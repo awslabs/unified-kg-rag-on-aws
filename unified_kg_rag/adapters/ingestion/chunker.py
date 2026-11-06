@@ -332,11 +332,22 @@ class LineBasedBoundaryProcessor:
 
 
 # LangChain's default separators (paragraph, line, word, character) plus a
-# split after CJK sentence terminators, so Chinese and Japanese text, which has
-# no spaces, is not cut mid-sentence at the character limit. The lookbehind is
-# zero-width, so the terminator stays at the end of its sentence; text without
-# these characters splits exactly as with the defaults.
-_SPLITTER_SEPARATORS = ["\n\n", "\n", "(?<=[。．｡！？；])", " ", ""]
+# split after sentence terminators before a word: after CJK ones, so Chinese
+# and Japanese text, which has no spaces, is not cut mid-sentence at the
+# character limit, then after a Latin or Korean sentence end (".", "!", "?"
+# or "…" before a space), so a paragraph longer than a chunk is cut between
+# sentences rather than at its last space that fits. The lookarounds are
+# zero-width, so the terminator stays at the end of its sentence; a "." not
+# followed by a space (3.5, e.g.) splits nothing, and a paragraph that fits
+# splits as with the defaults.
+_SPLITTER_SEPARATORS = [
+    "\n\n",
+    "\n",
+    "(?<=[。．｡！？；])",
+    "(?<=[.!?…])(?= )",
+    " ",
+    "",
+]
 
 
 class ChunkProcessor:

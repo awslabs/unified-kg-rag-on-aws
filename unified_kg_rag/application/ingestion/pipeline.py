@@ -475,13 +475,17 @@ class DataIngestionPipeline:
                 "seed_conversions": self.seed_conversions,
                 "confirm": self._confirm,
                 "confirm_deletions": self._confirm_deletions,
+                "rebuild_for_artifacts": lambda: self._reset_for_run,
             },
             # --force-rebuild re-extracts every unit (and refreshes the
             # extraction store) instead of reusing the stored records, asks
-            # the model for every pre-chunk's boundaries, description
+            # the model for every pre-chunk's boundaries, translation, description
             # summary and community report again and embeds every text
             # again.
             PipelineStageType.TEXT_CHUNKING: {
+                "reuse_stored": not self.pipeline_config.force_rebuild
+            },
+            PipelineStageType.TRANSLATION: {
                 "reuse_stored": not self.pipeline_config.force_rebuild
             },
             PipelineStageType.GRAPH_EXTRACTION: {
@@ -493,6 +497,9 @@ class DataIngestionPipeline:
             PipelineStageType.CLAIM_EXTRACTION: {
                 "reuse_stored": not self.pipeline_config.force_rebuild
             },
+            # Both export the visualization data (the community stage with
+            # the communities) under the pipeline's cache directory.
+            PipelineStageType.GRAPH_ANALYSIS: {"cache_directory": cache_directory},
             PipelineStageType.COMMUNITY_DETECTION: {
                 "cache_directory": cache_directory,
                 "doc_status": doc_status,
@@ -1218,6 +1225,7 @@ class DataIngestionPipeline:
                     seed_conversions=stage.seed_conversions,
                     confirm=stage.confirm,
                     confirm_deletions=stage.confirm_deletions,
+                    rebuild_for_artifacts=stage.rebuild_for_artifacts,
                 )
 
     def _set_corpus_fingerprint(self, source_directory: Path) -> None:

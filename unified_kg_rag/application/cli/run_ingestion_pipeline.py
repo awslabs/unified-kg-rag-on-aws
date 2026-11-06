@@ -52,6 +52,7 @@ from unified_kg_rag.application.ingestion.pipeline import (
     DataIngestionPipeline,
     run_token_usage,
 )
+from unified_kg_rag.domain.ingestion.methodologies import writes_graph_store
 from unified_kg_rag.domain.models import (
     PipelineConfig,
     PipelineContext,
@@ -608,11 +609,12 @@ class IngestionPipelineRunner:
             return
         if not pipeline_config.stages_enabled.get(PipelineStageType.INDEXING):
             return
-        error = missing_endpoints_error(
-            self.config,
-            {RetrieverRole.GRAPH, RetrieverRole.DOCUMENT},
-            "the indexing stage",
-        )
+        # A run that builds no graph-store artifact (raptor alone) writes
+        # no graph store.
+        roles = {RetrieverRole.DOCUMENT}
+        if writes_graph_store(self.config):
+            roles.add(RetrieverRole.GRAPH)
+        error = missing_endpoints_error(self.config, roles, "the indexing stage")
         if error:
             usage_error(error)
 

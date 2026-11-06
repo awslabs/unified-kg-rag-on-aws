@@ -468,6 +468,18 @@ gets its models and stores from the run's `Providers` bundle.
   over the limit) would split it by size on every later run, so it is asked
   again, and a stored one of that kind is replaced. `--force-rebuild` asks
   again.
+- **Translations are records too.** The translation stage stores a text
+  unit's translations (every language it translates into) under
+  `<cache_keys.translation_fingerprint>:<SHA-256 of the unit's text>` (the
+  every-call and translation settings, the translation model, the source
+  language, the translated languages and the translation prompt), and the
+  unit names the record (`translation`). A unit with a stored record takes
+  it instead of a model call, so a reset or an edit translates only text
+  that changed, and extraction, which reads the translation and is keyed by
+  it, reuses its records too: a model that translates otherwise each time
+  would re-key every downstream record of unchanged text. A unit whose
+  translation failed in any language stores none; `--force-rebuild`
+  translates again.
 - **A full build reuses the corpus-wide answers of unchanged input.** The
   LLM response cache keys a call by its prompt and model, which are stable
   (community ids are content ids), but it lives in the run's cache
@@ -531,7 +543,11 @@ gets its models and stores from the run's `Providers` bundle.
   `Corp`, ...) and without spaces next to Han, Hangul or Kana, so
   "(주)가나다", "가나다 상사" / "가나다상사" and "Acme Inc" / "Acme" merge. A
   merged group takes the name cited by the most text units (ties: the
-  smallest), so the result does not depend on input order.
+  smallest), so the result does not depend on input order. The list is
+  applied whatever the entity's type: entity types are the user's
+  vocabulary, so no type rule tells a company from a place, and a place
+  written with a region code that is also a designator ("Springfield, CO")
+  merges with its bare name ("Springfield").
 - **Fuzzy matching is opt-in** (`processing.fuzzy_entity_resolution`), because
   name similarity also joins different organizations that share most of their
   name ("Northfield University" / "Northfield University Hospital"). When it is
@@ -974,7 +990,7 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   registry holds any (`incremental.other_source_scopes`) the run is refused
   instead (`ConfigurationError`, exit 2, nothing written). The rebuild
   reuses what the stores keep
-  (§4.1, §4.4): chunk boundaries, extraction records, description
+  (§4.1, §4.4): chunk boundaries, translations, extraction records, description
   summaries and vectors, so its new model calls are the added
   methodology's (one report per community). Without the registry every run
   is a full build and reuses the same. A record written before profiles
@@ -1785,6 +1801,17 @@ chunks. Short queries without keywords use the raw query as low-level
 keywords (`raw_query_fallback_max_len`). Upstream LightRAG has no multi-hop
 traversal, hence graph expansion is opt-in.
 
+One deviation in what the high-level side searches: upstream's extraction
+asks each relationship for its own high-level keywords and embeds the
+relationship as keywords, endpoints and description; here extraction is
+shared with GraphRAG, whose relationships carry no keywords, so a
+relationship is embedded (and BM25-indexed) by its description alone (its
+endpoints and type when it has none). The high-level keywords of the query
+then meet the description's words rather than a keyword list; asking
+extraction for keywords would add output tokens to every unit of every
+methodology and re-extract every stored corpus, so it waits for a measured
+benefit.
+
 ### 6.3 Iterative bridge follow-up (`iterative_search.py`, opt-in)
 
 No default selects `iterative`; `auto` may route a multi-hop question to
@@ -2449,13 +2476,19 @@ Unchanged clusters cost no call (`input_key` reuse) and no embedding
    failing fails the indexing stage like any failed write.
 2. *Rebuild.* The `summary_tree` stage then builds the new tree from the
    leaves and swaps it in.
-3. *Crash between the two.* Queries meet the old tree without the deleted
-   nodes; new documents are reachable as leaves. The record still holds
-   the old digest, so the next run rebuilds; an index a killed build left
-   unswapped is deleted by the next build's reaper.
+3. *Between the two.* The indexing stage's build record keeps naming the
+   summary tree where a live one exists, `raptor` is selected and every
+   deletion of step 1 succeeded, so `tree` queries meet the old tree
+   without the deleted nodes while the stage runs, and after a crash
+   before it finished; new documents are reachable as leaves. The tree
+   record still holds the old digest, so the next run rebuilds; an index
+   a killed build left unswapped is deleted by the next build's reaper. A
+   build that fails (the stage raises) drops the tree from the build
+   record: `tree` is refused until a run builds it.
 
 `refresh: on_reset` keeps step 1 on delta runs and rebuilds only on
-`indexing.reset` (or a missing tree), reporting the leaves no level-1 node
+`indexing.reset` (or a missing tree, or one some of whose summaries
+failed), reporting the leaves no level-1 node
 covers (`tree_uncovered_leaves`). `scope: document` rebuilds the trees of
 every document too, but reuse makes an unchanged document's tree free.
 
@@ -2533,7 +2566,7 @@ measured default path).
 |---|---|
 | A summary call fails every attempt | The node is dropped and its children promoted; the record is `partial`, so the next run retries (only the failed clusters cost a call) |
 | The vector store cannot page text units or embed (a custom backend: the port defaults return `None`) | The stage skips with a warning; no tree |
-| More than `max_leaves_in_memory` (200,000) leaves under `scope: corpus` without partitions | The stage fails, naming `partition_by` and `scope: document` |
+| More than `max_leaves_in_memory` (100,000) leaves in one tree | The stage fails before it reads their vectors, naming `partition_by` and `scope: document` |
 | Writing the new index fails | The new index is dropped, the old tree (without its stale nodes) stays, the stage fails |
 | Indexing failed in the same run | The stage is skipped |
 | No summary tree at query time | `tree` is refused when the build record says so (`MethodologyNotIndexedError`); with a record from before methodology profiles it answers from the text units with `metadata["summary_tree"] = "missing"` and a WARNING. `run-ingestion --enabled-stages summary_tree` builds the tree from the stored text units |

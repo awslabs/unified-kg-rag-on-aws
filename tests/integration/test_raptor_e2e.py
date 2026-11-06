@@ -193,8 +193,9 @@ def test_a_raptor_only_ingestion_builds_a_tree_and_no_graph(
     assert all(n["text"].startswith("Summary: ") for n in nodes)
     tree = tree_record(providers)
     assert tree is not None and tree["nodes"] == len(nodes)
-    # No graph was built.
-    assert e2e._entity_names(providers) == set()
+    # No graph was built: the graph store was never opened.
+    graph = Path(config.providers.graph.sqlite_path)
+    assert not graph.exists() or not graph.stat().st_size
 
     # A run with nothing new builds nothing: the tree is current.
     before = Counter(calls.kinds)
@@ -202,6 +203,31 @@ def test_a_raptor_only_ingestion_builds_a_tree_and_no_graph(
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert calls.since(before) == Counter()
     assert shape(tree_nodes(providers)) == shape(nodes)
+    assert record(providers)["methodologies"] == ["raptor"]
+
+
+def test_a_raptor_only_namespace_needs_no_graph_store(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # A Gremlin graph store without an endpoint: a run that builds no graph
+    # artifact never builds its writer, through additions, a removal and a
+    # reset alike.
+    from unified_kg_rag.adapters.storage.null_graph_indexer import NullGraphIndexer
+
+    config, providers, _, _ = setup(tmp_path)
+    config.providers.graph.kind = "gremlin"
+    config.aws.neptune.use_iam = False
+    config.aws.neptune.endpoint = None
+    assert isinstance(providers.build_graph_indexer(), NullGraphIndexer)
+    source = corpus(tmp_path)
+    context = ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    (source / "mill.txt").unlink()
+    context = ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    config.indexing.reset = True
+    context = ingest(config, providers, source, tmp_path / "run-3")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert record(providers)["methodologies"] == ["raptor"]
 
 
@@ -238,6 +264,41 @@ def test_adding_raptor_builds_only_the_tree(
         "raptor",
     ]
     assert tree_nodes(providers)
+
+
+def test_a_reset_without_raptor_deletes_the_tree(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    config, providers, _, _ = setup(
+        tmp_path, [Methodology.LIGHTRAG, Methodology.RAPTOR]
+    )
+    source = corpus(tmp_path)
+    context = ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert tree_nodes(providers)
+    indexer = providers.build_vector_indexer()
+    alias = indexer._get_name(
+        config.indexing.opensearch.summary_nodes_index_prefix, None
+    )
+    # The index of a build killed before its swap.
+    indexer.opensearch_client.create_index(
+        f"{alias}-{99999999999999999}",
+        indexer._spec("summary nodes").mapping(),
+        exist_ok=False,
+    )
+    indexer.close()
+
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    config.indexing.reset = True
+    context = ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert tree_nodes(providers) == []
+    indexer = providers.build_vector_indexer()
+    try:
+        assert not indexer.opensearch_client.get_aliases_by_index(f"{alias}-*")
+    finally:
+        indexer.close()
+    assert record(providers)["methodologies"] == ["lightrag", "hipporag"]
 
 
 @pytest.mark.parametrize("registry", [True, False])
@@ -349,8 +410,8 @@ def test_a_removal_leaves_no_summary_of_removed_text(
     assert gone and any(set(n["text_unit_ids"]) & gone for n in tree_nodes(providers))
 
     # The run stops after indexing (no summary_tree stage): the summaries of
-    # the deleted document are gone all the same, and raptor is no longer
-    # held until a run builds the tree again.
+    # the deleted document are gone all the same, and raptor is still held:
+    # the tree left cites only stored text.
     (source / "mill.txt").unlink()
     stages = {
         PipelineStageType.DOCUMENT_PARSING,
@@ -362,13 +423,115 @@ def test_a_removal_leaves_no_summary_of_removed_text(
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     left = tree_nodes(providers)
     assert left and not any(set(n["text_unit_ids"]) & gone for n in left)
-    assert "raptor" not in record(providers)["methodologies"]
+    assert record(providers)["methodologies"] == ["raptor"]
 
     # The next run builds the tree again.
     context = ingest(config, providers, source, tmp_path / "run-3")
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert record(providers)["methodologies"] == ["raptor"]
     assert not any(set(n["text_unit_ids"]) & gone for n in tree_nodes(providers))
+
+
+def test_a_tree_over_the_limit_fails_before_its_vectors_are_read(
+    tmp_path: Path, no_aws, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    import numpy as np
+
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+
+    config, providers, _, _ = setup(tmp_path)
+    scan = OpenSearchIndexer.scan_text_units
+    read: list[Any] = []
+
+    def recorded(self: Any, suffix: Any, *, fields: list[str], **kwargs: Any) -> Any:
+        rows = scan(self, suffix, fields=fields, **kwargs)
+        if "text_embedding" in fields:
+            read.extend(row["text_embedding"] for row in rows)
+        return rows
+
+    monkeypatch.setattr(OpenSearchIndexer, "scan_text_units", recorded)
+    source = corpus(tmp_path)
+    context = ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    # The vectors are read as float32 arrays.
+    assert read and all(
+        isinstance(v, np.ndarray) and v.dtype == np.float32 for v in read
+    )
+    read.clear()
+    config.indexing.summary_tree.max_leaves_in_memory = 3
+    (source / "zeta.txt").write_text("Zeta repairs ships for Port.")
+    context = ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.FAILED
+    assert "max_leaves_in_memory" in e2e._errors(context)
+    assert read == []
+
+
+def test_refresh_on_reset_builds_a_partial_tree_again(
+    tmp_path: Path, no_aws, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    # A summary that failed leaves the tree partial, and its WARNING says
+    # the next run builds it again: refresh: on_reset kept it until a reset.
+    from unified_kg_rag.adapters.ingestion.tree_summarizer import TreeSummarizer
+
+    config, providers, _, _ = setup(tmp_path)
+    config.indexing.summary_tree.refresh = "on_reset"
+    summarize = TreeSummarizer.summarize
+
+    def first_fails(self: Any, clusters: Any, reusable: Any) -> Any:
+        return [None, *summarize(self, clusters[1:], reusable)]
+
+    source = corpus(tmp_path)
+    with monkeypatch.context() as failing:
+        failing.setattr(TreeSummarizer, "summarize", first_fails)
+        context = ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert (tree_record(providers) or {}).get("partial") is True
+
+    (source / "zeta.txt").write_text("Zeta repairs ships for Port.")
+    context = ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert (tree_record(providers) or {}).get("partial") is False
+
+
+def test_the_tree_is_served_while_it_is_rebuilt_and_refused_once_it_fails(
+    tmp_path: Path, no_aws, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    from unified_kg_rag.application.ingestion import summary_tree_stage as sts
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+    from unified_kg_rag.domain.models import SearchStrategy
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    config, providers, _, _ = setup(tmp_path)
+    source = corpus(tmp_path)
+    context = ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    (source / "zeta.txt").write_text("Zeta repairs ships for Port.")
+    (source / "mill.txt").unlink()
+    during: list[str] = []
+
+    def fail(self: Any, *args: Any, **kwargs: Any) -> Any:
+        # Indexing committed the run: the record still names the tree, and
+        # a query reads it.
+        during.extend(record(providers)["methodologies"])
+        chain = GraphRAGChain(config, providers=providers)
+        try:
+            ask(chain, search_strategy=SearchStrategy.TREE)
+        finally:
+            chain.close()
+        raise RuntimeError("simulated failure of the tree build")
+
+    monkeypatch.setattr(sts.SummaryTreeStage, "_rebuild", fail)
+    context = ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.FAILED
+    assert during == ["raptor"]
+    # The build failed: the tree no longer covers the stored text units.
+    assert record(providers)["methodologies"] == []
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        with pytest.raises(MethodologyNotIndexedError):
+            ask(chain, search_strategy=SearchStrategy.TREE)
+    finally:
+        chain.close()
 
 
 # --- the tree strategy ------------------------------------------------------

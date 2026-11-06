@@ -96,8 +96,8 @@ next one; a failed initial download or final upload fails the run with
 Across runs, the doc-status registry (`providers.doc_status.enabled`) keeps
 unchanged documents from being embedded again: an incremental run embeds
 only what its delta changes. Within what a run writes, unchanged text keeps
-its stored vector, and unchanged chunk boundaries, description summaries and
-community reports keep their stored model answers, so a changed document or
+its stored vector, and unchanged chunk boundaries, translations, description
+summaries and community reports keep their stored model answers, so a changed document or
 a reset of an unchanged corpus pays only for what changed
 ([Design §4.4](../design.md#44-pipeline-infrastructure),
 [§5.2](../design.md#52-full-rebuild-indexingreset)).
@@ -188,7 +188,10 @@ indexing:
   refused from then on; until then (an unchanged corpus) they stay current.
   Nothing is deleted. To delete them, run once with `indexing.reset: true`
   and the remaining methodologies: the rebuild replaces the community-reports
-  index with an empty one and drops the graph's community vertices.
+  index with an empty one, drops the graph's community vertices and, without
+  `raptor`, deletes the summary tree's indices (those of a build killed
+  before it swapped in too). Without the registry every run is a full build,
+  so the next run deletes them.
 
 ## A RAPTOR summary tree (opt-in)
 
@@ -215,7 +218,9 @@ indexing:
   resolution, claims or communities, so a `raptor`-only namespace costs
   about $1-8 per million corpus tokens (the summaries; the tree is about
   one call per five or six text units), against roughly $1,000 for the
-  default graph ingest. Only `tree` serves it; `auto` falls back to it.
+  default graph ingest. Only `tree` serves it; `auto` falls back to it. It
+  writes no graph store, so it needs no Neptune endpoint, and a graph the
+  namespace held before is left as it is.
 - **Adding `raptor` later** builds only the tree, on the next run (an
   unchanged corpus included) or with `run-ingestion --enabled-stages
   summary_tree`, from the stored text units: no re-extraction and no
@@ -230,17 +235,22 @@ indexing:
   document's summaries, and every summary above them, are deleted with its
   text units, before the tree is built again, so no summary of removed text
   is served even when the run stops in between. `refresh: on_reset` keeps
-  the tree until a reset (removals still delete their summaries).
+  the tree until a reset (removals still delete their summaries), unless
+  some of its summaries failed: that tree is built again on the next run.
 - **Filters.** A summary keeps a document filter key only when all its
   documents share the value, so under a filter it is kept only when all its
   documents pass; `partition_by` keeps whole trees pure on those keys.
 - **Languages.** Summaries are written in the index language (the target
   language when translation runs, the source language otherwise), and their
   text is analyzed with that language's analyzer.
-- **Limits.** A tree holds at most `max_leaves_in_memory` (200,000) text
-  units (their vectors are clustered in memory): split larger corpora with
+- **Limits.** A tree holds at most `max_leaves_in_memory` (100,000) text
+  units: their texts and vectors are clustered in memory, about 50 KiB of
+  task memory per text unit at the peak (1,024 dimensions), so the default
+  takes about 5 GiB of the task's 8 ([Capacity
+  sizing](../operations.md#capacity-sizing)). Split larger corpora with
   `partition_by` or `scope: document` (one tree per document, RAPTOR's own
-  setting; documents of fewer than three text units get none).
+  setting; documents of fewer than three text units get none), or raise the
+  limit with `fargate_memory`.
 
 ## Cost levers
 

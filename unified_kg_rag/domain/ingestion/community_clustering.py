@@ -629,8 +629,15 @@ def build_hierarchy(
             break
 
         next_partition = base_partition(cluster_graph, config, entity_level=False)
+        # Judged over the communities an edge joins to another: an isolated
+        # one (an entity without relationships, a component of its own) is
+        # never merged, so it must not make a single root over the others
+        # read as a partition (and a level of its own, shifting every depth
+        # global search cuts at).
+        linked = {node for node in cluster_graph if cluster_graph.degree(node) > 0}
+        merged = sum(1 for members in next_partition if members & linked)
 
-        if next_partition and 1 < len(next_partition) < cluster_graph.number_of_nodes():
+        if next_partition and 1 < merged < len(linked):
             logger.info(
                 "Selected partition with %s communities for level %s",
                 len(next_partition),

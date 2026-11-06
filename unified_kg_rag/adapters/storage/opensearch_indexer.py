@@ -11,6 +11,8 @@ from collections.abc import Callable, Collection, Hashable, Mapping
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
+import numpy as np
+
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.adapters.storage.embedding_settings import (
     META_BUILD,
@@ -77,9 +79,10 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Texts per embedding request, and requests in flight at once (Bedrock
-# embedding calls are IO-bound). In the real-AWS E2E 16 requests in flight
-# embedded 1,600 texts in half the time 8 took, with no throttling.
+# Texts per embedding request, and requests in flight at once at most
+# (Bedrock embedding calls are IO-bound; processing.max_concurrency lowers
+# it). In the real-AWS E2E 16 requests in flight embedded 1,600 texts in
+# half the time 8 took, with no throttling.
 _EMBED_BATCH_SIZE = 50
 _EMBED_WORKERS = 16
 # Ids per read-back search at most (fewer when the index's limits are lower:
@@ -2598,7 +2601,9 @@ class OpenSearchIndexer(VectorIndexer):
             for start in range(0, len(unique), batch_size)
         ]
         if batches:
-            max_workers = min(_EMBED_WORKERS, len(batches))
+            max_workers = min(
+                _EMBED_WORKERS, self.config.processing.max_concurrency, len(batches)
+            )
             failed_keys = 0
             with ContextThreadPoolExecutor(max_workers=max_workers) as executor:
                 for pairs in executor.map(_embed_batch, batches):
@@ -2704,11 +2709,15 @@ class OpenSearchIndexer(VectorIndexer):
         *,
         page_size: int | None = None,
         exclude: dict[str, Any] | None = None,
+        vector_fields: Collection[str] = (),
     ) -> list[dict[str, Any]]:
         """Every document of ``suffix``'s live ``alias_prefix`` index (only
         ``fields``), in id order, a page at a time (at most ``page_size``,
         the index's window otherwise); without the documents ``exclude``
-        (a ``must_not`` clause) matches. ``[]`` without a live index."""
+        (a ``must_not`` clause) matches. ``[]`` without a live index. Each
+        of ``vector_fields`` is read as a float32 array, a page at a time:
+        as parsed (a list of float objects) a 1,024-dimension vector takes
+        about 32 KiB, eight times its array."""
         alias_name = self._get_name(alias_prefix, suffix)
         index_name = self._live_index(alias_name)
         if not index_name:
@@ -2735,7 +2744,11 @@ class OpenSearchIndexer(VectorIndexer):
             )
             page = list(response.get("hits", {}).get("hits", []))
             for hit in page:
-                found.append({**(hit.get("_source") or {}), "id": str(hit["_id"])})
+                source = {**(hit.get("_source") or {}), "id": str(hit["_id"])}
+                for name in vector_fields:
+                    if isinstance(value := source.get(name), list) and value:
+                        source[name] = np.asarray(value, dtype=np.float32)
+                found.append(source)
             if len(page) < size:
                 return found
             after = str((page[-1].get("_source") or {}).get("id") or page[-1]["_id"])
@@ -2748,13 +2761,14 @@ class OpenSearchIndexer(VectorIndexer):
         page_size: int | None = None,
     ) -> list[dict[str, Any]]:
         """Every stored text unit of ``suffix`` but the seed graphs' (see
-        the port), in id order."""
+        the port), in id order; ``text_embedding`` as a float32 array."""
         return self._scan(
             self.opensearch_config.text_units_index_prefix,
             suffix,
             fields,
             page_size=page_size,
             exclude={"exists": {"field": "source_kind"}},
+            vector_fields=("text_embedding",),
         )
 
     def read_summary_nodes(
@@ -2855,7 +2869,7 @@ class OpenSearchIndexer(VectorIndexer):
     def write_summary_tree(
         self,
         nodes: list[SummaryNode],
-        vectors: Mapping[str, list[float]],
+        vectors: Mapping[str, Collection[float]],
         suffix: str | None,
         record: dict[str, Any],
     ) -> IndexingStats:
@@ -2883,7 +2897,9 @@ class OpenSearchIndexer(VectorIndexer):
                 chunk = nodes[start : start + _WRITE_SLICE_SIZE]
                 docs = [
                     {
-                        **self._prepare_summary_node_doc(node, (vectors[node.id],)),
+                        **self._prepare_summary_node_doc(
+                            node, ([float(v) for v in vectors[node.id]],)
+                        ),
                         _DIGESTS_FIELD: {
                             "text_embedding": self._embedding_digest(node.text)
                         },
@@ -2975,12 +2991,59 @@ class OpenSearchIndexer(VectorIndexer):
             stats.add_error(f"Deleting stale summary nodes failed: {e}", 1)
             return stats
 
+    def delete_summary_tree(self, suffix: str) -> IndexingStats:
+        """Delete ``suffix``'s summary tree: every index of its alias (by
+        name, as ``clear``), those a killed build left unswapped included,
+        and the alias with them (see the port)."""
+        alias = self._get_name(
+            self.opensearch_config.summary_nodes_index_prefix, suffix
+        )
+        try:
+            indices = sorted(
+                name
+                for name in self.opensearch_client.get_aliases_by_index(f"{alias}-*")
+                if self._index_timestamp(alias, name) is not None
+            )
+            if indices:
+                self._delete_indices(indices)
+                logger.info(
+                    "Deleted the summary tree of '%s' (%d index(es)): raptor is "
+                    "not selected",
+                    suffix,
+                    len(indices),
+                )
+            return IndexingStats(
+                total_items=len(indices), successful_items=len(indices)
+            )
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            stats = IndexingStats(total_items=1)
+            stats.add_error(f"Deleting the summary tree failed: {e}", 1)
+            return stats
+
     def add_build_artifacts(
         self, artifacts: Collection[IndexArtifact], suffix: str | None
     ) -> bool:
         """Name ``artifacts`` in the build record of each live index of
         ``suffix`` too (see the port). A record that names no artifacts
         (written before methodology profiles) is left as it is."""
+        return self._change_build_artifacts(suffix, add=artifacts)
+
+    def drop_build_artifacts(
+        self, artifacts: Collection[IndexArtifact], suffix: str | None
+    ) -> bool:
+        """Stop naming ``artifacts`` in the build record of each live index
+        of ``suffix`` (see the port)."""
+        return self._change_build_artifacts(suffix, drop=artifacts)
+
+    def _change_build_artifacts(
+        self,
+        suffix: str | None,
+        *,
+        add: Collection[IndexArtifact] = (),
+        drop: Collection[IndexArtifact] = (),
+    ) -> bool:
         changed = False
         for prefix in self._index_prefixes():
             alias = self._get_name(prefix, suffix)
@@ -2995,9 +3058,10 @@ class OpenSearchIndexer(VectorIndexer):
                 continue
             record = IndexBuildRecord.model_validate(stored)
             held = set(record.artifacts or [])
-            if set(artifacts) <= held:
+            artifacts = (held | set(add)) - set(drop)
+            if artifacts == held:
                 continue
-            updated = record.with_artifacts(held | set(artifacts))
+            updated = record.with_artifacts(artifacts)
             self._put_index_meta(
                 index_name, {**meta, META_BUILD: updated.model_dump(mode="json")}
             )

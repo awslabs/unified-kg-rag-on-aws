@@ -28,6 +28,7 @@ from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.domain.ingestion.community_clustering import (
     base_partition,
     build_cluster_graph,
+    build_hierarchy,
     canonical_graph,
     community_content_id,
     entity_subgraph,
@@ -950,9 +951,37 @@ def test_a_report_key_holds_the_community_name() -> None:
     community = _community(["e1", "e2"])
     renamed = community.model_copy(update={"name": "Level 0 Community 7"})
     chain_input = {"input_text": "Vendor supplies Buyer.", "max_report_length": 500}
-    key = detector._report_key(chain_input, community)
-    assert key == detector._report_key(dict(chain_input), community)
-    assert detector._report_key(chain_input, renamed) != key
+    key = detector._report_keys(chain_input, community)[0]
+    assert key == detector._report_keys(dict(chain_input), community)[0]
+    assert detector._report_keys(chain_input, renamed)[0] != key
+
+
+def test_a_report_key_follows_the_input_not_the_packing_budgets() -> None:
+    # The packed input reflects the budgets: one packed alike under another
+    # budget is the same answer, and one stored under the earlier key (the
+    # whole report_generation section) is still found.
+    from unified_kg_rag.domain.ingestion.cache_keys import (
+        community_report_fingerprint,
+        legacy_community_report_fingerprints,
+    )
+
+    base = Config()
+    budget = Config()
+    report = budget.graph.community_detection.report_generation
+    report.max_report_context_tokens = 8000
+    report.enable_sub_community_rollup = False
+    report.max_entities_per_report = 7
+    assert community_report_fingerprint(budget) == community_report_fingerprint(base)
+    assert legacy_community_report_fingerprints(budget) != (
+        legacy_community_report_fingerprints(base)
+    )
+    model = Config()
+    model.models.roles.community_report = "vendor.small-v1"
+    assert community_report_fingerprint(model) != community_report_fingerprint(base)
+    detector = _detector()
+    community = _community(["e1", "e2"])
+    current, earlier = detector._report_keys({"input_text": "x"}, community)
+    assert current != earlier
 
 
 class TestReportInputShaping:
@@ -2037,3 +2066,16 @@ def test_random_state_zero_is_rejected_at_config_time() -> None:
 
     with pytest.raises(ValidationError):
         CommunityDetectionConfig(random_state=0)
+
+
+@pytest.mark.parametrize("isolated", [0, 1, 3])
+def test_isolated_entities_do_not_decide_the_hierarchy(isolated: int) -> None:
+    # Two triangles joined by a bridge: two communities, which would merge
+    # into a single root. An entity without relationships made the merge a
+    # partition of the cluster graph (the root plus it) and so a level of
+    # its own, shifting every depth global search cuts at.
+    graph = _two_triangle_graph()
+    for i in range(isolated):
+        graph.add_node(f"x{i}", name=f"X{i}")
+    partitions, _ = build_hierarchy(graph, Config().graph.community_detection)
+    assert len(partitions) == 1

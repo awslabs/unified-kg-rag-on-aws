@@ -408,6 +408,16 @@ From a `main` checkout (formats and keys no release had):
   completed answers), and pairwise length buckets are renamed (`<=0.67x`, `0.67-0.91x`, `0.91-1.1x`, `>=1.5x`).
   `prepare-benchmark musique --unanswerable` without `--data-path` now also downloads the answerable split and
   draws the answerable questions from it (labelled `musique`); prepare again for that sample. Nothing else re-runs.
+- (#PR) Translations are stored from the first run after upgrading: that run still asks the model for every unit
+  it translates, with the new translation prompt, so a reset of a translated namespace translates and re-extracts
+  every unit once more (the cost of a first build; an incremental run only its new and changed documents), and later
+  resets reuse them. Community report answers stored before are found under their earlier key (nothing is asked
+  again). A graph with entities without relationships may lose its top community level at its next clustering (its
+  reports go, no call is added, global search's `community_depth` cuts one level higher). A document with a
+  paragraph longer than a chunk is cut otherwise when it is next chunked (a reset or an edit), and those chunks are
+  extracted again. `graph_metrics.average_clustering` is empty unless
+  `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
+  now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`.
 - (#602) `local` (and each DRIFT follow-up) orders its text units by HippoRAG 2's PageRank by default
   (`search.local_search.text_unit_ranking: ppr`): answers can change. Nothing is re-indexed or re-run; each local
   query adds a text-unit search, a relationship kNN search, an edge read and one query embedding (about 0.1 s on
@@ -461,6 +471,14 @@ From a `main` checkout (formats and keys no release had):
   summary covers are EMF metrics (`total_tree_summaries_failed`, `total_tree_uncovered_leaves`) on the CDK
   dashboard's "Summary tree (EMF)" widget (#603). See [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in)
   and [Design §6.5](docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
+  original code ship with recorded fixtures. The build record keeps naming a live tree while a run rebuilds it (the
+  summaries citing removed text deleted first), so `tree` is served during and after a write run, and is refused
+  only once a tree build fails; a full build without `raptor` deletes the tree's indices; a partial tree is built
+  again under `refresh: on_reset`; the leaves' vectors are read as float32 arrays (about 15 KiB per leaf read instead
+  of 40-60 KiB, about 50 KiB at the build's peak) and `max_leaves_in_memory` is checked before they are read, at a
+  default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#PR). See
+  [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
+  [Design §6.5](docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
 - Methodology profiles (#596): `indexing.methodologies` (default `[graphrag, lightrag]`, today's union) selects what
   ingestion builds, so a LightRAG-only corpus (`[lightrag]`) runs no community detection and makes no report call.
   On the CDK stack the `methodologies` context key sets it on both task definitions, so every state-machine run
@@ -473,7 +491,12 @@ From a `main` checkout (formats and keys no release had):
   holds what `lightrag` builds and `raptor` reads a summary tree (#599). See [methodology
   holds what `lightrag` builds and `raptor` is reserved. Without a build record (a namespace ingested before
   them), a query takes the namespace to hold what a run of the config builds, so the default holds `hipporag` and
-  serves `ppr` (#602). See [methodology
+  serves `ppr` (#602). With `graph.community_detection.report_generation.enabled: false` a run builds no reports,
+  so an incremental run no longer takes them for missing and rebuilds the namespace; the rebuild that adds a
+  methodology asks before deleting more than `indexing.max_deletion_share` of the scope's documents, as an
+  incremental run does; a run without community detection (`[lightrag]`) exports `visualization_data.json` without
+  communities; a run that builds no graph-store artifact (`[raptor]`) writes no graph store, so `run-ingestion`
+  needs no Neptune endpoint for it (#PR). See [methodology
   profiles](docs/concepts/overview.md#methodology-profiles) and [Design §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the
@@ -750,9 +773,20 @@ From a `main` checkout (formats and keys no release had):
   resolution on, it folds a delta entity into its one best stored match and never joins two stored ones until a reset
   (#564).
 - Re-runs reuse what is unchanged: vectors carry a digest of their text and model, so indexing embeds only changed
-  texts; the `intelligent` chunker's boundary answers and community report answers live in the extraction store; a
-  full build keeps a stored summary of the same lines and settings; a no-op incremental run writes only its lease.
-  `--force-rebuild` asks and embeds again (#527, #531, #537, #541).
+  texts; the `intelligent` chunker's boundary answers, the text units' translations and community report answers
+  live in the extraction store; a full build keeps a stored summary of the same lines and settings; a no-op
+  incremental run writes only its lease. `--force-rebuild` asks and embeds again (#527, #531, #537, #541). A reset or
+  an edit translates only the text that changed (a translation asked again re-extracted the unit when the model
+  answered otherwise); a report answer is keyed by its packed input, not the whole `report_generation` section, so
+  a packing budget change asks only the reports whose input it changed (#PR).
+- The translation prompt translates a text unit as written: it no longer completes fragments, rewrites sentences or
+  converts formatting to markdown, and fences the unit as data. It and the `intelligent` chunker's prompt are
+  overridable (`custom_prompts.text_translation_*`, `custom_prompts.text_chunking_*`) (#PR).
+- The splitter cuts a paragraph longer than a chunk after a Latin or Korean sentence end (".", "!", "?" or "…"
+  before a space) before it falls back to its last space (#PR).
+- `graph.analysis.statistics.calculate_average_clustering` (off): the `graph_analysis` stage no longer computes the
+  average clustering coefficient by default (about 10 s at 80,000 entities, read by no stage) (#PR).
+- Embedding requests in flight are bounded by `processing.max_concurrency` too (at most 16 as before) (#PR).
 - Stage cache keys cover the whole configuration and the package version (#332).
 - `BatchProcessor` runs one pool of `processing.max_concurrency` items, connection pools follow the concurrency, and
   OpenSearch indexing embeds and writes 800 items of a type at a time (#296, #309, #310).
@@ -804,6 +838,9 @@ From a `main` checkout (formats and keys no release had):
 
 ### Fixed
 Bugs present in 0.2.3.
+
+- An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
+  the other communities read as a partition, so global search's cut depths depended on it (#PR).
 
 Queries and retrieval.
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its

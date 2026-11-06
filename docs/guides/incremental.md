@@ -107,8 +107,8 @@ pipeline stored are gone ...`) and extracts those units again: the LLM
 response cache answers them, and with `cache.llm_responses.enabled: false`
 the rerun costs what the reset did.
 
-A reset reuses the stored chunk boundaries, extraction records and vectors of
-unchanged text, and the stored description summaries and community report
+A reset reuses the stored chunk boundaries, translations, extraction records
+and vectors of unchanged text, and the stored description summaries and community report
 answers whose input is unchanged. A rebuild with the same models and settings
 therefore asks the model only for what the corpus changed, plus the reports
 of the communities it clusters differently from the incremental runs before

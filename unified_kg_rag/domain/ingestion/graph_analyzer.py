@@ -234,11 +234,12 @@ class GraphAnalyzer:
             nx.density,
             lambda r: setattr(stats, "density", r),
         )
-        self._compute_metric(
-            "average_clustering",
-            nx.average_clustering,
-            lambda r: setattr(stats, "average_clustering", r),
-        )
+        if self.analysis_config.statistics.calculate_average_clustering:
+            self._compute_metric(
+                "average_clustering",
+                nx.average_clustering,
+                lambda r: setattr(stats, "average_clustering", r),
+            )
         self._compute_metric(
             "connected_components",
             lambda g: (

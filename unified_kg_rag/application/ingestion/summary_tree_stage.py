@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from unified_kg_rag.adapters.ingestion.tree_summarizer import TreeSummarizer
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.pipeline_stages import _RegistryStage
@@ -48,7 +50,11 @@ from unified_kg_rag.domain.models import (
     SummaryTreeRecord,
 )
 from unified_kg_rag.ports.indexer import BaseIndexer, VectorIndexer
-from unified_kg_rag.shared import PipelineStageError, get_logger
+from unified_kg_rag.shared import (
+    NamespaceLeaseError,
+    PipelineStageError,
+    get_logger,
+)
 
 if TYPE_CHECKING:
     from unified_kg_rag.ports import DocStatusPort
@@ -122,7 +128,11 @@ class SummaryTreeStage(_RegistryStage):
             totals: dict[str, Any] = defaultdict(int)
             notes: dict[str, dict[str, str]] = {}
             for suffix in self._suffixes(context):
-                metrics = self._build_suffix(indexer, suffix, context)
+                try:
+                    metrics = self._build_suffix(indexer, suffix, context)
+                except Exception:
+                    self._drop_artifact(indexer, suffix)
+                    raise
                 for key, value in metrics.items():
                     if isinstance(value, int | float) and not isinstance(value, bool):
                         totals[key] += value
@@ -141,7 +151,10 @@ class SummaryTreeStage(_RegistryStage):
         self, indexer: VectorIndexer, suffix: str, context: PipelineContext
     ) -> dict[str, Any]:
         tree = self.config.indexing.summary_tree
-        rows = indexer.scan_text_units(suffix, fields=[])
+        partitioned = tree.scope == "document" or bool(tree.partition_by)
+        rows = indexer.scan_text_units(
+            suffix, fields=["attributes"] if partitioned else []
+        )
         if rows is None:
             logger.warning(
                 "The vector store (%s) cannot page its text units: no summary "
@@ -170,7 +183,14 @@ class SummaryTreeStage(_RegistryStage):
             logger.info("The summary tree of '%s' is current", suffix)
             self._record_artifact(indexer, suffix)
             return {"tree_leaves": len(rows), "tree_current": 1}
-        if tree.refresh == "on_reset" and incremental and stored is not None:
+        # A tree some of whose summaries failed is built again (its
+        # warning says the next run does), whatever the refresh.
+        if (
+            tree.refresh == "on_reset"
+            and incremental
+            and stored is not None
+            and not stored.get("partial")
+        ):
             uncovered = self._uncovered(indexer, suffix, rows)
             logger.info(
                 "Not rebuilding the summary tree of '%s' (refresh: on_reset): "
@@ -181,7 +201,39 @@ class SummaryTreeStage(_RegistryStage):
             )
             self._record_artifact(indexer, suffix)
             return {"tree_leaves": len(rows), "tree_uncovered_leaves": uncovered}
+        self._check_tree_size(suffix, rows)
         return self._rebuild(indexer, suffix, context, digest, fingerprint)
+
+    def _check_tree_size(self, suffix: str, rows: list[dict[str, Any]]) -> None:
+        """Fail before the vectors are read when a tree would hold more
+        text units than ``max_leaves_in_memory``."""
+        tree = self.config.indexing.summary_tree
+        sizes: dict[str | None, int] = defaultdict(int)
+        for row in rows:
+            sizes[self._tree_of(row.get("attributes") or {})] += 1
+        largest = max(sizes.values(), default=0)
+        if largest > tree.max_leaves_in_memory:
+            raise PipelineStageError(
+                f"The summary tree of '{suffix}' would hold {largest} text units, "
+                f"more than indexing.summary_tree.max_leaves_in_memory "
+                f"({tree.max_leaves_in_memory}) read into memory at once: split "
+                "it with indexing.summary_tree.partition_by (document filter "
+                "keys), build one tree per document (scope: document), or raise "
+                "the limit with the task's memory (about 50 KiB per text unit "
+                "at 1,024 dimensions)."
+            )
+
+    def _tree_of(self, attributes: dict[str, Any]) -> str | None:
+        """The tree a text unit of ``attributes`` belongs to: the corpus's
+        (``None``), its ``partition_by`` value tuple's, or its document's
+        (its stored file path)."""
+        tree = self.config.indexing.summary_tree
+        if tree.scope == "document":
+            return str(attributes.get("file_path") or attributes.get("file_name") or "")
+        if tree.partition_by:
+            filters = attributes.get(Constants.FILTERS.value) or {}
+            return partition_key([filters.get(key) for key in tree.partition_by])
+        return None
 
     def _rebuild(
         self,
@@ -193,16 +245,6 @@ class SummaryTreeStage(_RegistryStage):
     ) -> dict[str, Any]:
         tree = self.config.indexing.summary_tree
         groups = self._leaves(indexer, suffix)
-        largest = max((len(g) for g in groups.values()), default=0)
-        if largest > tree.max_leaves_in_memory:
-            raise PipelineStageError(
-                f"The summary tree of '{suffix}' would hold {largest} text units, "
-                f"more than indexing.summary_tree.max_leaves_in_memory "
-                f"({tree.max_leaves_in_memory}) read into memory at once: split "
-                "it with indexing.summary_tree.partition_by (document filter "
-                "keys), build one tree per document (scope: document), or raise "
-                "the limit."
-            )
         reusable: dict[str, tuple[str, int]] = {}
         if self.reuse_stored:
             for node in (
@@ -216,7 +258,7 @@ class SummaryTreeStage(_RegistryStage):
                     reusable[key] = (text, int(node.get("n_tokens") or 0))
         counts: dict[str, int] = defaultdict(int)
         nodes: list[SummaryNode] = []
-        vectors: dict[str, list[float]] = {}
+        vectors: dict[str, np.ndarray] = {}
         stops: set[str] = set()
         for name, leaves in sorted(groups.items(), key=lambda item: item[0] or ""):
             if tree.scope == "document" and len(leaves) < tree.min_leaves_per_tree:
@@ -330,10 +372,8 @@ class SummaryTreeStage(_RegistryStage):
     def _leaves(
         self, indexer: VectorIndexer, suffix: str
     ) -> dict[str | None, list[Leaf]]:
-        """The suffix's stored text units with their vectors, by tree: one
-        (``None``) for the corpus, one per ``partition_by`` value tuple, or
-        one per document (its stored file path)."""
-        tree = self.config.indexing.summary_tree
+        """The suffix's stored text units with their vectors (float32), by
+        tree (``_tree_of``)."""
         translated = f"translated_text_{index_language(self.config)}"
         rows = (
             indexer.scan_text_units(
@@ -345,23 +385,20 @@ class SummaryTreeStage(_RegistryStage):
         )
         groups: dict[str | None, list[Leaf]] = defaultdict(list)
         skipped = 0
-        for row in rows:
+        for index, row in enumerate(rows):
+            # Each row is let go once it is a leaf: the JSON it was read as
+            # is not kept beside the leaves.
+            rows[index] = {}
             vector = row.get("text_embedding")
+            if isinstance(vector, list):
+                vector = np.asarray(vector, dtype=np.float32)
             text = row.get(translated) or row.get("text") or ""
-            if not isinstance(vector, list) or not vector or not text:
+            if not isinstance(vector, np.ndarray) or not vector.size or not text:
                 skipped += 1
                 continue
             attributes = row.get("attributes") or {}
             filters = attributes.get(Constants.FILTERS.value) or {}
-            if tree.scope == "document":
-                name: str | None = str(
-                    attributes.get("file_path") or attributes.get("file_name") or ""
-                )
-            elif tree.partition_by:
-                name = partition_key([filters.get(key) for key in tree.partition_by])
-            else:
-                name = None
-            groups[name].append(
+            groups[self._tree_of(attributes)].append(
                 Leaf(
                     id=str(row["id"]),
                     text=text,
@@ -403,6 +440,28 @@ class SummaryTreeStage(_RegistryStage):
             return
         if indexer.add_build_artifacts([IndexArtifact.SUMMARY_TREE], suffix):
             logger.info("The build record of '%s' now names its summary tree", suffix)
+
+    def _drop_artifact(self, indexer: VectorIndexer, suffix: str) -> None:
+        """Stop naming the summary tree in the suffix's build record, which
+        the indexing stage kept naming it (``IndexingStage._record_build``):
+        its build failed, so the tree may not cover the stored text units
+        until a run builds it. Best-effort: the stage fails either way."""
+        try:
+            if indexer.drop_build_artifacts([IndexArtifact.SUMMARY_TREE], suffix):
+                logger.warning(
+                    "The build record of '%s' no longer names its summary tree "
+                    "(its build failed): raptor queries are refused until a run "
+                    "builds it",
+                    suffix,
+                )
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - the build's error is raised
+            logger.warning(
+                "Could not drop the summary tree from the build record of '%s': %s",
+                suffix,
+                e,
+            )
 
 
 def _package_version() -> str | None:

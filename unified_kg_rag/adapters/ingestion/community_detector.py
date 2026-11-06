@@ -27,6 +27,7 @@ from unified_kg_rag.domain.ingestion.base_processor import (
 from unified_kg_rag.domain.ingestion.cache_keys import (
     community_report_fingerprint,
     index_language,
+    legacy_community_report_fingerprints,
 )
 from unified_kg_rag.domain.ingestion.community_clustering import (
     build_hierarchy,
@@ -126,6 +127,7 @@ class CommunityDetector:
         # under (generate_reports' records).
         self._report_records: ReportRecords | None = None
         self._report_fingerprint: str | None = None
+        self._legacy_report_fingerprints: list[str] = []
         self.all_communities: dict[str, HierarchicalCommunity] = {}
         self.node_to_community_l0: dict[str, str] = {}
         # Entities of the components too small to form a community.
@@ -427,7 +429,7 @@ class CommunityDetector:
                 the graph node's (a member an incremental run states
                 without one, read from the stores).
             records: Where report answers are kept (a full build's): a
-                community whose input (``_report_key``) has a stored answer
+                community whose input (``_report_keys``) has a stored answer
                 takes it instead of a model call, a new answer is stored,
                 and each report names its answer's key
                 (``REPORT_RECORD_ATTRIBUTE``).
@@ -556,38 +558,57 @@ class CommunityDetector:
                 attributes[filters_key] = filters
             report.attributes = attributes
 
-    def _report_key(self, chain_input: dict[str, Any], community: Community) -> str:
-        """The record key of a community's report answer: its prompt input
-        (members, descriptions, edges and claims as packed, roll-up text,
-        length) and the community's name (the report's title starts with
-        it), under the report settings (``community_report_fingerprint``).
-        The name derives from the content id (``community_label``), so an
-        unchanged community keeps its key when others are added."""
+    def _report_keys(
+        self, chain_input: dict[str, Any], community: Community
+    ) -> list[str]:
+        """The record keys of a community's report answer, current first: its
+        prompt input (members, descriptions, edges and claims as packed,
+        roll-up text, length) and the community's name (the report's title
+        starts with it), under the report settings
+        (``community_report_fingerprint``), then under those of earlier
+        versions (``legacy_community_report_fingerprints``). The name
+        derives from the content id (``community_label``), so an unchanged
+        community keeps its key when others are added."""
         if self._report_fingerprint is None:
             self._report_fingerprint = community_report_fingerprint(self.config)
+            self._legacy_report_fingerprints = legacy_community_report_fingerprints(
+                self.config
+            )
         text = json.dumps(
             {"input": chain_input, "name": community.name},
             sort_keys=True,
             default=str,
             ensure_ascii=False,
         )
-        return record_key(self._report_fingerprint, text)
+        return [
+            record_key(fingerprint, text)
+            for fingerprint in (
+                self._report_fingerprint,
+                *self._legacy_report_fingerprints,
+            )
+        ]
 
     def _stored_answers(
-        self, keys: Mapping[int, str], suffix: str
+        self, keys: Mapping[int, list[str]], suffix: str
     ) -> dict[int, dict[str, Any]]:
         """The stored records (``{"response", "generated_at"}``) of the
-        ``keys`` (by input index), read as a cache."""
+        ``keys`` (by input index, current key first), read as a cache; one
+        found under an earlier key only is marked ``"legacy"`` (stored
+        under the current one again)."""
         if self._report_records is None or not keys:
             return {}
         stored = self._report_records.read_records(
-            {suffix: sorted(set(keys.values()))}
+            {suffix: sorted({key for found in keys.values() for key in found})}
         ).get(suffix, {})
         found: dict[int, dict[str, Any]] = {}
-        for index, key in keys.items():
-            record = stored.get(key)
-            if isinstance(record, dict) and isinstance(record.get("response"), dict):
-                found[index] = record
+        for index, candidates in keys.items():
+            for rank, key in enumerate(candidates):
+                record = stored.get(key)
+                if isinstance(record, dict) and isinstance(
+                    record.get("response"), dict
+                ):
+                    found[index] = {**record, "legacy": rank > 0}
+                    break
         if found:
             logger.info(
                 "Reused %d of %d stored community report answers",
@@ -616,11 +637,11 @@ class CommunityDetector:
         (and its generation time) instead of a model call, and the others'
         answers are stored (see ``generate_reports``).
         """
-        keys: dict[int, str] = {}
+        keys: dict[int, list[str]] = {}
         suffix = BaseIndexer.get_suffix(SimpleNamespace(attributes=graph_attributes))
         if self._report_records is not None:
             keys = {
-                index: self._report_key(chain_input, community)
+                index: self._report_keys(chain_input, community)
                 for index, (chain_input, community) in enumerate(
                     zip(
                         self._create_report_chain_inputs(report_inputs),
@@ -654,8 +675,13 @@ class CommunityDetector:
                 made_at = generated_at
                 if index in stored:
                     made_at = _stored_time(stored[index], generated_at)
+                    if stored[index]["legacy"]:
+                        new_records[keys[index][0]] = {
+                            "response": result,
+                            "generated_at": made_at.isoformat(),
+                        }
                 elif index in keys:
-                    new_records[keys[index]] = {
+                    new_records[keys[index][0]] = {
                         "response": result,
                         "generated_at": generated_at.isoformat(),
                     }
@@ -665,7 +691,7 @@ class CommunityDetector:
                 if index in keys:
                     report.attributes = {
                         **(report.attributes or {}),
-                        REPORT_RECORD_ATTRIBUTE: keys[index],
+                        REPORT_RECORD_ATTRIBUTE: keys[index][0],
                     }
                 reports.append(report)
             else:

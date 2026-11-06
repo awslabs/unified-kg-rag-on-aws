@@ -142,10 +142,10 @@ custom_prompts:
 
 ### 재정의할 수 없는 프롬프트
 
-지능형 청커(`TextChunkingPrompt`), 문서 번역(`TextTranslationPrompt`), 질의 번역
-(`TranslationPrompt`)와 전역 검색의 커뮤니티 평가(`CommunityRelevancePrompt`)의 프롬프트를
-뺀 모든 프롬프트에는 `custom_prompts.*_system` / `*_human` 재정의 키가 있습니다. 이 네 개는
-재정의할 수 없습니다.
+질의 번역(`TranslationPrompt`)과 전역 검색의 커뮤니티 평가(`CommunityRelevancePrompt`)의
+프롬프트를 뺀 모든 프롬프트에는 `custom_prompts.*_system` / `*_human` 재정의 키가 있습니다. 이
+두 개는 재정의할 수 없습니다. 지능형 청커의 키는 `custom_prompts.text_chunking_*`, 문서 번역의
+키는 `custom_prompts.text_translation_*`입니다.
 
 ## 추출 스키마와 시드 그래프
 

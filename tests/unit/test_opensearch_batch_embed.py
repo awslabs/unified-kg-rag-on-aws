@@ -105,3 +105,25 @@ def test_embedding_requests_run_sixteen_at_once(indexer) -> None:
     result = indexer._batch_embed([f"text {i}" for i in range(50 * 32)])
     assert all(r is not None for r in result)
     assert peak == 16
+
+
+def test_a_lower_max_concurrency_bounds_the_embedding_requests(indexer) -> None:
+    # A run throttled into a lower processing.max_concurrency kept 16
+    # embedding requests in flight.
+    indexer.config.processing.max_concurrency = 3
+    lock = threading.Lock()
+    in_flight = peak = 0
+
+    def _embed(texts):
+        nonlocal in_flight, peak
+        with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+        threading.Event().wait(0.01)
+        with lock:
+            in_flight -= 1
+        return [[1.0] * 4 for _ in texts]
+
+    indexer.embedding_model.embed_documents = _embed
+    indexer._batch_embed([f"text {i}" for i in range(50 * 12)])
+    assert 1 <= peak <= 3

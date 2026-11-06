@@ -195,6 +195,20 @@ def test_ingestion_without_the_indexing_stage_needs_no_endpoints(
     pipeline.assert_called_once()
 
 
+def test_a_raptor_only_ingestion_needs_no_graph_endpoint(
+    mocker, tmp_path: Path
+) -> None:
+    from unified_kg_rag.domain.models import Methodology
+
+    config = _config(opensearch="o")
+    config.indexing.methodologies = [Methodology.RAPTOR]
+    runner = _ingestion_runner(mocker, tmp_path, config)
+    pipeline = mocker.patch.object(run_ingestion_pipeline, "DataIngestionPipeline")
+    mocker.patch.object(runner, "_execute_pipeline", return_value=None)
+    runner.run()
+    pipeline.assert_called_once()
+
+
 # --- run-rag -------------------------------------------------------------
 
 

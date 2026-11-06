@@ -32,6 +32,7 @@ from unified_kg_rag.adapters.provider_registry import (
     provider_kind,
     register_provider,
 )
+from unified_kg_rag.domain.ingestion.methodologies import writes_graph_store
 from unified_kg_rag.domain.models import Config, RetrieverRole
 from unified_kg_rag.domain.models.provider_config import (
     BEDROCK,
@@ -217,9 +218,17 @@ class Providers:
     # --- stores --------------------------------------------------------------
 
     def build_graph_indexer(self) -> GraphIndexer:
-        """A new graph-store writer (the caller closes it)."""
+        """A new graph-store writer (the caller closes it). A run that
+        builds no graph-store artifact (``raptor`` alone) gets one that
+        writes nothing: it needs no graph store."""
         if self._graph_indexer_factory is not None:
             return self._graph_indexer_factory()
+        if not writes_graph_store(self.config):
+            from unified_kg_rag.adapters.storage.null_graph_indexer import (
+                NullGraphIndexer,
+            )
+
+            return NullGraphIndexer(self.config)
         indexer: GraphIndexer = self._build(ProviderRole.GRAPH_INDEXER)
         return indexer
 

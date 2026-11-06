@@ -198,8 +198,11 @@ RECORD_KEYS_ATTRIBUTE = "extraction_records"
 # The kind of the record of the boundary answer of the pre-chunk a unit was
 # cut from (set by the intelligent chunker): kept while a unit names it.
 CHUNKS_RECORD_KIND = "chunks"
+# The kind of the record of a unit's translations (set by the translator):
+# kept while a unit names it.
+TRANSLATION_RECORD_KIND = "translation"
 # Every record kind a text unit names.
-RECORD_KINDS = ("graph", "claims", CHUNKS_RECORD_KIND)
+RECORD_KINDS = ("graph", "claims", CHUNKS_RECORD_KIND, TRANSLATION_RECORD_KIND)
 # Community-report attribute naming the extraction-store key of the report's
 # answer (its settings and input, ``cache_keys.community_report_fingerprint``):
 # a full build reuses the answer of an unchanged input and keeps the records

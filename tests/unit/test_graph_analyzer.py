@@ -163,12 +163,18 @@ class TestStatistics:
         assert stats.num_connected_components == 3
         assert stats.largest_component_size == 2
 
-    def test_density_clustering_and_components_are_always_computed(self) -> None:
+    def test_density_and_components_are_always_computed(self) -> None:
         stats = GraphAnalyzer(Config(), graph=_triangle_graph()).get_graph_statistics()
         assert stats.density == pytest.approx(1.0)
-        assert stats.average_clustering == pytest.approx(1.0)
         assert stats.num_connected_components == 1
+        assert stats.average_clustering is None  # opt-in
         assert stats.diameter is None  # opt-in
+
+    def test_average_clustering_only_when_enabled(self) -> None:
+        config = Config()
+        config.graph.analysis.statistics.calculate_average_clustering = True
+        stats = GraphAnalyzer(config, graph=_triangle_graph()).get_graph_statistics()
+        assert stats.average_clustering == pytest.approx(1.0)
 
     def test_diameter_only_when_enabled_and_connected(self) -> None:
         config = Config()

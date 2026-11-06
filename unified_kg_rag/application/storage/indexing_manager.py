@@ -37,6 +37,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
     record_keys,
 )
 from unified_kg_rag.domain.ingestion.derivation import Derived
+from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
 from unified_kg_rag.domain.models import (
     Claim,
@@ -45,6 +46,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Constants,
     Entity,
+    IndexArtifact,
     Relationship,
     TextUnit,
 )
@@ -296,11 +298,18 @@ class IndexingManager:
                 text_units or [], suffixes, community_reports or []
             )
             # The summaries of text the rebuild no longer holds go: a summary
-            # tree, if any, is written again by the summary_tree stage.
+            # tree, if any, is written again by the summary_tree stage. A
+            # rebuild without raptor deletes the tree whole, as it replaces
+            # the indices of the other artifacts it no longer builds.
             units = self._group_by_suffix(text_units or [])
+            keeps_tree = IndexArtifact.SUMMARY_TREE in artifacts_to_build(self.config)
             for suffix in sorted(suffixes):
-                summaries = self.vector_indexer.delete_summary_nodes_outside(
-                    [unit.id for unit in units.get(suffix, [])], suffix
+                summaries = (
+                    self.vector_indexer.delete_summary_nodes_outside(
+                        [unit.id for unit in units.get(suffix, [])], suffix
+                    )
+                    if keeps_tree
+                    else self.vector_indexer.delete_summary_tree(suffix)
                 )
                 if summaries.total_items or summaries.failed_items:
                     results[f"vector_summary_nodes_{suffix}"] = summaries

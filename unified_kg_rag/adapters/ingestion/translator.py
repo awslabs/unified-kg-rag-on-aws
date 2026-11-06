@@ -1,13 +1,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from collections import defaultdict
 from typing import Any
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.ingestion.chunker import BoundaryRecords
+from unified_kg_rag.adapters.llm.chain_factory import setup_chain, usage_model_id
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.llm.retry import (
     item_error_predicate,
@@ -15,6 +17,13 @@ from unified_kg_rag.adapters.llm.retry import (
     transient_error_predicate,
 )
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.domain.ingestion.cache_keys import translation_fingerprint
+from unified_kg_rag.domain.ingestion.contributions import (
+    RECORD_KEYS_ATTRIBUTE,
+    TRANSLATION_RECORD_KIND,
+    record_key,
+    record_keys,
+)
 from unified_kg_rag.domain.models import (
     Config,
     LanguageCode,
@@ -22,9 +31,12 @@ from unified_kg_rag.domain.models import (
     ModelRole,
     TextUnit,
     language_name,
+    model_id_value,
 )
 from unified_kg_rag.domain.prompts import TextTranslationPrompt
+from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.usage import record_cache_hit
 
 logger = get_logger(__name__)
 
@@ -43,6 +55,11 @@ class TranslationStats(BaseModel):
     num_translated: int = Field(
         default=0,
         description="Number of text units that actually underwent translation",
+    )
+    num_reused: int = Field(
+        default=0,
+        description="Number of text units whose stored translations were "
+        "reused (no model call)",
     )
     total_processing_time: float = Field(
         default=0.0, description="Total time spent processing translations (in seconds)"
@@ -84,8 +101,15 @@ class TextUnitTranslator:
         show_progress: bool = True,
         *,
         providers: Providers | None = None,
+        records: BoundaryRecords | None = None,
     ) -> None:
+        """``records`` (the extraction store) keeps each unit's translations
+        by its text and the translation settings
+        (``cache_keys.translation_fingerprint``): a unit with stored ones
+        takes them instead of a model call, and the others' are stored."""
         self.config = config
+        self.records = records
+        self._fingerprint: str | None = None
         self.translation_config = config.processing.translation
         self.target_language = self.translation_config.target_language
         self.source_language = self.translation_config.source_language
@@ -137,13 +161,118 @@ class TextUnitTranslator:
             ", ".join([lang.value for lang in self.all_target_languages]),
         )
 
-        for target_language in self.all_target_languages:
-            logger.info("Translating to '%s'...", target_language.value)
-            self._translate_text_units_batch(text_units, target_language)
+        reused = self._reuse_stored(text_units)
+        pending = [unit for unit in text_units if unit.id not in reused]
+        if pending:
+            for target_language in self.all_target_languages:
+                logger.info("Translating to '%s'...", target_language.value)
+                self._translate_text_units_batch(pending, target_language)
+            self._store(pending)
 
         self.stats.total_processing_time = time.time() - start_time
         self._log_completion_summary(self.stats)
         return text_units
+
+    @property
+    def _model_languages(self) -> list[LanguageCode]:
+        """The languages a model call translates into (not the source's)."""
+        return [
+            lang for lang in self.all_target_languages if lang != self.source_language
+        ]
+
+    def record_key(self, unit: TextUnit) -> str:
+        """The record key of ``unit``'s translations: its text under the
+        translation settings (``translation_fingerprint``)."""
+        if self._fingerprint is None:
+            self._fingerprint = translation_fingerprint(self.config)
+        return record_key(self._fingerprint, unit.text)
+
+    @staticmethod
+    def _name_record(unit: TextUnit, key: str) -> None:
+        """Name the record of ``unit``'s translations on it, so the store
+        keeps the record while the unit is indexed."""
+        unit.attributes = {
+            **(unit.attributes or {}),
+            RECORD_KEYS_ATTRIBUTE: {**record_keys(unit), TRANSLATION_RECORD_KIND: key},
+        }
+
+    def _reuse_stored(self, text_units: list[TextUnit]) -> set[str]:
+        """Give the units with stored translations in every language they
+        are translated into those translations; returns their ids."""
+        languages = self._model_languages
+        if self.records is None or not languages:
+            return set()
+        keys = {
+            unit.id: (BaseIndexer.get_suffix(unit), self.record_key(unit))
+            for unit in text_units
+        }
+        wanted: dict[str, set[str]] = defaultdict(set)
+        for suffix, key in keys.values():
+            wanted[suffix].add(key)
+        stored = self.records.read_records(
+            {suffix: sorted(found) for suffix, found in wanted.items()}
+        )
+        reused: set[str] = set()
+        for unit in text_units:
+            suffix, key = keys[unit.id]
+            record = stored.get(suffix, {}).get(key)
+            texts = record.get("translations") if isinstance(record, dict) else None
+            if not isinstance(texts, dict) or not all(
+                isinstance(texts.get(lang.value), str) and texts[lang.value].strip()
+                for lang in languages
+            ):
+                continue
+            unit.translated_texts = {
+                **(unit.translated_texts or {}),
+                **{
+                    lang.value: (
+                        unit.text if lang == self.source_language else texts[lang.value]
+                    )
+                    for lang in self.all_target_languages
+                },
+            }
+            self._name_record(unit, key)
+            reused.add(unit.id)
+        if reused:
+            logger.info(
+                "Reused the stored translations of %d of %d text units",
+                len(reused),
+                len(text_units),
+            )
+            if self.stats:
+                self.stats.num_reused += len(reused)
+                self.stats.num_successful_translations += len(reused) * len(
+                    self.all_target_languages
+                )
+            # Model calls the run did not make (shared.usage), under the id
+            # the calls are recorded by (the resolved profile).
+            model = usage_model_id(
+                self.factory,
+                model_id_value(self.config.model_id(ModelRole.TRANSLATION)),
+            )
+            for _ in range(len(reused) * len(languages)):
+                record_cache_hit(ModelPurpose.INGESTION.value, model)
+        return reused
+
+    def _store(self, text_units: list[TextUnit]) -> None:
+        """Store the translations of the units translated into every
+        language, and name each record on its unit."""
+        languages = self._model_languages
+        if self.records is None or not languages:
+            return
+        failed = set(self.stats.failed_text_unit_ids) if self.stats else set()
+        new_records: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+        for unit in text_units:
+            texts = unit.translated_texts or {}
+            if unit.id in failed or not all(lang.value in texts for lang in languages):
+                continue
+            key = self.record_key(unit)
+            new_records[BaseIndexer.get_suffix(unit)][key] = {
+                "translations": {lang.value: texts[lang.value] for lang in languages}
+            }
+            self._name_record(unit, key)
+        if new_records:
+            self.records.write_records(new_records)
 
     def _translate_text_units_batch(
         self, text_units: list[TextUnit], target_language: LanguageCode
