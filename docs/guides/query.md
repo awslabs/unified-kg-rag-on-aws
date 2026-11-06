@@ -167,9 +167,14 @@ search:
   does not; `abstain` tells it not to answer and to write the decline in the
   query's language, and reports the output abstained
   (`abstention_reason: insufficient_context`). Neither adds a model call.
-- `mark` changes the answer prompt, so answers and EM / F1 can change. It is
-  opt-in until a measured run decides; compare `mark` runs as their own arm.
-  How declines are scored:
+  Measured with `iterative`, `abstain` declined 45 of 100 answerable
+  questions and lost 13.8 points of token F1, so `hedge` stays the default
+  ([evidence](../concepts/defaults-and-evidence.md#declines-and-abstention)).
+- `mark` changes the answer prompt, so answers and EM / F1 change. Measured
+  on multi-hop questions, it turned hedged correct answers into declines (EM
+  -10 to -12 points) for machine-readable declines, so it stays opt-in
+  ([evidence](../concepts/defaults-and-evidence.md#declines-and-abstention));
+  compare `mark` runs as their own arm. How declines are scored:
   [Evaluation: unanswerable questions](./evaluate.md#unanswerable-questions-and-declines).
 
 ## Follow-up rounds for multi-hop questions

@@ -123,7 +123,12 @@ set, filtered so the corpus does not answer them:
   answerable questions, declines as 0), `selective_accuracy` (the answered
   ones) and `overall_accuracy` (a correct answer or a correct decline, over
   both kinds). Read coverage and accuracy together: declining more raises
-  selective accuracy and lowers coverage.
+  selective accuracy and lowers coverage. Its counts are `completed`
+  (answers that did not fail) = `abstained` + `answered` (not declined).
+- Each saved result keeps `abstained`, `abstention_reason`,
+  `context_sufficient`, `insufficiency_reason` and, for `iterative`, its run
+  record (rounds, stop reason, verdicts), so a run can be analysed from its
+  files ([Result files](../reference/evaluation-output.md#result-files)).
 - With `mode: off` only the empty-context reply counts as a decline, so recall
   is a lower bound. `mark` changes the answer prompt: compare a `mark` run
   with an `off` run as two arms (run `off`, then `mark` with

@@ -1429,13 +1429,63 @@ class TestAbstention:
         )
         assert [r.abstained for r in results] == [False, True, True]
         stats = summary.abstention_statistics
-        assert stats["abstained"] == 2 and stats["answered"] == 3
+        # completed = abstained + answered: "answered" means not declined,
+        # as in answer_match's coverage.
+        assert stats["completed"] == 3
+        assert stats["abstained"] == 2 and stats["answered"] == 1
         assert stats["abstention_rate"] == pytest.approx(2 / 3)
         assert stats["per_strategy"]["local"]["abstention_rate"] == 0.5
         assert stats["per_strategy"]["global"]["abstention_rate"] == 1.0
         assert "unanswerable" not in stats
         # An abstention on an answerable item is still graded (a miss).
         assert summary.metric_statistics["answer_contains"]["count"] == 3
+
+    async def test_saved_results_keep_decline_and_sufficiency_fields(
+        self, config: Config, tmp_path
+    ) -> None:
+        # Before, a saved result kept only `abstained`: why it declined, the
+        # strategy's sufficiency verdict and the iterative run record were
+        # dropped, so a run could not be analysed from its files.
+        iterative = {
+            "base": "mix",
+            "mode": "loop",
+            "rounds": 2,
+            "stop_reason": "max_rounds",
+            "verdicts": [{"round": 1, "sufficient": False, "bridges": ["Depot"]}],
+        }
+        insufficient = {
+            "search_strategy": "iterative",
+            "abstained": True,
+            "abstention_reason": "insufficient_context",
+            "context_sufficient": False,
+            "insufficiency_reason": "max_rounds",
+            "iterative": iterative,
+        }
+        results, reports, summary = await self._run(
+            config,
+            [
+                ("A?", "Vendor ships.", {"search_strategy": "local"}, {}),
+                ("B?", "倉庫の情報はありません。", insufficient, {}),
+            ],
+        )
+        manager = EvaluationManager(config, rag_chain=_FakeChain({}))
+        manager.save_results(results, reports, summary, tmp_path)
+        saved = {
+            row["query_id"]: row
+            for path in tmp_path.glob("evaluation_results_*.json")
+            for row in json.loads(path.read_text(encoding="utf-8"))
+        }
+        assert saved["q0"]["abstention_reason"] is None
+        assert saved["q0"]["context_sufficient"] is None
+        assert saved["q0"]["insufficiency_reason"] is None
+        assert saved["q0"]["iterative"] is None
+        assert saved["q1"]["abstained"] is True
+        assert saved["q1"]["abstention_reason"] == "insufficient_context"
+        assert saved["q1"]["context_sufficient"] is False
+        assert saved["q1"]["insufficiency_reason"] == "max_rounds"
+        assert saved["q1"]["iterative"] == iterative
+        # A saved file reads back (run-eval --from-results).
+        assert EvaluationResult.model_validate(saved["q1"]) == results[1]
 
     async def test_guardrail_blocks_are_counted_per_blocked_text(
         self, config: Config
@@ -1479,8 +1529,9 @@ class TestAbstention:
         # the model's own words ("A confident guess." could be one) is not
         # detected and the rate is only a lower bound.
         assert summary.abstention_statistics["unanswerable"] == {
+            "completed": 2,
             "abstained": 1,
-            "answered": 2,
+            "answered": 1,
             "abstention_rate": 0.5,
         }
         assert summary.metric_outcomes["answer_match"]["answer_contains"] == {
@@ -1512,14 +1563,20 @@ class TestAbstention:
         stats = summary.abstention_statistics
         assert stats["unanswerable"]["abstained"] == 1
         assert stats["answerable"] == {
+            "completed": 3,
             "abstained": 1,
-            "answered": 3,
+            "answered": 2,
             "abstention_rate": pytest.approx(1 / 3),
         }
         assert stats["precision"] == 0.5 and stats["recall"] == 0.5
         assert stats["f1"] == 0.5
         contains = stats["answer_match"]["answer_contains"]
         assert contains["coverage"] == pytest.approx(2 / 3)
+        # The same "answered" share in both blocks.
+        answerable = stats["answerable"]
+        assert answerable["answered"] / answerable["completed"] == pytest.approx(
+            contains["coverage"]
+        )
         assert contains["accuracy"] == pytest.approx(1 / 3)
         assert contains["selective_accuracy"] == 0.5
         # A, plus the correct decline of D, over all five.

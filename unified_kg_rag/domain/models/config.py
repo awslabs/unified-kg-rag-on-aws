@@ -4596,7 +4596,9 @@ class AbstentionConfig(BaseModel):
             "reported abstained (metadata.abstention_reason: marker) whatever "
             "its language. The instruction changes the answer prompt, so "
             "answers and EM/F1 differ from off: compare mark runs as their own "
-            "arm. Opt-in until a measured run decides."
+            "arm. Opt-in: on multi-hop questions it cost 10-12 points of EM "
+            "for machine-readable declines (docs/concepts/"
+            "defaults-and-evidence.md)."
         ),
     )
     strip_marker: bool = Field(
@@ -4612,13 +4614,16 @@ class AbstentionConfig(BaseModel):
         default="hedge",
         description=(
             "What the answer step does when the strategy flagged its context "
-            "insufficient (SearchResult.metadata.context_sufficient false; no "
-            "shipped strategy sets it yet, so this has no effect on them). "
+            "insufficient (SearchResult.metadata.context_sufficient false; "
+            "iterative sets it when its controller still finds the context "
+            "insufficient when it stops, other strategies never do). "
             "hedge: the model answers what the context supports and says, in "
             "the query's language, what it does not cover. abstain: the model "
             "is told not to answer and writes the decline in the query's "
             "language; the output is reported abstained "
-            "(abstention_reason: insufficient_context). Neither adds a call."
+            "(abstention_reason: insufficient_context). Neither adds a call. "
+            "hedge is the default: with iterative, abstain declined 45% of "
+            "answerable questions."
         ),
     )
 

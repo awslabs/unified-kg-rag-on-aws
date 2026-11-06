@@ -193,7 +193,7 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   #420).
 - `run-eval --search-strategy` takes a list (`["auto"]` by default); with several strategies or `--repeats` it
   overrides an item's `search_strategy`; `abstention_statistics.unanswerable` has the overall block's shape
-  (`abstained`, `answered`, `abstention_rate`) (#292, #324).
+  (`completed`, `abstained`, `answered`, `abstention_rate`) (#292, #324, #600).
 - The `indexing_results` stage metrics in `pipeline_metadata.json` (and the index types an `Indexing failed` error
   names) start `vector_` / `graph_` instead of `opensearch_` / `neptune_` (`vector_text_units`, `graph_entities`,
   ...); the EMF metrics are unchanged (#584).
@@ -567,9 +567,12 @@ From a `main` checkout (formats and keys no release had):
   start a declined answer with the fixed token `[NO_ANSWER]` (detected in any answer language, stripped by default)
   and reports it in `metadata.abstained` / `abstention_reason`, with its sources kept;
   `search.abstention.on_insufficient` (`hedge`, `abstain`) applies when a strategy sets its metadata
-  `context_sufficient` to false (none does yet). `answer_match` scores a decline on an answerable question (the
-  no-context reply included) 0 without a span call, and `abstention_statistics` adds decline precision, recall and F1
-  and per `answer_match` metric coverage, accuracy, selective and overall accuracy (#593). See
+  `context_sufficient` to false (`iterative` does). `answer_match` scores a decline on an answerable question (the
+  no-context reply included) 0 without a span call, and `abstention_statistics` counts `completed` = `abstained` +
+  `answered` (not declined, as in coverage) and adds decline precision, recall and F1 and per `answer_match` metric
+  coverage, accuracy, selective and overall accuracy. Each saved result keeps `abstention_reason`,
+  `context_sufficient`, `insufficiency_reason` and the `iterative` run record. Measured on 100 + 100 MuSiQue
+  questions, `mark` stays opt-in and `hedge` the default (#593, #600). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
 - Evaluation of open-ended answers, all opt-in (defaults unchanged until a measured experiment decides): the
   pairwise judge reports win rates per answer-length bucket in estimated tokens and their correlation with length;

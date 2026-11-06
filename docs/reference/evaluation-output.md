@@ -20,6 +20,28 @@ the timestamp part, not by building a name.
 A comparison adds `evaluation_comparison_<timestamp>.json`, `.csv` and `.md`
 ([Comparison](#comparison)).
 
+Each row of `evaluation_results_*` is one answer: the question, answer,
+ground truth, retrieved contexts and source provenance, `response_time`,
+`usage`, `error` / `error_message`, `rerank_status`, `guardrail_blocked`,
+`category`, the query's `metadata`, and the chain's decline and
+sufficiency fields:
+
+- `abstained`: the chain declined (the fixed no-context reply, a
+  `[NO_ANSWER]` decline or the insufficient-context policy).
+- `abstention_reason`: why: `no_context`, `marker` or
+  `insufficient_context`; `null` for an answer.
+- `context_sufficient`: `false` when the strategy flagged its own context
+  insufficient (`iterative` does), `null` when the strategy did not judge it.
+- `insufficiency_reason`: the strategy's reason for that flag (for
+  `iterative`, its stop reason); `null` otherwise.
+- `iterative`: the `iterative` strategy's run record (`base`, `mode`,
+  `rounds`, `stop_reason`, `degraded`, `llm_calls`, `usage`, `searched`,
+  `verdicts`, `steps`, `added_results`, `round_0_rerank`;
+  [Querying](../guides/query.md#follow-up-rounds-for-multi-hop-questions)); `null` for the
+  other strategies.
+
+Results saved before these fields read back with them `null`.
+
 ## Run summary
 
 The summary holds per-metric statistics (`metric_statistics`) and
@@ -31,8 +53,12 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
 - `abstention_statistics`: how often the chain declined (`abstained`: its
   fixed no-context reply "I could not find relevant information…", and under
   `search.abstention.mode: mark` an answer starting with `[NO_ANSWER]` or one
-  declined by the insufficient-context policy): `abstained`, `answered`,
-  `abstention_rate`, `per_strategy`. With `answerable: false` items:
+  declined by the insufficient-context policy): `completed` (results whose
+  answer generation did not fail, declines included) = `abstained`
+  (declined) + `answered` (not declined), `abstention_rate`
+  (`abstained / completed`), and the same per strategy actually used
+  (`per_strategy`). "Answered" means not declined everywhere, as in
+  `answer_match` `coverage`. With `answerable: false` items:
   `unanswerable` and `answerable` blocks of the same shape, `precision`
   (declines on unanswerable items / all declines; `null` without any),
   `recall` (unanswerable items declined) and `f1`. With `answer_match`:
@@ -40,8 +66,9 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   `overall_accuracy`} over the answerable items (a decline scores 0;
   `overall_accuracy`, present with unanswerable items, counts a decline on
   one as correct). With `mode: off` a model declining in its own words is not
-  detected, so `recall` is a lower bound. Each result carries `abstained`;
-  an `answer_match` report of a decline carries `abstained: true` and 0 on
+  detected, so `recall` is a lower bound. Each result carries `abstained`
+  and `abstention_reason` ([Result files](#result-files)); an
+  `answer_match` report of a decline carries `abstained: true` and 0 on
   every metric
   ([Unanswerable questions and declines](../guides/evaluate.md#unanswerable-questions-and-declines)).
 - `answer_span_statistics`: the `answer_span` exact match and token F1
