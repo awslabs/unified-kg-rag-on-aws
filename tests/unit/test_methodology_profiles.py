@@ -40,7 +40,6 @@ from unified_kg_rag.domain.models.methodology import (
     DEFAULT_METHODOLOGIES,
     METHODOLOGY_PROFILES,
     UNBUILT_ARTIFACTS,
-    available_methodologies,
     methodologies_holding,
 )
 
@@ -75,14 +74,25 @@ def test_every_buildable_artifact_has_its_stages() -> None:
     assert set(mp.STAGE_DEPENDENCIES) == set(S)
 
 
-def test_raptor_builds_its_summary_tree_after_indexing() -> None:
-    assert available_methodologies() == (G, L, H, R)
-    assert UNBUILT_ARTIFACTS == frozenset()
-    assert METHODOLOGY_PROFILES[R].required == {A.TEXT_UNITS, A.SUMMARY_TREE}
-    assert mp.ARTIFACT_PRODUCERS[A.SUMMARY_TREE] is S.SUMMARY_TREE
-    assert mp.STAGE_DEPENDENCIES[S.SUMMARY_TREE] == {S.INDEXING, S.TRANSLATION}
-    # Built from what the stores hold: adding it rebuilds nothing.
-    assert A.SUMMARY_TREE not in mp.CORPUS_WIDE_ARTIFACTS
+def test_raptor_is_held_once_its_tree_stage_has_run() -> None:
+    # A run that stopped after indexing built the text units, not the tree:
+    # the namespace does not serve raptor until the tree stage completes.
+    config = _config(R)
+    through_indexing = mp.selected_stages(config) - {S.SUMMARY_TREE}
+    assert S.INDEXING in through_indexing
+    built = mp.built_artifacts(config, through_indexing)
+    assert R not in mp.held_methodologies(
+        _record(*built).model_dump(mode="json"), config
+    )
+    built = mp.built_artifacts(config, mp.selected_stages(config))
+    assert R in mp.held_methodologies(_record(*built).model_dump(mode="json"), config)
+
+
+def test_adding_raptor_to_a_built_namespace_rebuilds_nothing() -> None:
+    # The tree is built from what the stores hold, so an incremental run that
+    # adds raptor reads no document again.
+    full = _record(*FULL).model_dump(mode="json")
+    assert mp.missing_artifacts(full, _config(G, L, R)) == frozenset()
 
 
 def test_raptor_alone_runs_no_graph_stage() -> None:

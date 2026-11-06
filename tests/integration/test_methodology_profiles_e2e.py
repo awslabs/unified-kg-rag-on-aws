@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.fakes.chat_models import CountingResponder
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - fixture
@@ -59,25 +60,6 @@ LIGHTRAG = (
 )
 
 
-class _Calls:
-    """The fake model's answers (the embedded E2E's), counted by kind."""
-
-    def __init__(self) -> None:
-        self.kinds: Counter[str] = Counter()
-
-    def __call__(self, system: str, human: str) -> str:
-        if "knowledge graph extraction expert" in system:
-            self.kinds["extraction"] += 1
-        elif "community analysis" in system:
-            self.kinds["report"] += 1
-        else:
-            self.kinds["other"] += 1
-        return e2e._respond(system, human)
-
-    def since(self, before: Counter[str]) -> Counter[str]:
-        return self.kinds - before
-
-
 def _corpus(root: Path) -> Path:
     source = root / "corpus"
     source.mkdir(parents=True)
@@ -89,10 +71,10 @@ def _corpus(root: Path) -> Path:
 
 def _setup(
     tmp_path: Path, *, registry: bool = True
-) -> tuple[Config, Providers, FakeOllama, _Calls]:
+) -> tuple[Config, Providers, FakeOllama, CountingResponder]:
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
     config.providers.doc_status.enabled = registry
-    calls = _Calls()
+    calls = CountingResponder(e2e._respond)
     server = FakeOllama(calls, e2e.ANSWER, e2e.DIM)
     encoder = e2e.FakeCrossEncoder("synthetic-reranker")
     return config, e2e._providers(config, server, encoder), server, calls

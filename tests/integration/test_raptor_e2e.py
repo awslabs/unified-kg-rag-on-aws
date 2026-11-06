@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from tests.fixtures.fakes.chat_models import SUMMARY_TREE_PROMPT, CountingResponder
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - fixture
@@ -36,7 +37,6 @@ from unified_kg_rag.domain.models import (
 
 pytestmark = pytest.mark.integration
 
-TREE_PROMPT = "You write the summaries of a summary tree"
 
 # Twelve topics, two passages each: enough text units for a level of
 # clusters at min_nodes_to_cluster 4.
@@ -59,28 +59,6 @@ def tree_summary(human: str) -> str:
     return "Summary: " + "; ".join(" ".join(p.split()[:3]) for p in passages)
 
 
-class _Calls:
-    def __init__(self) -> None:
-        self.kinds: Counter[str] = Counter()
-        self.tree_prompts: list[str] = []
-
-    def __call__(self, system: str, human: str) -> str:
-        if TREE_PROMPT in system:
-            self.kinds["summary"] += 1
-            self.tree_prompts.append(system + "\n" + human)
-            return tree_summary(human)
-        if "knowledge graph extraction expert" in system:
-            self.kinds["extraction"] += 1
-        elif "community analysis" in system:
-            self.kinds["report"] += 1
-        else:
-            self.kinds["other"] += 1
-        return e2e._respond(system, human)
-
-    def since(self, before: Counter[str]) -> Counter[str]:
-        return self.kinds - before
-
-
 def corpus(root: Path, topics: list[tuple[str, str]] = TOPICS) -> Path:
     source = root / "corpus"
     source.mkdir(parents=True, exist_ok=True)
@@ -96,14 +74,14 @@ def setup(
     methodologies: list[Methodology] | None = None,
     *,
     registry: bool = True,
-) -> tuple[Config, Providers, FakeOllama, _Calls]:
+) -> tuple[Config, Providers, FakeOllama, CountingResponder]:
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
     config.providers.doc_status.enabled = registry
     config.indexing.methodologies = methodologies or [Methodology.RAPTOR]
     tree = config.indexing.summary_tree
     tree.min_nodes_to_cluster = 4
     tree.target_children = 3
-    calls = _Calls()
+    calls = CountingResponder(e2e._respond, summarize=tree_summary)
     server = FakeOllama(calls, e2e.ANSWER, e2e.DIM)
     encoder = e2e.FakeCrossEncoder("synthetic-reranker")
     return config, e2e._providers(config, server, encoder), server, calls
@@ -586,18 +564,25 @@ def test_a_summary_passes_a_filter_only_when_all_its_documents_do(
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 
     config, providers, _, _ = setup(tmp_path)
+    # Text unit ids, hence the tree's clusters, are keyed by the source
+    # scope, by default the corpus directory: pytest's tmp_path differs
+    # from run to run, and some of its trees had no single-category node.
+    # One fixed scope gives every run the tree that has them.
+    config.processing.document_parsing.source_scope = "corpus"
     source = corpus(tmp_path)
     # Half the documents are of category "north", half "south", as
-    # pre-parsed documents carrying their filters.
+    # pre-parsed documents carrying their filters (read without a parsing
+    # stage: parsed again, the JSON would be text without filters).
     parsed = tmp_path / "parsed"
     parsed.mkdir()
     for index, path in enumerate(sorted(source.glob("*.txt"))):
         (parsed / f"{path.stem}.json").write_text(
             json.dumps(
                 {
-                    "content": path.read_text(),
+                    "document_id": path.stem,
+                    "page_content": path.read_text(),
                     "file_name": path.name,
-                    "file_path": str(path),
+                    "file_path": path.name,
                     "metadata": {
                         "filters": {"category": "north" if index % 2 else "south"}
                     },
@@ -605,18 +590,18 @@ def test_a_summary_passes_a_filter_only_when_all_its_documents_do(
             )
         )
         path.unlink()
-    context = ingest(config, providers, parsed, tmp_path / "run-1")
+    stages = set(PipelineStageType) - {PipelineStageType.DOCUMENT_PARSING}
+    context = ingest(config, providers, parsed, tmp_path / "run-1", stages)
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     nodes = tree_nodes(providers)
-    mixed = [
-        n for n in nodes if "category" not in (n["attributes"].get("filters") or {})
-    ]
     pure = [n for n in nodes if (n["attributes"].get("filters") or {}).get("category")]
-    assert nodes and (mixed or pure)
+    assert nodes and pure, nodes
+    assert all(n["text"].startswith("Summary: ") for n in nodes)
 
     chain = GraphRAGChain(config, providers=providers)
     try:
         out = ask(chain, filters={"attr_category": "north"})
+        assert by_type(out, "summary") and by_type(out, "text"), out.sources
         for entry in out.sources:
             if entry["metadata"]["section_type"] == "summary":
                 filters = entry["metadata"]["attributes"]["filters"]
@@ -730,7 +715,7 @@ def test_a_partial_tree_is_reported_to_the_metrics_sink(
     failed: list[int] = []
 
     def flaky(system: str, human: str) -> str:
-        if TREE_PROMPT in system and not failed:
+        if SUMMARY_TREE_PROMPT in system and not failed:
             failed.append(1)
             return ""  # answered nothing: the summary failed
         return calls(system, human)

@@ -263,6 +263,40 @@ def test_clusters_respect_the_token_bound() -> None:
         assert sum(m.n_tokens for m in cluster.members) <= 2000
 
 
+@pytest.mark.parametrize(
+    "unsplit",
+    [
+        lambda n: [list(range(n))],
+        # Soft clusters, one of which holds every member.
+        lambda n: [list(range(n)), [0, 1]],
+    ],
+    ids=["one-cluster", "a-cluster-of-all"],
+)
+def test_a_cluster_too_large_to_split_is_packed_by_tokens_in_id_order(
+    unsplit: object,
+) -> None:
+    def partition(vectors: np.ndarray, split: bool, keys: object) -> list[list[int]]:
+        # The level is one cluster; asked to split it, clustering cannot.
+        if not split:
+            return [list(range(len(vectors)))]
+        return unsplit(len(vectors))  # type: ignore[operator]
+
+    summaries = _Summaries()
+    leaves = _leaves(20, tokens=100)
+    build_tree(
+        list(reversed(leaves)),
+        settings=TreeSettings(max_cluster_tokens=350, max_levels=1),
+        realize=summaries,
+        language="en",
+        partition=partition,
+    )
+    ids = [leaf.id for leaf in leaves]
+    # Three leaves fit in 350 tokens, a fourth does not.
+    assert [c.child_ids for c in summaries.calls[0]] == [
+        ids[i : i + 3] for i in range(0, 20, 3)
+    ]
+
+
 def test_single_member_clusters_are_promoted_or_summarized() -> None:
     def single(vectors: np.ndarray, split: bool, keys: object) -> list[list[int]]:
         return [[i] for i in range(len(vectors))]

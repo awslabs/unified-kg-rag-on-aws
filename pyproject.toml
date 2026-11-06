@@ -1,5 +1,7 @@
 [build-system]
-requires = ["hatchling"]
+# Pinned so a new hatchling release cannot change the built wheel or sdist
+# between two builds of one commit; bump it deliberately.
+requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -318,7 +320,7 @@ python_functions = ["test_*"]
 # Real-AWS tests keep the real environment (tests/conftest.py), so a plain
 # `pytest` with store endpoints exported must not select them; `-m aws` on the
 # command line overrides this selector.
-addopts = '--tb=short --strict-markers -m "not aws and not perf"'
+addopts = '--tb=short --strict-markers -m "not aws and not perf and not weekly"'
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # Fail a hung test (e.g. an unmocked network wait or a deadlocked pool) after
@@ -332,6 +334,7 @@ markers = [
     "aws: Tests requiring real AWS services (skipped by default)",
     "slow: Tests that take over 5 s (deselect with -m \"not slow\" for a quick run)",
     "perf: Wall- or CPU-time assertions, too noisy for shared runners (weekly job only)",
+    "weekly: Heavy fidelity cases the weekly fidelity workflow runs (pull requests run a sample)",
 ]
 # Silence only known third-party deprecations so new ones (including our own)
 # stay visible. gremlin_python: camelCase step aliases kept for Neptune's

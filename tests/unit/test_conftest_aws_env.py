@@ -63,4 +63,4 @@ def test_plain_pytest_run_deselects_aws_tests(pytestconfig: pytest.Config) -> No
     # the selector and an explicit `-m aws` on the command line replaces it.
     addopts = pytestconfig.getini("addopts")
     assert "-m" in addopts
-    assert addopts[addopts.index("-m") + 1] == "not aws and not perf"
+    assert addopts[addopts.index("-m") + 1] == "not aws and not perf and not weekly"

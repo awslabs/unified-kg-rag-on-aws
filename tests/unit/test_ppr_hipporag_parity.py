@@ -9,8 +9,12 @@ execute the original functions (``HippoRAG.run_ppr``,
 ``graph_search_with_fact_entities``, ``get_top_k_weights`` and the
 ``misc_utils`` helpers they use, read from the checkout's source) on the
 same graph, reset vector and damping as ``domain.retrieval.ppr`` and compare
-the scores and the passage order. Run them with::
+the scores and the passage order. They were written against commit
+``d5c8329422e0a0b834a15874545cb6a74b4f9b26``, which the weekly fidelity
+workflow (``.github/workflows/fidelity.yml``) checks out. Run them with::
 
+    git clone https://github.com/OSU-NLP-Group/HippoRAG /path/to/HippoRAG
+    git -C /path/to/HippoRAG checkout d5c8329422e0a0b834a15874545cb6a74b4f9b26
     HIPPORAG_SRC=/path/to/HippoRAG uv run --with python-igraph==0.11.8 \\
         pytest tests/unit/test_ppr_hipporag_parity.py
 

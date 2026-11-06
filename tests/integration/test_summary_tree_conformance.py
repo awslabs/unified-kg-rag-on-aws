@@ -512,3 +512,97 @@ def test_expanded_passages_keep_the_callers_filters(harness: StoreHarness) -> No
     expanded = [r for r in result.results if (r.metadata or {}).get("expanded_from")]
     assert expanded
     assert all(r.metadata["n_tokens"] == 5 for r in expanded)
+
+
+def test_a_cut_lineage_is_read_from_the_descendants(harness: StoreHarness) -> None:
+    # A node over more text units than max_lineage_text_units stores only
+    # the first ones (lineage_complete false); its passages are found
+    # through its children, down to the nodes whose lineage is whole.
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+    from tests.fixtures.fakes.tokens import WordTokenCounter
+    from unified_kg_rag.adapters.providers import Providers
+    from unified_kg_rag.adapters.search_strategies.tree_search import (
+        TreeSearchStrategy,
+    )
+    from unified_kg_rag.domain.models import Methodology, SearchQuery
+
+    units = [
+        TextUnit(
+            id=f"u{i:03d}",
+            text=(
+                "Depot stores widgets for Vendor every week"
+                if i >= 10
+                else f"Ledger entry {i}"
+            ),
+            n_tokens=7 if i >= 10 else 3,
+        )
+        for i in range(12)
+    ]
+    indexer = harness.vector_indexer
+    assert indexer.index_text_units(units).failed_items == 0
+    ids = [u.id for u in units]
+    _tree(
+        harness,
+        [
+            _node("na", 1, ids[:6], ids[:6], text="Ledger entries"),
+            # Cut: the stored lineage holds none of the widget passages.
+            _node(
+                "nb",
+                1,
+                ids[6:],
+                ids[6:8],
+                text="Ledger totals",
+                lineage_complete=False,
+            ),
+            _node(
+                "top",
+                2,
+                ["na", "nb"],
+                ids[:2],
+                text="Depot stores widgets for Vendor",
+                lineage_complete=False,
+            ),
+        ],
+    )
+    config = harness.config.model_copy(deep=True)
+    config.indexing.methodologies = [Methodology.RAPTOR]
+    config.providers.rerank.kind = "none"
+    config.search.tree_search.graph_signal = "off"
+    config.search.tree_search.text_top_k = 1
+    config.search.tree_search.summary_top_k = 1
+    config.search.tree_search.expand_children = 3
+    providers = Providers(
+        config,
+        boto_session=MagicMock(),
+        llm_factory=ScriptedLLMFactory(lambda system, human: ""),
+        embedding_factory=harness.embedding_factory,
+        token_counter_factory=lambda *_, **__: WordTokenCounter(),
+    )
+
+    async def search() -> Any:
+        retriever = harness.vector_retriever()
+        try:
+            strategy = TreeSearchStrategy(
+                config, {"document": retriever}, providers=providers
+            )
+            return await strategy.asearch(
+                SearchQuery(query="Which depot stores widgets for Vendor?")
+            )
+        finally:
+            await retriever.aclose()
+
+    result = asyncio.run(search())
+    expanded = {
+        str(r.source): r.metadata["expanded_from"]
+        for r in result.results
+        if (r.metadata or {}).get("expanded_from")
+    }
+    # The one summary found is the top; only its cut child's children lead
+    # to the widget passage the text search did not return.
+    assert [r.source for r in result.results if r.retriever_type == "summary"] == [
+        "top"
+    ]
+    assert expanded.keys() & {"u010", "u011"}, result.results

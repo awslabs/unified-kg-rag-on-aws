@@ -42,12 +42,15 @@ jobs:
 
       - name: Run ASH
         # Pinned to the commit of tag v3.1.2: a tag can be moved, a SHA cannot.
-        # Exits non-zero on an actionable finding (fail_on_findings in
+        # Its own dependencies (the scanners among them) resolve as of the
+        # --exclude-newer date, so a new scanner release cannot change a run
+        # either; move the date when bumping ASH. Exits non-zero on an actionable finding (fail_on_findings in
         # .ash/.ash.yaml). semgrep runs the registry's `auto` rules, so a rule
         # published upstream can fail a run whose diff did not change: triage
         # it like any finding (fix, or suppress with the reason).
         run: >-
-          uvx git+https://github.com/awslabs/automated-security-helper.git@e73de85c1db7f443276370c4a6f7501815756780
+          uvx --exclude-newer 2026-11-01T00:00:00Z
+          git+https://github.com/awslabs/automated-security-helper.git@e73de85c1db7f443276370c4a6f7501815756780
           --source-dir .
 
       - name: Findings in the job summary

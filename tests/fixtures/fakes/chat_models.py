@@ -9,6 +9,7 @@ chains (``prompt | llm | parser``) with valid, fixed LLM output.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
@@ -56,3 +57,40 @@ class ScriptedLLMFactory:
 
     def get_model_info(self, model_id: Any) -> LanguageModelInfo:
         return fake_model_info(model_id)
+
+
+# The opening words of the prompts CountingResponder tells apart.
+SUMMARY_TREE_PROMPT = "You write the summaries of a summary tree"
+_PROMPT_KINDS = (
+    ("knowledge graph extraction expert", "extraction"),
+    ("community analysis", "report"),
+)
+
+
+class CountingResponder:
+    """``respond`` with its calls counted by prompt kind: ``extraction``,
+    ``report``, ``summary`` (a summary tree's, answered by ``summarize(human)``
+    when given) and ``other``."""
+
+    def __init__(
+        self, respond: Responder, summarize: Callable[[str], str] | None = None
+    ) -> None:
+        self.respond = respond
+        self.summarize = summarize
+        self.kinds: Counter[str] = Counter()
+        self.tree_prompts: list[str] = []
+
+    def __call__(self, system: str, human: str) -> str:
+        if SUMMARY_TREE_PROMPT in system:
+            self.kinds["summary"] += 1
+            self.tree_prompts.append(system + "\n" + human)
+            if self.summarize is not None:
+                return self.summarize(human)
+            return self.respond(system, human)
+        kind = next((k for marker, k in _PROMPT_KINDS if marker in system), "other")
+        self.kinds[kind] += 1
+        return self.respond(system, human)
+
+    def since(self, before: Counter[str]) -> Counter[str]:
+        """The calls made after ``before`` (a copy of ``kinds``)."""
+        return self.kinds - before

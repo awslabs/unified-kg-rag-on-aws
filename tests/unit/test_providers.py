@@ -19,6 +19,7 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
+from tests.fixtures.fakes.tokens import WordTokenCounter
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.memory_manager import (
@@ -57,15 +58,6 @@ class FakeRerankFactory:
         return None
 
 
-class FakeTokenCounter:
-    def count_tokens(self, text: str) -> int:
-        return len(text.split())
-
-    def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
-        words = text.split()[:max_tokens]
-        return " ".join(words), len(words)
-
-
 @pytest.fixture
 def no_bedrock(mocker) -> dict[str, MagicMock]:
     """Fail loudly if any default Bedrock factory/counter is constructed."""
@@ -95,7 +87,7 @@ def _fake_providers(config: Config) -> Providers:
         llm_factory=FakeLLMFactory(),
         embedding_factory=MagicMock(),
         rerank_factory=FakeRerankFactory(),
-        token_counter_factory=lambda *_, **__: FakeTokenCounter(),
+        token_counter_factory=lambda *_, **__: WordTokenCounter(),
     )
 
 
@@ -212,8 +204,8 @@ def test_injected_llm_factory_reaches_global_and_drift(
     assert str(expected) in llm.model_ids
     # Scorer and token counter came from the bundle too.
     assert instance.hybrid_scorer.rerank_factory is providers.rerank_factory
-    assert isinstance(instance.token_manager._token_counter, FakeTokenCounter)
-    assert isinstance(chain.token_manager._token_counter, FakeTokenCounter)
+    assert isinstance(instance.token_manager._token_counter, WordTokenCounter)
+    assert isinstance(chain.token_manager._token_counter, WordTokenCounter)
 
 
 def test_model_factory_shorthand_reaches_strategies(no_bedrock) -> None:

@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from tests.fixtures.fakes.tokens import WordTokenCounter
 from tests.fixtures.store_backends import (
     RETRIEVERS,
     StoreHarness,
@@ -131,15 +132,6 @@ def _controller(system: str, human: str) -> str:
     )
 
 
-class _Tokens:
-    def count_tokens(self, text: str) -> int:
-        return len(text.split())
-
-    def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
-        words = text.split()[:max_tokens]
-        return " ".join(words), len(words)
-
-
 def _search(h: StoreHarness, filters: dict[str, Any] | None) -> SearchResult:
     config = h.config.model_copy(deep=True)
     config.search.iterative_search.base = "local"
@@ -148,7 +140,7 @@ def _search(h: StoreHarness, filters: dict[str, Any] | None) -> SearchResult:
         config,
         llm_factory=ScriptedLLMFactory(_controller),
         embedding_factory=h.embedding_factory,
-        token_counter_factory=lambda *_, **__: _Tokens(),
+        token_counter_factory=lambda *_, **__: WordTokenCounter(),
     )
 
     async def run() -> SearchResult:

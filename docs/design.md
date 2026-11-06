@@ -2243,7 +2243,8 @@ original's PPR (python-igraph `personalized_pagerank`, PRPACK, as
 (`graph_search_with_fact_entities`, executed from a checkout named by
 `HIPPORAG_SRC`) on the same graphs, reset vectors and damping, and compares
 the scores and passage order; it is skipped unless both are available (the
-original is never a dependency). The deliberate differences:
+original is never a dependency) and runs weekly in the `fidelity` workflow,
+at HippoRAG commit `d5c8329`. The deliberate differences:
 
 | HippoRAG 2 | Here | Why |
 |---|---|---|
@@ -2586,6 +2587,9 @@ upstream's answers, and the tests run in CI without upstream installed:
   into 1-16: a BIC overfit no two EM implementations reproduce, so the
   local counts are not compared. RAPTOR's small clusters (6.7 children a
   parent in the paper) may owe as much to that overfit as to topics.
+  Pull requests check the cluster count on one case per count (1 to 5) and
+  two two-step cases; the weekly `fidelity` workflow runs every case, and
+  checks the recorded answers against upstream's code at that commit.
 
 Deviations from upstream, each deliberate:
 
@@ -3144,7 +3148,8 @@ tokens.
 
 **Parity with BenchmarkQED, and the deliberate deviations.**
 `tests/unit/test_benchmarkqed_parity.py` (skipped unless `benchmark_qed` is
-importable; it is not a dependency, install it in a scratch environment)
+importable; it is not a dependency, install it in a scratch environment; the
+weekly `fidelity` workflow runs it against `benchmark-qed` 0.4.0)
 feeds the same synthetic sample and scripted replies to both
 implementations. Identical decisions: claim parsing (non-empty statement,
 integer score above 0, sources read as strings and kept only when given),
@@ -3428,7 +3433,8 @@ by default**.
   checks that SQLite and an OpenSearch container rank a synthetic corpus alike
   (same lexical and hybrid top 10, kNN recall@10 ≥ 0.98).
 - **Markers**: `unit`, `integration`, `property`, `aws` (real AWS, excluded in
-  CI), `slow`. Run `uv run pytest -m "not aws" --cov=unified_kg_rag`.
+  CI), `slow`, `perf` and `weekly` (both deselected by default and run by the
+  weekly workflows). Run `uv run pytest --cov=unified_kg_rag`.
 
 ---
 
@@ -3438,7 +3444,9 @@ by default**.
   `main` (lint, types, tests with the coverage floor, the image build, the IaC
   synth with cdk-nag), `licenses` checks dependency licenses, `security` runs
   an ASH scan that fails on an unsuppressed finding at MEDIUM or above
-  (configuration and path-scoped suppressions in `.ash/.ash.yaml`); the local
+  (configuration and path-scoped suppressions in `.ash/.ash.yaml`), and the
+  weekly `fidelity` runs the parity tests against the original HippoRAG 2,
+  RAPTOR and BenchmarkQED at pinned commits and versions; the local
   checks are in [CONTRIBUTING.md](../CONTRIBUTING.md#checks-to-run-before-pushing).
 - **Dependabot** updates the `uv` locks (root and `iac/`) and the SHA-pinned
   Actions weekly, 7 days after a release at the earliest (security updates

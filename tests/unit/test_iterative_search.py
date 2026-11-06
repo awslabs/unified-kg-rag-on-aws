@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from tests.fixtures.fakes.tokens import WordTokenCounter
 from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
@@ -168,15 +169,6 @@ class _RerankFactory:
         return None
 
 
-class _Tokens:
-    def count_tokens(self, text: str) -> int:
-        return len(text.split())
-
-    def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
-        words = text.split()[:max_tokens]
-        return " ".join(words), len(words)
-
-
 class _Script:
     """The scripted model: each prompt kind answers from its own queue (the
     last answer repeats); an exception in a queue is raised."""
@@ -239,7 +231,7 @@ def _strategy(
         llm_factory=ScriptedLLMFactory(script),
         embedding_factory=MagicMock(),
         rerank_factory=reranks,
-        token_counter_factory=lambda *_, **__: _Tokens(),
+        token_counter_factory=lambda *_, **__: WordTokenCounter(),
     )
     documents = documents or _Documents({FOLLOW_UP: [HARBOR]})
     strategy = IterativeSearchStrategy(
@@ -505,6 +497,24 @@ async def test_an_unreadable_verdict_answers_from_what_is_there(reply: str) -> N
     assert "degraded_error" not in result.metadata
 
 
+@pytest.mark.parametrize(
+    ("sufficient", "follows_up"),
+    [("true", False), (" True ", False), ("false", True), ("FALSE", True)],
+)
+async def test_a_verdict_written_as_a_string_is_read(
+    sufficient: str, follows_up: bool
+) -> None:
+    # Models often quote their JSON booleans.
+    verdict = {**INSUFFICIENT, "sufficient": sufficient}
+    strategy, _, later, _, _ = _strategy(_Script(controller=[verdict, SUFFICIENT]))
+
+    result = await strategy.asearch(_query())
+
+    assert bool(later.queries) is follows_up
+    meta = result.metadata["iterative"]
+    assert meta["stop_reason"] == "sufficient" and meta["degraded"] is None
+
+
 async def test_a_failed_controller_call_degrades_after_a_round() -> None:
     script = _Script(controller=[INSUFFICIENT, RuntimeError("throttled")])
     strategy, *_ = _strategy(script)
@@ -596,8 +606,13 @@ async def test_no_round_starts_without_time_for_the_answer() -> None:
         ({"query_language": "Korean"}, {}, "Korean"),
         ({}, {"enabled": False, "source_language": LanguageCode.JA}, "Japanese"),
         ({}, {"enabled": True, "target_language": LanguageCode.ZH}, "Chinese"),
+        (
+            {"query_language": ""},
+            {"enabled": False, "source_language": LanguageCode.KO},
+            "Korean",
+        ),
     ],
-    ids=["from-the-chain", "index-as-written", "translated-index"],
+    ids=["from-the-chain", "index-as-written", "translated-index", "blank-is-unset"],
 )
 async def test_the_controller_writes_follow_ups_in_the_query_language(
     metadata: dict[str, Any], translation: dict[str, Any], language: str
@@ -773,6 +788,53 @@ async def test_a_failed_step_keeps_what_the_steps_before_it_found() -> None:
     meta = result.metadata["iterative"]
     assert (meta["rounds"], meta["degraded"]) == (2, "step_failed")
     assert result.metadata["degraded_error"] == "RuntimeError"
+    assert "context_sufficient" not in result.metadata
+
+
+async def test_no_step_is_planned_without_time_for_the_answer() -> None:
+    config = Config()
+    config.search.model_timeout_seconds = 60.0
+    script = _Script(decomposition=[{"steps": STEPS}], step=[{"answer": "x"}])
+    strategy, _, later, _, _ = _strategy(script, config=config, decompose=True)
+
+    with retry_deadline(time.monotonic() + 30.0):
+        result = await strategy.asearch(_query())
+
+    assert script.calls["decomposition"] == [] and later.queries == []
+    assert result.results == ROUND_0
+    meta = result.metadata["iterative"]
+    assert (meta["stop_reason"], meta["llm_calls"]) == ("deadline", 0)
+
+
+async def test_the_deadline_ends_the_steps_and_keeps_what_they_found() -> None:
+    config = Config()
+    config.search.model_timeout_seconds = 1.0
+    script = _Script(
+        decomposition=[{"steps": STEPS}],
+        step=[{"answer": "Carrier"}, {"answer": "Depot"}, {"answer": "Harbor"}],
+    )
+    strategy, _, later, _, _ = _strategy(script, config=config, decompose=True)
+    search = later.asearch
+
+    async def slow_after_the_first_step(query: SearchQuery, config: Any = None) -> Any:
+        if later.queries:
+            later.delay = 30.0
+        return await search(query, config)
+
+    strategy.follow_up.asearch = slow_after_the_first_step  # type: ignore[method-assign]
+
+    started = time.monotonic()
+    # 2 s are left for the steps once the answer's 1 s is set aside.
+    with retry_deadline(time.monotonic() + 3.0):
+        result = await strategy.asearch(_query())
+
+    assert time.monotonic() - started < 10
+    assert later.cancelled and len(later.queries) == 2
+    meta = result.metadata["iterative"]
+    assert (meta["rounds"], meta["stop_reason"]) == (1, "deadline")
+    assert [s["question"] for s in meta["steps"]] == [STEPS[0]]
+    # The first step's candidates were fused in, not dropped for round 0's.
+    assert "Depot is located in Harbor." in _contents(result)
     assert "context_sufficient" not in result.metadata
 
 
