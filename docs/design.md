@@ -907,6 +907,106 @@ of the documents plus the configured seeds. No model reads a seed.
   retrievable fact card (seed units as TEXT context), and federation
   (§15, *New seed source*).
 
+### 4.6 Methodology profiles
+
+One ingestion builds what the selected methodologies read, and a query
+fails fast when its strategy's methodology is not in the namespace, so a
+LightRAG-only corpus never pays for GraphRAG's communities and reports.
+
+- **Catalogue (domain, pure).** `domain/models/methodology.py` names the
+  methodologies (`Methodology`: `graphrag`, `lightrag`, `hipporag`,
+  `raptor`) and the index artifacts (`IndexArtifact`) each needs
+  (`METHODOLOGY_PROFILES`, required and optional):
+
+  | Methodology | Required | Optional (used when built) |
+  |---|---|---|
+  | `graphrag` | text units, entities, relationships, graph, communities, community reports | relationship vectors, claims |
+  | `lightrag` | text units, entities, relationships, relationship vectors, graph | — |
+  | `hipporag` | text units, entities, relationships, relationship vectors, graph | — |
+  | `raptor` | text units, summary tree | — |
+
+  `domain/ingestion/methodologies.py` maps each artifact to the stages that
+  build it and each stage to the stages it reads
+  (`ARTIFACT_STAGES`, `STAGE_DEPENDENCIES`): `stages_for(artifacts)` is
+  their closure. No stage builds the summary tree yet
+  (`UNBUILT_ARTIFACTS`), so `raptor` is refused at config load until the
+  branch that adds the stage maps it; `hipporag` needs nothing `lightrag`
+  does not build, so every default index holds it.
+- **Selection.** `indexing.methodologies` (default `[graphrag, lightrag]`:
+  today's union, every stage) selects what a run builds. The effective
+  methodologies (`effective_methodologies`) leave out those whose required
+  artifacts a switch turns off: `graph.community_detection.enabled: false`
+  drops `graphrag`, `indexing.opensearch.build_relationship_vector_index:
+  false` drops `lightrag` and `hipporag`, so a pre-existing light config
+  reads as the profile it builds; none left is a config error. A stage
+  runs when `stages_enabled` and its config section allow it and it is in
+  `stages_for` the effective methodologies' artifacts, plus claims when
+  `processing.claim_extraction.enabled` (claims are per-document extraction
+  output, recorded in each document's extraction settings, so their switch
+  alone governs them; with no selected methodology reading them a WARNING
+  says so). For the default union every stage is selected, and
+  `indexing.methodologies` keys no stage cache and, at its default, no
+  evaluation manifest (`cache_keys._KEYED_ONCE_SET`), so default users see
+  no change. An explicit `--enabled-stages` list wins in both directions
+  (a listed stage runs, an unlisted one does not); a run that writes the
+  index (lists `indexing`) and leaves out a stage a selected methodology
+  needs logs a WARNING naming both (not for `OPTIONAL_STAGES`: parsing,
+  translation, gleaning).
+- **Build record.** `IndexBuildRecord` gains `artifacts` (what the namespace
+  holds and the runs maintain) and `methodologies` (those whose required
+  artifacts it holds, for manifests and readers). A run's artifacts
+  (`built_artifacts`) are those whose producing stage completed in its
+  context (a phased run's earlier phases count) and whose switch is on
+  (relationship vectors, report generation). A full build records them; an
+  incremental record keeps those both it and the stored record hold
+  (`IndexBuildRecord.over`), so an artifact a run stopped maintaining leaves
+  the record. An incremental run that writes nothing writes no record:
+  what it left out is still current.
+- **Adding a methodology** that needs an artifact the namespace does not
+  hold (communities and reports for `graphrag`, relationship vectors for
+  `lightrag`) needs the whole corpus, not a delta: a run with the registry
+  on that finds one (the stored record against the effective
+  methodologies, `missing_artifacts`) rebuilds the namespace for that run
+  (`indexing.reset`, WARNING), before any cache key is computed. A rebuild
+  from one corpus deletes the namespace's other source scopes, so when the
+  registry holds any (`incremental.other_source_scopes`) the run is refused
+  instead (`ConfigurationError`, exit 2, nothing written). The rebuild
+  reuses what the stores keep
+  (§4.1, §4.4): chunk boundaries, extraction records, description
+  summaries and vectors, so its new model calls are the added
+  methodology's (one report per community). Without the registry every run
+  is a full build and reuses the same. A record written before profiles
+  existed has no `artifacts`: it is read as the configured methodologies,
+  so an upgrade promotes no run.
+- **Removing a methodology** stops maintaining its artifacts: the next run
+  that writes the namespace records them gone, and its strategies fail fast.
+  Nothing is deleted: a reset with the remaining methodologies replaces the
+  community-reports index with an empty one and drops the graph's community
+  vertices (the rebuild sweep, §5.2).
+- **Query time.** Every strategy class declares `methodology`
+  (`BaseSearchStrategy.methodology`): `graphrag` for `local`, `global`,
+  `drift` and `simple`, `lightrag` for `mix`, `hybrid` and `naive`; a
+  wrapper strategy sets it per instance from the strategy it wraps.
+  `GraphRAGChain` reads the namespace's build record through the document
+  retriever (`aread_build_record`, cached per suffix for
+  `methodology_check.HELD_TTL_SECONDS`, read again before a refusal) and derives what it
+  holds (`held_methodologies`; the configured effective methodologies when
+  there is no record or it predates profiles). An explicit strategy whose
+  methodology is not held raises `MethodologyNotIndexedError` (a
+  `ConfigurationError`; `run-rag` exits 2) before any model call, naming
+  what the namespace holds, the strategies that serve it and how to add the
+  methodology. `auto` routes only among the held methodologies' strategies
+  of `search.auto_routable_strategies`, falling back to `local` or `mix`.
+  `local` and `simple` count as GraphRAG's: `local` reserves part of its
+  context for the community-report section, so on a LightRAG-only index it
+  would answer with that share unused; `mix`/`hybrid` serve the same entity
+  questions there.
+- **Failure modes.** An unreadable record (store error, a backend without
+  index metadata) reads as the configured methodologies, as before; a
+  record that over-claims cannot arise from a run (an artifact enters it
+  only through a completed stage), and one that under-claims refuses
+  queries until the next run that writes the namespace.
+
 ---
 
 ## 5. Incremental Indexing
@@ -1445,10 +1545,11 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   (`LocalSearchStrategy._with_hit_filters`), and a source a graph walk
   alone reached names no seed graph.
 - **One index, both methodologies (deliberate extension).** Ingestion builds
-  the union of what both need (MS GraphRAG builds no relationship vector
-  index, LightRAG no communities). A LightRAG-only deployment can set
-  `graph.community_detection.enabled: false` to skip Leiden and every report
-  call, leaving `global` and `drift` unavailable.
+  the union of what the selected methodologies need, both by default (MS
+  GraphRAG builds no relationship vector index, LightRAG no communities). A
+  LightRAG-only deployment selects `indexing.methodologies: [lightrag]` to
+  skip Leiden and every report call; the namespace then holds no `graphrag`
+  and its strategies are refused (§4.6).
 
 ### 6.1 GraphRAG Methodology (`adapters/search_strategies/`)
 
@@ -2619,7 +2720,7 @@ This section is the single reference for extending the framework. Extensions com
 - **Plugins**, which live in your own package and import only from `unified_kg_rag` (§2.5): backends through the provider registry or constructor injection, and renderers, parsers, schema sources and seed sources through their registries. None needs a change to the framework's code.
 - **In-tree changes**, made in a fork or contributed upstream: a search strategy and an evaluator. `register_strategy` is keyed by the closed `SearchStrategy` enum, which `RAGInput.search_strategy`, `--search-strategy` and `search.auto_routable_strategies` validate against, so a new strategy adds an enum member; an evaluator adds an `EvaluatorType` member and a branch in `EvaluationManager._resolve_evaluator_class`. The registry still keeps the chain's dispatch code unchanged.
 
-- **New search strategy** (in-tree): Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. A strategy that runs another one's search (as `iterative` runs `local` or `mix`) passes `wraps=` a function of the config naming it: the chain then extracts what that one reads and packs its context as that one does (`wrapped_strategy`), and the wrapper builds its base through `get_strategy_spec(...).strategy_class`, not by name. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it. Regenerate the references (the new member is a `--search-strategy` choice and a config value): `uv run python scripts/gen_cli_reference.py` and `uv run python scripts/gen_config_reference.py`. A minimal strategy, a document search fused and reranked like `simple` (`adapters/search_strategies/simple_search.py` is the full version, with the index gates):
+- **New search strategy** (in-tree): Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. Set the class attribute `methodology` (a `Methodology`: the one whose index artifacts it reads, §4.6) so a query on a namespace that does not hold it is refused before any model call and `auto` routes to it only where it is held; a new methodology adds a `Methodology` member, its `METHODOLOGY_PROFILES` entry (required and optional `IndexArtifact`s) and, for an artifact no stage builds yet, the stage, its `ARTIFACT_STAGES`/`ARTIFACT_PRODUCERS` entries and its removal from `UNBUILT_ARTIFACTS` (`domain/ingestion/methodologies.py`; a corpus-wide artifact also joins `CORPUS_WIDE_ARTIFACTS`). `needs_community_reports=True` is kept for a strategy that declares no methodology but answers from reports. A strategy that runs another one's search (as `iterative` runs `local` or `mix`) passes `wraps=` a function of the config naming it: the chain then extracts what that one reads and packs its context as that one does (`wrapped_strategy`), the wrapper builds its base through `get_strategy_spec(...).strategy_class`, not by name, and it declares no `methodology` of its own: it reads the wrapped one's (`strategy_registry.strategy_methodology`), which it also sets on its instance. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it. Regenerate the references (the new member is a `--search-strategy` choice and a config value): `uv run python scripts/gen_cli_reference.py` and `uv run python scripts/gen_config_reference.py`. A minimal strategy, a document search fused and reranked like `simple` (`adapters/search_strategies/simple_search.py` is the full version, with the index gates):
 
   ```python
   # unified_kg_rag/adapters/search_strategies/keyword_search.py
@@ -2631,6 +2732,7 @@ This section is the single reference for extending the framework. Extensions com
   from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
   from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
   from unified_kg_rag.domain.models import (
+      Methodology,
       RetrieverRole,
       SearchQuery,
       SearchResult,
@@ -2640,6 +2742,8 @@ This section is the single reference for extending the framework. Extensions com
 
   @register_strategy(SearchStrategy.KEYWORD, required_roles=(RetrieverRole.DOCUMENT,))
   class KeywordSearchStrategy(BaseSearchStrategy):
+      methodology = Methodology.LIGHTRAG  # reads text units only
+
       async def asearch(
           self, query: SearchQuery, config: RunnableConfig | None = None
       ) -> SearchResult:
