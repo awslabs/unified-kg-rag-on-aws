@@ -146,7 +146,7 @@ Guide: [Domain adaptation](../guides/domain-adaptation.md#prompt-tuning-run-prom
 
 ## `prepare-benchmark`
 
-Prepare a public benchmark (MuSiQue answerable) as a corpus directory and a run-eval dataset
+Prepare a public benchmark (MuSiQue) as a corpus directory and a run-eval dataset
 
 Guide: [Benchmarks](../guides/benchmarks.md).
 
@@ -154,8 +154,10 @@ Guide: [Benchmarks](../guides/benchmarks.md).
 |---|---|---|
 | `benchmark` | required | Benchmark to prepare. One of `musique`. |
 | `--output-directory` | required | Directory for corpus/ and eval_data.json (corpus/ must be new or empty). |
-| `--data-path` | — | Local official JSONL (e.g. musique_ans_v1.0_dev.jsonl from the official download); default: download the answerable dev split. |
-| `--limit` | — | Number of questions to sample (default: all 2,417 of dev). |
+| `--data-path` | — | Local official JSONL (e.g. musique_ans_v1.0_dev.jsonl from the official download; a musique_full_v1.0_*.jsonl for --unanswerable); default: download the answerable dev split, or the full one with --unanswerable. |
+| `--limit` | — | Number of answerable questions to sample (default: all 2,417 of dev). |
+| `--unanswerable` `N` | — | Also write N unanswerable questions of the full split (metadata.answerable: false), leaving out any whose answerable twin is sampled or whose removed supporting paragraph's exact text is in the pooled corpus; the counts are reported (default: none). |
+| `--hops` `HOPS` | — | Hop counts to sample from: a list (3,4) filters both answerable and unanswerable questions; quotas (2=50,3=50,4=100) draw exactly that many answerable questions per hop count, instead of --limit (default: every hop count, sampled as one pool). |
 | `--seed` | `0` | Sampling seed (default 0). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 

@@ -79,7 +79,8 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
 - Mark a question the corpus cannot answer with
   `"metadata": {"answerable": false}`: no evaluator grades it; it counts only
   in `abstention_statistics`
-  ([Run summary](../reference/evaluation-output.md#run-summary)).
+  ([Run summary](../reference/evaluation-output.md#run-summary),
+  [Unanswerable questions and declines](#unanswerable-questions-and-declines)).
 - The file is validated before any query runs. A file that cannot be read,
   an empty or non-array dataset, a missing `question`, a duplicate id, a field
   of the wrong type (a non-list `expected_entities`, an `answer_aliases` that
@@ -88,6 +89,32 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
   such as an empty list, or a key the item's strategy refuses, checked under
   every compared strategy in a comparison) stops the run with
   `Error: invalid evaluation dataset:`, the item index and id, and exit code 2.
+
+## Unanswerable questions and declines
+
+A RAG system that answers every question also answers the ones its corpus
+cannot. To measure declining, mix questions marked `"answerable": false`
+into the dataset (`prepare-benchmark musique --unanswerable N` builds such a
+set, filtered so the corpus does not answer them:
+[Benchmarks](./benchmarks.md#unanswerable-questions)) and run with
+`search.abstention.mode: mark`, so the model's declines are detected
+([Querying: declined answers](./query.md#declined-answers)). Then:
+
+- A decline on an answerable question is a wrong answer: `answer_match`
+  scores it 0 (no span extraction call) and records `abstained` in its report.
+- An unanswerable question is graded only by whether the answer declined.
+- `abstention_statistics` reports the decline `precision` (declines that were
+  on unanswerable questions), `recall` (unanswerable questions declined) and
+  `f1`, the `answerable` and `unanswerable` rates, and per `answer_match`
+  metric `coverage` (answerable questions answered), `accuracy` (all
+  answerable questions, declines as 0), `selective_accuracy` (the answered
+  ones) and `overall_accuracy` (a correct answer or a correct decline, over
+  both kinds). Read coverage and accuracy together: declining more raises
+  selective accuracy and lowers coverage.
+- With `mode: off` only the empty-context reply counts as a decline, so recall
+  is a lower bound. `mark` changes the answer prompt: compare a `mark` run
+  with an `off` run as two arms (run `off`, then `mark` with
+  `--baseline-results` pointing at the `off` run's files).
 
 ## Examples
 

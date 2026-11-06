@@ -713,7 +713,9 @@ class EvaluationManager:
 
     @staticmethod
     def _is_abstention(answer: Any, rag_metadata: Any) -> bool:
-        """True for the chain's fixed no-context reply (flag, or the exact text)."""
+        """True for a declined answer: the chain's ``abstained`` flag (the
+        no-context reply, a ``[NO_ANSWER]`` decline, the insufficient-context
+        policy), or the exact no-context text."""
         if isinstance(rag_metadata, dict) and rag_metadata.get("abstained"):
             return True
         return isinstance(answer, str) and answer.strip() == NO_CONTEXT_ANSWER
@@ -1048,7 +1050,9 @@ class EvaluationManager:
             average_response_time=avg_response_time,
             metric_statistics=self._calculate_metric_statistics(reports),
             metric_outcomes=self._calculate_metric_outcomes(results, reports),
-            abstention_statistics=self._calculate_abstention_statistics(results),
+            abstention_statistics=self._calculate_abstention_statistics(
+                results, reports
+            ),
             answer_span_statistics=self._calculate_answer_span_statistics(reports),
             rerank_status_counts=dict(
                 sorted(
@@ -1400,8 +1404,23 @@ class EvaluationManager:
 
     @classmethod
     def _calculate_abstention_statistics(
-        cls, results: list[EvaluationResult]
+        cls,
+        results: list[EvaluationResult],
+        reports: list[EvaluationReport] | None = None,
     ) -> dict[str, Any]:
+        """Abstentions among the answered queries, and how well they track
+        answerability.
+
+        Always: the overall and per-strategy rates. With items marked
+        ``metadata.answerable=false``: the ``unanswerable`` and ``answerable``
+        blocks and the decline ``precision`` (abstentions that were on
+        unanswerable items), ``recall`` (unanswerable items declined) and
+        ``f1``. With ``answer_match`` reports: per metric, ``coverage``
+        (answerable items answered), ``accuracy`` (over every scored
+        answerable item, a decline scoring 0), ``selective_accuracy`` (over
+        the answered ones) and, with unanswerable items, ``overall_accuracy``
+        (a correct answer or a correct decline, over both).
+        """
         answered = [r for r in results if not r.error]
         if not answered:
             return {}
@@ -1422,14 +1441,71 @@ class EvaluationManager:
             **_rate(answered),
             "per_strategy": {k: _rate(v) for k, v in sorted(by_strategy.items())},
         }
-        # Only the fixed no-context reply counts as an abstention, and the
-        # chain returns it only when retrieval finds nothing; a model that
-        # declines in its own words is not detected. On unanswerable items the
-        # rate is therefore a lower bound on correct declines, not an accuracy.
+        # Abstentions are the fixed no-context reply and, under
+        # search.abstention.mode: mark, answers starting with the decline
+        # token; a model that declines in its own words without the token is
+        # not detected, so with mode off recall is a lower bound.
         unanswerable = [r for r in answered if cls._is_unanswerable(r)]
+        answerable = [r for r in answered if not cls._is_unanswerable(r)]
         if unanswerable:
             stats["unanswerable"] = _rate(unanswerable)
+            if answerable:
+                stats["answerable"] = _rate(answerable)
+            declined = stats["abstained"]
+            correct = stats["unanswerable"]["abstained"]
+            precision = correct / declined if declined else None
+            recall = correct / len(unanswerable)
+            stats["precision"] = precision
+            stats["recall"] = recall
+            stats["f1"] = (
+                2 * precision * recall / (precision + recall)
+                if precision and recall
+                else 0.0
+            )
+        if answer_match := cls._selective_answer_match(
+            answerable, unanswerable, reports or []
+        ):
+            stats["answer_match"] = answer_match
         return stats
+
+    @staticmethod
+    def _selective_answer_match(
+        answerable: list[EvaluationResult],
+        unanswerable: list[EvaluationResult],
+        reports: list[EvaluationReport],
+    ) -> dict[str, dict[str, float | None]]:
+        """Coverage and accuracy of each answer_match metric together, so
+        declining more cannot look like answering better."""
+        scores: dict[str, dict[str, float]] = defaultdict(dict)
+        for report in reports:
+            if report.evaluator_type is not EvaluatorType.ANSWER_MATCH:
+                continue
+            for metric in report.metrics:
+                scores[metric.metric_type.value][report.query_id] = metric.value
+        if not scores:
+            return {}
+        abstained = {r.query_id for r in answerable if r.abstained}
+        declined_unanswerable = sum(1 for r in unanswerable if r.abstained)
+        block: dict[str, dict[str, float | None]] = {}
+        for name, values in sorted(scores.items()):
+            scored = [q for q in (r.query_id for r in answerable) if q in values]
+            if not scored:
+                continue
+            kept = [q for q in scored if q not in abstained]
+            total = sum(values[q] for q in scored)
+            entry: dict[str, float | None] = {
+                "coverage": len(kept) / len(scored),
+                "accuracy": total / len(scored),
+                "selective_accuracy": (
+                    sum(values[q] for q in kept) / len(kept) if kept else None
+                ),
+            }
+            if unanswerable:
+                entry["overall_accuracy"] = (total + declined_unanswerable) / (
+                    len(scored) + len(unanswerable)
+                )
+            block[name] = entry
+        return block
 
     @staticmethod
     def _calculate_metric_statistics(

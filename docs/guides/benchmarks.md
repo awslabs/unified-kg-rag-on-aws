@@ -1,8 +1,9 @@
 # Benchmarks (MuSiQue)
 
 `prepare-benchmark musique` turns
-[MuSiQue](https://github.com/StonyBrookNLP/musique) (answerable, multi-hop,
-CC BY 4.0; Trivedi et al., TACL 2022) into a corpus and a `run-eval` dataset.
+[MuSiQue](https://github.com/StonyBrookNLP/musique) (multi-hop, CC BY 4.0;
+Trivedi et al., TACL 2022) into a corpus and a `run-eval` dataset, optionally
+with [unanswerable questions](#unanswerable-questions).
 Every flag with its default: [CLI Reference](../reference/cli.md#prepare-benchmark).
 Running and reading the evaluation itself: [Evaluation](./evaluate.md).
 The package's own measured runs on MuSiQue, and the commands that reproduce
@@ -51,6 +52,59 @@ evaluation:
   answer_normalization: official_squad   # MuSiQue's evaluation script normalization
   enabled_evaluators: [answer_match, retrieval]   # judge-free; add langchain / ragas if wanted
 ```
+
+## Unanswerable questions
+
+`--unanswerable N` adds N questions the corpus cannot answer, to measure
+whether the chain declines them
+([Evaluation: unanswerable questions](./evaluate.md#unanswerable-questions-and-declines)).
+They come from MuSiQue-Full, which pairs every answerable question with an
+unanswerable twin: the same question with one or more supporting paragraphs
+replaced by distractors. The full dev split is downloaded the same way
+(pinned mirror revision, SHA-256 checked); `--data-path` takes a local
+`musique_full_v1.0_*.jsonl`, and an answerable-only file is a usage error.
+
+Pooled naively, many of them are answerable after all, so each is checked
+against the corpus being written:
+
+- **Its twin.** An unanswerable question whose answerable twin is in the
+  sample is left out: the twin's paragraphs give the removed one back.
+- **Other questions.** MuSiQue reuses paragraphs across questions. A question
+  is left out when the exact text (whitespace-normalized) of a removed
+  paragraph is anywhere in the pooled corpus, or when one of its own
+  paragraphs is a removed paragraph of a question already kept. On the dev
+  split this drops 34-50% of the candidates for 100-200 answerable plus
+  100-200 unanswerable questions.
+
+The output reports the counts (`unanswerable_filter`: `requested`, `kept`,
+`examined`, `excluded_twin`, `excluded_contaminated`, `excluded_no_twin`),
+and fails with exit 2 when fewer than N pass (ask for fewer, or fewer
+answerable questions). Unanswerable rows have the query id
+`<id>__unanswerable`, `metadata.answerable: false`, no `answer` or
+`reference_sources`, `metadata.benchmark: musique-full-unanswerable` and the
+twin's answer (`metadata.twin_answer`, `twin_answer_aliases`): an answer that
+names it came from a near-duplicate paragraph the exact-text filter cannot
+see, or from the model's own knowledge. The answerable questions are then the
+answerable half of the full file (`musique-full-answerable`), the same sample
+the seed draws without `--unanswerable`.
+
+`--hops` picks the hop counts: `--hops 3,4` samples both kinds from 3- and
+4-hop questions only; `--hops 2=50,3=50,4=100` draws exactly that many
+answerable questions per hop count (instead of `--limit`), to oversample the
+longer chains. Sampling is deterministic per `--seed`.
+
+```bash
+# 150 answerable (oversampling 3-4 hops) + 150 unanswerable questions.
+prepare-benchmark musique --output-directory bench/unans \
+  --hops 2=50,3=50,4=50 --unanswerable 150
+
+run-ingestion --source-directory bench/unans/corpus --config-path musique.yaml
+run-eval --data-path bench/unans/eval_data.json --suffix musique \
+  --search-strategy local,mix --config-path musique-mark.yaml
+```
+
+with `musique-mark.yaml` = `musique.yaml` plus `search.abstention.mode: mark`.
+Ingestion cost is about 19 paragraphs a question, as for answerable ones.
 
 ## Reading the scores
 

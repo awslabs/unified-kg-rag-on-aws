@@ -28,13 +28,22 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
 - `grouped_statistics`: the same split by `search_strategy` (the strategy
   actually used, which varies under `auto`), `category`, `difficulty` and
   `source_type` (the retrieval metrics per source section type).
-- `abstention_statistics`: how often the chain returned its fixed no-context
-  reply ("I could not find relevant information…"): `abstained`, `answered`,
-  `abstention_rate`, `per_strategy`, and an `unanswerable` block for
-  `answerable: false` items. The chain returns that reply only when retrieval
-  finds nothing, and a model declining in its own words is not detected, so
-  on a populated index the `unanswerable` rate is a lower bound on correct
-  declines. Each result carries `abstained`.
+- `abstention_statistics`: how often the chain declined (`abstained`: its
+  fixed no-context reply "I could not find relevant information…", and under
+  `search.abstention.mode: mark` an answer starting with `[NO_ANSWER]` or one
+  declined by the insufficient-context policy): `abstained`, `answered`,
+  `abstention_rate`, `per_strategy`. With `answerable: false` items:
+  `unanswerable` and `answerable` blocks of the same shape, `precision`
+  (declines on unanswerable items / all declines; `null` without any),
+  `recall` (unanswerable items declined) and `f1`. With `answer_match`:
+  `answer_match` {metric: `coverage`, `accuracy`, `selective_accuracy`,
+  `overall_accuracy`} over the answerable items (a decline scores 0;
+  `overall_accuracy`, present with unanswerable items, counts a decline on
+  one as correct). With `mode: off` a model declining in its own words is not
+  detected, so `recall` is a lower bound. Each result carries `abstained`;
+  an `answer_match` report of a decline carries `abstained: true` and 0 on
+  every metric
+  ([Unanswerable questions and declines](../guides/evaluate.md#unanswerable-questions-and-declines)).
 - `answer_span_statistics`: the `answer_span` exact match and token F1
   read, the reports `scored` and the extracted spans that fell back to the
   first line (`fallbacks`).

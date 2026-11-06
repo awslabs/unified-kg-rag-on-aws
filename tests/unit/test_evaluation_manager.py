@@ -1481,6 +1481,63 @@ class TestAbstention:
             "skipped": 2,
         }
 
+    async def test_declines_are_scored_against_answerability(
+        self, config: Config
+    ) -> None:
+        no = {"answerable": False}
+        marked = {"abstained": True, "abstention_reason": "marker"}
+        results, reports, summary = await self._run(
+            config,
+            [
+                ("A?", "Vendor ships.", {}, {}),
+                # A decline that names the gold entity is still not an answer.
+                ("B?", "The context names Vendor but not the depot.", marked, {}),
+                ("C?", "Buyer ships.", {}, {}),
+                ("D?", "정보가 없습니다.", marked, no),
+                ("E?", "A confident guess.", {}, no),
+            ],
+        )
+        assert [r.abstained for r in results] == [False, True, False, True, False]
+        by_id = {r.query_id: r for r in reports}
+        assert by_id["q1"].metadata["abstained"] is True
+        assert {m.value for m in by_id["q1"].metrics} == {0.0}
+        stats = summary.abstention_statistics
+        assert stats["unanswerable"]["abstained"] == 1
+        assert stats["answerable"] == {
+            "abstained": 1,
+            "answered": 3,
+            "abstention_rate": pytest.approx(1 / 3),
+        }
+        assert stats["precision"] == 0.5 and stats["recall"] == 0.5
+        assert stats["f1"] == 0.5
+        contains = stats["answer_match"]["answer_contains"]
+        assert contains["coverage"] == pytest.approx(2 / 3)
+        assert contains["accuracy"] == pytest.approx(1 / 3)
+        assert contains["selective_accuracy"] == 0.5
+        # A, plus the correct decline of D, over all five.
+        assert contains["overall_accuracy"] == pytest.approx(2 / 5)
+
+    async def test_no_decline_means_no_precision(self, config: Config) -> None:
+        _, _, summary = await self._run(
+            config,
+            [
+                ("A?", "Vendor ships.", {}, {}),
+                ("B?", "Vendor.", {}, {"answerable": False}),
+            ],
+        )
+        stats = summary.abstention_statistics
+        assert stats["precision"] is None
+        assert stats["recall"] == 0.0 and stats["f1"] == 0.0
+        # Without unanswerable items: coverage and accuracy only.
+        _, _, summary = await self._run(config, [("A?", "Vendor ships.", {}, {})])
+        stats = summary.abstention_statistics
+        assert "precision" not in stats
+        assert stats["answer_match"]["answer_contains"] == {
+            "coverage": 1.0,
+            "accuracy": 1.0,
+            "selective_accuracy": 1.0,
+        }
+
     def test_answerable_must_be_boolean(self, tmp_path) -> None:
         path = tmp_path / "eval.json"
         path.write_text(

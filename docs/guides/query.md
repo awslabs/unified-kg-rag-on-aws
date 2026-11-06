@@ -152,6 +152,8 @@ search:
   (`abstention_reason: insufficient_context`). Neither adds a model call.
 - `mark` changes the answer prompt, so answers and EM / F1 can change. It is
   opt-in until a measured run decides; compare `mark` runs as their own arm.
+  How declines are scored:
+  [Evaluation: unanswerable questions](./evaluate.md#unanswerable-questions-and-declines).
 
 ## Interactive mode & conversation memory
 
