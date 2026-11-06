@@ -67,10 +67,10 @@ ships no price table, because one would go stale.
 
 | Setting | Default | Measured |
 |---|---|---|
-| `search.answer_prompt_style` | `{global: comprehensive}` | Comprehensive global answers beat concise ones on comprehensiveness, diversity and empowerment at 0.95-0.99 with all three judges, +$0.016 per query; they lose directness. DRIFT stays concise for its latency ([Answer style](#answer-style)) |
+| `search.answer_prompt_style` | `{global: comprehensive}` | Comprehensive global answers beat concise ones on comprehensiveness, diversity and empowerment at 0.95-0.99 with all three judges, +$0.016 per query, and at 0.89-0.95 with a judge that compares only what each answer adds; they lose directness (0.29 [0.19, 0.39] with that judge). DRIFT stays concise for its latency ([Answer style](#answer-style)) |
 | `search.global_search.evidence_tokens` | 4000 | -41% cost per global query against no cap, no consistent quality difference, sources kept ([Global evidence cap](#global-evidence-cap)) |
 | `models.roles.evaluation` | Opus 5.5 on Bedrock | Against a GPT-5.5 judge, a Sonnet 5.5 judge shifted directness by -0.27 [-0.38, -0.16] when it judged its own answers ([The evaluation judge](#the-evaluation-judge)) |
-| `processing.gleaning.max_rounds` | 3 | Within one ingestion, round 1 adds +6.0 points of bridge relationships and rounds 2-3 +2.0; decomposition answers found as graph entities +1.3 points [+0.4, +2.3] over extraction alone, +0.4 [0.0, +1.0] from rounds 2-3. Gleaning is 47% of the ingestion cost ([Gleaning rounds](#gleaning-rounds)) |
+| `processing.gleaning.max_rounds` | 3 | Within one ingestion, round 1 adds +6.0 points of bridge relationships and rounds 2-3 +2.0; decomposition answers found as graph entities +1.3 points [+0.4, +2.3] over extraction alone, +0.4 [0.0, +1.0] from rounds 2-3. Gleaning is 47% of the ingestion cost. Answers with round 1 alone against 3 rounds were mixed: `local` `answer_contains` -3.0 [-6.5, 0.0], `mix` EM +5.0 [+1.0, +9.5] ([Gleaning rounds](#gleaning-rounds)) |
 | `search.lightrag_search.kg_chunk_pick_method` | `weight` | `vector` n.s. on `mix` and `hybrid`, +1.5 s latency ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.fusion.diversity_lambda` | 0.5 | 0.7 and 1.0 n.s. on `mix` ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.abstention.mode` | `off` | `mark` against `off` on 100 answerable and 100 unanswerable multi-hop questions: EM -12 points [-20, -5] on `local`, -10 [-18, -3] on `mix`, for decline recall +8 [+3, +13] over the declines the model already writes in prose. Machine-readable declines, so opt-in ([Declines and abstention](#declines-and-abstention)) |
@@ -79,6 +79,8 @@ ships no price table, because one would go stale.
 | `search.local_search.text_unit_ranking` | `ppr` | Against `support` on 200 MuSiQue questions, two repeats: `answer_contains` +3.5 points [+0.5, +6.75], recall@5 +6.1 [+2.9, +9.4], EM and token F1 n.s.; +0.10 s retrieval a query ([Local PPR ranking](#local-ppr-ranking)) |
 | `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant, +3.08 s per answer ([Retrieval switches](#retrieval-switches)) |
 | `search.auto_routable_strategies` | `local`, `mix`, `global`, `iterative` | `iterative` over `mix` against `mix` on multi-hop questions: `answer_contains` +12.5 points [+7.5, +18.0], token F1 +5.2 [+0.2, +10.1], last hop in the context +21.5; p95 11.1 s to 27.4 s, +$0.002 a query. `decompose` was no better than the loop, so it stays off ([Iterative follow-up rounds](#iterative-follow-up-rounds)) |
+| `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions: answers n.s. (`answer_contains` +4.0 [-1.0, +10.0]), recall@5 -8.7 [-13.6, -3.8], +5.5 s and +$0.0062 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions ([RAPTOR summary tree](#raptor-summary-tree)) |
+| `aws.bedrock.ingestion_effort` | `null` (`default_effort`, `high`) | `low` on a 109-document slice: ingestion cost -19%, answers n.s. on 30 questions ([Ingestion effort](#ingestion-effort)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
 
 ## Answer style
@@ -98,10 +100,24 @@ concise ones:
 consistency 0.92-0.96) for +$0.0169 per query. Its latency is why it stays
 concise: see [Query deadlines and model timeouts](#query-deadlines-and-model-timeouts).
 
-Pairwise LLM judges favour the longer answer, so these win rates measure
-coverage more than quality for every reader. The directness loss is the
-cost, and `search.answer_prompt_style: {global: concise}` keeps the short
-answers ([Answer style](./retrieval.md#answer-style)).
+Pairwise LLM judges favour the longer answer, so a run on 2026-11-06
+re-judged the same saved answers (no answer call) with a judge built to
+discount length, an experiment that is not in the package: Haiku 5.5
+split each pair into the points both answers make and the points unique to
+each, and Opus 5.5 judged the unique points alone, in both orders.
+
+| Strategy | Judged | Orders agreed | Comprehensiveness | Diversity | Empowerment | Directness |
+|---|---|---|---|---|---|---|
+| `global` | 49 of 50 (one split failed) | 81% | 0.95 [0.89, 0.99] | 0.91 [0.85, 0.97] | 0.89 [0.83, 0.94] | 0.29 [0.19, 0.39] |
+| `drift` | 50 | 79% | 0.94 [0.89, 0.98] | 0.87 [0.81, 0.93] | 0.80 [0.70, 0.89] | 0.41 [0.30, 0.52], n.s. |
+
+The comprehensive answers still won the three coverage criteria, so their
+lead is not length alone. Their directness cost is smaller than the
+standard Opus 5.5 judge's 0.02 (`global`) and 0.04 (`drift`) suggest: 0.29
+for `global`, and not significant for `drift`. This is one judge model on
+one question set.
+`search.answer_prompt_style: {global: concise}` keeps the short answers
+([Answer style](./retrieval.md#answer-style)).
 
 ## Global evidence cap
 
@@ -165,11 +181,50 @@ failed extractions and named some entities differently ("Rio Linda,
 Sacramento, CA" as one entity). Of the 7 answers only the 3-round run found,
 at most one came from gleaning.
 
-MuSiQue paragraphs are about 110 tokens; the GraphRAG paper motivates
-gleaning with 600-2,400-token chunks, which this index does not test. 3
-rounds stays the default until a measurement of answers decides it;
+**Answers.** A run on 2026-11-06 measured the answers on the repaired
+index ([Limits of the evidence](#limits-of-the-evidence)) against a copy
+with round 1 alone: everything rounds 2-3 wrote removed by its write time
+(52 entities and 1,291 relationships that rounds 2-3 corrected kept their
+corrected form, as no earlier version was stored), the communities and
+reports unchanged. On the 200 MuSiQue questions, one repeat, round 1 alone
+against 3 rounds:
+
+| Strategy | Answers | Query cost |
+|---|---|---|
+| `local` | `answer_contains` -3.0 points [-6.5, 0.0] (2 wins, 8 losses), borderline; EM -2.0 and token F1 -2.2, n.s. | -$0.0006 a query |
+| `mix` | EM +5.0 [+1.0, +9.5] (14 wins, 4 losses); `answer_contains` 0.0 and token F1 +2.1, n.s. | -$0.0032 a query (-6%) |
+| `hybrid` | n.s. on every metric | -$0.0032 a query |
+
+So the answers do not favour either setting: `local` lost on one metric at
+the edge of significance and `mix` gained on another. 3 rounds stays the
+default; a second repeat of `local` would settle its difference. MuSiQue
+paragraphs are about 110 tokens; the GraphRAG paper motivates gleaning
+with 600-2,400-token chunks, which this index does not test.
 `max_rounds: 1` keeps most of the relationship gain at about a third of
 the gleaning cost ([Cost levers](../guides/ingest.md#cost-levers)).
+
+## Ingestion effort
+
+`aws.bedrock.ingestion_effort` sets the reasoning effort of the default
+tier's ingestion calls without changing the queries'. A run on 2026-11-06
+ingested the 109-document slice twice with that day's code, `low` against
+`high` (the `default_effort` that `null` inherits), and answered its 30
+questions from each, one repeat:
+
+- **Ingestion.** $15.11 to $12.31 at the list prices (-19%), output tokens
+  -24%, 419 s to 384 s. The graph had 11% fewer entities and 20% fewer
+  relationships, but more of the questions' 82 decomposition answers were
+  graph entities by exact name with `low` (64 against 61; 79 each by a
+  looser match). No text unit was left without an extraction in either
+  run.
+- **Answers.** n.s. on `local` and `mix` (30 questions: `answer_contains`
+  +3.3 [-6.7, +13.3] and 0.0 [-10.0, +10.0], `low` against `high`).
+- **Queries.** Over the smaller graph: -$0.003 and -$0.004 a query, -2.7 s
+  and -1.6 s (`local`, `mix`), all significant.
+
+So `low` is a cost lever of about a fifth of the ingestion. Thirty
+questions cannot show a small quality loss, so the default is unchanged
+([Cost levers](../guides/ingest.md#cost-levers)).
 
 ## LightRAG chunk picking and MMR diversity
 
@@ -367,6 +422,32 @@ relying on it. To keep `auto` off it, list the strategies without
 search:
   auto_routable_strategies: [local, mix, global]
 ```
+
+## RAPTOR summary tree
+
+`tree` searches the text units and every level of a summary tree (§6.5 of
+the [Design Doc](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)).
+A run on 2026-11-06 (package at commit `1d11766b`) built the tree on a copy
+of the repaired index with `run-ingestion --enabled-stages summary_tree`
+and `models.roles.summary_tree: fast`: 603 summaries in 4 levels over the
+3,318 text units, 603 Haiku 5.5 calls (1.09M input and 0.36M output
+tokens), $0.29 at the list prices, in 288 s.
+
+On 100 of the 200 MuSiQue questions, one repeat, paired on the same
+questions:
+
+| Arm against `naive` | Answers | Retrieval | Latency and cost |
+|---|---|---|---|
+| `tree` | `answer_contains` +4.0 points [-1.0, +10.0], EM +4.0 [-2.0, +10.0], token F1 +2.8 [-2.3, +8.1]: all n.s. | recall@5 -8.7 [-13.6, -3.8] and MRR -3.3 [-6.7, -0.6]: the 5.2 summaries a context gained take source slots; the text units' own recall@5 +0.8, n.s. | +5.5 s [+4.9, +6.2] (5.1 s to 10.6 s); +$0.0062 a query ($0.0163 to $0.0225), the summaries' 3,075 input tokens |
+| `mix` | `answer_contains` +19.0 [+11.0, +27.0], EM +15.0 [+8.0, +23.0] | recall@5 +2.5, n.s. | +4.3 s; +$0.0407 a query |
+| `local` | `answer_contains` +18.0 [+7.0, +29.0], EM +10.0 [+1.0, +19.0] | recall@5 +2.0, n.s. | +5.0 s; +$0.0266 a query |
+
+So on multi-hop questions over short paragraphs the tree is cheap to
+build and answers within the noise of `naive`, well below the graph
+strategies, at twice `naive`'s latency. That is why `raptor` is not in the
+default `indexing.methodologies` and `auto` does not route to `tree`.
+Not measured: sensemaking questions, long documents, `scope: document`
+and `algorithm: gmm`.
 
 ## Query deadlines and model timeouts
 
@@ -570,8 +651,9 @@ excludes zero.
 
 ## Limits of the evidence
 
-- **One corpus, one model family.** MuSiQue is English, multi-hop
-  Wikipedia text; the answers came from Claude models on Bedrock. A
+- **One corpus, one model family.** Every answer measurement ran on a
+  single corpus, MuSiQue (English, multi-hop Wikipedia text, or a slice
+  of it); the answers came from Claude models on Bedrock. A
   default that was n.s. here may matter on your corpus: measure it there.
 - **LLM judges.** Pairwise judges favour longer answers and, as measured
   above, their own model's answers. Read win rates with the position
@@ -579,9 +661,16 @@ excludes zero.
 - **Embedded stores.** Latencies were measured on the SQLite stores, not on
   Neptune and OpenSearch, except the 90 s and 180 s timeouts, which come
   from real-AWS runs.
-- **A partial graph.** In the measured index, 138 of 3,318 text units (4.2%)
-  had no extraction (a model output the parser could not read); every arm
-  read the same graph, so the comparisons are paired, but absolute scores
-  are lower than a complete graph would give.
+- **A partial graph in the first runs.** In the index the first runs
+  measured (package at `f04ee50d`: answer style, the global evidence cap,
+  the judge, gleaning's graph recall, LightRAG chunk picking and MMR, the
+  retrieval switches and local report selection), 138 of 3,318 text units
+  (4.2%) had no extraction (a model output the parser could not read).
+  Every arm read the same graph, so those comparisons are paired, but
+  their absolute scores are lower than a complete graph would give. A
+  later run extracted those 138 units into a copy (0 units left without
+  one, $13.93), and the gleaning answers, the PPR ranking, the `ppr`
+  strategy, `iterative` and the summary tree were measured on that
+  repaired copy.
 - **Costs are upper bounds** when the prompt cache hit, and they use the
   dated list prices above.
