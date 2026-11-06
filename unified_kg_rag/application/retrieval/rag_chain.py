@@ -1378,7 +1378,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             if marked and self.config.search.abstention.strip_marker:
                 state["answer"] = rest or NO_CONTEXT_ANSWER
         if self._declines_insufficient(state):
-            # Declined by policy, whatever the model wrote.
+            # Declined by policy, whatever the model wrote: an answer it gave
+            # instead of the decline is not shown.
+            if not marked:
+                state["answer"] = NO_CONTEXT_ANSWER
             state["abstention_reason"] = REASON_INSUFFICIENT_CONTEXT
         else:
             state["abstention_reason"] = REASON_MARKER if marked else None
@@ -2147,6 +2150,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 if self._reads_marker(state)
                 else None
             )
+            # Under on_insufficient: abstain only a decline is shown; an
+            # answer the model wrote instead becomes the fixed reply.
+            declining = marker is not None and self._declines_insufficient(state)
             while True:
                 async with deadline.scope(started):
                     try:
@@ -2160,6 +2166,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 chunks.append(text)
                 if not self._screen_outputs:
                     shown = marker.feed(text) if marker is not None else text
+                    if declining and marker is not None and not marker.marked:
+                        shown = ""
                     if shown:
                         delivered = True
                         yield shown
@@ -2183,6 +2191,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     yield verdict.text
             elif marker is not None:
                 rest = marker.finish()
+                if declining and not marker.marked:
+                    rest = ""
                 if not delivered and not rest and state["answer"]:
                     # Only the token: the stripped answer's fixed reply.
                     rest = state["answer"]

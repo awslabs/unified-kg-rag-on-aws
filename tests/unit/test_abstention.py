@@ -9,6 +9,8 @@ from __future__ import annotations
 import ast
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
@@ -120,6 +122,77 @@ def test_the_stream_filter_matches_detection_for_any_chunking(
     assert _streamed(text, size) == (marked, shown)
     # Kept as written when not stripped, still detected.
     assert _streamed(text, size, strip=False) == (marked, text)
+
+
+# Pieces a streamed answer is made of: decoration, the token (in its
+# variants), separators, words in several scripts and whitespace.
+_PIECES = st.sampled_from(
+    [
+        "[NO_ANSWER]",
+        "［NO_ANSWER］",
+        "【NO_ANSWER】",
+        "[no answer]",
+        "[NO-ANSWER]",
+        "[NOTE]",
+        "**",
+        "## ",
+        "> ",
+        '"',
+        ": ",
+        " - ",
+        " ",
+        "  ",
+        "\n",
+        "\n\n",
+        "\t",
+        "The",
+        " context",
+        " lacks it.",
+        "공급업체 ",
+        "정보가 없습니다.",
+        "文脈には",
+        "上下文中没有。",
+    ]
+)
+
+
+@given(
+    pieces=st.lists(_PIECES, max_size=12),
+    sizes=st.lists(st.integers(min_value=1, max_value=9), min_size=1, max_size=40),
+)
+def test_a_streamed_answer_shows_what_detection_leaves(
+    pieces: list[str], sizes: list[int]
+) -> None:
+    # Any answer, cut at any chunk boundaries: the stream decides as the
+    # whole answer is decided, and shows what split_marker leaves of it, up
+    # to the whitespace that ends it (shown text is never taken back).
+    answer = "".join(pieces)
+    chunks, start = [], 0
+    while start < len(answer):
+        size = sizes[len(chunks) % len(sizes)]
+        chunks.append(answer[start : start + size])
+        start += size
+    for strip in (True, False):
+        marker = MarkerStreamFilter(strip=strip)
+        shown = "".join([marker.feed(c) for c in chunks] + [marker.finish()])
+        marked, rest = split_marker(answer)
+        assert marker.marked is marked
+        if marked and strip:
+            assert shown.strip() == rest
+            assert answer.endswith(shown) and not shown[:1].isspace()
+        else:
+            assert shown == answer
+
+
+def test_a_chunk_boundary_after_the_marker_keeps_the_space_between_words() -> None:
+    # "[NO_ANSWER] The " + "context ..." was shown as "Thecontext ...".
+    assert _streamed("[NO_ANSWER] The context lacks it.", 16) == (
+        True,
+        "The context lacks it.",
+    )
+    marker = MarkerStreamFilter()
+    assert marker.feed("[NO_ANSWER] 공급업체 ") == "공급업체 "
+    assert marker.feed("정보가 없습니다.") == "정보가 없습니다."
 
 
 def test_the_stream_filter_holds_back_at_most_the_lookahead() -> None:
@@ -370,6 +443,26 @@ async def test_abstain_counts_even_when_the_model_answers(config: Config) -> Non
     _flag_insufficient(chain)
     out = await chain.ainvoke(_query())
     assert out.metadata["abstention_reason"] == "insufficient_context"
+    # The answer the model wrote instead of the decline is not returned.
+    assert out.answer == NO_CONTEXT_ANSWER
+
+
+async def test_a_streamed_abstain_shows_no_answer_the_model_wrote_instead(
+    config: Config,
+) -> None:
+    config.search.abstention.on_insufficient = "abstain"
+    chain, _ = _chain(config, lambda _s: "Vendor supplies Buyer.")
+    _flag_insufficient(chain)
+    chunks = [chunk async for chunk in chain.astream(_query())]
+    assert "".join(chunks) == NO_CONTEXT_ANSWER
+
+
+async def test_a_streamed_abstain_shows_the_model_s_decline(config: Config) -> None:
+    config.search.abstention.on_insufficient = "abstain"
+    chain, _ = _chain(config, _declining)
+    _flag_insufficient(chain)
+    chunks = [chunk async for chunk in chain.astream(_query())]
+    assert "".join(chunks) == "컨텍스트에 공급업체 정보가 없습니다."
 
 
 async def test_the_no_context_reply_names_its_reason(config: Config) -> None:

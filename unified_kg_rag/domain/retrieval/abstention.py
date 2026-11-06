@@ -46,8 +46,9 @@ REASON_MARKER = "marker"
 REASON_INSUFFICIENT_CONTEXT = "insufficient_context"
 
 # Characters a streamed answer holds back, at most, before the marker is
-# ruled in or out: leading decoration plus the token.
-MARKER_LOOKAHEAD = 32
+# ruled in or out (leading decoration plus the token), and the characters
+# detection reads: the stream and the whole answer decide alike.
+MARKER_LOOKAHEAD = 64
 
 # Decoration a model puts before the token: whitespace, Markdown emphasis,
 # heading and quote marks, code ticks, quotes.
@@ -67,16 +68,25 @@ def split_marker(answer: str) -> tuple[bool, str]:
     The remainder is the model's own explanation, stripped of surrounding
     whitespace; it may be empty.
     """
-    head = answer[: MARKER_LOOKAHEAD * 2]
+    end = _marker_end(answer)
+    if end is None:
+        return False, answer
+    return True, answer[end:].strip()
+
+
+def _marker_end(answer: str) -> int | None:
+    """Where the decline marker that starts ``answer`` ends (``None``: it
+    does not start with one). Only the first :data:`MARKER_LOOKAHEAD`
+    characters are read, so a stream decides on what it holds back."""
+    head = answer[:MARKER_LOOKAHEAD]
     normalized = unicodedata.normalize("NFKC", head)
     match = _MARKER.match(normalized)
     if match is None:
-        return False, answer
+        return None
     # NFKC can change the length of what precedes the end of the match
     # (one full-width character stays one character, but a compatibility
     # ligature can expand), so the cut is found again on the original.
-    consumed = _original_length(head, match.end())
-    return True, answer[consumed:].strip()
+    return _original_length(head, match.end())
 
 
 def _original_length(head: str, normalized_end: int) -> int:
@@ -107,9 +117,16 @@ class MarkerStreamFilter:
 
     ``feed`` returns the text that may be shown now: nothing while the start
     of the answer could still be the marker (at most
-    :data:`MARKER_LOOKAHEAD` characters), then everything. ``marked`` tells,
-    once decided, whether the answer started with the marker. With
+    :data:`MARKER_LOOKAHEAD` characters; after the marker, until the first
+    character of the explanation), then everything. ``marked`` tells, once
+    decided, whether the answer started with the marker. With
     ``strip=False`` the text passes through unchanged (still detected).
+
+    What it shows is what :func:`split_marker` leaves of the whole answer,
+    up to the whitespace that ends it (a stream cannot take back what it
+    showed): the explanation is cut at the end of the marker and only its
+    leading whitespace is dropped, so a chunk boundary never joins two
+    words.
     """
 
     def __init__(self, *, strip: bool = True) -> None:
@@ -122,18 +139,15 @@ class MarkerStreamFilter:
         if self._decided:
             return chunk
         self._buffer += chunk
-        marked, rest = split_marker(self._buffer)
-        if marked and (rest or len(self._buffer) >= MARKER_LOOKAHEAD):
-            return self._decide(True, rest)
-        if (
-            not marked
-            and len(self._buffer) < MARKER_LOOKAHEAD
-            and _could_become_marker(self._buffer)
-        ):
+        end = _marker_end(self._buffer)
+        if end is not None:
+            # Marked; the explanation starts at its first visible character
+            # (more decoration or a separator may still follow the token).
+            rest = self._buffer[end:].lstrip()
+            return self._decide(True, rest) if rest else ""
+        if len(self._buffer) < MARKER_LOOKAHEAD and _could_become_marker(self._buffer):
             return ""
-        if not marked:
-            return self._decide(False, self._buffer)
-        return ""
+        return self._decide(False, self._buffer)
 
     def finish(self) -> str:
         """The text still held back when the stream ends."""
