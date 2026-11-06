@@ -61,6 +61,11 @@ units (`fallback_chunk_size` 4,800 characters), scaled from short units
 | 16384 | about 100,000-160,000 |
 | 30720 | about 200,000-300,000 |
 
+The `raptor` summary tree is built over every stored text unit, not only
+the run's: about 50 KiB per text unit of one tree at its peak (1,024
+dimensions; `indexing.summary_tree.max_leaves_in_memory`, 100,000, about
+5 GiB, bounds it).
+
 Keep a margin: the `IngestionTaskMemory` alarm fires at 90%, and a task over
 its memory is killed with the running stage lost. A larger corpus can also
 be ingested in several incremental runs, each within the budget. The task's

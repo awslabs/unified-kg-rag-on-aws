@@ -257,8 +257,18 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "aws.dynamodb.create_table_if_missing": _neutral("provisions the table"),
     "aws.dynamodb.billing_mode": _neutral("provisions the table"),
     # --- the per-document stages -------------------------------------------
-    "processing.chunking": Keyed(_P.TEXT_CHUNKING),
-    "processing.translation": Keyed(_P.TRANSLATION),
+    **_keyed_at(
+        _P.TEXT_CHUNKING,
+        "processing.chunking",
+        "custom_prompts.text_chunking_system",
+        "custom_prompts.text_chunking_human",
+    ),
+    **_keyed_at(
+        _P.TRANSLATION,
+        "processing.translation",
+        "custom_prompts.text_translation_system",
+        "custom_prompts.text_translation_human",
+    ),
     **_keyed_at(
         _P.GRAPH_EXTRACTION,
         "processing.graph_extraction",
@@ -484,6 +494,12 @@ _KEYED_ONCE_SET = frozenset(
         *(f"indexing.summary_tree.{name}" for name in SummaryTreeConfig.model_fields),
         *(f"search.tree_search.{name}" for name in TreeSearchConfig.model_fields),
         "search.token_manager.type_budgets.summary",
+        # Overrides of the chunker's and the translator's prompts, added
+        # after them: unset, the prompts are the ones keyed before.
+        "custom_prompts.text_chunking_system",
+        "custom_prompts.text_chunking_human",
+        "custom_prompts.text_translation_system",
+        "custom_prompts.text_translation_human",
     }
 )
 
@@ -572,7 +588,14 @@ _IN_EFFECT_WHEN: dict[str, Callable[[Config], bool]] = {
             "graph_refinement": "processing.gleaning",
             "claim_extraction": "processing.claim_extraction",
             "community_report": "graph.community_detection.report_generation",
+            "text_translation": "processing.translation",
         }.items()
+        for part in ("system", "human")
+    },
+    **{
+        f"custom_prompts.text_chunking_{part}": lambda c: (
+            c.processing.chunking.chunker_type is ChunkingStrategy.INTELLIGENT
+        )
         for part in ("system", "human")
     },
 }
@@ -1136,19 +1159,68 @@ def chunk_boundary_fingerprint(config: Config) -> str:
 _ANSWER_FORMAT_VERSION = 1
 
 
+# The format of a text unit's translation record: bump it when the record or
+# the way the translator reads it changes.
+_TRANSLATION_FORMAT_VERSION = 1
+
+
+def translation_fingerprint(config: Config) -> str:
+    """Fingerprint the settings a text unit's translations depend on beside
+    its text: the settings of every model call, the translation model
+    resolved through its tier, the source language, the languages it is
+    translated into and the translation prompt (code, or its
+    ``custom_prompts`` override). The extraction store keys a unit's
+    translations by it and the hash of the unit's text
+    (``contributions.record_key``), so a reset or an edited document's
+    untouched text is not translated again, and extraction, which reads the
+    translation, reuses its records too.
+    """
+    from unified_kg_rag.domain.prompts import TextTranslationPrompt
+
+    translation = config.processing.translation
+    # The section's languages are keyed below; its switch is on whenever a
+    # unit is translated.
+    settings = {
+        path: value
+        for path, value in _settings(
+            config,
+            lambda rule: rule.per_document
+            and (rule.stage is None or rule.stage is _P.TRANSLATION),
+        ).items()
+        if not path.startswith("processing.translation.")
+    }
+    resolved = TextTranslationPrompt.resolve(config.custom_prompts)
+    return _digest(
+        {
+            "record": "translation",
+            "version": _TRANSLATION_FORMAT_VERSION,
+            "settings": settings,
+            "source_language": translation.source_language.value,
+            "languages": translation.translated_languages,
+            "prompt": compute_hash(
+                resolved.system_prompt_template + "\n" + resolved.human_prompt_template
+            ),
+        }
+    )
+
+
 def _answer_fingerprint(
-    config: Config, record: str, role: ModelRole, prompt: Any, section: str
+    config: Config, record: str, role: ModelRole, prompt: Any, section: str | None
 ) -> str:
     """Fingerprint the settings a corpus-wide model answer depends on beside
     its input text: the settings of every model call, the ``role``'s model
-    resolved through its tier, the config ``section`` the stage reads, the
-    index language (``index_language``) and ``prompt`` (code, or its ``custom_prompts``
-    override)."""
+    resolved through its tier, the config ``section`` the stage reads (none
+    when the input text holds all of it the answer depends on), the index
+    language (``index_language``) and ``prompt`` (code, or its
+    ``custom_prompts`` override)."""
     from unified_kg_rag.domain.prompts.base import fill_slots
 
-    node: Any = config
-    for name in section.split("."):
-        node = getattr(node, name)
+    keyed: dict[str, Any] = {}
+    if section is not None:
+        node: Any = config
+        for name in section.split("."):
+            node = getattr(node, name)
+        keyed["section"] = to_jsonable_python(node)
     resolved = prompt.resolve(config.custom_prompts)
     return _digest(
         {
@@ -1158,7 +1230,7 @@ def _answer_fingerprint(
                 config, lambda rule: rule.per_document and rule.stage is None
             ),
             "model": to_jsonable_python(config.model_id(role)),
-            "section": to_jsonable_python(node),
+            **keyed,
             "target_language": index_language(config),
             "prompt": compute_hash(
                 fill_slots(
@@ -1193,7 +1265,10 @@ def community_report_fingerprint(config: Config) -> str:
     input (``_answer_fingerprint``). The extraction store keys the report's
     answer by it and the input's text, so a full build that packs a
     community's input again does not ask the model again (a reset of an
-    unchanged corpus)."""
+    unchanged corpus). Not ``report_generation``: the input as packed
+    reflects its packing budgets, and holds the report length the prompt
+    asks for, so a budget change re-asks only the reports whose input it
+    changed."""
     from unified_kg_rag.domain.prompts import CommunityReportPrompt
 
     return _answer_fingerprint(
@@ -1201,8 +1276,25 @@ def community_report_fingerprint(config: Config) -> str:
         "community_report",
         ModelRole.COMMUNITY_REPORT,
         CommunityReportPrompt,
-        "graph.community_detection.report_generation",
+        None,
     )
+
+
+def legacy_community_report_fingerprints(config: Config) -> list[str]:
+    """The fingerprints earlier versions keyed report answers by (with the
+    ``report_generation`` section): a report stored under one is reused, and
+    stored under the current one too."""
+    from unified_kg_rag.domain.prompts import CommunityReportPrompt
+
+    return [
+        _answer_fingerprint(
+            config,
+            "community_report",
+            ModelRole.COMMUNITY_REPORT,
+            CommunityReportPrompt,
+            "graph.community_detection.report_generation",
+        )
+    ]
 
 
 def index_language(config: Config) -> str:

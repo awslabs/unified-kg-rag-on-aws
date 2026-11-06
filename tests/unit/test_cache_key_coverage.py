@@ -117,6 +117,11 @@ _KEYED_ONCE_SET = frozenset(
                 "expand_children",
             )
         ),
+        # The chunker's and the translator's prompt overrides.
+        "custom_prompts.text_chunking_system",
+        "custom_prompts.text_chunking_human",
+        "custom_prompts.text_translation_system",
+        "custom_prompts.text_translation_human",
     }
 )
 

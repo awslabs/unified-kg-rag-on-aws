@@ -95,7 +95,11 @@ from unified_kg_rag.domain.ingestion.document_identity import (
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
-from unified_kg_rag.domain.ingestion.methodologies import built_artifacts
+from unified_kg_rag.domain.ingestion.methodologies import (
+    artifacts_to_build,
+    built_artifacts,
+    selected_stages,
+)
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_RECORD_FINGERPRINT,
@@ -120,6 +124,7 @@ from unified_kg_rag.domain.models import (
     Document,
     DocumentDelta,
     Entity,
+    IndexArtifact,
     IndexBuildRecord,
     PipelineContext,
     PipelineStageResult,
@@ -476,6 +481,7 @@ class DocumentLoadingStage(_RegistryStage):
     seed_conversions: tuple[SeedConversion, ...] = ()
     confirm: Callable[[str], bool] | None = None
     confirm_deletions: Callable[[str], bool] | None = None
+    rebuild_for_artifacts: Callable[[], bool] | None = None
 
     def __init__(
         self,
@@ -486,6 +492,7 @@ class DocumentLoadingStage(_RegistryStage):
         seed_conversions: Sequence[SeedConversion] = (),
         confirm: Callable[[str], bool] | None = None,
         confirm_deletions: Callable[[str], bool] | None = None,
+        rebuild_for_artifacts: Callable[[], bool] | None = None,
     ):
         super().__init__(PipelineStageType.DOCUMENT_LOADING, config, providers)
         # The run's seed graphs (bootstrap.load_seed_graphs): their shards
@@ -498,6 +505,10 @@ class DocumentLoadingStage(_RegistryStage):
         # Answers an incremental run's question before it deletes more than
         # indexing.max_deletion_share of its scope's documents; None cannot.
         self.confirm_deletions = confirm_deletions
+        # Whether the run's indexing.reset is the pipeline's rebuild for an
+        # artifact the namespace lacks (not the user's): its deletions are
+        # asked like an incremental run's.
+        self.rebuild_for_artifacts = rebuild_for_artifacts
         # Without parsing, the directory holds pre-parsed Document JSON.
         # Deduplication runs in this stage, after document identity is
         # assigned, so an incremental run can prefer indexed documents.
@@ -719,6 +730,9 @@ class DocumentLoadingStage(_RegistryStage):
             self.loader.source_directory,
             self.confirm,
             self.confirm_deletions,
+            guard_reset_deletions=(
+                self.rebuild_for_artifacts is not None and self.rebuild_for_artifacts()
+            ),
         )
 
     @staticmethod
@@ -1003,19 +1017,38 @@ class TranslationStage(PipelineStage):
         self,
         config: Config,
         providers: Providers | None = None,
+        reuse_stored: bool = True,
     ):
         super().__init__(PipelineStageType.TRANSLATION, config, providers)
         self.translation_config = self.config.processing.translation
         self.target_language = self.translation_config.target_language.value
+        # --force-rebuild translates every unit again (and refreshes the
+        # stored translations).
+        self.reuse_stored = reuse_stored
         # Build the Bedrock-backed translator lazily so a disabled / no-op stage
         # costs nothing (no LLM client, no calls).
         self._translator: TextUnitTranslator | None = None
+        self._store: ExtractionStore | None = None
 
     @property
     def translator(self) -> TextUnitTranslator:
         if self._translator is None:
-            self._translator = TextUnitTranslator(self.config, providers=self.providers)
+            # The units' translations are kept in the extraction store (by
+            # text and translation settings): a reset or an edited
+            # document translates only the text that changed.
+            self._store = ExtractionStore(
+                self.config,
+                self.providers.build_vector_indexer,
+                reuse=self.reuse_stored,
+            )
+            self._translator = TextUnitTranslator(
+                self.config, providers=self.providers, records=self._store
+            )
         return self._translator
+
+    def close(self) -> None:
+        if self._store is not None:
+            self._store.close()
 
     def _should_skip(self) -> str | None:
         """Return a reason to skip translation, or None to run it."""
@@ -1644,14 +1677,94 @@ def _nothing_to_index(context: PipelineContext) -> bool:
     return context.incremental_delta is not None and not context.documents
 
 
-class GraphAnalysisStage(PipelineStage):
+class _VisualizationExport:
+    """Writes ``visualization_data.json`` (``graph.visualization.export_data``)
+    for ``run-visualization``: the community detection stage with the
+    communities, the graph analysis stage without them when no community
+    detection runs (a LightRAG-only run)."""
+
+    config: Config
+    cache_directory: Path | None = None
+
+    def _visualization_outputs_dir(self, context: PipelineContext) -> Path | None:
+        # Unset outputs_directory -> the pipeline's cache dir, which the S3 cache
+        # sync uploads (a deployed task's local outputs/ is lost on exit).
+        if (
+            self.config.graph.visualization.outputs_directory
+            or not self.cache_directory
+        ):
+            return None
+        return self.cache_directory / context.pipeline_id / "visualization"
+
+    def _export_visualization(
+        self,
+        context: PipelineContext,
+        communities: Callable[[], tuple[dict[str, Any], dict[str, str]]],
+    ) -> None:
+        """Export the run's graph with ``communities()`` (the community data
+        and each node's level-0 community), unless the run's graph is an
+        incremental delta's."""
+        export = self.config.graph.visualization.export_data
+        delta = context.incremental_delta
+        if export and delta is not None and delta.unchanged:
+            # An incremental run's graph holds only the delta's documents:
+            # exporting it would replace the full graph's visualization data
+            # with a fragment.
+            logger.info(
+                "Visualization skipped: this incremental run's graph holds only "
+                "its %d new or changed documents, not the %d unchanged ones. "
+                "To visualize the whole graph, run a full build "
+                "(indexing.reset: true) and then run-visualization on its "
+                "visualization_data.json.",
+                len(delta.to_process),
+                len(delta.unchanged),
+            )
+        elif export and context.knowledge_graph:
+            self._write_visualization_data(context, communities)
+
+    def _write_visualization_data(
+        self,
+        context: PipelineContext,
+        communities: Callable[[], tuple[dict[str, Any], dict[str, str]]],
+    ) -> None:
+        """Write the graph and communities for ``run-visualization`` (no render).
+
+        Best effort: a failed write never fails the stage.
+        """
+        import json
+
+        from unified_kg_rag.domain.ingestion.visualization_data import (
+            DEFAULT_OUTPUTS_DIRECTORY,
+            VISUALIZATION_DATA_FILENAME,
+            graph_data,
+        )
+
+        viz = self.config.graph.visualization
+        outputs_dir = self._visualization_outputs_dir(context) or Path(
+            viz.outputs_directory or DEFAULT_OUTPUTS_DIRECTORY
+        )
+        path = outputs_dir / VISUALIZATION_DATA_FILENAME
+        try:
+            community_data, node_communities = communities()
+            data = graph_data(context.knowledge_graph, community_data, node_communities)
+            outputs_dir.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, default=str), encoding="utf-8")
+        except Exception as e:  # noqa: BLE001 - the export is optional
+            logger.warning("Visualization data export failed: %s", e)
+            return
+        logger.info("Exported visualization data to '%s'", path)
+
+
+class GraphAnalysisStage(_VisualizationExport, PipelineStage):
     def __init__(
         self,
         config: Config,
         providers: Providers | None = None,
+        cache_directory: Path | None = None,
     ):
         super().__init__(PipelineStageType.GRAPH_ANALYSIS, config, providers)
         self.analyzer = GraphAnalyzer(config)
+        self.cache_directory = Path(cache_directory) if cache_directory else None
 
     def _execute_core(
         self, context: PipelineContext
@@ -1685,9 +1798,23 @@ class GraphAnalysisStage(PipelineStage):
             },
         }
 
+        if not _detects_communities(self.config):
+            # No community detection follows to export the graph with its
+            # communities: export it without.
+            self._export_visualization(context, lambda: ({}, {}))
+
         input_count = len(entities) + len(relationships)
         output_count = len(entities)
         return input_count, output_count, metrics
+
+
+def _detects_communities(config: Config) -> bool:
+    """Whether a run of ``config`` runs community detection (its methodologies
+    read communities, and ``graph.community_detection.enabled``)."""
+    return (
+        config.graph.community_detection.enabled
+        and PipelineStageType.COMMUNITY_DETECTION in selected_stages(config)
+    )
 
 
 # Incident edges read per batch while a delta component's stored
@@ -1903,7 +2030,7 @@ def _neighbor_ids(graph: Any) -> dict[str, set[str]]:
     return {str(n): {str(m) for m in graph.neighbors(n)} for n in graph.nodes}
 
 
-class CommunityDetectionStage(_RegistryStage):
+class CommunityDetectionStage(_VisualizationExport, _RegistryStage):
     # Stored entities without a community linked to the small delta
     # components the last run clustered (``_whole_graph``).
     unclustered_stored = 0
@@ -1930,50 +2057,6 @@ class CommunityDetectionStage(_RegistryStage):
 
     def close(self) -> None:
         self.store.close()
-
-    def _visualization_outputs_dir(self, context: PipelineContext) -> Path | None:
-        # Unset outputs_directory -> the pipeline's cache dir, which the S3 cache
-        # sync uploads (a deployed task's local outputs/ is lost on exit).
-        if (
-            self.config.graph.visualization.outputs_directory
-            or not self.cache_directory
-        ):
-            return None
-        return self.cache_directory / context.pipeline_id / "visualization"
-
-    def _export_visualization_data(self, context: PipelineContext) -> None:
-        """Write the graph and communities for ``run-visualization`` (no render).
-
-        Best effort: a failed write never fails the stage.
-        """
-        import json
-
-        from unified_kg_rag.domain.ingestion.visualization_data import (
-            DEFAULT_OUTPUTS_DIRECTORY,
-            VISUALIZATION_DATA_FILENAME,
-            graph_data,
-        )
-
-        viz = self.config.graph.visualization
-        outputs_dir = self._visualization_outputs_dir(context) or Path(
-            viz.outputs_directory or DEFAULT_OUTPUTS_DIRECTORY
-        )
-        path = outputs_dir / VISUALIZATION_DATA_FILENAME
-        try:
-            data = graph_data(
-                context.knowledge_graph,
-                self.detector.export_community_data(),
-                {
-                    str(node): str(community)
-                    for node, community in self.detector.node_to_community_l0.items()
-                },
-            )
-            outputs_dir.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(data, default=str), encoding="utf-8")
-        except Exception as e:  # noqa: BLE001 - the export is optional
-            logger.warning("Visualization data export failed: %s", e)
-            return
-        logger.info("Exported visualization data to '%s'", path)
 
     def _check_report_failures(
         self, communities: list[Community], failed_community_ids: list[str]
@@ -2375,23 +2458,16 @@ class CommunityDetectionStage(_RegistryStage):
             evidenced, failed_community_ids
         )
 
-        export = self.config.graph.visualization.export_data
-        delta = context.incremental_delta
-        if export and delta is not None and delta.unchanged:
-            # An incremental run's graph holds only the delta's documents:
-            # exporting it would replace the full graph's visualization data
-            # with a fragment.
-            logger.info(
-                "Visualization skipped: this incremental run's graph holds only "
-                "its %d new or changed documents, not the %d unchanged ones. "
-                "To visualize the whole graph, run a full build "
-                "(indexing.reset: true) and then run-visualization on its "
-                "visualization_data.json.",
-                len(delta.to_process),
-                len(delta.unchanged),
-            )
-        elif export and context.knowledge_graph:
-            self._export_visualization_data(context)
+        self._export_visualization(
+            context,
+            lambda: (
+                self.detector.export_community_data(),
+                {
+                    str(node): str(community)
+                    for node, community in self.detector.node_to_community_l0.items()
+                },
+            ),
+        )
 
         communities_count = len(context.communities)
         reports_count = len(context.community_reports)
@@ -2647,7 +2723,16 @@ class IndexingStage(_RegistryStage):
         ):
             # An incremental run that found nothing to index wrote no item:
             # the indices keep the record of the run that did.
-            counters = self._record_build(context, text_units, communities)
+            counters = self._record_build(
+                context,
+                text_units,
+                communities,
+                tree_pruned=not any(
+                    stats.failed_items
+                    for key, stats in indexing_results.items()
+                    if key.startswith("vector_summary_nodes_")
+                ),
+            )
 
         metrics = {
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},
@@ -2716,8 +2801,16 @@ class IndexingStage(_RegistryStage):
         context: PipelineContext,
         text_units: list[TextUnit],
         communities: Sequence[Community] = (),
+        tree_pruned: bool = True,
     ) -> dict[str, CommunityCounters]:
         """Record on each written suffix's vector indices what built them.
+
+        The summary tree is built after this record, by the summary_tree
+        stage. A suffix holding a live tree keeps naming it when ``raptor``
+        is selected and the run's deletion of the summaries citing removed
+        text succeeded (``tree_pruned``): the tree then cites only stored
+        text, so queries read it while the stage rebuilds it (and after a
+        crash before it did). The stage drops it when its build fails.
 
         ``run-eval`` copies the record into its run manifest, so a score can be
         traced to the ingestion run, its extraction settings and its corpus
@@ -2773,8 +2866,16 @@ class IndexingStage(_RegistryStage):
             else None
         )
         counters: dict[str, CommunityCounters] = {}
+        keeps_tree = tree_pruned and IndexArtifact.SUMMARY_TREE in (
+            artifacts_to_build(self.config)
+        )
+        vector_indexer = self.indexing_manager.vector_indexer
         for suffix in sorted(suffixes):
             update: dict[str, Any] = {}
+            if keeps_tree and vector_indexer.read_summary_tree_record(suffix):
+                update = record.with_artifacts(
+                    [*(record.artifacts or []), IndexArtifact.SUMMARY_TREE]
+                ).model_dump(include={"artifacts", "methodologies"})
             if commit is not None:
                 update["community_change"] = CommunityChange(
                     commit=commit,

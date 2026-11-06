@@ -299,6 +299,9 @@ def test_a_removal_deletes_the_summaries_of_removed_text(
 def test_a_full_build_sweeps_the_summaries_of_text_it_no_longer_holds(
     harness: StoreHarness,
 ) -> None:
+    from unified_kg_rag.domain.models import Methodology
+
+    harness.config.indexing.methodologies = [Methodology.RAPTOR]
     manager = _manager(harness)
     manager.index_all_data(text_units=_units(4))
     _tree(
@@ -319,6 +322,22 @@ def test_a_full_build_sweeps_the_summaries_of_text_it_no_longer_holds(
     assert "vector_summary_nodes_" + other not in manager.index_all_data(
         text_units=_units(2, other)
     )
+
+
+def test_a_full_build_without_raptor_deletes_the_tree(harness: StoreHarness) -> None:
+    from unified_kg_rag.domain.models import Methodology
+
+    harness.config.indexing.methodologies = [Methodology.RAPTOR]
+    _manager(harness).index_all_data(text_units=_units(4))
+    _tree(harness, [_node("n1", 1, ["u000", "u001"], ["u000", "u001"])])
+    assert harness.vector_indexer.read_summary_tree_record(None) is not None
+
+    harness.config.indexing.methodologies = [Methodology.LIGHTRAG]
+    results = _manager(harness).index_all_data(text_units=_units(4))
+
+    assert results["vector_summary_nodes_default"].successful_items == 1
+    assert harness.vector_indexer.read_summary_nodes(None, fields=[]) == []
+    assert harness.vector_indexer.read_summary_tree_record(None) is None
 
 
 def test_the_tree_strategy_holds_the_collapsed_trees_top_five(

@@ -40,7 +40,11 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     SearchStrategy,
 )
-from unified_kg_rag.shared import ConfigurationError, MethodologyNotIndexedError
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    ConfirmationDeclinedError,
+    MethodologyNotIndexedError,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -269,6 +273,73 @@ def test_a_resumed_pipeline_id_runs_only_the_added_stages(
     assert set(calls.since(before)) == {"report"}
     assert pipeline.executed_stages == {"community_detection", "indexing"}
     assert _record(providers)["methodologies"] == ["graphrag", "lightrag", "hipporag"]
+
+
+def test_a_lightrag_only_run_exports_its_graph_without_communities(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    import json
+
+    config, providers, _, _ = _setup(tmp_path)
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    context = e2e._ingest(config, providers, _corpus(tmp_path), tmp_path / "run")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    (path,) = tmp_path.rglob("visualization_data.json")
+    data = json.loads(path.read_text())
+    assert data["nodes"] and data["edges"]
+    assert data["communities"] == {}
+
+
+def test_report_generation_off_keeps_incremental_runs_incremental(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # A run that never builds community reports does not take the
+    # namespace for missing them: the next run is incremental, not a rebuild.
+    config, providers, _, calls = _setup(tmp_path)
+    config.graph.community_detection.report_generation.enabled = False
+    source = _corpus(tmp_path)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert "community_reports" not in _record(providers)["artifacts"]
+
+    (source / "notes.txt").write_text("Bank lends money to Vendor.")
+    before = Counter(calls.kinds)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert _record(providers)["mode"] == "incremental"
+    # Only the new document is extracted.
+    assert calls.since(before) == Counter({"extraction": 1})
+
+
+def test_adding_a_methodology_asks_before_its_rebuild_deletes_most_documents(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # The rebuild that adds graphrag deletes the documents gone from the
+    # corpus (a partial sync, say) as an incremental run would: it is asked
+    # first, past indexing.max_deletion_share, and nothing is written.
+    config, providers, server, _ = _setup(tmp_path)
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    source = tmp_path / "corpus"
+    source.mkdir()
+    names = [f"party{i}" for i in range(12)]
+    for i, name in enumerate(names):
+        (source / f"{name}.txt").write_text(
+            f"Party{i} trades widgets with Party{(i + 1) % 12}."
+        )
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(providers)
+    for name in names[3:]:
+        (source / f"{name}.txt").unlink()
+
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    calls = len(server.chat_models)
+    with pytest.raises(ConfirmationDeclinedError, match="deletes 9 of the 12"):
+        e2e._ingest(config, providers, source, tmp_path / "add")
+    assert len(server.chat_models) == calls
+    assert config.indexing.reset is False
+    assert _record(providers) == record
+    assert len(e2e._registry(providers)) == 12
 
 
 def test_adding_a_methodology_never_rebuilds_over_another_scope(

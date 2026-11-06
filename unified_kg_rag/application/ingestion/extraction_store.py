@@ -31,6 +31,7 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
 from unified_kg_rag.domain.ingestion.contributions import (
     CHUNKS_RECORD_KIND,
     RECORD_KEYS_ATTRIBUTE,
+    TRANSLATION_RECORD_KIND,
     record_key,
     record_keys,
 )
@@ -80,8 +81,8 @@ def with_record_keys(
     the unit's text (``ExtractionStore.key``), so they are the ones the
     extraction stages stored the records under. A seed graph's unit names
     its graph record only, under the seed fingerprint (it has no claims).
-    The record of its pre-chunk's boundary answer, which the chunker named,
-    stays named.
+    The records of its pre-chunk's boundary answer and of its translations,
+    which the chunker and the translator named, stay named.
     """
     gleaned = {r.text_unit_id: r.gleaned for r in records}
     # The fingerprint depends only on the settings: one per (gleaned, claims).
@@ -100,7 +101,7 @@ def with_record_keys(
         keys: dict[str, str] = {
             kind: key
             for kind, key in record_keys(unit).items()
-            if kind == CHUNKS_RECORD_KIND
+            if kind in (CHUNKS_RECORD_KIND, TRANSLATION_RECORD_KIND)
         }
         if is_seed_unit(unit.id):
             if unit.id in gleaned and unit.id not in graph_failed:

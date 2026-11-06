@@ -92,7 +92,7 @@ class TestCreateChainInputs:
             [("human", TextTranslationPrompt.human_prompt_template)]
         )
         (message,) = template.format_messages(**inputs)
-        assert "Translate the following text to Korean" in message.content
+        assert "Translate the following text into Korean" in message.content
         assert "LanguageCode" not in message.content
 
     def test_empty_texts_yields_empty(self) -> None:
@@ -304,3 +304,87 @@ class TestTranslationStats:
             total_processing_time=8.0,
         )
         assert s.average_processing_time == pytest.approx(2.0)
+
+
+class _Records:
+    """An in-memory extraction store (the ``BoundaryRecords`` protocol)."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, dict[str, dict]] = {}
+
+    def read_records(self, keys):
+        return {
+            suffix: {
+                k: self.data[suffix][k]
+                for k in wanted
+                if k in self.data.get(suffix, {})
+            }
+            for suffix, wanted in keys.items()
+        }
+
+    def write_records(self, records):
+        for suffix, by_key in records.items():
+            self.data.setdefault(suffix, {}).update(by_key)
+
+
+class TestStoredTranslations:
+    def test_a_unit_with_stored_translations_is_not_translated_again(
+        self, mocker
+    ) -> None:
+        tr, chain = _make_translator(
+            mocker, target=LanguageCode.KO, additional=[LanguageCode.JA]
+        )
+        tr.records = records = _Records()
+        tr.translate_text_units(_units())
+        assert len(chain.calls) == 4
+        (stored,) = records.data.values()
+        assert len(stored) == 2
+        chain.calls.clear()
+        again = [*_units(), TextUnit(id="t3", text="新しい文")]
+        tr.translate_text_units(again)
+        # Only the new text is asked; the others take their stored texts in
+        # both languages and name the record they came from.
+        assert [c["text"] for c in chain.calls] == ["新しい文", "新しい文"]
+        assert again[0].translated_texts == {
+            "ko": "[Korean] Hello world",
+            "ja": "[Japanese] Hello world",
+        }
+        key = again[0].attributes["extraction_records"]["translation"]
+        assert key in stored
+        assert tr.stats.num_reused == 2
+        assert tr.stats.success_rate == 100.0
+
+    def test_a_failed_unit_stores_nothing(self, mocker) -> None:
+        tr, _ = _make_translator(
+            mocker, transform=lambda inp: "" if inp["text"] == "Hello world" else "ok"
+        )
+        tr.config.processing.translation.source_language = LanguageCode.KO
+        tr.source_language = LanguageCode.KO
+        tr.records = records = _Records()
+        units = _units()
+        tr.translate_text_units(units)
+        (stored,) = records.data.values()
+        assert len(stored) == 1
+        assert "translation" not in (units[0].attributes or {}).get(
+            "extraction_records", {}
+        )
+
+
+def test_the_translation_record_key_follows_what_reaches_the_prompt() -> None:
+    from unified_kg_rag.domain.ingestion.cache_keys import translation_fingerprint
+
+    base = translation_fingerprint(Config())
+    chunked = Config()
+    chunked.processing.chunking.max_chunk_size = 1234
+    assert translation_fingerprint(chunked) == base
+    for change in (
+        lambda c: setattr(c.models.roles, "translation", "vendor.small-v1"),
+        lambda c: setattr(c.custom_prompts, "text_translation_system", "Translate."),
+        lambda c: setattr(c.processing.translation, "source_language", LanguageCode.JA),
+        lambda c: setattr(
+            c.processing.translation, "additional_target_languages", [LanguageCode.ZH]
+        ),
+    ):
+        other = Config()
+        change(other)
+        assert translation_fingerprint(other) != base

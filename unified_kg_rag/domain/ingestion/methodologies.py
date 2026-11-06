@@ -96,6 +96,11 @@ CORPUS_WIDE_ARTIFACTS: frozenset[IndexArtifact] = frozenset(
 )
 
 
+# The artifacts the graph store holds (entity vertices and relationship
+# edges, community vertices); the others are the vector store's.
+GRAPH_STORE_ARTIFACTS: frozenset[IndexArtifact] = frozenset({_A.GRAPH, _A.COMMUNITIES})
+
+
 def stages_for(artifacts: Iterable[IndexArtifact]) -> frozenset[PipelineStageType]:
     """The stages that build ``artifacts``, with every stage they read."""
     pending = [
@@ -117,7 +122,9 @@ def artifacts_to_build(config: Config) -> frozenset[IndexArtifact]:
     """What a run of ``config`` builds: every artifact its effective
     methodologies read whose switch is on, and claims when
     ``processing.claim_extraction`` is on (per-document extraction output,
-    which its switch alone governs)."""
+    which its switch alone governs). Community reports are switched off by
+    ``report_generation.enabled`` too: a run never builds them then, so an
+    incremental run does not take them for missing (and rebuild)."""
     artifacts = set(artifacts_of(config.effective_methodologies))
     if config.processing.claim_extraction.enabled:
         artifacts.add(_A.CLAIMS)
@@ -127,7 +134,15 @@ def artifacts_to_build(config: Config) -> frozenset[IndexArtifact]:
         artifacts.discard(_A.RELATIONSHIP_VECTORS)
     if not config.graph.community_detection.enabled:
         artifacts -= {_A.COMMUNITIES, _A.COMMUNITY_REPORTS}
+    if not config.graph.community_detection.report_generation.enabled:
+        artifacts.discard(_A.COMMUNITY_REPORTS)
     return frozenset(artifacts)
+
+
+def writes_graph_store(config: Config) -> bool:
+    """Whether a run of ``config`` builds an artifact the graph store holds
+    (not with ``raptor`` alone): without one, it needs no graph store."""
+    return bool(artifacts_to_build(config) & GRAPH_STORE_ARTIFACTS)
 
 
 def selected_stages(config: Config) -> frozenset[PipelineStageType]:
@@ -154,16 +169,12 @@ def built_artifacts(
     config: Config, completed: Collection[PipelineStageType]
 ) -> frozenset[IndexArtifact]:
     """The artifacts a run built: those of ``artifacts_to_build`` whose
-    producing stage is in ``completed`` (the run's or its earlier phases'),
-    without community reports when report generation is off."""
-    built = {
+    producing stage is in ``completed`` (the run's or its earlier phases')."""
+    return frozenset(
         artifact
         for artifact in artifacts_to_build(config)
         if artifact in ARTIFACT_PRODUCERS and ARTIFACT_PRODUCERS[artifact] in completed
-    }
-    if not config.graph.community_detection.report_generation.enabled:
-        built.discard(_A.COMMUNITY_REPORTS)
-    return frozenset(built)
+    )
 
 
 def stored_artifacts(

@@ -26,7 +26,9 @@ Ingestion itself renders nothing. Another renderer plugs in through
 ## Input and output
 
 - **The input.** The community-detection stage of `run-ingestion` writes
-  `visualization_data.json` on every run whose graph covers the whole corpus:
+  `visualization_data.json` (the graph-analysis stage, without communities,
+  when no community detection runs: `indexing.methodologies` without
+  `graphrag`) on every run whose graph covers the whole corpus:
   a full build, a reset, or an incremental run in which every document is new
   or changed. An incremental run that skips unchanged documents writes
   nothing (it logs an INFO line) and leaves an earlier file in place; run one

@@ -670,6 +670,21 @@ def test_a_resumed_merge_keeps_a_gleaned_edge_on_the_spelling_it_names(
     assert incremental == full
 
 
+@pytest.fixture
+def word_splits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The splitter without its Latin sentence-end separator: the scenarios
+    below were found with chunks cut at the last space that fits, which
+    their corpora's 60-character chunks rely on."""
+    from unified_kg_rag.adapters.ingestion import chunker
+
+    monkeypatch.setattr(
+        chunker,
+        "_SPLITTER_SEPARATORS",
+        [s for s in chunker._SPLITTER_SEPARATORS if s != "(?<=[.!?…])(?= )"],
+    )
+
+
+@pytest.mark.usefixtures("word_splits")
 def test_a_gleaned_edge_follows_a_part_split_off_two_stored_spellings(
     tmp_path: Path,
 ) -> None:
@@ -1139,6 +1154,7 @@ def test_a_strip_note_is_one_record_whatever_the_removed_units(
         ),
     ],
 )
+@pytest.mark.usefixtures("word_splits")
 def test_a_resumed_removal_that_merged_and_split_matches_a_full_build(
     tmp_path: Path, die_at: tuple[Any, ...]
 ) -> None:

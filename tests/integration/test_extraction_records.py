@@ -27,10 +27,12 @@ from tests.integration.test_embedded_e2e import (
     _config,
     _providers,
 )
+from tests.integration.test_embedded_e2e import no_aws as _no_aws  # noqa: F401
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     Config,
+    LanguageCode,
     PipelineConfig,
     PipelineStageStatus,
     PipelineStageType,
@@ -289,3 +291,67 @@ def test_corrected_edges_are_the_same_in_full_and_incremental_builds(
     descriptions = [edge[-1] for edge in full.edges()]
     assert len(descriptions) == 2
     assert sum("corrected" in d for d in descriptions) == 1
+
+
+class _Translating(_Model):
+    """The extraction model above, and a translator whose every answer
+    differs (a model is not deterministic): a translation asked again
+    changes the text extraction reads, so its record misses."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.asked = 0
+
+    def __call__(self, system: str, human: str) -> str:
+        if "professional translator" in system:
+            self.calls["translate"] += 1
+            self.asked += 1
+            text = human.split("<text>\n", 1)[1].split("\n</text>", 1)[0]
+            return f"{text} (v{self.asked})"
+        return super().__call__(system, human)
+
+
+def _translating(tmp_path: Path) -> tuple[_Translating, _Store]:
+    model = _Translating()
+    store = _Store(tmp_path, model)
+    translation = store.config.processing.translation
+    translation.enabled = True
+    translation.source_language = LanguageCode.KO
+    translation.target_language = LanguageCode.EN
+    return model, store
+
+
+TRANSLATED = {
+    "a.txt": "Acme supplies goods to Buyer here.",
+    "b.txt": "Depot trades with Buyer daily.",
+}
+
+
+@pytest.mark.usefixtures("_no_aws")
+def test_a_reset_reuses_the_stored_translations_and_their_extractions(
+    tmp_path: Path,
+) -> None:
+    model, store = _translating(tmp_path)
+    store.ingest(TRANSLATED)
+    assert model.calls["translate"] == 2
+    keys = store.record_keys()
+    model.calls.clear()
+    store.config.indexing.reset = True
+    store.ingest(TRANSLATED)
+    # Neither translated nor (the same translation) extracted again, and
+    # the records stay named.
+    assert model.calls == Counter()
+    assert store.record_keys() == keys
+    store.ingest(TRANSLATED, force_rebuild=True)
+    assert model.calls["translate"] == 2
+
+
+@pytest.mark.usefixtures("_no_aws")
+def test_an_edited_document_translates_only_its_changed_text(tmp_path: Path) -> None:
+    model, store = _translating(tmp_path)
+    store.ingest(TRANSLATED)
+    model.calls.clear()
+    store.config.indexing.reset = True
+    store.ingest({**TRANSLATED, "b.txt": "Depot trades with Buyer weekly."})
+    assert model.calls["translate"] == 1
+    assert model.calls["extract"] == 1

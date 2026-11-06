@@ -514,7 +514,7 @@ class FakeVectorStore(_Recorder):
     def write_summary_tree(
         self,
         nodes: list[Any],
-        vectors: Mapping[str, list[float]],
+        vectors: Mapping[str, Collection[float]],
         suffix: str | None,
         record: dict[str, Any],
     ) -> IndexingStats:
@@ -532,6 +532,9 @@ class FakeVectorStore(_Recorder):
     ) -> IndexingStats:
         return IndexingStats()
 
+    def delete_summary_tree(self, suffix: str) -> IndexingStats:
+        return IndexingStats()
+
     def add_build_artifacts(
         self, artifacts: Collection[Any], suffix: str | None
     ) -> bool:
@@ -542,6 +545,18 @@ class FakeVectorStore(_Recorder):
         if set(artifacts) <= set(record.artifacts):
             return False
         self.builds[key] = record.with_artifacts({*record.artifacts, *artifacts})
+        return True
+
+    def drop_build_artifacts(
+        self, artifacts: Collection[Any], suffix: str | None
+    ) -> bool:
+        key = suffix or Constants.DEFAULT_SUFFIX.value
+        record = self.builds.get(key)
+        if record is None or record.artifacts is None:
+            return False
+        if not set(artifacts) & set(record.artifacts):
+            return False
+        self.builds[key] = record.with_artifacts(set(record.artifacts) - set(artifacts))
         return True
 
     def read_build_record(self, suffix: str | None) -> dict[str, Any] | None:

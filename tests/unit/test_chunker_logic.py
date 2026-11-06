@@ -846,13 +846,30 @@ class TestSplitterSeparators:
         chunks = splitter.split_text("あいうえおかきく．さしすせそたちつ．")
         assert chunks == ["あいうえおかきく．", "さしすせそたちつ．"]
 
-    def test_english_splitting_unchanged(self) -> None:
+    def test_text_that_fits_its_paragraphs_splits_as_by_default(self) -> None:
         from langchain_text_splitters import RecursiveCharacterTextSplitter
 
         text = "Vendor ships widgets.\n\nBuyer pays on time. " * 20
         default = RecursiveCharacterTextSplitter(chunk_size=80, chunk_overlap=10)
         ours = SimpleTextChunker._create_splitter(80, 10)
         assert ours.split_text(text) == default.split_text(text)
+
+    @pytest.mark.parametrize(
+        "sentence",
+        [
+            "Vendor ships widgets to the Buyer on time.",
+            "Le vendeur livre les pièces à l'acheteur !",
+            "가나다 회사는 2020년에 설립되었다.",
+        ],
+    )
+    def test_a_long_paragraph_splits_between_sentences(self, sentence: str) -> None:
+        # One paragraph longer than a chunk was cut at the last space that
+        # fit, mid-sentence; a "." inside a word or number splits nothing.
+        splitter = SimpleTextChunker._create_splitter(100, 0)
+        text = " ".join([sentence, "Version 3.5 e.g. holds."] * 8)
+        chunks = splitter.split_text(text)
+        assert len(chunks) > 1
+        assert all(c.rstrip()[-1] in ".!?" for c in chunks), chunks
 
 
 # --------------------------------------------------------------------------- #

@@ -606,8 +606,8 @@ class VectorIndexer(BaseIndexer):
         page_size: int | None = None,
     ) -> list[dict[str, Any]] | None:
         """Every stored text unit of ``suffix`` (a dict of ``id`` and the
-        stored ``fields``, a vector field included when named), in id
-        order, read a page at a time (``page_size`` documents at most);
+        stored ``fields``, a vector field included when named, as a list or
+        a float32 array), in id order, read a page at a time (``page_size`` documents at most);
         the seed graphs' units are left out, as every text search leaves
         them out. ``[]`` without a live index; ``None`` (the default) when
         the backend cannot page its text units. Raises when a read fails."""
@@ -639,7 +639,7 @@ class VectorIndexer(BaseIndexer):
     def write_summary_tree(
         self,
         nodes: list[SummaryNode],
-        vectors: Mapping[str, list[float]],
+        vectors: Mapping[str, Collection[float]],
         suffix: str | None,
         record: dict[str, Any],
     ) -> IndexingStats:
@@ -672,6 +672,13 @@ class VectorIndexer(BaseIndexer):
         read as failed items."""
         return IndexingStats()
 
+    def delete_summary_tree(self, suffix: str) -> IndexingStats:
+        """Delete ``suffix``'s summary tree whole, the indices of builds that
+        never swapped in included (a full build of a run without
+        ``raptor``). Default deletes nothing; adapters that override it
+        report a failure as a failed item."""
+        return IndexingStats()
+
     def add_build_artifacts(
         self, artifacts: Collection[IndexArtifact], suffix: str | None
     ) -> bool:
@@ -679,6 +686,14 @@ class VectorIndexer(BaseIndexer):
         besides those it names (the summary tree, built after the record);
         a record naming none is left as it is. Returns whether a record
         changed. Default changes nothing."""
+        return False
+
+    def drop_build_artifacts(
+        self, artifacts: Collection[IndexArtifact], suffix: str | None
+    ) -> bool:
+        """Stop naming ``artifacts`` in the build record of ``suffix``'s
+        indices (the summary tree, when its build failed). Returns whether a
+        record changed. Default changes nothing."""
         return False
 
     def prune_text_unit_communities(

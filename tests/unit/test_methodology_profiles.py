@@ -412,6 +412,15 @@ def test_adding_a_corpus_wide_artifact_is_missing_from_the_record() -> None:
     # Claims are per-document: an incremental run adds them itself.
     claims = Config(processing={"claim_extraction": {"enabled": True}})
     assert mp.missing_artifacts(graph_only, claims) == frozenset()
+    # Report generation off: a run builds no reports, so none are missing.
+    no_reports = Config(
+        graph={"community_detection": {"report_generation": {"enabled": False}}}
+    )
+    built = _record(*(a for a in FULL if a is not A.COMMUNITY_REPORTS))
+    assert mp.missing_artifacts(built.model_dump(mode="json"), no_reports) == (
+        frozenset()
+    )
+    assert A.COMMUNITIES in mp.artifacts_to_build(no_reports)
     # No record, or one from before profiles: nothing to add.
     assert mp.missing_artifacts(None, Config()) == frozenset()
     assert mp.missing_artifacts({"pipeline_id": "p"}, Config()) == frozenset()

@@ -1636,6 +1636,7 @@ def filter_to_delta(
     source_directory: Path,
     confirm: Callable[[str], bool] | None = None,
     confirm_deletions: Callable[[str], bool] | None = None,
+    guard_reset_deletions: bool = False,
 ) -> tuple[list[Document], int]:
     """Keep only new/changed documents per the DynamoDB doc-status registry.
 
@@ -1645,7 +1646,10 @@ def filter_to_delta(
     ``confirm`` first when it drops another scope's seed graph documents
     (see ``_confirm_reset_of_seed_scopes``); a run that would delete more
     than ``indexing.max_deletion_share`` of its scope's documents asks
-    ``confirm_deletions`` (see ``_confirm_mass_deletion``).
+    ``confirm_deletions`` (see ``_confirm_mass_deletion``), and so does a
+    reset the pipeline set to add an artifact the namespace lacks
+    (``guard_reset_deletions``): a rebuild deletes every stored document of
+    the scope gone from the corpus, and the user asked for no reset.
 
     Raises :class:`DocStatusRegistryError` when the registry cannot be
     read. There is no safe fallback: without a delta the indexing stage
@@ -1676,12 +1680,19 @@ def filter_to_delta(
         records = _confirm_reset_of_seed_scopes(
             doc_status, namespace, source_scope, confirm, seeds_only
         )
+        fingerprints = fingerprint_documents(documents)
+        if guard_reset_deletions:
+            _confirm_mass_deletion(
+                _reset_deletions(records, fingerprints, namespace, source_scope),
+                config.indexing.max_deletion_share,
+                source_scope,
+                confirm_deletions,
+            )
         # A reset rebuilds the namespace from the whole corpus and then
         # replaces the registry's records, so every document is new: diffing
         # against the registry here would rebuild from the delta alone and
         # lose the unchanged documents. Quarantined ones stay skipped: they
         # would kill the reset as they killed the runs that quarantined them.
-        fingerprints = fingerprint_documents(documents)
         quarantined = _quarantined_on_reset(
             records, fingerprints, config.indexing.max_document_attempts
         )
@@ -1805,6 +1816,27 @@ def filter_to_delta(
         len(delta.deferred),
     )
     return to_process, skipped
+
+
+def _reset_deletions(
+    records: Iterable[DocStatusRecord],
+    fingerprints: Mapping[str, str],
+    namespace: str,
+    source_scope: str,
+) -> DocumentDelta:
+    """What a reset deletes of the run's scope, as a delta for
+    ``_confirm_mass_deletion``: its stored documents (seed graph shards
+    aside) whose files are not in the corpus, of all it holds."""
+    own = [
+        record
+        for record in records
+        if _same_source(record.scope, namespace, source_scope)
+        and not is_seed_path(record.file_path)
+    ]
+    return DocumentDelta(
+        deleted=[r.doc_id for r in own if r.doc_id not in fingerprints],
+        scope_documents=len(own),
+    )
 
 
 # A scope holding fewer documents is never checked against

@@ -95,7 +95,8 @@ class Leaf:
 
     id: str
     text: str
-    vector: Sequence[float]
+    # A float32 array as the summary_tree stage reads it (a list reads too).
+    vector: Sequence[float] | np.ndarray
     n_tokens: int
     # Its document's filters (``attributes.filters``).
     filters: Mapping[str, Any] = field(default_factory=dict)
@@ -154,7 +155,8 @@ class TreeBuild:
     """The nodes of a built tree and how the build went."""
 
     nodes: list[SummaryNode]
-    vectors: dict[str, list[float]]
+    # Each node's vector (float32, the array its entry clusters by).
+    vectors: dict[str, np.ndarray]
     levels: int
     failed: int
     stop_reason: str
@@ -716,7 +718,7 @@ def build_tree(
         key=lambda entry: entry.id,
     )
     nodes: list[SummaryNode] = []
-    vectors: dict[str, list[float]] = {}
+    vectors: dict[str, np.ndarray] = {}
     failed = 0
     top_level = 0
     stop_reason = "max_levels"
@@ -749,8 +751,11 @@ def build_tree(
                 cluster, realized, settings, language, partition_name, attributes
             )
             nodes.append(node)
-            vectors[node.id] = [float(v) for v in realized.vector]
-            summarized[tuple(cluster.child_ids)] = _entry_for(cluster, realized, node)
+            entry = _entry_for(cluster, realized, node)
+            # One array for the entry and the node: a vector as a list of
+            # float objects took eight times its array, per node.
+            vectors[node.id] = entry.vector
+            summarized[tuple(cluster.child_ids)] = entry
         # A summary takes its members' place; an entry no summary covers (a
         # cluster of one, a failed summary) moves up as it is. Under soft
         # membership an entry in both stays only under its summary.

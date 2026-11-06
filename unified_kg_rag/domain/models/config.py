@@ -2259,7 +2259,8 @@ class ProcessingConfig(BaseModel):
         description=(
             "LLM calls an ingestion stage keeps in flight: the next item "
             "starts as soon as one finishes, so this is both the peak and the "
-            "steady concurrency. These stages are I/O-bound, so this can be "
+            "steady concurrency (embedding requests: at most 16 of them). "
+            "These stages are I/O-bound, so this can be "
             "well above the CPU count. Bedrock quotas differ per account, "
             "model and Region: lower it if the logs show ThrottlingException "
             "retries, raise it if quota allows. The backend: local preset sets"
@@ -2433,9 +2434,17 @@ class CentralityConfig(BaseModel):
 
 
 class StatisticsConfig(BaseModel):
-    """Graph-level statistics: density, the average clustering coefficient and
-    the connected components are always computed."""
+    """Graph-level statistics: density and the connected components are
+    always computed; the others on request."""
 
+    calculate_average_clustering: bool = Field(
+        default=False,
+        description=(
+            "Calculate the average clustering coefficient (graph_metrics."
+            "average_clustering): about 10 s on a graph of 80,000 entities, "
+            "and no stage reads it"
+        ),
+    )
     calculate_diameter: bool = Field(
         default=False,
         description=(
@@ -2480,12 +2489,15 @@ class ReportGenerationConfig(BaseModel):
     )
     enable_sub_community_rollup: bool = Field(
         default=True,
-        description="When a parent community's raw entity/relationship context "
-        "would exceed max_report_context_tokens, substitute summaries of its "
-        "already-generated child sub-community reports for the lowest-priority "
-        "raw context (MS GraphRAG parity), instead of simply truncating. "
-        "Requires bottom-up per-level report generation (level 0 = finest "
-        "first). Set false to keep the flat, truncate-on-overflow behaviour.",
+        description="When a parent community's entity/relationship context is "
+        "cut at max_report_context_tokens, add the summaries of its child "
+        "communities' reports (largest first, within a budget of "
+        "max_report_context_tokens of their own, so the prompt holds at most "
+        "about twice it) after the context kept, so what was cut is still "
+        "summarized. MS GraphRAG substitutes the child reports for raw "
+        "context instead. Reports are then generated level by level, the "
+        "finest first (a level waits for the one below); false generates "
+        "every level at once and only cuts the context.",
     )
 
 
@@ -3322,11 +3334,14 @@ class SummaryTreeConfig(BaseModel):
         default=42, description="Seed of the clustering's initializations."
     )
     max_leaves_in_memory: int = Field(
-        default=200_000,
+        default=100_000,
         ge=1,
         description="Text units one tree may hold, read into memory with "
-        "their vectors (about 4 KB each at 1,024 dimensions); a larger tree "
-        "fails the stage, naming partition_by and scope: document.",
+        "their texts and vectors and clustered there: about 50 KiB of task "
+        "memory per text unit at the peak (4,000-character units, 1,024 "
+        "dimensions; read 15, build 35), so the default takes about 5 GiB. "
+        "A larger tree fails the stage before its vectors are read, naming "
+        "partition_by and scope: document; raise it with the task's memory.",
     )
 
     @field_validator("partition_by")
@@ -5129,6 +5144,27 @@ class CustomPromptConfig(BaseModel):
     description_summarization_human: str | None = Field(
         default=None,
         description="Custom human prompt for re-summarizing over-long merged entity/relationship descriptions",
+    )
+    text_chunking_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for the intelligent chunker's "
+        "boundary call (processing.chunking.chunker_type: intelligent)",
+    )
+    text_chunking_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for the intelligent chunker's "
+        "boundary call; it must keep {numbered_text}, {min_chunk_size} and "
+        "{max_chunk_size}",
+    )
+    text_translation_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for translating text units "
+        "(processing.translation)",
+    )
+    text_translation_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for translating text units; it must "
+        "keep {text} and {target_language}",
     )
     tree_summary_system: str | None = Field(
         default=None,

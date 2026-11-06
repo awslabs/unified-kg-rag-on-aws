@@ -278,7 +278,7 @@ Text processing configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `max_concurrency` | integer (≥ 1) | `40` | LLM calls an ingestion stage keeps in flight: the next item starts as soon as one finishes, so this is both the peak and the steady concurrency. These stages are I/O-bound, so this can be well above the CPU count. Bedrock quotas differ per account, model and Region: lower it if the logs show ThrottlingException retries, raise it if quota allows. The backend: local preset sets 20, since a local model server queues the calls it cannot run at once. |
+| `max_concurrency` | integer (≥ 1) | `40` | LLM calls an ingestion stage keeps in flight: the next item starts as soon as one finishes, so this is both the peak and the steady concurrency (embedding requests: at most 16 of them). These stages are I/O-bound, so this can be well above the CPU count. Bedrock quotas differ per account, model and Region: lower it if the logs show ThrottlingException retries, raise it if quota allows. The backend: local preset sets 20, since a local model server queues the calls it cannot run at once. |
 | `io_workers` | integer (≥ 1) | `64` | Threads for blocking I/O on the query path (the Bedrock calls LangChain runs in the event loop's default executor, Neptune traversals, reranking) in the CLIs and GraphRAGChain's sync methods. Python's default is min(32, CPUs + 4), six on a 2-vCPU task. An async host calls unified_kg_rag.configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers) at startup. |
 | `ignore_errors` | boolean | `false` | When a whole step fails (a batch call, a translation language, an evaluator, global map/reduce, the DRIFT primer, the auto router), log it and continue with an empty or degraded result instead of raising. Items whose own LLM call fails are always skipped and reported, whatever this says. |
 | `deduplicate` | boolean | `false` | Drop near-duplicate documents before extraction. Two documents are near-duplicates when the Jaccard similarity of their character 3-gram sets, estimated with a 128-permutation MinHash, is at least 0.9 (fixed parameters); of each pair the first is kept, and an incremental run keeps the already-indexed copy. |
@@ -429,6 +429,7 @@ Graph-level statistics configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
+| `calculate_average_clustering` | boolean | `false` | Calculate the average clustering coefficient (graph_metrics.average_clustering): about 10 s on a graph of 80,000 entities, and no stage reads it |
 | `calculate_diameter` | boolean | `false` | Calculate graph diameter (computationally expensive; only on a connected graph) |
 
 ### `graph.community_detection`
@@ -459,7 +460,7 @@ Community report generation configuration
 | `max_entities_per_report` | integer (≥ 1) | `50` | Maximum entities per community report |
 | `max_report_context_tokens` | integer (≥ 1) | `4000` | Token budget for the entity/relationship (and, with claim extraction on, claim) context packed into a community report prompt. As MS GraphRAG's sort_context, relationships are packed by combined endpoint degree (most connected first), each with its two entities and their claims, then the entities with no relationship in the community, up to this budget. max_entities_per_report remains an additional upper bound on entity count. MS GraphRAG's default is 8000 with max_cluster_size 10: raise this (more report input tokens per call) when reports of large communities keep few relationships. |
 | `content_length` | string | `"medium"` | Report length, as the number of findings the report asks for: short (5-7), medium (7-10), long (10-15) |
-| `enable_sub_community_rollup` | boolean | `true` | When a parent community's raw entity/relationship context would exceed max_report_context_tokens, substitute summaries of its already-generated child sub-community reports for the lowest-priority raw context (MS GraphRAG parity), instead of simply truncating. Requires bottom-up per-level report generation (level 0 = finest first). Set false to keep the flat, truncate-on-overflow behaviour. |
+| `enable_sub_community_rollup` | boolean | `true` | When a parent community's entity/relationship context is cut at max_report_context_tokens, add the summaries of its child communities' reports (largest first, within a budget of max_report_context_tokens of their own, so the prompt holds at most about twice it) after the context kept, so what was cut is still summarized. MS GraphRAG substitutes the child reports for raw context instead. Reports are then generated level by level, the finest first (a level waits for the one below); false generates every level at once and only cuts the context. |
 
 ### `graph.visualization`
 
@@ -602,7 +603,7 @@ RAPTOR's summary tree over the stored text units, which the tree strategy search
 | `min_leaves_per_tree` | integer (≥ 2) | `3` | scope: document only: a document with fewer text units gets no tree. |
 | `refresh` | `"every_run"` \| `"on_reset"` | `"every_run"` | every_run: rebuild the tree on every run whose stored text units changed. on_reset: delta runs only delete the nodes of removed text (always done) and report the text units no summary covers (tree_uncovered_leaves); indexing.reset rebuilds. |
 | `random_state` | integer | `42` | Seed of the clustering's initializations. |
-| `max_leaves_in_memory` | integer (≥ 1) | `200000` | Text units one tree may hold, read into memory with their vectors (about 4 KB each at 1,024 dimensions); a larger tree fails the stage, naming partition_by and scope: document. |
+| `max_leaves_in_memory` | integer (≥ 1) | `100000` | Text units one tree may hold, read into memory with their texts and vectors and clustered there: about 50 KiB of task memory per text unit at the peak (4,000-character units, 1,024 dimensions; read 15, build 35), so the default takes about 5 GiB. A larger tree fails the stage before its vectors are read, naming partition_by and scope: document; raise it with the task's memory. |
 
 ## `search`
 
@@ -902,6 +903,10 @@ Custom prompt configuration
 | `claim_extraction_human` | string \| null | `null` | Custom human prompt for extracting claims and assertions from documents |
 | `description_summarization_system` | string \| null | `null` | Custom system prompt for re-summarizing over-long merged entity/relationship descriptions |
 | `description_summarization_human` | string \| null | `null` | Custom human prompt for re-summarizing over-long merged entity/relationship descriptions |
+| `text_chunking_system` | string \| null | `null` | Custom system prompt for the intelligent chunker's boundary call (processing.chunking.chunker_type: intelligent) |
+| `text_chunking_human` | string \| null | `null` | Custom human prompt for the intelligent chunker's boundary call; it must keep {numbered_text}, {min_chunk_size} and {max_chunk_size} |
+| `text_translation_system` | string \| null | `null` | Custom system prompt for translating text units (processing.translation) |
+| `text_translation_human` | string \| null | `null` | Custom human prompt for translating text units; it must keep {text} and {target_language} |
 | `tree_summary_system` | string \| null | `null` | Custom system prompt for summarizing one cluster of the summary tree (raptor methodology) |
 | `tree_summary_human` | string \| null | `null` | Custom human prompt for summarizing one cluster of the summary tree; it must keep {passages} |
 | `graph_refinement_system` | string \| null | `null` | Custom system prompt for improving and refining extracted graph entities and relationships |

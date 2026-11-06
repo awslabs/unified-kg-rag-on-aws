@@ -430,7 +430,7 @@ def test_an_explicit_indexing_only_rerun_warns_and_counts_again(
     finally:
         pipeline.close()
     assert (
-        "'graph_extraction' failed on 1 text units and is not enabled in this run"
+        "'graph_extraction' failed on 2 text units and is not enabled in this run"
         in caplog.text
     )
     (record,) = [
