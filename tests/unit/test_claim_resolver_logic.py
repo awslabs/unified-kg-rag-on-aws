@@ -17,10 +17,12 @@ from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolutionStats,
     ClaimResolver,
     claim_date_value,
+    claim_identity_suffix,
     earlier_claim_ids,
     resolved_claim_id,
 )
 from unified_kg_rag.domain.models import Claim, Config, Entity
+from unified_kg_rag.shared.utils import generate_stable_id
 
 pytestmark = pytest.mark.unit
 
@@ -652,3 +654,52 @@ def test_an_earlier_reading_id_is_the_id_resolved_claim_id_gave_it(
 @pytest.mark.parametrize("text", ["15 January, 2024", "15 Jan, 2024", "15 Jan., 2024"])
 def test_a_day_month_date_with_a_comma_is_a_calendar_date(text: str) -> None:
     assert claim_date_value(text) == "2024-01-15"
+
+
+@pytest.mark.parametrize(
+    ("text", "start", "end"),
+    [
+        ("2024年3月15日", "2024-03-15", "2024-03-15"),
+        ("2024年3月", "2024-03-01", "2024-03-31"),
+        ("2024年", "2024-01-01", "2024-12-31"),
+        ("２０２４年１月５日", "2024-01-05", "2024-01-05"),
+        ("2024년 3월 15일", "2024-03-15", "2024-03-15"),
+        ("2024년 2월", "2024-02-01", "2024-02-29"),
+        ("2024년", "2024-01-01", "2024-12-31"),
+        ("2022年第3四半期", "2022-07-01", "2022-09-30"),
+        ("2022年第3季度", "2022-07-01", "2022-09-30"),
+        ("2022년 3분기", "2022-07-01", "2022-09-30"),
+    ],
+)
+def test_a_chinese_japanese_or_korean_date_is_a_calendar_date(
+    text: str, start: str, end: str
+) -> None:
+    assert claim_date_value(text) == start
+    assert claim_date_value(text, end=True) == end
+    # Its own result reads back unchanged.
+    assert claim_date_value(start) == start
+
+
+@pytest.mark.parametrize("text", ["2024年13月", "2024년 2월 30일"])
+def test_an_impossible_cjk_date_stays_as_written(text: str) -> None:
+    assert claim_date_value(text) == text
+
+
+@pytest.mark.parametrize(
+    "text", ["不明", "未定", "なし", "未知", "不详", "미상", "알 수 없음", "Unbekannt"]
+)
+def test_a_placeholder_in_the_corpus_language_is_an_unknown_date(text: str) -> None:
+    assert claim_date_value(text) is None
+    assert claim_identity_suffix(text, text) == ""
+
+
+def test_a_claim_keyed_by_its_written_cjk_date_is_found_under_it() -> None:
+    # An earlier build kept "2024年3月" as written: the claim's id then is
+    # among its earlier ids, so an incremental run replaces it.
+    statement = _coarse_statement(start_date="2024年3月", end_date="不明")
+    claim = _resolved_from(statement)
+    assert (claim.start_date, claim.end_date) == ("2024-03-01", None)
+    stale = generate_stable_id(
+        "claim:e-vendor:e-buyer:obligation:" + "2024年3月:不明".casefold()
+    )
+    assert stale in earlier_claim_ids(claim, [statement])

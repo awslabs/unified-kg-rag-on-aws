@@ -4,6 +4,7 @@ import calendar
 import functools
 import re
 import time
+import unicodedata
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
 from datetime import date, datetime, timedelta
@@ -24,7 +25,9 @@ _RESOLVE_PROGRESS_EVERY = 2000
 
 logger = get_logger(__name__)
 
-# Placeholders the claim prompt (or the model) uses for an absent date.
+# Placeholders the claim prompt (or the model) uses for an absent date. The
+# prompt asks for UNKNOWN, but a model writing descriptions in the corpus
+# language writes the placeholder in it too ("不明", "미상").
 _UNKNOWN_DATE_VALUES = frozenset(
     {
         "",
@@ -38,6 +41,37 @@ _UNKNOWN_DATE_VALUES = frozenset(
         "unspecified",
         "ongoing",
         "present",
+        # Chinese and Japanese.
+        "不明",
+        "未知",
+        "不详",
+        "未定",
+        "待定",
+        "无",
+        "なし",
+        "該当なし",
+        "現在",
+        "现在",
+        "至今",
+        "進行中",
+        "进行中",
+        # Korean.
+        "미상",
+        "불명",
+        "알 수 없음",
+        "없음",
+        "미정",
+        "해당 없음",
+        "현재",
+        "진행 중",
+        # German, Spanish, French, Italian, Portuguese, Russian.
+        "unbekannt",
+        "desconocido",
+        "inconnu",
+        "inconnue",
+        "sconosciuto",
+        "desconhecido",
+        "неизвестно",
     }
 )
 # An ISO 8601 week ("2024-W03", or with its weekday "2024-W03-2"):
@@ -57,6 +91,17 @@ _ABBREVIATION_DOT = re.compile(r"(?<=[A-Za-z])\s*\.")
 _COMMA = re.compile(r"\s*,\s*")
 # "Sept" is no %b abbreviation.
 _SEPT = re.compile(r"\bSept\b", re.IGNORECASE)
+# A Chinese, Japanese or Korean date: a year, a year and month, or a full
+# date written with their unit characters ("2024年3月15日", "2024년 3월 15일",
+# "2024年3月"), and a quarter ("2024年第3四半期", "2024年第3季度",
+# "2024년 3분기").
+_CJK_DATE = re.compile(
+    r"(?P<y>\d{4})\s*[年년]"
+    r"(?:\s*(?P<m>\d{1,2})\s*[月월](?:\s*(?P<d>\d{1,2})\s*[日일])?)?"
+)
+_CJK_QUARTER = re.compile(
+    r"(?P<y>\d{4})\s*[年년]?\s*第?\s*(?P<q>[1-4])\s*(?:四半期|季度|季|분기)"
+)
 
 
 # Written-out dates read as calendar dates besides ISO 8601 (which the claim
@@ -92,9 +137,10 @@ def _last_day(year: int, month: int) -> date:
 @functools.lru_cache(maxsize=1 << 16)
 def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
     """A claim date as stored: None when absent or a placeholder such as
-    UNKNOWN or TBD, ``YYYY-MM-DD`` when it reads as a calendar date (ISO
+    UNKNOWN, TBD, 不明 or 미상 (``_UNKNOWN_DATE_VALUES``), ``YYYY-MM-DD`` when it reads as a calendar date (ISO
     8601, a time dropped, unpadded ``2024-1-5``, or a written-out date such
-    as "January 15th, 2024", "Jan. 15, 2024" or "Sept. 3, 2024"), or as a
+    as "January 15th, 2024", "Jan. 15, 2024", "Sept. 3, 2024",
+    "2024年3月15日" or "2024년 3월 15일"), or as a
     coarser period, stored as its first day (an ISO week ``2024-W03`` as its
     Monday, ``Q3 2022`` as 2022-07-01, ``March 2024``/``2024-03`` as
     2024-03-01, ``2024`` as 2024-01-01) or, as an ``end`` date, as its last
@@ -107,6 +153,8 @@ def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
     text = " ".join((value or "").split())
     if text.casefold() in _UNKNOWN_DATE_VALUES:
         return None
+    if (cjk := _cjk_date_value(text, end=end)) is not None:
+        return cjk
     if week := _ISO_WEEK.fullmatch(text):
         text = text.upper()
         try:
@@ -144,6 +192,32 @@ def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
             parsed = _last_day(parsed.year, month)
         return parsed.isoformat()
     return text
+
+
+def _cjk_date_value(text: str, *, end: bool) -> str | None:
+    """``text`` as ``claim_date_value`` stores it when it is a Chinese,
+    Japanese or Korean date or quarter (``_CJK_DATE``, ``_CJK_QUARTER``;
+    fullwidth digits read as digits), else None."""
+    normalized = unicodedata.normalize("NFKC", text)
+    if quarter := _CJK_QUARTER.fullmatch(normalized):
+        year, month = int(quarter["y"]), 3 * (int(quarter["q"]) - 1) + 1
+        if end:
+            return _last_day(year, month + 2).isoformat()
+        return f"{year:04d}-{month:02d}-01"
+    found = _CJK_DATE.fullmatch(normalized)
+    if found is None:
+        return None
+    year = int(found["y"])
+    try:
+        if found["d"] is not None:
+            return date(year, int(found["m"]), int(found["d"])).isoformat()
+        if found["m"] is None:
+            return (date(year, 12, 31) if end else date(year, 1, 1)).isoformat()
+        month = int(found["m"])
+        return (_last_day(year, month) if end else date(year, month, 1)).isoformat()
+    except ValueError:
+        # No such day or month ("2024年13月"): kept as written.
+        return None
 
 
 def claim_date_key(value: str | None, *, end: bool = False) -> str:
