@@ -66,12 +66,12 @@ needs the relationship vector index and the graph, not community reports.
 Its settings are `search.ppr_search`, and its fusion buckets
 (`ppr_passages`, `ppr_seed_text_units`, `ppr_facts`) take
 `search.fusion.fusion_weights`. It is the cheap, fast option: answers
-within the noise of `local` and `mix` on multi-hop questions for a third to
-half of their cost, so `auto` never picks it
-([evidence](../concepts/defaults-and-evidence.md#the-ppr-strategy)).
-`local` orders its text units the same way by default
-(`search.local_search.text_unit_ranking: ppr`; `support` restores the
-earlier order); DRIFT's follow-up local searches keep `support`
+within the noise of `local` and `mix` on multi-hop questions at a fraction
+of their cost ([evidence](../concepts/defaults-and-evidence.md#the-ppr-strategy)).
+`auto` never picks it until a measurement shows where it wins: select it
+explicitly. `local` orders its text units the same way by default
+(`search.local_search.text_unit_ranking: ppr`; `support` orders them by
+how many expanded entities cite each); DRIFT's follow-up local searches keep `support`
 (`search.drift_search.text_unit_ranking`), unmeasured with `ppr`. See [Retrieval](../concepts/retrieval.md) and
 [Design §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking).
 
@@ -172,12 +172,12 @@ search:
   does not; `abstain` tells it not to answer and to write the decline in the
   query's language, and reports the output abstained
   (`abstention_reason: insufficient_context`). Neither adds a model call.
-  Measured with `iterative`, `abstain` declined 45 of 100 answerable
-  questions and lost 13.8 points of token F1, so `hedge` stays the default
+  Measured with `iterative`, `abstain` declined many answerable questions
+  and lost token F1, so `hedge` stays the default
   ([evidence](../concepts/defaults-and-evidence.md#declines-and-abstention)).
 - `mark` changes the answer prompt, so answers and EM / F1 change. Measured
-  on multi-hop questions, it turned hedged correct answers into declines (EM
-  -10 to -12 points) for machine-readable declines, so it stays opt-in
+  on multi-hop questions, it turned hedged correct answers into declines
+  (lower EM) for machine-readable declines, so it stays opt-in
   ([evidence](../concepts/defaults-and-evidence.md#declines-and-abstention));
   compare `mark` runs as their own arm. How declines are scored:
   [Evaluation: unanswerable questions](./evaluate.md#unanswerable-questions-and-declines).
@@ -193,9 +193,9 @@ the depot of the carrier the vendor hired?") and its follow-up queries search
 the passages, for at most `max_rounds` (default 2) rounds. The answer model
 answers once, from the fused candidates. No default selects it, but `auto`
 may route a question that chains facts through an entity it does not name to
-it (`search.auto_routable_strategies`). On 200 MuSiQue questions it raised
-`mix`'s `answer_contains` by 12.5 points and token F1 by 5.2, and the median
-query took 16 s instead of 7
+it (`search.auto_routable_strategies`). Over `mix` it answered multi-hop
+questions significantly better than `mix` alone, and the median query took
+about 10 s longer
 ([evidence](../concepts/defaults-and-evidence.md#iterative-follow-up-rounds)).
 To keep `auto` off it, list the routable strategies without it:
 `search.auto_routable_strategies: [local, mix, global]`.

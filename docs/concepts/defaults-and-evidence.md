@@ -228,6 +228,17 @@ over the expanded entities, their relationships and the passages they cite,
 seeded by local's entities, the question's passage hits and the endpoints of
 its relationship hits ([Design §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking));
 `support`, the earlier default, by how many expanded entities cite a unit.
+A retrieval-only screen first chose the seeding: on the same 200 MuSiQue
+questions, one repeat, real models, the ranking as configured by default
+against `support` put more supporting passages in the context (+11.0
+points [+8.4, +13.8]) and raised recall@5 after the rerank by 4.1 [+1.0,
++7.1]. Fusing the same passage hits into `support`'s order without the
+PageRank gained +6.4, so the PageRank adds 4.7 [+2.5, +6.8] beyond the
+passage hits; seeding from the entities alone gained only +3.9. The
+screen's retrieval took about 0.4 s more a query on the embedded stores
+(the PageRank itself about 50 ms); the answer runs below measured the
+shipped ranking at +0.10 s.
+
 Two runs on 2026-11-06 (package at commits `e4cd96e5` and `85d7e6ec`)
 measured `ppr` against `support` on the same index, models and 200 MuSiQue
 questions, one repeat each, the rerank on, both arms reading the same query
