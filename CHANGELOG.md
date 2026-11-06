@@ -423,15 +423,15 @@ From a `main` checkout (formats and keys no release had):
   date written as `2024年3月` is found under it, so nothing else re-runs.
 - (#602) `local` orders its text units by HippoRAG 2's PageRank by default
   (`search.local_search.text_unit_ranking: ppr`): answers can change. DRIFT's follow-up local searches keep the
-  earlier order (`search.drift_search.text_unit_ranking: support`, unmeasured under DRIFT with `ppr`) (#PR). Nothing is re-indexed or re-run; each local
+  earlier order (`search.drift_search.text_unit_ranking: support`, unmeasured under DRIFT with `ppr`) (#607). Nothing is re-indexed or re-run; each local
   query adds a text-unit search, a relationship kNN search, an edge read and one query embedding (about 0.1 s on
   the embedded stores), and without the relationship vector index the PageRank is seeded by the entities and
   passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
-- (#PR) A query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the `rerank` role and
+- (#607) A query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the `rerank` role and
   the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the rerank model has a
   price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets both token prices or
   the rerank price; one with neither, or one token price alone, is refused at load. Nothing is re-run.
-- (#PR) `naive` and `simple` are served by every namespace that holds the text units (a `raptor`-only or
+- (#607) `naive` and `simple` are served by every namespace that holds the text units (a `raptor`-only or
   `lightrag`-only one, where they were refused), and `simple` sweeps only the indexes the namespace holds.
 
 ### Added
@@ -454,7 +454,7 @@ From a `main` checkout (formats and keys no release had):
   filter key the summary index does not store (`community_ids`, `source_kinds`) `tree` reads no summary
   (`metadata.summaries_skipped_for_filters`) where it returned them unfiltered, the graph buckets run where the
   queried namespace holds the entities index (not where the config would build one), and their text units are the
-  best-weighted that pass the filters (#PR).
+  best-weighted that pass the filters (#607).
   Settings: `indexing.summary_tree`, `search.tree_search`, `search.token_manager.type_budgets.summary`; the
   `VectorIndexer` port gains the summary-tree methods (each with a "cannot" default). Differential tests against the
   original code ship with recorded fixtures. Failed summaries and, with `refresh: on_reset`, the text units no
@@ -590,8 +590,8 @@ From a `main` checkout (formats and keys no release had):
   the answer's budget (`controller_context_tokens: null`; at 8000, with ~1200-token chunks it read 3 of the answer's
   11 passages; MuSiQue's short chunks fit either way), a round follows at most five bridge entities, and the
   follow-up queries, bridge entities and step questions in `metadata["iterative"]` are screened by the output
-  guardrail with `check_output` (#PR). `metadata["context_sufficient"]: false` reports a final insufficient verdict,
-  a deadline that cancels the round such a verdict started included (`insufficiency_reason: deadline`, #PR);
+  guardrail with `check_output` (#607). `metadata["context_sufficient"]: false` reports a final insufficient verdict,
+  a deadline that cancels the round such a verdict started included (`insufficiency_reason: deadline`, #607);
   `metadata["iterative"]` the rounds and their model usage; new `custom_prompts.iterative_controller_*`,
   `query_decomposition_*` and `decomposition_step_*` (#594). See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
@@ -601,7 +601,7 @@ From a `main` checkout (formats and keys no release had):
   call counts from its start, so cancelled and background calls are billed at an estimated input; a response that
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
   #563, #589). Rerank requests count apart (`rerank_calls`, `rerank_search_units`, one per 100 documents), priced by
-  `evaluation.prices.<rerank model>.per_thousand_rerank_search_units` (#PR).
+  `evaluation.prices.<rerank model>.per_thousand_rerank_search_units` (#607).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
   `total_files_skipped`, `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and
   `total_documents_without_claims`; a run with failed units ends with a WARNING naming them per stage (#518, #532).
@@ -638,7 +638,7 @@ From a `main` checkout (formats and keys no release had):
   questions, `mark` stays opt-in and `hedge` the default (#593, #600, #606). See
   questions, `mark` stays opt-in and `hedge` the default (#593, #600). Under `abstain` an answer the model writes
   instead of the decline is replaced by the no-context reply (invoke and stream), and a streamed decline keeps the
-  space at a chunk boundary after the token (#PR). See
+  space at a chunk boundary after the token (#607). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
 - Evaluation of open-ended answers, all opt-in (defaults unchanged until a measured experiment decides): the
   pairwise judge reports win rates per answer-length bucket in estimated tokens (symmetric in the log ratio) and
