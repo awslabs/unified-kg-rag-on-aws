@@ -486,6 +486,47 @@ def test_tree_answers_from_summaries_and_their_passages(
         chain.close()
 
 
+def test_tree_reads_what_the_namespace_holds_under_any_config(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    config, providers, _, _ = setup(tmp_path)
+    context = ingest(config, providers, corpus(tmp_path), tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    # A query config naming every methodology on the raptor-only namespace:
+    # the graph buckets read the entities index only where it is held.
+    wide = config.model_copy(deep=True)
+    wide.indexing.methodologies = [
+        Methodology.GRAPHRAG,
+        Methodology.LIGHTRAG,
+        Methodology.RAPTOR,
+    ]
+    chain = GraphRAGChain(wide, providers=providers)
+    try:
+        meta = ask(chain).search_results.metadata
+        assert meta["graph_signal"] == "unavailable"
+        assert "tree_graph_summaries" not in meta["sources"]
+        # A key only the text units store leaves the summaries out (the
+        # summary index would drop it and return them unfiltered).
+        out = ask(chain, filters={"community_ids": "no-such-community"})
+        meta = out.search_results.metadata
+        assert meta["summaries_skipped_for_filters"] == ["community_ids"]
+        assert "tree_summaries" not in meta["sources"]
+        assert not by_type(out, "summary")
+        # A key the summaries store filters them as before.
+        meta = ask(chain, filters={"attr_category": "none"}).search_results.metadata
+        assert "summaries_skipped_for_filters" not in meta
+        assert meta["sources"]["tree_summaries"] == 0
+        # naive and simple read what any namespace holds: served here.
+        for strategy in (SearchStrategy.NAIVE, SearchStrategy.SIMPLE):
+            out = ask(chain, search_strategy=strategy)
+            assert by_type(out, "text"), strategy
+    finally:
+        chain.close()
+
+
 def test_tree_is_refused_where_no_tree_was_built(
     tmp_path: Path, no_aws  # noqa: F811 - the fixture
 ) -> None:

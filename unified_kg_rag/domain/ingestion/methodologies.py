@@ -179,20 +179,25 @@ def stored_artifacts(
     return parse_artifacts(artifacts)
 
 
+def held_artifacts(
+    record: Mapping[str, Any] | None, config: Config
+) -> frozenset[IndexArtifact]:
+    """The artifacts an index namespace holds: those its build record names;
+    without a record that names them (none written, a backend without index
+    metadata, a record from before methodology profiles) those a run of
+    ``config`` builds (``artifacts_to_build``)."""
+    artifacts = stored_artifacts(record)
+    return artifacts_to_build(config) if artifacts is None else artifacts
+
+
 def held_methodologies(
     record: Mapping[str, Any] | None, config: Config
 ) -> tuple[Methodology, ...]:
     """The methodologies an index namespace holds: those whose required
-    artifacts its build record names; without a record that names them (none
-    written, a backend without index metadata, a record from before
-    methodology profiles) those whose required artifacts a run of ``config``
-    builds (``artifacts_to_build``): a store the default graphrag + lightrag
-    run built before build records holds hipporag too, which reads what
-    lightrag does."""
-    artifacts = stored_artifacts(record)
-    if artifacts is None:
-        artifacts = artifacts_to_build(config)
-    return methodologies_holding(artifacts)
+    artifacts it holds (``held_artifacts``): a store the default graphrag +
+    lightrag run built before build records holds hipporag too, which reads
+    what lightrag does."""
+    return methodologies_holding(held_artifacts(record, config))
 
 
 def missing_artifacts(

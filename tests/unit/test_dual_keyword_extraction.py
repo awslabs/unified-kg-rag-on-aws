@@ -325,7 +325,10 @@ class TestSearchStepThreading:
         await chain._search_step(state)
         # The mode, and the language a strategy writes its own searches in
         # (the index's: translation is off by default).
-        assert captured["query"].metadata == {
+        # and what the namespace holds (the configured run's, no record here).
+        metadata = dict(captured["query"].metadata)
+        assert "entities" in metadata.pop("held_artifacts")
+        assert metadata == {
             "search_strategy": "local",
             "query_language": "English",
         }

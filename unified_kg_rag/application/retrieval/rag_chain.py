@@ -97,6 +97,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
+    IndexArtifact,
     Methodology,
     ModelRole,
     RetrievalResult,
@@ -132,6 +133,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     MarkerStreamFilter,
     split_marker,
 )
+from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
 from unified_kg_rag.ports.guardrail import (
     ContentGuardPort,
     GroundingContext,
@@ -575,7 +577,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         self._cache_lock = threading.RLock()
         # What each queried suffix's index namespace holds, with when it was
         # read (methodology_check; guarded by the cache lock).
-        self._held_methodologies: dict[str, tuple[float, tuple[Methodology, ...]]] = {}
+        self._held_methodologies: dict[str, tuple[float, frozenset[IndexArtifact]]] = {}
         # The schema annotation fields the configured extraction schema
         # writes (filter_validation._schema_annotation_fields), loaded on the
         # first filter on one of them; None until then, and for good once a
@@ -1049,6 +1051,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
         resolved_strategy: SearchStrategy = state["resolved_strategy"]
+        # What the namespace holds (cached since the methodology check): a
+        # strategy reads only those of its optional indexes it holds.
+        held = await methodology_check.namespace_artifacts(self, state.get("suffix"))
         search_query = SearchQuery(
             query=processed.final_query,
             search_type=state.get("search_type", SearchType.HYBRID),
@@ -1066,6 +1071,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             metadata={
                 "search_strategy": resolved_strategy.value,
                 "query_language": query_processing.query_language(self, state),
+                HELD_ARTIFACTS_KEY: sorted(a.value for a in held),
             },
         )
         with observability.span(

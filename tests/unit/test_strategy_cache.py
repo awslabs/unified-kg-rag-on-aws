@@ -195,7 +195,9 @@ async def test_concurrent_queries_on_a_cached_strategy_are_isolated(
     assert {r.metadata["filters"]["document_id"][0] for r in second.results} == {"d-2"}
     assert first.metadata is not second.metadata
     for out in (first, second):
-        assert out.query.metadata == {
+        metadata = dict(out.query.metadata)
+        assert "text_units" in metadata.pop("held_artifacts")
+        assert metadata == {
             "search_strategy": strategy.value,
             "query_language": "English",
         }

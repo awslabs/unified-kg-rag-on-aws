@@ -47,14 +47,15 @@ GRAPHRAG = (
     SearchStrategy.LOCAL,
     SearchStrategy.GLOBAL,
     SearchStrategy.DRIFT,
-    SearchStrategy.SIMPLE,
 )
-# iterative over its default base, mix, reads lightrag.
+# iterative over its default base, mix, reads lightrag; simple sweeps the
+# indexes the namespace holds.
 LIGHTRAG = (
     SearchStrategy.MIX,
     SearchStrategy.HYBRID,
     SearchStrategy.NAIVE,
     SearchStrategy.ITERATIVE,
+    SearchStrategy.SIMPLE,
 )
 
 

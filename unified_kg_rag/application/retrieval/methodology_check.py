@@ -17,18 +17,22 @@ from typing import TYPE_CHECKING
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     get_strategy_spec,
+    serves,
+    strategy_artifacts,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     strategy_methodology as registered_methodology,
 )
-from unified_kg_rag.domain.ingestion.methodologies import held_methodologies
+from unified_kg_rag.domain.ingestion.methodologies import held_artifacts
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
+    IndexArtifact,
     Methodology,
     RetrieverRole,
     SearchStrategy,
 )
+from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
 
@@ -50,13 +54,13 @@ def _namespace(chain: GraphRAGChain, suffix: str | None) -> str:
     )
 
 
-async def namespace_methodologies(
+async def namespace_artifacts(
     chain: GraphRAGChain, suffix: str | None, *, refresh: bool = False
-) -> tuple[Methodology, ...]:
-    """The methodologies the index namespace of ``suffix`` holds: from its
-    build record, else (no record, one from before methodology profiles, a
-    backend without index metadata, an unreadable one) those a run of the
-    config builds (``held_methodologies``)."""
+) -> frozenset[IndexArtifact]:
+    """The index artifacts the namespace of ``suffix`` holds: from its build
+    record, else (no record, one from before methodology profiles, a backend
+    without index metadata, an unreadable one) those a run of the config
+    builds (``held_artifacts``)."""
     key = suffix or ""
     now = time.monotonic()
     with chain._cache_lock:
@@ -70,10 +74,20 @@ async def namespace_methodologies(
     except Exception as e:  # noqa: BLE001 - the record is optional
         # The query meets a store error itself; the config stands in here.
         logger.debug("Reading the build record of '%s' failed: %s", key, e)
-    held = held_methodologies(record, chain.config)
+    held = held_artifacts(record, chain.config)
     with chain._cache_lock:
         chain._held_methodologies[key] = (now, held)
     return held
+
+
+async def namespace_methodologies(
+    chain: GraphRAGChain, suffix: str | None, *, refresh: bool = False
+) -> tuple[Methodology, ...]:
+    """The methodologies the index namespace of ``suffix`` holds: those
+    whose required artifacts it holds (``namespace_artifacts``)."""
+    return methodologies_holding(
+        await namespace_artifacts(chain, suffix, refresh=refresh)
+    )
 
 
 def strategy_methodology(
@@ -97,24 +111,48 @@ async def check_strategy_methodology(
     chain: GraphRAGChain, strategy: SearchStrategy, suffix: str | None
 ) -> tuple[Methodology, ...]:
     """The methodologies the namespace of ``suffix`` holds, raising
-    ``MethodologyNotIndexedError`` if ``strategy`` reads another one (the
-    record is read again first).
+    ``MethodologyNotIndexedError`` if it does not serve ``strategy`` (the
+    record is read again first): it lacks an artifact the strategy declares
+    it reads (``StrategySpec.required_artifacts``), or, for a strategy that
+    declares none, the strategy's methodology.
 
     For ``auto`` nothing is refused here: it routes among the strategies of
     the held methodologies (``strategy_registry.routable_strategies``).
     """
-    held = await namespace_methodologies(chain, suffix)
-    methodology = strategy_methodology(chain, strategy)
-    if methodology is None or methodology in held:
-        return held
-    held = await namespace_methodologies(chain, suffix, refresh=True)
-    if methodology in held:
-        return held
-    raise MethodologyNotIndexedError(
-        not_indexed_message(
-            strategy, methodology, held, _namespace(chain, suffix), chain.config
+    for refresh in (False, True):
+        artifacts = await namespace_artifacts(chain, suffix, refresh=refresh)
+        held = methodologies_holding(artifacts)
+        if _served(chain, strategy, artifacts, held):
+            return held
+    namespace = _namespace(chain, suffix)
+    needed = strategy_artifacts(strategy, chain.config)
+    if needed is not None:
+        raise MethodologyNotIndexedError(
+            f"Search strategy '{strategy.value}' reads the "
+            f"{', '.join(sorted(a.value for a in needed - artifacts))} of the "
+            f"index namespace '{namespace}', which it does not hold; run "
+            "ingestion with indexing.methodologies naming any methodology."
         )
+    methodology = strategy_methodology(chain, strategy)
+    assert methodology is not None  # _served serves a strategy without one
+    raise MethodologyNotIndexedError(
+        not_indexed_message(strategy, methodology, held, namespace, chain.config)
     )
+
+
+def _served(
+    chain: GraphRAGChain,
+    strategy: SearchStrategy,
+    artifacts: frozenset[IndexArtifact],
+    held: tuple[Methodology, ...],
+) -> bool:
+    if strategy is SearchStrategy.AUTO:
+        return True
+    needed = strategy_artifacts(strategy, chain.config)
+    if needed is not None:
+        return needed <= artifacts
+    methodology = strategy_methodology(chain, strategy)
+    return methodology is None or methodology in held
 
 
 def not_indexed_message(
@@ -151,5 +189,7 @@ def _reads(
         get_strategy_spec(strategy)
     except ValueError:
         return False
+    if strategy_artifacts(strategy, config) is not None:
+        return serves(strategy, held, config)
     methodology = registered_methodology(strategy, config)
     return methodology is not None and methodology in held
