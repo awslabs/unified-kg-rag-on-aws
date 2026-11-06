@@ -160,9 +160,10 @@ async def test_auto_never_routes_to_report_strategies_without_communities() -> N
 
 
 async def test_auto_routes_among_the_namespace_methodologies() -> None:
-    # The held methodologies the query read (a lightrag-only namespace) leave
-    # mix and hybrid of the configured strategies; global is never offered.
+    # What the queried namespace holds (a lightrag-only one) leaves mix and
+    # hybrid of the configured strategies; global is never offered.
     from unified_kg_rag.domain.models import Config, Methodology
+    from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 
     config = Config()
     config.search.auto_routable_strategies = [
@@ -186,7 +187,7 @@ async def test_auto_routes_among_the_namespace_methodologies() -> None:
         {
             "search_strategy": SearchStrategy.AUTO,
             "query": "q",
-            "held_methodologies": (Methodology.LIGHTRAG,),
+            "held_artifacts": METHODOLOGY_PROFILES[Methodology.LIGHTRAG].required,
         }
     )
     assert offered["strategies"] == "mix, hybrid"
@@ -199,7 +200,8 @@ def test_routable_set_follows_what_the_pipeline_builds() -> None:
     from unified_kg_rag.adapters.retrieval.strategy_registry import (
         routable_strategies,
     )
-    from unified_kg_rag.domain.models import Config, Methodology
+    from unified_kg_rag.domain.models import Config, IndexArtifact, Methodology
+    from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
     from unified_kg_rag.shared import MethodologyNotIndexedError
 
     config = Config()
@@ -212,9 +214,18 @@ def test_routable_set_follows_what_the_pipeline_builds() -> None:
     # GraphRAG's on a namespace holding graphrag alone.
     config.graph.community_detection.enabled = True
     config.search.auto_routable_strategies = [SearchStrategy.MIX]
-    assert routable_strategies(config, [Methodology.GRAPHRAG]) == (
+    graphrag = METHODOLOGY_PROFILES[Methodology.GRAPHRAG].required
+    assert routable_strategies(config, graphrag) == (SearchStrategy.LOCAL,)
+    # Without the community reports: neither global nor drift.
+    config.search.auto_routable_strategies = [
+        SearchStrategy.GLOBAL,
+        SearchStrategy.DRIFT,
         SearchStrategy.LOCAL,
-    )
+    ]
+    assert routable_strategies(config, graphrag) == (SearchStrategy.LOCAL,)
+    assert routable_strategies(
+        config, graphrag | {IndexArtifact.COMMUNITY_REPORTS}
+    ) == tuple(config.search.auto_routable_strategies)
     # A namespace holding nothing a strategy reads.
     with pytest.raises(MethodologyNotIndexedError, match="holds \\(nothing\\)"):
-        routable_strategies(config, [])
+        routable_strategies(config, frozenset())

@@ -885,10 +885,29 @@ def extraction_settings(config: Config) -> ExtractionSettings:
         config,
         lambda rule: rule.per_document and _upstream_of(_P.CLAIM_EXTRACTION)(rule),
     )
+    values.update(_language_input(config))
     return ExtractionSettings(
         version=EXTRACTION_SETTINGS_VERSION,
         values={path: _recorded(value) for path, value in sorted(values.items())},
     )
+
+
+def _language_input(config: Config) -> dict[str, str]:
+    """``{"index_language": ...}`` for a config whose translation settings
+    alone do not say the language it is indexed in: translation off with a
+    ``target_language`` other than ``source_language``, extracted in the
+    target language before #605 and in the source language since. Keyed
+    into its extraction settings and stage caches, a namespace extracted
+    the earlier way re-extracts (or, where its analyzers differ, stops)
+    instead of mixing languages, and a re-run of a pipeline id does not
+    resume from target-language stage outputs. Empty for every other
+    config, so its keys stay."""
+    translation = config.processing.translation
+    if translation.enabled or translation.source_language == (
+        translation.target_language
+    ):
+        return {}
+    return {"index_language": index_language(config)}
 
 
 def extraction_fingerprint(config: Config) -> str:
@@ -1280,23 +1299,6 @@ def community_report_fingerprint(config: Config) -> str:
     )
 
 
-def legacy_community_report_fingerprints(config: Config) -> list[str]:
-    """The fingerprints earlier versions keyed report answers by (with the
-    ``report_generation`` section): a report stored under one is reused, and
-    stored under the current one too."""
-    from unified_kg_rag.domain.prompts import CommunityReportPrompt
-
-    return [
-        _answer_fingerprint(
-            config,
-            "community_report",
-            ModelRole.COMMUNITY_REPORT,
-            CommunityReportPrompt,
-            "graph.community_detection.report_generation",
-        )
-    ]
-
-
 def index_language(config: Config) -> str:
     """The language (its code) the corpus is indexed in: the target
     language when translation runs, the source language otherwise (the
@@ -1413,6 +1415,8 @@ def stage_input_fingerprint(
         "package_version": __version__,
         "corpus_manifest": corpus_fingerprint,
     }
+    if _STAGE_ORDER.index(stage_type) >= _STAGE_ORDER.index(_P.TRANSLATION):
+        payload.update(_language_input(config))
     if stage_type is _P.INDEXING and (iris := _schema_iris(config)):
         payload["schema_iris"] = iris
     return _digest(payload)

@@ -151,6 +151,10 @@ indexing:
   `indexing.opensearch.build_relationship_vector_index: false`이면 `graphrag`만 만듭니다.
   모르는 이름은 올바른 이름을 알려 주며 설정 로드에 실패하고, 이 스위치들 때문에 남는 방법론이
   없는 선택도 마찬가지입니다.
+- **리포트 없이.** `graph.community_detection.report_generation.enabled: false`이면 Leiden
+  단계는 실행하고 리포트 호출만 건너뜁니다. 네임스페이스는 `local`이 읽는 `graphrag`를 가지며,
+  리포트로 답하는 `global`과 `drift`는 이 스위치를 알려 주며 거절하고(설정 로드 때 WARNING으로
+  알림) `auto`도 고르지 않습니다.
 - **네임스페이스가 가진 것.** 실행마다 빌드 기록(`artifacts`, `methodologies`)에 남깁니다.
   질의한 전략이 네임스페이스에 없는 방법론을 읽으면 모델을 호출하기 전에 거절하고
   (`MethodologyNotIndexedError`, `run-rag`는 종료 코드 2), 네임스페이스가 가진 것을 알려 줍니다.
@@ -193,7 +197,10 @@ indexing:
   `models.roles.summary_tree: fast`로 $0.1-0.4이며, 같은 저장소의 그래프 수집은 약 $370입니다
   ([설계 §6.5](../design.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). 이 네임스페이스는
   `tree`, `naive`, `simple`이 서비스하며 `auto`는 `tree`로 갑니다. 그래프 저장소에 쓰지 않으므로 Neptune 엔드포인트가
-  필요 없고, 네임스페이스에 있던 그래프는 그대로 둡니다.
+  필요 없습니다. 네임스페이스에 있던 그래프는 증분 실행에서는 그대로 두고, 전체 구축
+  (`indexing.reset: true`, 또는 레지스트리 없는 모든 실행)은 더 만들지 않는 벡터 인덱스를 비우듯
+  그래프 엔드포인트가 설정되어 있으면 그래프를 지웁니다. 엔드포인트가 없으면 그래프가 남으므로,
+  지우려면 엔드포인트를 설정하고 그 재설정을 한 번 실행하세요.
 - **나중에 `raptor` 추가.** 다음 실행에서(코퍼스가 그대로여도) 또는 `run-ingestion
   --enabled-stages summary_tree`로, 저장된 텍스트 유닛에서 트리만 만듭니다. 다시 추출하거나
   네임스페이스를 재구축하지 않습니다. 이 단계는 저장소만 읽으므로, 업그레이드로 앞 단계의 캐시

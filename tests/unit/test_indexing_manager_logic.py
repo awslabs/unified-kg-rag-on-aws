@@ -685,8 +685,9 @@ def test_relationship_vector_index_skipped_when_disabled(manager) -> None:
     mgr, graph, vector, _ = manager
     mgr.config.indexing.opensearch.build_relationship_vector_index = False
     mgr.index_all_data(relationships=[_rel()], entities=[])
-    # The LightRAG-only vector index is skipped...
-    assert "relationships" not in vector.data
+    # The LightRAG-only vector index gets none (a full build only empties a
+    # live one)...
+    assert not any(vector.data.get("relationships", {}).values())
     # ...but the Neptune relationship edges (graph expansion) are still built.
     assert "relationships" in graph.data
 

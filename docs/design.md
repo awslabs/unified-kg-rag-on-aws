@@ -943,7 +943,7 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
 
   | Methodology | Required | Optional (used when built) |
   |---|---|---|
-  | `graphrag` | text units, entities, relationships, graph, communities, community reports | relationship vectors, claims |
+  | `graphrag` | text units, entities, relationships, graph, communities | community reports (`global` and `drift` require them), relationship vectors, claims |
   | `lightrag` | text units, entities, relationships, relationship vectors, graph | — |
   | `hipporag` | text units, entities, relationships, relationship vectors, graph | — |
   | `raptor` | text units, summary tree | — (`tree` also reads the entities index where another methodology built it) |
@@ -1010,21 +1010,31 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   that writes the namespace records them gone, and its strategies fail fast.
   Nothing is deleted: a reset with the remaining methodologies replaces the
   community-reports index with an empty one and drops the graph's community
-  vertices (the rebuild sweep, §5.2).
+  vertices (the rebuild sweep, §5.2). A run creates no vector index of an
+  artifact it does not build (`artifacts_to_build`; a `raptor`-only run has
+  no entities index): a full build only empties a live one, and the
+  index-creation probe counts the same indices.
 - **Query time.** Every strategy class declares `methodology`
   (`BaseSearchStrategy.methodology`): `graphrag` for `local`, `global`,
   `drift` and `simple`, `lightrag` for `mix`, `hybrid` and `naive`,
   `hipporag` for `ppr`, `raptor` for `tree`; a
   wrapper strategy (`iterative`) sets it per instance from the strategy it
-  wraps. A strategy that reads less than its methodology requires declares
+  wraps. A strategy that reads other than its methodology requires declares
   its artifacts at registration (`StrategySpec.required_artifacts`):
   `naive` reads the text units alone, and `simple` sweeps the indexes the
   namespace holds (the text units at least), so any namespace holding the
   text units serves both, a `raptor`-only or `lightrag`-only one included.
+  `global` and `drift`, which answer from the community reports, declare
+  `graphrag`'s required artifacts and the reports
+  (`REPORT_READER_ARTIFACTS`): with
+  `graph.community_detection.report_generation.enabled: false` a namespace
+  holds `graphrag` for `local` (as before profiles), the two are refused
+  naming that switch, and a WARNING at load says so.
   `GraphRAGChain` reads the namespace's build record through the document
   retriever (`aread_build_record`, cached per suffix for
   `methodology_check.HELD_TTL_SECONDS`, read again before a refusal) and derives what it
-  holds (`held_methodologies`; when there is no record or it predates
+  holds (`held_artifacts`, and the methodologies whose required artifacts
+  they are, `methodologies_holding`; when there is no record or it predates
   profiles, every methodology whose required artifacts a run of the config
   builds, `artifacts_to_build`: a store the default run built before records
   holds `hipporag` too, as it holds the relationship vectors `ppr` reads),
@@ -1035,8 +1045,8 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   methodology (or declared artifacts) is not held raises `MethodologyNotIndexedError` (a
   `ConfigurationError`; `run-rag` exits 2) before any model call, naming
   what the namespace holds, the strategies that serve it and how to add the
-  methodology. `auto` routes only among the held methodologies' strategies
-  of `search.auto_routable_strategies`, falling back to `local`, else `mix`,
+  methodology. `auto` routes only among the strategies
+  of `search.auto_routable_strategies` the held artifacts serve, falling back to `local`, else `mix`,
   else the first registered strategy of a held methodology (`tree` on a
   `raptor`-only namespace).
   `local` counts as GraphRAG's: it reserves part of its
@@ -2807,7 +2817,12 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   `BaseSearchStrategy.query_language`, falling back to the index language.
   The extraction-record and answer fingerprints key the index language
   under their earlier `target_language` field, so a translated index keeps
-  its records. Claims carry no language slot: the claim prompt reads the
+  its records. Where the translation settings do not say it (translation
+  off, `source_language` other than `target_language`: extracted in the
+  target language before), the extraction settings and the stage caches
+  from translation on key it too (`cache_keys._language_input`), so such a
+  namespace re-extracts instead of mixing languages; every other config
+  keeps its keys. Claims carry no language slot: the claim prompt reads the
   unit's text in the index language and states facts as written.
 - **Language-aware parsing.** Query entities split at `,`, `，`, `、`,
   `;`, `；` and line breaks (`domain/retrieval/query_entities.py`). Global

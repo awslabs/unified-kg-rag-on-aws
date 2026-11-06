@@ -449,20 +449,23 @@ class IndexingManager:
             (vector.index_claims, vector.upsert_claims, claims, "vector_claims"),
             (graph.index_entities, graph.upsert_entities, entities, "graph_entities"),
         ]
-        # The OpenSearch relationship VECTOR index is only consumed by LightRAG
-        # high-level keyword retrieval (mix/hybrid). Skip it for a GraphRAG-only
-        # deployment (symmetric with community_detection.enabled). The Neptune
-        # relationship EDGES of phase 2 are always written — both methodologies
-        # traverse them for graph expansion.
-        if self.config.indexing.opensearch.build_relationship_vector_index:
-            phase1.append(
+        # The OpenSearch relationship VECTOR index: written when the run
+        # builds it (its switch, a methodology reading it); otherwise a full
+        # build only empties a live one. The Neptune relationship EDGES of
+        # phase 2 are always written: every graph methodology traverses them.
+        phase1.append(
+            (
+                vector.index_relationships,
+                self._upsert_vector_relationships,
                 (
-                    vector.index_relationships,
-                    self._upsert_vector_relationships,
-                    relationships,
-                    "vector_relationships",
-                )
+                    relationships
+                    if IndexArtifact.RELATIONSHIP_VECTORS
+                    in artifacts_to_build(self.config)
+                    else None
+                ),
+                "vector_relationships",
             )
+        )
 
         def tasks(
             specs: list[

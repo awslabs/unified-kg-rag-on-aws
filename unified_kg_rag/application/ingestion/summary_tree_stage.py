@@ -130,6 +130,9 @@ class SummaryTreeStage(_RegistryStage):
             for suffix in self._suffixes(context):
                 try:
                     metrics = self._build_suffix(indexer, suffix, context)
+                except _IntactTreeError:
+                    # Failed before writing: the stored tree stays named.
+                    raise
                 except Exception:
                     self._drop_artifact(indexer, suffix)
                     raise
@@ -201,7 +204,19 @@ class SummaryTreeStage(_RegistryStage):
             )
             self._record_artifact(indexer, suffix)
             return {"tree_leaves": len(rows), "tree_uncovered_leaves": uncovered}
-        self._check_tree_size(suffix, rows)
+        try:
+            self._check_tree_size(suffix, rows)
+        except PipelineStageError as e:
+            if stored is None:
+                raise
+            # Nothing was written: the tree stored before is intact and
+            # still serves the text units it covers.
+            logger.warning(
+                "The summary tree of '%s' is not rebuilt; the stored one stays "
+                "in the build record and serves the text units it covers",
+                suffix,
+            )
+            raise _IntactTreeError(str(e)) from e
         return self._rebuild(indexer, suffix, context, digest, fingerprint)
 
     def _check_tree_size(self, suffix: str, rows: list[dict[str, Any]]) -> None:
@@ -462,6 +477,12 @@ class SummaryTreeStage(_RegistryStage):
                 suffix,
                 e,
             )
+
+
+class _IntactTreeError(PipelineStageError):
+    """A tree build that failed before writing anything (its size check),
+    over a stored tree it leaves as it was: the build record keeps naming
+    it."""
 
 
 def _package_version() -> str | None:

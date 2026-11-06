@@ -169,6 +169,11 @@ indexing:
   profile; one with `indexing.opensearch.build_relationship_vector_index:
   false` builds `graphrag` alone. An unknown name fails the load naming the
   valid ones, and so does a selection those switches leave nothing of.
+- **Without reports.** `graph.community_detection.report_generation.enabled:
+  false` keeps the Leiden pass and skips the report calls: the namespace
+  holds `graphrag` for `local`, while `global` and `drift`, which answer
+  from the reports, are refused naming the switch (a WARNING at load says
+  so) and `auto` leaves them out.
 - **What the namespace holds.** Each run records it in the build record
   (`artifacts`, `methodologies`). A query whose strategy reads a methodology
   the namespace does not hold is refused before any model call
@@ -224,8 +229,12 @@ indexing:
   `models.roles.summary_tree: fast`, against about $370 for its graph
   ingest ([Design §6.5](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)).
   `tree`, `naive` and `simple` serve it; `auto` falls back to `tree`. It
-  writes no graph store, so it needs no Neptune endpoint, and a graph the
-  namespace held before is left as it is.
+  writes no graph store, so it needs no Neptune endpoint. A graph the
+  namespace held before is left as it is by an incremental run; a full
+  build (`indexing.reset: true`, or any run without the registry) deletes
+  it, as it empties the vector indices of what it no longer builds, when a
+  graph endpoint is configured. Without one the graph stays: run that reset
+  once with the endpoint set to delete it.
 - **Adding `raptor` later** builds only the tree, on the next run (an
   unchanged corpus included) or with `run-ingestion --enabled-stages
   summary_tree`, from the stored text units: no re-extraction and no

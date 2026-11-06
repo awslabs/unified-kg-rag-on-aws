@@ -44,6 +44,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.domain.models.methodology import REPORT_READER_ARTIFACTS
 from unified_kg_rag.domain.prompts import CommunityRelevancePrompt, GlobalMapPrompt
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -107,7 +108,11 @@ def _record(degraded: list[str] | None, error: Exception) -> None:
         degraded.append(type(error).__name__)
 
 
-@register_strategy(SearchStrategy.GLOBAL, required_roles=(RetrieverRole.DOCUMENT,))
+@register_strategy(
+    SearchStrategy.GLOBAL,
+    required_roles=(RetrieverRole.DOCUMENT,),
+    required_artifacts=REPORT_READER_ARTIFACTS,
+)
 class GlobalSearchStrategy(BaseSearchStrategy):
     methodology = Methodology.GRAPHRAG
 

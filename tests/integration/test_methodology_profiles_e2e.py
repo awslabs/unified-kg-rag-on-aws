@@ -300,7 +300,22 @@ def test_report_generation_off_keeps_incremental_runs_incremental(
     source = _corpus(tmp_path)
     context = e2e._ingest(config, providers, source, tmp_path / "run-1")
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
-    assert "community_reports" not in _record(providers)["artifacts"]
+    record = _record(providers)
+    assert "community_reports" not in record["artifacts"]
+    # It holds graphrag: local answers, global and drift are refused before
+    # any model call, naming the switch.
+    assert "graphrag" in record["methodologies"]
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        out = _ask(chain, SearchStrategy.LOCAL)
+        assert out.answer == e2e.ANSWER and out.sources
+        for strategy in (SearchStrategy.GLOBAL, SearchStrategy.DRIFT):
+            with pytest.raises(
+                MethodologyNotIndexedError, match="report_generation.enabled: true"
+            ):
+                _ask(chain, strategy)
+    finally:
+        chain.close()
 
     (source / "notes.txt").write_text("Bank lends money to Vendor.")
     before = Counter(calls.kinds)

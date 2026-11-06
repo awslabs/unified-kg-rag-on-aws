@@ -206,3 +206,50 @@ def test_an_untranslated_corpus_is_indexed_and_queried_in_its_language(
                     ), marker
     finally:
         chain.close()
+
+
+def test_a_namespace_keyed_without_its_index_language_re_extracts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Japanese source, Chinese target, translation off: extracted in Chinese
+    # before #605 and in Japanese since, under the same settings and with
+    # one analyzer (cjk) for both, so an incremental run mixed the two. The
+    # index language keys its extraction settings: the documents extracted
+    # the earlier way are extracted again.
+    from collections import Counter
+
+    from tests.fixtures.fakes.chat_models import CountingResponder
+    from tests.fixtures.fakes.model_servers import FakeOllama
+    from unified_kg_rag.domain.ingestion import cache_keys
+
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    config.providers.doc_status.enabled = True
+    translation = config.processing.translation
+    translation.enabled = False
+    translation.source_language = LanguageCode.JA
+    translation.target_language = LanguageCode.ZH
+    calls = CountingResponder(e2e._respond)
+    providers = e2e._providers(
+        config, FakeOllama(calls, e2e.ANSWER, e2e.DIM), e2e.FakeCrossEncoder("r")
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    for name, text in (("a", _CORPORA[LanguageCode.JA][2]), ("b", "倉庫は港にある。")):
+        (source / f"{name}.txt").write_text(text, encoding="utf-8")
+
+    def run(name: str) -> Counter[str]:
+        before = Counter(calls.kinds)
+        context = e2e._ingest(config, providers, source, tmp_path / name)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        return calls.since(before)
+
+    with monkeypatch.context() as earlier:
+        # Keyed as before #605: no index language in the settings, and the
+        # records under the language the prompts then asked for.
+        earlier.setattr(cache_keys, "_language_input", lambda _config: {})
+        earlier.setattr(cache_keys, "index_language", lambda _config: "zh")
+        first = run("run-1")
+    assert first["extraction"] == 2
+    # Nothing changed but the keying: every document is extracted again.
+    assert run("run-2")["extraction"] == 2
+    assert run("run-3")["extraction"] == 0

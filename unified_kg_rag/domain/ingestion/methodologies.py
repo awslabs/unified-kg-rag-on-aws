@@ -12,12 +12,12 @@ from typing import Any
 
 from unified_kg_rag.domain.models import Config, PipelineStageType
 from unified_kg_rag.domain.models.methodology import (
+    ARTIFACT_SWITCHES,
     METHODOLOGY_PROFILES,
     UNBUILT_ARTIFACTS,
     IndexArtifact,
     Methodology,
     artifacts_of,
-    methodologies_holding,
     parse_artifacts,
 )
 
@@ -118,6 +118,37 @@ def stages_for(artifacts: Iterable[IndexArtifact]) -> frozenset[PipelineStageTyp
     return frozenset(stages)
 
 
+def _switchable_stages() -> dict[PipelineStageType, frozenset[IndexArtifact]]:
+    """The stages only switchable artifacts (``ARTIFACT_SWITCHES``) need,
+    with those artifacts: claim extraction and resolution (claims),
+    community detection (communities and reports)."""
+    switchable = frozenset().union(*(s.artifacts for s in ARTIFACT_SWITCHES))
+    needs = {
+        stage: frozenset(
+            a
+            for a in ARTIFACT_STAGES
+            if a not in UNBUILT_ARTIFACTS and stage in stages_for([a])
+        )
+        for stage in PipelineStageType
+    }
+    return {stage: a for stage, a in needs.items() if a and a <= switchable}
+
+
+# Stage -> the artifacts that need it, for the stages a switch alone can turn
+# off: a run whose switches turn every one of them off skips the stage, even
+# when an explicit stage list names it (the pipeline's CONFIG_ENABLED).
+SWITCHABLE_STAGES: dict[PipelineStageType, frozenset[IndexArtifact]] = (
+    _switchable_stages()
+)
+
+
+def stage_switched_off(config: Config, stage: PipelineStageType) -> bool:
+    """Whether ``config``'s switches turn off every artifact that needs
+    ``stage`` (``SWITCHABLE_STAGES``)."""
+    needed = SWITCHABLE_STAGES.get(stage)
+    return needed is not None and needed <= config.artifacts_switched_off
+
+
 def artifacts_to_build(config: Config) -> frozenset[IndexArtifact]:
     """What a run of ``config`` builds: every artifact its effective
     methodologies read whose switch is on (``ARTIFACT_SWITCHES``), and claims when
@@ -191,16 +222,6 @@ def held_artifacts(
     ``config`` builds (``artifacts_to_build``)."""
     artifacts = stored_artifacts(record)
     return artifacts_to_build(config) if artifacts is None else artifacts
-
-
-def held_methodologies(
-    record: Mapping[str, Any] | None, config: Config
-) -> tuple[Methodology, ...]:
-    """The methodologies an index namespace holds: those whose required
-    artifacts it holds (``held_artifacts``): a store the default graphrag +
-    lightrag run built before build records holds hipporag too, which reads
-    what lightrag does."""
-    return methodologies_holding(held_artifacts(record, config))
 
 
 def missing_artifacts(

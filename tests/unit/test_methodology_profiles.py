@@ -64,6 +64,11 @@ def _config(*methodologies: Methodology, **sections) -> Config:
     )
 
 
+def _held(record, config: Config) -> tuple[Methodology, ...]:
+    """The methodologies a namespace with ``record`` holds."""
+    return methodologies_holding(mp.held_artifacts(record, config))
+
+
 # --- catalogue -----------------------------------------------------------
 
 
@@ -84,11 +89,9 @@ def test_raptor_is_held_once_its_tree_stage_has_run() -> None:
     through_indexing = mp.selected_stages(config) - {S.SUMMARY_TREE}
     assert S.INDEXING in through_indexing
     built = mp.built_artifacts(config, through_indexing)
-    assert R not in mp.held_methodologies(
-        _record(*built).model_dump(mode="json"), config
-    )
+    assert R not in _held(_record(*built).model_dump(mode="json"), config)
     built = mp.built_artifacts(config, mp.selected_stages(config))
-    assert R in mp.held_methodologies(_record(*built).model_dump(mode="json"), config)
+    assert R in _held(_record(*built).model_dump(mode="json"), config)
 
 
 def test_adding_raptor_to_a_built_namespace_rebuilds_nothing() -> None:
@@ -120,7 +123,13 @@ def test_lightrag_and_hipporag_need_no_community() -> None:
         required = METHODOLOGY_PROFILES[methodology].required
         assert A.RELATIONSHIP_VECTORS in required
         assert not required & {A.COMMUNITIES, A.COMMUNITY_REPORTS}
-    assert {A.COMMUNITIES, A.COMMUNITY_REPORTS} <= METHODOLOGY_PROFILES[G].required
+    assert A.COMMUNITIES in METHODOLOGY_PROFILES[G].required
+    # Local reads graphrag without the reports; global and drift need them.
+    assert A.COMMUNITY_REPORTS in METHODOLOGY_PROFILES[G].optional
+    for strategy in (SearchStrategy.GLOBAL, SearchStrategy.DRIFT):
+        assert get_strategy_spec(strategy).required_artifacts == (
+            METHODOLOGY_PROFILES[G].required | {A.COMMUNITY_REPORTS}
+        )
 
 
 def test_stages_for_closes_over_what_each_stage_reads() -> None:
@@ -308,21 +317,40 @@ def test_every_consumer_reads_the_same_switch_table(switch) -> None:
     assert not switch.artifacts & mp.artifacts_to_build(off)
     assert not switch.artifacts & on.artifacts_switched_off
     assert switch.artifacts <= off.artifacts_switched_off
-    # The default sweep searches an index of the artifact only when it is on.
+    # The default sweep searches an index of the artifact only when it is on,
+    # and a run creates one only then (rebuild or incremental, in a fresh
+    # namespace).
     for prefix, artifact in index_prefixes._prefix_artifacts(on):
         if artifact in switch.artifacts:
             assert prefix in index_prefixes.configured_index_prefixes(on)
             assert prefix not in index_prefixes.configured_index_prefixes(off)
-    # A deselecting switch leaves out the methodologies that require them.
+            for rebuild in (True, False):
+                assert prefix in _created(on, rebuild=rebuild)
+                assert prefix not in _created(off, rebuild=rebuild)
+    # The pipeline skips the stages only the switched-off artifacts need,
+    # even when an explicit stage list names them.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    def skipped(config: Config) -> set[PipelineStageType]:
+        return {
+            stage
+            for stage, allows in DataIngestionPipeline.CONFIG_ENABLED.items()
+            if stage is not S.GLEANING and not allows(config)
+        }
+
+    assert skipped(off) - skipped(on) == mp.selected_stages(on) - (
+        mp.selected_stages(off)
+    )
+    # A switch leaves out the methodologies that require them.
     needing = {
         m
         for m in DEFAULT_METHODOLOGIES
         if METHODOLOGY_PROFILES[m].required & switch.artifacts
     }
-    expected = set(DEFAULT_METHODOLOGIES) - (needing if switch.deselects else set())
+    expected = set(DEFAULT_METHODOLOGIES) - needing
     assert set(off.effective_methodologies) == expected
     assert set(on.effective_methodologies) == set(DEFAULT_METHODOLOGIES)
-    if switch.deselects and needing:
+    if needing:
         with pytest.raises(ValidationError, match=f"{switch.key}: false"):
             Config(
                 **merge_over(
@@ -332,21 +360,66 @@ def test_every_consumer_reads_the_same_switch_table(switch) -> None:
             )
 
 
+def _created(
+    config: Config, *, rebuild: bool, live: frozenset[str] = frozenset()
+) -> set[str]:
+    """The index prefixes a run of ``config`` creates in a namespace whose
+    ``live`` prefixes have an index."""
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+
+    indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
+    indexer.config = config
+    indexer.opensearch_config = config.indexing.opensearch
+    indexer.analyzer = "standard"
+    indexer.language = "en"
+    indexer._embedding_dimension = 8
+    indexer._index_limits = {}
+    indexer._get_name = lambda prefix, suffix: prefix  # type: ignore[method-assign]
+    indexer._live_index = lambda alias: alias if alias in live else None  # type: ignore[method-assign]
+    return {alias for alias, _ in indexer._mappings_to_create(None, rebuild)}
+
+
+def test_a_run_creates_only_the_indices_of_what_it_builds() -> None:
+    o = Config().indexing.opensearch
+    graph_indices = {
+        o.entities_index_prefix,
+        o.relationships_index_prefix,
+        o.community_reports_index_prefix,
+        o.claims_index_prefix,
+    }
+    raptor = _config(R)
+    for rebuild in (True, False):
+        assert _created(raptor, rebuild=rebuild) == {
+            o.text_units_index_prefix,
+            o.summary_nodes_index_prefix,
+            o.extraction_records_index_prefix,
+        }
+    # A rebuild replaces the live index of a type it does not build with an
+    # empty one (a methodology removed); an incremental run leaves it.
+    assert _created(raptor, rebuild=True, live=frozenset(graph_indices)) >= (
+        graph_indices
+    )
+    assert not _created(raptor, rebuild=False, live=frozenset(graph_indices)) & (
+        graph_indices
+    )
+    # Not the summary tree's: its stage writes (and a reset deletes) it.
+    assert o.summary_nodes_index_prefix not in _created(
+        Config(), rebuild=True, live=frozenset({o.summary_nodes_index_prefix})
+    )
+    assert _created(_config(L), rebuild=True) == {
+        o.text_units_index_prefix,
+        o.entities_index_prefix,
+        o.relationships_index_prefix,
+        o.extraction_records_index_prefix,
+    }
+
+
 def test_the_switch_table_names_boolean_settings() -> None:
-    assert {s.key: (s.artifacts, s.deselects) for s in ARTIFACT_SWITCHES} == {
-        "graph.community_detection.enabled": (
-            {A.COMMUNITIES, A.COMMUNITY_REPORTS},
-            True,
-        ),
-        "graph.community_detection.report_generation.enabled": (
-            {A.COMMUNITY_REPORTS},
-            False,
-        ),
-        "indexing.opensearch.build_relationship_vector_index": (
-            {A.RELATIONSHIP_VECTORS},
-            True,
-        ),
-        "processing.claim_extraction.enabled": ({A.CLAIMS}, True),
+    assert {s.key: s.artifacts for s in ARTIFACT_SWITCHES} == {
+        "graph.community_detection.enabled": {A.COMMUNITIES, A.COMMUNITY_REPORTS},
+        "graph.community_detection.report_generation.enabled": {A.COMMUNITY_REPORTS},
+        "indexing.opensearch.build_relationship_vector_index": {A.RELATIONSHIP_VECTORS},
+        "processing.claim_extraction.enabled": {A.CLAIMS},
     }
     config = Config()
     for switch in ARTIFACT_SWITCHES:
@@ -419,14 +492,15 @@ def _record(*artifacts: IndexArtifact, mode: str = "full") -> IndexBuildRecord:
 
 LIGHT = (A.TEXT_UNITS, A.ENTITIES, A.RELATIONSHIPS, A.RELATIONSHIP_VECTORS, A.GRAPH)
 FULL = (*LIGHT, A.COMMUNITIES, A.COMMUNITY_REPORTS)
+TREE_ONLY = (A.TEXT_UNITS, A.SUMMARY_TREE)
 
 
 def test_a_record_names_what_its_artifacts_hold() -> None:
     record = _record(*LIGHT)
     assert record.methodologies == [L, H]
     dump = record.model_dump(mode="json")
-    assert mp.held_methodologies(dump, Config()) == (L, H)
-    assert mp.held_methodologies(_record(*FULL).model_dump(mode="json"), Config()) == (
+    assert _held(dump, Config()) == (L, H)
+    assert _held(_record(*FULL).model_dump(mode="json"), Config()) == (
         G,
         L,
         H,
@@ -434,18 +508,16 @@ def test_a_record_names_what_its_artifacts_hold() -> None:
     # A record from before profiles, or none: what a run of the config
     # builds holds, hipporag (lightrag's artifacts) included.
     legacy = {k: v for k, v in dump.items() if k not in ("artifacts", "methodologies")}
-    assert mp.held_methodologies(legacy, Config()) == (G, L, H)
-    assert mp.held_methodologies(None, _config(L)) == (L, H)
+    assert _held(legacy, Config()) == (G, L, H)
+    assert _held(None, _config(L)) == (L, H)
     no_vectors = Config(
         indexing={"opensearch": {"build_relationship_vector_index": False}}
     )
-    assert mp.held_methodologies(None, no_vectors) == (G,)
+    assert _held(None, no_vectors) == (G,)
     no_communities = Config(graph={"community_detection": {"enabled": False}})
-    assert mp.held_methodologies(None, no_communities) == (L, H)
+    assert _held(None, no_communities) == (L, H)
     # An artifact a later version names is skipped.
-    assert mp.held_methodologies(
-        {"artifacts": [*dump["artifacts"], "x"]}, Config()
-    ) == (L, H)
+    assert _held({"artifacts": [*dump["artifacts"], "x"]}, Config()) == (L, H)
 
 
 def test_an_incremental_record_keeps_what_both_hold() -> None:
@@ -529,8 +601,8 @@ def test_iterative_reads_what_its_base_reads() -> None:
         assert strategy_methodology(SearchStrategy.ITERATIVE, config) is methodology
     # Refused where its base's methodology is not held.
     config = Config(search={"iterative_search": {"base": "local"}})
-    assert not serves(SearchStrategy.ITERATIVE, [L, H], config)
-    assert serves(SearchStrategy.ITERATIVE, [G], config)
+    assert not serves(SearchStrategy.ITERATIVE, LIGHT, config)
+    assert serves(SearchStrategy.ITERATIVE, METHODOLOGY_PROFILES[G].required, config)
 
 
 # --- query time ----------------------------------------------------------------
@@ -558,13 +630,70 @@ def _chain(config: Config, records: _Records):
     chain = GraphRAGChain.__new__(GraphRAGChain)
     chain.config = config
     chain._cache_lock = threading.RLock()
-    chain._held_methodologies = {}
+    chain._held_artifacts = {}
     chain._get_retriever = lambda role: records  # type: ignore[method-assign]
 
     # The check reads the registry: it never builds a strategy.
     chain.built = []  # type: ignore[attr-defined]
     chain._get_strategy_instance = chain.built.append  # type: ignore[attr-defined]
     return chain
+
+
+async def test_without_reports_local_is_served_and_global_and_drift_refused() -> None:
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    # A namespace built with report generation off holds graphrag: local
+    # answers as it did before profiles.
+    no_reports = (*LIGHT, A.COMMUNITIES)
+    record = _record(*no_reports).model_dump(mode="json")
+    off = Config(
+        graph={"community_detection": {"report_generation": {"enabled": False}}}
+    )
+    assert G in _held(record, off) and G in off.effective_methodologies
+    chain = _chain(off, _Records(record))
+    assert G in await chain.acheck_methodology(SearchStrategy.LOCAL)
+    # Global and drift, which answer from the reports, are refused naming
+    # the switch that builds them, not graphrag (which the namespace holds).
+    for strategy in (SearchStrategy.GLOBAL, SearchStrategy.DRIFT):
+        with pytest.raises(MethodologyNotIndexedError) as refused:
+            await chain.acheck_methodology(strategy)
+        message = str(refused.value)
+        assert f"'{strategy.value}' reads the community_reports" in message
+        assert "graph.community_detection.report_generation.enabled: true" in message
+        assert "graphrag methodology" not in message
+    # On a namespace without graphrag they are refused as graphrag's.
+    with pytest.raises(MethodologyNotIndexedError, match="reads the graphrag"):
+        await _chain(
+            Config(), _Records(_record(*LIGHT).model_dump(mode="json"))
+        ).acheck_methodology(SearchStrategy.GLOBAL)
+    # auto never routes to them there.
+    assert routable_strategies(off, no_reports) == (
+        SearchStrategy.LOCAL,
+        SearchStrategy.MIX,
+        SearchStrategy.ITERATIVE,
+    )
+    assert routable_strategies(off) == routable_strategies(off, no_reports)
+
+
+def test_report_generation_off_warns_that_global_and_drift_are_refused() -> None:
+    def warned(config: Config) -> bool:
+        return any(
+            "report_generation.enabled is false" in m and "global and drift" in m
+            for m in config.ineffective_settings()
+        )
+
+    assert warned(
+        Config(graph={"community_detection": {"report_generation": {"enabled": False}}})
+    )
+    assert not warned(Config())
+    # Without graphrag there is nothing global or drift could read anyway.
+    assert not warned(
+        Config(
+            indexing={"methodologies": ["lightrag"]},
+            graph={"community_detection": {"report_generation": {"enabled": False}}},
+        )
+    )
+    assert not warned(Config(graph={"community_detection": {"enabled": False}}))
 
 
 async def test_a_query_reads_what_the_namespace_holds_before_refusing() -> None:
@@ -641,8 +770,8 @@ async def test_naive_and_simple_are_served_where_their_indexes_are_held() -> Non
         await _chain(Config(), nothing).acheck_methodology(SearchStrategy.NAIVE)
     # auto may route to them on such a namespace too.
     config = Config(search={"auto_routable_strategies": ["naive", "local"]})
-    assert routable_strategies(config, [R]) == (SearchStrategy.NAIVE,)
-    assert serves(SearchStrategy.SIMPLE, [L], Config())
+    assert routable_strategies(config, TREE_ONLY) == (SearchStrategy.NAIVE,)
+    assert serves(SearchStrategy.SIMPLE, LIGHT, Config())
 
 
 async def test_the_refusal_says_what_adding_the_methodology_costs() -> None:
@@ -687,6 +816,6 @@ def test_the_auto_fallback_is_warned_about_once(caplog) -> None:
     config = Config(search={"auto_routable_strategies": ["global", "drift"]})
     with caplog.at_level(logging.DEBUG, logger=strategy_registry.logger.name):
         for _ in range(3):
-            assert routable_strategies(config, [R]) == (SearchStrategy.TREE,)
+            assert routable_strategies(config, TREE_ONLY) == (SearchStrategy.TREE,)
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1 and "auto uses tree" in warnings[0].getMessage()

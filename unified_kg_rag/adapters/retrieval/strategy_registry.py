@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, TypeVar
 
+from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import (
     Config,
     IndexArtifact,
@@ -28,7 +29,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchStrategy,
 )
-from unified_kg_rag.domain.models.methodology import required_artifacts_of
+from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
 
@@ -64,10 +65,10 @@ class StrategySpec:
             (``wrapped_strategy``), and the wrapper reads its methodology
             (``strategy_methodology``).
         required_artifacts: The index artifacts the strategy reads, for one
-            that reads less than its methodology requires (``naive`` reads
-            the text units alone): a namespace holding them serves it,
-            whatever methodology built them. ``None``: its methodology's
-            required artifacts.
+            that reads other than its methodology requires (``naive`` reads
+            the text units alone, ``global`` the community reports too): a
+            namespace holding them serves it, whatever methodology built
+            them. ``None``: its methodology's required artifacts.
     """
 
     strategy_class: type[BaseSearchStrategy]
@@ -110,7 +111,7 @@ def register_strategy(
             skips the LLM calls for the rest.
         wraps: The strategy it runs the search of, under a config
             (``StrategySpec.wraps``).
-        required_artifacts: The index artifacts it reads, when fewer than
+        required_artifacts: The index artifacts it reads, when other than
             its methodology requires (``StrategySpec.required_artifacts``).
 
     Raises:
@@ -196,18 +197,18 @@ def strategy_artifacts(
 
 
 def serves(
-    strategy: SearchStrategy, held: Collection[Methodology], config: Config
+    strategy: SearchStrategy, artifacts: Collection[IndexArtifact], config: Config
 ) -> bool:
-    """Whether a namespace holding the ``held`` methodologies serves
-    ``strategy`` under ``config``: it holds the artifacts the strategy
-    declares it reads (``strategy_artifacts``), else the strategy's
-    methodology (one that declares none even through what it wraps is
-    kept)."""
+    """Whether a namespace holding ``artifacts`` serves ``strategy`` under
+    ``config``: it holds the artifacts the strategy declares it reads
+    (``strategy_artifacts``), else the strategy's methodology (one that
+    declares none even through what it wraps is kept)."""
+    held = frozenset(artifacts)
     needed = strategy_artifacts(strategy, config)
     if needed is not None:
-        return needed <= required_artifacts_of(held)
+        return needed <= held
     methodology = strategy_methodology(strategy, config)
-    return methodology is None or methodology in held
+    return methodology is None or methodology in methodologies_holding(held)
 
 
 # The fallbacks routable_strategies has warned about (configured strategies,
@@ -223,25 +224,26 @@ _FALLBACKS = (SearchStrategy.LOCAL, SearchStrategy.MIX)
 
 
 def routable_strategies(
-    config: Config, held: Collection[Methodology] | None = None
+    config: Config, artifacts: Collection[IndexArtifact] | None = None
 ) -> tuple[SearchStrategy, ...]:
     """The strategies ``auto`` may pick: ``search.auto_routable_strategies``
-    without those whose methodology the queried namespace does not hold
-    (``held``; by default the configured effective methodologies,
-    ``Config.effective_methodologies``).
+    without those the queried namespace does not serve (``serves`` the
+    ``artifacts`` it holds; by default those a run of ``config`` builds,
+    ``artifacts_to_build``).
 
-    Without communities a namespace holds no ``graphrag``, so routing a query
-    to global or drift answered it from nothing. When no configured strategy
-    is servable, the first of ``local``, ``mix`` and then any registered
-    strategy that is.
+    Without community reports a namespace serves no global or drift, so
+    routing a query to them answered it from nothing. When no configured
+    strategy is servable, the first of ``local``, ``mix`` and then any
+    registered strategy that is.
 
     Raises:
         MethodologyNotIndexedError: No registered strategy reads a held
             methodology.
     """
-    held = frozenset(config.effective_methodologies if held is None else held)
+    holding = frozenset(artifacts_to_build(config) if artifacts is None else artifacts)
+    held = methodologies_holding(holding)
     configured = config.search.auto_routable_strategies
-    routable = tuple(s for s in configured if serves(s, held, config))
+    routable = tuple(s for s in configured if serves(s, holding, config))
     if routable:
         return routable
     candidates = [*_FALLBACKS, *(s for s in SearchStrategy if s not in _FALLBACKS)]
@@ -249,7 +251,9 @@ def routable_strategies(
         (
             s
             for s in candidates
-            if s in _REGISTRY and strategy_methodology(s, config) in held
+            if s in _REGISTRY
+            and strategy_methodology(s, config) in held
+            and serves(s, holding, config)
         ),
         None,
     )

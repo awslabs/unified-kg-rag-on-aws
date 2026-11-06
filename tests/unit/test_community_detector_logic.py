@@ -951,18 +951,16 @@ def test_a_report_key_holds_the_community_name() -> None:
     community = _community(["e1", "e2"])
     renamed = community.model_copy(update={"name": "Level 0 Community 7"})
     chain_input = {"input_text": "Vendor supplies Buyer.", "max_report_length": 500}
-    key = detector._report_keys(chain_input, community)[0]
-    assert key == detector._report_keys(dict(chain_input), community)[0]
-    assert detector._report_keys(chain_input, renamed)[0] != key
+    key = detector._report_key(chain_input, community)
+    assert key == detector._report_key(dict(chain_input), community)
+    assert detector._report_key(chain_input, renamed) != key
 
 
 def test_a_report_key_follows_the_input_not_the_packing_budgets() -> None:
     # The packed input reflects the budgets: one packed alike under another
-    # budget is the same answer, and one stored under the earlier key (the
-    # whole report_generation section) is still found.
+    # budget is the same answer.
     from unified_kg_rag.domain.ingestion.cache_keys import (
         community_report_fingerprint,
-        legacy_community_report_fingerprints,
     )
 
     base = Config()
@@ -972,16 +970,9 @@ def test_a_report_key_follows_the_input_not_the_packing_budgets() -> None:
     report.enable_sub_community_rollup = False
     report.max_entities_per_report = 7
     assert community_report_fingerprint(budget) == community_report_fingerprint(base)
-    assert legacy_community_report_fingerprints(budget) != (
-        legacy_community_report_fingerprints(base)
-    )
     model = Config()
     model.models.roles.community_report = "vendor.small-v1"
     assert community_report_fingerprint(model) != community_report_fingerprint(base)
-    detector = _detector()
-    community = _community(["e1", "e2"])
-    current, earlier = detector._report_keys({"input_text": "x"}, community)
-    assert current != earlier
 
 
 class TestReportInputShaping:

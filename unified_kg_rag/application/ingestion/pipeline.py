@@ -77,9 +77,11 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
 from unified_kg_rag.domain.ingestion.delta_detector import retired_scope_groups
 from unified_kg_rag.domain.ingestion.document_identity import config_registry_namespace
 from unified_kg_rag.domain.ingestion.methodologies import (
+    SWITCHABLE_STAGES,
     missing_artifacts,
     selected_stages,
     stage_methodologies,
+    stage_switched_off,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
 from unified_kg_rag.domain.models import (
@@ -157,6 +159,12 @@ class _Borrowed:
         return None
 
 
+def _unless_switched_off(stage: PipelineStageType) -> Callable[[Config], bool]:
+    """Whether a config allows ``stage``: not every artifact it builds is
+    switched off (``stage_switched_off``)."""
+    return lambda config: not stage_switched_off(config, stage)
+
+
 class DataIngestionPipeline:
     """The ingestion pipeline: documents in, an indexed knowledge graph out.
 
@@ -206,20 +214,12 @@ class DataIngestionPipeline:
         ]
 
     # Stages switched off by a config section besides stages_enabled and the
-    # selected methodologies (_stage_enabled). Claim extraction and
-    # resolution go together; community detection builds what graphrag
-    # alone reads.
+    # selected methodologies (_stage_enabled): gleaning by its own, and each
+    # stage whose every artifact a switch turns off (SWITCHABLE_STAGES:
+    # claim extraction and resolution, community detection).
     CONFIG_ENABLED: dict[PipelineStageType, Callable[[Config], bool]] = {
         PipelineStageType.GLEANING: lambda c: c.processing.gleaning.enabled,
-        PipelineStageType.CLAIM_EXTRACTION: (
-            lambda c: c.processing.claim_extraction.enabled
-        ),
-        PipelineStageType.CLAIM_RESOLUTION: (
-            lambda c: c.processing.claim_extraction.enabled
-        ),
-        PipelineStageType.COMMUNITY_DETECTION: (
-            lambda c: c.graph.community_detection.enabled
-        ),
+        **{stage: _unless_switched_off(stage) for stage in SWITCHABLE_STAGES},
     }
 
     # What each stage caches, derived from the single shared definition the

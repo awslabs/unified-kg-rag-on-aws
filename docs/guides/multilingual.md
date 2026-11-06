@@ -40,6 +40,16 @@ source language; a failed call for a whole target language fails the stage
 unless `processing.ignore_errors: true`. An incremental run records the
 documents of the `failed_units` as failed, so the next run retries them.
 
+**Stored translations.** A text unit's translations are stored by its text
+under the translation settings, every language in one record, so a reset or
+an edited document translates only new text. Changing
+`additional_target_languages` (or the source language, the translation
+model or its prompt) keys every record anew: the next build translates every
+unit into every listed language again, and a unit whose target-language
+translation then reads otherwise is extracted again. The records of text no
+unit holds any more are deleted by the next full build
+(`indexing.reset: true`); incremental runs leave them.
+
 ## Analyzers
 
 - **Analyzers** come from `indexing.opensearch.language_analyzers`. Every

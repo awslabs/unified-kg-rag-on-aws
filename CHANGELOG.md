@@ -310,7 +310,9 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    `UKR__...`.
 3. Review the settings whose behaviour changed: set any 0.2.3 default you rely on (*Defaults*); replace
    `search.reranking.enabled: false` with `providers.rerank.kind: none` (otherwise a Bedrock Rerank call per query),
-   and expect RRF ordering where you set `search.fusion.method: weighted` (#577).
+   and expect RRF ordering where you set `search.fusion.method: weighted` (#577). With
+   `graph.community_detection.report_generation.enabled: false`, `global` and `drift` queries are refused (exit 2,
+   naming the switch) and `auto` leaves them out; `local` answers as before (#612).
 4. A custom `fusion_weights.lightrag_linked_chunks` weight: set `lightrag_relation_chunks` too (usually the same
    value) to keep weighting every LightRAG graph chunk; mix and hybrid recall are sensitive to it (#521, #530).
    Rename an `opensearch_all` weight to `vector_all` and drop `opensearch_community_reports`,
@@ -417,13 +419,16 @@ From a `main` checkout (formats and keys no release had):
   on the embedded stores), and without the relationship vector index the PageRank is seeded by the entities and
   passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
 - #605 one index language: a namespace ingested with `processing.translation.enabled: false` and a
-  `source_language` other than `target_language` was extracted, summarized and reported in `target_language`; its
-  incremental runs now stop before any model call (exit 2, `was built for other language settings`, the graph
-  indexes' analyzers follow `source_language`) until one `indexing.reset: true` run, which costs a first build
-  (every unit extracted and gleaned again, every summary, report and vector made again). Any other configuration
+  `source_language` other than `target_language` was extracted, summarized and reported in `target_language`. Its
+  extraction settings and stage caches now record the index language (#612), so its next incremental run stops before
+  any model call where the analyzers differ (exit 2, `was built for other language settings`, the graph indexes'
+  analyzers follow `source_language`) and otherwise extracts every document again (a WARNING names
+  `index_language`); a re-run of a `--pipeline-id` does not resume from its stage caches either. Run one
+  `indexing.reset: true`, which costs a first build (every unit extracted and gleaned again, every summary, report
+  and vector made again). Any other configuration
   keeps its extraction records and indices; the community report prompt now names its language, so the next full
   build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
-  date written as `2024年3月` is found under it, so nothing else re-runs.
+  date written as `2024年3月` (or `2024. 3. 15.`, #612) is found under it, so nothing else re-runs.
 - #606 evaluation results: `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by
   whitespace, so a default-normalization run is refused against them (exit 2) until one side is scored again (an
   `official_squad` or `hotpotqa` run still compares). Their `abstention_statistics` left failed answers out (rate
@@ -439,13 +444,18 @@ From a `main` checkout (formats and keys no release had):
 - #608 stored translations: translations are stored from the first run after upgrading: that run still asks the
   model for every unit it translates, with the new translation prompt, so a reset of a translated namespace
   translates and re-extracts every unit once more (the cost of a first build; an incremental run only its new and
-  changed documents), and later resets reuse them. Community report answers stored before are found under their
-  earlier key (nothing is asked again). A graph with entities without relationships may lose its top community
+  changed documents), and later resets reuse them. Community report answers stored before are not found under the new key (the packed
+  input), so the next full build asks every report once more (one call per community, the same call #605 names), and
+  later builds reuse them. A graph with entities without relationships may lose its top community
   level at its next clustering (its reports go, no call is added, global search's `community_depth` cuts one level
   higher). A document with a paragraph longer than a chunk is cut otherwise when it is next chunked (a reset or an
   edit), and those chunks are extracted again. `graph_metrics.average_clustering` is empty unless
   `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
-  now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`.
+  now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`. The tree
+  stored before stays in the build record, so `tree` keeps serving the text units it covers (#612).
+- #612 report generation off: a namespace built with `graph.community_detection.report_generation.enabled: false`
+  holds `graphrag` again, so `local` answers on it (refused since #603); `global` and `drift`, which read the
+  reports, are refused naming the switch. Nothing re-runs.
 
 ### Added
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
@@ -494,11 +504,15 @@ From a `main` checkout (formats and keys no release had):
   builds, so `ppr` is served wherever `lightrag` is, and `raptor` reads a summary tree (#599). Without a build
   record (a namespace ingested before them), a query takes the namespace to hold what a run of the config builds,
   `hipporag` included (#602). With `graph.community_detection.report_generation.enabled: false` a run builds no
-  reports, so an incremental run no longer takes them for missing and rebuilds the namespace; the rebuild that adds
+  reports, so an incremental run no longer takes them for missing and rebuilds the namespace, and the namespace
+  holds `graphrag` for `local` while `global` and `drift`, which declare the reports among their artifacts, are
+  refused naming the switch (a WARNING at load says so, #612); the rebuild that adds
   a methodology asks before deleting more than `indexing.max_deletion_share` of the scope's documents, as an
   incremental run does; a run without community detection (`[lightrag]`) exports `visualization_data.json` without
   communities; a run that builds no graph-store artifact (`[raptor]`) writes no graph store, so `run-ingestion`
-  needs no Neptune endpoint for it (#608). See [methodology
+  needs no Neptune endpoint for it (#608), and a run creates (and probes) no vector index of an artifact it does not
+  build, emptying only a live one on a full build; that full build (a reset) also deletes the namespace's graph when
+  a graph endpoint is configured (#612). See [methodology
   profiles](docs/concepts/overview.md#methodology-profiles) and [Design
   §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
@@ -913,7 +927,8 @@ Ingestion and incremental indexing.
   written in `target_language` and the graph indexes analyzed for it while the text units, the summary tree and the
   queries used `source_language`, so the graph held a second language. The community report prompt names its
   output language. Claim dates written as `2024年3月15日`, `2024년 3월 15일` or `2022年第3四半期` read as calendar
-  dates and placeholders such as `不明` or `미상` as unknown (#605).
+  dates and placeholders such as `不明` or `미상` as unknown (#605), and so do `2024. 3. 15.` and a day followed by
+  its weekday, `2024年3月15日(金)` (#612).
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

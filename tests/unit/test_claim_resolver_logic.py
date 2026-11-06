@@ -669,6 +669,14 @@ def test_a_day_month_date_with_a_comma_is_a_calendar_date(text: str) -> None:
         ("2022年第3四半期", "2022-07-01", "2022-09-30"),
         ("2022年第3季度", "2022-07-01", "2022-09-30"),
         ("2022년 3분기", "2022-07-01", "2022-09-30"),
+        # With the weekday, and the Korean dotted form.
+        ("2024年3月15日(金)", "2024-03-15", "2024-03-15"),
+        ("2024年3月15日（金曜日）", "2024-03-15", "2024-03-15"),
+        ("2024年3月15日 (星期五)", "2024-03-15", "2024-03-15"),
+        ("2024년 3월 15일 (금)", "2024-03-15", "2024-03-15"),
+        ("2024. 3. 15.", "2024-03-15", "2024-03-15"),
+        ("2024. 03. 15", "2024-03-15", "2024-03-15"),
+        ("2024. 3. 15.(금요일)", "2024-03-15", "2024-03-15"),
     ],
 )
 def test_a_chinese_japanese_or_korean_date_is_a_calendar_date(
@@ -680,7 +688,9 @@ def test_a_chinese_japanese_or_korean_date_is_a_calendar_date(
     assert claim_date_value(start) == start
 
 
-@pytest.mark.parametrize("text", ["2024年13月", "2024년 2월 30일"])
+@pytest.mark.parametrize(
+    "text", ["2024年13月", "2024년 2월 30일", "2024. 13. 15.", "2024年3月15日(x)"]
+)
 def test_an_impossible_cjk_date_stays_as_written(text: str) -> None:
     assert claim_date_value(text) == text
 
@@ -703,3 +713,13 @@ def test_a_claim_keyed_by_its_written_cjk_date_is_found_under_it() -> None:
         "claim:e-vendor:e-buyer:obligation:" + "2024年3月:不明".casefold()
     )
     assert stale in earlier_claim_ids(claim, [statement])
+    # So is one dated with a form read as a date since (the Korean dotted
+    # one, a weekday after the day).
+    for written in ("2024. 3. 15.", "2024年3月15日(金)"):
+        statement = _coarse_statement(start_date=written, end_date="不明")
+        claim = _resolved_from(statement)
+        assert claim.start_date == "2024-03-15"
+        stale = generate_stable_id(
+            "claim:e-vendor:e-buyer:obligation:" + f"{written}:不明".casefold()
+        )
+        assert stale in earlier_claim_ids(claim, [statement])
