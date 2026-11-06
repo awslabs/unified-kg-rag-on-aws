@@ -397,8 +397,8 @@ From a `main` checkout (formats and keys no release had):
   --enabled-stages summary_tree`, from the stored text units: no re-extraction, about one summary call per five or
   six text units on the default tier (the MuSiQue benchmark store's 3,318 text units: about 580 calls, $2-8 with
   Sonnet 5.5, $0.1-0.4 with `models.roles.summary_tree: fast`). A completed pipeline id re-run resumes at
-  `indexing` as before. A tree built from a `main` checkout before (#PR) is summarized again by its next build
-  (the summaries' length changed): as many calls as building it. `tree` retrieval scores saved before (#PR) rank a
+  `indexing` as before. A tree built from a `main` checkout before (#601) is summarized again by its next build
+  (the summaries' length changed): as many calls as building it. `tree` retrieval scores saved before (#601) rank a
   summary's lineage files above the passages; evaluate again to compare.
 
 ### Added
@@ -409,9 +409,9 @@ From a `main` checkout (formats and keys no release had):
   index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children are unchanged reuses its
   summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
   (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, and one still over the budget
-  keeps its whole sentences within it (#PR). `run-ingestion --enabled-stages summary_tree` builds the tree under the
+  keeps its whole sentences within it (#601). `run-ingestion --enabled-stages summary_tree` builds the tree under the
   pipeline id that built the namespace even after an upgrade changed the earlier stages' cache keys, running none of
-  them and probing only the indices the namespace lacks (#PR). `raptor` alone runs no graph stage. The `tree`
+  them and probing only the indices the namespace lacks (#601). `raptor` alone runs no graph stage. The `tree`
   strategy (`auto` routes to it only on a `raptor`-only namespace) fuses BM25 + kNN searches of the text units and
   of every level of summaries, plus the summaries and passages citing the entities a raw-query search finds where
   the namespace has an entities index (buckets `tree_text_units`, `tree_summaries`, `tree_graph_summaries`,
@@ -557,7 +557,7 @@ From a `main` checkout (formats and keys no release had):
 - Evaluation: `retrieval` (hit@k, recall@k, MRR; the passages' files ranked before the lineage files of summaries,
   reports, entities, relationships and claims, so one high-ranked summary or report cannot fill the top k) and
   `answer_match` (exact match, token F1) evaluators, grouped statistics, the run manifest and index build record,
-  `s3://` dataset and output paths, guardrail block counts (#113, #121, #206, #315, #321, #345, #355, #579, #PR).
+  `s3://` dataset and output paths, guardrail block counts (#113, #121, #206, #315, #321, #345, #355, #579, #601).
   See [evaluate](docs/guides/evaluate.md) and [evaluation output](docs/reference/evaluation-output.md).
 - Answer scoring: `evaluation.answer_span` (`first_line` default, `full`, or `extracted` by a fast model, cached,
   falling back to the first line), `evaluation.answer_normalization` (`official_squad`, `hotpotqa`), recorded in the
