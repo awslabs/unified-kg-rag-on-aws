@@ -5552,15 +5552,25 @@ def _template_variables(template: str) -> set[str]:
 
 
 class ModelPrice(BaseModel):
-    """A model's on-demand price, for run-eval's USD cost estimate."""
+    """A model's on-demand price, for run-eval's USD cost estimate: a
+    language model's token prices, or a rerank model's search-unit price."""
 
     model_config = ConfigDict(extra="forbid")
 
     input_per_million_tokens: float = Field(
-        ge=0, description="USD per million input tokens."
+        default=0.0, ge=0, description="USD per million input tokens."
     )
     output_per_million_tokens: float = Field(
-        ge=0, description="USD per million output tokens."
+        default=0.0, ge=0, description="USD per million output tokens."
+    )
+    per_thousand_rerank_search_units: float = Field(
+        default=0.0,
+        ge=0,
+        description=(
+            "A rerank model's USD per thousand search units (usage "
+            "rerank_search_units: one per rerank request of up to 100 "
+            "documents; Amazon Bedrock's price per 1,000 queries)."
+        ),
     )
     cache_read_per_million_tokens: float | None = Field(
         default=None,
@@ -5791,7 +5801,10 @@ class EvaluationConfig(BaseModel):
             "estimate, token counts only. No prices ship with the package: "
             "fill in the current Amazon Bedrock on-demand prices of your "
             "region. input_tokens includes the cache reads and writes; each "
-            "is priced at its own rate when the model's price sets one."
+            "is priced at its own rate when the model's price sets one. The "
+            "rerank model is priced too (per_thousand_rerank_search_units; "
+            "a local cross-encoder at 0): an answer with an unpriced model "
+            "that was called, reranker included, has no USD estimate."
         ),
     )
 

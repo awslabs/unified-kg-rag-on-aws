@@ -696,7 +696,7 @@ def answer_cost_usd(
     unpriced = {
         model
         for model, counts in usage.by_model.items()
-        if counts.llm_calls and model not in prices
+        if (counts.llm_calls or counts.rerank_calls) and model not in prices
     }
     if unpriced:
         return None, unpriced
@@ -710,17 +710,22 @@ def answer_cost_usd(
 
 def _counts_usd(counts: LLMUsageCounts, price: ModelPrice) -> float:
     """The USD of one model's counts: ``input_tokens`` includes the cache
-    reads and writes, each priced at its own rate when ``price`` has one."""
+    reads and writes, each priced at its own rate when ``price`` has one;
+    a rerank model's search units at their own price."""
     cached = counts.cache_read_input_tokens + counts.cache_write_input_tokens
     rate = price.input_per_million_tokens
     read = price.cache_read_per_million_tokens
     write = price.cache_write_per_million_tokens
     return (
-        max(0, counts.input_tokens - cached) * rate
-        + counts.cache_read_input_tokens * (rate if read is None else read)
-        + counts.cache_write_input_tokens * (rate if write is None else write)
-        + counts.output_tokens * price.output_per_million_tokens
-    ) / 1e6
+        (
+            max(0, counts.input_tokens - cached) * rate
+            + counts.cache_read_input_tokens * (rate if read is None else read)
+            + counts.cache_write_input_tokens * (rate if write is None else write)
+            + counts.output_tokens * price.output_per_million_tokens
+        )
+        / 1e6
+        + counts.rerank_search_units * price.per_thousand_rerank_search_units / 1e3
+    )
 
 
 def _distribution(values: Sequence[float]) -> dict[str, float] | None:

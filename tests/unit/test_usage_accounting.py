@@ -143,6 +143,8 @@ def test_a_cached_response_is_a_cache_hit_not_a_call(tmp_path: Path) -> None:
             "cache_write_input_tokens": 0,
             "request_retries": 0,
             "failed_calls": 0,
+            "rerank_calls": 0,
+            "rerank_search_units": 0,
         }
     }
 

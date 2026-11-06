@@ -223,7 +223,9 @@ estimate, and the comparison warns. `input_tokens` includes the prompt-cache
 reads and writes; give their rates (`cache_read_per_million_tokens`,
 `cache_write_per_million_tokens`) and they are priced apart, otherwise at
 the input rate (an upper bound for reads, which cost a tenth of input on
-Claude):
+Claude). The rerank model is priced too, per thousand search units (usage
+`rerank_search_units`: one per rerank request of up to 100 documents; set 0
+for a local cross-encoder):
 
 ```yaml
 evaluation:
@@ -234,6 +236,7 @@ evaluation:
       cache_read_per_million_tokens: 0.0
       cache_write_per_million_tokens: 0.0
     "global.<fast-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
+    "<rerank-model-id>": {per_thousand_rerank_search_units: 0.0}
 ```
 
 The estimate covers the calls the usage records: botocore's resent requests

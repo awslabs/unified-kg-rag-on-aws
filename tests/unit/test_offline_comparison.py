@@ -183,6 +183,29 @@ class TestCostBlock:
         plain, _ = answer_cost_usd(used, {"m-a": ModelPrice(**rates)})
         assert plain == pytest.approx(1.0 * 2.0 + 0.1 * 10.0)
 
+    def test_rerank_search_units_are_priced_and_an_unpriced_reranker_named(
+        self,
+    ) -> None:
+        from unified_kg_rag.domain.models import LLMUsage
+
+        llm = {"llm_calls": 1, "input_tokens": 1_000_000, "output_tokens": 0}
+        rerank = {"rerank_calls": 3, "rerank_search_units": 4}
+        used = LLMUsage(**llm, **rerank, by_model={"m-a": llm, "reranker": rerank})
+        llm_price = ModelPrice(
+            input_per_million_tokens=2.0, output_per_million_tokens=10.0
+        )
+        usd, unpriced = answer_cost_usd(
+            used,
+            {
+                "m-a": llm_price,
+                "reranker": ModelPrice(per_thousand_rerank_search_units=2.0),
+            },
+        )
+        assert unpriced == set()
+        assert usd == pytest.approx(2.0 + 4 * 2.0 / 1000)
+        # A reranker without a price leaves the answer unpriced, as a model.
+        assert answer_cost_usd(used, {"m-a": llm_price}) == (None, {"reranker"})
+
     def test_results_saved_before_usage_have_latency_only(self) -> None:
         comparison = paired_comparison(
             {

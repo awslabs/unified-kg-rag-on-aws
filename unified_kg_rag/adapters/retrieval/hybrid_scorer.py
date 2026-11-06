@@ -17,6 +17,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import RerankModelError, get_logger
+from unified_kg_rag.shared.usage import record_rerank_call
 from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
@@ -579,6 +580,12 @@ class HybridScorer:
             rerank_model = _with_top_n(self.rerank_model, adjusted_top_n)
             reranked_docs = rerank_model.compress_documents(
                 documents=documents, query=query
+            )
+            # Billed per search unit: counted in the query's usage.
+            model_id = self.config.rerank_model_id
+            record_rerank_call(
+                str(getattr(model_id, "value", model_id) or "rerank"),
+                documents=len(documents),
             )
             reranked_results = []
             for i, doc in enumerate(reranked_docs):
