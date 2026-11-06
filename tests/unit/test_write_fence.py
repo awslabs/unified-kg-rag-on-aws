@@ -483,7 +483,12 @@ def test_a_stopped_run_uploads_its_checkpoint_before_releasing_the_lease(
     pipe._prepare_new_run = mocker.MagicMock(
         return_value=(SimpleNamespace(incremental_delta=None), None)
     )
-    for name in ("_set_corpus_fingerprint", "_validate_retired_scopes"):
+    for name in (
+        "_set_corpus_fingerprint",
+        "_rebuild_for_added_artifacts",
+        "_validate_retired_scopes",
+        "_rebuild_for_added_artifacts",
+    ):
         mocker.patch.object(pipe, name)
     mocker.patch.object(pipe, "_use_source_directory")
     held_during_upload: list[bool] = []
@@ -656,6 +661,7 @@ def _leased_pipeline(
     )
     for name in (
         "_set_corpus_fingerprint",
+        "_rebuild_for_added_artifacts",
         "_validate_retired_scopes",
         "_use_source_directory",
     ):

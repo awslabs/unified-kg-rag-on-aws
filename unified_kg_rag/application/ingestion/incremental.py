@@ -1368,6 +1368,27 @@ def _namespace_records(
         ) from e
 
 
+def other_source_scopes(
+    doc_status: DocStatusPort, config: Config, source_directory: Path
+) -> list[str]:
+    """The source scopes besides the run's whose documents the run's index
+    namespace holds: a reset rebuilds the namespace from the run's corpus
+    and deletes them.
+
+    Raises:
+        DocStatusRegistryError: The namespace cannot be read.
+    """
+    _, namespace, source_scope, _ = run_registry_scope(config, source_directory, [])
+    records = _namespace_records(lambda: doc_status, namespace, "the rebuild")
+    return sorted(
+        {
+            _source_scope_of(r.scope)
+            for r in records
+            if not _same_source(r.scope, namespace, source_scope)
+        }
+    )
+
+
 def _source_scope_of(scope: str | None) -> str:
     """The source scope part of a registry ``scope`` (``namespace|source``)."""
     return (scope or "").partition("|")[2] or "(no scope)"

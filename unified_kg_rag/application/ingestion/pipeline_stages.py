@@ -95,6 +95,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
+from unified_kg_rag.domain.ingestion.methodologies import built_artifacts
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_RECORD_FINGERPRINT,
@@ -155,6 +156,17 @@ def _resolved_claims(context: PipelineContext) -> list[Claim]:
     claims attached to no entity.
     """
     return [claim for claim in context.resolved_claims if claim.subject_id]
+
+
+def _completed_stages(context: PipelineContext) -> set[PipelineStageType]:
+    """The stages completed in ``context`` (this run's and, on a resume,
+    its earlier phases')."""
+    known = {stage.value: stage for stage in PipelineStageType}
+    return {
+        known[result.stage_name]
+        for result in context.stage_results
+        if result.status == PipelineStageStatus.COMPLETED and result.stage_name in known
+    }
 
 
 def _build_knowledge_graph(context: PipelineContext) -> Any:
@@ -2743,7 +2755,7 @@ class IndexingStage(_RegistryStage):
             ),
             extraction_settings=settings,
             package_version=package_version,
-        )
+        ).with_artifacts(built_artifacts(self.config, _completed_stages(context)))
         added = Counter(BaseIndexer.get_suffix(c) for c in communities)
         deleted = self.indexing_manager.deleted_communities
         # Written by a delta (an incremental run, or one whose scope the

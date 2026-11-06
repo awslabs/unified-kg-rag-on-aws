@@ -548,6 +548,41 @@ async def test_rag_an_unknown_filter_key_is_a_usage_error(config, mocker) -> Non
     assert result["success"] is False
 
 
+async def test_rag_a_strategy_the_namespace_cannot_serve_is_a_usage_error(
+    config, mocker
+) -> None:
+    # A --search-strategy whose methodology the index namespace does not hold
+    # is the command line to fix (exit 2), refused before any model call; an
+    # interactive session is refused before its first question.
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(
+        _rag_parser().parse_args(["-q", "hi", "--search-strategy", "global"])
+    )
+    runner.rag_chain = mocker.AsyncMock()
+    refused = MethodologyNotIndexedError("reads the graphrag methodology")
+    runner.rag_chain.ainvoke.side_effect = refused
+    with pytest.raises(SystemExit) as exit_info:
+        await runner._run_query(run_rag_chain.RAGInput(query="hi"))
+    assert exit_info.value.code == 2
+
+    runner = run_rag_chain.RAGChainRunner(
+        _rag_parser().parse_args(["--interactive", "--search-strategy", "global"])
+    )
+    runner.rag_chain = mocker.Mock(
+        acheck_methodology=mocker.AsyncMock(side_effect=refused)
+    )
+    asked = mocker.patch.object(run_rag_chain.console, "input", return_value="quit")
+    with pytest.raises(SystemExit) as exit_info:
+        await runner._interactive_mode()
+    assert exit_info.value.code == 2
+    asked.assert_not_called()
+    runner.rag_chain.acheck_methodology.assert_awaited_once_with(
+        run_rag_chain.SearchStrategy.GLOBAL, None
+    )
+
+
 def test_rag_parse_filters_types_boolean_and_numeric_fields() -> None:
     # Every value was a string: in_schema:false matched nothing on the
     # graph stores, where the Python API's False matched.
@@ -642,7 +677,9 @@ async def test_rag_interactive_set_filter_rejects_a_key_no_index_declares(
         if "colour" in filters:
             raise InvalidFilterError("Unknown filter key(s): colour.")
 
-    runner.rag_chain = mocker.Mock(check_filter_keys=check_filter_keys)
+    runner.rag_chain = mocker.Mock(
+        check_filter_keys=check_filter_keys, acheck_methodology=mocker.AsyncMock()
+    )
     seen: dict = {}
     runner.interactive_commands["show-config"] = lambda state, args: seen.update(
         state["filters"]
@@ -689,7 +726,9 @@ async def test_rag_interactive_rejects_initial_filters_no_index_declares(
         )
         raise InvalidFilterError("Unknown filter key(s): colour.")
 
-    runner.rag_chain = mocker.Mock(check_filter_keys=check_filter_keys)
+    runner.rag_chain = mocker.Mock(
+        check_filter_keys=check_filter_keys, acheck_methodology=mocker.AsyncMock()
+    )
     asked = mocker.patch.object(run_rag_chain.console, "input", return_value="quit")
     with pytest.raises(SystemExit) as info:
         await runner._interactive_mode()

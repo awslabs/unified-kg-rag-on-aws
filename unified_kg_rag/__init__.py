@@ -21,8 +21,9 @@ a :class:`GraphRAGException` but :class:`PipelineInterrupted`, a
 :class:`ConfigurationError` (among them a :class:`StoreRequestRejectedError`)
 is a setting to fix (a :class:`SchemaSourceError` a schema source that
 cannot be loaded, a :class:`SeedGraphError` a seed graph that cannot be
-imported) and an :class:`InvalidFilterError` a search filter to
-fix, not failures to retry; a :class:`StoreConnectionError` is an unreachable
+imported, a :class:`MethodologyNotIndexedError` a query whose strategy
+reads a methodology its index namespace does not hold) and an
+:class:`InvalidFilterError` a search filter to fix, not failures to retry; a :class:`StoreConnectionError` is an unreachable
 store, a :class:`QueryTimeoutError` a query past its deadline, an
 :class:`IndexNotFoundError` a suffix with no index (not ingested,
 or a typo), and a :class:`ConfirmationDeclinedError` (a
@@ -72,6 +73,7 @@ _EXPORTS: dict[str, str] = {
     "SearchResult": "unified_kg_rag.domain.models",
     "SearchStrategy": "unified_kg_rag.domain.models",
     "SearchType": "unified_kg_rag.domain.models",
+    "Methodology": "unified_kg_rag.domain.models",
     "MemoryManager": "unified_kg_rag.adapters.retrieval.memory_manager",
     "ConversationKey": "unified_kg_rag.adapters.retrieval.memory_manager",
     # Evaluation
@@ -84,6 +86,7 @@ _EXPORTS: dict[str, str] = {
     "ConfirmationDeclinedError": "unified_kg_rag.shared.exceptions",
     "NamespaceLeaseError": "unified_kg_rag.shared.exceptions",
     "InvalidFilterError": "unified_kg_rag.shared.exceptions",
+    "MethodologyNotIndexedError": "unified_kg_rag.shared.exceptions",
     "IndexNotFoundError": "unified_kg_rag.shared.exceptions",
     "StoreConnectionError": "unified_kg_rag.shared.exceptions",
     "QueryTimeoutError": "unified_kg_rag.shared.exceptions",
@@ -174,6 +177,7 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.domain.models import (
         Config,
+        Methodology,
         ModelPurpose,
         ModelRole,
         PipelineConfig,
@@ -208,6 +212,7 @@ if TYPE_CHECKING:
         GraphRAGException,
         IndexNotFoundError,
         InvalidFilterError,
+        MethodologyNotIndexedError,
         NamespaceLeaseError,
         PipelineExecutionError,
         PipelineInterrupted,

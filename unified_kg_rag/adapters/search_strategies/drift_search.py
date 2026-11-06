@@ -37,6 +37,7 @@ from unified_kg_rag.adapters.search_strategies.local_search import (
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
     Config,
+    Methodology,
     ModelRole,
     RetrievalResult,
     SearchQuery,
@@ -87,6 +88,8 @@ def _follow_ups(payload: dict[str, Any]) -> list[str]:
 
 @register_strategy(SearchStrategy.DRIFT, needs_community_reports=True)
 class DriftSearchStrategy(BaseSearchStrategy):
+    methodology = Methodology.GRAPHRAG
+
     def __init__(
         self,
         config: Config,

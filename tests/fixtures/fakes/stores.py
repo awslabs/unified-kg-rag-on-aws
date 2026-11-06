@@ -488,6 +488,10 @@ class FakeVectorStore(_Recorder):
         )
         return self.builds[key]
 
+    def read_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        record = self.builds.get(suffix or Constants.DEFAULT_SUFFIX.value)
+        return record.model_dump(mode="json") if record is not None else None
+
     def initialize(self) -> None:
         return None
 

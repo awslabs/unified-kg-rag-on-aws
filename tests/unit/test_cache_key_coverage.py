@@ -70,6 +70,7 @@ _FIELDS = sorted(set(_field_paths(Config)))
 # configuration) fails here instead of passing silently.
 _KEYED_ONCE_SET = frozenset(
     {
+        "indexing.methodologies",
         "processing.graph_extraction.relationship_types",
         "processing.graph_extraction.relationship_patterns",
         "processing.graph_extraction.schema_mode",

@@ -28,6 +28,17 @@ from pydantic import (
 )
 
 from .evaluation import EvaluationMetricType, EvaluatorType
+from .methodology import (
+    DEFAULT_METHODOLOGIES,
+    METHODOLOGY_PROFILES,
+    UNBUILT_ARTIFACTS,
+    IndexArtifact,
+    Methodology,
+    artifacts_of,
+    available_methodologies,
+    buildable,
+    switched_off_artifacts,
+)
 from .provider_config import (
     BEDROCK,
     CROSS_ENCODER,
@@ -2465,10 +2476,10 @@ class CommunityDetectionConfig(BaseModel):
         default=True,
         description=(
             "Run Leiden community detection + LLM community-report generation "
-            "during indexing. Required for GraphRAG global/drift search. Disable "
-            "for a lighter, LightRAG-only ingestion (mix/hybrid/naive need only "
-            "entities, relationships, and the relationship vector index — no "
-            "communities), which skips the Leiden pass and all report LLM calls."
+            "during indexing, when indexing.methodologies selects graphrag "
+            "(its strategies need the reports). false leaves graphrag out of "
+            "what ingestion builds, as indexing.methodologies: [lightrag] "
+            "does: no Leiden pass and no report calls."
         ),
     )
     resolution: float = Field(
@@ -3164,6 +3175,27 @@ class IndexingConfig(BaseModel):
     # setting.
     model_config = ConfigDict(validate_assignment=True)
 
+    methodologies: list[Methodology] = Field(
+        default_factory=lambda: list(DEFAULT_METHODOLOGIES),
+        min_length=1,
+        description=(
+            "The retrieval methodologies ingestion builds: graphrag (local, "
+            "global, drift, simple; communities and community reports), "
+            "lightrag (mix, hybrid, naive; the relationship vector index), "
+            "hipporag (what lightrag builds). A run builds only what the "
+            "selected ones read: without graphrag no community detection "
+            "and no report calls. A query whose strategy reads a methodology "
+            "the index namespace does not hold fails before any model call. "
+            "Adding one to an incremental namespace rebuilds it once from "
+            "its stored extractions (only the added methodology's model "
+            "calls are new); removing one stops maintaining its artifacts "
+            "without deleting them. graph.community_detection.enabled: "
+            "false leaves out graphrag and "
+            "indexing.opensearch.build_relationship_vector_index: false "
+            "lightrag and hipporag. raptor is reserved: no stage builds its "
+            "summary tree yet."
+        ),
+    )
     reset: bool = Field(
         default=False,
         description=(
@@ -3298,6 +3330,39 @@ class IndexingConfig(BaseModel):
         "records once the removal succeeded. Never the run's own scope. "
         "run-ingestion --retire-source-scope adds to this list.",
     )
+
+    @field_validator("methodologies", mode="before")
+    @classmethod
+    def _check_methodologies(cls, value: Any) -> Any:
+        # Named here, with the valid ones, before the enum check's generic
+        # message; a duplicate is dropped.
+        if not isinstance(value, list | tuple):
+            return value
+        known = {m.value: m for m in Methodology}
+        available = available_methodologies()
+        names = ", ".join(m.value for m in available)
+        selected: list[Methodology] = []
+        for item in value:
+            name = item.value if isinstance(item, Methodology) else item
+            methodology = known.get(str(name).strip().lower())
+            if methodology is None:
+                raise ValueError(f"unknown methodology {name!r}; valid: {names}")
+            if methodology not in available:
+                raise ValueError(
+                    f"methodology {methodology.value!r} is not available in this "
+                    "version (no ingestion stage builds its "
+                    + ", ".join(
+                        sorted(
+                            a.value
+                            for a in METHODOLOGY_PROFILES[methodology].required
+                            & UNBUILT_ARTIFACTS
+                        )
+                    )
+                    + f"); valid: {names}"
+                )
+            if methodology not in selected:
+                selected.append(methodology)
+        return selected
 
     @field_validator("additional_suffix")
     @classmethod
@@ -4157,11 +4222,13 @@ class SearchConfig(BaseModel):
             "graph strategies cover its direct lookups with graph context, and"
             " drift because it costs up to 27 LLM calls a query (local: 2), a "
             "price one misrouted question should not pay; add it to route to "
-            "it. global and drift are skipped when "
-            "graph.community_detection.enabled is false (no community "
-            "reports), and local is used when nothing is left; with one "
-            "strategy left no router call is made. auto itself is rejected; "
-            "every strategy stays selectable explicitly."
+            "it. Only the strategies of the methodologies the queried index "
+            "namespace holds are offered (on a LightRAG-only namespace none "
+            "of local, global, drift and simple), and local or mix is used "
+            "when nothing is left; with one strategy left no router call is "
+            "made. auto itself is rejected; every strategy stays selectable "
+            "explicitly, and one of a methodology the namespace does not "
+            "hold is refused."
         ),
     )
     hybrid: HybridConfig = Field(
@@ -5452,6 +5519,57 @@ class Config(BaseModel):
             raise ValueError("; ".join(errors))
         return self
 
+    @model_validator(mode="after")
+    def _check_methodologies(self) -> "Config":
+        """Refuse a selection a switch leaves nothing of (every selected
+        methodology needs an artifact a switch turns off)."""
+        if not self.effective_methodologies:
+            off = sorted(
+                {
+                    a.value
+                    for m in self.indexing.methodologies
+                    for a in METHODOLOGY_PROFILES[m].required
+                    & self._switched_off_artifacts
+                }
+            )
+            raise ValueError(
+                "indexing.methodologies ("
+                + ", ".join(m.value for m in self.indexing.methodologies)
+                + f") needs {', '.join(off)}, which "
+                + " and ".join(self._artifact_switches(set(off)))
+                + " turns off: select another methodology or turn it back on"
+            )
+        return self
+
+    @property
+    def _switched_off_artifacts(self) -> frozenset[IndexArtifact]:
+        return switched_off_artifacts(
+            communities=self.graph.community_detection.enabled,
+            relationship_vectors=(
+                self.indexing.opensearch.build_relationship_vector_index
+            ),
+        )
+
+    @staticmethod
+    def _artifact_switches(artifacts: Collection[str]) -> list[str]:
+        """The switches that turn ``artifacts`` off, as a message names them."""
+        switches = []
+        if {"communities", "community_reports"} & set(artifacts):
+            switches.append("graph.community_detection.enabled: false")
+        if "relationship_vectors" in artifacts:
+            switches.append(
+                "indexing.opensearch.build_relationship_vector_index: false"
+            )
+        return switches
+
+    @property
+    def effective_methodologies(self) -> tuple[Methodology, ...]:
+        """``indexing.methodologies`` without those whose required artifacts a
+        switch turns off (docs/design.md#46-methodology-profiles): what
+        ingestion builds and, without a build record, what a query takes the
+        namespace to hold."""
+        return buildable(self.indexing.methodologies, self._switched_off_artifacts)
+
     # --- resolved models -----------------------------------------------------
 
     def tier_model_id(self, tier: ModelTier) -> str:
@@ -5639,6 +5757,34 @@ class Config(BaseModel):
                 "about 32,000 English characters): set the sizes in tokens, "
                 "for example min 250, max 2000, overlap 125, fallback 1200, "
                 "pre-chunk 12500 and its overlap 125"
+            )
+        effective = self.effective_methodologies
+        # A config that sets no methodologies but switches an artifact off
+        # (a LightRAG-only config from before they were selectable) builds
+        # the profile it leaves: nothing to warn of.
+        dropped = [m for m in self.indexing.methodologies if m not in effective]
+        if dropped and "methodologies" in self.indexing.model_fields_set:
+            off = {
+                a.value
+                for m in dropped
+                for a in METHODOLOGY_PROFILES[m].required & self._switched_off_artifacts
+            }
+            messages.append(
+                "indexing.methodologies selects "
+                + ", ".join(m.value for m in dropped)
+                + ", but "
+                + " and ".join(self._artifact_switches(off))
+                + " turns off what it needs: ingestion builds "
+                + ", ".join(m.value for m in effective)
+                + " only, and queries of its strategies are refused"
+            )
+        if self.processing.claim_extraction.enabled and IndexArtifact.CLAIMS not in (
+            artifacts_of(effective)
+        ):
+            messages.append(
+                "processing.claim_extraction is enabled, but no selected "
+                "methodology reads claims (graphrag's local does): ingestion "
+                "still extracts them"
             )
         return messages
 

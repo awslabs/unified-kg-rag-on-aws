@@ -9,6 +9,7 @@ from unified_kg_rag.adapters.retrieval.base import (
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.domain.models import (
+    Methodology,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -27,6 +28,8 @@ logger = get_logger(__name__)
 
 @register_strategy(SearchStrategy.SIMPLE, required_roles=(RetrieverRole.DOCUMENT,))
 class SimpleSearchStrategy(BaseSearchStrategy):
+    methodology = Methodology.GRAPHRAG
+
     def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
         # Every index the pipeline builds (_apply_claim_gate).
         return configured_index_prefixes(self.config)

@@ -62,6 +62,7 @@ from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     ConfigurationError,
     InvalidFilterError,
+    MethodologyNotIndexedError,
     MetricsSink,
     NullMetricsSink,
     QueryTimeoutError,
@@ -376,6 +377,15 @@ class RAGChainRunner:
         console.print("---")
 
         filters = self._parse_filters(self.args.filters)
+        # A strategy the namespace cannot serve failed every question too.
+        if self.rag_chain is not None:
+            try:
+                await self.rag_chain.acheck_methodology(
+                    SearchStrategy(self.args.search_strategy),
+                    query_suffix(self.args, self.config),
+                )
+            except MethodologyNotIndexedError as e:
+                usage_error(f"--search-strategy: {e}")
         # An undeclared key failed every question of the session.
         if filters and self.rag_chain is not None:
             try:
@@ -504,8 +514,13 @@ class RAGChainRunner:
             return {"success": True, **output}
 
         except Exception as e:
-            if isinstance(e, InvalidFilterError) and not self.args.interactive:
-                # A --filters key no index declares: the command line is wrong.
+            if (
+                isinstance(e, InvalidFilterError | MethodologyNotIndexedError)
+                and not self.args.interactive
+            ):
+                # A --filters key no index declares, or a --search-strategy
+                # whose methodology the namespace does not hold: the command
+                # line is wrong.
                 usage_error(str(e))
             if isinstance(e, QueryTimeoutError):
                 # An expected outcome with its own message: no traceback.

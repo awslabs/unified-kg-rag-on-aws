@@ -7,7 +7,8 @@ strategies that pin a sweep explicitly, so any document backend honours the
 same ingestion gates.
 """
 
-from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
+from unified_kg_rag.domain.models import Config, IndexArtifact
 
 
 def all_index_prefixes(config: Config) -> list[str]:
@@ -30,8 +31,9 @@ def configured_index_prefixes(config: Config) -> list[str]:
     never queries an alias that was never created: claims need
     ``processing.claim_extraction.enabled``, the relationship vector index needs
     ``indexing.opensearch.build_relationship_vector_index``, and community
-    reports need ``graph.community_detection.enabled``. Explicit
-    ``index_prefixes`` still reach any mapped index.
+    reports need ``graph.community_detection.enabled`` and ``graphrag`` among
+    the effective ``indexing.methodologies``. Explicit ``index_prefixes``
+    still reach any mapped index.
     """
     opensearch = config.indexing.opensearch
     optional_enabled = {
@@ -40,7 +42,7 @@ def configured_index_prefixes(config: Config) -> list[str]:
             opensearch.build_relationship_vector_index
         ),
         opensearch.community_reports_index_prefix: (
-            config.graph.community_detection.enabled
+            IndexArtifact.COMMUNITY_REPORTS in artifacts_to_build(config)
         ),
     }
     return [

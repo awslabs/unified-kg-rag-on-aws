@@ -36,6 +36,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
     Config,
+    Methodology,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -363,6 +364,13 @@ class BaseSearchStrategy(ABC):
     and treat instance attributes as read-only after ``__init__``.
     """
 
+    # The methodology whose index artifacts the strategy reads
+    # (docs/design.md#46-methodology-profiles): a query on a namespace that
+    # does not hold it fails before any model call, and auto routes only to
+    # strategies of held methodologies. Every registered strategy sets it; a
+    # strategy that wraps another sets it on the instance from the wrapped
+    # one (the chain reads the instance's).
+    methodology: Methodology | None = None
     # Section types that take the context budget other types leave unused
     # before the rest share it (``TokenManager.optimize_context``).
     spare_context_budget_first: ClassVar[tuple[SectionType, ...]] = ()

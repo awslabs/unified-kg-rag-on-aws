@@ -16,6 +16,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     Constants,
+    Methodology,
     RetrievalResult,
     SearchQuery,
     SearchResult,
@@ -32,6 +33,8 @@ logger = get_logger(__name__)
 
 @register_strategy(SearchStrategy.LOCAL, query_inputs=frozenset({QueryInput.ENTITIES}))
 class LocalSearchStrategy(BaseSearchStrategy):
+    methodology = Methodology.GRAPHRAG
+
     # Entities-index hits fetched per focus entity, among which its exact
     # name match is looked for (``_find_candidate_entities``).
     ENTITY_CANDIDATES_PER_FOCUS: ClassVar[int] = 2
