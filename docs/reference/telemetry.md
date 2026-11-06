@@ -97,5 +97,6 @@ say) was sent and is billed, so it counts in `llm_calls` and in
 `estimated_calls`, at an estimate of its input tokens and no output tokens;
 one that answers later is settled in `run-eval`'s run usage. A call that
 answers without reporting usage (a local server that returns none, say)
-stays estimated the same way, rather than reading as free.
+stays estimated the same way, rather than reading as free, with its output
+tokens estimated from its text and its resent requests counted.
 `stream` / `astream` yield text only and report no usage.

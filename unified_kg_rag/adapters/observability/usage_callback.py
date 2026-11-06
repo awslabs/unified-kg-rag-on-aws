@@ -12,7 +12,8 @@ LLM response cache served counts as a cache hit instead, a failed call as
 ``failed_calls`` only; a call still running or
 cancelled in flight, or one whose response reports no token usage (a
 model or server that returns none), keeps its estimate
-(``estimated_calls``). LangChain
+(``estimated_calls``; the output tokens of such a response are estimated
+from its text). LangChain
 reports no end or error for a call whose task was cancelled, so such a call
 is let go when its task ends. Outside a scope a call costs one
 context-variable read.
@@ -44,6 +45,15 @@ from unified_kg_rag.shared import usage
 def _served_from_cache(response: LLMResult) -> bool:
     return any(
         (generation.generation_info or {}).get(usage.CACHED_RESPONSE_KEY)
+        for generations in response.generations
+        for generation in generations
+    )
+
+
+def _estimated_output_tokens(response: LLMResult) -> int:
+    """The tokens of the response's text, estimated as a prompt's are."""
+    return sum(
+        estimate_token_count(generation.text)
         for generations in response.generations
         for generation in generations
     )
@@ -130,16 +140,33 @@ class UsageCallbackHandler(BaseCallbackHandler):
                 call.served_from_cache()
             return
         tokens = response_token_usage(response)
-        if tokens is None and call is not None:
+        retries = response_retry_attempts(response)
+        if tokens is None:
             # No usage reported: settled at 0 tokens the call would read as
-            # free, so it keeps its start estimate and counts as estimated.
+            # free, so it keeps its start estimate, its output is estimated
+            # from the response text as the input was from the prompt, and
+            # it counts as estimated.
+            output_tokens = _estimated_output_tokens(response)
+            if call is None:
+                usage.record_llm_call(
+                    self.role,
+                    self.model_id,
+                    input_tokens=0,
+                    output_tokens=output_tokens,
+                    request_retries=retries,
+                    estimated=True,
+                )
+            else:
+                call.finish_estimated(
+                    output_tokens=output_tokens, request_retries=retries
+                )
             return
-        counts = {
-            "input_tokens": tokens.input_tokens if tokens else 0,
-            "output_tokens": tokens.output_tokens if tokens else 0,
-            "cache_read_input_tokens": tokens.cache_read if tokens else 0,
-            "cache_write_input_tokens": tokens.cache_creation if tokens else 0,
-            "request_retries": response_retry_attempts(response),
+        counts: dict[str, Any] = {
+            "input_tokens": tokens.input_tokens,
+            "output_tokens": tokens.output_tokens,
+            "cache_read_input_tokens": tokens.cache_read,
+            "cache_write_input_tokens": tokens.cache_creation,
+            "request_retries": retries,
         }
         if call is None:
             usage.record_llm_call(self.role, self.model_id, **counts)

@@ -485,8 +485,9 @@ From a `main` checkout (formats and keys no release had):
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
-  call counts from its start, so cancelled and background calls are billed at an estimated input (#526, #530, #532,
-  #533, #541, #563).
+  call counts from its start, so cancelled and background calls are billed at an estimated input; a response that
+  reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
+  #563, #PR).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
   `total_files_skipped`, `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and
   `total_documents_without_claims`; a run with failed units ends with a WARNING naming them per stage (#518, #532).
