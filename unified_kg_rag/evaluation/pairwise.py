@@ -42,7 +42,7 @@ criterion on the unique statements, the shared ones shown as common ground
 that earns neither side credit (both orders, ties and position consistency
 as in the standard mode). A pair with no unique statement is a tie without a
 judge call (``identical_pairs``); a failed or malformed split fails the pair.
-docs/design.md#92-length-controlled-judging-assertions-and-the-closed-book-arm
+docs/design.md#93-length-controlled-judging-assertions-and-the-closed-book-arm
 """
 
 from __future__ import annotations

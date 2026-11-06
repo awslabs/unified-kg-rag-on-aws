@@ -8,7 +8,7 @@ Microsoft Corporation, https://github.com/microsoft/benchmark-qed). The
 prompts are written here (``domain/prompts/benchmark.py``) and none of
 BenchmarkQED's datasets is used. The pure decision steps (claim and
 assertion parsing, the assertion ranking, the validation rule, the cluster
-sampling) follow BenchmarkQED's; docs/design.md#92-length-controlled-judging-assertions-and-the-closed-book-arm
+sampling) follow BenchmarkQED's; docs/design.md#93-length-controlled-judging-assertions-and-the-closed-book-arm
 lists where and why this differs.
 
 1. Text units: each ``.txt``/``.md`` file of the corpus directory is split

@@ -10,7 +10,7 @@ and ranking, the validation rule, the per-trial assertion aggregation and the
 clustered text sampling. They run only where ``benchmark_qed`` is importable
 (it is not a dependency: install it in a scratch environment, never its
 datasets, which are under the Microsoft Research License); the intentional
-deviations they pin are listed in docs/design.md#92-length-controlled-judging-assertions-and-the-closed-book-arm.
+deviations they pin are listed in docs/design.md#93-length-controlled-judging-assertions-and-the-closed-book-arm.
 """
 
 from __future__ import annotations
