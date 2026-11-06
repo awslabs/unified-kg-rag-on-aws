@@ -357,6 +357,7 @@ class ModelRole(str, Enum):
     GLOBAL_MAP = "global_map"
     DRIFT_PRIMER = "drift_primer"
     DRIFT_ACTION = "drift_action"
+    QUERY_CONTROLLER = "query_controller"
     EVALUATION = "evaluation"
     ANSWER_SPAN = "answer_span"
 
@@ -388,6 +389,11 @@ _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
     ModelRole.GLOBAL_MAP: ("fast", "answers from each report batch (global map)"),
     ModelRole.DRIFT_PRIMER: ("fast", "writes DRIFT's primer and follow-ups"),
     ModelRole.DRIFT_ACTION: ("fast", "answers each DRIFT follow-up"),
+    ModelRole.QUERY_CONTROLLER: (
+        "fast",
+        "judges whether iterative search's context answers the question and "
+        "names the follow-up queries, or decomposes it into steps",
+    ),
     ModelRole.EVALUATION: ("default", "judges answers in run-eval"),
     ModelRole.ANSWER_SPAN: (
         "fast",
@@ -455,6 +461,7 @@ class RoleModelsConfig(BaseModel):
     global_map: str | None = _role_field(ModelRole.GLOBAL_MAP)
     drift_primer: str | None = _role_field(ModelRole.DRIFT_PRIMER)
     drift_action: str | None = _role_field(ModelRole.DRIFT_ACTION)
+    query_controller: str | None = _role_field(ModelRole.QUERY_CONTROLLER)
     evaluation: str | None = _EVALUATION_ROLE_FIELD
     answer_span: str | None = _role_field(ModelRole.ANSWER_SPAN)
 
@@ -3408,7 +3415,11 @@ class FusionConfig(BaseModel):
             "lightrag_endpoint_entities, lightrag_incident_relationships, "
             "lightrag_chunks, lightrag_linked_chunks (the chunks the entities "
             "cite), lightrag_relation_chunks (those the relationships cite)), "
-            "simple (vector_all), global (text_units) and drift (results). A "
+            "simple (vector_all), global (text_units), drift (results) and "
+            "iterative (iterative_round_<n>, round n's base search, 0 the "
+            "first; iterative_round_<n>_text, its follow-up queries' text "
+            "units; fused once more over the rounds, the base's own buckets "
+            "fused within each). A "
             "bucket without a key weighs 1.0 (the default: none). A weight on "
             "the former bucket opensearch_all applies to vector_all, with a "
             "warning; one on the retired opensearch_community_reports, "
@@ -3914,9 +3925,96 @@ class LightRAGSearchConfig(BaseModel):
     )
 
 
+class IterativeSearchConfig(BaseModel):
+    """Iterative bridge follow-up search (``iterative``, opt-in, unmeasured).
+
+    Round 0 is the ``base`` strategy's search. A fast-model controller
+    (``models.roles.query_controller``) reads the question and the packed
+    context and says whether it answers the question; when it does not, each
+    follow-up round reruns the base search seeded with the bridge entities
+    it names and searches the text units for its follow-up queries, fuses
+    the new candidates with the earlier rounds' (RRF), reranks them against
+    the question and the follow-up queries and repacks them under the same
+    token budget. The answer model answers once, from the final context.
+    With ``decompose`` a single call writes the question as a chain of steps
+    instead, each answered in order over its own text-unit search.
+    """
+
+    base: Literal["local", "mix"] = Field(
+        default="mix",
+        description=(
+            "The strategy round 0 runs and each follow-up round reruns, seeded "
+            "with the bridge entities: local (its query entities) or mix (its "
+            "low-level keywords). iterative reads the query extraction, the "
+            "indexes and the context packing of this strategy."
+        ),
+    )
+    max_rounds: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        description=(
+            "Follow-up rounds after round 0 at most. The controller judges the "
+            "context after every round, the last one included, so a query "
+            "makes at most max_rounds + 1 controller calls and max_rounds + 1 "
+            "base searches; the answer model is called once. With decompose, "
+            "the most steps the question is split into is max_rounds + 1."
+        ),
+    )
+    decompose: bool = Field(
+        default=False,
+        description=(
+            "Instead of the controller loop, one models.roles.query_controller "
+            "call writes the question as a chain of single-hop steps (a later "
+            "step refers to an earlier answer as #1, #2, ...), and each step is "
+            "answered in order by one call over its own text-unit search; the "
+            "steps' passages join round 0's candidates. KAG-style "
+            "decomposition, an alternative to the controller loop with the "
+            "same caps: at most max_rounds + 2 fast-model calls."
+        ),
+    )
+    round_top_k: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description=(
+            "Text units each follow-up query (and each decomposition step) "
+            "retrieves by the request's search_type (BM25 + vector by "
+            "default). The base rerun of a follow-up round keeps the query's "
+            "top_k."
+        ),
+    )
+    max_next_queries: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description=(
+            "Follow-up queries the controller may ask for in one round, each "
+            "naming a bridge entity; a query already searched is not searched "
+            "again. 0 follows the bridge entities alone."
+        ),
+    )
+    controller_context_tokens: int | None = Field(
+        default=8000,
+        ge=256,
+        description=(
+            "Token budget of the context each controller call (and each "
+            "decomposition step) reads: the round's candidates packed as the "
+            "answer's context is, cut to this. null packs them to the "
+            "answer's budget. The answer itself always gets its full budget."
+        ),
+    )
+
+
 def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrategy]:
     if SearchStrategy.AUTO in strategies:
         raise ValueError("auto_routable_strategies cannot include 'auto'")
+    if SearchStrategy.ITERATIVE in strategies:
+        raise ValueError(
+            "auto_routable_strategies cannot include 'iterative': it is "
+            "opt-in and unmeasured, so the router does not pick it; select "
+            "it explicitly"
+        )
     return strategies
 
 
@@ -4080,6 +4178,10 @@ class SearchConfig(BaseModel):
     lightrag_search: LightRAGSearchConfig = Field(
         default_factory=LightRAGSearchConfig,
         description="LightRAG dual-level keyword search configuration",
+    )
+    iterative_search: IterativeSearchConfig = Field(
+        default_factory=IterativeSearchConfig,
+        description="Iterative bridge follow-up search configuration (opt-in)",
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
@@ -4583,6 +4685,37 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for the DRIFT query expansion (HyDE)",
     )
+    iterative_controller_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for iterative search's controller, "
+        "which judges whether the context answers the question and names "
+        "the bridge entities and follow-up queries",
+    )
+    iterative_controller_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for iterative search's controller",
+    )
+    query_decomposition_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for iterative search's decomposition "
+        "of the question into single-hop steps (search.iterative_search."
+        "decompose)",
+    )
+    query_decomposition_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for iterative search's decomposition "
+        "of the question into single-hop steps",
+    )
+    decomposition_step_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for answering one decomposition step "
+        "from its passages",
+    )
+    decomposition_step_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for answering one decomposition step "
+        "from its passages",
+    )
     drift_action_system: str | None = Field(
         default=None,
         description="Custom system prompt for answering a DRIFT follow-up query "
@@ -4694,6 +4827,7 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "community_report": frozenset({"entities", "relationships"}),
     "corpus_profile": frozenset({"corpus_sample"}),
     "description_summarization": frozenset({"descriptions"}),
+    "decomposition_step": frozenset({"query", "context"}),
     "drift_action": frozenset({"query", "context"}),
     "drift_hyde": frozenset({"query"}),
     "drift_primer": frozenset({"query", "community_reports"}),
@@ -4701,8 +4835,10 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "global_map": frozenset({"query", "reports"}),
     "graph_extraction": frozenset({"input_text"}),
     "graph_refinement": frozenset({"text", "entities", "relationships"}),
+    "iterative_controller": frozenset({"query", "context"}),
     "keywords_extraction": frozenset({"query"}),
     "pairwise_comparison": frozenset({"query", "answer1", "answer2"}),
+    "query_decomposition": frozenset({"query"}),
     "query_rewrite": frozenset({"query", "conversation_history"}),
     "strategy_selection": frozenset({"query", "strategies"}),
 }

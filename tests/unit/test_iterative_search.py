@@ -1,0 +1,751 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""AWS-free tests of iterative bridge follow-up search.
+
+The strategy is built for real on a fake provider bundle: the controller,
+decomposition and step chains run on a scripted chat model, the reranker
+orders passages by the words they share with its query, and the base
+strategy's searches are stubs recording the queries they get, so the tests
+see what each round asks and how the rounds' candidates are fused.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+from collections.abc import Callable
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from unified_kg_rag.adapters.llm.retry import retry_deadline
+from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.retrieval.strategy_registry import (
+    QueryInput,
+    get_strategy_spec,
+    query_inputs,
+    wrapped_strategy,
+)
+from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.adapters.search_strategies.iterative_search import (
+    IterativeSearchStrategy,
+)
+from unified_kg_rag.adapters.search_strategies.lightrag_search import (
+    LightRAGSearchStrategy,
+)
+from unified_kg_rag.adapters.search_strategies.local_search import (
+    LocalSearchStrategy,
+)
+from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+from unified_kg_rag.domain.models import (
+    Config,
+    RetrievalResult,
+    SearchQuery,
+    SearchResult,
+    SearchStrategy,
+)
+from unified_kg_rag.domain.models.config import LanguageCode
+from unified_kg_rag.shared import ConfigurationError
+
+pytestmark = pytest.mark.unit
+
+TEXT_UNITS = Config().indexing.opensearch.text_units_index_prefix
+QUESTION = "Where is the storage site of the firm Vendor hires?"
+FOLLOW_UP = "Where is Depot located?"
+FILTERS = {"attr_category": "ops"}
+
+
+def _hit(
+    content: str, *, kind: str = "text", score: float = 0.5, **metadata: Any
+) -> RetrievalResult:
+    return RetrievalResult(
+        content=content,
+        score=score,
+        source=f"{kind}:{content}",
+        retriever_type=kind,
+        metadata=metadata,
+    )
+
+
+ROUND_0 = [
+    _hit("Vendor hires Carrier for freight.", score=0.9),
+    _hit("Carrier rents Depot for storage.", score=0.8),
+    _hit("Vendor", kind="entity", score=0.02),
+    _hit("Carrier", kind="entity", score=0.01),
+]
+HARBOR = _hit(
+    "Depot is located in Harbor.",
+    text_unit_ids=["unit-harbor"],
+    iri="https://example.org/depot",
+    source_kinds=["document"],
+    attributes={"filters": {"category": "ops"}},
+)
+DEPOT = _hit("Depot", kind="entity", score=0.03, text_unit_ids=["unit-harbor"])
+
+
+class _Base:
+    """A base strategy's search: ``answer(query)`` gives its results."""
+
+    def __init__(self, answer: Callable[[SearchQuery], list[RetrievalResult]]):
+        self.answer = answer
+        self.queries: list[SearchQuery] = []
+        self.delay = 0.0
+        self.cancelled = False
+
+    async def asearch(self, query: SearchQuery, config: Any = None) -> SearchResult:
+        self.queries.append(query)
+        try:
+            await asyncio.sleep(self.delay)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        results = self.answer(query)
+        return SearchResult(
+            query=query,
+            results=results,
+            total_results=len(results),
+            search_strategy="local_search",
+            processing_time=0.0,
+            metadata={
+                "candidate_entity_count": 1,
+                "rerank": {"status": "applied", "reason": None, "stages": []},
+            },
+        )
+
+
+class _Documents:
+    """The document retriever: a text-units search finds ``hits[text]``."""
+
+    def __init__(self, hits: dict[str, list[RetrievalResult]] | None = None):
+        self.hits = hits or {}
+        self.calls: list[SearchQuery] = []
+
+    def filter_fields(self) -> None:
+        return None
+
+    def filter_fields_for(self, prefixes: object) -> None:
+        return None
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        return list(self.hits.get(query.query, []))
+
+
+class _Reranker:
+    """Orders passages by the words they share with the query."""
+
+    def __init__(self) -> None:
+        self.top_n: int | None = None
+        self.queries: list[str] = []
+
+    def compress_documents(self, documents: list[Any], query: str) -> list[Any]:
+        self.queries.append(query)
+        words = set(query.lower().replace("?", "").split())
+
+        def overlap(doc: Any) -> int:
+            return len(words & set(doc.page_content.lower().rstrip(".").split()))
+
+        ranked = sorted(documents, key=overlap, reverse=True)
+        for doc in ranked:
+            doc.metadata["relevance_score"] = overlap(doc) / 10
+        return ranked
+
+
+class _RerankFactory:
+    def __init__(self) -> None:
+        self.model = _Reranker()
+
+    def get_model(self, model_id: Any, **kwargs: Any) -> _Reranker:
+        self.model.top_n = kwargs.get("top_k")
+        return self.model
+
+    def get_model_info(self, model_id: Any) -> None:
+        return None
+
+
+class _Tokens:
+    def count_tokens(self, text: str) -> int:
+        return len(text.split())
+
+    def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
+        words = text.split()[:max_tokens]
+        return " ".join(words), len(words)
+
+
+class _Script:
+    """The scripted model: each prompt kind answers from its own queue (the
+    last answer repeats); an exception in a queue is raised."""
+
+    KINDS = {
+        "controller": "You control the retrieval",
+        "decomposition": "You plan the retrieval",
+        "step": "You answer one step",
+    }
+
+    def __init__(self, **replies: list[Any]) -> None:
+        self.replies = replies
+        self.calls: dict[str, list[tuple[str, str]]] = {k: [] for k in self.KINDS}
+
+    def __call__(self, system: str, human: str) -> str:
+        for kind, marker in self.KINDS.items():
+            if marker in system:
+                self.calls[kind].append((system, human))
+                queue = self.replies[kind]
+                reply = queue.pop(0) if len(queue) > 1 else queue[0]
+                if isinstance(reply, BaseException):
+                    raise reply
+                return reply if isinstance(reply, str) else json.dumps(reply)
+        raise AssertionError(f"unexpected prompt: {system[:60]!r}")
+
+
+def _verdict(
+    sufficient: bool, bridges: list[str] | None = None, queries: list[str] | None = None
+) -> dict[str, Any]:
+    return {
+        "sufficient": sufficient,
+        "known_facts": ["Vendor hires Carrier."],
+        "bridge_entities": bridges or [],
+        "next_queries": queries or [],
+    }
+
+
+INSUFFICIENT = _verdict(False, ["Depot"], [FOLLOW_UP])
+SUFFICIENT = _verdict(True)
+
+
+def _strategy(
+    script: _Script,
+    *,
+    base: str = "local",
+    documents: _Documents | None = None,
+    round_0: list[RetrievalResult] | None = None,
+    follow_up: Callable[[SearchQuery], list[RetrievalResult]] | None = None,
+    config: Config | None = None,
+    **settings: Any,
+) -> tuple[IterativeSearchStrategy, _Base, _Base, _Documents, _RerankFactory]:
+    config = config or Config()
+    config.search.iterative_search.base = base  # type: ignore[assignment]
+    for name, value in settings.items():
+        setattr(config.search.iterative_search, name, value)
+    reranks = _RerankFactory()
+    providers = Providers(
+        config,
+        boto_session=MagicMock(),
+        llm_factory=ScriptedLLMFactory(script),
+        embedding_factory=MagicMock(),
+        rerank_factory=reranks,
+        token_counter_factory=lambda *_, **__: _Tokens(),
+    )
+    documents = documents or _Documents({FOLLOW_UP: [HARBOR]})
+    strategy = IterativeSearchStrategy(
+        config,
+        {"document": documents, "graph": MagicMock()},  # type: ignore[dict-item]
+        providers=providers,
+    )
+    first = _Base(lambda _: list(ROUND_0 if round_0 is None else round_0))
+    later = _Base(follow_up or (lambda _: [DEPOT, HARBOR]))
+    strategy.base.asearch = first.asearch  # type: ignore[method-assign]
+    strategy.follow_up.asearch = later.asearch  # type: ignore[method-assign]
+    return strategy, first, later, documents, reranks
+
+
+def _query(**update: Any) -> SearchQuery:
+    query = SearchQuery(
+        query=QUESTION,
+        top_k=5,
+        suffix="tenant_a",
+        entity_focus=["Vendor"],
+        filters=dict(FILTERS),
+        metadata={"search_strategy": "iterative", "query_language": "English"},
+    )
+    return query.model_copy(update=update)
+
+
+def _contents(result: SearchResult) -> list[str]:
+    return [r.content for r in result.results]
+
+
+# --- the controller loop ------------------------------------------------------
+
+
+async def test_a_sufficient_round_zero_is_the_base_search_unchanged() -> None:
+    script = _Script(controller=[SUFFICIENT])
+    strategy, first, later, documents, reranks = _strategy(script)
+
+    result = await strategy.asearch(_query())
+
+    assert result.results == ROUND_0
+    assert len(script.calls["controller"]) == 1
+    assert later.queries == [] and documents.calls == [] and reranks.model.queries == []
+    meta = result.metadata
+    assert meta["iterative"]["rounds"] == 0
+    assert meta["iterative"]["stop_reason"] == "sufficient"
+    assert meta["iterative"]["llm_calls"] == 1
+    assert "context_sufficient" not in meta and "degraded_error" not in meta
+    # The base's own metadata (its rerank outcome included) is kept.
+    assert meta["candidate_entity_count"] == 1
+    assert meta["rerank"]["status"] == "applied"
+    # Round 0 searched as the base: its mode, the caller's filters and scope.
+    (asked,) = first.queries
+    assert asked.metadata["search_strategy"] == "local"
+    assert (asked.filters, asked.suffix, asked.query) == (FILTERS, "tenant_a", QUESTION)
+
+
+async def test_an_insufficient_round_zero_runs_one_seeded_follow_up() -> None:
+    script = _Script(controller=[INSUFFICIENT, SUFFICIENT])
+    strategy, _, later, documents, reranks = _strategy(script, round_top_k=3)
+
+    result = await strategy.asearch(_query())
+
+    # The base reruns seeded with the bridge entity, under the same filters.
+    (seeded,) = later.queries
+    assert seeded.query == FOLLOW_UP
+    assert seeded.entity_focus == ["Depot"] and seeded.ll_keywords == ["Depot"]
+    assert seeded.hl_keywords == []
+    assert seeded.metadata["search_strategy"] == "local"
+    assert (seeded.filters, seeded.suffix, seeded.top_k) == (FILTERS, "tenant_a", 5)
+    # ... and the follow-up query searches the text units the same way.
+    (text,) = documents.calls
+    assert (text.query, text.index_prefixes, text.top_k) == (
+        FOLLOW_UP,
+        [TEXT_UNITS],
+        3,
+    )
+    assert (text.filters, text.suffix, text.search_type) == (
+        FILTERS,
+        "tenant_a",
+        seeded.search_type,
+    )
+    # Fused with round 0 and reranked against the question and the follow-up.
+    assert "Depot is located in Harbor." in _contents(result)
+    assert set(_contents(result)) >= {r.content for r in ROUND_0}
+    assert reranks.model.queries == [f"{QUESTION}\n{FOLLOW_UP}"]
+    # The second verdict read the new passage and what was searched.
+    _, human = script.calls["controller"][1]
+    assert "Depot is located in Harbor." in human and FOLLOW_UP in human
+    meta = result.metadata["iterative"]
+    assert (meta["rounds"], meta["stop_reason"], meta["llm_calls"]) == (
+        1,
+        "sufficient",
+        2,
+    )
+    assert meta["searched"] == [FOLLOW_UP]
+    assert [v["sufficient"] for v in meta["verdicts"]] == [False, True]
+    assert meta["verdicts"][0]["bridge_entities"] == ["Depot"]
+    assert meta["added_results"] == 2
+    assert result.metadata["rerank"]["status"] == "applied"
+    assert "context_sufficient" not in result.metadata
+
+
+async def test_follow_up_candidates_keep_their_provenance() -> None:
+    strategy, *_ = _strategy(_Script(controller=[INSUFFICIENT, SUFFICIENT]))
+
+    result = await strategy.asearch(_query())
+
+    (harbor,) = [r for r in result.results if r.source == HARBOR.source]
+    for key in ("text_unit_ids", "iri", "source_kinds", "attributes"):
+        assert harbor.metadata[key] == HARBOR.metadata[key]
+    assert harbor.metadata["reranked"] is True
+
+
+async def test_a_round_zero_item_leaves_only_when_outranked() -> None:
+    # Each type keeps round 0's share of the context (12 entities, above the
+    # entity quota's floor of 10): the follow-up's entity, first in its
+    # round, takes the slot of round 0's last-ranked entity, and only that.
+    entities = [_hit(f"E{i}", kind="entity", score=0.1) for i in range(12)]
+    strategy, *_ = _strategy(
+        _Script(controller=[INSUFFICIENT, SUFFICIENT]),
+        round_0=[*ROUND_0[:2], *entities],
+        follow_up=lambda _: [DEPOT],
+    )
+    result = await strategy.asearch(_query())
+    kept = [r.content for r in result.results if r.retriever_type == "entity"]
+    assert len(kept) == 12
+    assert set(kept) == {f"E{i}" for i in range(11)} | {"Depot"}
+
+
+async def test_never_sufficient_stops_at_the_round_cap_and_says_so() -> None:
+    script = _Script(
+        controller=[
+            _verdict(False, ["Depot"], [FOLLOW_UP]),
+            _verdict(False, ["Harbor"], ["Where is Harbor?"]),
+            _verdict(False, ["Marsh"], ["Where is Marsh?"]),
+        ]
+    )
+    strategy, _, later, _, _ = _strategy(script, max_rounds=2)
+
+    result = await strategy.asearch(_query())
+
+    assert len(later.queries) == 2
+    assert len(script.calls["controller"]) == 3  # the last round is judged too
+    meta = result.metadata["iterative"]
+    assert (meta["rounds"], meta["stop_reason"]) == (2, "max_rounds")
+    assert meta["searched"] == [FOLLOW_UP, "Where is Harbor?"]
+    assert result.metadata["context_sufficient"] is False
+
+
+async def test_nothing_new_to_search_ends_the_rounds_insufficient() -> None:
+    # The second verdict repeats the bridge and the query, in other cases.
+    script = _Script(
+        controller=[INSUFFICIENT, _verdict(False, ["DEPOT"], [FOLLOW_UP.upper()])]
+    )
+    strategy, _, later, _, _ = _strategy(script, max_rounds=3)
+
+    result = await strategy.asearch(_query())
+
+    assert len(later.queries) == 1
+    meta = result.metadata["iterative"]
+    assert (meta["rounds"], meta["stop_reason"]) == (1, "no_follow_up")
+    assert result.metadata["context_sufficient"] is False
+
+
+async def test_bridge_entities_alone_drive_a_round_without_queries() -> None:
+    script = _Script(controller=[_verdict(False, ["Depot"]), SUFFICIENT])
+    strategy, _, later, documents, _ = _strategy(script, max_next_queries=0)
+
+    await strategy.asearch(_query())
+
+    (seeded,) = later.queries
+    assert (seeded.query, seeded.entity_focus) == ("Depot", ["Depot"])
+    assert documents.calls == []
+
+
+async def test_at_most_max_next_queries_are_searched() -> None:
+    queries = ["q one", "q two", "q three"]
+    script = _Script(controller=[_verdict(False, ["Depot"], queries), SUFFICIENT])
+    strategy, _, _, documents, _ = _strategy(script, max_next_queries=2)
+
+    result = await strategy.asearch(_query())
+
+    assert [c.query for c in documents.calls] == ["q one", "q two"]
+    assert result.metadata["iterative"]["searched"] == ["q one", "q two"]
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["no JSON at all", json.dumps({"next_queries": [FOLLOW_UP]}), '{"sufficient":'],
+    ids=["prose", "no-verdict", "cut-off"],
+)
+async def test_an_unreadable_verdict_answers_from_what_is_there(reply: str) -> None:
+    strategy, _, later, _, _ = _strategy(_Script(controller=[reply]))
+
+    result = await strategy.asearch(_query())
+
+    assert result.results == ROUND_0
+    assert later.queries == []
+    meta = result.metadata["iterative"]
+    assert meta["stop_reason"] == meta["degraded"] == "controller_unparsed"
+    assert "context_sufficient" not in result.metadata
+    assert "degraded_error" not in result.metadata
+
+
+async def test_a_failed_controller_call_degrades_after_a_round() -> None:
+    script = _Script(controller=[INSUFFICIENT, RuntimeError("throttled")])
+    strategy, *_ = _strategy(script)
+
+    result = await strategy.asearch(_query())
+
+    assert "Depot is located in Harbor." in _contents(result)
+    meta = result.metadata["iterative"]
+    assert (meta["rounds"], meta["degraded"]) == (1, "controller_failed")
+    assert result.metadata["degraded_error"] == "RuntimeError"
+    assert "context_sufficient" not in result.metadata
+
+
+async def test_a_fatal_controller_error_fails_the_query() -> None:
+    script = _Script(controller=[ConfigurationError("model access denied")])
+    strategy, *_ = _strategy(script)
+
+    with pytest.raises(ConfigurationError):
+        await strategy.asearch(_query())
+
+
+# --- the query deadline --------------------------------------------------------
+
+
+async def test_the_deadline_cancels_a_follow_up_round_mid_way() -> None:
+    config = Config()
+    config.search.model_timeout_seconds = 1.0
+    script = _Script(controller=[INSUFFICIENT, SUFFICIENT])
+    strategy, _, later, _, _ = _strategy(script, config=config)
+    later.delay = 30.0
+
+    started = time.monotonic()
+    # 0.4 s are left for the rounds once the answer's 1 s is set aside.
+    with retry_deadline(time.monotonic() + 1.4):
+        result = await strategy.asearch(_query())
+
+    assert time.monotonic() - started < 5
+    assert later.cancelled
+    assert result.results == ROUND_0
+    meta = result.metadata["iterative"]
+    assert (meta["rounds"], meta["stop_reason"]) == (0, "deadline")
+    assert "context_sufficient" not in result.metadata
+
+
+async def test_no_round_starts_without_time_for_the_answer() -> None:
+    config = Config()
+    config.search.model_timeout_seconds = 60.0
+    script = _Script(controller=[INSUFFICIENT])
+    strategy, *_ = _strategy(script, config=config)
+
+    with retry_deadline(time.monotonic() + 30.0):
+        result = await strategy.asearch(_query())
+
+    assert script.calls["controller"] == []
+    assert result.results == ROUND_0
+    assert result.metadata["iterative"]["stop_reason"] == "deadline"
+
+
+# --- languages -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("metadata", "translation", "language"),
+    [
+        ({"query_language": "Korean"}, {}, "Korean"),
+        ({}, {"enabled": False, "source_language": LanguageCode.JA}, "Japanese"),
+        ({}, {"enabled": True, "target_language": LanguageCode.ZH}, "Chinese"),
+    ],
+    ids=["from-the-chain", "index-as-written", "translated-index"],
+)
+async def test_the_controller_writes_follow_ups_in_the_query_language(
+    metadata: dict[str, Any], translation: dict[str, Any], language: str
+) -> None:
+    config = Config()
+    for name, value in translation.items():
+        setattr(config.processing.translation, name, value)
+    script = _Script(controller=[SUFFICIENT])
+    strategy, *_ = _strategy(script, config=config)
+
+    await strategy.asearch(
+        _query(metadata={"search_strategy": "iterative", **metadata})
+    )
+
+    ((system, _),) = script.calls["controller"]
+    assert f"in {language}, the language of the indexed corpus" in system
+
+
+@pytest.mark.parametrize(
+    ("first", "again", "question", "query"),
+    [
+        (
+            "동부 창고",
+            "동부창고",
+            "한빛상사가 맡긴 운송사의 창고는?",
+            "동부창고는 어디에 있나?",
+        ),
+        ("東 倉庫", "東倉庫", "北星商事の倉庫はどこ？", "東倉庫はどこにある？"),
+        ("东方 仓库", "东方仓库", "北辰贸易的仓库在哪里？", "东方仓库在哪里？"),
+    ],
+    ids=["ko", "ja", "zh"],
+)
+async def test_dense_script_bridges_and_queries_are_followed_once(
+    first: str, again: str, question: str, query: str
+) -> None:
+    script = _Script(
+        controller=[
+            _verdict(False, [first], [query]),
+            _verdict(False, [again], [query]),
+        ]
+    )
+    strategy, _, later, documents, reranks = _strategy(script, max_rounds=3)
+
+    result = await strategy.asearch(_query(query=question))
+
+    # The same name without the space is the same bridge; the query as is.
+    (seeded,) = later.queries
+    assert (seeded.query, seeded.entity_focus) == (query, [first])
+    assert [c.query for c in documents.calls] == [query]
+    assert reranks.model.queries == [f"{question}\n{query}"]
+    assert result.metadata["iterative"]["stop_reason"] == "no_follow_up"
+
+
+# --- decomposition ---------------------------------------------------------------
+
+
+STEPS = ["Which firm does Vendor hire?", "Which depot does #1 rent?", "Where is #2?"]
+
+
+def _step_hits(texts: dict[str, list[RetrievalResult]]) -> _Documents:
+    return _Documents(texts)
+
+
+async def test_decomposition_answers_each_step_in_order() -> None:
+    script = _Script(
+        decomposition=[{"steps": STEPS}],
+        step=[{"answer": "Carrier"}, {"answer": "Depot"}, {"answer": "Harbor"}],
+    )
+    documents = _step_hits({"Where is Depot?": [HARBOR]})
+    strategy, _, later, _, reranks = _strategy(
+        script, decompose=True, documents=documents
+    )
+
+    result = await strategy.asearch(_query())
+
+    resolved = ["Which firm does Vendor hire?", "Which depot does Carrier rent?"]
+    resolved.append("Where is Depot?")
+    assert [c.query for c in documents.calls] == resolved
+    assert [q.query for q in later.queries] == resolved
+    assert [q.entity_focus for q in later.queries] == [[], ["Carrier"], ["Depot"]]
+    assert all(q.filters == FILTERS for q in later.queries + documents.calls)
+    # Each step read its own passages, and the overall question.
+    _, human = script.calls["step"][2]
+    assert "Depot is located in Harbor." in human and QUESTION in human
+    assert script.calls["controller"] == []
+    assert "Depot is located in Harbor." in _contents(result)
+    assert reranks.model.queries == ["\n".join([QUESTION, *resolved])]
+    meta = result.metadata["iterative"]
+    assert (meta["mode"], meta["rounds"], meta["stop_reason"]) == (
+        "decompose",
+        3,
+        "steps_done",
+    )
+    assert meta["llm_calls"] == 4
+    assert [s["answered"] for s in meta["steps"]] == [True, True, True]
+    assert "context_sufficient" not in result.metadata
+
+
+async def test_an_unanswered_last_step_says_the_context_is_insufficient() -> None:
+    script = _Script(
+        decomposition=[{"steps": STEPS[:2]}],
+        step=[{"answer": "Carrier"}, {"answer": ""}],
+    )
+    strategy, *_ = _strategy(script, decompose=True)
+
+    result = await strategy.asearch(_query())
+
+    assert result.metadata["context_sufficient"] is False
+
+
+async def test_decomposition_is_capped_at_max_rounds_plus_one_steps() -> None:
+    script = _Script(
+        decomposition=[{"steps": [f"step {i}" for i in range(6)]}],
+        step=[{"answer": "x"}],
+    )
+    strategy, _, later, _, _ = _strategy(script, decompose=True, max_rounds=1)
+
+    result = await strategy.asearch(_query())
+
+    assert [q.query for q in later.queries] == ["step 0", "step 1"]
+    assert result.metadata["iterative"]["llm_calls"] == 3
+
+
+async def test_a_step_refers_to_an_unanswered_step_by_its_question() -> None:
+    script = _Script(
+        decomposition=[{"steps": ["누가 창고를 빌리나?", "#1의 창고는 어디에 있나?"]}],
+        step=[{"answer": ""}, {"answer": "남항"}],
+    )
+    strategy, _, later, _, _ = _strategy(script, decompose=True)
+
+    await strategy.asearch(_query())
+
+    assert later.queries[1].query == "(누가 창고를 빌리나?)의 창고는 어디에 있나?"
+    assert later.queries[1].entity_focus == []
+
+
+async def test_a_korean_step_answer_seeds_the_next_step() -> None:
+    script = _Script(
+        decomposition=[{"steps": ["한빛상사가 맡긴 운송사는?", "#1의 창고는?"]}],
+        step=[{"answer": "바다운송"}, {"answer": "동부창고"}],
+    )
+    strategy, _, later, _, _ = _strategy(script, decompose=True)
+
+    await strategy.asearch(_query(metadata={"query_language": "Korean"}))
+
+    assert later.queries[1].query == "바다운송의 창고는?"
+    assert later.queries[1].entity_focus == ["바다운송"]
+    ((system, _),) = script.calls["decomposition"]
+    assert "in Korean, the language of the indexed corpus" in system
+
+
+@pytest.mark.parametrize(
+    "reply", ["no plan", json.dumps({"steps": []})], ids=["prose", "empty"]
+)
+async def test_an_unreadable_plan_answers_from_round_zero(reply: str) -> None:
+    strategy, _, later, _, _ = _strategy(_Script(decomposition=[reply]), decompose=True)
+
+    result = await strategy.asearch(_query())
+
+    assert result.results == ROUND_0 and later.queries == []
+    assert result.metadata["iterative"]["degraded"] == "decomposition_unparsed"
+
+
+async def test_a_failed_step_keeps_what_the_steps_before_it_found() -> None:
+    script = _Script(
+        decomposition=[{"steps": STEPS}],
+        step=[{"answer": "Carrier"}, RuntimeError("throttled")],
+    )
+    strategy, *_ = _strategy(script, decompose=True)
+
+    result = await strategy.asearch(_query())
+
+    meta = result.metadata["iterative"]
+    assert (meta["rounds"], meta["degraded"]) == (2, "step_failed")
+    assert result.metadata["degraded_error"] == "RuntimeError"
+    assert "context_sufficient" not in result.metadata
+
+
+# --- the base it wraps -----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("base", "inputs", "cls", "spare"),
+    [
+        ("local", QueryInput.ENTITIES, LocalSearchStrategy, ()),
+        ("mix", QueryInput.DUAL_KEYWORDS, LightRAGSearchStrategy, (SectionType.TEXT,)),
+    ],
+)
+def test_iterative_reads_what_its_base_reads(
+    base: str, inputs: QueryInput, cls: type, spare: tuple[SectionType, ...]
+) -> None:
+    config = Config()
+    config.search.iterative_search.base = base  # type: ignore[assignment]
+
+    assert wrapped_strategy(SearchStrategy.ITERATIVE, config) is SearchStrategy(base)
+    assert query_inputs(SearchStrategy.ITERATIVE, config) == frozenset({inputs})
+    state = {"resolved_strategy": SearchStrategy.ITERATIVE}
+    assert GraphRAGChain._needs_query_entities(state, config) is (
+        inputs is QueryInput.ENTITIES
+    )
+    assert GraphRAGChain._needs_dual_keywords(state, config) is (
+        inputs is QueryInput.DUAL_KEYWORDS
+    )
+    spec = get_strategy_spec(wrapped_strategy(SearchStrategy.ITERATIVE, config))
+    assert spec.strategy_class.spare_context_budget_first == spare
+    # It needs no artifact the base does not: the same stores, no reports.
+    own = get_strategy_spec(SearchStrategy.ITERATIVE)
+    assert own.required_roles == spec.required_roles
+    assert not own.needs_community_reports
+
+    strategy, *_ = _strategy(_Script(controller=[SUFFICIENT]), base=base)
+    assert isinstance(strategy.base, cls) and isinstance(strategy.follow_up, cls)
+    # The follow-up rounds are reranked once, together; round 0 as the base.
+    assert strategy.base.rerank_types == frozenset({"text"})
+    assert strategy.follow_up.rerank_types == frozenset()
+    assert strategy.base.hybrid_scorer is strategy.hybrid_scorer
+    assert strategy.filtered_index_prefixes(SearchStrategy.ITERATIVE) == (
+        strategy.base.filtered_index_prefixes(SearchStrategy(base))
+    )
+
+
+async def test_a_mix_round_is_seeded_through_its_low_level_keywords() -> None:
+    script = _Script(controller=[INSUFFICIENT, SUFFICIENT])
+    strategy, first, later, _, _ = _strategy(script, base="mix")
+
+    await strategy.asearch(_query(hl_keywords=["storage"], ll_keywords=["Vendor"]))
+
+    assert first.queries[0].metadata["search_strategy"] == "mix"
+    (seeded,) = later.queries
+    assert (seeded.ll_keywords, seeded.hl_keywords) == (["Depot"], [])
+    assert seeded.metadata["search_strategy"] == "mix"
+
+
+def test_auto_never_routes_to_iterative() -> None:
+    with pytest.raises(ValueError, match="iterative"):
+        Config.model_validate(
+            {"search": {"auto_routable_strategies": ["local", "iterative"]}}
+        )

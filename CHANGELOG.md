@@ -483,6 +483,15 @@ From a `main` checkout (formats and keys no release had):
   expanded entities' communities, falling back to similar reports) (#521, #525, #530, #533, #535, #541). `drift`
   stays concise: with `{drift: comprehensive}` raise `search.query_timeout_seconds` (300 s). See
   [query](docs/guides/query.md).
+- `iterative` search strategy (opt-in, unmeasured; `auto` never routes to it): `search.iterative_search.base`
+  (`mix` or `local`) runs first, then a fast-model controller (`models.roles.query_controller`) judges the packed
+  context and, when it does not answer the question, names the bridge entities and follow-up queries that seed up to
+  `max_rounds` (2) more base searches and text-unit searches under the same filters; the rounds are fused (buckets
+  `iterative_round_<n>`, `iterative_round_<n>_text`) and reranked, and the answer is generated once.
+  `decompose: true` splits the question into steps instead (KAG-style). `metadata["context_insufficient"]` reports a
+  final insufficient verdict, `metadata["iterative"]` the rounds and their model usage; new
+  `custom_prompts.iterative_controller_*`, `query_decomposition_*` and `decomposition_step_*` (#PR). See
+  [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions-opt-in).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A

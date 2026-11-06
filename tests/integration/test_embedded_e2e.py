@@ -101,6 +101,8 @@ def _respond(system: str, human: str) -> str:
                 "follow_up_queries": ["What does Depot store for Vendor?"],
             }
         )
+    if "You control the retrieval" in system:
+        return json.dumps({"sufficient": True, "known_facts": [ANSWER]})
     if "precision relevance evaluator" in system:
         return "9"
     if "search convergence analyst" in system:

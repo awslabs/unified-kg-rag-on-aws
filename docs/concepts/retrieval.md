@@ -54,6 +54,12 @@ LightRAG does by default. `weight` stays the default, and MMR's
 `search.fusion.diversity_lambda` keeps 0.5: the alternatives measured no
 significant difference ([evidence](./defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity)).
 
+**Follow-up rounds (opt-in, unmeasured):**
+
+| Strategy | Use when | How it works |
+|---|---|---|
+| `iterative` | Multi-hop questions whose last hop is about an entity the question does not name | Runs `search.iterative_search.base` (`mix` by default, or `local`), then a fast-model controller (`models.roles.query_controller`) reads the packed context: if it does not answer the question, the base search reruns seeded with the bridge entities the controller names and its follow-up queries search the passages, for at most `max_rounds` (2) rounds; the rounds' candidates are fused and reranked, and the answer model answers once. `decompose: true` splits the question into steps instead. About 1-3 fast-model calls more than the base a query. Selected explicitly only: `auto` does not route to it until it is measured ([design](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in)). |
+
 ## Hybrid scoring and rerank
 
 Every strategy fuses its per-source results (BM25, vector, graph) by

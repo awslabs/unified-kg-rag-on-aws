@@ -1781,15 +1781,15 @@ bounds it.
 | Unreadable controller JSON (no `sufficient`), or a plan with no steps | As above, without `degraded_error` (`controller_unparsed`, `decomposition_unparsed`) |
 | A store request of a round fails | Degrades that sub-search to nothing (`_safe_aretrieve`), as in the base; fatal store errors fail the query |
 | Deadline reached | The round in flight is cancelled (`deadline`) |
-| Insufficient after the round cap, or nothing new to search | `SearchResult.metadata["context_insufficient"] = True` |
+| Insufficient after the round cap, or nothing new to search | `SearchResult.metadata["context_sufficient"] = False`, `insufficiency_reason` = the stop reason |
 
-**Contract: `context_insufficient`.** Set (to `True`, absent otherwise)
+**Contract: `context_sufficient`** (`domain/retrieval/abstention.py`). Set (to `False`, absent otherwise)
 only on a positive verdict: the controller's last verdict was insufficient
 and no further round could run (`max_rounds` reached or no new lead), or,
 with `decompose`, the last step found no answer. A degraded or timed-out run
-never sets it, its verdict being unknown. The strategy does not abstain; an
-abstention policy reads the flag from `RAGOutput.metadata` (the chain
-copies the search metadata there). `metadata["iterative"]` records the base,
+never sets it, its verdict being unknown. The strategy does not abstain;
+`search.abstention.on_insufficient` (§9.2) reads the flag in the answer
+step. `metadata["iterative"]` records the base,
 mode, rounds, `stop_reason`, round 0's own rerank outcome (`rerank` is the
 last fusion's), the searched queries, each verdict (sufficient,
 bridge entities, queries, the number of known facts), the steps, the

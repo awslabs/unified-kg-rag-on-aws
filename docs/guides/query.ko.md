@@ -131,13 +131,55 @@ search:
   가드레일은 토큰을 뺀 답변을 검사합니다.
 - **`on_insufficient`**는 전략이 자기 컨텍스트를 불충분하다고 표시했을 때만
   적용됩니다(`search_results.metadata.context_sufficient: false`, 선택적으로
-  `insufficiency_reason`). 아직 이 표시를 남기는 기본 제공 전략은 없습니다. `hedge`는
+  `insufficiency_reason`). 이 표시를 남기는 기본 제공 전략은 `iterative`입니다. `hedge`는
   컨텍스트가 뒷받침하는 부분만 답하고 다루지 못한 부분을 밝히게 하고, `abstain`은 답하지
   말고 질의 언어로 거절 문장을 쓰게 한 뒤 출력을 거절로 표시합니다
   (`abstention_reason: insufficient_context`). 어느 쪽도 모델 호출을 늘리지 않습니다.
 - `mark`는 답변 프롬프트를 바꾸므로 답변과 EM / F1이 달라질 수 있습니다. 측정으로 결정할
   때까지 선택 기능이며, `mark` 실행은 별도 비교군으로 다루세요. 거절을 채점하는 방법:
   [평가: 답할 수 없는 질문과 거절](./evaluate.ko.md#답할-수-없는-질문과-거절).
+
+## 다중 홉 질문의 후속 라운드(선택 사항)
+
+`--search-strategy iterative`는 `search.iterative_search.base`(기본 `mix`, 또는 `local`)를
+실행한 뒤 답변 전에 fast 모델(`models.roles.query_controller`)이 컨텍스트를 판단하게 합니다.
+컨텍스트로 질문에 답할 수 없으면 컨트롤러가 지목한 연결(bridge) 엔티티(빠진 홉이 다루는
+엔티티. 예를 들어 "공급사가 맡긴 운송사의 창고는 어디에 있나?"의 창고)에서 기본 검색을 다시
+시작하고, 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(기본 2)번 반복합니다.
+답변 모델은 융합한 후보로 한 번만 답합니다. 선택 사항이며 아직 측정하지 않았습니다. `auto`는
+이 전략으로 분기하지 않고, 고르지 않으면 아무것도 바뀌지 않습니다.
+
+```yaml
+search:
+  iterative_search:
+    base: local          # 또는 mix(기본값)
+    max_rounds: 2        # 첫 검색 뒤의 후속 라운드 수
+    max_next_queries: 2  # 라운드마다 후속 질의 수
+    round_top_k: 5       # 후속 질의마다 가져오는 구절 수
+    decompose: false     # true면 대신 질문을 단계로 나눔
+models:
+  roles:
+    query_controller: fast   # 컨트롤러 모델(기본값: fast 등급)
+```
+
+- **비용.** fast 등급 컨트롤러 호출이 최대 `max_rounds + 1`번(`decompose`이면
+  `max_rounds + 2`번)이고, 라운드마다 기본 검색과 재순위화가 한 번씩 더 듭니다. 답변은 한 번만
+  생성합니다. `metadata["iterative"]`에 라운드 수, 멈춘 이유(`stop_reason`: `sufficient`,
+  `max_rounds`, `no_follow_up`, `deadline` 또는 실패한 단계), 판정마다의 결과, 후속 질의와
+  라운드의 모델 사용량이 기록됩니다.
+- **제한 시간.** `search.query_timeout_seconds`가 답변에 쓸 `search.model_timeout_seconds`를
+  남길 때만 라운드를 시작합니다. 그 시점을 넘는 라운드는 취소되고, 답변은 앞선 라운드가 찾은
+  후보로 생성합니다.
+- **언어.** 후속 질의와 연결 엔티티 이름은 질의 언어로 씁니다(번역을 끄면 색인 언어).
+- **필터**는 모든 라운드에 적용됩니다. **출처**는 답변 모델이 읽은 구절과 그래프 항목이며
+  출처 정보(provenance)는 기본 전략과 같습니다.
+- **부족한 컨텍스트.** 마지막 라운드 뒤에도 컨트롤러가 컨텍스트가 부족하다고 판단하면
+  `metadata["context_sufficient"]`가 `false`가 되고(멈춘 이유는 `insufficiency_reason`),
+  `search.abstention.on_insufficient`에 따라 단서를 달아 답하거나 답변을 거절합니다
+  ([답변 거절](#답변-거절)).
+
+동작 방식과 IRCoT·KAG와의 비교는
+[설계 문서](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in)(영문)에 있습니다.
 
 ## 대화형 모드와 대화 메모리
 

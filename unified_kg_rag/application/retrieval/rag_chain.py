@@ -67,6 +67,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
 from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
     DriftSearchStrategy,
     GlobalSearchStrategy,
+    IterativeSearchStrategy,
     LightRAGSearchStrategy,
     LocalSearchStrategy,
     SimpleSearchStrategy,
