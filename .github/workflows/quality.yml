@@ -303,7 +303,7 @@ jobs:
       - name: Sync dependencies
         # --frozen: resolve nothing, install exactly what the committed lock
         # pins, so this also proves the lock itself is installable on the floor.
-        run: uv sync --python 3.11 --frozen --extra eval --extra viz --extra ontology
+        run: uv sync --python 3.11 --frozen --extra otel --extra eval --extra viz --extra ontology
 
       - name: pytest
         run: uv run --python 3.11 --frozen pytest -m "not aws and not perf and not weekly" -q -n logical

@@ -1,5 +1,7 @@
 [build-system]
-requires = ["hatchling"]
+# Pinned so a new hatchling release cannot change the built wheel or sdist
+# between two builds of one commit; bump it deliberately.
+requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
 
 [project]
