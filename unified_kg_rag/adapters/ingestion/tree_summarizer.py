@@ -210,9 +210,4 @@ class TreeSummarizer:
                 high = middle - 1
         if low:
             return text[: ends[low - 1]].rstrip()
-        for _ in range(8):
-            tokens = self.count_tokens(text)
-            if tokens <= budget:
-                return text
-            text = text[: max(1, int(len(text) * budget / tokens) - 1)].rstrip()
-        return text
+        return self.token_counter.truncate_to_token_limit(text, budget)[0].rstrip()

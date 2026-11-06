@@ -157,13 +157,27 @@ def test_an_over_long_summary_is_cut_at_its_last_sentence_end_in_the_budget(
     assert summarizer.count_tokens(summary.text + joiner + sentence) > 300
 
 
-def test_a_first_sentence_over_the_budget_is_cut_at_a_character() -> None:
-    long_sentence = " ".join(["widgets"] * 400) + "."
-    summarizer = _summarizer(LanguageCode.EN, lambda system, human: long_sentence)
-    [summary] = summarizer.summarize([_cluster(LanguageCode.EN)])
+@pytest.mark.parametrize("counter", sorted(_COUNTERS))
+@pytest.mark.parametrize(
+    ("language", "word", "joiner"),
+    [
+        (LanguageCode.EN, "widgets", " "),
+        (LanguageCode.KO, "창고에서", " "),
+        (LanguageCode.JA, "倉庫の部品", ""),
+    ],
+)
+def test_a_first_sentence_over_the_budget_is_cut_at_a_character(
+    counter: str, language: LanguageCode, word: str, joiner: str
+) -> None:
+    long_sentence = joiner.join([word] * 400) + ("。" if not joiner else ".")
+    summarizer = _summarizer(
+        language, lambda system, human: long_sentence, counter=counter
+    )
+    [summary] = summarizer.summarize([_cluster(language)])
 
     assert summary is not None
-    assert 0 < summary.n_tokens <= 300
+    # The counter's own cut: within the budget and most of it used.
+    assert 0.8 * 300 < summary.n_tokens <= 300
     assert long_sentence.startswith(summary.text)
 
 
