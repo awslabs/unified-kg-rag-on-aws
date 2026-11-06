@@ -924,15 +924,15 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   | `graphrag` | text units, entities, relationships, graph, communities, community reports | relationship vectors, claims |
   | `lightrag` | text units, entities, relationships, relationship vectors, graph | — |
   | `hipporag` | text units, entities, relationships, relationship vectors, graph | — |
-  | `raptor` | text units, summary tree | — |
+  | `raptor` | text units, summary tree | — (`tree` also reads the entities index where another methodology built it) |
 
   `domain/ingestion/methodologies.py` maps each artifact to the stages that
   build it and each stage to the stages it reads
   (`ARTIFACT_STAGES`, `STAGE_DEPENDENCIES`): `stages_for(artifacts)` is
-  their closure. No stage builds the summary tree yet
-  (`UNBUILT_ARTIFACTS`), so `raptor` is refused at config load until the
-  branch that adds the stage maps it; `hipporag` needs nothing `lightrag`
-  does not build, so every default index holds it.
+  their closure. The summary tree is built by the `summary_tree` stage
+  after indexing (§6.5), from the stored text units, so `raptor` alone runs
+  no graph stage; `hipporag` needs nothing `lightrag` does not build, so
+  every default index holds it.
 - **Selection.** `indexing.methodologies` (default `[graphrag, lightrag]`:
   today's union, every stage) selects what a run builds. The effective
   methodologies (`effective_methodologies`) leave out those whose required
@@ -965,7 +965,8 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   what it left out is still current.
 - **Adding a methodology** that needs an artifact the namespace does not
   hold (communities and reports for `graphrag`, relationship vectors for
-  `lightrag`) needs the whole corpus, not a delta: a run with the registry
+  `lightrag`) needs the whole corpus, not a delta (the summary tree is the
+  exception: it is built from the stored text units, §6.5): a run with the registry
   on that finds one (the stored record against the effective
   methodologies, `missing_artifacts`) rebuilds the namespace for that run
   (`indexing.reset`, WARNING), before any cache key is computed. A rebuild
@@ -986,7 +987,8 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   vertices (the rebuild sweep, §5.2).
 - **Query time.** Every strategy class declares `methodology`
   (`BaseSearchStrategy.methodology`): `graphrag` for `local`, `global`,
-  `drift` and `simple`, `lightrag` for `mix`, `hybrid` and `naive`; a
+  `drift` and `simple`, `lightrag` for `mix`, `hybrid` and `naive`,
+  `raptor` for `tree`; a
   wrapper strategy sets it per instance from the strategy it wraps.
   `GraphRAGChain` reads the namespace's build record through the document
   retriever (`aread_build_record`, cached per suffix for
@@ -2191,6 +2193,352 @@ original is never a dependency). The deliberate differences:
 | A passage links to every phrase it contains | to the reached entities citing it; a passage hit none cites has no edge | the neighbourhood is read from the seeds outward, not passage by passage |
 | (the `local` ranking) | its own seeding, `summed_seed_weights`, on raw search scores | the variant the retrieval screen measured |
 | Self-loops kept | dropped | they only hold mass on their node |
+
+### 6.5 RAPTOR summary tree (`raptor`, `tree`, opt-in)
+
+The summary tree reimplements RAPTOR (Sarthi et al., ICLR 2024, arXiv
+2401.18059; reference code github.com/parthsarthi03/raptor, MIT, read and
+run for comparison only, never vendored): text units are clustered in
+embedding space, each cluster is summarized by a model, the summaries are
+clustered and summarized again, and a query searches every level at once
+(RAPTOR's "collapsed tree"). It is opt-in and unmeasured: `raptor` is not
+in the default `indexing.methodologies`, so no default ingestion builds a
+tree, and `search.auto_routable_strategies` refuses `tree`. Whether it helps is for the
+experiment at the end of this section to decide. The evidence is mixed:
+RAPTOR leads on specific QA in one unified benchmark (Zhou et al., arXiv
+2503.04338: MuSiQue 24.1 against vanilla RAG's 17.2), but is below vanilla
+RAG on GraphRAG-Bench's novel set (arXiv 2506.05690: fact retrieval 49.3
+against 58.8). Its case is cheap indexing and cheap queries, not beating
+`global` on summaries.
+
+**Methodology (§4.6).** The tree is the `summary_tree` index artifact of the
+methodology `raptor` (required: text units and the summary tree), and `tree`
+declares `methodology = Methodology.RAPTOR`. The catalogue maps the
+artifact to the `summary_tree` stage (`ARTIFACT_STAGES`,
+`ARTIFACT_PRODUCERS`), which reads only the indexing stage's stored output
+(`STAGE_DEPENDENCIES[SUMMARY_TREE] = {INDEXING}`), so the stage runs only
+when `raptor` is selected and `indexing.methodologies: [raptor]` alone
+runs parsing, loading, chunking, translation (when configured), indexing of
+the text units and the tree: no graph extraction, gleaning, resolution,
+claims, graph analysis or communities. With the other methodologies the
+tree is added beside their artifacts. The summary tree is not a
+`CORPUS_WIDE_ARTIFACTS` member: it is built from what the stores hold, so
+adding `raptor` to an existing namespace builds only the tree on the next
+run (an empty delta included) instead of rebuilding the namespace, and
+adding `graphrag` or `lightrag` to a `raptor`-only namespace extracts over
+the documents (their rebuild) and leaves the tree as it is: the text units
+do not change, so neither does the leaf-set digest. The indexing stage
+writes the build record before the tree exists, so the stage adds
+`summary_tree` to the record once the tree is current
+(`VectorIndexer.add_build_artifacts`); an incremental record keeps only the
+artifacts both it and the stored record name, so a run that leaves the
+stage out (or whose tree build fails) records `raptor` as no longer held
+until a run builds the tree again. On a `raptor`-only namespace `auto`
+falls back to `tree` (§4.6's fallback), the only strategy reading what it
+holds.
+
+**Placement and data flow.** A post-indexing stage,
+`PipelineStageType.SUMMARY_TREE` (appended after `INDEXING`, so every
+earlier stage keeps its cache key), run when `raptor` is selected, `application/ingestion/summary_tree_stage.py`:
+
+1. *Leaves.* The stage reads the namespace's stored text units through
+   `VectorIndexer.scan_text_units` (an id-ordered page walk, the seed
+   graphs' units left out as every text search leaves them out): their
+   id, indexed text (the `target_language` translation when one is
+   stored, the source text otherwise, as the indexer embeds them), stored
+   vector, `n_tokens`, file name and document `filters`. Reading the
+   committed store, not the run's context, makes the tree a function of
+   what is stored: an incremental run and a full build of the same corpus
+   build the same tree, and a run with an empty delta can build a tree
+   that is missing.
+2. *Trigger.* The leaf-set digest (the sorted leaf ids, which derive from
+   the document's content) and the tree fingerprint (every tree setting,
+   the summary model, prompt and language, the embedding model and
+   dimension) are compared with the build record in the summary index's
+   `_meta` (`summary_tree`). Equal and complete: nothing is done. A tree
+   marked `partial` (a summary failed) is rebuilt; reuse makes that cost
+   only the failed clusters.
+3. *Clustering and assembly* (`domain/ingestion/summary_tree.py`, pure
+   numpy, deterministic): below.
+4. *Summaries* (`adapters/ingestion/tree_summarizer.py`,
+   `TreeSummaryPrompt`, `ModelRole.SUMMARY_TREE` on the default tier, through
+   `BatchProcessor` and the run's LLM response cache), one level at a time,
+   bottom-up. A cluster whose input (its children's texts in id order, the
+   language and the summary settings: `input_key`) equals a node of the
+   live tree takes that node's summary and makes no call.
+5. *Embedding and write.* The summaries are embedded by the vector
+   indexer (`embed_summary_texts`, which takes the stored vector of a text
+   whose digest the live summary index holds), and the whole tree is
+   written into a new timestamped index whose alias is then swapped
+   (`write_summary_tree`), the build record written with it. A tree is
+   rebuilt, never patched.
+
+The stage runs in its own usage scope (`run-ingestion` reports its calls,
+tokens and cost as for any stage) and inside the run's lease and write
+fence. It is skipped, with a warning, when the run's indexing stage failed.
+
+**Clustering** (each step deterministic: inputs sorted by id, seeded by
+`random_state`, coordinates rounded to 1e-6 so a BLAS thread count does not
+flip a tie):
+
+- *Reduce.* L2-normalize, center, project onto the top
+  `min(reduction_dims (10), n - 1)` principal axes (numpy SVD, each axis's
+  largest loading made positive). This replaces UMAP.
+- *Partition one level.* `algorithm: kmeans` (default): Lloyd's iterations
+  (at most 100), `k = ceil(n / target_children)` (6), hard assignments, an
+  empty cluster re-seeded at the farthest point; two steps (about `sqrt(k)`
+  coarse clusters, then each split by its share of `k`) when `n * k` passes
+  4 million, so a 200,000-leaf level costs about `2 n sqrt(k)` distances.
+  The initial centers are the farthest-first `k` of the `2k` nodes of lowest
+  seeded id hash, a sample one added or removed node changes by one at
+  most: k-means++ samples by cumulative distances, so one inserted node
+  changed every later pick and a delta re-clustered, and re-summarized, the
+  whole tree. On 2,000 synthetic leaves (40 blobs, 64 dimensions) a 1% delta
+  reused 39% of the summaries with this start against 0.8% with k-means++,
+  a 10% delta 8% against 0.6% (stage 0 below measures it on real vectors).
+  `algorithm: gmm` (RAPTOR's): its two steps, a global Gaussian mixture,
+  then a local one inside each global cluster larger than `dims + 1`
+  (local PCA of the members' vectors in place of upstream's local UMAP);
+  each mixture is EM with full covariances (regularization 1e-6) started
+  from k-means, k chosen by BIC over `bic_grid` (`bounded`, the default: at
+  most 8 values around `n / target_children`; `upstream`: 1..49 as
+  upstream's `max_clusters` 50), and a node joins every cluster whose
+  posterior exceeds `soft_threshold` (0.1, upstream's `threshold`), its best
+  one when none does. Soft membership makes the tree a DAG; lineage is a
+  union.
+- *Token bound.* A cluster whose children exceed `max_cluster_tokens`
+  (8,000, counted by the token counter, so Han, Hangul and Kana are counted
+  about a character a token) is clustered again with the same algorithm
+  and settings, at least two ways, until it fits (a split that does not
+  shrink falls back to id-order packing).
+- *Levels.* The new nodes' summary vectors are clustered again, up to
+  `max_levels` (5, upstream `num_layers`), until a level holds at most
+  `min_nodes_to_cluster` nodes (11, upstream's `reduction_dimension + 1`)
+  or would shrink by less than `min_level_shrink` (20%). A cluster of one
+  node is not summarized: the node is promoted to the next level. The top
+  level may hold several roots.
+- *Scope.* `scope: corpus` (default): one tree over the namespace's
+  leaves, or one per value tuple of the `partition_by` document filter
+  keys. `scope: document`: one tree per document (RAPTOR's own setting),
+  documents told apart by their stored file path; one with fewer than
+  `min_leaves_per_tree` (3) leaves gets none. MuSiQue's one-paragraph
+  documents get no tree under `document`.
+
+**Data model.** `SummaryNode` (`domain/models/summary_node.py`): `id` (a
+content id: level, partition and sorted child ids), `level` (1..L; text
+units are level 0 and are not copied), `text` (the summary, in the index
+language), `child_ids`, `text_unit_ids` (the transitive leaves, sorted,
+cut at `max_lineage_text_units`, 10,000: `lineage_complete` false then, and
+a query resolves the lineage through the children), `n_leaves`,
+`n_tokens`, `partition`, `language`, `input_key`, and `attributes`
+(`index`, and the uniform `filters` below). The index is
+`indexing.opensearch.summary_nodes_index_prefix`
+(`graphrag-summary-nodes`): a kNN field, a `text` field analyzed with the
+index language's analyzer (`language_analyzers`: `nori` or `cjk` for
+Korean, `cjk` for Japanese and Chinese), keyword arrays for the lineage
+and the filters. Neptune and the SQLite graph get nothing, so graph-store
+parity is free; OpenSearch and the embedded engine share the indexer code.
+Stored text units hold no document id, so a node carries none:
+`text_unit_ids`, which the expanded passages and the retrieval evaluator
+resolve to files, is its provenance.
+
+**Multilingual.** Leaves are the indexed text, so a translated corpus is
+clustered and summarized in its target language and an untranslated one in
+its source language: the summaries are written in the index language
+(`language_name`, the language the query side extracts in), whatever the
+mix of the corpus. Every budget counts with the token counter. Without
+translation a mixed-language corpus may cluster by language before topic;
+`partition_by` on a language filter key splits the trees.
+
+**Incremental runs, resets and crash recovery.** The rule is rebuild,
+never patch: clusters move when the corpus does, so patching lineage up a
+corpus tree would not converge with a full build, while a rebuild is the
+same function of the same stored leaves (a property test checks it).
+Unchanged clusters cost no call (`input_key` reuse) and no embedding
+(digest reuse).
+
+1. *Removal, fail-closed.* `IndexingManager.remove_text_units` first
+   deletes every summary node citing a removed text unit and every node
+   above it (by `child_ids`, so a node whose lineage was cut is found
+   too): a summary paraphrases its children, so it goes even where other
+   children remain. A full build (reset, or a run without the registry)
+   deletes the nodes citing a text unit it did not write. Either deletion
+   failing fails the indexing stage like any failed write.
+2. *Rebuild.* The `summary_tree` stage then builds the new tree from the
+   leaves and swaps it in.
+3. *Crash between the two.* Queries meet the old tree without the deleted
+   nodes; new documents are reachable as leaves. The record still holds
+   the old digest, so the next run rebuilds; an index a killed build left
+   unswapped is deleted by the next build's reaper.
+
+`refresh: on_reset` keeps step 1 on delta runs and rebuilds only on
+`indexing.reset` (or a missing tree), reporting the leaves no level-1 node
+covers (`tree_uncovered_leaves`). `scope: document` rebuilds the trees of
+every document too, but reuse makes an unchanged document's tree free.
+
+**Filters, scopes and tenants.** One tree per index suffix, never across
+suffixes. A node stores a document filter key only when every one of its
+leaves has the same value for it (uniform-only, fail-closed); the
+retriever's existing rule, "an item without the attribute is excluded",
+does the rest: under `attr_k: x` a node passes only if all its documents
+have `k = x`. This differs on purpose from reports and entities, which
+pass when one document does: a summary sentence can restate an excluded
+document directly in the answer context. `partition_by` keeps nodes pure
+on its keys. The summary index declares `id`, `text`, `level`,
+`text_unit_ids`, `child_ids`, `n_leaves` and the document filters;
+`filtered_index_prefixes` of `tree` names the text-units and summary
+indexes, so a key neither declares is refused, and a key only the text
+units declare (`n_tokens`) leaves the summary index out rather than
+unfiltered. Expanded passages are fetched under the caller's filters too.
+
+**Retrieval: `tree`** (`adapters/search_strategies/tree_search.py`,
+`@register_strategy(SearchStrategy.TREE, required_roles=(RetrieverRole.DOCUMENT,))`,
+no query-side model call). On a namespace whose build record does not
+name the summary tree it is refused before any model call
+(`MethodologyNotIndexedError`, §4.6). Its fusion buckets, run concurrently
+under the request's `search_type` (BM25 + kNN by default):
+
+| Bucket | What |
+|---|---|
+| `tree_text_units` | the hybrid text-unit search (`naive`'s) |
+| `tree_summaries` | the hybrid search over every level of the summary index (the collapsed tree) |
+| `tree_graph_summaries` | the summary nodes citing the text units of the top `graph_seed_entities` (8) entities a hybrid search of the entities index finds with the raw query (LightRAG's raw-query fallback, no model call), each node scored by the seed weights it covers over `sqrt(n_leaves)` so a root does not win by size |
+| `tree_graph_text_units` | those entities' text units, ranked the same way |
+
+The graph buckets run when the entities index exists (`graph_signal:
+auto`; `off` turns them off), so a `raptor`-only index answers from the
+other two and reports `graph_signal: unavailable`. Text-unit ids are the
+join key on purpose: they are never re-keyed by merges or renames, so the
+tree needs no update when the graph changes. The graph walk of `local` is
+not used: it would need the graph role on every query, which a
+`raptor`-only deployment does not have.
+
+Fusion is RRF over the buckets (`fusion_weights` apply), then the
+cross-encoder rerank over leaves and summaries together (the one
+comparator across the two types), MMR and the type quotas
+(`text_top_k` 20, `summary_top_k` 10), then at most `max_nodes_per_level`
+(3) summaries of any one level. Each kept summary is expanded to
+`expand_children` (2) of its own passages: one search of the text units
+within its lineage (`id` filter, cut to the live `max_terms_count`), under
+the caller's filters, joined to the text with the summary's score just
+below it (`expanded_from`). The context gets the new `summary` section
+type, whose share is `search.token_manager.type_budgets.summary` (0.5); the
+text units take the spare budget first (`spare_context_budget_first`), so
+leaves always ground the answer. A summary reads `Summary (level 2, 14
+passages): ...`; its source carries `level`, `child_ids`, `text_unit_ids`,
+`n_leaves` and `lineage_complete`, so a user can expand it to the passages,
+and the retrieval evaluator attributes it through its lineage (a `summary`
+row in `by_source_type`). A summary is index content written by a model at
+ingestion, as a community report is; it is not `synthesized` (query-time
+model output) and is reported as a source. Summaries are not used by
+`naive`, `global` or `drift` (deferred until measured: each would change a
+measured default path).
+
+**Failure modes.**
+
+| Event | Outcome |
+|---|---|
+| A summary call fails every attempt | The node is dropped and its children promoted; the record is `partial`, so the next run retries (only the failed clusters cost a call) |
+| The vector store cannot page text units or embed (a custom backend: the port defaults return `None`) | The stage skips with a warning; no tree |
+| More than `max_leaves_in_memory` (200,000) leaves under `scope: corpus` without partitions | The stage fails, naming `partition_by` and `scope: document` |
+| Writing the new index fails | The new index is dropped, the old tree (without its stale nodes) stays, the stage fails |
+| Indexing failed in the same run | The stage is skipped |
+| No summary tree at query time | `tree` is refused when the build record says so (`MethodologyNotIndexedError`); with a record from before methodology profiles it answers from the text units with `metadata["summary_tree"] = "missing"` and a WARNING. `run-ingestion --enabled-stages summary_tree` builds the tree from the stored text units |
+
+**Cost.** Calls ≈ leaves / (children per node − 1), about 0.18 per leaf;
+input about 1.1-1.9 times the corpus tokens. At the 2026-11 list prices
+(Sonnet 5.5 $2 / $10, Haiku 5.5 $0.10 / $0.50 per million tokens): the
+MuSiQue benchmark store (3,318 leaves, 0.37M tokens, about 580 nodes) about
+$2 with Sonnet without reasoning tokens (about $8 at high effort; $0.11 to
+$0.40 with `models.roles.summary_tree: fast`), against $371.64 for its graph
+ingest; a 1M-token corpus of 1,000-token chunks about $3-5. A delta pays
+for the clusters whose children changed. At query time `tree` costs a
+`naive` query plus up to three more searches, a wider rerank and one
+search per expanded summary.
+
+**Fidelity against the original** (`tests/unit/test_raptor_fidelity.py`).
+Upstream's outputs on synthetic, pre-reduced points were recorded once by a
+script run in upstream's own environment (its code at commit
+`7da1d48`, with its model clients stubbed, UMAP replaced by an identity
+truncation since it is unseeded upstream, and tiktoken by a word count, so
+both sides cluster the same points and count the same tokens). The points
+are generated in plain Python from SHA-256 draws
+(`tests/fixtures/raptor_fidelity.py`), so the committed fixture
+(`tests/fixtures/raptor/upstream.json`) holds only the cases' parameters and
+upstream's answers, and the tests run in CI without upstream installed:
+
+- *Tree assembly, exact.* Upstream's cluster assignments are replayed into
+  our assembly (the partition function is a parameter of the pure
+  builder), with the deviations below set to upstream's behaviour (single
+  nodes summarized, no shrink stop): node count per layer, child sets, the
+  token-bound splits and the stopping layer must be equal. They are, on all
+  12 recorded trees (40-90 leaves of 150-700 words, 3,500-word bound).
+- *Collapsed-tree selection, exact.* `collapsed_tree_reference` (a test
+  helper, not a product mode: cosine order, `top_k` 10, stop at the first
+  node over the 3,500-token budget) must select upstream's node ids in
+  upstream's order (it does on all 40 cases); the shipped `tree` strategy
+  on the embedded store, vector search without rerank, graph buckets or
+  expansion, must hold the reference's top 5 in its top 10.
+- *Clustering, by agreement.* The BIC-chosen k equals upstream's
+  (sklearn's) on at least 90% of the cases and is within one on all; the
+  soft memberships at 0.1 reach an adjusted Rand index of at least 0.9; the
+  global/local two-step finds upstream's global count and partition, and
+  every local cluster of either side lies inside one global cluster. Exact
+  equality is not the bar: our numpy EM is not sklearn's initialization.
+  Two findings on the way: with full covariances, BIC is well posed only
+  with enough points a cluster (with about 10 points a blob in 10
+  dimensions upstream picked near-singleton clusters, 13 for 4 blobs of 57
+  points; the recorded cases use 50-90 points a blob in 5 dimensions, where
+  both sides pick the true count on all 40), and upstream's local step
+  splits a single Gaussian blob of 100-130 points into 6-25 clusters, ours
+  into 1-16: a BIC overfit no two EM implementations reproduce, so the
+  local counts are not compared. RAPTOR's small clusters (6.7 children a
+  parent in the paper) may owe as much to that overfit as to topics.
+
+Deviations from upstream, each deliberate:
+
+| # | Upstream | Here | Why |
+|---|---|---|---|
+| 1 | UMAP (unseeded) | PCA by numpy SVD, sign-fixed, rounded | determinism, no numba/llvmlite, scale (Zhou et al.: GMM with UMAP did not finish in two days on the largest sets) |
+| 2 | GMM, BIC over 1..49 | `kmeans` by default; `gmm` with a bounded grid, `upstream` grid optional | scale, stability on deltas |
+| 3 | a one-node cluster is summarized | promoted without a call | no summary that only paraphrases one child |
+| 4 | the recursion resets the reduction, threshold and tokenizer to defaults | the recursion keeps the configured ones | an upstream quirk |
+| 5 | 3,500 cl100k tokens per cluster | 8,000 by the run's token counter | Claude's window; CJK-correct counts |
+| 6 | 100-token chunks | the repository's chunker | one leaf set for every methodology |
+| 7 | a generic English prompt | faithfulness rules, conflicts reported, the index language, a length hint | hallucination risk; multilingual requirement |
+| 8 | one tree per input text | `corpus` scope by default, `document` available | multi-document corpora |
+| 9 | stop at ≤ 11 nodes or 5 layers | the same, plus a stop when a level shrinks less than 20% | no near-identical levels |
+| 10 | a node with no posterior above the threshold joins no cluster (it leaves the tree) | it joins its most likely cluster | every leaf stays reachable |
+| 10a | GMM and k-means start from scikit-learn's k-means++ | farthest-first from a hash-ranked sample of the node ids | a delta keeps most clusters, so their summaries are reused |
+| 11 | collapsed tree: cosine, `top_k` 10, 3,500 tokens | BM25 + kNN + graph signal, RRF, rerank, level quotas, passage expansion | hybrid-retrieval requirement; provenance |
+| 12 | an in-memory pickle, no updates | a stored index, rebuilt with reuse, fail-closed removal, filters, tenancy | production indexing |
+
+Against the approved design proposal, three simplifications: the leaf-set
+digest is read from the stored text units rather than the registry (it
+works without the registry, and the tree is a function of the store
+anyway); a summary is reused from the live tree's nodes (`input_key`)
+rather than from extraction-store records, so the full build's record
+retention needs no change and a summary is reusable while its cluster is in
+the last tree; and stale nodes are found by text-unit lineage and their
+ancestors rather than by document ids, which stored text units do not
+hold.
+
+**Experiment (needs budget).** Stage 0 is free (scripted models, embedded
+stores): determinism, permutation invariance, incremental-against-full
+convergence, summary reuse after 1% and 10% deltas for `kmeans` and
+`gmm` (which decides `refresh` and the default algorithm), filters,
+mixed-language and CJK budgets, `tree` latency. Stage 1, a MuSiQue screen
+on the repaired benchmark store (no re-ingest; the tree costs about $2-8
+with Sonnet): 200 questions, 2 repeats, arms `naive`, `tree`, `mix` and
+`tree` with `graph_signal: off`; `answer_match` EM/F1, `retrieval`
+hit@k/MRR with `by_source_type`, the cost block; about $15-25. MuSiQue's
+unrelated paragraphs test specific QA, not sensemaking: a coherent corpus
+(stage 2, about $350-750, data licenses to confirm) is the real test, and
+an end-to-end comparison with upstream on 10 QuALITY articles (about
+$20-25) the fidelity check with models. Proposed bar: ship `tree` as a
+documented option if it beats `naive` on assertion coverage or
+summarization questions without losing faithfulness, at no more than twice
+`naive`'s query cost.
 
 ---
 
