@@ -2169,6 +2169,199 @@ manifest's config hash differs. Whether `mark` should become the default
 waits on a measured run (`unanswerable` 100-200 + matched answerable,
 `local` and `mix`, `off` vs `mark`).
 
+### 9.3 Length-controlled judging, assertions and the closed-book arm
+
+The pairwise judge's evidence for the global strategies was weak in two ways:
+an LLM judge prefers the longer answer (Zeng et al., arXiv 2506.06331,
+measured LightRAG's win over naive RAG falling from 66.7% to 39.1% once the
+length effect is removed), and the global question set came from our own
+community reports, so it favours the method that wrote them. Four opt-in
+additions, all in the `evaluation` layer and its prompts, measure around
+both. None changes a default: a run without the new flags and evaluator
+judges and scores exactly as before. Which of them becomes a default is for
+a measured experiment to decide.
+
+**Length buckets (always on with `--pairwise-judge`).** `PairwiseJudge`
+records each judged pair's answer lengths in estimated tokens
+(`adapters.llm.token_estimate.estimate_token_count`: about one token per
+Hangul, kana or Han character, about four characters per token elsewhere,
+so a Korean or Japanese answer is not measured in whitespace words) and
+reports, under `length`, the candidate's win rate per bucket of the length
+ratio (candidate over baseline: below 0.67, 0.67-0.9, 0.9-1.1, 1.1-1.5,
+above 1.5) and, per criterion, the correlation between the relative length
+difference and the pair's score. A win rate that rises with the ratio, with
+few pairs in the 0.9-1.1 bucket, is a length effect, not a quality one. Free:
+no model call.
+
+**Differential mode (`evaluation.pairwise_mode: differential`, or
+`run-eval --pairwise-mode differential`).** Per judged pair:
+
+1. One `pairwise_overlap` call (fast tier, `PairwiseOverlapPrompt`) splits
+   the two answers into the statements both make and the statements only one
+   makes, copied from the answers in their own language (never translated).
+2. The judge (`models.roles.evaluation`, `PairwiseDifferentialPrompt`) sees
+   the shared statements as common ground that earns neither answer credit,
+   and decides each criterion on the unique statements only: both orders,
+   ties, the same criteria (with `overall` under `evaluation.pairwise_overall`)
+   and the same order-agreement rule and `position_consistency` as the
+   standard mode.
+3. When neither answer has a unique statement, every criterion is a tie
+   without a judge call (`identical_pairs`).
+
+A failed or malformed overlap call fails the pair (`failed`, held to
+`--max-failure-rate`), never a tie. Cost: one fast call plus the two judge
+calls per pair, on shorter inputs than the standard mode's. The per-pair
+shared and unique token counts go to `length.per_query`, so a reader sees
+how much of each answer was common ground. The overlap model can miss a
+paraphrase; the shared list is in the saved comparison for review.
+
+**`assertion` evaluator.** A dataset item may carry
+`assertions: [{text, kind: positive|negative, source?}]`: statements a good
+answer supports (positive) or must not state (negative, for example a known
+hallucination). Per answer and trial, one `assertion_judgement` call (the
+evaluation role) labels every assertion of the item `supported`,
+`contradicted` or `absent`, in a shuffled order seeded by the query id and
+trial, so the assertion order is no position bias. Per query, over its
+successful trials: `assertion_recall` (positive assertions labelled
+supported, averaged over trials), `assertion_contradiction_rate` (positive
+ones contradicted) and `negative_assertion_violation_rate` (negative ones
+supported). A trial whose call fails, or whose reply misses an assertion or
+uses another label, is a failed trial; a query with no successful trial
+records its metrics under `failed_metrics`, never as 0. A query without
+assertions, or without one of the two kinds, skips the metrics it cannot
+score. The scores are ordinary report metrics, so the paired comparison,
+`deltas_by_category` and `--fail-if assertion/assertion_recall:...` work
+unchanged; the two rates are lower-is-better, so a failed answer is left
+unpaired on them rather than filled with 0 (`comparison._UNFILLED`), which
+would count a crash as a perfect score. Cost: `evaluation.assertion_trials`
+(default 3) judge calls per answer. The labels are fixed English tokens in a
+JSON reply, so parsing does not depend on the answer's language.
+
+**Question and assertion generation (`prepare-benchmark assertions`).** A
+native reimplementation of the approach of Microsoft's BenchmarkQED
+(AutoQ question classes, AutoE-style assertions; code MIT, Copyright (c)
+Microsoft Corporation; https://github.com/microsoft/benchmark-qed). Its
+prompts are rewritten here and none of its datasets is used or shipped (they
+are under the Microsoft Research License). `evaluation/benchmarks/autoq.py`:
+
+1. Reads a corpus directory (`.txt`, `.md`), splits each file into text
+   units of about `--unit-tokens` estimated tokens (paragraphs packed; an
+   overlong paragraph is cut by the script-aware estimate, so CJK text
+   without spaces splits too) with ids `<file>#<n>` and character offsets,
+   samples at most `--max-units` of them with the seed and embeds them with
+   the configured embedding model.
+2. Clusters the embeddings with seeded k-means (k-means++ start, numpy) into
+   `--clusters` groups. Each cluster's sample, largest cluster first, is
+   its member nearest the centroid and that unit's `--units-per-cluster - 1`
+   nearest untaken units by cosine distance (BenchmarkQED's centroid
+   representative sampling).
+3. Generates questions in five classes, each with the evaluation role:
+   - `data_local`: from a sample of one cluster's units.
+   - `data_global`: from local questions of several clusters that share a
+     topic label, asking what the corpus as a whole says.
+   - `data_linked`: from two local questions of different clusters that
+     name a common entity, needing both.
+   - `activity_local` / `activity_global`: from personas and tasks generated
+     from a cross-cluster sample (one call), about one cluster's entities or
+     about the whole corpus.
+4. For every data question, assertions by map-reduce over claims: the map
+   step extracts claims from its source units, each citing unit ids; the
+   reduce step merges them into at most `--max-assertions` assertions citing
+   the units of their claims; a validation pass scores each assertion's
+   grounding, relevance and verifiability (1-5) against the cited unit texts
+   and drops those below 3, and an assertion citing no known unit is dropped
+   before validation. Activity questions get no assertions (BenchmarkQED's
+   assertion scoring does not cover them); they are for the pairwise judge.
+5. Writes `eval_data.json` (the `run-eval` format: `category` is the class,
+   `reference_sources` the cited files, `assertions` with
+   `source: [unit ids]`), `text_units.jsonl` (each unit's id, file, offsets
+   and text, so a reviewer can check every assertion against its sources)
+   and `generation_report.json` (seed, models, counts per class, dropped
+   items and why, usage per step).
+
+Every prompt names the output language (`--language`, default
+`processing.translation.source_language`). Sampling, clustering, the order of
+the calls and the selection among the generated candidates depend only on
+the seed and the corpus, so a run with the same models' replies writes the
+same files (tested with scripted models); the model replies themselves are
+not deterministic. A failed or malformed call drops the item it was for and
+is counted in the report. Cost is printed from the usage records (with a USD
+estimate under `evaluation.prices`); a typical run (20 clusters, 10 questions
+per class, 3 to 4 calls per data question) is a few hundred thousand input
+tokens.
+
+**Parity with BenchmarkQED, and the deliberate deviations.**
+`tests/unit/test_benchmarkqed_parity.py` (skipped unless `benchmark_qed` is
+importable; it is not a dependency, install it in a scratch environment)
+feeds the same synthetic sample and scripted replies to both
+implementations. Identical decisions: claim parsing (non-empty statement,
+integer score above 0, sources read as strings and kept only when given),
+assertion parsing (score 1-10, 5 when missing; `claim_<n>` ids mapped to the
+claims' units; an assertion citing no known claim dropped), the assertion
+ranking (weighted reciprocal rank fusion, importance 0.3 and source count
+0.7, k 60, competition ranks), the validation rule (grounding, relevance and
+verifiability clamped to 1-5, each at least 3), the per-question pass rate
+over trials (an assertion passes above a trial mean of 0.5) and the
+clustered sampling on fixed clusters; on well-separated groups our k-means
+and scikit-learn's find the same partition. Deviations, each on purpose:
+
+- One judge call labels all of an answer's assertions per trial (theirs:
+  one call per assertion and trial), with three labels (`supported`,
+  `contradicted`, `absent`; theirs: a 0/1 score) and a shuffled order per
+  trial: an answer of 10 assertions over 3 trials costs 3 calls, not 30.
+  A negative assertion is written as the false claim itself and is violated
+  when supported (theirs: "The answer does not mention X", passed when
+  absent).
+- Validation scores all of a question's assertions in one call (theirs: one
+  per assertion), and an assertion the reply does not score, or scores with
+  a value that is not a number, fails; BenchmarkQED defaults such a score to
+  3, a pass.
+- A claim citing only ids the prompt never gave is dropped; BenchmarkQED's
+  extractor keeps it with its raw sources (its source mapping is skipped
+  and the later filter only checks that the list is non-empty).
+- Booleans are no integer score, and blank statements are dropped after
+  stripping (Python's `True` is an `int`; BenchmarkQED accepts it).
+- Data-local questions come from one call per cluster (theirs: a generate
+  then expand pair), the kept questions are taken round-robin over the
+  clusters (theirs: a k-means over question embeddings ranked by similarity
+  ratio, coverage and assertion count), and the claims of a global or linked
+  question are its source questions' claims (theirs: claims re-extracted for
+  the global question). Fewer calls; the selection is less tuned.
+- Text units are packed paragraphs measured by the script-aware estimate
+  (theirs: 600-token tiktoken windows with 100-token overlap), so Korean,
+  Japanese and Chinese corpora split without a BPE tokenizer.
+- Prompts: written here, each naming `{language}`; ours ask for JSON with
+  fixed keys and cite short numeric ids that the code maps back to unit ids.
+  BenchmarkQED's claim prompt scores importance 0-100, ours 1-10 (only the
+  sign matters to the parse).
+
+An end-to-end comparison with the same model on the same small corpus
+(BenchmarkQED's AutoQ and AutoE against these) needs a model budget and is
+listed as a measured experiment, not run here.
+
+**Closed-book arm (`run-eval --closed-book`).** One more arm, labelled
+`closed_book`, answers every question with the answer model alone
+(`ClosedBookAnswerPrompt`: no context, no retrieval, no store call) through
+an `EvaluationManager` whose chain is `evaluation/closed_book.py`'s runnable.
+It runs after the strategies with the same repeats and evaluators and is
+compared with the first strategy like any other arm, so its scores bound what
+the answer model knows without the corpus: a strategy that does not beat it
+on a question set measures prior knowledge, not retrieval. Its results carry
+`metadata.retrieval: none` and no sources; the comparison lists it under
+`closed_book_arms` and the Markdown report marks it "(no retrieval)";
+retrieval and context metrics of it score an empty source list (read only
+the answer metrics); `--fail-if` gates skip it. Cost: one answer call per
+question and repeat.
+
+**Layer placement.** Everything above lives in `evaluation/` (judges,
+evaluator, generator, closed-book runnable), `domain/prompts/evaluation.py`
+and `domain/prompts/benchmark.py` (prompts, overridable through
+`custom_prompts`), the domain models (`EvaluationAssertion`, the evaluator
+and metric enum members, the `pairwise_overlap` model role) and the two CLIs'
+flags. The `assertion` evaluator is one branch in
+`EvaluationManager._resolve_evaluator_class`. No store, retriever or
+ingestion code changes.
+
 ---
 
 ## 10. Visualization & Analytics
