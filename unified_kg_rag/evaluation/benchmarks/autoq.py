@@ -69,6 +69,7 @@ from unified_kg_rag.adapters.llm.token_estimate import (
     truncate_to_estimate,
 )
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.domain.ingestion import summary_tree
 from unified_kg_rag.domain.models import Config, ModelPurpose, ModelRole, language_name
 from unified_kg_rag.domain.models.config import model_id_value
 from unified_kg_rag.domain.prompts import (
@@ -109,7 +110,6 @@ RRF_SOURCE_WEIGHT = 0.7
 # (map: partial assertions per batch; reduce: final assertions over them).
 CLAIM_BATCH = 40
 _EMBED_BATCH = 64
-_KMEANS_ITERATIONS = 100
 _PARAGRAPH = re.compile(r"\S[\s\S]*?(?=\n[ \t\r\f\v]*\n|\Z)")
 
 
@@ -258,39 +258,10 @@ def sample_units(units: Sequence[TextUnit], limit: int, seed: int) -> list[TextU
 
 
 def kmeans(vectors: np.ndarray, k: int, seed: int) -> np.ndarray:
-    """Cluster labels of ``vectors`` (rows) into at most ``k`` clusters:
-    k-means++ start seeded with ``seed``, Lloyd iterations to convergence."""
-    count = len(vectors)
-    k = max(1, min(k, count))
-    rng = np.random.default_rng(seed)
-    squared = np.einsum("ij,ij->i", vectors, vectors)
-    centers = [vectors[int(rng.integers(count))]]
-    nearest = np.sum((vectors - centers[0]) ** 2, axis=1)
-    for _ in range(1, k):
-        total = float(nearest.sum())
-        if total <= 0:
-            break
-        center = vectors[int(rng.choice(count, p=nearest / total))]
-        centers.append(center)
-        nearest = np.minimum(nearest, np.sum((vectors - center) ** 2, axis=1))
-    center_array = np.asarray(centers, dtype=float)
-    labels = np.zeros(count, dtype=int)
-    for iteration in range(_KMEANS_ITERATIONS):
-        # ||x - c||^2 without the (units x clusters x dimensions) array.
-        distances = (
-            squared[:, None]
-            - 2.0 * vectors @ center_array.T
-            + np.einsum("ij,ij->i", center_array, center_array)[None, :]
-        )
-        new_labels = distances.argmin(axis=1)
-        if iteration and np.array_equal(new_labels, labels):
-            break
-        labels = new_labels
-        for c in range(len(center_array)):
-            members = vectors[labels == c]
-            if len(members):
-                center_array[c] = members.mean(axis=0)
-    # Dense labels 0..n-1 in order of first appearance.
+    """Cluster labels of ``vectors`` (rows) into at most ``k`` clusters: the
+    summary tree's seeded k-means (``summary_tree.kmeans``: k-means++ start,
+    Lloyd iterations), relabelled 0..n-1 in order of first appearance."""
+    labels = summary_tree.kmeans(np.asarray(vectors, dtype=float), k, seed)
     remap = {old: new for new, old in enumerate(dict.fromkeys(labels.tolist()))}
     return np.asarray([remap[label] for label in labels.tolist()], dtype=int)
 
