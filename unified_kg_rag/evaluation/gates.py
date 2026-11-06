@@ -8,7 +8,8 @@ when the condition holds: ``answer_match/token_f1:ci_high<-0.02`` fails when
 the interval of the token-F1 delta lies wholly below -0.02 (a supported
 regression), ``usage/total_tokens:mean_delta>500`` when the answers cost 500
 more tokens per query on average. ``<measure>`` is a key of
-``deltas_vs_baseline`` (``<evaluator>/<metric>``) or of
+``deltas_vs_baseline`` (``<evaluator>/<metric>``, or ``abstention/recall``
+and ``abstention/precision`` with unanswerable items) or of
 ``cost.deltas_vs_baseline`` (``usage/llm_calls``, ``usage/input_tokens``,
 ``usage/output_tokens``, ``usage/total_tokens``, ``usage/cost_usd``,
 ``latency/response_time_seconds``). A measure a strategy has no delta for

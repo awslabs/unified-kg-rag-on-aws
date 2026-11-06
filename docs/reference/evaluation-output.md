@@ -55,15 +55,18 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   `search.abstention.mode: mark` an answer starting with `[NO_ANSWER]` or one
   declined by the insufficient-context policy): `completed` (results whose
   answer generation did not fail, declines included) = `abstained`
-  (declined) + `answered` (not declined), `abstention_rate`
-  (`abstained / completed`), and the same per strategy actually used
+  (declined) + `answered` (not declined), `failed` (answer generation
+  failed: no decline), `abstention_rate`
+  (`abstained / (completed + failed)`), and the same per strategy actually used
   (`per_strategy`). "Answered" means not declined everywhere, as in
   `answer_match` `coverage`. With `answerable: false` items:
   `unanswerable` and `answerable` blocks of the same shape, `precision`
   (declines on unanswerable items / all declines; `null` without any),
-  `recall` (unanswerable items declined) and `f1`. With `answer_match`:
+  `recall` (unanswerable items declined, over all of them: a failed answer
+  is no decline) and `f1`. With `answer_match`:
   `answer_match` {metric: `coverage`, `accuracy`, `selective_accuracy`,
-  `overall_accuracy`} over the answerable items (a decline scores 0;
+  `overall_accuracy`} over the answerable items (a decline or a failed
+  answer scores 0;
   `overall_accuracy`, present with unanswerable items, counts a decline on
   one as correct). With `mode: off` a model declining in its own words is not
   detected, so `recall` is a lower bound. Each result carries `abstained`
@@ -179,6 +182,17 @@ strategies, or `--repeats`) saves every run's files and adds
   supported when its interval excludes 0; a 10-point difference on binary
   metrics is detected in 15% of runs with 50 queries and 59% with 200, so
   compare on a few hundred queries.
+- `abstention/recall` and `abstention/precision` (in `strategies.<s>.metrics`
+  and `deltas_vs_baseline.<s>`, with `metadata.answerable: false` items):
+  recall is per unanswerable query whether its answer declined (1) or not
+  (0; a failed answer is no decline), paired like a metric, also per
+  category and per query in the CSV. Precision (declines on unanswerable
+  queries over all declines) is a ratio, not a per-query mean: its
+  `mean_delta` is the difference of the two precisions and its interval
+  recomputes both on each resample of the queries; `pairs` counts the
+  queries either side declined, `queries` (in `metrics`) those the strategy
+  declined, and it is absent when a side declined nothing. Both are
+  `--fail-if` measures (`abstention/recall:ci_high<0`).
 - `deltas_by_category.<s>.<category>.<metric>`: the same deltas over each
   dataset `category` (MuSiQue's hop count, say). Each interval is per
   category and not corrected for the number of categories and metrics read,

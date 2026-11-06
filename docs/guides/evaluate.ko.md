@@ -114,7 +114,14 @@ musique --unanswerable N`이 코퍼스로 답할 수 없도록 걸러 낸 질문
   `selective_accuracy`(답한 질문만), `overall_accuracy`(맞힌 답이나 맞는 거절, 두 종류
   전체)를 보고합니다. coverage와 accuracy를 함께 읽으세요. 거절을 늘리면 selective
   accuracy는 오르고 coverage는 떨어집니다. 개수는 `completed`(답변 생성이 실패하지 않은
-  결과) = `abstained`(거절) + `answered`(거절하지 않음)입니다.
+  결과) = `abstained`(거절) + `answered`(거절하지 않음)와 `failed`입니다. 답변 생성이 실패한
+  결과는 거절이 아니므로 recall을 낮추고, 답할 수 있는 질문이면 accuracy에서 0점입니다.
+  실패가 거절로 보이지 않습니다.
+- 비교(`--search-strategy a,b`, `--baseline-results`)는 거절도 짝지어 비교합니다.
+  `abstention/recall`(답할 수 없는 질의마다 거절 여부)과 `abstention/precision`(거절 중 답할
+  수 없는 질문의 비율. 구간은 질의를 재표본추출해 구합니다)이 `deltas_vs_baseline`에 지표와
+  함께 들어가므로 `--fail-if abstention/recall:ci_high<0`으로 뒷받침되는 하락을 게이트로
+  걸 수 있습니다.
 - 저장된 결과마다 `abstained`, `abstention_reason`, `context_sufficient`,
   `insufficiency_reason`과 `iterative`의 실행 기록(라운드 수, 멈춘 이유, 판정)이 남으므로 결과
   파일만으로 실행을 분석할 수 있습니다

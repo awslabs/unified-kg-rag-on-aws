@@ -2920,7 +2920,17 @@ report. Unanswerable items are scored only by abstention:
 items, abstentions as 0), `selective_accuracy` (over the answered ones) and,
 with unanswerable items, `overall_accuracy` (a correct answer or a correct
 decline, over both). Coverage and accuracy are reported together so a
-strategy cannot look precise by declining more.
+strategy cannot look precise by declining more. A failed answer is no
+decline: it counts against recall and scores 0 in accuracy (with a
+reference answer), so a strategy cannot look better by failing either.
+
+A paired comparison carries the declines as measures: `abstention/recall`
+is a per-query 0/1 (declined) on the unanswerable queries, averaged over
+repeats and paired like any metric (bootstrap interval, per category, per
+query); `abstention/precision` is a ratio over the declines, so its delta is
+the difference of the two precisions and its interval comes from
+recomputing both on each resample of the queries (`pairs` = queries either
+side declined; absent when one side declined none). `--fail-if` reads both.
 
 Failure modes: a model that ignores the marker instruction looks like
 `mode: off` (recall falls, nothing breaks); one that writes the token

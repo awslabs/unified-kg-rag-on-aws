@@ -599,12 +599,16 @@ From a `main` checkout (formats and keys no release had):
   `context_sufficient` to false (`iterative` does). `answer_match` scores a decline on an answerable question (the
   no-context reply included) 0 without a span call, and `abstention_statistics` counts `completed` = `abstained` +
   `answered` (not declined, as in coverage) and adds decline precision, recall and F1 and per `answer_match` metric
-  coverage, accuracy, selective and overall accuracy. Each saved result keeps `abstention_reason`,
+  coverage, accuracy, selective and overall accuracy; a failed answer counts as no decline (`failed`) and 0 in
+  accuracy. The answerable questions stay the MuSiQue-Ans sample the seed draws without `--unanswerable` (the full
+  split is downloaded beside it, or `--unanswerable-data-path`). A comparison pairs `abstention/recall` and
+  `abstention/precision`, both `--fail-if` measures. Each saved result keeps `abstention_reason`,
   `context_sufficient`, `insufficiency_reason` and the `iterative` run record. Measured on 100 + 100 MuSiQue
-  questions, `mark` stays opt-in and `hedge` the default (#593, #600). See
+  questions, `mark` stays opt-in and `hedge` the default (#593, #600, #PR). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
 - Evaluation of open-ended answers, all opt-in (defaults unchanged until a measured experiment decides): the
-  pairwise judge reports win rates per answer-length bucket in estimated tokens and their correlation with length;
+  pairwise judge reports win rates per answer-length bucket in estimated tokens (symmetric in the log ratio) and
+  their correlation with length;
   `evaluation.pairwise_mode: differential` (`run-eval --pairwise-mode differential`, model role
   `models.roles.pairwise_overlap`) judges only the statements unique to each answer; the `assertion` evaluator
   (`assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`;

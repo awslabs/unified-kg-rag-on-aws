@@ -31,6 +31,7 @@ from unified_kg_rag.evaluation import pairwise
 from unified_kg_rag.evaluation.answer_match_evaluator import AnswerMatchEvaluator
 from unified_kg_rag.evaluation.benchmarks import musique
 from unified_kg_rag.evaluation.comparison import bootstrap_ci, paired_comparison
+from unified_kg_rag.evaluation.gates import gate_breaches, parse_gate
 from unified_kg_rag.evaluation.text_matching import normalize_answer_squad
 from unified_kg_rag.shared import EvaluationException
 
@@ -675,3 +676,104 @@ def test_runs_scored_on_different_spans_are_warned() -> None:
     )
     (warning,) = mixed["warnings"]
     assert "first_line: mix; full: local" in warning
+
+
+def _decline_run(
+    declined_unanswerable: int,
+    declined_answerable: int,
+    *,
+    failed_unanswerable: int = 0,
+    n: int = 20,
+) -> tuple[list[EvaluationReport], list[EvaluationResult]]:
+    """``n`` unanswerable and ``n`` answerable results (no reports): the
+    first ``failed_unanswerable`` unanswerable answers fail, the next
+    ``declined_unanswerable`` decline, as do the first
+    ``declined_answerable`` answerable ones."""
+    results = []
+    for i in range(n):
+        failed = i < failed_unanswerable
+        results.append(
+            EvaluationResult(
+                query_id=f"u{i}",
+                question="?",
+                generated_answer="" if failed else "x",
+                ground_truth="",
+                error=failed,
+                abstained=(
+                    not failed and i < failed_unanswerable + declined_unanswerable
+                ),
+                metadata={"answerable": False},
+            )
+        )
+        results.append(
+            EvaluationResult(
+                query_id=f"a{i}",
+                question="?",
+                generated_answer="x",
+                ground_truth="Vendor",
+                abstained=i < declined_answerable,
+            )
+        )
+    return [], results
+
+
+class TestAbstentionDeltas:
+    """Regression: the comparison paired only evaluator metrics, so a
+    strategy's decline recall and precision could not be compared or gated."""
+
+    def test_recall_and_precision_are_paired_deltas(self) -> None:
+        comparison = paired_comparison(
+            {"base": [_decline_run(8, 4)], "mark": [_decline_run(16, 0)]}
+        )
+        means = comparison["strategies"]
+        assert means["base"]["metrics"]["abstention/recall"]["mean"] == 0.4
+        assert means["mark"]["metrics"]["abstention/recall"]["mean"] == 0.8
+        # 8 of 12 declines were on unanswerable items, then 16 of 16.
+        precision = means["base"]["metrics"]["abstention/precision"]
+        assert precision["mean"] == pytest.approx(8 / 12)
+        assert precision["queries"] == 12
+        deltas = comparison["deltas_vs_baseline"]["mark"]
+        recall = deltas["abstention/recall"]
+        assert recall["mean_delta"] == pytest.approx(0.4) and recall["pairs"] == 20
+        assert recall["ci_low"] > 0
+        delta = deltas["abstention/precision"]
+        assert delta["mean_delta"] == pytest.approx(1 / 3)
+        # The queries either side declined: u0-u15 and a0-a3.
+        assert delta["pairs"] == 20
+        assert delta["ci_low"] <= 1 / 3 <= delta["ci_high"]
+
+    def test_a_failed_answer_is_no_decline(self) -> None:
+        comparison = paired_comparison(
+            {
+                "base": [_decline_run(16, 0)],
+                # Fails 10 and declines the other 10 unanswerable items.
+                "crash": [_decline_run(10, 0, failed_unanswerable=10)],
+            }
+        )
+        metrics = comparison["strategies"]["crash"]["metrics"]
+        assert metrics["abstention/recall"]["mean"] == 0.5
+        delta = comparison["deltas_vs_baseline"]["crash"]["abstention/recall"]
+        assert delta["mean_delta"] == pytest.approx(-0.3)
+
+    def test_gates_read_the_decline_deltas(self) -> None:
+        comparison = paired_comparison(
+            {"base": [_decline_run(16, 0)], "worse": [_decline_run(6, 6)]}
+        )
+        breaches = gate_breaches(
+            comparison,
+            [
+                parse_gate("abstention/recall:ci_high<0"),
+                parse_gate("abstention/precision:ci_high<0"),
+            ],
+        )
+        assert len(breaches) == 2
+        assert all(b.startswith("worse: abstention/") for b in breaches)
+
+    def test_no_unanswerable_items_no_decline_measures(self) -> None:
+        comparison = paired_comparison(
+            {"a": [_run({"q1": 1.0})], "b": [_run({"q1": 0.5})]}
+        )
+        assert not any(
+            key.startswith("abstention/")
+            for key in comparison["deltas_vs_baseline"]["b"]
+        )

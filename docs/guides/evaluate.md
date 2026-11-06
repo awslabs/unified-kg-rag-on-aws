@@ -124,7 +124,16 @@ set, filtered so the corpus does not answer them:
   ones) and `overall_accuracy` (a correct answer or a correct decline, over
   both kinds). Read coverage and accuracy together: declining more raises
   selective accuracy and lowers coverage. Its counts are `completed`
-  (answers that did not fail) = `abstained` + `answered` (not declined).
+  (answers that did not fail) = `abstained` + `answered` (not declined),
+  and `failed`. A failed answer is no decline: it lowers recall, and on an
+  answerable question it scores 0 in accuracy, so failing cannot pass for
+  declining.
+- A comparison (`--search-strategy a,b`, `--baseline-results`) pairs the
+  declines too: `abstention/recall` (per unanswerable query, declined or
+  not) and `abstention/precision` (declines on unanswerable questions over
+  all declines, its interval from resampling the queries) sit with the
+  metrics in `deltas_vs_baseline`, so
+  `--fail-if abstention/recall:ci_high<0` gates a supported drop.
 - Each saved result keeps `abstained`, `abstention_reason`,
   `context_sufficient`, `insufficiency_reason` and, for `iterative`, its run
   record (rounds, stop reason, verdicts), so a run can be analysed from its
