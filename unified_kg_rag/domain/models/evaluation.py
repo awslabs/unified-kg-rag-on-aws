@@ -253,6 +253,38 @@ class EvaluationResult(BaseModel):
             "metadata.answerable=false ones."
         ),
     )
+    abstention_reason: str | None = Field(
+        default=None,
+        description=(
+            "Why the chain declined (metadata.abstention_reason): no_context, "
+            "marker or insufficient_context. None for an answer, and for a "
+            "result saved without it."
+        ),
+    )
+    context_sufficient: bool | None = Field(
+        default=None,
+        description=(
+            "False when the strategy flagged its own context insufficient "
+            "(SearchResult.metadata.context_sufficient; iterative sets it); "
+            "None when the strategy did not judge it."
+        ),
+    )
+    insufficiency_reason: str | None = Field(
+        default=None,
+        description=(
+            "The strategy's reason for an insufficient context "
+            "(metadata.insufficiency_reason; for iterative its stop reason)."
+        ),
+    )
+    iterative: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The iterative strategy's run record (metadata.iterative): base, "
+            "mode, rounds, stop_reason, degraded, llm_calls, usage, searched, "
+            "verdicts, steps, added_results, round_0_rerank. None for the "
+            "other strategies."
+        ),
+    )
     rerank_status: RerankStatus | None = Field(
         default=None,
         description=(
@@ -373,8 +405,10 @@ class EvaluationSummary(BaseModel):
     abstention_statistics: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Abstentions (EvaluationResult.abstained) among answered queries: "
-            "'abstained', 'answered', 'abstention_rate', the same per actual "
+            "Abstentions (EvaluationResult.abstained) among the completed "
+            "queries (answer generation did not fail): 'completed' = "
+            "'abstained' (declined) + 'answered' (not declined), "
+            "'abstention_rate', the same per actual "
             "search strategy ('per_strategy'). With items marked "
             "metadata.answerable=false: 'unanswerable' and 'answerable' blocks "
             "of the same shape, and 'precision' (abstentions on unanswerable "

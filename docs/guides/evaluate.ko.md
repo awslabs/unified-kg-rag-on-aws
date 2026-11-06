@@ -113,7 +113,12 @@ musique --unanswerable N`이 코퍼스로 답할 수 없도록 걸러 낸 질문
   지표마다 `coverage`(답한 비율), `accuracy`(답할 수 있는 질문 전체, 거절은 0),
   `selective_accuracy`(답한 질문만), `overall_accuracy`(맞힌 답이나 맞는 거절, 두 종류
   전체)를 보고합니다. coverage와 accuracy를 함께 읽으세요. 거절을 늘리면 selective
-  accuracy는 오르고 coverage는 떨어집니다.
+  accuracy는 오르고 coverage는 떨어집니다. 개수는 `completed`(답변 생성이 실패하지 않은
+  결과) = `abstained`(거절) + `answered`(거절하지 않음)입니다.
+- 저장된 결과마다 `abstained`, `abstention_reason`, `context_sufficient`,
+  `insufficiency_reason`과 `iterative`의 실행 기록(라운드 수, 멈춘 이유, 판정)이 남으므로 결과
+  파일만으로 실행을 분석할 수 있습니다
+  ([Evaluation output: Result files](../reference/evaluation-output.md#result-files)(영문)).
 - `mode: off`이면 빈 컨텍스트에 대한 고정 문구만 거절로 세므로 recall은 하한값입니다.
   `mark`는 답변 프롬프트를 바꾸므로 `mark` 실행과 `off` 실행은 두 비교군으로
   비교하세요(`off`로 실행한 뒤, 그 결과 파일을 `--baseline-results`로 지정해 `mark`로

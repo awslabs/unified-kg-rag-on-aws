@@ -53,6 +53,11 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     model_id_value,
 )
+from unified_kg_rag.domain.retrieval.abstention import (
+    ABSTENTION_REASON_KEY,
+    CONTEXT_SUFFICIENT_KEY,
+    INSUFFICIENCY_REASON_KEY,
+)
 from unified_kg_rag.ports.guardrail import GuardAction
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -627,6 +632,7 @@ class EvaluationManager:
                         error_message=error_message,
                         abstained=error_message is None
                         and self._is_abstention(answer, rag_metadata),
+                        **self._decline_details(rag_metadata),
                         rerank_status=(rag_metadata.get("rerank") or {}).get("status"),
                         guardrail_blocked=self._guardrail_block(rag_metadata),
                         category=query.category,
@@ -728,6 +734,23 @@ class EvaluationManager:
         if isinstance(rag_metadata, dict) and rag_metadata.get("abstained"):
             return True
         return isinstance(answer, str) and answer.strip() == NO_CONTEXT_ANSWER
+
+    @staticmethod
+    def _decline_details(rag_metadata: Any) -> dict[str, Any]:
+        """The chain's per-answer decline and sufficiency fields, kept in the
+        saved results: why it declined, whether the strategy judged its
+        context insufficient (and why), and the iterative run record."""
+        if not isinstance(rag_metadata, dict):
+            return {}
+        iterative = rag_metadata.get("iterative")
+        sufficient = rag_metadata.get(CONTEXT_SUFFICIENT_KEY)
+        reason = rag_metadata.get(INSUFFICIENCY_REASON_KEY)
+        return {
+            "abstention_reason": rag_metadata.get(ABSTENTION_REASON_KEY),
+            "context_sufficient": sufficient if isinstance(sufficient, bool) else None,
+            "insufficiency_reason": None if reason is None else str(reason),
+            "iterative": dict(iterative) if isinstance(iterative, dict) else None,
+        }
 
     @staticmethod
     def _is_unanswerable(query_or_result: EvaluationQuery | EvaluationResult) -> bool:
@@ -1437,11 +1460,12 @@ class EvaluationManager:
         results: list[EvaluationResult],
         reports: list[EvaluationReport] | None = None,
     ) -> dict[str, Any]:
-        """Abstentions among the answered queries, and how well they track
-        answerability.
+        """Abstentions among the completed queries (answer generation did
+        not fail), and how well they track answerability.
 
-        Always: the overall and per-strategy rates. With items marked
-        ``metadata.answerable=false``: the ``unanswerable`` and ``answerable``
+        Always: the overall and per-strategy counts, ``completed`` =
+        ``abstained`` (declined) + ``answered`` (not declined), and the
+        rate. With items marked ``metadata.answerable=false``: the ``unanswerable`` and ``answerable``
         blocks and the decline ``precision`` (abstentions that were on
         unanswerable items), ``recall`` (unanswerable items declined) and
         ``f1``. With ``answer_match`` reports: per metric, ``coverage``
@@ -1450,32 +1474,33 @@ class EvaluationManager:
         the answered ones) and, with unanswerable items, ``overall_accuracy``
         (a correct answer or a correct decline, over both).
         """
-        answered = [r for r in results if not r.error]
-        if not answered:
+        completed = [r for r in results if not r.error]
+        if not completed:
             return {}
 
         def _rate(group: list[EvaluationResult]) -> dict[str, Any]:
             abstained = sum(1 for r in group if r.abstained)
             return {
+                "completed": len(group),
                 "abstained": abstained,
-                "answered": len(group),
+                "answered": len(group) - abstained,
                 "abstention_rate": abstained / len(group),
             }
 
         by_strategy: dict[str, list[EvaluationResult]] = defaultdict(list)
-        for r in answered:
+        for r in completed:
             if r.search_strategy:
                 by_strategy[r.search_strategy].append(r)
         stats: dict[str, Any] = {
-            **_rate(answered),
+            **_rate(completed),
             "per_strategy": {k: _rate(v) for k, v in sorted(by_strategy.items())},
         }
         # Abstentions are the fixed no-context reply and, under
         # search.abstention.mode: mark, answers starting with the decline
         # token; a model that declines in its own words without the token is
         # not detected, so with mode off recall is a lower bound.
-        unanswerable = [r for r in answered if cls._is_unanswerable(r)]
-        answerable = [r for r in answered if not cls._is_unanswerable(r)]
+        unanswerable = [r for r in completed if cls._is_unanswerable(r)]
+        answerable = [r for r in completed if not cls._is_unanswerable(r)]
         if unanswerable:
             stats["unanswerable"] = _rate(unanswerable)
             if answerable:
