@@ -531,7 +531,7 @@ From a `main` checkout (formats and keys no release had):
   (`assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`;
   `evaluation.assertion_trials`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions
   in five classes and source-cited assertions from your corpus, after Microsoft BenchmarkQED (MIT; no BenchmarkQED
-  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval (#PR). See
+  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval (#595). See
   [evaluation](docs/guides/evaluate.md#assertions-length-control-and-a-closed-book-bound).
 - Comparison cost: per strategy calls, tokens and latency per query (mean, p50, p95) with paired deltas, a USD
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and
