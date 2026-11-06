@@ -95,9 +95,19 @@ _SEPT = re.compile(r"\bSept\b", re.IGNORECASE)
 # date written with their unit characters ("2024年3月15日", "2024년 3월 15일",
 # "2024年3月"), and a quarter ("2024年第3四半期", "2024年第3季度",
 # "2024년 3분기").
+# A weekday in parentheses after a day: (金), (金曜日), (星期五), (周五), (금),
+# (금요일).
+_WEEKDAY = (
+    r"(?:\s*\((?:[月火水木金土日](?:曜日?)?|(?:星期|周|週)[一二三四五六日天]"
+    r"|[월화수목금토일](?:요일)?)\))?"
+)
 _CJK_DATE = re.compile(
     r"(?P<y>\d{4})\s*[年년]"
-    r"(?:\s*(?P<m>\d{1,2})\s*[月월](?:\s*(?P<d>\d{1,2})\s*[日일])?)?"
+    r"(?:\s*(?P<m>\d{1,2})\s*[月월](?:\s*(?P<d>\d{1,2})\s*[日일]" + _WEEKDAY + r")?)?"
+)
+# The Korean dotted form: 2024. 3. 15. (the last dot optional).
+_DOTTED_DATE = re.compile(
+    r"(?P<y>\d{4})\s*\.\s*(?P<m>\d{1,2})\s*\.\s*(?P<d>\d{1,2})\s*\.?" + _WEEKDAY
 )
 _CJK_QUARTER = re.compile(
     r"(?P<y>\d{4})\s*[年년]?\s*第?\s*(?P<q>[1-4])\s*(?:四半期|季度|季|분기)"
@@ -140,7 +150,8 @@ def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
     UNKNOWN, TBD, 不明 or 미상 (``_UNKNOWN_DATE_VALUES``), ``YYYY-MM-DD`` when it reads as a calendar date (ISO
     8601, a time dropped, unpadded ``2024-1-5``, or a written-out date such
     as "January 15th, 2024", "Jan. 15, 2024", "Sept. 3, 2024",
-    "2024年3月15日" or "2024년 3월 15일"), or as a
+    "2024年3月15日", "2024年3月15日(金)", "2024년 3월 15일" or
+    "2024. 3. 15."), or as a
     coarser period, stored as its first day (an ISO week ``2024-W03`` as its
     Monday, ``Q3 2022`` as 2022-07-01, ``March 2024``/``2024-03`` as
     2024-03-01, ``2024`` as 2024-01-01) or, as an ``end`` date, as its last
@@ -204,7 +215,7 @@ def _cjk_date_value(text: str, *, end: bool) -> str | None:
         if end:
             return _last_day(year, month + 2).isoformat()
         return f"{year:04d}-{month:02d}-01"
-    found = _CJK_DATE.fullmatch(normalized)
+    found = _CJK_DATE.fullmatch(normalized) or _DOTTED_DATE.fullmatch(normalized)
     if found is None:
         return None
     year = int(found["y"])

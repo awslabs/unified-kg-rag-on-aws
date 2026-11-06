@@ -428,7 +428,7 @@ From a `main` checkout (formats and keys no release had):
   and vector made again). Any other configuration
   keeps its extraction records and indices; the community report prompt now names its language, so the next full
   build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
-  date written as `2024年3月` is found under it, so nothing else re-runs.
+  date written as `2024年3月` (or `2024. 3. 15.`, #PR) is found under it, so nothing else re-runs.
 - #606 evaluation results: `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by
   whitespace, so a default-normalization run is refused against them (exit 2) until one side is scored again (an
   `official_squad` or `hotpotqa` run still compares). Their `abstention_statistics` left failed answers out (rate
@@ -451,7 +451,8 @@ From a `main` checkout (formats and keys no release had):
   higher). A document with a paragraph longer than a chunk is cut otherwise when it is next chunked (a reset or an
   edit), and those chunks are extracted again. `graph_metrics.average_clustering` is empty unless
   `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
-  now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`.
+  now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`. The tree
+  stored before stays in the build record, so `tree` keeps serving the text units it covers (#PR).
 - #PR report generation off: a namespace built with `graph.community_detection.report_generation.enabled: false`
   holds `graphrag` again, so `local` answers on it (refused since #603); `global` and `drift`, which read the
   reports, are refused naming the switch. Nothing re-runs.
@@ -926,7 +927,8 @@ Ingestion and incremental indexing.
   written in `target_language` and the graph indexes analyzed for it while the text units, the summary tree and the
   queries used `source_language`, so the graph held a second language. The community report prompt names its
   output language. Claim dates written as `2024年3月15日`, `2024년 3월 15일` or `2022年第3四半期` read as calendar
-  dates and placeholders such as `不明` or `미상` as unknown (#605).
+  dates and placeholders such as `不明` or `미상` as unknown (#605), and so do `2024. 3. 15.` and a day followed by
+  its weekday, `2024年3月15日(金)` (#PR).
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

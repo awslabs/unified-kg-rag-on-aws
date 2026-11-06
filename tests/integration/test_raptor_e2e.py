@@ -541,6 +541,10 @@ def test_a_tree_over_the_limit_fails_before_its_vectors_are_read(
     assert context.status is PipelineStageStatus.FAILED
     assert "max_leaves_in_memory" in e2e._errors(context)
     assert read == []
+    # Nothing was written: the stored tree is intact and stays named, so
+    # tree queries still read it (an earlier version stopped naming it).
+    assert "summary_tree" in record(providers)["artifacts"]
+    assert tree_nodes(providers)
 
 
 def test_refresh_on_reset_builds_a_partial_tree_again(
