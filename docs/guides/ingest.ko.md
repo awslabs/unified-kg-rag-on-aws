@@ -142,7 +142,7 @@ temperature, 추론 설정입니다.
 
 ```yaml
 indexing:
-  methodologies: [lightrag]   # mix, hybrid, naive: 커뮤니티도 리포트도 만들지 않음
+  methodologies: [lightrag]   # mix, hybrid, naive, ppr, iterative: 커뮤니티도 리포트도 만들지 않음
 ```
 
 - **건너뛰는 것.** `graphrag`가 없으면 Leiden 단계와 리포트 호출을 하지 않습니다. 나머지
@@ -174,7 +174,7 @@ indexing:
 군집화하고 군집마다 요약(`models.roles.summary_tree`, default 티어)한 뒤, 요약을 다시
 군집화하고 요약하는 일을 `indexing.summary_tree.max_levels`(5) 레벨까지 반복해 `tree`
 전략이 쓰는 별도 인덱스에 씁니다([검색](../concepts/retrieval.ko.md#검색-전략-선택)).
-선택 사항이며 아직 측정하지 않았습니다. `naive`보다 답이 나은지는 실험으로 정합니다.
+선택 사항이며 아직 측정하지 않았습니다. `naive`보다 답이 나은지 보여 주는 측정은 아직 없습니다.
 
 ```yaml
 indexing:
@@ -187,9 +187,12 @@ indexing:
 
 - **`raptor`만 고르면 실행되는 단계.** 파싱, 로딩, 청킹, 번역(켠 경우), 인덱싱과 트리뿐이며
   그래프 추출, 글리닝, 병합, 주장, 커뮤니티는 실행하지 않습니다. 그래서 `raptor`만 가진
-  네임스페이스는 코퍼스 토큰 100만 개당 약 $1-8(요약 비용, 텍스트 유닛 5-6개에 호출 한 번
-  정도)이 들며, 기본 그래프 수집의 약 $1,000과 대비됩니다. 이 네임스페이스는 `tree`만
-  서비스하며 `auto`도 `tree`로 갑니다. 그래프 저장소에 쓰지 않으므로 Neptune 엔드포인트가
+  네임스페이스는 요약 비용만 냅니다. 텍스트 유닛 5-6개에 호출 한 번 정도이므로 코퍼스 토큰당
+  비용은 청크가 작을수록, 추론 수준(effort)이 높을수록 커집니다. MuSiQue 벤치마크 저장소(문단
+  하나씩인 청크로 토큰 37만 개)는 default 티어에서 약 $2-8(추론 없음에서 기본값 `high`까지),
+  `models.roles.summary_tree: fast`로 $0.1-0.4이며, 같은 저장소의 그래프 수집은 약 $370입니다
+  ([설계 §6.5](../design.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). 이 네임스페이스는
+  `tree`, `naive`, `simple`이 서비스하며 `auto`는 `tree`로 갑니다. 그래프 저장소에 쓰지 않으므로 Neptune 엔드포인트가
   필요 없고, 네임스페이스에 있던 그래프는 그대로 둡니다.
 - **나중에 `raptor` 추가.** 다음 실행에서(코퍼스가 그대로여도) 또는 `run-ingestion
   --enabled-stages summary_tree`로, 저장된 텍스트 유닛에서 트리만 만듭니다. 다시 추출하거나

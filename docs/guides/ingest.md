@@ -159,7 +159,7 @@ builds ([profiles](../concepts/overview.md#methodology-profiles)):
 
 ```yaml
 indexing:
-  methodologies: [lightrag]   # mix, hybrid, naive: no communities, no reports
+  methodologies: [lightrag]   # mix, hybrid, naive, ppr, iterative: no communities, no reports
 ```
 
 - **What it skips.** Without `graphrag` no run does the Leiden pass or a
@@ -201,8 +201,8 @@ text units are clustered by their vectors, each cluster is summarized
 clustered and summarized again, up to `indexing.summary_tree.max_levels`
 (5), and the tree is written into its own index for the `tree` strategy
 ([Retrieval](../concepts/retrieval.md#search-strategies--when-to-use-which)).
-Opt-in and unmeasured: whether it answers better than `naive` is for an
-experiment to decide.
+Opt-in and unmeasured: no measurement shows yet whether it answers better
+than `naive`.
 
 ```yaml
 indexing:
@@ -215,10 +215,15 @@ indexing:
 
 - **What `raptor` alone runs.** Parsing, loading, chunking, translation
   (when on), indexing and the tree: no graph extraction, gleaning,
-  resolution, claims or communities, so a `raptor`-only namespace costs
-  about $1-8 per million corpus tokens (the summaries; the tree is about
-  one call per five or six text units), against roughly $1,000 for the
-  default graph ingest. Only `tree` serves it; `auto` falls back to it. It
+  resolution, claims or communities, so a `raptor`-only namespace pays
+  for the summaries alone: about one call per five or six text units, so
+  the cost per corpus token grows as the chunks shrink and with the
+  reasoning effort. The MuSiQue benchmark store (0.37M tokens in
+  one-paragraph chunks) costs about $2 to $8 on the default tier (no
+  reasoning to the default `high` effort) and $0.1-0.4 with
+  `models.roles.summary_tree: fast`, against about $370 for its graph
+  ingest ([Design §6.5](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)).
+  `tree`, `naive` and `simple` serve it; `auto` falls back to `tree`. It
   writes no graph store, so it needs no Neptune endpoint, and a graph the
   namespace held before is left as it is.
 - **Adding `raptor` later** builds only the tree, on the next run (an

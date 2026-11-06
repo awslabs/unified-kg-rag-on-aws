@@ -117,7 +117,9 @@ custom_prompts:
 
 Each key has a `_system` and a `_human` field: `graph_extraction`,
 `description_summarization`, `claim_extraction`, `graph_refinement`,
-`community_report`, `answer_generation`, `comprehensive_answer` (the answer of
+`community_report`, `tree_summary` (the `raptor` summary tree's summaries),
+`text_chunking` (the `intelligent` chunker), `text_translation` (document
+translation), `answer_generation`, `comprehensive_answer` (the answer of
 the strategies `search.answer_prompt_style` sets to `comprehensive`, `global`
 by default), `query_rewrite`, `entity_extraction`,
 `drift_hyde`, `drift_primer`, `drift_action`, `iterative_controller`,

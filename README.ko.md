@@ -9,7 +9,7 @@
   <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS" width="320">
 </p>
 
-대규모 다국어 문서 코퍼스를 Amazon Neptune과 Amazon OpenSearch Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프에 대한 질문에 답하는 AWS 네이티브 지식 그래프 RAG(검색 증강 생성) 프레임워크입니다. 멀티홉 그래프 순회로 여러 문서에 걸친 추론을 수행합니다. Microsoft GraphRAG와 LightRAG를 하나의 공통 스택 위에 다시 구현했기 때문에, 검색 방법론을 배포 단위가 아니라 질의 단위로 고를 수 있습니다. 하나의 스택에서 두 방법론 운영, 3중 하이브리드 검색, 증분 인덱싱, 다국어 처리는 원 논문을 의도적으로 확장한 부분입니다.
+대규모 다국어 문서 코퍼스를 Amazon Neptune과 Amazon OpenSearch Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프에 대한 질문에 답하는 AWS 네이티브 지식 그래프 RAG(검색 증강 생성) 프레임워크입니다. 멀티홉 그래프 순회로 여러 문서에 걸친 추론을 수행합니다. Microsoft GraphRAG와 LightRAG를 HippoRAG 2의 개인화 PageRank, 선택 사항인 RAPTOR 요약 트리와 함께 하나의 공통 스택 위에 다시 구현했기 때문에, 검색 방법론을 배포 단위가 아니라 질의 단위로 고르고 쓰는 방법론만 만들 수 있습니다. 하나의 스택에서 여러 방법론 운영, 3중 하이브리드 검색, 증분 인덱싱, 다국어 처리는 원 논문을 의도적으로 확장한 부분입니다.
 
 각 부분이 GraphRAG와 LightRAG에 무엇을 더했는지, 어디서 일부러 다르게 했는지는 [원 논문을 넘어서](./docs/concepts/overview.ko.md#원-논문을-넘어서)에 정리했습니다.
 
@@ -17,25 +17,25 @@
 
 ## 이 프레임워크를 쓰는 이유
 
-- **하나의 AWS 스택에서 두 방법론.** GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드)가 수집, 인덱싱, 캐싱, 검색을 함께 쓰고 검색 알고리즘만 다르며, 방법론은 질의마다 고릅니다. 모든 답변은 실제로 모델 컨텍스트에 들어간 출처를 함께 돌려줍니다.
-- **3중 하이브리드 검색.** BM25, 벡터 검색, Neptune 그래프 순회를 RRF(Reciprocal Rank Fusion)로 합치고 Bedrock rerank 모델로 재순위화합니다.
+- **하나의 AWS 스택에서 네 방법론.** GraphRAG(커뮤니티 요약), LightRAG(이중 레벨 키워드), HippoRAG 2(엔티티와 패시지에 대한 개인화 PageRank), RAPTOR(요약 트리, 선택 사항)가 수집, 인덱싱, 캐싱, 검색을 함께 쓰고 검색 알고리즘만 다르며, 방법론은 질의마다 고릅니다. `indexing.methodologies`는 고른 방법론이 읽는 것만 만듭니다([방법론 프로필](./docs/concepts/overview.ko.md#방법론-프로필)). 모든 답변은 실제로 모델 컨텍스트에 들어간 출처를 함께 돌려줍니다.
+- **3중 하이브리드 검색.** BM25, 벡터 검색, Neptune 그래프 순회를 RRF(Reciprocal Rank Fusion)로 합치고 Bedrock rerank 모델로 재순위화합니다(청크만 검색하는 전략은 그래프를 쓰지 않고, `global`은 대신 커뮤니티 리포트를 map 단계로 읽습니다).
 - **증분 인덱싱.** 문서 상태 레지스트리(`providers.doc_status.enabled`)를 켜면 새 문서와 바뀐 문서만 다시 인덱싱해 운영 중인 그래프에 병합하고, 문서를 지우면 다른 문서가 기술하지 않는 내용만 제거합니다([증분 인덱싱](./docs/guides/incremental.ko.md)).
 - **가지고 있는 지식 그래프 가져오기.** 시드 그래프(JSONL, CSV, RDF A-Box)로 이미 가진 그래프를 가상 문서로 추출 그래프에 합칩니다. 문서가 기준이 되고, 시드는 설명, 속성, IRI, 에지를 더합니다([Seed graphs](./docs/guides/seed-graphs.md), 영문).
 - **다국어.** 인덱싱과 질의 시점의 선택적 번역, 언어별 분석기(예: 한국어 `nori`), 다국어 키워드 추출을 지원합니다.
-- **프롬프트 튜닝, 평가, 시각화.** `run-prompt-tuning`은 코퍼스 표본에서 도메인에 맞춘 프롬프트를 쓰고([도메인 적응](./docs/guides/domain-adaptation.ko.md)), `run-eval`은 LangChain·RAGAS 심사에 LLM 없는 커버리지·검색·답변 일치 지표를 더하며([평가](./docs/guides/evaluate.ko.md)), `run-visualization`은 내보낸 그래프를 렌더링합니다([Visualization](./docs/guides/visualize.md), 영문).
+- **프롬프트 튜닝, 평가, 시각화.** `run-prompt-tuning`은 코퍼스 표본에서 도메인에 맞춘 프롬프트를 쓰고([도메인 적응](./docs/guides/domain-adaptation.ko.md)), `run-eval`은 LangChain·RAGAS·단언문(assertion) 심사에 LLM 없는 커버리지·검색·답변 일치 지표, 전략 짝 비교, 비용 측정, 답변 거절 통계를 더하며([평가](./docs/guides/evaluate.ko.md)), `run-visualization`은 내보낸 그래프를 렌더링합니다([Visualization](./docs/guides/visualize.md), 영문).
 - **교체 가능한 구조.** 저장소와 모델 백엔드는 포트 뒤에 있고, 렌더러·파서·스키마 소스·시드 소스·공급자는 사용자 패키지에서 레지스트리로 등록합니다. 새 검색 전략이나 평가기는 저장소 안에서 고쳐야 합니다(포크하거나 기여). 전략은 정해진 `SearchStrategy` 열거형을 키로 쓰기 때문입니다([확장 가이드](./docs/design.md#15-extension-guide)).
 
 ## 아키텍처
 
 ![아키텍처 한눈에 보기](./assets/architecture-overview.drawio.png)
 
-수집은 중단 후 재개할 수 있는 12단계 파이프라인(파싱, 청킹, 엔티티·관계 추출, 해석, LLM 리포트가 붙는 커뮤니티 탐지, 인덱싱)으로 그래프·검색 저장소에 씁니다. AWS에서는 Neptune과 OpenSearch, 로컬 모드에서는 내장 SQLite나 컨테이너입니다.
+수집은 중단 후 재개할 수 있는 13단계 파이프라인(파싱, 청킹, 엔티티·관계 추출, 해석, LLM 리포트가 붙는 커뮤니티 탐지, 인덱싱, `raptor`이면 요약 트리 구축)으로 그래프·검색 저장소에 씁니다. AWS에서는 Neptune과 OpenSearch, 로컬 모드에서는 내장 SQLite나 컨테이너입니다.
 
-모든 전략은 같은 하이브리드 스코어러와 토큰 예산을 거칩니다. CLI에서는 `--search-strategy`, Python에서는 `RAGInput.search_strategy`로 전략을 고릅니다.
+모든 전략은 같은 인덱스와 토큰 예산 위의 한 체인에서 실행됩니다. CLI에서는 `--search-strategy`, Python에서는 `RAGInput.search_strategy`로 전략을 고릅니다.
 
 | 전략 | 방법론 | 적합한 경우 |
 |---|---|---|
-| `auto`(기본값) | GraphRAG | 어떤 전략이 맞을지 모를 때. LLM 라우터가 질의마다 `search.auto_routable_strategies`(기본값 `local`, `mix`, `global`, `iterative`. `drift`도 고르게 하려면 추가) 중 하나를 고릅니다 |
+| `auto`(기본값) | 인덱스가 가진 모든 방법론 | 어떤 전략이 맞을지 모를 때. LLM 라우터가 질의마다 `search.auto_routable_strategies`(기본값 `local`, `mix`, `global`, `iterative`. `drift`도 고르게 하려면 추가) 중 하나를 고릅니다 |
 | `simple` | GraphRAG | 빠른 사실 조회. 그래프 순회 없이 벡터와 키워드로 검색합니다 |
 | `local` | GraphRAG | 특정 엔티티와 그 관계에 대한 질문 |
 | `global` | GraphRAG | 넓은 범위나 주제 중심 질문. 커뮤니티 리포트에 map-reduce를 적용해 답합니다 |
@@ -43,6 +43,9 @@
 | `mix` | LightRAG | 일반적인 LightRAG 사용. 엔티티·관계 키워드 검색에 청크 검색을 더합니다 |
 | `hybrid` | LightRAG | 키워드 중심의 그래프 질문. 청크 검색은 더하지 않습니다 |
 | `naive` | LightRAG | 그래프 없이 청크만 검색하는(BM25 + 벡터) 빠른 기준선과 비교 실험 |
+| `iterative` | 기반 전략(`mix`나 `local`)의 방법론 | 마지막 홉이 질문에 이름이 나오지 않는 엔티티에 관한 멀티홉 질문. 연결 엔티티로 후속 라운드를 정해진 횟수만큼 실행합니다 |
+| `ppr` | HippoRAG 2 | 저렴하고 빠른 멀티홉 선택지. 엔티티와 패시지에 대한 개인화 PageRank이며 LLM 호출은 답변 한 번입니다 |
+| `tree` | RAPTOR(선택 사항) | 관련 패시지 여러 개에 걸친 답. `indexing.methodologies`에 `raptor`를 넣어 만든 요약 트리를 읽습니다 |
 
 전략별 동작은 [검색](./docs/concepts/retrieval.ko.md)을, 레이어 구조·알고리즘·데이터 모델과 [수집](./docs/design.md#4-ingestion-pipeline)·[증분 인덱싱](./docs/design.md#5-incremental-indexing)·[검색](./docs/design.md#6-retrieval-two-methodologies) 상세 다이어그램은 [설계 문서](./docs/design.md)를 참고하세요.
 
@@ -147,5 +150,7 @@ CLI마다의 가이드는 [문서 안내](./docs/index.ko.md)에(평가 데이�
 
 - Microsoft GraphRAG: [From Local to Global: A Graph RAG Approach to Query-Focused Summarization](https://arxiv.org/abs/2404.16130) · [라이브러리](https://github.com/microsoft/graphrag)
 - LightRAG: [Simple and Fast Retrieval-Augmented Generation](https://arxiv.org/abs/2410.05779) · [라이브러리](https://github.com/HKUDS/LightRAG)
+- HippoRAG 2: [From RAG to Memory: Non-Parametric Continual Learning for Large Language Models](https://arxiv.org/abs/2502.14802) · [라이브러리](https://github.com/OSU-NLP-Group/HippoRAG)
+- RAPTOR: [Recursive Abstractive Processing for Tree-Organized Retrieval](https://arxiv.org/abs/2401.18059) · [코드](https://github.com/parthsarthi03/raptor)
 
 DRIFT 검색, 동적 커뮤니티 선택, 자동 튜닝, LazyGraphRAG 등 GraphRAG 관련 추가 자료는 [설계 문서](./docs/design.md#16-further-reading)에 정리되어 있습니다.

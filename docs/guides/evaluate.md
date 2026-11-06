@@ -14,8 +14,9 @@ as a corpus and a dataset: [Benchmarks](./benchmarks.md).
 
 ## Evaluators
 
-`evaluation.enabled_evaluators` selects them; all but `langchain` are on by
-default. The deterministic ones skip a query that lacks their dataset fields;
+`evaluation.enabled_evaluators` selects them; four of the six are on by
+default: `ragas` and the three LLM-free ones (`langchain` and `assertion`
+are opt-in). The deterministic ones skip a query that lacks their dataset fields;
 for a judge-free run set `enabled_evaluators: [answer_match, retrieval,
 graph_aware]`. `langchain` is opt-in because its `correctness` and
 `partial_correctness` measure what `ragas`' `answer_correctness` already does,

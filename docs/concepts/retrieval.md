@@ -2,9 +2,10 @@
 
 > 🇰🇷 한국어판: [retrieval.ko.md](./retrieval.ko.md)
 
-A query picks a strategy of one of two methodologies, GraphRAG
-(community-summary) or LightRAG (dual-level keyword), or lets `auto` (the
-default) route it. Every strategy runs in
+A query picks a strategy of one of four methodologies, GraphRAG
+(community-summary), LightRAG (dual-level keyword), HippoRAG 2
+(Personalized PageRank) or RAPTOR (summary tree, opt-in), or the
+`iterative` wrapper, or lets `auto` (the default) route it. Every strategy runs in
 one chain over the same indexes: query processing, retrieval, fusion and
 rerank, then the context budget and the answer; every answer returns the
 sources the answer model actually saw. This page explains the strategies and
@@ -17,8 +18,9 @@ strategy retrieves.
 
 GraphRAG strategies excel at *summarization and thematic synthesis* over a
 corpus; LightRAG strategies are faster and lean on *dual-level keyword*
-retrieval, good for keyword-driven lookups and as a low-cost baseline. Both
-share the hybrid scorer (BM25, vector, graph, RRF, rerank).
+retrieval, good for keyword-driven lookups and as a low-cost baseline. Every
+strategy but `global` shares the hybrid scorer (BM25, vector, graph, RRF,
+rerank); `simple` and `naive` read no graph.
 
 Each strategy reads its methodology's index artifacts: on an index namespace
 that does not hold that methodology
@@ -48,7 +50,7 @@ methodologies the namespace holds.
 
 | Strategy | Use when | How it works |
 |---|---|---|
-| `ppr` | Multi-hop questions whose facts chain through a few entities; a namespace built for `hipporag` or `lightrag` alone, without community reports (methodology `hipporag`) | The question's relationship hits (the facts, by kNN) and text-unit hits (BM25 + vector) seed a Personalized PageRank over the graph neighbourhood of the facts' entities and the passages they cite (HippoRAG 2, damping 0.5); the ranked passages, the passage hits and the facts are fused and reranked as for every strategy. One LLM call a query: the answer. The cheap, fast option: on 200 MuSiQue questions its answers were not significantly different from `local` or `mix` (`answer_contains` -2.0 points against each) for 2.4 to 3.4 times less ($0.016 a query) and about 5 s at the median, but weaker on 4-hop questions (token F1 -15.7 against `mix`) ([evidence](./defaults-and-evidence.md#the-ppr-strategy)). `auto` does not route to it; select it explicitly ([`search.ppr_search`](../reference/configuration.md#searchppr_search), [design](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking)). `local` orders its text units by the same PageRank by default (`search.local_search.text_unit_ranking`). |
+| `ppr` | Multi-hop questions whose facts chain through a few entities; a namespace built for `hipporag` or `lightrag` alone, without community reports (methodology `hipporag`) | The question's relationship hits (the facts, by kNN) and text-unit hits (BM25 + vector) seed a Personalized PageRank over the graph neighbourhood of the facts' entities and the passages they cite (HippoRAG 2, damping 0.5); the ranked passages, the passage hits and the facts are fused and reranked as for every strategy. One LLM call a query: the answer. The cheap, fast option: answers within the noise of `local` and `mix` at a fraction of their cost and median latency, weaker on the longest chains ([evidence](./defaults-and-evidence.md#the-ppr-strategy)). `auto` does not route to it until a measurement shows where it wins; select it explicitly ([`search.ppr_search`](../reference/configuration.md#searchppr_search), [design](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking)). `local` orders its text units by the same PageRank by default (`search.local_search.text_unit_ranking`). |
 
 `mix` and `hybrid` read the relationships index ingestion builds; a short
 query that yields no keywords is used as a low-level keyword itself (up to
@@ -70,18 +72,21 @@ significant difference ([evidence](./defaults-and-evidence.md#lightrag-chunk-pic
 
 | Strategy | Use when | How it works |
 |---|---|---|
-| `iterative` | Multi-hop questions whose last hop is about an entity the question does not name | Runs `search.iterative_search.base` (`mix` by default, or `local`), then a fast-model controller (`models.roles.query_controller`) reads the packed context: if it does not answer the question, the base search reruns seeded with the bridge entities the controller names and its follow-up queries search the passages, for at most `max_rounds` (2) rounds; the rounds' candidates are fused and reranked, and the answer model answers once. `decompose: true` splits the question into steps instead. About 1-3 fast-model calls more than the base a query. On 200 MuSiQue questions, over `mix`: `answer_contains` +12.5 points and token F1 +5.2 against `mix`, p95 latency 11 s to 27 s, and +13.0 `answer_contains` in a second run; `auto` sent 191-193 of the 200 to it, none of 150 sensemaking routing decisions and 2-4% of single-hop questions ([evidence](./defaults-and-evidence.md#iterative-follow-up-rounds)). `auto` may route multi-hop questions to it; no default selects it ([design](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in)). |
+| `iterative` | Multi-hop questions whose last hop is about an entity the question does not name | Runs `search.iterative_search.base` (`mix` by default, or `local`), then a fast-model controller (`models.roles.query_controller`) reads the packed context: if it does not answer the question, the base search reruns seeded with the bridge entities the controller names and its follow-up queries search the passages, for at most `max_rounds` (2) rounds; the rounds' candidates are fused and reranked, and the answer model answers once. `decompose: true` splits the question into steps instead. About 1-3 fast-model calls more than the base a query. Over `mix` it answered multi-hop questions significantly better than `mix`, at more than twice the p95 latency, and `auto` routed multi-hop questions to it while leaving sensemaking and single-hop ones to the other strategies ([evidence](./defaults-and-evidence.md#iterative-follow-up-rounds)). `auto` may route multi-hop questions to it; no default selects it ([design](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in)). |
 
 **RAPTOR summary tree (opt-in, unmeasured; the `raptor` methodology):**
 
 | Strategy | Use when | How it works |
 |---|---|---|
-| `tree` | Questions whose answer spans several related passages, or needs a passage and the gist around it | Needs a namespace built with `raptor` in `indexing.methodologies`: after indexing, the text units are clustered by their vectors and each cluster summarized (`models.roles.summary_tree`), level by level, in the index language. A query fuses by RRF a BM25 + kNN search of the text units, one of every level of summaries (RAPTOR's collapsed tree) and, where the namespace also holds the entities index, the summaries and passages citing the entities the raw query finds (no model call); the cross-encoder reranks passages and summaries together, at most `max_nodes_per_level` (3) summaries of a level are kept, and each brings `expand_children` (2) of its own passages, so the answer cites original text. A summary is reported as a source with its lineage (`text_unit_ids`, `child_ids`). Costs about what `naive` costs, plus a few searches. Selected explicitly only: `auto` does not route to it until it is measured, except on a `raptor`-only namespace, where it is the one strategy left ([design](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)). |
+| `tree` | Questions whose answer spans several related passages, or needs a passage and the gist around it | Needs a namespace built with `raptor` in `indexing.methodologies`: after indexing, the text units are clustered by their vectors and each cluster summarized (`models.roles.summary_tree`), level by level, in the index language. A query fuses by RRF a BM25 + kNN search of the text units, one of every level of summaries (RAPTOR's collapsed tree) and, where the namespace also holds the entities index, the summaries and passages citing the entities the raw query finds (no model call); the cross-encoder reranks passages and summaries together, at most `max_nodes_per_level` (3) summaries of a level are kept, and each brings `expand_children` (2) of its own passages, so the answer cites original text. A summary is reported as a source with its lineage (`text_unit_ids`, `child_ids`). Costs about what `naive` costs, plus a few searches. Selected explicitly only: `auto` does not route to it until it is measured, except on a `raptor`-only namespace, where `auto` falls back to it ([design](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)). |
 
 ## Hybrid scoring and rerank
 
-Every strategy fuses its per-source results (BM25, vector, graph) by
-reciprocal rank fusion or weights, reranks them, applies MMR diversity and
+Every strategy but `global` (which maps community reports, and fuses text
+units only with `search.global_search.text_unit_slots`) fuses its
+per-source results (BM25, vector and, except `simple` and `naive`, graph)
+by reciprocal rank fusion, weighted per bucket by
+`search.fusion.fusion_weights`, reranks them, applies MMR diversity and
 cuts them to a per-type quota, in that order, so a cut on fused scores cannot
 drop what the reranker ranks first
 ([Design §7](../design.md#7-hybrid-scoring-and-token-management)). What the

@@ -101,7 +101,8 @@ custom_prompts:
 
 키마다 `_system`과 `_human` 필드가 있습니다: `graph_extraction`,
 `description_summarization`, `claim_extraction`, `graph_refinement`,
-`community_report`, `answer_generation`,
+`community_report`, `tree_summary`(`raptor` 요약 트리의 요약), `text_chunking`(`intelligent`
+청커), `text_translation`(문서 번역), `answer_generation`,
 `comprehensive_answer`(`search.answer_prompt_style`이 `comprehensive`인 전략의 답변,
 기본값은 `global`), `query_rewrite`, `entity_extraction`,
 `drift_hyde`, `drift_primer`, `drift_action`, `iterative_controller`,

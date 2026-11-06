@@ -117,8 +117,8 @@ cat > sample-eval.json <<'EOF'
 EOF
 ```
 
-All five evaluators are on by default, and two of them call an LLM judge. Keep
-only the three that need no LLM (here through an environment variable, see
+Four evaluators are on by default, and one of them (`ragas`) calls an LLM
+judge. Keep only the three that need no LLM (here through an environment variable, see
 [Environment variable overrides](../guides/configure.md#environment-variable-overrides))
 and compare the two strategies on the same questions:
 

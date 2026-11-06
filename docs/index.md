@@ -9,7 +9,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 
 | You are | Goal | Read, in order | Done when |
 |---|---|---|---|
-| **First-time evaluator** | See it work without AWS | [Getting started locally](./getting-started/local.md) → [Overview](./concepts/overview.md) → [Search strategies](./concepts/retrieval.md#search-strategies--when-to-use-which) → [Evaluators](./guides/evaluate.md#evaluators) | Answers from both methodologies on a sample corpus, plus a judge-free `run-eval` |
+| **First-time evaluator** | See it work without AWS | [Getting started locally](./getting-started/local.md) → [Overview](./concepts/overview.md) → [Search strategies](./concepts/retrieval.md#search-strategies--when-to-use-which) → [Evaluators](./guides/evaluate.md#evaluators) | Answers from GraphRAG and LightRAG on a sample corpus, plus a judge-free `run-eval` |
 | **Builder on AWS** | Ingest a real corpus and query it | [Getting started on AWS](./getting-started/aws.md) (existing stores, [required models](./getting-started/aws.md#required-models)) or [`iac/README.md`](../iac/README.md#quick-start) (CDK) → [Configuration](./guides/configure.md) → [Ingestion](./guides/ingest.md) → [Querying](./guides/query.md) → [Incremental indexing](./guides/incremental.md) → [Domain adaptation](./guides/domain-adaptation.md) | Incremental ingestion on, queries with filters, a tuned schema or prompts |
 | **Operator** | Run, monitor, recover, upgrade | [`iac/README.md`](../iac/README.md) → [Operator Runbook](./operations.md) ([before a run](./operations.md#before-a-run), [when a run fails](./operations.md#when-a-run-fails), [alarms](./operations.md#alarms), [troubleshooting](./troubleshooting.md)) → [CHANGELOG](../CHANGELOG.md) | Every alarm and error leads to a procedure |
 | **Evaluator or researcher** | Measure quality and cost, reproduce the defaults, compare with the papers | [Evaluation](./guides/evaluate.md) → [Comparing strategies](./guides/evaluate.md#comparing-strategies) → [Evaluation output](./reference/evaluation-output.md) → [Benchmarks](./guides/benchmarks.md) → [Defaults and evidence](./concepts/defaults-and-evidence.md) → [Beyond the papers](./concepts/overview.md#beyond-the-papers) | A paired comparison with intervals and a gate, on MuSiQue or your own data |
@@ -21,8 +21,8 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Type | Page | Covers |
 |---|---|---|
 | Tutorial | [README Quickstart](../README.md#quickstart) | Choose how to run, install, first ingestion, query and evaluation |
-| Tutorial | [Getting started locally](./getting-started/local.md), [Getting started on AWS](./getting-started/aws.md) | Step-by-step first runs: a sample corpus without AWS (both methodologies, a judge-free evaluation); prerequisites, required models, install, authentication and IAM for existing Neptune and OpenSearch |
-| Explanation | [Overview](./concepts/overview.md) | Architecture, pipeline, the two methodologies, what the framework adds beyond the papers, limitations |
+| Tutorial | [Getting started locally](./getting-started/local.md), [Getting started on AWS](./getting-started/aws.md) | Step-by-step first runs: a sample corpus without AWS (GraphRAG and LightRAG queries, a judge-free evaluation); prerequisites, required models, install, authentication and IAM for existing Neptune and OpenSearch |
+| Explanation | [Overview](./concepts/overview.md) | Architecture, pipeline, the methodologies and their profiles, what the framework adds beyond the papers, limitations |
 | Explanation | [Defaults and evidence](./concepts/defaults-and-evidence.md) | The measured defaults, how they were measured, dated prices, how to reproduce |
 | Explanation | [Design Doc](./design.md) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
 | Explanation | [Retrieval](./concepts/retrieval.md), [Scopes and namespaces](./concepts/scopes-and-namespaces.md) | The search strategies and when to use which, hybrid scoring and rerank, answer style, context budget; index suffix, source scope, namespace, and why neither the suffix nor filters are access control |
@@ -60,11 +60,14 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Ingest a corpus, resume or rebuild | [Ingestion](./guides/ingest.md) |
 | Index a Korean or mixed-language corpus | [Multilingual corpora](./guides/multilingual.md) |
 | Pick a search strategy | [Search strategies](./concepts/retrieval.md#search-strategies--when-to-use-which) |
+| Build only the methodology I query | [Methodology profiles](./guides/ingest.md#methodology-profiles) |
 | Filter results by document or attribute | [Querying: Filters](./guides/query.md#filters), [Filters reference](./reference/filters.md) |
 | Update the index as documents change or are deleted | [Incremental indexing](./guides/incremental.md) |
 | Adapt extraction to my domain | [Domain adaptation](./guides/domain-adaptation.md), [Prompt tuning](./guides/domain-adaptation.md#prompt-tuning-run-prompt-tuning) |
 | Import an ontology or an existing knowledge graph | [Ontology](./guides/ontology.md), [Seed graphs](./guides/seed-graphs.md) |
 | Evaluate answers and retrieval | [Evaluation](./guides/evaluate.md), [Benchmarks](./guides/benchmarks.md) |
+| Measure declines on unanswerable questions | [Unanswerable questions and declines](./guides/evaluate.md#unanswerable-questions-and-declines) |
+| Evaluate open-ended answers | [Assertions, length control and a closed-book bound](./guides/evaluate.md#assertions-length-control-and-a-closed-book-bound) |
 | Compare strategies or gate a change in CI | [Comparing strategies](./guides/evaluate.md#comparing-strategies), [Rebuilding, re-judging and gating](./guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison) |
 | Know why a default is what it is | [Defaults and evidence](./concepts/defaults-and-evidence.md) |
 | Use it from Python | [Using the library from Python](./guides/python-library.md) |
@@ -76,13 +79,13 @@ the project? Read the [Overview](./concepts/overview.md) first.
 
 | Term | Meaning |
 |---|---|
-| Ingestion | The 12-stage pipeline (`run-ingestion`) that turns documents into the graph and the indexes |
+| Ingestion | The 13-stage pipeline (`run-ingestion`) that turns documents into the graph and the indexes |
 | Text unit | A chunk of a document; extraction, citations and deletion all work per text unit |
 | Entity, relationship | A node and an edge of the extracted knowledge graph |
 | Claim | An optional factual statement extracted per text unit (MS GraphRAG covariates) |
 | Gleaning | Extra extraction rounds that ask the model what the first pass missed |
 | Community, community report | A Leiden cluster of entities, and the LLM-written summary that `global` and `drift` read |
-| Methodology, strategy | GraphRAG or LightRAG, and the concrete retrieval algorithm (`local`, `mix`, ...) chosen per query |
+| Methodology, strategy | GraphRAG, LightRAG, HippoRAG 2 or RAPTOR (what an index holds, `indexing.methodologies`), and the concrete retrieval algorithm (`local`, `mix`, `ppr`, ...) chosen per query |
 | Index suffix | The `<suffix>` in every index and graph label name (`processing.document_parsing.index_value`, followed by `-<indexing.additional_suffix>` when set); one per tenant or corpus version |
 | Doc-status registry | The DynamoDB (or SQLite) table of each document's hash and text units that makes ingestion incremental |
 | Namespace | The index suffix plus `indexing.additional_suffix` and a tag of non-default index or label prefixes, and so the indexes it names; one writing run per namespace at a time (a write lease). Messages call it the index namespace |

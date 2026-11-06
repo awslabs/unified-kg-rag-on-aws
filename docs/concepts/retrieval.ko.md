@@ -2,8 +2,9 @@
 
 > 🇬🇧 English version: [retrieval.md](./retrieval.md)
 
-질의는 두 방법론, GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드) 중 한쪽의 전략을
-고르거나, `auto`(기본값)가 전략을 고르게 합니다. 모든 전략은 같은 인덱스 위에서 하나의
+질의는 네 방법론, GraphRAG(커뮤니티 요약), LightRAG(이중 레벨 키워드), HippoRAG 2(개인화
+PageRank), RAPTOR(요약 트리, 선택 사항) 중 하나의 전략이나 `iterative` 래퍼를 고르거나,
+`auto`(기본값)가 전략을 고르게 합니다. 모든 전략은 같은 인덱스 위에서 하나의
 체인으로 실행됩니다. 질의 처리, 검색, 결과 융합(fusion)과 재순위화(rerank)를 거쳐
 컨텍스트 예산 안에서 답변을 만들며, 모든 답변은 답변 모델이 실제로 본 출처를 함께
 돌려줍니다. 이 문서는 전략과 답변을 좌우하는 선택을 설명합니다. 질의 실행 방법은
@@ -14,8 +15,8 @@
 
 GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 데 강하고, LightRAG 전략은
 더 빠르며 *이중 레벨 키워드* 검색을 중심으로 동작하므로 키워드 중심 조회와 저비용
-기준선에 적합합니다. 두 방법론 모두 같은 하이브리드 스코어러(BM25, 벡터, 그래프, RRF,
-재순위화)를 씁니다.
+기준선에 적합합니다. `global`을 뺀 모든 전략이 같은 하이브리드 스코어러(BM25, 벡터, 그래프,
+RRF, 재순위화)를 쓰며, `simple`과 `naive`는 그래프를 읽지 않습니다.
 
 각 전략은 자기 방법론의 인덱스 산출물을 읽습니다. 그 방법론이 없는 인덱스 네임스페이스에서는
 ([방법론 프로필](./overview.ko.md#방법론-프로필)) 모델을 호출하기 전에 거절되고, `auto`는
@@ -43,7 +44,7 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `ppr` | 사실이 몇 개의 엔티티를 거쳐 이어지는 다중 홉 질문, 커뮤니티 보고서 없이 `hipporag`나 `lightrag`만으로 만든 네임스페이스(방법론 `hipporag`) | 질문의 관계 검색 결과(사실, kNN)와 텍스트 단위 검색 결과(BM25 + 벡터)를 시작점으로, 사실의 엔티티 주변 그래프와 그 엔티티가 인용하는 문단에 개인화 PageRank(Personalized PageRank)를 실행합니다(HippoRAG 2, 감쇠 계수 0.5). 순위를 매긴 문단, 문단 검색 결과, 사실을 다른 전략처럼 융합하고 재순위화합니다. 질의마다 LLM 호출은 답변 1회입니다. 비용과 지연 시간이 적은 선택지입니다. MuSiQue 질문 200개에서 답변은 `local`, `mix`와 유의한 차이가 없었고(`answer_contains`가 각각 2.0%p 낮음) 비용은 2.4-3.4분의 1(질의당 $0.016), 중앙값 지연 시간은 약 5초였지만, 4홉 질문에서는 약했습니다(`mix`보다 token F1 15.7%p 낮음)([근거](./defaults-and-evidence.md#the-ppr-strategy), 영문). `auto`는 이 전략으로 보내지 않으므로 직접 지정해야 합니다([`search.ppr_search`](../reference/configuration.md#searchppr_search), [설계](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking), 영문). `local`은 기본값으로 같은 PageRank로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking`). |
+| `ppr` | 사실이 몇 개의 엔티티를 거쳐 이어지는 다중 홉 질문, 커뮤니티 보고서 없이 `hipporag`나 `lightrag`만으로 만든 네임스페이스(방법론 `hipporag`) | 질문의 관계 검색 결과(사실, kNN)와 텍스트 단위 검색 결과(BM25 + 벡터)를 시작점으로, 사실의 엔티티 주변 그래프와 그 엔티티가 인용하는 문단에 개인화 PageRank(Personalized PageRank)를 실행합니다(HippoRAG 2, 감쇠 계수 0.5). 순위를 매긴 문단, 문단 검색 결과, 사실을 다른 전략처럼 융합하고 재순위화합니다. 질의마다 LLM 호출은 답변 1회입니다. 비용과 지연 시간이 적은 선택지입니다. 답변은 `local`, `mix`와 오차 범위 안이면서 비용과 중앙값 지연 시간은 그 일부이고, 가장 긴 연쇄에서는 약했습니다([근거](./defaults-and-evidence.md#the-ppr-strategy), 영문). 어디서 나은지 측정으로 보이기 전까지 `auto`는 이 전략으로 보내지 않으므로 직접 지정해야 합니다([`search.ppr_search`](../reference/configuration.md#searchppr_search), [설계](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking), 영문). `local`은 기본값으로 같은 PageRank로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking`). |
 
 `mix`와 `hybrid`는 수집이 만드는 관계 인덱스를 읽습니다. 키워드가 나오지 않는 짧은
 질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`
@@ -63,18 +64,20 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `iterative` | 마지막 홉이 질문에 이름이 나오지 않는 엔티티에 관한 다중 홉 질문 | `search.iterative_search.base`(기본 `mix`, 또는 `local`)를 실행한 뒤 fast 모델 컨트롤러(`models.roles.query_controller`)가 묶은 컨텍스트를 읽습니다. 컨텍스트로 답할 수 없으면 컨트롤러가 지목한 연결(bridge) 엔티티로 기본 검색을 다시 시작하고 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(2)번 반복합니다. 라운드마다 찾은 후보를 융합·재순위화하고 답변 모델은 한 번만 답합니다. `decompose: true`이면 대신 질문을 단계로 나눕니다. 질의마다 기본 전략보다 fast 모델 호출이 1-3번 많습니다. MuSiQue 질문 200개에서 `mix` 기반으로 실행했을 때 `mix`보다 `answer_contains`가 12.5%p, token F1이 5.2%p 높았고 p95 지연 시간은 11초에서 27초로 늘었으며, 두 번째 실행에서도 `answer_contains`가 13.0%p 높았습니다. `auto`는 이 200문항 중 191-193개를 이 전략으로 보냈고, 요약형(sensemaking) 질문의 라우팅 결정 150번 중에는 한 번도, 단일 홉 질문은 2-4%만 보냈습니다([근거](./defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 다중 홉 질문을 이 전략으로 보낼 수 있으며, 기본값으로 선택되지는 않습니다([설계](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in), 영문). |
+| `iterative` | 마지막 홉이 질문에 이름이 나오지 않는 엔티티에 관한 다중 홉 질문 | `search.iterative_search.base`(기본 `mix`, 또는 `local`)를 실행한 뒤 fast 모델 컨트롤러(`models.roles.query_controller`)가 묶은 컨텍스트를 읽습니다. 컨텍스트로 답할 수 없으면 컨트롤러가 지목한 연결(bridge) 엔티티로 기본 검색을 다시 시작하고 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(2)번 반복합니다. 라운드마다 찾은 후보를 융합·재순위화하고 답변 모델은 한 번만 답합니다. `decompose: true`이면 대신 질문을 단계로 나눕니다. 질의마다 기본 전략보다 fast 모델 호출이 1-3번 많습니다. `mix` 기반으로 실행하면 다중 홉 질문에서 `mix`보다 유의하게 잘 답했고 p95 지연 시간은 두 배 넘게 늘었으며, `auto`는 다중 홉 질문을 이 전략으로 보내고 요약형(sensemaking)·단일 홉 질문은 다른 전략에 맡겼습니다([근거](./defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 다중 홉 질문을 이 전략으로 보낼 수 있으며, 기본값으로 선택되지는 않습니다([설계](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in), 영문). |
 
 **RAPTOR 요약 트리(선택 사항, 측정 전, `raptor` 방법론):**
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `tree` | 관련된 여러 구절에 걸친 답이 필요하거나, 구절 하나와 그 주변의 요지가 함께 필요한 질문 | `indexing.methodologies`에 `raptor`를 넣어 만든 네임스페이스가 필요합니다. 인덱싱 뒤에 텍스트 유닛을 벡터로 군집화하고 군집마다 요약(`models.roles.summary_tree`)하는 일을 레벨마다 반복하며, 요약은 인덱스 언어로 씁니다. 질의는 텍스트 유닛의 BM25 + kNN 검색, 모든 레벨 요약의 검색(RAPTOR의 collapsed tree), 그리고 네임스페이스에 엔티티 인덱스가 있으면 원 질의로 찾은 엔티티를 인용하는 요약과 구절(모델 호출 없음)을 RRF로 융합합니다. 교차 인코더가 구절과 요약을 함께 재순위화하고, 레벨마다 요약은 최대 `max_nodes_per_level`(3)개만 남기며, 남은 요약마다 자기 계보의 구절 `expand_children`(2)개를 함께 가져와 답변이 원문을 인용하게 합니다. 요약은 계보(`text_unit_ids`, `child_ids`)와 함께 출처로 보고됩니다. 비용은 `naive`와 비슷하고 검색이 몇 번 더 듭니다. 명시적으로 고를 때만 실행되며, 측정하기 전까지 `auto`는 이 전략으로 분기하지 않습니다. 다만 `raptor`만 가진 네임스페이스에서는 남은 유일한 전략이므로 `auto`가 고릅니다([설계](../design.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). |
+| `tree` | 관련된 여러 구절에 걸친 답이 필요하거나, 구절 하나와 그 주변의 요지가 함께 필요한 질문 | `indexing.methodologies`에 `raptor`를 넣어 만든 네임스페이스가 필요합니다. 인덱싱 뒤에 텍스트 유닛을 벡터로 군집화하고 군집마다 요약(`models.roles.summary_tree`)하는 일을 레벨마다 반복하며, 요약은 인덱스 언어로 씁니다. 질의는 텍스트 유닛의 BM25 + kNN 검색, 모든 레벨 요약의 검색(RAPTOR의 collapsed tree), 그리고 네임스페이스에 엔티티 인덱스가 있으면 원 질의로 찾은 엔티티를 인용하는 요약과 구절(모델 호출 없음)을 RRF로 융합합니다. 교차 인코더가 구절과 요약을 함께 재순위화하고, 레벨마다 요약은 최대 `max_nodes_per_level`(3)개만 남기며, 남은 요약마다 자기 계보의 구절 `expand_children`(2)개를 함께 가져와 답변이 원문을 인용하게 합니다. 요약은 계보(`text_unit_ids`, `child_ids`)와 함께 출처로 보고됩니다. 비용은 `naive`와 비슷하고 검색이 몇 번 더 듭니다. 명시적으로 고를 때만 실행되며, 측정하기 전까지 `auto`는 이 전략으로 분기하지 않습니다. 다만 `raptor`만 가진 네임스페이스에서는 `auto`가 이 전략으로 대체합니다([설계](../design.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). |
 
 ## 하이브리드 점수와 재순위화
 
-모든 전략은 출처별 결과(BM25, 벡터, 그래프)를 RRF(reciprocal rank fusion)나 가중치로
-융합한 뒤 재순위화하고, MMR 다양성을 적용하고, 유형별 할당량으로 자릅니다. 이 순서이므로
+`global`(커뮤니티 리포트를 map하며, 텍스트 단위는 `search.global_search.text_unit_slots`를
+설정할 때만 융합)을 뺀 모든 전략은 출처별 결과(BM25, 벡터, 그리고 `simple`과 `naive`를 뺀
+전략의 그래프)를 RRF(reciprocal rank fusion)로 융합하되 버킷마다 `search.fusion.fusion_weights`로
+가중치를 준 뒤 재순위화하고, MMR 다양성을 적용하고, 유형별 할당량으로 자릅니다. 이 순서이므로
 융합 점수로 자르다가 재순위화 모델이 맨 위에 놓을 결과를 잃는 일이 없습니다
 ([설계 §7](../design.md#7-hybrid-scoring-and-token-management), 영문). 재순위화 결과는
 질의마다 보고합니다([재순위화 상태](../guides/query.ko.md#재순위화-상태)).

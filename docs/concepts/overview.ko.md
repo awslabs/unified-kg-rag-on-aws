@@ -4,9 +4,11 @@
 
 `unified-kg-rag-on-aws`는 대규모 다국어 문서 코퍼스를 Amazon Neptune과 Amazon OpenSearch
 Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프에 대한 질문에 답합니다.
-두 그래프 RAG 방법론인 Microsoft GraphRAG(커뮤니티 요약)와 LightRAG(이중 레벨 키워드)를
-하나의 공통 스택 위에 구현했습니다. 한 번의 수집으로 두 방법론을 함께 만들어 질의마다 고를
-수도 있고, 고른 방법론만 만들어 나머지 방법론의 비용을 아낄 수도 있습니다. 모든 답변은 실제로 모델 컨텍스트에 들어간 출처를 함께 돌려줍니다.
+네 가지 그래프 RAG 방법론, 즉 Microsoft GraphRAG(커뮤니티 요약), LightRAG(이중 레벨 키워드),
+HippoRAG 2(엔티티와 패시지에 대한 개인화 PageRank), 그리고 선택 사항인 RAPTOR(요약 트리)를
+하나의 공통 스택 위에 구현했습니다. 한 번의 수집으로 GraphRAG와 LightRAG의 인덱스(HippoRAG 2도
+이것을 읽음)를 함께 만들어 질의마다 방법론을 고를 수도 있고, 고른 방법론만 만들어 나머지
+방법론의 비용을 아낄 수도 있습니다. 모든 답변은 실제로 모델 컨텍스트에 들어간 출처를 함께 돌려줍니다.
 
 이 페이지는 구성 요소와 그 관계를 설명합니다. 실행은 [README](../../README.ko.md#빠른-시작)나
 [문서 안내](../index.ko.md)에서 시작하세요.
@@ -23,8 +25,8 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 - **모델.** 기본으로 채팅, 임베딩, 재순위화(rerank) 모델 모두 Bedrock을 쓰고, 로컬 모드에서는
   Ollama나 OpenAI 호환 서버를 씁니다. 모든 LLM 역할이 두 계층 중 하나에서 실행되므로 설정
   하나로 파이프라인 전체를 바꿀 수 있습니다.
-- **검색**(`run-rag` 또는 Python 체인)은 같은 저장소와 같은 하이브리드 점수 계산기 위에서
-  전략 8개 중 하나를 실행하고, 결과를 답변 모델의 토큰 예산에 맞춰 컨텍스트로 담습니다.
+- **검색**(`run-rag` 또는 Python 체인)은 같은 저장소 위에서 전략 10개 중 하나나 `auto`
+  라우터를 실행하고, 결과를 답변 모델의 토큰 예산에 맞춰 컨텍스트로 담습니다.
 - **평가**(`run-eval`)는 LLM 없이 계산하는 지표와 LLM 판정 모델로 답변을 채점하고, 전략이나
   실행을 짝지어 비교하며, 질의마다 토큰, 비용, 지연 시간을 측정합니다([평가](../guides/evaluate.ko.md)).
 
@@ -55,18 +57,24 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 [설계 문서 §4](../design.md#4-ingestion-pipeline)와 [§5](../design.md#5-incremental-indexing)(영문)에
 있습니다.
 
-## 두 방법론
+## 방법론
 
-두 방법론은 같은 인덱스를 읽고 검색 알고리즘만 다릅니다.
+방법론들은 같은 인덱스를 읽고 검색 알고리즘만 다릅니다.
 
-| | GraphRAG(커뮤니티 요약) | LightRAG(이중 레벨 키워드) |
-|---|---|---|
-| 전략 | `local`, `global`, `drift`, `simple`, `auto` 라우터 | `mix`, `hybrid`, `naive` |
-| 읽는 것 | 엔티티와 그 그래프 이웃, 커뮤니티 리포트, 텍스트 단위, 주장 | 엔티티(저수준 키워드), 관계(고수준 키워드), 그 원문 청크 |
-| 잘하는 질문 | 코퍼스 전체에 걸친 주제·의미 파악 질문(`global`, `drift`), 특정 엔티티 질문(`local`) | 키워드 중심 조회, 빠르고 저렴한 기준선 |
+| | GraphRAG(커뮤니티 요약) | LightRAG(이중 레벨 키워드) | HippoRAG 2(개인화 PageRank) | RAPTOR(요약 트리, 선택 사항) |
+|---|---|---|---|---|
+| 전략 | `local`, `global`, `drift`, `simple` | `mix`, `hybrid`, `naive` | `ppr` | `tree` |
+| 읽는 것 | 엔티티와 그 그래프 이웃, 커뮤니티 리포트, 텍스트 단위, 주장 | 엔티티(저수준 키워드), 관계(고수준 키워드), 그 원문 청크 | 관계 검색 결과, 패시지 검색 결과, 그 엔티티와 패시지 사이의 그래프. LightRAG가 만드는 것 | 텍스트 단위와 그 위의 모든 레벨 요약 |
+| 잘하는 질문 | 코퍼스 전체에 걸친 주제·의미 파악 질문(`global`, `drift`), 특정 엔티티 질문(`local`) | 키워드 중심 조회, 빠르고 저렴한 기준선 | 가장 적은 비용의 멀티홉 질문. 질의마다 LLM 호출 한 번 | 관련 패시지 여러 개에 걸친 답(측정 전) |
 
-모든 전략은 같은 하이브리드 점수 계산기를 거칩니다. BM25, 벡터 검색, 그래프 순회(`simple`과
-`naive`는 제외)를 RRF(Reciprocal Rank Fusion)로 합치고, 재순위화하고, 다양성을 맞춥니다.
+`iterative`는 `mix`나 `local`을 감싸 멀티홉 질문이 기대는 연결(bridge) 엔티티로 정해진 횟수만큼
+후속 라운드를 실행하며, 기반 전략이 읽는 것을 읽습니다. `local`은 기본으로 HippoRAG 2의
+PageRank로 텍스트 단위의 순서를 정합니다.
+
+`global`을 뺀 모든 전략은 같은 하이브리드 점수 계산기를 거칩니다. BM25, 벡터 검색, 그래프
+신호(`simple`과 `naive`는 그래프를 읽지 않음)를 RRF(Reciprocal Rank Fusion)로 합치고,
+재순위화하고, 다양성을 맞춥니다. `global`은 대신 커뮤니티 리포트를 핵심 요점으로 map합니다
+(텍스트 단위는 `search.global_search.text_unit_slots`를 설정할 때만 합침).
 기본값인 `auto`는 LLM 라우터가 질의마다 `local`, `mix`, `global`, `iterative`(다중 홉 질문) 중 하나를 고릅니다. 언제 어떤
 전략을 쓸지는 [검색](./retrieval.ko.md#검색-전략-선택), 전략별 검색 방식은
 [설계 문서 §6](../design.md#6-retrieval-two-methodologies)(영문)에 있습니다.
@@ -78,12 +86,13 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 
 | 프로필 | 만드는 것 | 전략 | 수집 단계의 모델 호출 |
 |---|---|---|---|
-| `[graphrag, lightrag]`(기본값) | 텍스트 단위, 엔티티, 관계와 그 벡터, 그래프, 커뮤니티와 리포트 | 모든 전략 | 청크 경계, 텍스트 단위마다 추출과 글리닝, 설명 요약, 커뮤니티마다 리포트 하나 |
-| `[lightrag]` | 커뮤니티와 리포트를 뺀 나머지 | `mix`, `hybrid`, `naive`, `simple`, `auto` | Leiden 단계와 리포트 호출을 뺀 나머지 |
-| `[graphrag]` | 기본값과 같음 | `local`, `global`, `drift`, `simple`, `auto` | 기본값과 같음. 관계 임베딩까지 아끼려면 `indexing.opensearch.build_relationship_vector_index: false`도 설정(대신 `local`의 관계 섹션이 빠짐) |
-| `[raptor]`(선택 사항, 측정 전) | 텍스트 단위와 그 위의 요약 트리(RAPTOR) | `tree`, `naive`, `simple`, `auto` | 청크 경계와 텍스트 단위 5-6개마다 요약 하나 정도. 그래프 추출 없음([요약 트리](../guides/ingest.ko.md#raptor-요약-트리선택-사항)) |
+| `[graphrag, lightrag]`(기본값) | 텍스트 단위, 엔티티, 관계와 그 벡터, 그래프, 커뮤니티와 리포트 | `tree`를 뺀 모든 전략 | 청크 경계, 텍스트 단위마다 추출과 글리닝, 설명 요약, 커뮤니티마다 리포트 하나 |
+| `[lightrag]`나 `[hipporag]` | 커뮤니티와 리포트를 뺀 나머지 | `mix`, `hybrid`, `naive`, `simple`, `ppr`, `iterative`(`mix` 기반), `auto` | Leiden 단계와 리포트 호출을 뺀 나머지 |
+| `[graphrag]` | 기본값과 같음. `local`이 읽는 관계 벡터가 `lightrag`와 `hipporag`에도 쓰임 | `tree`를 뺀 모든 전략. `indexing.opensearch.build_relationship_vector_index: false`이면 `local`, `global`, `drift`, `simple`, `naive`, `iterative`(`local` 기반), `auto` | 기본값과 같음. 관계 벡터 인덱스를 끄면 관계 임베딩을 아끼는 대신 `local`의 관계 섹션과 `lightrag`·`hipporag`의 모든 전략이 빠짐 |
+| `[raptor]`(선택 사항, 측정 전) | 텍스트 단위와 그 위의 요약 트리(RAPTOR) | `tree`, `naive`, `simple`, `auto`(`tree`를 씀) | 청크 경계와 텍스트 단위 5-6개마다 요약 하나 정도. 그래프 추출 없음([요약 트리](../guides/ingest.ko.md#raptor-요약-트리선택-사항)) |
 
-`hipporag`는 `lightrag`가 만드는 것과 같은 것을 가리키며, 그것을 읽는 전략에 씁니다.
+다른 프로필에 `raptor`를 더하면 트리도 함께 만듭니다.
+`hipporag`는 `lightrag`가 만드는 것과 같은 것을 가리키며, 그것을 읽는 전략(`ppr`)에 씁니다.
 `iterative`는 기반 전략(`local`이나 `mix`)이 읽는 것을 읽습니다. `naive`는 텍스트 단위만,
 `simple`은 네임스페이스가 가진 인덱스를 읽으므로 모든 프로필에서 쓸 수 있습니다.
 인덱스 네임스페이스는 자신이 가진 것을 기록합니다. 질의한 전략이 네임스페이스에 없는 방법론을
@@ -91,7 +100,8 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 알려 줍니다. `auto`는 가진 방법론의 전략 중에서만 고릅니다. 나중에 방법론을 추가하면 그
 방법론이 더하는 것만 새로 만듭니다. 증분 네임스페이스는 저장된 청크 경계, 추출 결과, 요약,
 벡터로 한 번 다시 구축되므로 새 모델 호출은 추가한 방법론의 것뿐입니다(`graphrag`라면 커뮤니티
-리포트, `raptor`라면 재구축 없이 저장된 텍스트 단위로 만드는 트리만). 방법론을 빼면 그 산출물은 더 이상 갱신되지 않으며, 재설정(reset) 전에는 아무것도 지우지
+리포트, `raptor`라면 재구축 없이 저장된 텍스트 단위로 만드는 트리만. `raptor`만 가진
+네임스페이스에 그래프 방법론을 더하면 저장된 추출 결과가 없으므로 모든 텍스트 단위를 추출함). 방법론을 빼면 그 산출물은 더 이상 갱신되지 않으며, 재설정(reset) 전에는 아무것도 지우지
 않습니다([수집](../guides/ingest.ko.md#방법론-프로필),
 [설계 문서 §4.6](../design.md#46-methodology-profiles), 영문).
 
@@ -106,8 +116,8 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 
 | 영역 | GraphRAG | LightRAG | 이 프레임워크 | 문서 |
 |---|---|---|---|---|
-| 3중 하이브리드 검색 | 엔티티 설명, 텍스트 단위, 리포트 내용에 대한 벡터 검색(`config/embeddings.py`)과 인덱싱된 테이블에서 읽는 그래프 컨텍스트. 질의 코드에 어휘(lexical) 검색이나 재순위화 모델은 없음 | 엔티티, 관계, 청크 인덱스에 대한 벡터 검색과 그래프 저장소를 라운드 로빈으로 합치고, 재순위화 모델은 선택(`operate.py`, `rerank.py`) | BM25(OpenSearch), 벡터 검색(Bedrock 임베딩), Neptune 그래프 순회를 RRF로 합치고, Bedrock rerank 모델로 재순위화하고, MMR로 다양성을 맞춤. 두 방법론의 모든 전략이 점수 계산기 하나를 씀(`simple`과 `naive`는 그래프 제외) | [설계 문서 §7](../design.md#7-hybrid-scoring-and-token-management)(영문) |
-| 한 인덱스에서 두 방법론 | 커뮤니티 리포트. 관계 벡터 인덱스(`config/embeddings.py`)와 키워드 수준 검색은 없음 | 엔티티와 관계 인덱스에 대한 이중 레벨 키워드. 커뮤니티 탐지와 리포트는 없음 | 한 번의 수집이 고른 방법론(기본값은 둘 다)에 필요한 것을 모두 만들고, 방법론은 질의마다 직접 고르거나 `auto` 라우터가 고르며, 네임스페이스에 없는 방법론은 거절함 | [방법론 프로필](#방법론-프로필), [설계 문서 §6](../design.md#6-retrieval-two-methodologies)(영문) |
+| 3중 하이브리드 검색 | 엔티티 설명, 텍스트 단위, 리포트 내용에 대한 벡터 검색(`config/embeddings.py`)과 인덱싱된 테이블에서 읽는 그래프 컨텍스트. 질의 코드에 어휘(lexical) 검색이나 재순위화 모델은 없음 | 엔티티, 관계, 청크 인덱스에 대한 벡터 검색과 그래프 저장소를 라운드 로빈으로 합치고, 재순위화 모델은 선택(`operate.py`, `rerank.py`) | BM25(OpenSearch), 벡터 검색(Bedrock 임베딩), Neptune 그래프 순회를 RRF로 합치고, Bedrock rerank 모델로 재순위화하고, MMR로 다양성을 맞춤. 커뮤니티 리포트를 map하는 `global`을 뺀 모든 전략이 점수 계산기 하나를 씀(`simple`과 `naive`는 그래프 제외) | [설계 문서 §7](../design.md#7-hybrid-scoring-and-token-management)(영문) |
+| 한 인덱스에서 여러 방법론 | 커뮤니티 리포트. 관계 벡터 인덱스(`config/embeddings.py`)와 키워드 수준 검색은 없음 | 엔티티와 관계 인덱스에 대한 이중 레벨 키워드. 커뮤니티 탐지와 리포트는 없음 | 한 번의 수집이 고른 방법론(기본값은 GraphRAG와 LightRAG이며, 이것으로 HippoRAG 2의 `ppr`도 씀)에 필요한 것을 모두 만들고, 방법론은 질의마다 직접 고르거나 `auto` 라우터가 고르며, 네임스페이스에 없는 방법론은 거절함 | [방법론 프로필](#방법론-프로필), [설계 문서 §6](../design.md#6-retrieval-two-methodologies)(영문) |
 | 삭제 계보(lineage)를 갖춘 증분 인덱싱 | `graphrag update`는 제목이 새로운 문서를 인덱싱함. 계산한 차이에 삭제된 문서도 들어 있지만 갱신 워크플로에는 새 문서만 전달됨(`index/update/incremental_index.py`, `index/workflows/load_update_documents.py`) | 문서 상태 저장소는 파일 이름이나 내용 해시가 이미 등록된 문서의 삽입을 건너뜀(`pipeline.py`). `adelete_by_doc_id`는 문서를 지우고, 다른 문서가 여전히 뒷받침하는 엔티티와 관계는 캐시된 추출 결과로 다시 만듦(`lightrag.py`) | 레지스트리(DynamoDB, 로컬에서는 SQLite)가 내용 해시로 코퍼스를 비교해 새 문서와 바뀐 문서를 다시 인덱싱하고, 지운 문서는 각 항목이 인용한 텍스트 단위를 따라 제거해 남은 텍스트 단위가 기술하지 않는 것만 지움. 선기록(write-ahead) 장애 복구, 네임스페이스마다 쓰기 실행 하나. 속성 기반 테스트로 증분 실행이 전체 구축과 같은 결과에 수렴하는지 확인 | [증분 인덱싱](../guides/incremental.ko.md), [설계 문서 §5](../design.md#5-incremental-indexing)(영문) |
 | 다국어 | `graphrag prompt-tune --language`가 튜닝한 프롬프트의 언어를 정함(`cli/main.py`) | `SUMMARY_LANGUAGE`가 추출과 요약의 출력 언어를 정함(`addon_params.py`) | 인덱싱과 질의 시점의 선택적 번역 단계(추가 대상 언어 포함), 언어별 OpenSearch 분석기(한국어는 `nori`), 다국어 키워드 추출, 한국어·CJK를 고려한 답변 일치 채점을 두 방법론 모두에 적용 | [다국어 코퍼스](../guides/multilingual.ko.md), [설계 문서 §8.3](../design.md#83-multilingual-processing)(영문) |
 | 온톨로지와 시드 그래프 가져오기 | Bring Your Own Graph: 추출 대신 엔티티와 관계 테이블을 넣고 커뮤니티 워크플로를 실행(`docs/index/byog.md`) | `insert_custom_kg`가 주어진 청크, 엔티티, 관계를 삽입(`lightrag.py`) | 직접 선언하거나 OWL/RDFS 온톨로지에서 읽은 추출 스키마(유형, 패턴, IRI). 시드 그래프(JSONL, CSV, RDF)를 코퍼스의 가상 문서로 추출 그래프에 병합하므로 증분 실행과 삭제가 파일처럼 다루고, 문서가 기준(canonical)으로 남음 | [Extraction schema](../guides/extraction-schema.md), [Ontology](../guides/ontology.md), [Seed graphs](../guides/seed-graphs.md)(영문) |
@@ -180,7 +190,7 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
 - **가벼운 수집은 쓸 수 있는 전략을 제한합니다.** 커뮤니티가 없는 네임스페이스
   (`indexing.methodologies: [lightrag]`나 `graph.community_detection.enabled: false`)에는
   `graphrag`가 없으므로 `local`, `global`, `drift`가 거절되고(`simple`은 가진 인덱스만 훑음), 관계 벡터 인덱스를 끄면(`indexing.opensearch.build_relationship_vector_index: false`)
-  `mix`와 `hybrid`가 고수준 키워드를, `local`이 관계 섹션을 쓰지 못하고, 문서 필터가 걸린 그래프
+  네임스페이스에 `lightrag`도 `hipporag`도 없어 `mix`, `hybrid`, `ppr`이 거절되고, `local`이 관계 섹션을 쓰지 못하며, 문서 필터가 걸린 그래프
   확장은 엔티티에 닿는 관계가 아니라 엔티티 인덱스 확인만으로 엔티티를 남깁니다.
 - **Markdown과 HTML**에는 `unstructured` extra가 필요하며, 컨테이너 이미지에는 기본으로
   빠져 있습니다([Troubleshooting](../troubleshooting.md#why-are-my-markdown-or-html-files-not-indexed), 영문).
