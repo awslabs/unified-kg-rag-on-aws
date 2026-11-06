@@ -312,7 +312,7 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    `search.reranking.enabled: false` with `providers.rerank.kind: none` (otherwise a Bedrock Rerank call per query),
    and expect RRF ordering where you set `search.fusion.method: weighted` (#577). With
    `graph.community_detection.report_generation.enabled: false`, `global` and `drift` queries are refused (exit 2,
-   naming the switch) and `auto` leaves them out; `local` answers as before (#PR).
+   naming the switch) and `auto` leaves them out; `local` answers as before (#612).
 4. A custom `fusion_weights.lightrag_linked_chunks` weight: set `lightrag_relation_chunks` too (usually the same
    value) to keep weighting every LightRAG graph chunk; mix and hybrid recall are sensitive to it (#521, #530).
    Rename an `opensearch_all` weight to `vector_all` and drop `opensearch_community_reports`,
@@ -420,7 +420,7 @@ From a `main` checkout (formats and keys no release had):
   passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
 - #605 one index language: a namespace ingested with `processing.translation.enabled: false` and a
   `source_language` other than `target_language` was extracted, summarized and reported in `target_language`. Its
-  extraction settings and stage caches now record the index language (#PR), so its next incremental run stops before
+  extraction settings and stage caches now record the index language (#612), so its next incremental run stops before
   any model call where the analyzers differ (exit 2, `was built for other language settings`, the graph indexes'
   analyzers follow `source_language`) and otherwise extracts every document again (a WARNING names
   `index_language`); a re-run of a `--pipeline-id` does not resume from its stage caches either. Run one
@@ -428,7 +428,7 @@ From a `main` checkout (formats and keys no release had):
   and vector made again). Any other configuration
   keeps its extraction records and indices; the community report prompt now names its language, so the next full
   build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
-  date written as `2024年3月` (or `2024. 3. 15.`, #PR) is found under it, so nothing else re-runs.
+  date written as `2024年3月` (or `2024. 3. 15.`, #612) is found under it, so nothing else re-runs.
 - #606 evaluation results: `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by
   whitespace, so a default-normalization run is refused against them (exit 2) until one side is scored again (an
   `official_squad` or `hotpotqa` run still compares). Their `abstention_statistics` left failed answers out (rate
@@ -452,8 +452,8 @@ From a `main` checkout (formats and keys no release had):
   edit), and those chunks are extracted again. `graph_metrics.average_clustering` is empty unless
   `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
   now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`. The tree
-  stored before stays in the build record, so `tree` keeps serving the text units it covers (#PR).
-- #PR report generation off: a namespace built with `graph.community_detection.report_generation.enabled: false`
+  stored before stays in the build record, so `tree` keeps serving the text units it covers (#612).
+- #612 report generation off: a namespace built with `graph.community_detection.report_generation.enabled: false`
   holds `graphrag` again, so `local` answers on it (refused since #603); `global` and `drift`, which read the
   reports, are refused naming the switch. Nothing re-runs.
 
@@ -506,13 +506,13 @@ From a `main` checkout (formats and keys no release had):
   `hipporag` included (#602). With `graph.community_detection.report_generation.enabled: false` a run builds no
   reports, so an incremental run no longer takes them for missing and rebuilds the namespace, and the namespace
   holds `graphrag` for `local` while `global` and `drift`, which declare the reports among their artifacts, are
-  refused naming the switch (a WARNING at load says so, #PR); the rebuild that adds
+  refused naming the switch (a WARNING at load says so, #612); the rebuild that adds
   a methodology asks before deleting more than `indexing.max_deletion_share` of the scope's documents, as an
   incremental run does; a run without community detection (`[lightrag]`) exports `visualization_data.json` without
   communities; a run that builds no graph-store artifact (`[raptor]`) writes no graph store, so `run-ingestion`
   needs no Neptune endpoint for it (#608), and a run creates (and probes) no vector index of an artifact it does not
   build, emptying only a live one on a full build; that full build (a reset) also deletes the namespace's graph when
-  a graph endpoint is configured (#PR). See [methodology
+  a graph endpoint is configured (#612). See [methodology
   profiles](docs/concepts/overview.md#methodology-profiles) and [Design
   §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
@@ -928,7 +928,7 @@ Ingestion and incremental indexing.
   queries used `source_language`, so the graph held a second language. The community report prompt names its
   output language. Claim dates written as `2024年3月15日`, `2024년 3월 15일` or `2022年第3四半期` read as calendar
   dates and placeholders such as `不明` or `미상` as unknown (#605), and so do `2024. 3. 15.` and a day followed by
-  its weekday, `2024年3月15日(金)` (#PR).
+  its weekday, `2024年3月15日(金)` (#612).
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed
