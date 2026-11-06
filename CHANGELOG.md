@@ -608,7 +608,7 @@ From a `main` checkout (formats and keys no release had):
   `...ingestion.pipeline_metrics`, `...retrieval.query_processing`, `...retrieval.filter_validation`,
   `...storage.cross_run_merge`/`removal`/`reannotation`/`stored_items`,
   `unified_kg_rag.domain.ingestion.community_clustering`), not the pipeline's, chain's or indexing manager's; filter
-  on the subpackage prefix (`unified_kg_rag.application.ingestion`, ...) (#586, #587).
+  on the subpackage prefix (`unified_kg_rag.application.ingestion`, ...) (#586, #587, #590).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`, langchain-openai 1.7, langsmith 0.14,
   datasets 5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.275 in the CDK lock (#241, #251, #265,
   #438, #465, #489).
