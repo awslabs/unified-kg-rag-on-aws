@@ -79,12 +79,13 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 | 프로필 | 만드는 것 | 전략 | 수집 단계의 모델 호출 |
 |---|---|---|---|
 | `[graphrag, lightrag]`(기본값) | 텍스트 단위, 엔티티, 관계와 그 벡터, 그래프, 커뮤니티와 리포트 | 모든 전략 | 청크 경계, 텍스트 단위마다 추출과 글리닝, 설명 요약, 커뮤니티마다 리포트 하나 |
-| `[lightrag]` | 커뮤니티와 리포트를 뺀 나머지 | `mix`, `hybrid`, `naive`, `auto` | Leiden 단계와 리포트 호출을 뺀 나머지 |
+| `[lightrag]` | 커뮤니티와 리포트를 뺀 나머지 | `mix`, `hybrid`, `naive`, `simple`, `auto` | Leiden 단계와 리포트 호출을 뺀 나머지 |
 | `[graphrag]` | 기본값과 같음 | `local`, `global`, `drift`, `simple`, `auto` | 기본값과 같음. 관계 임베딩까지 아끼려면 `indexing.opensearch.build_relationship_vector_index: false`도 설정(대신 `local`의 관계 섹션이 빠짐) |
-| `[raptor]`(선택 사항, 측정 전) | 텍스트 단위와 그 위의 요약 트리(RAPTOR) | `tree`, `auto` | 청크 경계와 텍스트 단위 5-6개마다 요약 하나 정도. 그래프 추출 없음([요약 트리](../guides/ingest.ko.md#raptor-요약-트리선택-사항)) |
+| `[raptor]`(선택 사항, 측정 전) | 텍스트 단위와 그 위의 요약 트리(RAPTOR) | `tree`, `naive`, `simple`, `auto` | 청크 경계와 텍스트 단위 5-6개마다 요약 하나 정도. 그래프 추출 없음([요약 트리](../guides/ingest.ko.md#raptor-요약-트리선택-사항)) |
 
 `hipporag`는 `lightrag`가 만드는 것과 같은 것을 가리키며, 그것을 읽는 전략에 씁니다.
-`iterative`는 기반 전략(`local`이나 `mix`)이 읽는 것을 읽습니다.
+`iterative`는 기반 전략(`local`이나 `mix`)이 읽는 것을 읽습니다. `naive`는 텍스트 단위만,
+`simple`은 네임스페이스가 가진 인덱스를 읽으므로 모든 프로필에서 쓸 수 있습니다.
 인덱스 네임스페이스는 자신이 가진 것을 기록합니다. 질의한 전략이 네임스페이스에 없는 방법론을
 읽으면 모델을 호출하기 전에 실패하고, 네임스페이스가 가진 것과 그 방법론을 추가하는 방법을
 알려 줍니다. `auto`는 가진 방법론의 전략 중에서만 고릅니다. 나중에 방법론을 추가하면 그
@@ -178,7 +179,7 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   `metadata.rerank`에 나타납니다([재순위화 상태](../guides/query.ko.md#재순위화-상태)).
 - **가벼운 수집은 쓸 수 있는 전략을 제한합니다.** 커뮤니티가 없는 네임스페이스
   (`indexing.methodologies: [lightrag]`나 `graph.community_detection.enabled: false`)에는
-  `graphrag`가 없으므로 `local`, `global`, `drift`, `simple`이 거절되고, 관계 벡터 인덱스를 끄면(`indexing.opensearch.build_relationship_vector_index: false`)
+  `graphrag`가 없으므로 `local`, `global`, `drift`가 거절되고(`simple`은 가진 인덱스만 훑음), 관계 벡터 인덱스를 끄면(`indexing.opensearch.build_relationship_vector_index: false`)
   `mix`와 `hybrid`가 고수준 키워드를, `local`이 관계 섹션을 쓰지 못하고, 문서 필터가 걸린 그래프
   확장은 엔티티에 닿는 관계가 아니라 엔티티 인덱스 확인만으로 엔티티를 남깁니다.
 - **Markdown과 HTML**에는 `unstructured` extra가 필요하며, 컨테이너 이미지에는 기본으로

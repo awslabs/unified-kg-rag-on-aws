@@ -988,25 +988,34 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
 - **Query time.** Every strategy class declares `methodology`
   (`BaseSearchStrategy.methodology`): `graphrag` for `local`, `global`,
   `drift` and `simple`, `lightrag` for `mix`, `hybrid` and `naive`,
-  `raptor` for `tree`; a
-  wrapper strategy sets it per instance from the strategy it wraps.
+  `hipporag` for `ppr`, `raptor` for `tree`; a
+  wrapper strategy (`iterative`) sets it per instance from the strategy it
+  wraps. A strategy that reads less than its methodology requires declares
+  its artifacts at registration (`StrategySpec.required_artifacts`):
+  `naive` reads the text units alone, and `simple` sweeps the indexes the
+  namespace holds (the text units at least), so any namespace holding the
+  text units serves both, a `raptor`-only or `lightrag`-only one included.
   `GraphRAGChain` reads the namespace's build record through the document
   retriever (`aread_build_record`, cached per suffix for
   `methodology_check.HELD_TTL_SECONDS`, read again before a refusal) and derives what it
   holds (`held_methodologies`; when there is no record or it predates
   profiles, every methodology whose required artifacts a run of the config
   builds, `artifacts_to_build`: a store the default run built before records
-  holds `hipporag` too, as it holds the relationship vectors `ppr` reads).
+  holds `hipporag` too, as it holds the relationship vectors `ppr` reads),
+  and passes the held artifacts to the strategy
+  (`SearchQuery.metadata["held_artifacts"]`), which reads only the optional
+  indexes the namespace holds (`simple`'s sweep, `tree`'s graph buckets).
   An explicit strategy whose
-  methodology is not held raises `MethodologyNotIndexedError` (a
+  methodology (or declared artifacts) is not held raises `MethodologyNotIndexedError` (a
   `ConfigurationError`; `run-rag` exits 2) before any model call, naming
   what the namespace holds, the strategies that serve it and how to add the
   methodology. `auto` routes only among the held methodologies' strategies
   of `search.auto_routable_strategies`, falling back to `local` or `mix`.
-  `local` and `simple` count as GraphRAG's: `local` reserves part of its
+  `local` counts as GraphRAG's: it reserves part of its
   context for the community-report section, so on a LightRAG-only index it
   would answer with that share unused; `mix`/`hybrid` serve the same entity
-  questions there.
+  questions there. When `auto` falls back, it warns once per
+  configuration and held methodologies, not on every query.
 - **Failure modes.** An unreadable record (store error, a backend without
   index metadata) reads as the configured methodologies, as before; a
   record that over-claims cannot arise from a run (an artifact enters it
@@ -1784,7 +1793,7 @@ guide entry describes questions that chain facts through a bridge entity
 the question does not name), and an operator who leaves it out of that
 list keeps `auto` off it. A real-model run on 200 MuSiQue questions decided
 both (`iterative` over `mix` against `mix`: `answer_contains` +12.5 points,
-token F1 +5.2, both significant, for +9.6 s a query; [Defaults and
+token F1 +5.2, both significant, for +9.3 s at the median query; [Defaults and
 evidence](concepts/defaults-and-evidence.md#iterative-follow-up-rounds)).
 Whether the router picks it for single-hop or sensemaking questions it
 should leave alone was not measured. It targets one
@@ -1804,7 +1813,10 @@ through the strategy registry, so there is no dispatch on the base:
 2. *Control.* A fast-model call (`models.roles.query_controller`,
    `IterativeControllerPrompt`) reads the question and the candidates packed
    as the answer's context is (the base's `spare_context_budget_first`),
-   within `controller_context_tokens` (8000), plus what was already
+   within `controller_context_tokens` (null: the answer's own budget, so
+   the controller judges what the answer will read; at the earlier 8000,
+   ~1200-token chunks left it 3 of the answer's 11 passages, while the
+   measured MuSiQue chunks fit either way), plus what was already
    searched. It returns JSON (`parse_llm_json` with answer keys):
    `sufficient`, `known_facts`, `bridge_entities` (as the context writes
    them) and at most `max_next_queries` (2) `next_queries` naming them.
@@ -1823,7 +1835,8 @@ through the strategy registry, so there is no dispatch on the base:
    when the text passed `raw_query_fallback_max_len`: 62 of 238 controller
    rounds in the measured run.) A query already searched (case-folded) or
    a bridge already followed (`compact_name_key`, so `동부 창고` and `동부창고` are one) is
-   not searched again, and the controller is shown the searched list: the
+   not searched again, a round follows at most five bridge entities (the
+   most follow-up queries a round may ask for), and the controller is shown the searched list: the
    redundant searches ReaRAG (arXiv 2503.21729) reports for open-ended
    search agents, which run on until their iteration limit, are what the
    caps and the dedupe prevent.
@@ -1832,7 +1845,11 @@ through the strategy registry, so there is no dispatch on the base:
    the first) and `iterative_round_<n>_text` (its follow-up queries' text
    units, interleaved), each weighable through `search.fusion.fusion_weights`
    (the base's own buckets were fused, with their weights, inside each
-   round). The base's rerank types (`text` for both bases) are reranked
+   round). The first follow-up query is the base rerun's search text, so
+   its text units are searched twice, by mix's chunk stream (or local's
+   PageRank passage seeds) and by the round's own text search, at different
+   `top_k` and min-max normalization: the round bucket's own RRF credit is
+   part of the measured ranking, so the two concurrent searches are kept. The base's rerank types (`text` for both bases) are reranked
    against the question and the follow-up queries joined, and each section
    type keeps the larger of round 0's count of it and the type quota
    (`TYPE_QUOTA`), so a round-0 item leaves only when a new one outranks
@@ -1896,7 +1913,11 @@ retrieval evaluator scores it as any other.
 the answer, and the rounds run in one `asyncio.timeout` that ends there:
 past it the round in flight (its controller call, base search and text
 searches) is cancelled and the answer reads what the rounds before it
-found (`stop_reason: deadline`). Without a deadline the round cap alone
+found (`stop_reason: deadline`). When the controller had already judged
+those candidates insufficient (the deadline cancels the round its verdict
+started), the run reports it (`context_sufficient: false`,
+`insufficiency_reason: deadline`); a deadline that cuts the controller's
+own call leaves the verdict unknown. Without a deadline the round cap alone
 bounds it.
 
 **Failure modes.**
@@ -1907,21 +1928,28 @@ bounds it.
 | Any other failed call (throttled past its retries) | The rounds stop; the answer reads the earlier rounds' candidates; `degraded` names the step and `degraded_error` the error type |
 | Unreadable controller JSON (no `sufficient`), or a plan with no steps | As above, without `degraded_error` (`controller_unparsed`, `decomposition_unparsed`) |
 | A store request of a round fails | Degrades that sub-search to nothing (`_safe_aretrieve`), as in the base; fatal store errors fail the query |
-| Deadline reached | The round in flight is cancelled (`deadline`) |
+| Deadline reached | The round in flight is cancelled (`deadline`); after an insufficient verdict on what is returned, `context_sufficient = False` |
 | Insufficient after the round cap, or nothing new to search | `SearchResult.metadata["context_sufficient"] = False`, `insufficiency_reason` = the stop reason |
 
 **Contract: `context_sufficient`** (`domain/retrieval/abstention.py`). Set (to `False`, absent otherwise)
 only on a positive verdict: the controller's last verdict was insufficient
-and no further round could run (`max_rounds` reached or no new lead), or,
-with `decompose`, the last step found no answer. A degraded or timed-out run
-never sets it, its verdict being unknown. The strategy does not abstain;
+and no further round could run (`max_rounds` reached, no new lead, or the
+deadline cancelling the round that verdict started), or, with `decompose`,
+the last step found no answer. A degraded run, or one whose deadline came
+before the controller judged what it returns, never sets it, its verdict
+being unknown. The strategy does not abstain;
 `search.abstention.on_insufficient` (§9.2) reads the flag in the answer
 step. `metadata["iterative"]` records the base,
 mode, rounds, `stop_reason`, round 0's own rerank outcome (`rerank` is the
 last fusion's), the searched queries, each verdict (sufficient,
 bridge entities, queries, the number of known facts), the steps, the
 results added over round 0, and the rounds' own model calls and tokens
-(`usage`, by model; the query's `metadata["usage"]` counts them too).
+(`usage`, by model, rerank requests included; the query's
+`metadata["usage"]` counts them too). The follow-up queries, bridge
+entities and step questions there are model-written: with
+`check_output` the chain screens them as it screens synthesized results
+(one check over them all; only when it intervenes each on its own,
+masked or left out).
 
 **Cost.** Per query at most `max_rounds + 1` controller calls (3), or
 `max_rounds + 2` decomposition and step calls (4), on the fast tier;
@@ -1929,13 +1957,17 @@ results added over round 0, and the rounds' own model calls and tokens
 `max_rounds * max_next_queries` text searches, and one rerank call per
 round. At the 2026-11 list prices (Haiku 5.5 $0.10 / $0.50 per million
 tokens, Cohere Rerank 3.5 $2 per 1,000 search units), a controller call
-reading 8,000 context tokens costs about $0.001 and a rerank $0.002, so
-the worst case adds about $0.007 a query to `mix`'s; latency adds one
+reading 8,000 context tokens costs about $0.001 (one reading the
+answer's 30,000-token budget, the default since, about $0.003 when the
+chunks fill it) and a rerank $0.002, so the worst case adds about $0.007
+a query to `mix`'s (about $0.013 at a full 30,000-token budget); latency adds one
 fast-model call per round plus a base search and a rerank. Measured on 200
 MuSiQue questions over `mix` (KAG reports 84-98% stopping after its first
 round): 57 queries stopped after round 0, 48 after one follow-up round and
 95 after two, at 2.19 controller calls a query; +$0.0018 a query on
-average ($0.0553 to $0.0571, the larger answer context included), and the
+average ($0.0553 to $0.0571, the larger answer context included; the
+run's usage counted no rerank request, about $0.004 more a query at the
+rerank price above, which usage now counts as `rerank_search_units`), and the
 median query from 6.8 s to 16.1 s, p95 from 11.1 s to 27.4 s. The answer is
 generated once.
 
@@ -2101,12 +2133,26 @@ either) and their text units, plus the endpoints of the question's
 the entities index and joins the graph with its relationships). Its reset
 vector (`summed_seed_weights`): an entity's seed hit score plus the mean
 score of the relationship hits naming it, both as the searches return them,
-divided by its document units (no `link_top_k` cut), plus the passage seeds
+divided by its document units, each counted once as `ppr` counts them (no
+`link_top_k` cut), plus the passage seeds
 (`search.ppr_search.passage_seed_top_k` (20) text-unit hits of the question
 under the request's search, weighted by `passage_node_weight`). The PPR
 order over every passage node, passage seeds included, replaces
 `_rank_text_unit_ids`: the passage hits enter local as seeds and candidates
-of that ranking, not as a fusion bucket of their own (as measured). The
+of that ranking, not as a fusion bucket of their own (as measured), and are
+not fetched again (only the ranked units they are not). Unlike `ppr`, which
+scales each kind of hit to its best before seeding (`_relative`), local
+seeds with the raw scores, as measured: under the default hybrid search
+they are already on a 0-1 scale, but under `search_type: lexical` the BM25
+scores of the entity seeds outweigh the facts' kNN scores and the
+passages' `passage_node_weight`. Kept as measured; scaling them is a
+change to measure first.
+
+**DRIFT** follow-ups are local searches, but rank their text units by
+`search.drift_search.text_unit_ranking` (`support` by default, what DRIFT
+was measured with): `ppr` was measured for `local` alone and adds a
+text-unit search, a relationship search, an edge read and an embedding to
+each of up to 20 follow-ups. The
 damping, iterations, tolerance and edges per entity are
 `search.ppr_search`'s. The search metadata records `text_unit_ranking` and
 the run's counts (`ppr`: `entities`, `relationships`, `linked_entities`,
@@ -2127,13 +2173,19 @@ cannot tell; the strategy then reads the relationships index.
   from the set's vertices, in one request (custom vertex ids: `g.V(ids)` and
   `hasId`; property ids: `has("id", within(...))`, also while a full build
   switches the label). `indexing.neptune.deterministic_order: false` takes
-  the store's first `n`, as the walk does.
+  the store's first `n`, as the walk does. The traversal reads every
+  incident edge of each vertex (a hub of 20,000 edges took 0.4 s on Gremlin
+  Server, more than the expansion), so the retriever declares
+  `scans_incident_edges` and, where the relationship vector index is
+  built, the strategies read the edges from it as below (both endpoints in
+  one terms query, no per-vertex scan); the graph serves them without it.
 - SQLite (`SQLiteGraphRetriever`): one indexed `IN` read of the edges
   leaving each batch of 400 vertices (an edge within the set leaves one of
   them), the target kept when in the set, the first `n` per vertex by id in
-  Python.
-- Under a document filter the graph cannot tell which edges a passing
-  document states, so the edges come from the relationships index
+  Python (`cap_edges_per_vertex`, once, in `aneighbourhood_edges`).
+- Under a document filter (and from a graph that scans incident edges)
+  the graph cannot tell which edges a passing document states, so the
+  edges come from the relationships index
   (`_incident_relationships`, as the filtered walk reads them: one request per
   batch of source ids with the target pinned to the set, a page of at most
   `max_query_size` edges best first; under two or more document keys an
@@ -2415,11 +2467,17 @@ have `k = x`. This differs on purpose from reports and entities, which
 pass when one document does: a summary sentence can restate an excluded
 document directly in the answer context. `partition_by` keeps nodes pure
 on its keys. The summary index declares `id`, `text`, `level`,
-`text_unit_ids`, `child_ids`, `n_leaves` and the document filters;
+`text_unit_ids`, `child_ids`, `n_leaves`, `n_tokens`, `lineage_complete`,
+`language`, `partition` and the document filters;
 `filtered_index_prefixes` of `tree` names the text-units and summary
-indexes, so a key neither declares is refused, and a key only the text
-units declare (`n_tokens`) leaves the summary index out rather than
-unfiltered. Expanded passages are fetched under the caller's filters too.
+indexes, so a key neither declares is refused. A key only the text units
+declare (`community_ids`, `source_kinds`) would be dropped on the summary
+index by the retriever and the summaries returned unfiltered, so `tree`
+reads no summary under it (both summary buckets are skipped,
+`metadata.summaries_skipped_for_filters` names the keys) and answers from
+the text units. Expanded passages are fetched under the caller's filters
+too, and the graph bucket's text units are the best-weighted that pass them
+(`_passing_ranked_units`), not the best-weighted cut before the check.
 
 **Retrieval: `tree`** (`adapters/search_strategies/tree_search.py`,
 `@register_strategy(SearchStrategy.TREE, required_roles=(RetrieverRole.DOCUMENT,))`,
@@ -2435,8 +2493,10 @@ under the request's `search_type` (BM25 + kNN by default):
 | `tree_graph_summaries` | the summary nodes citing the text units of the top `graph_seed_entities` (8) entities a hybrid search of the entities index finds with the raw query (LightRAG's raw-query fallback, no model call), each node scored by the seed weights it covers over `sqrt(n_leaves)` so a root does not win by size |
 | `tree_graph_text_units` | those entities' text units, ranked the same way |
 
-The graph buckets run when the entities index exists (`graph_signal:
-auto`; `off` turns them off), so a `raptor`-only index answers from the
+The graph buckets run when the queried namespace holds the entities index
+(`graph_signal: auto`, read from the held artifacts the chain passes in
+`SearchQuery.metadata["held_artifacts"]`, the configured methodologies'
+without them; `off` turns them off), so a `raptor`-only index answers from the
 other two and reports `graph_signal: unavailable`. Text-unit ids are the
 join key on purpose: they are never re-keyed by merges or renames, so the
 tree needs no update when the graph changes. The graph walk of `local` is
@@ -2791,7 +2851,9 @@ choices:
   (`evaluation.prices`): a shipped table would be stale. Input tokens
   include the prompt-cache reads and writes, also counted apart
   (`cache_read_input_tokens`, `cache_write_input_tokens`) and priced at
-  their own rates when a price gives them. A call counts once however many
+  their own rates when a price gives them; the reranker's requests count
+  as `rerank_calls` and `rerank_search_units` (one per 100 documents) and
+  are priced per thousand units (`per_thousand_rerank_search_units`). A call counts once however many
   requests botocore sent for it; those resends (`request_retries`, read from
   `ResponseMetadata.RetryAttempts`) and calls that failed (`failed_calls`)
   are counted apart, since Bedrock counts each accepted request as an
