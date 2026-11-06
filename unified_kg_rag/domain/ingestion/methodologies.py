@@ -17,7 +17,6 @@ from unified_kg_rag.domain.models.methodology import (
     IndexArtifact,
     Methodology,
     artifacts_of,
-    methodologies_holding,
     parse_artifacts,
 )
 
@@ -191,16 +190,6 @@ def held_artifacts(
     ``config`` builds (``artifacts_to_build``)."""
     artifacts = stored_artifacts(record)
     return artifacts_to_build(config) if artifacts is None else artifacts
-
-
-def held_methodologies(
-    record: Mapping[str, Any] | None, config: Config
-) -> tuple[Methodology, ...]:
-    """The methodologies an index namespace holds: those whose required
-    artifacts it holds (``held_artifacts``): a store the default graphrag +
-    lightrag run built before build records holds hipporag too, which reads
-    what lightrag does."""
-    return methodologies_holding(held_artifacts(record, config))
 
 
 def missing_artifacts(

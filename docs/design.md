@@ -943,7 +943,7 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
 
   | Methodology | Required | Optional (used when built) |
   |---|---|---|
-  | `graphrag` | text units, entities, relationships, graph, communities, community reports | relationship vectors, claims |
+  | `graphrag` | text units, entities, relationships, graph, communities | community reports (`global` and `drift` require them), relationship vectors, claims |
   | `lightrag` | text units, entities, relationships, relationship vectors, graph | — |
   | `hipporag` | text units, entities, relationships, relationship vectors, graph | — |
   | `raptor` | text units, summary tree | — (`tree` also reads the entities index where another methodology built it) |
@@ -1016,15 +1016,22 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   `drift` and `simple`, `lightrag` for `mix`, `hybrid` and `naive`,
   `hipporag` for `ppr`, `raptor` for `tree`; a
   wrapper strategy (`iterative`) sets it per instance from the strategy it
-  wraps. A strategy that reads less than its methodology requires declares
+  wraps. A strategy that reads other than its methodology requires declares
   its artifacts at registration (`StrategySpec.required_artifacts`):
   `naive` reads the text units alone, and `simple` sweeps the indexes the
   namespace holds (the text units at least), so any namespace holding the
   text units serves both, a `raptor`-only or `lightrag`-only one included.
+  `global` and `drift`, which answer from the community reports, declare
+  `graphrag`'s required artifacts and the reports
+  (`REPORT_READER_ARTIFACTS`): with
+  `graph.community_detection.report_generation.enabled: false` a namespace
+  holds `graphrag` for `local` (as before profiles), the two are refused
+  naming that switch, and a WARNING at load says so.
   `GraphRAGChain` reads the namespace's build record through the document
   retriever (`aread_build_record`, cached per suffix for
   `methodology_check.HELD_TTL_SECONDS`, read again before a refusal) and derives what it
-  holds (`held_methodologies`; when there is no record or it predates
+  holds (`held_artifacts`, and the methodologies whose required artifacts
+  they are, `methodologies_holding`; when there is no record or it predates
   profiles, every methodology whose required artifacts a run of the config
   builds, `artifacts_to_build`: a store the default run built before records
   holds `hipporag` too, as it holds the relationship vectors `ppr` reads),
@@ -1035,8 +1042,8 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   methodology (or declared artifacts) is not held raises `MethodologyNotIndexedError` (a
   `ConfigurationError`; `run-rag` exits 2) before any model call, naming
   what the namespace holds, the strategies that serve it and how to add the
-  methodology. `auto` routes only among the held methodologies' strategies
-  of `search.auto_routable_strategies`, falling back to `local`, else `mix`,
+  methodology. `auto` routes only among the strategies
+  of `search.auto_routable_strategies` the held artifacts serve, falling back to `local`, else `mix`,
   else the first registered strategy of a held methodology (`tree` on a
   `raptor`-only namespace).
   `local` counts as GraphRAG's: it reserves part of its

@@ -151,6 +151,10 @@ indexing:
   `indexing.opensearch.build_relationship_vector_index: false`이면 `graphrag`만 만듭니다.
   모르는 이름은 올바른 이름을 알려 주며 설정 로드에 실패하고, 이 스위치들 때문에 남는 방법론이
   없는 선택도 마찬가지입니다.
+- **리포트 없이.** `graph.community_detection.report_generation.enabled: false`이면 Leiden
+  단계는 실행하고 리포트 호출만 건너뜁니다. 네임스페이스는 `local`이 읽는 `graphrag`를 가지며,
+  리포트로 답하는 `global`과 `drift`는 이 스위치를 알려 주며 거절하고(설정 로드 때 WARNING으로
+  알림) `auto`도 고르지 않습니다.
 - **네임스페이스가 가진 것.** 실행마다 빌드 기록(`artifacts`, `methodologies`)에 남깁니다.
   질의한 전략이 네임스페이스에 없는 방법론을 읽으면 모델을 호출하기 전에 거절하고
   (`MethodologyNotIndexedError`, `run-rag`는 종료 코드 2), 네임스페이스가 가진 것을 알려 줍니다.

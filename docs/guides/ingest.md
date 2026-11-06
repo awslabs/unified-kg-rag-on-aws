@@ -169,6 +169,11 @@ indexing:
   profile; one with `indexing.opensearch.build_relationship_vector_index:
   false` builds `graphrag` alone. An unknown name fails the load naming the
   valid ones, and so does a selection those switches leave nothing of.
+- **Without reports.** `graph.community_detection.report_generation.enabled:
+  false` keeps the Leiden pass and skips the report calls: the namespace
+  holds `graphrag` for `local`, while `global` and `drift`, which answer
+  from the reports, are refused naming the switch (a WARNING at load says
+  so) and `auto` leaves them out.
 - **What the namespace holds.** Each run records it in the build record
   (`artifacts`, `methodologies`). A query whose strategy reads a methodology
   the namespace does not hold is refused before any model call

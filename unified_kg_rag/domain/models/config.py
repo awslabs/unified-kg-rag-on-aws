@@ -34,10 +34,10 @@ from .methodology import (
     UNBUILT_ARTIFACTS,
     IndexArtifact,
     Methodology,
+    artifact_switches,
     artifacts_of,
     available_methodologies,
     buildable,
-    deselecting_switches,
     switched_off_artifacts,
 )
 from .provider_config import (
@@ -2465,7 +2465,12 @@ class GraphAnalysisConfig(BaseModel):
 
 class ReportGenerationConfig(BaseModel):
     enabled: bool = Field(
-        default=True, description="Enable automatic community report generation"
+        default=True,
+        description=(
+            "Enable automatic community report generation. Off: global and "
+            "drift search, which answer from the reports, are refused (local "
+            "reads graphrag without them; a WARNING at load says so)."
+        ),
     )
     max_entities_per_report: int = Field(
         default=50, ge=1, description="Maximum entities per community report"
@@ -6096,7 +6101,7 @@ class Config(BaseModel):
             off = {
                 a
                 for m in self.indexing.methodologies
-                for a in METHODOLOGY_PROFILES[m].required & self._switched_off_artifacts
+                for a in METHODOLOGY_PROFILES[m].required & self.artifacts_switched_off
             }
             raise ValueError(
                 "indexing.methodologies ("
@@ -6116,11 +6121,6 @@ class Config(BaseModel):
         return bool(value)
 
     @property
-    def _switched_off_artifacts(self) -> frozenset[IndexArtifact]:
-        """What the deselecting switches turn off (``effective_methodologies``)."""
-        return switched_off_artifacts(self._switch_on, deselecting=True)
-
-    @property
     def artifacts_switched_off(self) -> frozenset[IndexArtifact]:
         """The index artifacts a switch set false turns off: no run of this
         config builds them (``ARTIFACT_SWITCHES``)."""
@@ -6129,7 +6129,7 @@ class Config(BaseModel):
     @staticmethod
     def _artifact_switches(artifacts: Collection[IndexArtifact]) -> list[str]:
         """The switches that turn ``artifacts`` off, as a message names them."""
-        return [f"{key}: false" for key in deselecting_switches(artifacts)]
+        return [f"{key}: false" for key in artifact_switches(artifacts)]
 
     @property
     def effective_methodologies(self) -> tuple[Methodology, ...]:
@@ -6137,7 +6137,7 @@ class Config(BaseModel):
         switch turns off (docs/design.md#46-methodology-profiles): what
         ingestion builds (without a build record, a query takes the namespace
         to hold every methodology whose required artifacts these build)."""
-        return buildable(self.indexing.methodologies, self._switched_off_artifacts)
+        return buildable(self.indexing.methodologies, self.artifacts_switched_off)
 
     # --- resolved models -----------------------------------------------------
 
@@ -6306,6 +6306,8 @@ class Config(BaseModel):
         - ``length_unit: tokens`` with every chunk size at its character
           default: the sizes are read as tokens, about four times the
           intended chunk length in English text.
+        - Community reports off with graphrag selected: global and drift,
+          which answer from them, are refused on what ingestion builds.
         """
         messages: list[str] = []
         guardrail = self.aws.bedrock.guardrail
@@ -6336,7 +6338,7 @@ class Config(BaseModel):
             off = {
                 a
                 for m in dropped
-                for a in METHODOLOGY_PROFILES[m].required & self._switched_off_artifacts
+                for a in METHODOLOGY_PROFILES[m].required & self.artifacts_switched_off
             }
             messages.append(
                 "indexing.methodologies selects "
@@ -6354,6 +6356,17 @@ class Config(BaseModel):
                 "processing.claim_extraction is enabled, but no selected "
                 "methodology reads claims (graphrag's local does): ingestion "
                 "still extracts them"
+            )
+        if (
+            Methodology.GRAPHRAG in effective
+            and IndexArtifact.COMMUNITY_REPORTS in self.artifacts_switched_off
+            and self.graph.community_detection.enabled
+        ):
+            messages.append(
+                "graph.community_detection.report_generation.enabled is false: "
+                "ingestion builds no community reports, so global and drift "
+                "search, which answer from them, are refused (local reads "
+                "graphrag without them)"
             )
         return messages
 

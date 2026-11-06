@@ -45,6 +45,7 @@ from unified_kg_rag.application.retrieval import query_processing
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Config,
+    IndexArtifact,
     Methodology,
     RetrievalResult,
     SearchQuery,
@@ -52,6 +53,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
+from unified_kg_rag.domain.models.methodology import required_artifacts_of
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -1024,7 +1026,11 @@ def test_auto_routes_to_iterative_where_its_base_is_held(
     config = Config()
     config.search.iterative_search.base = base  # type: ignore[assignment]
 
-    offered = routable_strategies(config, [Methodology(m) for m in held])
+    # What a default run of each held methodology builds.
+    built = required_artifacts_of(Methodology(m) for m in held)
+    if "graphrag" in held:
+        built |= {IndexArtifact.COMMUNITY_REPORTS}
+    offered = routable_strategies(config, built)
 
     assert [s.value for s in offered] == routable
 

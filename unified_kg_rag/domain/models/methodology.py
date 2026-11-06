@@ -60,11 +60,12 @@ _GRAPH_CORE = frozenset({_A.TEXT_UNITS, _A.ENTITIES, _A.RELATIONSHIPS, _A.GRAPH}
 
 METHODOLOGY_PROFILES: dict[Methodology, MethodologyProfile] = {
     # Local reads the relationship vectors and claims when they are built
-    # (its relationship section, bridge relationships); global and drift
-    # answer from the community reports.
+    # (its relationship section, bridge relationships). Global and drift
+    # answer from the community reports, so they require them on their own
+    # (REPORT_READER_ARTIFACTS): local works without them.
     Methodology.GRAPHRAG: MethodologyProfile(
-        required=_GRAPH_CORE | {_A.COMMUNITIES, _A.COMMUNITY_REPORTS},
-        optional=frozenset({_A.RELATIONSHIP_VECTORS, _A.CLAIMS}),
+        required=_GRAPH_CORE | {_A.COMMUNITIES},
+        optional=frozenset({_A.COMMUNITY_REPORTS, _A.RELATIONSHIP_VECTORS, _A.CLAIMS}),
     ),
     # High-level keywords search the relationship vectors.
     Methodology.LIGHTRAG: MethodologyProfile(
@@ -78,6 +79,13 @@ METHODOLOGY_PROFILES: dict[Methodology, MethodologyProfile] = {
         required=frozenset({_A.TEXT_UNITS, _A.SUMMARY_TREE})
     ),
 }
+
+# What the strategies that answer from the community reports (global, drift)
+# read: graphrag's required artifacts and the reports, which
+# graph.community_detection.report_generation.enabled switches off.
+REPORT_READER_ARTIFACTS: frozenset[IndexArtifact] = METHODOLOGY_PROFILES[
+    Methodology.GRAPHRAG
+].required | {_A.COMMUNITY_REPORTS}
 
 # What indexing.methodologies selects by default: what one ingestion built
 # before methodologies were selectable.
@@ -134,14 +142,11 @@ def parse_artifacts(values: Iterable[object]) -> frozenset[IndexArtifact]:
 @dataclass(frozen=True)
 class ArtifactSwitch:
     """A configuration switch that, set false, turns ``artifacts`` off: no
-    run builds them. ``deselects``: a selected methodology that requires one
-    of them is left out of the effective ones (``buildable``); a switch that
-    only skips a build (report generation, with communities still detected)
-    leaves the selection as it is."""
+    run builds them, and a selected methodology that requires one of them is
+    left out of the effective ones (``buildable``)."""
 
     key: str
     artifacts: frozenset[IndexArtifact]
-    deselects: bool = True
 
 
 # Every switch that turns an index artifact off, by its dotted config key:
@@ -156,7 +161,6 @@ ARTIFACT_SWITCHES: tuple[ArtifactSwitch, ...] = (
     ArtifactSwitch(
         "graph.community_detection.report_generation.enabled",
         frozenset({_A.COMMUNITY_REPORTS}),
-        deselects=False,
     ),
     ArtifactSwitch(
         "indexing.opensearch.build_relationship_vector_index",
@@ -166,30 +170,19 @@ ARTIFACT_SWITCHES: tuple[ArtifactSwitch, ...] = (
 )
 
 
-def switched_off_artifacts(
-    is_on: Callable[[str], bool], *, deselecting: bool = False
-) -> frozenset[IndexArtifact]:
+def switched_off_artifacts(is_on: Callable[[str], bool]) -> frozenset[IndexArtifact]:
     """The artifacts the switches that are off turn off (``is_on`` reads a
-    switch by its key); with ``deselecting``, only those of the switches
-    that deselect a methodology (``ArtifactSwitch.deselects``)."""
+    switch by its key)."""
     return frozenset().union(
-        *(
-            switch.artifacts
-            for switch in ARTIFACT_SWITCHES
-            if (switch.deselects or not deselecting) and not is_on(switch.key)
-        )
+        *(switch.artifacts for switch in ARTIFACT_SWITCHES if not is_on(switch.key))
     )
 
 
-def deselecting_switches(artifacts: Iterable[IndexArtifact]) -> list[str]:
-    """The keys of the deselecting switches that turn any of ``artifacts``
-    off, in table order, as a message names them."""
+def artifact_switches(artifacts: Iterable[IndexArtifact]) -> list[str]:
+    """The keys of the switches that turn any of ``artifacts`` off, in table
+    order, as a message names them."""
     wanted = frozenset(artifacts)
-    return [
-        switch.key
-        for switch in ARTIFACT_SWITCHES
-        if switch.deselects and switch.artifacts & wanted
-    ]
+    return [switch.key for switch in ARTIFACT_SWITCHES if switch.artifacts & wanted]
 
 
 def buildable(

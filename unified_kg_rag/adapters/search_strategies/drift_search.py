@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.domain.models.methodology import REPORT_READER_ARTIFACTS
 from unified_kg_rag.domain.prompts import (
     DriftActionPrompt,
     DriftHydePrompt,
@@ -85,7 +86,7 @@ def _follow_ups(payload: dict[str, Any]) -> list[str]:
     return [str(q).strip() for q in raw if str(q).strip()]
 
 
-@register_strategy(SearchStrategy.DRIFT)
+@register_strategy(SearchStrategy.DRIFT, required_artifacts=REPORT_READER_ARTIFACTS)
 class DriftSearchStrategy(BaseSearchStrategy):
     methodology = Methodology.GRAPHRAG
 

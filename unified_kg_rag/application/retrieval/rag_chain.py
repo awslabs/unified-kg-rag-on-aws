@@ -577,7 +577,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         self._cache_lock = threading.RLock()
         # What each queried suffix's index namespace holds, with when it was
         # read (methodology_check; guarded by the cache lock).
-        self._held_methodologies: dict[str, tuple[float, frozenset[IndexArtifact]]] = {}
+        self._held_artifacts: dict[str, tuple[float, frozenset[IndexArtifact]]] = {}
         # The schema annotation fields the configured extraction schema
         # writes (filter_validation._schema_annotation_fields), loaded on the
         # first filter on one of them; None until then, and for good once a
@@ -731,7 +731,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # only among the strategies that apply every filter key, so whether
         # a key is refused never depends on the route a question takes.
         routable = filter_validation.auto_candidates(
-            self, state.get("filters"), state.get("held_methodologies")
+            self, state.get("filters"), state.get("held_artifacts")
         )
         if len(routable) == 1:
             # Nothing to choose between: no router call.
@@ -1715,8 +1715,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> RAGOutput | SearchOutput:
         rag_input, input_dict = self._prepare_invoke(input)
         filter_validation.check_requested_filter_keys(self, rag_input)
-        input_dict["held_methodologies"] = await self.acheck_methodology(
-            rag_input.search_strategy, rag_input.suffix
+        await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
+        # What auto routes among (cached since the check).
+        input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
+            self, rag_input.suffix
         )
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
@@ -2176,8 +2178,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         the route did not read go to ``leftovers``."""
         rag_input, input_dict = self._prepare_invoke(input)
         filter_validation.check_requested_filter_keys(self, rag_input)
-        input_dict["held_methodologies"] = await self.acheck_methodology(
-            rag_input.search_strategy, rag_input.suffix
+        await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
+        # What auto routes among (cached since the check).
+        input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
+            self, rag_input.suffix
         )
         search_config = self.config.search
         deadline = _QueryDeadline(

@@ -310,7 +310,9 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    `UKR__...`.
 3. Review the settings whose behaviour changed: set any 0.2.3 default you rely on (*Defaults*); replace
    `search.reranking.enabled: false` with `providers.rerank.kind: none` (otherwise a Bedrock Rerank call per query),
-   and expect RRF ordering where you set `search.fusion.method: weighted` (#577).
+   and expect RRF ordering where you set `search.fusion.method: weighted` (#577). With
+   `graph.community_detection.report_generation.enabled: false`, `global` and `drift` queries are refused (exit 2,
+   naming the switch) and `auto` leaves them out; `local` answers as before (#PR).
 4. A custom `fusion_weights.lightrag_linked_chunks` weight: set `lightrag_relation_chunks` too (usually the same
    value) to keep weighting every LightRAG graph chunk; mix and hybrid recall are sensitive to it (#521, #530).
    Rename an `opensearch_all` weight to `vector_all` and drop `opensearch_community_reports`,
@@ -447,6 +449,9 @@ From a `main` checkout (formats and keys no release had):
   edit), and those chunks are extracted again. `graph_metrics.average_clustering` is empty unless
   `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
   now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`.
+- #PR report generation off: a namespace built with `graph.community_detection.report_generation.enabled: false`
+  holds `graphrag` again, so `local` answers on it (refused since #603); `global` and `drift`, which read the
+  reports, are refused naming the switch. Nothing re-runs.
 
 ### Added
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
@@ -495,7 +500,9 @@ From a `main` checkout (formats and keys no release had):
   builds, so `ppr` is served wherever `lightrag` is, and `raptor` reads a summary tree (#599). Without a build
   record (a namespace ingested before them), a query takes the namespace to hold what a run of the config builds,
   `hipporag` included (#602). With `graph.community_detection.report_generation.enabled: false` a run builds no
-  reports, so an incremental run no longer takes them for missing and rebuilds the namespace; the rebuild that adds
+  reports, so an incremental run no longer takes them for missing and rebuilds the namespace, and the namespace
+  holds `graphrag` for `local` while `global` and `drift`, which declare the reports among their artifacts, are
+  refused naming the switch (a WARNING at load says so, #PR); the rebuild that adds
   a methodology asks before deleting more than `indexing.max_deletion_share` of the scope's documents, as an
   incremental run does; a run without community detection (`[lightrag]`) exports `visualization_data.json` without
   communities; a run that builds no graph-store artifact (`[raptor]`) writes no graph store, so `run-ingestion`
