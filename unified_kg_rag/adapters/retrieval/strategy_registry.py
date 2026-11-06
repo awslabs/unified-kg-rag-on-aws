@@ -51,6 +51,10 @@ class StrategySpec:
         query_inputs: Query-side extractions the strategy reads.
         needs_community_reports: Whether the strategy answers from community
             reports, which only ``graph.community_detection.enabled`` builds.
+        wraps: For a strategy that runs another one's search (``iterative``),
+            the strategy it wraps under a config. The chain then extracts
+            what that one reads and packs the context as that one does
+            (``wrapped_strategy``).
     """
 
     strategy_class: type[BaseSearchStrategy]
@@ -59,6 +63,7 @@ class StrategySpec:
     )
     query_inputs: frozenset[QueryInput] = frozenset()
     needs_community_reports: bool = False
+    wraps: Callable[[Config], SearchStrategy] | None = None
 
 
 _REGISTRY: dict[SearchStrategy, StrategySpec] = {}
@@ -75,6 +80,7 @@ def register_strategy(
     ),
     query_inputs: frozenset[QueryInput] = frozenset(),
     needs_community_reports: bool = False,
+    wraps: Callable[[Config], SearchStrategy] | None = None,
 ) -> Callable[[StrategyT], StrategyT]:
     """Class decorator that registers a search strategy under ``strategy``.
 
@@ -85,6 +91,8 @@ def register_strategy(
             skips the LLM calls for the rest.
         needs_community_reports: The strategy answers from community reports;
             ``auto`` does not route to it when the pipeline builds none.
+        wraps: The strategy it runs the search of, under a config
+            (``StrategySpec.wraps``).
 
     Raises:
         ValueError: If ``strategy`` is already registered to another class.
@@ -102,6 +110,7 @@ def register_strategy(
             required_roles=tuple(required_roles),
             query_inputs=frozenset(query_inputs),
             needs_community_reports=needs_community_reports,
+            wraps=wraps,
         )
         logger.debug(
             "Registered search strategy '%s' -> %s", strategy.value, cls.__name__
@@ -125,6 +134,20 @@ def get_strategy_spec(strategy: SearchStrategy) -> StrategySpec:
             f"No search strategy registered for '{strategy.value}'. "
             f"Available: {available or '(none)'}."
         ) from None
+
+
+def wrapped_strategy(strategy: SearchStrategy, config: Config) -> SearchStrategy:
+    """The strategy whose query extraction and context packing ``strategy``
+    uses under ``config``: the one it wraps (``StrategySpec.wraps``), else
+    itself. A wrapper is never wrapped again."""
+    wraps = get_strategy_spec(strategy).wraps
+    return strategy if wraps is None else wraps(config)
+
+
+def query_inputs(strategy: SearchStrategy, config: Config) -> frozenset[QueryInput]:
+    """The query-side extractions ``strategy`` reads under ``config``: its
+    own, or those of the strategy it wraps (``wrapped_strategy``)."""
+    return get_strategy_spec(wrapped_strategy(strategy, config)).query_inputs
 
 
 def routable_strategies(config: Config) -> tuple[SearchStrategy, ...]:

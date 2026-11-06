@@ -173,6 +173,9 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
     # Upstream gives chunks what the KG sections leave unused
     # (operate.py: available_chunk_tokens = max_total_tokens - KG tokens).
     spare_context_budget_first = (SectionType.TEXT,)
+    # The section types mix and hybrid rerank against the query. iterative,
+    # whose follow-up rounds rerun mix, clears it and reranks their union once.
+    rerank_types: frozenset[str] = frozenset({SectionType.TEXT.value})
 
     def __init__(
         self,
@@ -315,7 +318,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         # multi-hop bridge entities/relations whose description lacks the question's
         # surface terms (LightRAG reranks chunks only).
         rerank_only_types = (
-            {SectionType.TEXT.value}
+            set(self.rerank_types)
             if mode in (SearchStrategy.MIX.value, SearchStrategy.HYBRID.value)
             else None
         )

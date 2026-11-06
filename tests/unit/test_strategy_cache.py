@@ -194,8 +194,11 @@ async def test_concurrent_queries_on_a_cached_strategy_are_isolated(
     assert {r.metadata["filters"]["document_id"][0] for r in first.results} == {"d-1"}
     assert {r.metadata["filters"]["document_id"][0] for r in second.results} == {"d-2"}
     assert first.metadata is not second.metadata
-    assert first.query.metadata == {"search_strategy": strategy.value}
-    assert second.query.metadata == {"search_strategy": strategy.value}
+    for out in (first, second):
+        assert out.query.metadata == {
+            "search_strategy": strategy.value,
+            "query_language": "English",
+        }
 
 
 async def test_aclose_drops_cached_strategies() -> None:

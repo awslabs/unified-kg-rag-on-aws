@@ -30,7 +30,15 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
 )
-from unified_kg_rag.domain.models import ModelPurpose, ModelRole, language_name
+from unified_kg_rag.adapters.retrieval.strategy_registry import (
+    query_inputs as strategy_query_inputs,
+)
+from unified_kg_rag.domain.models import (
+    Config,
+    ModelPurpose,
+    ModelRole,
+    language_name,
+)
 from unified_kg_rag.domain.prompts import (
     BasePrompt,
     EntityExtractionPrompt,
@@ -192,8 +200,8 @@ async def process_query(
     # The strategy is resolved (AUTO routing included) before this step,
     # so only pay for the LLM extractions the resolved strategy reads.
     needs = {
-        "entities": chain._needs_query_entities(inputs),
-        "keywords": chain._needs_dual_keywords(inputs),
+        "entities": chain._needs_query_entities(inputs, chain.config),
+        "keywords": chain._needs_dual_keywords(inputs, chain.config),
     }
     tasks: dict[str, Any] = {
         name: prefetched.pop(name)
@@ -261,22 +269,32 @@ async def process_query(
     }
 
 
-def needs_query_entities(state: dict[str, Any]) -> bool:
+def _reads(strategy: Any, config: Config | None) -> frozenset[QueryInput]:
+    """The extractions ``strategy`` reads: under ``config``, a wrapping
+    strategy's are those of the one it wraps (``iterative``'s base)."""
+    if config is None:
+        return get_strategy_spec(strategy).query_inputs
+    return strategy_query_inputs(strategy, config)
+
+
+def needs_query_entities(state: dict[str, Any], config: Config | None = None) -> bool:
     # Without a resolved strategy (direct step invocation) stay conservative
     # and extract, matching the pre-gating behavior.
     strategy = state.get("resolved_strategy")
-    return (
-        strategy is None
-        or QueryInput.ENTITIES in get_strategy_spec(strategy).query_inputs
-    )
+    return strategy is None or QueryInput.ENTITIES in _reads(strategy, config)
 
 
-def needs_dual_keywords(state: dict[str, Any]) -> bool:
+def needs_dual_keywords(state: dict[str, Any], config: Config | None = None) -> bool:
     strategy = state.get("resolved_strategy")
-    return (
-        strategy is not None
-        and QueryInput.DUAL_KEYWORDS in get_strategy_spec(strategy).query_inputs
-    )
+    return strategy is not None and QueryInput.DUAL_KEYWORDS in _reads(strategy, config)
+
+
+def query_language(chain: GraphRAGChain, inputs: dict[str, Any]) -> str:
+    """The language (its name, ``"Korean"``) the query is processed into:
+    the requested one, else the language the index was built in
+    (``_query_language``). A strategy that writes its own searches (the
+    follow-up queries of ``iterative``) writes them in it."""
+    return _query_language(chain, inputs)[0]
 
 
 def _refusal_text(text: str) -> str:
