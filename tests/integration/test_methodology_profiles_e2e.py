@@ -49,7 +49,13 @@ GRAPHRAG = (
     SearchStrategy.DRIFT,
     SearchStrategy.SIMPLE,
 )
-LIGHTRAG = (SearchStrategy.MIX, SearchStrategy.HYBRID, SearchStrategy.NAIVE)
+# iterative over its default base, mix, reads lightrag.
+LIGHTRAG = (
+    SearchStrategy.MIX,
+    SearchStrategy.HYBRID,
+    SearchStrategy.NAIVE,
+    SearchStrategy.ITERATIVE,
+)
 
 
 class _Calls:
@@ -181,6 +187,17 @@ def test_a_lightrag_only_namespace_builds_less_and_gains_graphrag_later(
         # auto has one strategy left of local, mix and global: no router call.
         out = _ask(chain, SearchStrategy.AUTO)
         assert out.metadata["search_strategy"] == "mix"
+        # iterative over local reads graphrag: refused there.
+        over_local = config.model_copy(deep=True)
+        over_local.search.iterative_search.base = "local"
+        local_chain = GraphRAGChain(over_local, providers=providers)
+        try:
+            before = len(server.chat_models)
+            with pytest.raises(MethodologyNotIndexedError, match="'iterative'"):
+                _ask(local_chain, SearchStrategy.ITERATIVE)
+            assert len(server.chat_models) == before
+        finally:
+            local_chain.close()
 
         # Adding graphrag: the run rebuilds the namespace from the stored
         # extractions; the community reports are its only new model calls.
