@@ -490,7 +490,7 @@ From a `main` checkout (formats and keys no release had):
   `iterative_round_<n>`, `iterative_round_<n>_text`) and reranked, and the answer is generated once.
   `decompose: true` splits the question into steps instead (KAG-style). `metadata["context_insufficient"]` reports a
   final insufficient verdict, `metadata["iterative"]` the rounds and their model usage; new
-  `custom_prompts.iterative_controller_*`, `query_decomposition_*` and `decomposition_step_*` (#PR). See
+  `custom_prompts.iterative_controller_*`, `query_decomposition_*` and `decomposition_step_*` (#594). See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions-opt-in).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
