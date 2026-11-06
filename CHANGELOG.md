@@ -391,7 +391,7 @@ From a `main` checkout (formats and keys no release had):
   10 s more at the median and +$0.002 for the queries it takes, and a LightRAG-only namespace now makes a router
   call (between `mix` and `iterative`) where it made none. To keep the earlier routing, set
   `search.auto_routable_strategies: [local, mix, global]`; nothing is re-run.
-- (#PR) `raptor` can be selected (`indexing.methodologies`); without it nothing changes: no stage cache, extraction
+- (#599) `raptor` can be selected (`indexing.methodologies`); without it nothing changes: no stage cache, extraction
   record or evaluation manifest is keyed by the new settings at their defaults, and the text units are stored as
   before. Adding `raptor` to a namespace builds its summary tree on the next run, or with `run-ingestion
   --enabled-stages summary_tree`, from the stored text units: no re-extraction, about one summary call per five or
@@ -400,7 +400,7 @@ From a `main` checkout (formats and keys no release had):
   `indexing` as before.
 
 ### Added
-- RAPTOR summary tree, opt-in and unmeasured (#PR): the `raptor` methodology adds a `summary_tree` ingestion stage
+- RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
   after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
   mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index
   language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps the rebuilt tree into its own
@@ -423,7 +423,7 @@ From a `main` checkout (formats and keys no release had):
   among the held ones. Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's); `hipporag`
-  holds what `lightrag` builds and `raptor` reads a summary tree (#PR). See [methodology
+  holds what `lightrag` builds and `raptor` reads a summary tree (#599). See [methodology
   profiles](docs/concepts/overview.md#methodology-profiles) and [Design §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the
