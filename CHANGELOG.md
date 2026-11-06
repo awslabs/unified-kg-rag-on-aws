@@ -485,7 +485,7 @@ From a `main` checkout (formats and keys no release had):
   makes no report call. On the CDK stack the `methodologies` context key sets it on both task definitions, so every
   state-machine run builds the profile (#603). The build record names the artifacts and methodologies a namespace
   holds; a query whose strategy reads what the namespace does not hold fails before any model call, naming what it
-  holds and what adding the methodology costs (for `raptor`, the tree alone) (#PR), and `auto` routes only among the
+  holds and what adding the methodology costs (for `raptor`, the tree alone) (#609), and `auto` routes only among the
   strategies it serves. Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
