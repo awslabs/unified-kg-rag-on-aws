@@ -85,7 +85,7 @@ uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 extra가 없으면 해당 명령이 extra 이름을 알려 주고 종료 코드 `2`로 종료합니다.
 
 - **`eval`**: `run-eval`의 LangChain·RAGAS 심사 평가기(ragas, datasets, pandas,
-  langchain-openai). 둘 다 기본으로 켜져 있습니다([평가기](../guides/evaluate.ko.md#평가기)). LLM을 쓰지 않는
+  langchain-openai). RAGAS는 기본으로 켜져 있고 LangChain은 선택 사항입니다([평가기](../guides/evaluate.ko.md#평가기)). LLM을 쓰지 않는
   평가기에는 extra가 필요 없습니다.
 - **`viz`**: `run-visualization`의 대화형 그래프용 pyvis([Visualization](../guides/visualize.md), 영문). 정적 차트는 추가 패키지 없이 동작합니다.
 

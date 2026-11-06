@@ -30,13 +30,16 @@ recipes in [§15](#15-extension-guide).
 ## 1. Overview and Design Philosophy
 
 `unified-kg-rag-on-aws` reimplements the Microsoft GraphRAG and LightRAG
-methodologies on an AWS-native stack (Bedrock, Neptune, OpenSearch, S3,
-DynamoDB). Its design principles:
+methodologies, with HippoRAG 2's Personalized PageRank and RAPTOR's summary
+tree, on an AWS-native stack (Bedrock, Neptune, OpenSearch, S3, DynamoDB).
+Its design principles:
 
-- **Two methodologies, one infrastructure.** GraphRAG (community summaries)
-  and LightRAG (dual-level keywords) share ingestion, indexing, caching,
-  multilingual processing and hybrid search; **only the retrieval algorithm
-  differs**.
+- **Several methodologies, one infrastructure.** GraphRAG (community
+  summaries), LightRAG (dual-level keywords), HippoRAG 2 (Personalized
+  PageRank, §6.4) and RAPTOR (a summary tree, opt-in, §6.5) share
+  ingestion, indexing, caching, multilingual processing and hybrid search;
+  **only the retrieval algorithm differs**, and an ingestion builds only
+  what the selected methodologies read (§4.6).
 - **Generalization first.** No hardcoded domain rules or regex heuristics:
   semantic judgments go to the LLM or to authoritative data, token counts to
   the model's tokenizer API where it has one (a script-aware estimate
@@ -48,7 +51,7 @@ DynamoDB). Its design principles:
   evaluators map from `EvaluatorType` in one method (§2.4).
 
 Where the framework extends the GraphRAG and LightRAG papers (triple-hybrid
-retrieval, both methodologies on one index, incremental indexing, multilingual
+retrieval, several methodologies on one index, incremental indexing, multilingual
 ingestion, bring-your-own graphs and schemas, measured defaults) and where it
 deliberately departs from them is summarized in
 [Overview: Beyond the papers](./concepts/overview.md#beyond-the-papers); the
@@ -144,10 +147,11 @@ unified_kg_rag/
 │  ├─ ingestion/        #   pure algorithms: delta_detector, graph_builder/resolver/analyzer,
 │  │  │                 #   claim_resolver, contributions, derivation, cache_keys,
 │  │  │                 #   document_identity, seed_graph, visualization_data (+ layout helpers),
-│  │  │                 #   community_clustering (Leiden hierarchy, content-named communities)
+│  │  │                 #   community_clustering (Leiden hierarchy, content-named communities),
+│  │  │                 #   methodologies (methodology -> stages), summary_tree (RAPTOR clustering)
 │  │  └─ merge/         #   cross-run merger
 │  ├─ retrieval/        #   store_names, index_prefixes, hybrid_normalization,
-│  │                    #   ppr (HippoRAG 2 Personalized PageRank, §6.4)
+│  │                    #   ppr (HippoRAG 2 Personalized PageRank, §6.4), abstention
 │  └─ prompts/          #   version-controlled prompt templates
 ├─ ports/               # interfaces the application wires, adapters implement (DocStatusPort,
 │                       #   BaseIndexer/GraphIndexer/VectorIndexer, ModelFactoryPort,
@@ -163,10 +167,12 @@ unified_kg_rag/
 │  ├─ doc_status/       #   DynamoDB/SQLite document-status registries (DocStatusPort)
 │  ├─ guardrail/        #   Bedrock ApplyGuardrail (ContentGuardPort)
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive) + ppr
+│  │                    #   + tree + iterative (wraps mix or local)
 │  ├─ retrieval/        #   abstract retriever/strategy bases, strategy_registry, hybrid scorer,
 │  │                    #   token/memory managers, ppr_ranking (PageRank over the stores)
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
-│  │                    #   translator, gleaner, community_detector, document_converter
+│  │                    #   translator, gleaner, community_detector, document_converter,
+│  │                    #   tree_summarizer (RAPTOR summaries)
 │  ├─ renderers/        #   graph visualization renderers
 │  ├─ schema_sources/   #   @register_schema_source: extraction-schema loaders (file, owl)
 │  ├─ seed_sources/     #   @register_seed_source: seed graph loaders (jsonl, csv, rdf)
@@ -182,12 +188,12 @@ unified_kg_rag/
 │  │                    #   namespace lease, extraction-record store, stage cache
 │  │                    #   (cache_manager), resume (pipeline_manager; the resume
 │  │                    #   point and rewinds in resume) and run metrics
-│  │                    #   (pipeline_metrics)
+│  │                    #   (pipeline_metrics), the summary-tree stage (summary_tree_stage)
 │  ├─ storage/          #   IndexingManager (indexer fan-out) and its collaborators:
 │  │                    #   cross_run_merge, removal, reannotation, stored_items
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output), its query
 │  │                    #   processing (query_processing) and filter-key checks
-│  │                    #   (filter_validation)
+│  │                    #   (filter_validation), methodology_check (what a namespace holds)
 │  ├─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 │  ├─ bootstrap.py      #   the composition root: build_providers, build_query_guard,
 │  │                    #   build_checkpoint_sync, resolve_extraction_schema,
@@ -197,8 +203,8 @@ unified_kg_rag/
 ├─ shared/              # leaf kernel (logging, exceptions, metrics, observability hooks,
 │                       #   write fence, utils/: hashing, ids, concurrency, scripts)
 └─ evaluation/          # real logic package: evaluation_manager / graph_aware /
-                        #   retrieval / answer_match, strategy comparison + pairwise
-                        #   judge, benchmarks/ (MuSiQue)
+                        #   retrieval / answer_match / assertion, strategy comparison +
+                        #   pairwise judge, closed_book, benchmarks/ (MuSiQue, autoq)
 ```
 
 - **Real logic package.** `evaluation/` (the manager and the LLM-free
@@ -948,9 +954,13 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   their closure. The summary tree is built by the `summary_tree` stage
   after indexing (§6.5), from the stored text units, so `raptor` alone runs
   no graph stage; `hipporag` needs nothing `lightrag` does not build, so
-  every default index holds it.
+  every default index holds it, and so does a `[graphrag]` one while its
+  optional relationship vectors are built
+  (`indexing.opensearch.build_relationship_vector_index`, on by default):
+  it holds `lightrag` too.
 - **Selection.** `indexing.methodologies` (default `[graphrag, lightrag]`:
-  today's union, every stage) selects what a run builds. The effective
+  what one ingestion built before profiles, every stage but `summary_tree`)
+  selects what a run builds. The effective
   methodologies (`effective_methodologies`) leave out those whose required
   artifacts a switch turns off: `graph.community_detection.enabled: false`
   drops `graphrag`, `indexing.opensearch.build_relationship_vector_index:
@@ -1026,7 +1036,9 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   `ConfigurationError`; `run-rag` exits 2) before any model call, naming
   what the namespace holds, the strategies that serve it and how to add the
   methodology. `auto` routes only among the held methodologies' strategies
-  of `search.auto_routable_strategies`, falling back to `local` or `mix`.
+  of `search.auto_routable_strategies`, falling back to `local`, else `mix`,
+  else the first registered strategy of a held methodology (`tree` on a
+  `raptor`-only namespace).
   `local` counts as GraphRAG's: it reserves part of its
   context for the community-report section, so on a LightRAG-only index it
   would answer with that share unused; `mix`/`hybrid` serve the same entity
@@ -1494,7 +1506,10 @@ its lease.
 one chain for every strategy: conversation memory (a follow-up is rewritten as
 a standalone question) → strategy resolution → query processing (translation,
 entity or keyword extraction) → retrieval → fusion and rerank → (RAG) context
-budget and answer. `RAGInput.search_strategy` picks the methodology.
+budget and answer. `RAGInput.search_strategy` picks the strategy, and so
+the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
+`iterative` (§6.3), HippoRAG 2's `ppr` (§6.4) and RAPTOR's `tree` (§6.5);
+the section keeps its title, which links cite.
 
 ![Retrieval chain](../assets/retrieval-pipeline.drawio.png)
 
@@ -1505,8 +1520,8 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   steps, pack the results into the token budget (§7) and return a `RAGOutput`
   whose sources are exactly the sections the answer model saw. An empty
   budgeted context is answered "cannot answer" without calling the LLM.
-- **Graph expansion** is part of `local` and `drift`, and opt-in for `mix` /
-  `hybrid` (`search.lightrag_search.enable_graph_expansion`). Strategies find
+- **Graph expansion** is part of `local`, `drift` and `ppr` (§6.4), and
+  opt-in for `mix` / `hybrid` (`search.lightrag_search.enable_graph_expansion`). Strategies find
   the seed entities in the vector store and pass their ids to the graph
   retriever, which expands from those ids only.
 - **Under a document filter, expansion runs on the search store.** A graph
@@ -1575,9 +1590,10 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   `attributes.filters` onto the graph's copy of it
   (`LocalSearchStrategy._with_hit_filters`), and a source a graph walk
   alone reached names no seed graph.
-- **One index, both methodologies (deliberate extension).** Ingestion builds
-  the union of what the selected methodologies need, both by default (MS
-  GraphRAG builds no relationship vector index, LightRAG no communities). A
+- **One index, several methodologies (deliberate extension).** Ingestion builds
+  the union of what the selected methodologies need: GraphRAG's and
+  LightRAG's by default, which hold HippoRAG 2's too (MS GraphRAG builds no
+  relationship vector index, LightRAG no communities). A
   LightRAG-only deployment selects `indexing.methodologies: [lightrag]` to
   skip Leiden and every report call; the namespace then holds no `graphrag`
   and its strategies are refused (§4.6).
@@ -1814,16 +1830,15 @@ benefit.
 
 ### 6.3 Iterative bridge follow-up (`iterative_search.py`, opt-in)
 
-No default selects `iterative`; `auto` may route a multi-hop question to
-it (it is in `search.auto_routable_strategies` by default, and its router
-guide entry describes questions that chain facts through a bridge entity
-the question does not name), and an operator who leaves it out of that
-list keeps `auto` off it. A real-model run on 200 MuSiQue questions decided
-both (`iterative` over `mix` against `mix`: `answer_contains` +12.5 points,
-token F1 +5.2, both significant, for +9.3 s at the median query; [Defaults and
-evidence](concepts/defaults-and-evidence.md#iterative-follow-up-rounds)).
-Whether the router picks it for single-hop or sensemaking questions it
-should leave alone was not measured. It targets one
+No default selects `iterative` explicitly, but `auto` routes multi-hop
+questions to it by default: it is in `search.auto_routable_strategies`,
+and its router guide entry describes questions that chain facts through a
+bridge entity the question does not name. An operator who leaves it out of
+that list keeps `auto` off it. Real-model runs decided this: they measured
+its answers against its base and the routing (multi-hop questions routed
+to it, sensemaking and single-hop ones left to the other strategies), at
+about 10 s more for the median query routed to it ([Defaults and
+evidence](concepts/defaults-and-evidence.md#iterative-follow-up-rounds)). It targets one
 failure: on 200 MuSiQue questions (v15 benchmark index) about 53 of `mix`'s
 96 failures lacked a supporting passage, and the missing one was a later
 hop's far more often than the first's (the last hop's 14-16% against the
@@ -1841,9 +1856,8 @@ through the strategy registry, so there is no dispatch on the base:
    `IterativeControllerPrompt`) reads the question and the candidates packed
    as the answer's context is (the base's `spare_context_budget_first`),
    within `controller_context_tokens` (null: the answer's own budget, so
-   the controller judges what the answer will read; at the earlier 8000,
-   ~1200-token chunks left it 3 of the answer's 11 passages, while the
-   measured MuSiQue chunks fit either way), plus what was already
+   the controller judges what the answer will read; a smaller cap leaves
+   it only the first passages of a context of long chunks), plus what was already
    searched. It returns JSON (`parse_llm_json` with answer keys):
    `sufficient`, `known_facts`, `bridge_entities` (as the context writes
    them) and at most `max_next_queries` (2) `next_queries` naming them.
@@ -1857,10 +1871,9 @@ through the strategy registry, so there is no dispatch on the base:
    search text, but not `mix`: mix seeds its entity and relationship
    searches from keywords alone, and without a bridge those would be the
    question's, which round 0 already searched, so the round is its text
-   searches. (Rerunning mix with empty keywords, as the first version did,
-   made it fall back to the search text as a keyword, or search no entity
-   when the text passed `raw_query_fallback_max_len`: 62 of 238 controller
-   rounds in the measured run.) A query already searched (case-folded) or
+   searches (mix rerun with no keyword would fall back to the search text
+   as a keyword, or search no entity past `raw_query_fallback_max_len`). A
+   query already searched (case-folded) or
    a bridge already followed (`compact_name_key`, so `동부 창고` and `동부창고` are one) is
    not searched again, a round follows at most five bridge entities (the
    most follow-up queries a round may ask for), and the controller is shown the searched list: the
@@ -1985,18 +1998,15 @@ masked or left out).
 round. At the 2026-11 list prices (Haiku 5.5 $0.10 / $0.50 per million
 tokens, Cohere Rerank 3.5 $2 per 1,000 search units), a controller call
 reading 8,000 context tokens costs about $0.001 (one reading the
-answer's 30,000-token budget, the default since, about $0.003 when the
+answer's whole 30,000-token budget, the default, about $0.003 when the
 chunks fill it) and a rerank $0.002, so the worst case adds about $0.007
 a query to `mix`'s (about $0.013 at a full 30,000-token budget); latency adds one
-fast-model call per round plus a base search and a rerank. Measured on 200
-MuSiQue questions over `mix` (KAG reports 84-98% stopping after its first
-round): 57 queries stopped after round 0, 48 after one follow-up round and
-95 after two, at 2.19 controller calls a query; +$0.0018 a query on
-average ($0.0553 to $0.0571, the larger answer context included; the
-run's usage counted no rerank request, about $0.004 more a query at the
-rerank price above, which usage now counts as `rerank_search_units`), and the
-median query from 6.8 s to 16.1 s, p95 from 11.1 s to 27.4 s. The answer is
-generated once.
+fast-model call per round plus a base search and a rerank. The answer is
+generated once. How often the controller stops early (KAG reports 84-98%
+stopping after its first round), and the measured cost and latency per
+query, are in [Defaults and
+evidence](concepts/defaults-and-evidence.md#iterative-follow-up-rounds); a
+query's usage counts its rerank requests (`rerank_search_units`).
 
 **Fidelity: what the papers do and what we changed.** Neither IRCoT nor
 KAG is ported as a library (there is nothing to diff against algorithm by
@@ -2027,10 +2037,7 @@ MuSiQue was +5.0 (Flan-T5-XXL) and +7.1 (GPT-3), retrieval recall +3.5 and
 hybrid variant (44.3 to 48.7) but +0.2 and +1.2 on HotpotQA and 2Wiki. KAG's
 current code re-plans the original question on a retry rather than writing
 a supplementary question as the paper describes; ours follows the paper's
-supplementary-question form. Our expected gain is the own-data ceiling of
-about +11 points of answer F1 if every missing last-hop passage were
-recovered, realistically +3 to +5, below the 6-8 point minimum effect 200
-questions detect: hence the measured experiment before any default.
+supplementary-question form.
 
 ### 6.4 HippoRAG 2 Personalized PageRank (`ppr`, `local` ranking)
 
@@ -2044,8 +2051,9 @@ HippoRAG 2 seeds a Personalized PageRank (PPR) over a graph of entities and
 passages from the facts (triples) most similar to the question and from a
 dense passage search, and ranks the passages by their PPR score; the paper
 reports it above its dense-retrieval baselines on the multi-hop sets
-(MuSiQue among them). Both uses here are opt-in: the defaults change only
-on a measured answer-level result (§9.1).
+(MuSiQue among them). It is used twice here: the `ppr` strategy is
+opt-in, and the `local` ranking is the default, since a measured
+answer-level result (§9.1) showed it better than the earlier order.
 
 - **`ppr` strategy** (`adapters/search_strategies/ppr_search.py`,
   `methodology = Methodology.HIPPORAG`, config `search.ppr_search`): the
@@ -2053,31 +2061,27 @@ on a measured answer-level result (§9.1).
   besides the answer (no entity or keyword extraction). It reads the
   entities, relationships and their vector index, text units and the graph
   (the `hipporag` profile of §4.6, what `lightrag` builds); no community
-  report, so it serves a namespace built with `indexing.methodologies:
-  [hipporag]` or `[lightrag]`, and a namespace without the relationship
-  vector index (`[graphrag]` with `build_relationship_vector_index: false`)
-  refuses it before any model call (`MethodologyNotIndexedError`). The
-  `local` ranking below stays a `graphrag` strategy. `auto` never routes to it
-  (`search.auto_routable_strategies` refuses it): on 200 MuSiQue questions
-  its answers were not significantly different from `mix` or `local` at a
-  third to half of their cost, and weaker on 4-hop questions, so
-  it is the cheap, fast option a caller selects
+  report, so every namespace that holds the relationship vector index
+  serves it (the default profile, `[graphrag]` with its relationship
+  vectors, `[lightrag]`, `[hipporag]`), and one without it (`[graphrag]`
+  with `build_relationship_vector_index: false`, `[raptor]`) refuses it
+  before any model call (`MethodologyNotIndexedError`). The `local` ranking
+  below stays a `graphrag` strategy. `auto` never routes to `ppr`
+  (`search.auto_routable_strategies` refuses it until a measurement shows
+  where it wins): its answers were within the noise of `mix` and `local`
+  at a fraction of their cost, and weaker on the longest chains, so it is
+  the cheap, fast option a caller selects
   ([evidence](concepts/defaults-and-evidence.md#the-ppr-strategy)).
 - **`local` ranking** (`search.local_search.text_unit_ranking: ppr`, the
-  default; `support` is the earlier order): the same PPR replaces the order of local search's text
+  default; `support` orders the units by how many expanded entities cite
+  each): the same PPR replaces the order of local search's text
   units (`_rank_text_unit_ids`) over local's own expansion; everything else
   of local (seeds, sections, quotas, rerank) is unchanged. DRIFT's follow-up
-  local searches follow the setting. A retrieval-only screen on 200 MuSiQue
-  questions (one repeat, real models) measured it, as configured by default,
-  against `support`: the supporting passages in the context +11.0 points
-  (95% CI +8.4 to +13.8), recall@5 after the rerank +4.1 (+1.0 to +7.1);
-  fusing the same passage hits into `support`'s order without the PageRank
-  gained +6.4, so the PageRank adds 4.7 (+2.5 to +6.8) beyond the passage
-  hits; seeding from the entities alone gained only +3.9. It cost about
-  0.4 s a query on the embedded stores (the PageRank itself about 50 ms).
-  Two answer runs then measured it against `support` (`answer_contains`
-  +3.5 points, recall@5 +6.1, EM and token F1 n.s., retrieval +0.10 s a
-  query), so it became the default
+  local searches keep `support` (`search.drift_search.text_unit_ranking`):
+  the ranking was measured for `local` alone. A retrieval-only screen
+  chose its seeding (the PageRank adds to the passage hits beyond fusing
+  them into `support`'s order, and seeding from the entities alone gains
+  less), and answer runs against `support` made it the default
   ([evidence](concepts/defaults-and-evidence.md#local-ppr-ranking)). Its
   extra searches add CPU work in the querying process; with many concurrent
   queries in one process that work waits on the interpreter lock, which
@@ -2149,8 +2153,9 @@ on a measured answer-level result (§9.1).
    `source_kinds`), so `run-eval`'s retrieval evaluator scores it as any
    other.
 
-**`local` ranking** is the variant the screen above measured
-(`tests/unit/test_ppr_search.py` pins its ranking to the screen's prototype
+**`local` ranking** is the variant the retrieval-only screen measured
+([evidence](concepts/defaults-and-evidence.md#local-ppr-ranking);
+`tests/unit/test_ppr_search.py` pins its ranking to the screen's prototype
 on a fixture). It builds the same graph from local's expanded entities
 (after its frequency filter, which keeps the seeds as nodes; past
 `search.local_search.entity_frequency_threshold` a seed links no passage
@@ -2296,8 +2301,8 @@ embedding space, each cluster is summarized by a model, the summaries are
 clustered and summarized again, and a query searches every level at once
 (RAPTOR's "collapsed tree"). It is opt-in and unmeasured: `raptor` is not
 in the default `indexing.methodologies`, so no default ingestion builds a
-tree, and `search.auto_routable_strategies` refuses `tree`. Whether it helps is for the
-experiment at the end of this section to decide. The evidence is mixed:
+tree, and `search.auto_routable_strategies` refuses `tree`. Whether it
+helps on this stack is not measured yet; the published evidence is mixed:
 RAPTOR leads on specific QA in one unified benchmark (Zhou et al., arXiv
 2503.04338: MuSiQue 24.1 against vanilla RAG's 17.2), but is below vanilla
 RAG on GraphRAG-Bench's novel set (arXiv 2506.05690: fact retrieval 49.3
@@ -2309,7 +2314,8 @@ methodology `raptor` (required: text units and the summary tree), and `tree`
 declares `methodology = Methodology.RAPTOR`. The catalogue maps the
 artifact to the `summary_tree` stage (`ARTIFACT_STAGES`,
 `ARTIFACT_PRODUCERS`), which reads only the indexing stage's stored output
-(`STAGE_DEPENDENCIES[SUMMARY_TREE] = {INDEXING}`), so the stage runs only
+(`STAGE_DEPENDENCIES[SUMMARY_TREE] = {INDEXING, TRANSLATION}`: the stored
+text units, translated when translation is on), so the stage runs only
 when `raptor` is selected and `indexing.methodologies: [raptor]` alone
 runs parsing, loading, chunking, translation (when configured), indexing of
 the text units and the tree: no graph extraction, gleaning, resolution,
@@ -2323,12 +2329,13 @@ the documents (their rebuild) and leaves the tree as it is: the text units
 do not change, so neither does the leaf-set digest. The indexing stage
 writes the build record before the tree exists, so the stage adds
 `summary_tree` to the record once the tree is current
-(`VectorIndexer.add_build_artifacts`); an incremental record keeps only the
-artifacts both it and the stored record name, so a run that leaves the
-stage out (or whose tree build fails) records `raptor` as no longer held
-until a run builds the tree again. On a `raptor`-only namespace `auto`
-falls back to `tree` (§4.6's fallback), the only strategy reading what it
-holds.
+(`VectorIndexer.add_build_artifacts`). An incremental record keeps only the
+artifacts both it and the stored record name; the indexing stage keeps
+naming a live tree while `raptor` is selected and its stale nodes were
+deleted (*Incremental runs, resets and crash recovery* below), and a failed tree build drops it, so `tree` is
+refused only until a run builds the tree again. On a `raptor`-only
+namespace `auto` falls back to `tree` (§4.6's fallback), the only strategy of a held
+methodology (`naive` and `simple` serve it too when selected).
 
 **Placement and data flow.** A post-indexing stage,
 `PipelineStageType.SUMMARY_TREE` (appended after `INDEXING`, so every
@@ -2363,11 +2370,10 @@ earlier stage keeps its cache key), run when `raptor` is selected, `application/
    that 90% of `max_summary_tokens` holds at the rate the token counter
    that bounds the summary gives the cluster's own texts, so the hint
    follows the counter (the script-aware estimate scaled for the model's
-   tokenizer, or tiktoken) and the language: a fixed 0.75 words per token
-   asked for 225 words where that counter counts about 2 tokens a word,
-   and 95% of the summaries of a MuSiQue tree were cut mid-sentence. A
-   summary still over the budget keeps its longest prefix of whole
-   sentences within it (`shared/utils/sentences.py`: `。！？．` anywhere,
+   tokenizer, or tiktoken) and the language: a fixed words-per-token rate
+   asks for too many words where the counter counts about 2 tokens a word,
+   and the summaries end cut mid-sentence. A summary still over the
+   budget keeps its longest prefix of whole sentences within it (`shared/utils/sentences.py`: `。！？．` anywhere,
    `.!?…` before whitespace and not a `.` before a lowercase word, a line
    break), and is cut at a character only when its first sentence is
    longer than the budget.
@@ -2553,8 +2559,8 @@ passages): ...`; its source carries `level`, `child_ids`, `text_unit_ids`,
 `n_leaves` and `lineage_complete`, so a user can expand it to the passages,
 and the retrieval evaluator attributes it through its lineage (a `summary`
 row in `by_source_type`), its files ranked after the passages' as every
-lineage-attributed source's are (a summary at its own rank filled the top
-`k` with its lineage). A summary is index content written by a model at
+lineage-attributed source's are (at its own rank a summary would fill the
+top `k` with its lineage). A summary is index content written by a model at
 ingestion, as a community report is; it is not `synthesized` (query-time
 model output) and is reported as a source. Summaries are not used by
 `naive`, `global` or `drift` (deferred until measured: each would change a
@@ -2642,32 +2648,14 @@ Deviations from upstream, each deliberate:
 | 11 | collapsed tree: cosine, `top_k` 10, 3,500 tokens | BM25 + kNN + graph signal, RRF, rerank, level quotas, passage expansion | hybrid-retrieval requirement; provenance |
 | 12 | an in-memory pickle, no updates | a stored index, rebuilt with reuse, fail-closed removal, filters, tenancy | production indexing |
 
-Against the approved design proposal, three simplifications: the leaf-set
-digest is read from the stored text units rather than the registry (it
-works without the registry, and the tree is a function of the store
-anyway); a summary is reused from the live tree's nodes (`input_key`)
-rather than from extraction-store records, so the full build's record
-retention needs no change and a summary is reusable while its cluster is in
-the last tree; and stale nodes are found by text-unit lineage and their
-ancestors rather than by document ids, which stored text units do not
-hold.
-
-**Experiment (needs budget).** Stage 0 is free (scripted models, embedded
-stores): determinism, permutation invariance, incremental-against-full
-convergence, summary reuse after 1% and 10% deltas for `kmeans` and
-`gmm` (which decides `refresh` and the default algorithm), filters,
-mixed-language and CJK budgets, `tree` latency. Stage 1, a MuSiQue screen
-on the repaired benchmark store (no re-ingest; the tree costs about $2-8
-with Sonnet): 200 questions, 2 repeats, arms `naive`, `tree`, `mix` and
-`tree` with `graph_signal: off`; `answer_match` EM/F1, `retrieval`
-hit@k/MRR with `by_source_type`, the cost block; about $15-25. MuSiQue's
-unrelated paragraphs test specific QA, not sensemaking: a coherent corpus
-(stage 2, about $350-750, data licenses to confirm) is the real test, and
-an end-to-end comparison with upstream on 10 QuALITY articles (about
-$20-25) the fidelity check with models. Proposed bar: ship `tree` as a
-documented option if it beats `naive` on assertion coverage or
-summarization questions without losing faithfulness, at no more than twice
-`naive`'s query cost.
+Where the tree keeps its state: the leaf-set digest is read from the
+stored text units, not the registry, so the tree works without the
+registry and is a function of the store; a summary is reused from the
+live tree's nodes (`input_key`), not from extraction-store records, so the
+full build's record retention is unchanged and a summary is reusable while
+its cluster is in the last tree; and stale nodes are found by text-unit
+lineage and their ancestors, not by document ids, which stored text units
+do not hold.
 
 ---
 
@@ -2941,8 +2929,9 @@ numbers and dated prices, are in [Defaults and evidence](./concepts/defaults-and
 
 Whether the chain declines a question its corpus cannot answer is measured
 with a benchmark split built for it and an explicit decline marker. Both are
-opt-in: with no new flag and `search.abstention.mode: off` the corpus, the
-dataset, the answer prompts and the scores are those of earlier releases.
+opt-in: with no `--unanswerable` and `search.abstention.mode: off` (the
+defaults) the corpus and the dataset hold no unanswerable question and the
+answer prompts ask for no decline marker.
 
 **Benchmark** (`evaluation/benchmarks/musique.py`, driven by
 `prepare-benchmark musique --unanswerable N [--hops ...]`). MuSiQue-Full
@@ -3059,9 +3048,9 @@ measured LightRAG's win over naive RAG falling from 66.7% to 39.1% once the
 length effect is removed), and the global question set came from our own
 community reports, so it favours the method that wrote them. Four opt-in
 additions, all in the `evaluation` layer and its prompts, measure around
-both. None changes a default: a run without the new flags and evaluator
-judges and scores exactly as before. Which of them becomes a default is for
-a measured experiment to decide.
+both. None is on by default: a run without their flags and evaluator
+judges and scores with the defaults, and each stays opt-in until a
+measurement shows it should be a default.
 
 **Length buckets (always on with `--pairwise-judge`).** `PairwiseJudge`
 records each judged pair's answer lengths in estimated tokens

@@ -9,7 +9,7 @@
   <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS" width="320">
 </p>
 
-An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that turns large, multilingual document corpora into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, using multi-hop graph traversal to reason across document boundaries. It reimplements Microsoft GraphRAG and LightRAG on one shared stack, so you choose the retrieval methodology per query rather than per deployment. Running both methodologies on one stack, triple-hybrid search, incremental indexing, and multilingual processing are deliberate enhancements over the source papers.
+An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that turns large, multilingual document corpora into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, using multi-hop graph traversal to reason across document boundaries. It reimplements Microsoft GraphRAG and LightRAG, with HippoRAG 2's Personalized PageRank and an opt-in RAPTOR summary tree, on one shared stack, so you choose the retrieval methodology per query rather than per deployment and build only the methodologies you use. Running several methodologies on one stack, triple-hybrid search, incremental indexing, and multilingual processing are deliberate enhancements over the source papers.
 
 What each of them adds over GraphRAG and LightRAG, and where the framework deliberately departs from them: [Beyond the papers](./docs/concepts/overview.md#beyond-the-papers).
 
@@ -17,25 +17,25 @@ Read the [AWS Open Source Blog introduction](https://aws.amazon.com/blogs/openso
 
 ## Why this framework
 
-- **Two methodologies on one AWS stack.** GraphRAG (community summaries) and LightRAG (dual-level keywords) share ingestion, indexing, caching and search; only the retrieval algorithm differs, chosen per query. Every answer returns the sources that were actually in the model's context.
-- **Triple-hybrid search.** BM25, vector search and Neptune graph traversal, fused with Reciprocal Rank Fusion and reranked with a Bedrock rerank model.
+- **Four methodologies on one AWS stack.** GraphRAG (community summaries), LightRAG (dual-level keywords), HippoRAG 2 (Personalized PageRank over entities and passages) and RAPTOR (a summary tree, opt-in) share ingestion, indexing, caching and search; only the retrieval algorithm differs, chosen per query. `indexing.methodologies` builds only what the selected ones read ([Methodology profiles](./docs/concepts/overview.md#methodology-profiles)). Every answer returns the sources that were actually in the model's context.
+- **Triple-hybrid search.** BM25, vector search and Neptune graph traversal, fused with Reciprocal Rank Fusion and reranked with a Bedrock rerank model (the chunk-only strategies skip the graph; `global` maps community reports instead).
 - **Incremental indexing.** With the doc-status registry on (`providers.doc_status.enabled`), only new and changed documents are re-indexed and merged into the live graph; deleting a document removes only what no other document states ([Incremental indexing](./docs/guides/incremental.md)).
 - **Bring your own knowledge graph.** Seed graphs (JSONL, CSV or an RDF A-Box) merge a graph you already have into the extracted one as virtual documents: documents stay canonical, and the seed adds descriptions, properties, IRIs and edges ([Seed graphs](./docs/guides/seed-graphs.md)).
 - **Multilingual.** Optional translation at indexing and query time, per-language analyzers (for example `nori` for Korean) and multilingual keyword extraction.
-- **Prompt tuning, evaluation and visualization.** `run-prompt-tuning` writes domain-adapted prompts from a corpus sample ([Domain adaptation](./docs/guides/domain-adaptation.md)); `run-eval` adds LLM-free coverage, retrieval and answer-match metrics to LangChain and RAGAS judges ([Evaluation](./docs/guides/evaluate.md)); `run-visualization` renders an exported graph ([Visualization](./docs/guides/visualize.md)).
+- **Prompt tuning, evaluation and visualization.** `run-prompt-tuning` writes domain-adapted prompts from a corpus sample ([Domain adaptation](./docs/guides/domain-adaptation.md)); `run-eval` adds LLM-free coverage, retrieval and answer-match metrics to LangChain, RAGAS and assertion judges, with paired strategy comparisons, metered cost and decline statistics ([Evaluation](./docs/guides/evaluate.md)); `run-visualization` renders an exported graph ([Visualization](./docs/guides/visualize.md)).
 - **Pluggable.** Storage and model backends sit behind ports, and renderers, parsers, schema and seed sources and providers register from your own package through registries. A new search strategy or evaluator is an in-tree change (a fork or a contribution): strategies are keyed by the closed `SearchStrategy` enum ([extension guide](./docs/design.md#15-extension-guide)).
 
 ## Architecture
 
 ![Architecture at a glance](./assets/architecture-overview.drawio.png)
 
-Ingestion is a resumable 12-stage pipeline (parse, chunk, extract entities and relationships, resolve, detect communities with LLM-written reports, index) into the graph and search stores: Neptune and OpenSearch on AWS, embedded SQLite or containers in local mode.
+Ingestion is a resumable 13-stage pipeline (parse, chunk, extract entities and relationships, resolve, detect communities with LLM-written reports, index, and for `raptor` build a summary tree) into the graph and search stores: Neptune and OpenSearch on AWS, embedded SQLite or containers in local mode.
 
-Every strategy runs through the same hybrid scorer and token budget. Pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
+Every strategy runs in one chain over the same indexes and token budget. Pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
 
 | Strategy | Methodology | Use when |
 |---|---|---|
-| `auto` (default) | GraphRAG | You are not sure; an LLM router picks one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `iterative`; add `drift` to route to it) |
+| `auto` (default) | Any the index holds | You are not sure; an LLM router picks one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `iterative`; add `drift` to route to it) |
 | `simple` | GraphRAG | Fast factual lookups; vector + keyword search without graph traversal |
 | `local` | GraphRAG | Questions about specific entities and their relationships |
 | `global` | GraphRAG | Broad or thematic questions, answered by map-reduce over community reports |
@@ -43,6 +43,9 @@ Every strategy runs through the same hybrid scorer and token budget. Pick one wi
 | `mix` | LightRAG | General LightRAG use; entity and relationship keyword retrieval plus chunk retrieval |
 | `hybrid` | LightRAG | Keyword-driven graph questions, without the extra chunk retrieval |
 | `naive` | LightRAG | A fast chunk-only baseline (BM25 + vector, no graph) and comparison runs |
+| `iterative` | Its base's (`mix` or `local`) | Multi-hop questions whose last hop is about an entity the question does not name; bounded follow-up rounds on the bridge entities |
+| `ppr` | HippoRAG 2 | A cheap, fast multi-hop option: Personalized PageRank over entities and passages, one LLM call (the answer) |
+| `tree` | RAPTOR (opt-in) | Answers spanning several related passages, from a summary tree built with `raptor` in `indexing.methodologies` |
 
 See [Retrieval](./docs/concepts/retrieval.md) for per-strategy behavior and the [Design Doc](./docs/design.md) for the layer map, algorithms, data model and the detailed [ingestion](./docs/design.md#4-ingestion-pipeline), [incremental](./docs/design.md#5-incremental-indexing) and [retrieval](./docs/design.md#6-retrieval-two-methodologies) diagrams.
 
@@ -148,5 +151,7 @@ Thanks to **Jihyeon Kang** for significant contributions to the library's featur
 
 - Microsoft GraphRAG: [From Local to Global: A Graph RAG Approach to Query-Focused Summarization](https://arxiv.org/abs/2404.16130) · [library](https://github.com/microsoft/graphrag)
 - LightRAG: [Simple and Fast Retrieval-Augmented Generation](https://arxiv.org/abs/2410.05779) · [library](https://github.com/HKUDS/LightRAG)
+- HippoRAG 2: [From RAG to Memory: Non-Parametric Continual Learning for Large Language Models](https://arxiv.org/abs/2502.14802) · [library](https://github.com/OSU-NLP-Group/HippoRAG)
+- RAPTOR: [Recursive Abstractive Processing for Tree-Organized Retrieval](https://arxiv.org/abs/2401.18059) · [code](https://github.com/parthsarthi03/raptor)
 
 Further reading on GraphRAG (DRIFT search, dynamic community selection, auto-tuning, LazyGraphRAG) is listed in the [Design Doc](./docs/design.md#16-further-reading).

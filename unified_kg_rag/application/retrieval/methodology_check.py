@@ -171,14 +171,30 @@ def not_indexed_message(
     ]
     holds = ", ".join(m.value for m in held) or "no methodology"
     instead = f"; its strategies: {', '.join(serving)}, or auto" if serving else ""
+    if methodology is Methodology.RAPTOR:
+        # The tree is built from the stored text units: no rebuild.
+        how = (
+            "re-run ingestion, or run-ingestion --enabled-stages summary_tree: "
+            "the summary tree is built from the stored text units, with no "
+            "re-extraction."
+        )
+    elif set(held) <= {Methodology.RAPTOR}:
+        # Nothing extracted yet: the graph costs a first build.
+        how = (
+            "re-run ingestion: the namespace holds no graph, so every text "
+            "unit is extracted (the cost of a first build)."
+        )
+    else:
+        how = (
+            "re-run ingestion: a namespace with the doc-status registry is "
+            "rebuilt once from its stored extractions, so only the model "
+            f"calls that build what {methodology.value} adds are new."
+        )
     return (
         f"Search strategy '{strategy.value}' reads the {methodology.value} "
         f"methodology, which the index namespace '{namespace}' does not hold "
         f"(it holds {holds}{instead}). To add {methodology.value}, include it "
-        "in indexing.methodologies and re-run ingestion: a namespace with "
-        "the doc-status registry is rebuilt once from its stored "
-        "extractions, so only the model calls that build what "
-        f"{methodology.value} adds are new."
+        f"in indexing.methodologies and {how}"
     )
 
 

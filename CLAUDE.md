@@ -23,11 +23,13 @@ allowlist of exceptions is empty; keep it so).
   removing a name means editing `tests/unit/test_public_api.py` (and a
   CHANGELOG "Breaking" entry for a removal or rename). Inside the package,
   import from it only `__version__`.
-- **`domain/`**: technology-agnostic core — `models/` (Pydantic), pure
+- **`domain/`**: technology-agnostic core — `models/` (Pydantic; the
+  methodology catalogue in `methodology.py`), pure
   algorithms (`ingestion/` merge/delta/resolve/analyze, community clustering
-  (`community_clustering`), stage cache keys, document identity,
-  visualization data and layout; `retrieval/` store names,
-  index prefixes, hybrid normalization), and `prompts/` templates. Imports
+  (`community_clustering`), the methodology → stage map (`methodologies`),
+  stage cache keys, document identity, visualization data and layout;
+  `retrieval/` store names, index prefixes, hybrid normalization, PPR,
+  abstention), and `prompts/` templates. Imports
   only `shared`: no port or adapter, not even for typing — domain code that
   reads a store declares the subset it needs as its own `Protocol`
   (`delta_detector.DocStatusReader`, pinned to `DocStatusPort` by
@@ -108,13 +110,18 @@ The rules to keep in mind:
 
 ## Capabilities & CLIs
 
-- **Two retrieval methodologies** (user-selectable via `RAGInput.search_strategy`):
-  GraphRAG community-summary (`auto`/`drift`/`global`/`local`/`simple`) and
-  LightRAG dual-level keyword (`mix`/`hybrid`/`naive`). Both share the same
-  ingestion, indexing, caching, multilingual, and hybrid-scoring infrastructure;
-  only the retrieval algorithm differs. LightRAG `mix`/`hybrid` extract high/low
-  keywords (`KeywordsExtractionPrompt`) and query a relationship vector index
-  (high-level) + entity index (low-level) + Neptune expansion.
+- **Four retrieval methodologies** (`Methodology`; strategy per query via
+  `RAGInput.search_strategy`, `auto` routes): GraphRAG community-summary
+  (`drift`/`global`/`local`/`simple`), LightRAG dual-level keyword
+  (`mix`/`hybrid`/`naive`), HippoRAG 2 Personalized PageRank (`ppr`; `local`
+  ranks its text units by it by default) and RAPTOR summary tree (`tree`,
+  opt-in); `iterative` wraps `mix` or `local` with follow-up rounds. They
+  share ingestion, indexing, caching, multilingual and hybrid-scoring
+  infrastructure; only the retrieval algorithm differs. Every strategy class
+  declares its `methodology`; `indexing.methodologies` selects what ingestion
+  builds (the stages follow), the build record names what a namespace holds,
+  and a strategy reading what it does not hold is refused before any model
+  call (`docs/design.md` §4.6, §6).
 - **Incremental indexing**: enable the doc-status registry
   (`providers.doc_status.enabled`; DynamoDB, or SQLite in local mode) to diff a corpus by content hash and only
   (re)index new/changed documents, merging into the live graph
@@ -125,14 +132,16 @@ The rules to keep in mind:
 - **CLIs** (`pyproject` scripts): `run-ingestion`, `run-rag`, `run-eval`,
   `run-visualization` (render from exported graph data, no ingestion),
   `run-prompt-tuning` (profile a corpus → domain-adapted `custom_prompts` YAML),
-  `prepare-benchmark` (MuSiQue → corpus + `run-eval` dataset, downloaded at
-  run time, never committed). `run-eval --search-strategy a,b --repeats N`
+  `prepare-benchmark` (`musique`: corpus + `run-eval` dataset, downloaded at
+  run time, never committed; `assertions`: questions and assertions from
+  your corpus). `run-eval --search-strategy a,b --repeats N`
   runs a paired comparison (`evaluation/comparison.py`, optional
   `--pairwise-judge`). `docs/reference/cli.md` lists every flag; it is
   generated from the parsers by `scripts/gen_cli_reference.py`, so change a
   flag's `help=` and regenerate (a unit test fails when it is stale).
-- **Evaluation**: `langchain` + `ragas` (LLM judges) plus three LLM-free
-  evaluators: `graph_aware` (entity/relationship coverage = recall, from
+- **Evaluation**: `ragas` (LLM judge, on by default), `langchain` and
+  `assertion` (opt-in LLM judges) plus three LLM-free evaluators (on by
+  default): `graph_aware` (entity/relationship coverage = recall, from
   ground-truth `expected_entities`/`expected_relationships`; precision/F1
   intentionally not emitted — see the evaluator docstring), `retrieval`
   (hit@k/recall@k/MRR against `reference_sources`) and `answer_match` (exact
@@ -187,7 +196,9 @@ customer corpus, account ids, endpoints, and internal hostnames.
 
 Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
 `integration`, `property`, `aws` (real AWS — skipped in CI), `slow`, `perf`
-(timing assertions — weekly job only).
+(timing assertions — weekly job only), `weekly` (heavy fidelity cases against
+the original libraries — the weekly `fidelity` workflow; pull requests run a
+sample).
 
 - Tests run **AWS-free by default**. Use the port-based in-memory fakes in
   `tests/fixtures/fakes/` (e.g. `FakeDocStatusStore`) instead of mocking boto3
@@ -207,7 +218,7 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
   in `tests/integration/test_doc_status_conformance.py`.
 - Coverage gate ratchets up with measured coverage (the `--cov-fail-under` floor in
   `quality.yml` sits just under it: currently 95, measured ~96%). Run:
-  `uv run --extra otel --extra eval --extra viz --extra ontology pytest -m "not aws and not perf" -n logical --cov=unified_kg_rag`.
+  `uv run --extra otel --extra eval --extra viz --extra ontology pytest -m "not aws and not perf and not weekly" -n logical --cov=unified_kg_rag`.
 
 ## Quality gate
 
@@ -229,7 +240,8 @@ contributors **and** to Claude Code working in this repo.
   imperative mood, ≤72-char subject. Types: `feat`, `fix`, `docs`, `refactor`,
   `test`, `chore`, `style`, `perf`, `ci`, `build`. Body explains *why*, not
   *what* the diff already shows.
-- **Green before you push.** Run `uv run pytest -m "not aws and not perf"` and the pre-commit
+- **Green before you push.** Run `uv run pytest` (its addopts deselect `aws`, `perf` and
+  `weekly`) and the pre-commit
   hooks (ruff/black/isort/mypy) locally; never push a commit that fails the CI
   quality gate. Fix formatting *before* committing, not in a follow-up.
 - **No force-push to `main`, no history rewrites**: they break every clone,

@@ -61,10 +61,10 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 않습니다. 설정은 `search.ppr_search`이고, 융합 버킷(`ppr_passages`,
 `ppr_seed_text_units`, `ppr_facts`)에는 `search.fusion.fusion_weights`를 쓸 수 있습니다.
 비용과 지연 시간이 적은 선택지입니다. 다중 홉 질문에서 답변은 `local`, `mix`와 오차 범위
-안에서 같았고 비용은 그 3분의 1에서 절반이었으므로 `auto`는 이 전략을 고르지 않습니다
-([근거](../concepts/defaults-and-evidence.md#the-ppr-strategy), 영문). `local`은 기본값으로
-같은 방식으로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking: ppr`,
-`support`로 바꾸면 이전 순서). DRIFT의 후속 local 검색은 `support`를 유지합니다
+안에서 같았고 비용은 그 일부였습니다([근거](../concepts/defaults-and-evidence.md#the-ppr-strategy), 영문).
+어디서 나은지 측정으로 보이기 전까지 `auto`는 이 전략을 고르지 않으므로 직접 지정하세요. `local`은
+기본값으로 같은 방식으로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking: ppr`.
+`support`는 각 단위를 인용하는 확장 엔티티 수로 정함). DRIFT의 후속 local 검색은 `support`를 유지합니다
 (`search.drift_search.text_unit_ranking`. `ppr`로는 측정하지 않음). [검색](../concepts/retrieval.ko.md)과
 [설계 §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking)(영문)을
 참고하세요.
@@ -155,11 +155,11 @@ search:
   컨텍스트가 뒷받침하는 부분만 답하고 다루지 못한 부분을 밝히게 하고, `abstain`은 답하지
   말고 질의 언어로 거절 문장을 쓰게 한 뒤 출력을 거절로 표시합니다
   (`abstention_reason: insufficient_context`). 어느 쪽도 모델 호출을 늘리지 않습니다.
-  `iterative`로 측정했을 때 `abstain`은 답할 수 있는 질문 100개 중 45개를 거절했고 token
-  F1이 13.8점 떨어졌으므로 기본값은 `hedge`로 유지합니다
+  `iterative`로 측정했을 때 `abstain`은 답할 수 있는 질문을 많이 거절했고 token F1도
+  떨어졌으므로 기본값은 `hedge`로 유지합니다
   ([근거](../concepts/defaults-and-evidence.md#declines-and-abstention), 영문).
 - `mark`는 답변 프롬프트를 바꾸므로 답변과 EM / F1이 달라집니다. 다중 홉 질문에서 측정한
-  결과, 단서를 달아 맞힌 답변까지 거절로 바뀌어 EM이 10~12점 떨어졌습니다. 기계가 읽을 수
+  결과, 단서를 달아 맞힌 답변까지 거절로 바뀌어 EM이 떨어졌습니다. 기계가 읽을 수
   있는 거절 표시가 필요할 때만 쓰는 선택 기능으로 유지합니다
   ([근거](../concepts/defaults-and-evidence.md#declines-and-abstention), 영문). `mark` 실행은
   별도 비교군으로 다루세요. 거절을 채점하는 방법:
@@ -174,8 +174,8 @@ search:
 시작하고, 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(기본 2)번 반복합니다.
 답변 모델은 융합한 후보로 한 번만 답합니다. 기본값으로 선택되지는 않지만, 질문에 이름이 나오지
 않는 엔티티를 거쳐 사실을 이어야 하는 질문은 `auto`가 이 전략으로 보낼 수 있습니다
-(`search.auto_routable_strategies`). MuSiQue 질문 200개에서 `mix`보다 `answer_contains`가
-12.5%p, token F1이 5.2%p 높았고, 질의 시간 중앙값은 7초에서 16초로 늘었습니다
+(`search.auto_routable_strategies`). `mix` 기반으로 실행하면 다중 홉 질문에서 `mix`만 쓸 때보다
+유의하게 잘 답했고, 질의 시간 중앙값은 10초 정도 늘었습니다
 ([근거](../concepts/defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 이
 전략을 고르지 않게 하려면 이 전략을 뺀 목록을 지정합니다:
 `search.auto_routable_strategies: [local, mix, global]`.
@@ -196,7 +196,7 @@ models:
 - **비용.** fast 등급 컨트롤러 호출이 최대 `max_rounds + 1`번(`decompose`이면
   `max_rounds + 2`번)이고, 라운드마다 기본 검색과 재순위화가 한 번씩 더 듭니다. 답변은 한 번만
   생성합니다. `metadata["iterative"]`에 라운드 수, 멈춘 이유(`stop_reason`: `sufficient`,
-  `max_rounds`, `no_follow_up`, `deadline` 또는 실패한 단계), 판정마다의 결과, 후속 질의와
+  `max_rounds`, `no_follow_up`, `deadline` 또는 대체 동작으로 넘어간(degraded) 단계), 판정마다의 결과, 후속 질의와
   라운드의 모델 사용량이 기록됩니다.
 - **제한 시간.** `search.query_timeout_seconds`가 답변에 쓸 `search.model_timeout_seconds`를
   남길 때만 라운드를 시작합니다. 그 시점을 넘는 라운드는 취소되고, 답변은 앞선 라운드가 찾은

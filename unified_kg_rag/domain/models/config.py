@@ -1150,8 +1150,9 @@ class BedrockConfig(BaseModel):
         default=None,
         description=(
             "Reasoning effort for ingestion calls on the default tier (graph "
-            "extraction, gleaning, claim extraction, community reports, prompt "
-            "tuning, and the output fixer when models.roles.fixing is a "
+            "extraction, gleaning, claim extraction, description summaries, "
+            "community reports, summary-tree summaries, chunk boundaries, "
+            "translation, prompt tuning, and the output fixer when models.roles.fixing is a "
             "default-tier model). These make up most of an "
             "ingestion's default-tier tokens, so lowering this cuts ingestion "
             "cost without changing query-time effort. null inherits "
@@ -3366,15 +3367,20 @@ class IndexingConfig(BaseModel):
             "The retrieval methodologies ingestion builds: graphrag (local, "
             "global, drift, simple; communities and community reports), "
             "lightrag (mix, hybrid, naive; the relationship vector index), "
-            "hipporag (what lightrag builds), raptor (tree; the text units and "
-            "a summary tree over them, indexing.summary_tree, without graph "
-            "extraction). A run builds only what the "
+            "hipporag (ppr; what lightrag builds), raptor (tree; the text "
+            "units and a summary tree over them, indexing.summary_tree, "
+            "without graph extraction). naive and simple read what every "
+            "methodology builds; iterative reads what its base reads. The "
+            "default [graphrag, lightrag] also holds hipporag, and so does "
+            "[graphrag] while its relationship vectors are built. A run builds only what the "
             "selected ones read: without graphrag no community detection "
             "and no report calls. A query whose strategy reads a methodology "
             "the index namespace does not hold fails before any model call. "
-            "Adding one to an incremental namespace rebuilds it once from "
-            "its stored extractions (only the added methodology's model "
-            "calls are new); removing one stops maintaining its artifacts "
+            "Adding a graph methodology to an incremental namespace rebuilds "
+            "it once from its stored extractions (only the added "
+            "methodology's model calls are new; a raptor-only namespace "
+            "stores none, so every text unit is extracted); removing one "
+            "stops maintaining its artifacts "
             "without deleting them. graph.community_detection.enabled: "
             "false leaves out graphrag and "
             "indexing.opensearch.build_relationship_vector_index: false "
@@ -3683,8 +3689,9 @@ class FusionConfig(BaseModel):
             "iterative (iterative_round_<n>, round n's base search, 0 the "
             "first; iterative_round_<n>_text, its follow-up queries' text "
             "units; fused once more over the rounds, the base's own buckets "
-            "fused within each) and ppr (ppr_passages, ppr_seed_text_units, "
-            "ppr_facts). A "
+            "fused within each), ppr (ppr_passages, ppr_seed_text_units, "
+            "ppr_facts) and tree (tree_text_units, tree_summaries, "
+            "tree_graph_summaries, tree_graph_text_units). A "
             "bucket without a key weighs 1.0 (the default: none). A weight on "
             "the former bucket opensearch_all applies to vector_all, with a "
             "warning; one on the retired opensearch_community_reports, "
@@ -3957,14 +3964,11 @@ class LocalSearchConfig(BaseModel):
             "vector, weighted by passage_node_weight), which it ranks too; the "
             "PageRank settings are search.ppr_search's. 'support': by how many "
             "expanded entities cite a unit, then the best citing entity's "
-            "score (the earlier default). On 200 MuSiQue questions (two "
-            "repeats) ppr raised answer_contains by 3.5 points (95% CI +0.5 to "
-            "+6.75) and recall@5 by 6.1 (+2.9 to +9.4) against support, exact "
-            "match and token F1 not significantly, for about 0.1 s more "
-            "retrieval a query on the embedded stores. Costs a text-unit "
+            "score. ppr is the default because it answered multi-hop "
+            "questions better than support (the measurement: "
+            "docs/concepts/defaults-and-evidence.md#local-ppr-ranking). Costs a text-unit "
             "search, a relationship search, an edge read and a query "
-            "embedding a query. See docs/concepts/defaults-and-evidence.md#local-ppr-ranking "
-            "and docs/design.md §6.4."
+            "embedding a query. See docs/design.md §6.4."
         ),
     )
     ppr_seed_relationships: int = Field(
@@ -4332,9 +4336,8 @@ class IterativeSearchConfig(BaseModel):
             "search.token_manager.max_context_tokens), so the controller "
             "judges the context the answer reads; a smaller value saves "
             "fast-model input tokens, but with large chunks the controller "
-            "then misses passages the answer gets (at 8000 and ~1200-token "
-            "chunks it read 3 of the answer's 11). The answer itself always "
-            "gets its full budget."
+            "then reads only the first of the passages the answer gets. The "
+            "answer itself always gets its full budget."
         ),
     )
 
@@ -4343,12 +4346,14 @@ class PPRSearchConfig(BaseModel):
     """HippoRAG 2 Personalized PageRank (the ``ppr`` strategy; its PageRank
     settings also serve search.local_search.text_unit_ranking: ppr).
 
-    Opt-in: the defaults are HippoRAG 2's (damping 0.5, passage node weight
-    0.05, link_top_k 5). local's measured ranking uses the PageRank ones
-    (damping, passage node weight, passage seeds, iterations, edges per
-    entity) but seeds by its own search.local_search.ppr_seed_relationships
-    with no link_top_k cut; the ppr strategy's answers are not measured
-    yet. See docs/design.md §6.4.
+    The ppr strategy is opt-in (auto does not route to it): the defaults are
+    HippoRAG 2's (damping 0.5, passage node weight 0.05, link_top_k 5), and
+    docs/concepts/defaults-and-evidence.md#the-ppr-strategy has the
+    measurement of its answers. local's default
+    ranking uses the PageRank ones (damping, passage node weight, passage
+    seeds, iterations, edges per entity) but seeds by its own
+    search.local_search.ppr_seed_relationships with no link_top_k cut. See
+    docs/design.md §6.4.
     """
 
     fact_top_k: int = Field(
@@ -4699,14 +4704,15 @@ class SearchConfig(BaseModel):
             "it. iterative, for questions that chain facts through an entity "
             "they do not name, adds about 10 s to the median query it is "
             "routed to; leave it out to keep auto off it. Only the strategies "
-            "of the methodologies the queried index "
-            "namespace holds are offered (on a LightRAG-only namespace none "
-            "of local, global, drift and simple), and local or mix is used "
-            "when nothing is left; with one strategy left no router call is "
-            "made. auto itself is rejected, and so is ppr until a "
-            "measurement shows where it wins; every strategy stays "
-            "selectable explicitly, and one of a methodology the namespace "
-            "does not hold is refused."
+            "the queried index namespace serves are offered (on a "
+            "LightRAG-only namespace none of local, global and drift), and "
+            "when nothing is left local, else mix, else the first strategy "
+            "of a held methodology is used (tree on a raptor-only "
+            "namespace); with one strategy left no router call is "
+            "made. auto itself is rejected, and so are ppr until a "
+            "measurement shows where it wins and tree, which is unmeasured; "
+            "every strategy stays selectable explicitly, and one reading "
+            "what the namespace does not hold is refused."
         ),
     )
     hybrid: HybridConfig = Field(
