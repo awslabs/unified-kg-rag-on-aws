@@ -351,13 +351,10 @@ def test_a_reset_of_an_unchanged_corpus_asks_no_summary_or_report(
 
 
 def test_a_report_budget_change_asks_only_the_reports_whose_input_changed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_aws
+    tmp_path: Path, no_aws
 ) -> None:
-    # The answers stored under the earlier key (the whole report_generation
-    # section) are reused and stored under the current one; a packing budget
-    # that leaves every input as it was asks no report again.
-    from unified_kg_rag.domain.ingestion import cache_keys
-
+    # A reset reuses every stored answer; a packing budget that leaves every
+    # input as it was asks no report again.
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
     server = _CountingServer()
     providers = e2e._providers(config, server, e2e.FakeCrossEncoder("rerank"))
@@ -370,13 +367,7 @@ def test_a_report_budget_change_asks_only_the_reports_whose_input_changed(
         context = e2e._ingest(config, providers, source, tmp_path / name)
         assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
 
-    with monkeypatch.context() as earlier:
-        earlier.setattr(
-            "unified_kg_rag.adapters.ingestion.community_detector."
-            "community_report_fingerprint",
-            lambda c: cache_keys.legacy_community_report_fingerprints(c)[0],
-        )
-        run("run-1")
+    run("run-1")
     reports = server.reports
     assert reports > 0
     config.indexing.reset = True

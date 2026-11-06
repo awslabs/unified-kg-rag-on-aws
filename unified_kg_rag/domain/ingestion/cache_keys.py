@@ -1280,23 +1280,6 @@ def community_report_fingerprint(config: Config) -> str:
     )
 
 
-def legacy_community_report_fingerprints(config: Config) -> list[str]:
-    """The fingerprints earlier versions keyed report answers by (with the
-    ``report_generation`` section): a report stored under one is reused, and
-    stored under the current one too."""
-    from unified_kg_rag.domain.prompts import CommunityReportPrompt
-
-    return [
-        _answer_fingerprint(
-            config,
-            "community_report",
-            ModelRole.COMMUNITY_REPORT,
-            CommunityReportPrompt,
-            "graph.community_detection.report_generation",
-        )
-    ]
-
-
 def index_language(config: Config) -> str:
     """The language (its code) the corpus is indexed in: the target
     language when translation runs, the source language otherwise (the

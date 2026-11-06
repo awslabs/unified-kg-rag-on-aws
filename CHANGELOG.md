@@ -439,8 +439,9 @@ From a `main` checkout (formats and keys no release had):
 - #608 stored translations: translations are stored from the first run after upgrading: that run still asks the
   model for every unit it translates, with the new translation prompt, so a reset of a translated namespace
   translates and re-extracts every unit once more (the cost of a first build; an incremental run only its new and
-  changed documents), and later resets reuse them. Community report answers stored before are found under their
-  earlier key (nothing is asked again). A graph with entities without relationships may lose its top community
+  changed documents), and later resets reuse them. Community report answers stored before are not found under the new key (the packed
+  input), so the next full build asks every report once more (one call per community, the same call #605 names), and
+  later builds reuse them. A graph with entities without relationships may lose its top community
   level at its next clustering (its reports go, no call is added, global search's `community_depth` cuts one level
   higher). A document with a paragraph longer than a chunk is cut otherwise when it is next chunked (a reset or an
   edit), and those chunks are extracted again. `graph_metrics.average_clustering` is empty unless
