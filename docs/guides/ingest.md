@@ -152,8 +152,9 @@ the mechanical roles (the default for chunking, translation, map-reduce and
 summarization), fewer gleaning rounds, claims off, the caches and incremental
 indexing.
 
-Gleaning is the largest of these levers. `processing.gleaning.max_rounds`
-stays 3 for the graph recall it measured
+Gleaning is the largest of these levers (47% of a measured ingestion).
+`processing.gleaning.max_rounds` is 3; round 1 adds most of gleaning's
+relationships and rounds 2-3 little more
 ([evidence](../concepts/defaults-and-evidence.md#gleaning-rounds)). Set
-`max_rounds: 1` (MS GraphRAG's default) when ingestion cost matters more
-than graph recall.
+`max_rounds: 1` (MS GraphRAG's default) to keep most of that gain at about
+a third of the gleaning cost.

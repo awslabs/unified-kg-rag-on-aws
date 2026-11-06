@@ -33,7 +33,7 @@ measured most of the defaults below:
   sensemaking set (5 personas x 5 tasks x 2, written by Opus 5.5 from the
   level-0 community report summaries) for `global` and `drift`; and a
   109-document slice with 30 questions (their supporting paragraphs plus one
-  distractor each) for gleaning, which needs its own ingestion per arm.
+  distractor each).
 - **Repeats and judges.** Every arm answered twice and each query was
   averaged over the repeats before pairing. Pairwise verdicts
   (comprehensiveness, diversity, empowerment, directness) count only when
@@ -70,7 +70,7 @@ ships no price table, because one would go stale.
 | `search.answer_prompt_style` | `{global: comprehensive}` | Comprehensive global answers beat concise ones on comprehensiveness, diversity and empowerment at 0.95-0.99 with all three judges, +$0.016 per query; they lose directness. DRIFT stays concise for its latency ([Answer style](#answer-style)) |
 | `search.global_search.evidence_tokens` | 4000 | -41% cost per global query against no cap, no consistent quality difference, sources kept ([Global evidence cap](#global-evidence-cap)) |
 | `models.roles.evaluation` | Opus 5.5 on Bedrock | Against a GPT-5.5 judge, a Sonnet 5.5 judge shifted directness by -0.27 [-0.38, -0.16] when it judged its own answers ([The evaluation judge](#the-evaluation-judge)) |
-| `processing.gleaning.max_rounds` | 3 | +9.8 points [+3.7, +17.1] of intermediate answers found as graph entities against 1 round, for +38% ingestion cost ([Gleaning rounds](#gleaning-rounds)) |
+| `processing.gleaning.max_rounds` | 3 | Within one ingestion, round 1 adds +6.0 points of bridge relationships and rounds 2-3 +2.0; decomposition answers found as graph entities +1.3 points [+0.4, +2.3] over extraction alone, +0.4 [0.0, +1.0] from rounds 2-3. Gleaning is 47% of the ingestion cost ([Gleaning rounds](#gleaning-rounds)) |
 | `search.lightrag_search.kg_chunk_pick_method` | `weight` | `vector` n.s. on `mix` and `hybrid`, +1.5 s latency ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.fusion.diversity_lambda` | 0.5 | 0.7 and 1.0 n.s. on `mix` ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.local_search.report_selection` | `similarity` | `membership` (MS GraphRAG local's membership, over leaf communities rather than upstream's `community_level` cut) scored EM -4.0 and token F1 -4.1 points, both significant ([Local report selection](#local-report-selection)) |
@@ -137,24 +137,35 @@ and only `run-eval`'s LLM judges call it
 
 ## Gleaning rounds
 
-On the 109-document slice, ingested once with `processing.gleaning.max_rounds: 3`
-and once with `1`:
+Each item stores the time it was written, so one ingestion of the shared
+index (3 rounds) separates what extraction and each gleaning round added:
 
-- **Graph recall.** The questions' intermediate (bridge) answers found as
-  graph entities, by exact entity key: 72.0% (1 round) against 81.7% (3
-  rounds), +9.8 points [+3.7, +17.1]; 8 of 82 were found only with 3 rounds,
-  none only with 1.
-- **Graph size.** 1,149 entities and 1,279 relationships against 1,268 and
-  1,688.
-- **Ingestion cost.** $9.51 against $13.08 (+38%); gleaning itself $2.49
-  against $5.74.
-- **Answers** (30 questions, two repeats): n.s. `local` `answer_contains`
-  +13.3 points [-3.3, +33.3], `mix` unchanged; query cost unchanged for
-  `local`, +$0.0021 for `mix` (a slightly larger context).
+- **Graph recall.** The 522 decomposition answers of the 200 questions
+  (bridge and final answers) found as graph entities, by exact entity name:
+  83.5% after extraction, 84.5%, 84.7% and 84.9% after rounds 1-3. Gleaning
+  adds +1.3 points [+0.4, +2.3], rounds 2-3 +0.4 [0.0, +1.0]; every gain is
+  a last-hop answer (68.5% to 72.0%), none a bridge answer. A looser name
+  match raises every level by about 4 points and leaves the deltas unchanged.
+- **Relationships.** On the supporting paragraphs, gleaning adds 3,761
+  relationships to extraction's 4,922 (+76%) and corrects 19,936. A bridge
+  (the entity linking one hop's paragraph to the next) has an edge in the
+  next paragraph for 183 of 298 bridges after extraction, 201 after round 1
+  (+6.0 points) and 207 after round 3 (+2.0 from rounds 2-3).
+- **Ingestion cost.** Gleaning is $173.6 of the $371.64 build (47%);
+  rounds 2-3 are about $111 of it, by call count.
 
-3 rounds stays the default, against MS GraphRAG's 1, for the graph recall.
-`max_rounds: 1` is the lever when ingestion cost matters more
-([Cost levers](../guides/ingest.md#cost-levers)).
+The 109-document slice ingested once with `max_rounds: 3` and once with `1`
+cannot measure rounds: its two extractions differ before any gleaning (65
+against 59 of 82 answers found), because the runs lost different units to
+failed extractions and named some entities differently ("Rio Linda,
+Sacramento, CA" as one entity). Of the 7 answers only the 3-round run found,
+at most one came from gleaning.
+
+MuSiQue paragraphs are about 110 tokens; the GraphRAG paper motivates
+gleaning with 600-2,400-token chunks, which this index does not test. 3
+rounds stays the default until a measurement of answers decides it;
+`max_rounds: 1` keeps most of the relationship gain at about a third of
+the gleaning cost ([Cost levers](../guides/ingest.md#cost-levers)).
 
 ## LightRAG chunk picking and MMR diversity
 
