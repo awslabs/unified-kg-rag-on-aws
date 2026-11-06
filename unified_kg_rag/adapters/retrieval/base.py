@@ -36,6 +36,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.models import (
     Config,
+    GraphEdge,
     Methodology,
     RetrievalResult,
     RetrieverRole,
@@ -45,6 +46,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
+from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import InvalidFilterError
@@ -217,6 +219,23 @@ def _text_unit_ids(result: RetrievalResult) -> list[str]:
     return [str(i) for i in (result.metadata or {}).get("text_unit_ids") or []]
 
 
+def _graph_edge(hit: RetrievalResult) -> GraphEdge | None:
+    """A relationships-index hit as a ``GraphEdge`` (``None`` without both
+    endpoints)."""
+    metadata = hit.metadata or {}
+    source, target = metadata.get("source_id"), metadata.get("target_id")
+    if not source or not target:
+        return None
+    kinds = metadata.get(SOURCE_KINDS_FIELD)
+    return GraphEdge(
+        id=str(metadata.get("id") or hit.source or f"{source}->{target}"),
+        source_id=str(source),
+        target_id=str(target),
+        weight=safe_float_parse(metadata.get("weight")) or 1.0,
+        source_kinds=[str(k) for k in kinds] if isinstance(kinds, list) else None,
+    )
+
+
 class BaseGraphRAGRetriever(BaseRetriever, ABC):
     """A store-backed retriever the search strategies call by role.
 
@@ -308,6 +327,19 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         (``VectorIndexer.record_build``), read by ``run-eval`` into its run
         manifest. ``None`` (the default, for a backend without index
         metadata) when there is none or it cannot be read."""
+        return None
+
+    async def aneighbourhood_edges(
+        self, vertex_ids: list[str], query: SearchQuery, *, per_vertex: int
+    ) -> list[GraphEdge] | None:
+        """The stored relationships between two of ``vertex_ids`` (entity
+        ids), each vertex contributing its first ``per_vertex`` such edges
+        by relationship id, under ``query``'s suffix and filters, sorted by
+        ``(source_id, target_id, id)`` (``ppr.cap_edges_per_vertex``). The
+        Personalized PageRank of ``ppr`` and ``local``'s PPR ranking read
+        them. ``None`` (the default, for a backend without a graph) when
+        the backend cannot tell: the strategy reads the relationships index
+        instead."""
         return None
 
     def _get_name(self, base: str, suffix: str | None) -> str:
@@ -968,7 +1000,8 @@ class BaseSearchStrategy(ABC):
         follows the walk.
 
         ``None`` when the relationships index is missing at query time: the
-        caller falls back to the graph walk.
+        caller falls back to the graph walk. ``query.max_hops`` overrides
+        ``max_hops``.
         """
         retriever = self.document_retriever
         assert retriever is not None  # the caller walks the graph without one
@@ -1076,7 +1109,7 @@ class BaseSearchStrategy(ABC):
                 edges = kept
             return edges, full, dropped
 
-        for hop in range(neptune.max_hops):
+        for hop in range(query.max_hops or neptune.max_hops):
             per_vertex.clear()
             # Only the vertices whose seed is still short of its share.
             frontier = [vertex for vertex in frontier if open_(vertex)]
@@ -1206,6 +1239,121 @@ class BaseSearchStrategy(ABC):
                 )
             )
         return rank_expanded(results, seed_set, limit)
+
+    async def _neighbourhood_edges(
+        self, query: SearchQuery, vertex_ids: Iterable[str], per_vertex: int
+    ) -> list[GraphEdge]:
+        """The relationships between two of ``vertex_ids`` (entity ids), each
+        vertex contributing at most its first ``per_vertex`` by id
+        (``BaseGraphRAGRetriever.aneighbourhood_edges``), for a PPR over a
+        neighbourhood the expansion reached (docs/design.md §6.3).
+
+        Under a document filter the graph cannot tell which edges a passing
+        document states, so they are read from the relationships index, as
+        the filtered walk reads them (``_indexed_neighbourhood_edges``);
+        otherwise from the graph, and from the index when the graph
+        retriever cannot tell (``None``). The caller's ``id``/
+        ``source_id``/``target_id`` filters are not applied to the edges
+        (they applied to the vertices already). A failure that is not fatal
+        degrades to no edges (logged); a fatal one raises.
+        """
+        ids = list(dict.fromkeys(str(v) for v in vertex_ids if v))
+        if len(ids) < 2 or per_vertex < 1:
+            return []
+        through = query.model_copy(
+            update={
+                "filters": {
+                    k: v
+                    for k, v in (query.filters or {}).items()
+                    if k not in SCOPED_FILTER_KEYS
+                }
+                or None
+            }
+        )
+        indexed = (
+            self.document_retriever is not None
+            and self.config.indexing.opensearch.build_relationship_vector_index
+        )
+        if indexed and document_filters(query.filters):
+            edges = await self._indexed_neighbourhood_edges(through, ids, per_vertex)
+            if edges is not None:
+                return edges
+        graph = self.graph_retriever
+        if graph is not None:
+            with observability.span(
+                "kg_rag.retrieve",
+                retriever=type(graph).__name__,
+                label="Neighbourhood edges",
+            ) as span:
+                try:
+                    found = await graph.aneighbourhood_edges(
+                        ids, through, per_vertex=per_vertex
+                    )
+                except Exception as e:
+                    if is_fatal_retrieval_error(e):
+                        raise
+                    logger.error(
+                        "%s: neighbourhood edges failed (degrading to none): %s",
+                        type(self).__name__,
+                        e,
+                    )
+                    span.record_exception(e)
+                    span.set_attributes({"kg_rag.degraded": True})
+                    return []
+                if found is not None:
+                    span.set_attributes({"kg_rag.hits": len(found)})
+                    return found
+        if indexed:
+            return (
+                await self._indexed_neighbourhood_edges(through, ids, per_vertex) or []
+            )
+        return []
+
+    async def _indexed_neighbourhood_edges(
+        self, query: SearchQuery, ids: list[str], per_vertex: int
+    ) -> list[GraphEdge] | None:
+        """``_neighbourhood_edges`` from the relationships index, under the
+        caller's filters: one request per batch of source ids, the target
+        pinned to the set (when the set fits one terms clause; past it the
+        targets are kept in the set here), each page at most
+        ``_incident_fetch_limit`` best (rank, weight) edges; under two or
+        more document keys an edge also needs one passing document (its text
+        units). ``None`` when the index is missing at query time."""
+        retriever = self.document_retriever
+        assert retriever is not None  # the caller checks
+        prefix = self.config.indexing.opensearch.relationships_index_prefix
+        documents = document_filters(query.filters)
+        fields = [
+            f
+            for f in (*_WALK_EDGE_FIELDS, SOURCE_KINDS_FIELD)
+            if len(documents) > 1 or f != "text_unit_ids"
+        ]
+        limits = await retriever.aindex_limits(prefix, query.suffix)
+        pinned = (
+            query.model_copy(
+                update={"filters": scope_filters(query.filters, target_id=ids)}
+            )
+            if len(ids) <= limits.max_terms_count
+            else query
+        )
+        hits, full = await self._incident_relationships(
+            pinned, ids, fields, ends=("source_id",)
+        )
+        if full:
+            logger.debug(
+                "Neighbourhood edges: a page of the relationships index came "
+                "back full; the lowest-ranked edges of %s entities are left out",
+                len(ids),
+            )
+        if len(documents) > 1 and hits:
+            hits = await self._edges_one_document_passes(query, hits, documents)
+        if not hits and (await retriever.ahas_index(prefix, query.suffix)) is False:
+            return None
+        return cap_edges_per_vertex(
+            (edge for hit in hits if (edge := _graph_edge(hit)) is not None),
+            ids,
+            per_vertex,
+        )
 
     async def _edges_one_document_passes(
         self, query: SearchQuery, edges: list[RetrievalResult], filters: dict[str, Any]

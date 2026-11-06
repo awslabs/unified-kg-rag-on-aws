@@ -154,6 +154,11 @@ class SearchQuery(BaseModel):
         description="Graph expansion: each seed id's weight, its share of the "
         "fetch budget proportional to it (seed_shares); None splits it evenly",
     )
+    max_hops: int | None = Field(
+        default=None,
+        ge=1,
+        description="Graph expansion depth; None is indexing.neptune.max_hops",
+    )
 
     @field_validator("suffix")
     @classmethod
@@ -169,6 +174,20 @@ class SearchQuery(BaseModel):
         if value is None:
             return None
         return validate_safe_name(value, "suffix")
+
+
+class GraphEdge(BaseModel):
+    """One stored relationship as a graph edge between two entity ids
+    (``BaseGraphRAGRetriever.aneighbourhood_edges``)."""
+
+    id: str = Field(description="The relationship's id")
+    source_id: str = Field(description="Source entity id")
+    target_id: str = Field(description="Target entity id")
+    weight: float = Field(default=1.0, description="The stored relationship weight")
+    source_kinds: list[str] | None = Field(
+        default=None,
+        description="The kinds of source stating it (None: documents only)",
+    )
 
 
 class RerankStatus(str, Enum):

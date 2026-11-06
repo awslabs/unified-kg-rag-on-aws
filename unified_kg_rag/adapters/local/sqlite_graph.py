@@ -264,6 +264,30 @@ class SQLiteGraphStore:
                 counts[vertex_id] = counts.get(vertex_id, 0) + 1
         return counts
 
+    def edges_within(
+        self, label: str, ids: Iterable[str]
+    ) -> list[tuple[str, str, str, dict[str, Any]]]:
+        """``(id, source_id, target_id, props)`` of every edge of ``label``
+        between two of ``ids``: one indexed read of the edges leaving each
+        batch of them, the targets kept in the set here (any such edge
+        leaves one of them)."""
+        members = list(dict.fromkeys(str(i) for i in ids))
+        wanted = set(members)
+        found: list[tuple[str, str, str, dict[str, Any]]] = []
+        with self.read("read neighbourhood edges") as connection:
+            for batch in batches(members):
+                rows = connection.execute(
+                    "SELECT id, source_id, target_id, props FROM edges "  # nosec B608 - ? marks only, values bound
+                    f"WHERE label = ? AND source_id IN ({placeholders(batch)})",
+                    [label, *batch],
+                ).fetchall()
+                found.extend(
+                    (edge_id, source, target, json.loads(props))
+                    for edge_id, source, target, props in rows
+                    if target in wanted
+                )
+        return found
+
     def traverse(
         self,
         label: str,
