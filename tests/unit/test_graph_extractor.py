@@ -606,6 +606,20 @@ class TestPrepareExtractionInputs:
         inputs = extractor._prepare_extraction_inputs([TextUnit(id="t1", text="x")])
         assert inputs[0]["target_language"] == "ko"
 
+    def test_inputs_ask_for_the_source_language_without_translation(
+        self, extractor
+    ) -> None:
+        # Untranslated, the corpus is indexed as written: descriptions in
+        # the target language would put a second language in the graph.
+        translation = extractor.config.processing.translation
+        translation.enabled = False
+        translation.source_language = LanguageCode.JA
+        translation.target_language = LanguageCode.EN
+        unit = TextUnit(id="t1", text="倉庫", translated_texts={"en": "depot"})
+        (inputs,) = extractor._prepare_extraction_inputs([unit])
+        assert inputs["target_language"] == "ja"
+        assert inputs["input_text"] == "倉庫"
+
 
 # --------------------------------------------------------------------------- #
 # _process_extraction_results

@@ -212,3 +212,66 @@ class TestTranslationStageSkip:
         stage = self._stage(config)
         # Not skipped: a real (KO->EN) run would proceed.
         assert stage._should_skip() is None
+
+
+# --------------------------------------------------------------------------- #
+# One index language (cache_keys.index_language)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("enabled", "language"), [(True, "en"), (False, "ko")], ids=["on", "off"]
+)
+def test_the_index_language_is_the_source_language_without_translation(
+    enabled: bool, language: str
+) -> None:
+    from unified_kg_rag.domain.ingestion.cache_keys import index_language
+
+    config = Config()
+    config.processing.translation.enabled = enabled
+    # Assigned as a code: checked and read as its LanguageCode.
+    config.processing.translation.source_language = "ko"  # type: ignore[assignment]
+    config.processing.translation.target_language = "en"  # type: ignore[assignment]
+    assert config.processing.translation.source_language is LanguageCode.KO
+    assert index_language(config) == language
+
+
+def test_an_unknown_language_code_is_refused_on_assignment() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Config().processing.translation.source_language = "xx"  # type: ignore[assignment]
+
+
+def test_every_prompt_that_writes_corpus_text_names_its_language() -> None:
+    from unified_kg_rag.domain.prompts import CommunityReportPrompt, DriftHydePrompt
+
+    for prompt in (CommunityReportPrompt, DriftHydePrompt):
+        assert "target_language" in prompt.input_variables, prompt.__name__
+        prompt.validate_templates()
+
+
+def test_the_extraction_records_keep_their_key_when_translation_runs() -> None:
+    # The fingerprints follow the index language: an index in its target
+    # language keys as before, an untranslated one by its source language.
+    from unified_kg_rag.domain.ingestion.cache_keys import (
+        description_summary_fingerprint,
+        unit_record_fingerprint,
+    )
+
+    def keys(config: Config) -> tuple[str, str]:
+        return (
+            unit_record_fingerprint(config, gleaned=True),
+            description_summary_fingerprint(config),
+        )
+
+    translated = Config()
+    translated.processing.translation.source_language = LanguageCode.KO
+    untranslated = translated.model_copy(deep=True)
+    untranslated.processing.translation.enabled = False
+    as_written = untranslated.model_copy(deep=True)
+    as_written.processing.translation.target_language = LanguageCode.KO
+    first, second = keys(untranslated)
+    assert first != keys(translated)[0] and second != keys(translated)[1]
+    # Untranslated, the target language no longer shapes the prompts.
+    assert keys(untranslated)[0] == keys(as_written)[0]

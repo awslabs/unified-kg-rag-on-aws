@@ -24,6 +24,13 @@ processing:
 질의도 번역하지 않고 `source_language`로 처리합니다. 질의에 `target_language`를 지정하면
 그 언어를 따릅니다.
 
+**색인 언어는 하나입니다.** 번역을 켜면 `target_language`, 끄면 `source_language`로
+색인하며 모든 구성 요소가 이 언어를 따릅니다. 추출, 글리닝, 설명 요약, 커뮤니티 보고서,
+요약 트리를 이 언어로 쓰고, 텍스트 단위를 이 언어로 임베딩하며, 엔티티·관계·클레임·보고서
+인덱스를 이 언어의 분석기로 분석합니다. DRIFT와 global 검색도 후속 질의와 맵 포인트를 이
+언어(질의가 언어를 지정하면 그 언어)로 씁니다. 따라서 `enabled: false`이면
+`target_language`는 번역 텍스트 필드의 매핑 외에는 영향이 없습니다.
+
 **실패.** 번역에 실패한 텍스트 단위는 원문 언어로 추출합니다. 대상 언어 하나의 호출
 전체가 실패하면 `processing.ignore_errors: true`가 아닌 한 단계가 실패합니다. 증분
 실행은 `failed_units`의 문서를 실패로 기록하므로 다음 실행이 다시 시도합니다.
@@ -35,10 +42,11 @@ processing:
   `it: italian`, `pt: portuguese`, `ru: russian`은 OpenSearch 언어 분석기(불용어 제거와
   어간 추출), `ja: cjk`와 `zh: cjk`는 겹치는 두 글자 단위(플러그인 불필요, "首都"가
   "日本の首都は" 안에서 맞음), `ko: nori`입니다. 항목이 없는 언어는 `default_analyzer`를
-  씁니다. 청크 `text`는 `source_language`로
+  씁니다. 청크 `text`는 `source_language`로, 그래프 인덱스는 색인 언어로
   분석하므로 번역하지 않더라도 코퍼스 언어로 지정하세요. `source_language: en`이면 한국어
   코퍼스가 조사가 붙은 단어("홍길동으로부터")를 토큰 하나로 둡니다. 바꾸면 매핑이
-  바뀌므로 텍스트 단위를 다시 인덱싱하세요.
+  바뀌므로 `indexing.reset: true`로 한 번 실행할 때까지 증분 실행이
+  `was built for other language settings`로 멈춥니다.
 - **유니코드.** 텍스트와 질의는 NFC로 정규화하므로 분해형 한글(NFD)도 조합형과 맞습니다.
 - **분석기는 클러스터에 있어야** 하며, 없으면 인덱싱 단계가
   `the cluster has no analyzer '<name>'`로 실패합니다. `nori`는 `analysis-nori`

@@ -1571,6 +1571,11 @@ _CHUNK_SIZE_FIELDS = (
 
 
 class TranslationConfig(BaseModel):
+    # An assigned code ("ko") is checked and read as its LanguageCode, as a
+    # loaded one is: the index language (cache_keys.index_language) reads
+    # its value.
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = Field(
         default=True,
         description=(
@@ -1583,16 +1588,20 @@ class TranslationConfig(BaseModel):
         default=LanguageCode.EN,
         description="Predominant source language of the corpus. Selects the "
         "OpenSearch analyzer of the original chunk text and drives the "
-        "same-language no-op skip; translation itself is content-driven.",
+        "same-language no-op skip; translation itself is content-driven. With "
+        "translation disabled the corpus is indexed in it: extraction, "
+        "descriptions, claims, community reports and the summary tree are "
+        "written in it, the graph indexes are analyzed for it, and a query "
+        "without a requested language is processed into it.",
     )
     target_language: LanguageCode = Field(
         default=LanguageCode.EN,
         description=(
-            "Language the corpus is translated into. "
-            "Extraction, embeddings and the answer "
-            "context use it, and entity and "
-            "relationship descriptions are written in"
-            " it."
+            "Language the corpus is translated into. When translation runs, "
+            "the corpus is indexed in it: extraction, embeddings and the "
+            "answer context use it, and descriptions, claims, community "
+            "reports and the summary tree are written in it (with "
+            "translation disabled, source_language takes this role)."
         ),
     )
     additional_target_languages: list[LanguageCode] | None = Field(
@@ -4149,7 +4158,10 @@ class LightRAGSearchConfig(BaseModel):
             "When dual-level keyword extraction yields no keywords, a query whose "
             "length is below this (0 disables the gate) falls back to using the raw "
             "query as a low-level keyword, mirroring LightRAG. Longer queries skip "
-            "the fallback to avoid an over-broad graph scan."
+            "the fallback to avoid an over-broad graph scan. Counted in "
+            "characters, a dense-script (CJK, kana, Hangul) character as 4: "
+            "the token estimate's ratio, so a Korean or Chinese question is "
+            "gated at the length of an English one carrying as much."
         ),
     )
     kg_stream_top_k: int = Field(

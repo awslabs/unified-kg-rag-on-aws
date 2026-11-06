@@ -31,6 +31,7 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     format_entities_with_limit_task,
     group_by_text_unit,
 )
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
 from unified_kg_rag.domain.models import (
     Claim,
@@ -223,7 +224,7 @@ class ClaimExtractor(BaseProcessor):
     ) -> dict[str, dict[str, Any]]:
         config_for_task = {
             "max_entities_per_prompt": self.claim_extraction_config.max_entities_per_prompt,
-            "target_language": self.config.processing.translation.target_language.value,
+            "target_language": index_language(self.config),
         }
 
         # One lineage index for all units: each unit's prompt lists the

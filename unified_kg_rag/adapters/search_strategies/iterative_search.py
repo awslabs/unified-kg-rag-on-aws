@@ -78,7 +78,6 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
-    language_name,
 )
 from unified_kg_rag.domain.prompts import (
     DecompositionStepPrompt,
@@ -414,7 +413,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                     "context": context,
                     "searched": "\n".join(f"- {q}" for q in run.searched),
                     "max_next_queries": self.settings.max_next_queries,
-                    "target_language": self._language(query),
+                    "target_language": self.query_language(query),
                 },
                 config,
             )
@@ -540,7 +539,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                 {
                     "query": query.query,
                     "max_steps": self.settings.max_rounds + 1,
-                    "target_language": self._language(query),
+                    "target_language": self.query_language(query),
                 },
                 config,
             )
@@ -596,7 +595,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                     "query": step,
                     "global_query": query.query,
                     "context": context,
-                    "target_language": self._language(query),
+                    "target_language": self.query_language(query),
                 },
                 config,
             )
@@ -764,20 +763,6 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         if deadline is None:
             return None
         return deadline - time.monotonic() - self.config.search.model_timeout_seconds
-
-    def _language(self, query: SearchQuery) -> str:
-        """The language the follow-up queries are written in: the query's
-        (``query_language``, which the chain sets: the requested language,
-        else the index's), else the index's."""
-        language = query.metadata.get("query_language")
-        if isinstance(language, str) and language:
-            return language
-        translation = self.config.processing.translation
-        return language_name(
-            translation.target_language
-            if translation.enabled
-            else translation.source_language
-        )
 
     def _degrade(self, run: _Run, reason: str, error: Exception) -> None:
         """Record a failed model call, or raise ``error`` when it is fatal

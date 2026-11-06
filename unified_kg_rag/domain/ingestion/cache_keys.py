@@ -590,9 +590,9 @@ _RECORDED_AS: dict[str, str] = {
 _CURRENT_PATH: dict[str, str] = {old: new for new, old in _RECORDED_AS.items()}
 
 # Fields of a switchable block that other components read whatever its
-# ``enabled`` flag says. With translation off, extraction, gleaning, claim
-# and description prompts still take ``target_language`` and the indexer
-# picks its analyzers and translated-text fields from the three languages;
+# ``enabled`` flag says. With translation off, the prompts and the graph
+# indexes' analyzers follow ``source_language`` (``index_language``) and the
+# indexer maps its translated-text fields from the target languages;
 # with reports off, community objects still list at most
 # ``max_entities_per_report`` entity names.
 _READ_WHEN_DISABLED = frozenset(
@@ -1068,7 +1068,10 @@ def _unit_record_fingerprint(
             "version": _RECORD_FORMAT_VERSION,
             "gleaned": gleaned,
             "claims": claims,
-            "target_language": config.processing.translation.target_language.value,
+            # The language the prompts ask for (``index_language``); kept
+            # under its old name, so a corpus whose index language is its
+            # target language keeps its records.
+            "target_language": index_language(config),
             "prompts": [
                 compute_hash(
                     fill_slots(
@@ -1139,7 +1142,7 @@ def _answer_fingerprint(
     """Fingerprint the settings a corpus-wide model answer depends on beside
     its input text: the settings of every model call, the ``role``'s model
     resolved through its tier, the config ``section`` the stage reads, the
-    target language and ``prompt`` (code, or its ``custom_prompts``
+    index language (``index_language``) and ``prompt`` (code, or its ``custom_prompts``
     override)."""
     from unified_kg_rag.domain.prompts.base import fill_slots
 
@@ -1156,7 +1159,7 @@ def _answer_fingerprint(
             ),
             "model": to_jsonable_python(config.model_id(role)),
             "section": to_jsonable_python(node),
-            "target_language": config.processing.translation.target_language.value,
+            "target_language": index_language(config),
             "prompt": compute_hash(
                 fill_slots(
                     resolved.system_prompt_template
@@ -1203,9 +1206,15 @@ def community_report_fingerprint(config: Config) -> str:
 
 
 def index_language(config: Config) -> str:
-    """The language the text units are indexed and embedded in, and the
-    summary tree is written in: the target language when translation runs,
-    the source language otherwise (the query side's index language)."""
+    """The language (its code) the corpus is indexed in: the target
+    language when translation runs, the source language otherwise (the
+    corpus is indexed as written).
+
+    The one rule every component follows: text units are embedded and
+    searched in it, extraction, gleaning, claims, description summaries,
+    community reports and the summary tree are written in it, the graph
+    indexes' text fields are analyzed for it, and a query without a
+    requested language is processed into it."""
     translation = config.processing.translation
     language = (
         translation.target_language

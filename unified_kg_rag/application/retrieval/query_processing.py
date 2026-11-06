@@ -19,10 +19,7 @@ import re
 from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Any
 
-from langchain_core.output_parsers import (
-    CommaSeparatedListOutputParser,
-    StrOutputParser,
-)
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.llm.chain_factory import usage_model_id
@@ -33,6 +30,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     query_inputs as strategy_query_inputs,
 )
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.models import (
     Config,
     ModelPurpose,
@@ -45,6 +43,7 @@ from unified_kg_rag.domain.prompts import (
     KeywordsExtractionPrompt,
     TranslationPrompt,
 )
+from unified_kg_rag.domain.retrieval.query_entities import split_entity_list
 from unified_kg_rag.shared import LanguageModelError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import parse_llm_json, text_digest
@@ -58,7 +57,9 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Openings of a model refusal or meta-reply rather than the requested text
-# (a rewritten question, a translation). Matched case-insensitively.
+# (a rewritten question, a translation). Matched case-insensitively, in
+# English, Korean, Japanese and Chinese (a model replies in the user's
+# language); a refusal in another language is not recognised.
 _REFUSAL_OPENINGS: tuple[str, ...] = (
     "i'm sorry",
     "i am sorry",
@@ -69,6 +70,22 @@ _REFUSAL_OPENINGS: tuple[str, ...] = (
     "i'm unable",
     "i am unable",
     "as an ai",
+    "죄송",
+    "유감스럽게도",
+    "ai로서",
+    "申し訳",
+    "すみません",
+    "恐れ入りますが",
+    "aiとして",
+    "抱歉",
+    "对不起",
+    "對不起",
+    "很抱歉",
+    "我无法",
+    "我無法",
+    "我不能",
+    "作为ai",
+    "作为一个ai",
 )
 # A translation request also draws commentary about the input (seen when
 # the query is already in the target language).
@@ -94,7 +111,13 @@ _CLARIFICATION_REQUEST: re.Pattern[str] = re.compile(
     r"|\bplease (?:clarify|specify)"
     r"|\b(?:what|which)\b[^?]*\b(?:do|did) you (?:mean|refer)"
     r"|\bare you referring\b"
+    # Korean, Japanese, Chinese.
+    r"|명확히\s*해\s*주|구체적으로\s*(?:말씀|알려)|말씀하시는|의미하시는"
+    r"|具体的に(?:教え|お知らせ|ご指定)|指していますか|どの.*(?:ですか|でしょうか)"
+    r"|请(?:澄清|说明|具体说明|明确)|請(?:澄清|說明)|您(?:是指|指的是)|你(?:是指|指的是)"
 )
+# A question's closing mark: ASCII or fullwidth (Chinese, Japanese).
+_QUESTION_MARKS = ("?", "\uff1f")
 
 
 def _query_language(chain: GraphRAGChain, inputs: dict[str, Any]) -> tuple[str, bool]:
@@ -112,22 +135,17 @@ def _query_language(chain: GraphRAGChain, inputs: dict[str, Any]) -> tuple[str, 
     the search query.
 
     The language is the requested one, else the one the index was built
-    in: the source language when the stage is disabled (entity names and
-    text stay as written, so query entities and keywords extracted in
-    the target language would match nothing), the target language
-    otherwise (equal to the source for a no-op).
+    in (``index_language``): the source language when the stage is
+    disabled (entity names and text stay as written, so query entities
+    and keywords extracted in the target language would match nothing),
+    the target language otherwise (equal to the source for a no-op).
     """
     requested_language = inputs.get("target_language")
     translation = chain.config.processing.translation
     skip_translation = requested_language is None and (
         not translation.enabled or translation.is_noop
     )
-    if requested_language:
-        language = requested_language
-    elif not translation.enabled:
-        language = translation.source_language
-    else:
-        language = translation.target_language
+    language = requested_language or index_language(chain.config)
     return language_name(language), skip_translation
 
 
@@ -310,8 +328,9 @@ def looks_like_translation_refusal(candidate: str, original: str) -> bool:
     phrase, so genuine translations that merely contain such words mid-text
     are not caught.
 
-    The phrases are English: a meta-reply written in another language
-    passes as a translation. No language-agnostic test separates the two
+    The openings are English, Korean, Japanese and Chinese
+    (``_REFUSAL_OPENINGS``), the notices English: a meta-reply written
+    otherwise passes as a translation. No language-agnostic test separates the two
     reliably (a script mismatch misses a reply in the target language,
     which is the common case, and lengths differ legitimately across
     scripts), so the miss is accepted; the reply then searches as the
@@ -335,14 +354,17 @@ async def extract_query_entities(
         return list(cached)
     extractor = chain._get_chain_for_prompt(
         EntityExtractionPrompt,
-        CommaSeparatedListOutputParser(),
+        StrOutputParser(),
         output_ceiling=chain.config.search.output_ceilings.query_extraction,
     )
-    entities = await extractor.ainvoke(
+    raw = await extractor.ainvoke(
         {"query": query, "target_language": target_language}, config
     )
-    if not isinstance(entities, list):
+    if not isinstance(raw, str):
         return []
+    # Not split at the ASCII comma alone: a Chinese or Japanese list
+    # separates its items with 、 or ，.
+    entities = split_entity_list(raw)
     chain._cache_extraction(key, tuple(entities))
     return entities
 
@@ -478,7 +500,7 @@ def usable_rewrite(rewritten: str) -> str | None:
     # the user to clarify ("I'm sorry, could you clarify which contract?").
     opening = _refusal_text(text)
     if opening.startswith(_REFUSAL_OPENINGS) and (
-        not text.endswith("?") or _CLARIFICATION_REQUEST.search(opening)
+        not text.endswith(_QUESTION_MARKS) or _CLARIFICATION_REQUEST.search(opening)
     ):
         logger.warning("Follow-up rewrite was a refusal; using the query as is")
         return None

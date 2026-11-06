@@ -1014,6 +1014,7 @@ class TestReportInputShaping:
                     }
                 ],
                 "content_length": "medium",
+                "target_language": "Korean",
             }
         ]
         out = CommunityDetector._create_report_chain_inputs(report_inputs)
@@ -1023,6 +1024,7 @@ class TestReportInputShaping:
         assert "Alice (PERSON): A person" in chain_in["entities"]
         assert "Alice -> Acme (works_at): rel" in chain_in["relationships"]
         assert chain_in["content_length"] == "medium"
+        assert chain_in["target_language"] == "Korean"
         # Every variable the prompt reads is passed, and nothing else.
         assert set(chain_in) == set(CommunityReportPrompt.input_variables)
 

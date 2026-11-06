@@ -34,6 +34,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     source_kinds_values,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.models import (
     Config,
     GraphEdge,
@@ -45,6 +46,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.domain.models.config import language_name
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
@@ -446,6 +448,17 @@ class BaseSearchStrategy(ABC):
         self.providers = Providers.resolve(config, providers)
         self.hybrid_scorer = HybridScorer(self.config, providers=self.providers)
         self.token_manager = TokenManager(self.config, providers=self.providers)
+
+    def query_language(self, query: SearchQuery) -> str:
+        """The language (its name, ``"Korean"``) the strategy's own prompts
+        write in (follow-up queries, intermediate answers, map points): the
+        query's ``query_language``, which the chain sets (the requested
+        language, else the index's), else the index language
+        (``index_language``), so its searches match the indexed text."""
+        language = query.metadata.get("query_language")
+        if isinstance(language, str) and language:
+            return language
+        return language_name(index_language(self.config))
 
     def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str] | None:
         """The document indexes ``strategy``'s searches apply the caller's

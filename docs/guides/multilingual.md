@@ -25,6 +25,16 @@ translation stage is skipped at no cost, even with `enabled: true`. With
 in `source_language` (no query translation) unless a query asks for a
 language with `target_language`.
 
+**One index language.** The corpus is indexed in `target_language` when
+translation runs and in `source_language` otherwise. Every component follows
+it: extraction, gleaning, description summaries, community reports and the
+summary tree are written in it, the text units are embedded in it, the
+entity, relationship, claim and report indexes are analyzed for it, and
+DRIFT and global search write their follow-up queries and map points in it
+(or in a query's requested language). With `enabled: false`,
+`target_language` therefore has no effect but the translated-text fields'
+mapping.
+
 **Failures.** A text unit whose translation fails is extracted in its
 source language; a failed call for a whole target language fails the stage
 unless `processing.ignore_errors: true`. An incremental run records the
@@ -39,10 +49,12 @@ documents of the `failed_units` as failed, so the next run retries them.
   `ja: cjk` and `zh: cjk` (overlapping character pairs, so "首都" matches
   inside "日本の首都は"; no plugin), and `ko: nori`. A language without an
   entry uses `default_analyzer`. Chunk `text` is analyzed for
-  `source_language`, so set it to the corpus language even without
-  translation: with `source_language: en` a Korean corpus keeps words with
-  their particles ("홍길동으로부터") as single tokens. Changing it changes the
-  mapping: re-index the text units.
+  `source_language`, and the graph indexes for the index language, so set it
+  to the corpus language even without translation: with `source_language:
+  en` a Korean corpus keeps words with their particles ("홍길동으로부터") as
+  single tokens. Changing it changes the mapping: an incremental run stops
+  (`was built for other language settings`) until one `indexing.reset: true`
+  run.
 - **Unicode.** Text and queries are NFC-normalized, so decomposed Hangul (NFD)
   matches its composed form.
 - **The analyzer must exist on the cluster**, or the indexing stage fails

@@ -37,6 +37,7 @@ from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.ingestion.cache_keys import (
     description_summary_fingerprint,
+    index_language,
 )
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.seed_graph import seed_only
@@ -222,10 +223,9 @@ class DescriptionSummarizer:
         self.summarization_config: DescriptionSummarizationConfig = (
             self.config.processing.graph_extraction.description_summarization
         )
-        # Named in the prompt ("Write the summary in Korean"), not by code.
-        self.target_language = language_name(
-            self.config.processing.translation.target_language
-        )
+        # Named in the prompt ("Write the summary in Korean"), not by code:
+        # the language the corpus is indexed in.
+        self.target_language = language_name(index_language(self.config))
         # Recorded on each summary it makes (SUMMARIZED_WITH_ATTRIBUTE).
         self.settings = description_summary_fingerprint(self.config)
         self.providers = Providers.resolve(config, providers)

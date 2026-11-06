@@ -199,7 +199,6 @@ def _strategy(
     strat.global_search_config = gs
     strat.ignore_errors = config.processing.ignore_errors
     strat.max_concurrency = 4
-    strat.target_language = "English"
     strat.retrievers = {"document": store or _ReportStore(_documents())}
     strat.hybrid_scorer = HybridScorer(config)
     strat.token_manager = _Tokens()  # type: ignore[assignment]

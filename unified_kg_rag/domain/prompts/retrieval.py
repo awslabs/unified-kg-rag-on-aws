@@ -374,7 +374,7 @@ class DriftHydePrompt(BasePrompt):
     reports better than a short question does.
     """
 
-    input_variables = ["query", "template"]
+    input_variables = ["query", "template", "target_language"]
 
     system_prompt_template = """You write a hypothetical answer to a user question, shaped like the
 community report template you are given, so that it can be used to search for similar reports.
@@ -382,6 +382,8 @@ community report template you are given, so that it can be used to search for si
 RULES:
 - Follow the structure of the template (title, summary, findings), not its content.
 - Do not introduce named entities that do not appear in the question.
+- Write the answer in {target_language}, the language of the indexed corpus, so it matches the reports;
+  proper nouns keep their original form.
 - Respond with the hypothetical answer only, no commentary."""
 
     human_prompt_template = """QUESTION: "{query}"

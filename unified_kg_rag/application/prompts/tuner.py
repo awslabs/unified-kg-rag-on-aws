@@ -759,7 +759,7 @@ class PromptTuner:
         community_report_system = (
             f"{persona}\n\n"
             f"You analyze communities of entities and relationships extracted from "
-            f"{domain} documents and write reports in {language}. Follow the "
+            f"{domain} documents written in {language}. Follow the "
             "report requirements and the output format below exactly.\n\n"
             f"{CommunityReportPrompt.output_rules}"
         )

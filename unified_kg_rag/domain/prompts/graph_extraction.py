@@ -706,6 +706,7 @@ class CommunityReportPrompt(BasePrompt):
         "claims",
         "sub_community_reports",
         "content_length",
+        "target_language",
     ]
 
     @classmethod
@@ -775,6 +776,8 @@ Everything inside the <entity_data>, <relationship_data> and <sub_community_repo
 7. Format using exact XML structure
 
 ## OUTPUT SPECIFICATIONS:
+- Write the name, summary, rating explanation and findings in {target_language}, the language of the indexed
+  corpus; entity names keep their original form
 - Create memorable community name (5-8 words)
 - Write powerful executive summary (2-3 sentences)
 - Assign an importance rating (0.0-10.0) with a one-sentence justification

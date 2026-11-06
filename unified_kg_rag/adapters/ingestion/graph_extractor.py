@@ -28,6 +28,7 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
     coerce_llm_text,
 )
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.contributions import (
     merge_entity_contributions,
     merge_relationship_contributions,
@@ -291,9 +292,10 @@ class GraphExtractor(BaseProcessor):
         # The entity and relationship type blocks: the same for every unit.
         prompt_variables = GraphExtractionPrompt.config_variables(self.config)
         # Descriptions are written in the graph's language: the language the
-        # text is translated to (equal to the source when translation is a
-        # no-op), which is also the language queries are translated to.
-        target_language = self.config.processing.translation.target_language.value
+        # corpus is indexed in (``index_language``: the target language when
+        # translation runs, the source language otherwise), which is also
+        # the language queries are processed into.
+        target_language = index_language(self.config)
 
         for text_unit in text_units:
             try:

@@ -32,6 +32,7 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
+from unified_kg_rag.adapters.llm.token_estimate import dense_char_count
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
@@ -41,6 +42,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.domain.ingestion.chunk_length import LATIN_CHARS_PER_TOKEN
 from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     Config,
@@ -141,6 +143,16 @@ def _pick_by_weighted_polling(
     return selected
 
 
+def _latin_equivalent_length(text: str) -> int:
+    """``text``'s length in characters of Latin text that carry as much:
+    a dense-script character (CJK, kana, Hangul) counts as
+    ``LATIN_CHARS_PER_TOKEN`` (the token estimate's one token each against
+    ~4 Latin characters), any other as one. Upstream's gate counts
+    characters, which let a Korean or Chinese question four times as long
+    fall back to the raw query; Latin text keeps upstream's count."""
+    return len(text) + dense_char_count(text) * (LATIN_CHARS_PER_TOKEN - 1)
+
+
 # NAIVE is chunk retrieval only (no graph), so it declares DOCUMENT-only roles;
 # MIX/HYBRID keep the default (DOCUMENT, GRAPH) so the opt-in multi-hop graph
 # expansion (`search.lightrag_search.enable_graph_expansion`) has a GRAPH
@@ -211,7 +223,8 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         if query.hl_keywords or query.ll_keywords:
             return query
         max_len = self.config.search.lightrag_search.raw_query_fallback_max_len
-        if query.query and len(query.query) < max_len:
+        length = _latin_equivalent_length(query.query)
+        if query.query and length < max_len:
             logger.warning(
                 "No keywords extracted; falling back to raw query as ll_keyword"
             )
@@ -222,10 +235,11 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         # is empty"): hybrid then returns nothing and mix only chunks.
         logger.warning(
             "No keywords extracted and the query is too long (%s characters, "
-            "limit %s) for the raw-query fallback; no entities or relationships "
-            "are retrieved",
-            len(query.query),
+            "limit %s; a dense-script character counts %s) for the raw-query "
+            "fallback; no entities or relationships are retrieved",
+            length,
             max_len,
+            LATIN_CHARS_PER_TOKEN,
         )
         return query
 

@@ -73,6 +73,18 @@ def test_lone_letter_dash_keeps_one_token() -> None:
         ("I can't tell; are you referring to the Vendor agreement?", False),
         # Without a refusal opening the same words are a real question.
         ("Could you clarify which clause of the Vendor agreement applies?", True),
+        # Refusals and clarification requests in Korean, Japanese, Chinese.
+        ("죄송하지만 도와드릴 수 없습니다.", False),
+        ("죄송하지만 어떤 계약을 말씀하시는 건가요?", False),
+        ("申し訳ありませんが、お手伝いできません。", False),
+        ("申し訳ありませんが、どの契約のことですか？", False),
+        ("抱歉，我无法回答这个问题。", False),
+        ("抱歉，您是指哪份合同？", False),
+        # A rewritten question in those languages is used, including one
+        # that opens with an apology but asks about the corpus.
+        ("공급사의 지급 조건은 무엇인가요?", True),
+        ("すみません、供給者の支払条件は何ですか？", True),
+        ("供应商的付款条件是什么？", True),
     ],
 )
 def test_rewrite_refusal_guard(rewrite: str, usable: bool) -> None:

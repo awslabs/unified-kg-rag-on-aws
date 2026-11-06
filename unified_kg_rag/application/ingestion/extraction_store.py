@@ -24,7 +24,10 @@ from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from unified_kg_rag.domain.ingestion.cache_keys import unit_record_fingerprint
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    index_language,
+    unit_record_fingerprint,
+)
 from unified_kg_rag.domain.ingestion.contributions import (
     CHUNKS_RECORD_KIND,
     RECORD_KEYS_ATTRIBUTE,
@@ -52,10 +55,10 @@ T = TypeVar("T")
 
 
 def processed_text(config: Config, unit: TextUnit) -> str:
-    """The text extraction reads: the target-language translation, if any."""
+    """The text extraction reads: its translation into the index language
+    (``index_language``), if any."""
     if unit.translated_texts:
-        target = config.processing.translation.target_language.value
-        return unit.translated_texts.get(target, unit.text)
+        return unit.translated_texts.get(index_language(config), unit.text)
     return unit.text
 
 

@@ -123,9 +123,9 @@ def _strategy(
         text_unit_slots=0,
         evidence_tokens=evidence_tokens,
     )
+    strat.config = Config()
     strat.retrievers = {}
     strat.ignore_errors = ignore_errors
-    strat.target_language = "English"
     strat.hybrid_scorer = _no_rerank_scorer()
     strat.map_rater = _SyncMapChain(map_outputs or [])
     strat.token_manager = _TokenCounter(cost=token_cost)
@@ -903,3 +903,29 @@ def test_evidence_tokens_defaults_to_4000() -> None:
     from unified_kg_rag.domain.models.config import GlobalSearchConfig
 
     assert GlobalSearchConfig().evidence_tokens == 4000
+
+
+@pytest.mark.parametrize(
+    ("metadata", "translation", "language"),
+    [
+        ({"query_language": "Korean"}, {}, "Korean"),
+        # Untranslated, the index is in its source language, not the target.
+        (
+            {},
+            {"enabled": False, "source_language": "zh", "target_language": "en"},
+            "Chinese",
+        ),
+    ],
+    ids=["from-the-chain", "index-as-written"],
+)
+async def test_the_map_points_are_written_in_the_query_language(
+    metadata: dict[str, Any], translation: dict[str, Any], language: str
+) -> None:
+    strat = _strategy(map_outputs=[_map_payload(("p1", 50))])
+    for name, value in translation.items():
+        setattr(strat.config.processing.translation, name, value)
+    await strat._run_map_phase(
+        _batches(strat, _communities(1)), SearchQuery(query="q", metadata=metadata)
+    )
+    (batch,) = strat.map_rater.batch_inputs
+    assert batch["target_language"] == language
