@@ -26,6 +26,7 @@ from pydantic import ValidationError
 from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.domain.ingestion.community_clustering import (
+    base_partition,
     build_cluster_graph,
     canonical_graph,
     community_content_id,
@@ -294,14 +295,14 @@ class TestBasePartition:
         cd = _detector()
         g = nx.Graph()
         g.add_nodes_from(["a", "b", "c"])
-        partition = cd._get_base_partition(g)
+        partition = base_partition(g, cd.community_detection_config, entity_level=False)
         assert partition is not None
         assert sorted(partition, key=lambda s: sorted(s)) == [{"a"}, {"b"}, {"c"}]
 
     def test_finds_two_communities_in_two_triangles(self) -> None:
         cd = _detector(auto_resolution=True, min_community_size=1)
         g = _two_triangle_graph()
-        partition = cd._get_base_partition(g)
+        partition = base_partition(g, cd.community_detection_config, entity_level=False)
         assert partition is not None
         # The bridged double-triangle should split into (at least) two clusters.
         assert len(partition) >= 2
@@ -315,7 +316,7 @@ class TestBasePartition:
         cd = _detector(min_community_size=1)
         g = _two_triangle_graph()
         g.add_node("lonely", name="Lonely")
-        partition = cd._get_base_partition(g)
+        partition = base_partition(g, cd.community_detection_config, entity_level=False)
         assert partition is not None
         assert "lonely" in set().union(*partition)
 
@@ -424,9 +425,16 @@ class TestCanonicalOrder:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cd = _detector(auto_resolution=False)
-        expected = cd._get_base_partition(self._graph())
+        expected = base_partition(
+            self._graph(), cd.community_detection_config, entity_level=False
+        )
         self._shuffled_leiden(monkeypatch)
-        assert cd._get_base_partition(self._graph()) == expected
+        assert (
+            base_partition(
+                self._graph(), cd.community_detection_config, entity_level=False
+            )
+            == expected
+        )
 
     def test_hierarchy_ignores_leiden_label_order(
         self, monkeypatch: pytest.MonkeyPatch

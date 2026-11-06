@@ -250,10 +250,6 @@ class DataIngestionPipeline:
         PipelineStageType.TEXT_CHUNKING,
     )
 
-    # Emitted metric -> the stages whose execution produces it
-    # (pipeline_metrics.METRIC_STAGES).
-    METRIC_STAGES: dict[str, frozenset[str]] = pipeline_metrics.METRIC_STAGES
-
     # Names of the stages the current run executed (not skipped as completed).
     _executed_stages: frozenset[str] = frozenset()
     # The doc-status registry handed to the stages (None when off); the run
@@ -1859,22 +1855,6 @@ class DataIngestionPipeline:
     def _emit_stage_metrics(self, context: PipelineContext, stage_name: str) -> None:
         """``pipeline_metrics.emit_stage_metrics``."""
         pipeline_metrics.emit_stage_metrics(self, context, stage_name)
-
-    @staticmethod
-    def _calculate_stage_performance(
-        context: PipelineContext,
-    ) -> tuple[dict[str, float], dict[str, float]]:
-        """``pipeline_metrics.calculate_stage_performance``."""
-        return pipeline_metrics.calculate_stage_performance(context)
-
-    @staticmethod
-    def _get_stage_metric(
-        context: PipelineContext, stage_name_prefix: str, metric_name: str
-    ) -> float:
-        """``pipeline_metrics.get_stage_metric``."""
-        return pipeline_metrics.get_stage_metric(
-            context, stage_name_prefix, metric_name
-        )
 
     def verify_pipeline_metadata(self, pipeline_id: str) -> bool:
         logger.info("Verifying pipeline metadata for: %s", pipeline_id)

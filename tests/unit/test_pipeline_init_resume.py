@@ -5,7 +5,7 @@
 Complements ``test_pipeline_resume`` (which covers
 ``_prepare_context_for_resume`` canonical ordering) by exercising the OTHER
 helpers: stage enable/disable from config, pipeline-id resolution/generation,
-completed-stage skipping in ``_execute_pipeline_stages``, ``_get_stage_metric``,
+completed-stage skipping in ``_execute_pipeline_stages``, ``get_stage_metric``,
 and ``_create_pipeline_metrics`` field population. Heavy stage classes are
 replaced with lightweight stubs so no adapters/boto sessions are built.
 """
@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.ingestion import pipeline_metrics
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     Config,
@@ -388,7 +389,7 @@ def test_execute_pipeline_stages_stops_on_failure(mocker) -> None:
     assert executed == ["a"]
 
 
-# --- _get_stage_metric ---------------------------------------------------
+# --- get_stage_metric -----------------------------------------------------
 
 
 def test_get_stage_metric_returns_matching_prefix_value() -> None:
@@ -398,7 +399,7 @@ def test_get_stage_metric_returns_matching_prefix_value() -> None:
             _result("indexing", metrics={"total_indexed": 10}),
         ]
     )
-    val = DataIngestionPipeline._get_stage_metric(
+    val = pipeline_metrics.get_stage_metric(
         ctx, "graph_resolution", "entity_merge_rate"
     )
     assert val == 0.25
@@ -407,19 +408,17 @@ def test_get_stage_metric_returns_matching_prefix_value() -> None:
 def test_get_stage_metric_defaults_zero_when_absent() -> None:
     ctx = _ctx_with_results([_result("indexing", metrics={})])
     # Missing metric key -> 0.0.
-    assert DataIngestionPipeline._get_stage_metric(ctx, "indexing", "nope") == 0.0
+    assert pipeline_metrics.get_stage_metric(ctx, "indexing", "nope") == 0.0
     # No matching stage prefix -> 0.0.
-    assert DataIngestionPipeline._get_stage_metric(ctx, "missing", "x") == 0.0
+    assert pipeline_metrics.get_stage_metric(ctx, "missing", "x") == 0.0
 
 
 def test_get_stage_metric_matches_by_prefix_case_insensitive() -> None:
     ctx = _ctx_with_results([_result("Indexing", metrics={"total_failed": 3.0})])
-    assert (
-        DataIngestionPipeline._get_stage_metric(ctx, "indexing", "total_failed") == 3.0
-    )
+    assert pipeline_metrics.get_stage_metric(ctx, "indexing", "total_failed") == 3.0
 
 
-# --- _calculate_stage_performance ----------------------------------------
+# --- calculate_stage_performance ------------------------------------------
 
 
 def test_calculate_stage_performance_durations_and_throughput() -> None:
@@ -430,7 +429,7 @@ def test_calculate_stage_performance_durations_and_throughput() -> None:
             _result("c", duration=4.0, output=0),  # zero output -> no throughput
         ]
     )
-    durations, throughput = DataIngestionPipeline._calculate_stage_performance(ctx)
+    durations, throughput = pipeline_metrics.calculate_stage_performance(ctx)
     assert durations == {"a": 2.0, "c": 4.0}
     assert throughput == {"a": 5.0}
 
@@ -496,7 +495,7 @@ def test_create_pipeline_metrics_populates_counts_and_stage_metrics(
     assert metrics.relationships_indexed == 2
     assert metrics.cache_hit_rate == 0.75
     assert metrics.cache_size_mb == pytest.approx(1.0, abs=0.01)
-    # Stage durations flow through from _calculate_stage_performance.
+    # Stage durations flow through from calculate_stage_performance.
     assert metrics.stage_durations.get("indexing") == 2.0
 
 

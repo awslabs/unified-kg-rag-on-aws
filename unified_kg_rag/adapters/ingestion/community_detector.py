@@ -26,7 +26,6 @@ from unified_kg_rag.domain.ingestion.base_processor import (
 )
 from unified_kg_rag.domain.ingestion.cache_keys import community_report_fingerprint
 from unified_kg_rag.domain.ingestion.community_clustering import (
-    base_partition,
     build_hierarchy,
     entity_subgraph,
     hierarchical_communities,
@@ -226,19 +225,6 @@ class CommunityDetector:
             self.graph, self.community_detection_config
         )
         self._process_hierarchical_partitions(partitions)
-
-    def _get_base_partition(self, graph: nx.Graph | None = None) -> list[set[Any]]:
-        """``base_partition`` of ``graph``, a cluster graph, or of the entity
-        graph by default.
-
-        Raises:
-            GraphError: Leiden failed.
-        """
-        if graph is None:
-            return base_partition(self.graph, self.community_detection_config)
-        return base_partition(
-            graph, self.community_detection_config, entity_level=False
-        )
 
     def _collect_community_text_unit_ids(self, node_ids: Any) -> list[str]:
         """Union the source text-unit ids of a community's member entities.

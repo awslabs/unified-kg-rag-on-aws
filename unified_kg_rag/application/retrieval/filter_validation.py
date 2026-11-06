@@ -8,7 +8,7 @@ apply every key).
 
 The functions take the chain they validate for: it holds the config and
 the strategy instances (``_get_strategy_instance``), and it keeps
-``check_filter_keys`` and ``_validate_filter_keys`` as delegates.
+``check_filter_keys`` as a delegate.
 """
 
 from __future__ import annotations
