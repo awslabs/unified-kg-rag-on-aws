@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import argparse
+import inspect
 import json
 import logging
 import shutil
@@ -68,6 +69,7 @@ from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
+    EvaluationQuery,
     EvaluationSummary,
     EvaluatorType,
     ModelRole,
@@ -103,6 +105,7 @@ from unified_kg_rag.evaluation.saved_results import (
     group_runs,
     load_saved_runs,
     pooling_warnings,
+    rerank_unmetered,
     summary_warnings,
 )
 from unified_kg_rag.shared import (
@@ -110,6 +113,7 @@ from unified_kg_rag.shared import (
     ConfigurationError,
     DataProcessingError,
     EvaluationException,
+    MethodologyNotIndexedError,
     get_logger,
     observability,
     setup_logging,
@@ -119,6 +123,8 @@ from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
 
 logger = get_logger(__name__)
+
+_STRATEGY_VALUES = frozenset(s.value for s in SearchStrategy)
 
 
 class InvalidDatasetError(DataProcessingError):
@@ -865,8 +871,10 @@ class EvaluationRunner:
         breaches = measured.breaches
         if breaches:
             console.print(
-                f"[red]Failure budget exceeded ({markup_safe('; '.join(breaches))}; allowed "
-                f"failure rate: {self.args.max_failure_rate}).[/red]"
+                f"[red]Failure budget exceeded ({markup_safe('; '.join(breaches))}; "
+                f"--max-failure-rate {self.args.max_failure_rate}, which a run "
+                "whose every query, or every attempt of a metric, failed "
+                "breaches at any value).[/red]"
             )
             exit_code = EXIT_FAILURE
         if gate_failures:
@@ -897,19 +905,69 @@ class EvaluationRunner:
         if not self._baseline_results:
             return None
         try:
-            saved = load_saved_runs(self._baseline_results)
-            grouped = group_runs(saved)
-            if self._from_results is None:
-                # Refused now rather than after paying for the answers.
-                check_answer_scoring(
-                    [
-                        *(("baseline", run.manifest) for run in saved),
-                        ("this run", {"answer_scoring": self._answer_scoring()}),
-                    ]
-                )
+            grouped = group_runs(load_saved_runs(self._baseline_results))
         except EvaluationException as e:
             raise InvalidDatasetError(f"--baseline-results: {e}") from e
         return {f"baseline:{strategy}": runs for strategy, runs in grouped.items()}
+
+    def _check_baseline_scoring(
+        self,
+        baseline: dict[str, list[SavedRun]] | None,
+        queries: list[EvaluationQuery],
+        ground_truths: list[EvaluationGroundTruth],
+    ) -> None:
+        """Refuse a ``--baseline-results`` run scored unlike this one once
+        the dataset is read (whether it holds Han, Hangul or Kana text
+        decides if token F1's tokenizations differ), before any answer is
+        generated."""
+        if not baseline:
+            return
+        try:
+            check_answer_scoring(
+                [
+                    *(
+                        ("baseline", run.manifest)
+                        for runs in baseline.values()
+                        for run in runs
+                    ),
+                    ("this run", {"answer_scoring": self._answer_scoring()}),
+                ],
+                dense_script=EvaluationManager.holds_dense_script(
+                    queries, ground_truths
+                ),
+            )
+        except EvaluationException as e:
+            raise InvalidDatasetError(f"--baseline-results: {e}") from e
+
+    async def _check_methodologies(
+        self,
+        queries: list[EvaluationQuery],
+        strategies: list[str] | None,
+    ) -> None:
+        """Refuse, before any answer, a strategy a queried namespace does
+        not serve (``MethodologyNotIndexedError``: every one of its queries
+        would fail; exit 2, as ``run-rag``): each of ``strategies`` (a
+        comparison's), else each query's own, on each query's suffix."""
+        check = getattr(self.rag_chain, "acheck_methodology", None)
+        if not inspect.iscoroutinefunction(check):
+            return
+        pairs = dict.fromkeys(
+            (strategy, q.metadata.get("suffix"))
+            for q in queries
+            for strategy in (
+                strategies
+                if strategies is not None
+                else [q.metadata.get("search_strategy")]
+            )
+            if strategy and strategy in _STRATEGY_VALUES
+        )
+        for strategy, suffix in pairs:
+            try:
+                await check(SearchStrategy(strategy), suffix)
+            except MethodologyNotIndexedError as e:
+                raise MethodologyNotIndexedError(
+                    f"--search-strategy {strategy}: {e}"
+                ) from e
 
     def _answer_scoring(self) -> dict[str, Any] | None:
         """The answer_scoring this run's manifests will record."""
@@ -1043,6 +1101,8 @@ class EvaluationRunner:
                 EvaluationGroundTruth(query_id=q.query_id, ground_truth="")
                 for q in queries
             ]
+        self._check_baseline_scoring(baseline, queries, ground_truths)
+        await self._check_methodologies(queries, strategies if comparing else None)
 
         runs: dict[str, list[Run]] = {}
         summaries: list[dict[str, Any]] = []
@@ -1219,6 +1279,8 @@ class EvaluationRunner:
                 f"{', '.join(runs) or 'none'}"
             )
         prices = self.config.evaluation.prices
+        # Runs saved before their usage counted rerank requests.
+        unmetered = rerank_unmetered(manifests)
         names = list(runs)
         if pairs:
             comparison = baseline_comparison(
@@ -1227,6 +1289,7 @@ class EvaluationRunner:
                 pairs,
                 categories=measured.categories,
                 prices=prices,
+                unmetered_rerank=unmetered,
             )
             rows = [
                 row
@@ -1239,7 +1302,10 @@ class EvaluationRunner:
             ]
         else:
             comparison = paired_comparison(
-                runs, categories=measured.categories, prices=prices
+                runs,
+                categories=measured.categories,
+                prices=prices,
+                unmetered_rerank=unmetered,
             )
             rows = per_query_rows(runs, measured.categories, prices)
             pairs = dict.fromkeys(names[1:], names[0])

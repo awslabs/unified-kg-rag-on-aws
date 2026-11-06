@@ -84,21 +84,30 @@ class TreeSearchStrategy(BaseSearchStrategy):
         return IndexArtifact.ENTITIES in held
 
     def _summary_unfiltered_keys(self, query: SearchQuery) -> list[str]:
-        """The caller's filter keys the summary index does not declare (the
-        text units do: ``community_ids``, ``source_kinds``): the retriever
-        would drop them there and return summaries unfiltered, so the
-        summaries are left out instead (fail-closed)."""
+        """The caller's filter keys the text units declare and the summary
+        index does not (``community_ids``, ``source_kinds``): the retriever
+        would drop them there and return summaries the filter keeps out of
+        the text units, so the summaries are left out instead
+        (fail-closed). A key the text units do not declare either (an
+        entity's ``type``, which the graph buckets apply) leaves both
+        unfiltered alike, so it skips no summary."""
         retriever = self.document_retriever
         if not query.filters or retriever is None:
             return []
-        declared = retriever.filter_fields_for(
-            [self.config.indexing.opensearch.summary_nodes_index_prefix]
-        )
-        if declared is None:
+        o = self.config.indexing.opensearch
+        summaries = retriever.filter_fields_for([o.summary_nodes_index_prefix])
+        units = retriever.filter_fields_for([o.text_units_index_prefix])
+        if summaries is None or units is None:
             return []
-        return sorted(key for key in query.filters if not declared.declares(key))
+        return sorted(
+            key
+            for key in query.filters
+            if units.declares(key) and not summaries.declares(key)
+        )
 
     def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
+        # The configured ones; the chain keeps those the queried namespace
+        # holds (no entities index under raptor alone).
         o = self.config.indexing.opensearch
         prefixes = [o.text_units_index_prefix, o.summary_nodes_index_prefix]
         if self._graph_signal():

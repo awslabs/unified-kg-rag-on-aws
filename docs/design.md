@@ -1040,7 +1040,12 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   holds `hipporag` too, as it holds the relationship vectors `ppr` reads),
   and passes the held artifacts to the strategy
   (`SearchQuery.metadata["held_artifacts"]`), which reads only the optional
-  indexes the namespace holds (`simple`'s sweep, `tree`'s graph buckets).
+  indexes the namespace holds and a run of the config builds
+  (`index_prefixes.readable_artifacts`: `simple`'s sweep, `tree`'s graph
+  buckets, `local`'s claims, relationship and report sections, `ppr`'s
+  facts). After the methodology check, a query's filter keys are checked
+  against the same indexes (`readable_index_prefixes`), so a key only an
+  index the namespace lacks declares is refused, not dropped.
   An explicit strategy whose
   methodology (or declared artifacts) is not held raises `MethodologyNotIndexedError` (a
   `ConfigurationError`; `run-rag` exits 2) before any model call, naming
@@ -2812,9 +2817,12 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   are embedded in it, and the graph indexes' text fields are analyzed for it
   (`OpenSearchIndexer.language`). The chain records the query's language in
   `SearchQuery.metadata["query_language"]` (the requested one, else the
-  index language); a strategy's own prompts (DRIFT's HyDE, primer and
-  actions, global's map points, iterative's controller) read it through
+  index language); a strategy's own prompts (DRIFT's primer and actions,
+  global's map points, iterative's controller) read it through
   `BaseSearchStrategy.query_language`, falling back to the index language.
+  DRIFT's HyDE writes in the index language whatever was requested: its
+  hypothetical report only searches the community reports, which are
+  written in it.
   The extraction-record and answer fingerprints key the index language
   under their earlier `target_language` field, so a translated index keeps
   its records. Where the translation settings do not say it (translation

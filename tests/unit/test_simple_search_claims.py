@@ -16,6 +16,7 @@ import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.domain.models import (
     Config,
+    Methodology,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -84,11 +85,13 @@ async def test_claims_included_in_sweep_when_enabled(config: Config) -> None:
 async def test_relationship_and_reports_excluded_when_not_built(
     config: Config,
 ) -> None:
-    # Claims ON but no relationship vector index / community detection -> the
-    # sweep is pinned to the indices the pipeline actually builds.
+    # Claims ON but no relationship vector index / community reports (a
+    # graphrag-only config) -> the sweep is pinned to the indices the
+    # pipeline actually builds.
+    config.indexing.methodologies = [Methodology.GRAPHRAG]
     config.processing.claim_extraction.enabled = True
     config.indexing.opensearch.build_relationship_vector_index = False
-    config.graph.community_detection.enabled = False
+    config.graph.community_detection.report_generation.enabled = False
     strategy, os_r = _make_strategy(config)
 
     await strategy.asearch(SearchQuery(query="q"))

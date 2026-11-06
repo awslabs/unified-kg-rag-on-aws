@@ -27,6 +27,7 @@ from unified_kg_rag.adapters.retrieval.ppr_ranking import (
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.models import (
+    IndexArtifact,
     Methodology,
     RetrievalResult,
     SearchQuery,
@@ -79,7 +80,7 @@ class PPRSearchStrategy(PPRRankingMixin):
             text_digest(query.query),
             query.search_type.value,
         )
-        facts_built = self.config.indexing.opensearch.build_relationship_vector_index
+        facts_built = self._reads_artifact(query, IndexArtifact.RELATIONSHIP_VECTORS)
         entity_k = settings.entity_seed_top_k or (
             0 if facts_built else settings.fact_top_k
         )

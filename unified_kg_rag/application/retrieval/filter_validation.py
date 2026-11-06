@@ -30,6 +30,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
 from unified_kg_rag.domain.models import IndexArtifact, SearchStrategy
+from unified_kg_rag.domain.retrieval.index_prefixes import readable_index_prefixes
 from unified_kg_rag.shared import InvalidFilterError, get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 
@@ -56,8 +57,17 @@ def check_filter_keys(
 
 
 def check_strategy_filter_keys(
-    chain: GraphRAGChain, filters: dict[str, Any] | None, strategy: SearchStrategy
+    chain: GraphRAGChain,
+    filters: dict[str, Any] | None,
+    strategy: SearchStrategy,
+    artifacts: Collection[IndexArtifact] | None = None,
 ) -> None:
+    """Refuse a filter key ``strategy`` would not apply: one no index it
+    reads declares (of those indexes, only the ones whose artifact the
+    queried namespace holds, ``artifacts``, when given: a key only an index
+    the namespace lacks declares is dropped everywhere), one it scopes
+    itself, a range on a scoped key, or a schema annotation nothing
+    stores."""
     _check_schema_filter_keys(chain, filters)
     instance = chain._get_strategy_instance(strategy)
     reserved = sorted(set(filters or {}) & instance.reserved_filter_keys(strategy))
@@ -80,11 +90,10 @@ def check_strategy_filter_keys(
             "combined with the ids a search scopes these keys to; give a "
             "value or a list of values."
         )
-    validate_filter_keys(
-        filters,
-        instance.filtered_retrievers(strategy),
-        instance.filtered_index_prefixes(strategy),
-    )
+    prefixes = instance.filtered_index_prefixes(strategy)
+    if artifacts is not None:
+        prefixes = readable_index_prefixes(chain.config, prefixes, artifacts)
+    validate_filter_keys(filters, instance.filtered_retrievers(strategy), prefixes)
 
 
 def auto_candidates(
@@ -97,8 +106,9 @@ def auto_candidates(
     ``auto`` routes only among these, so a filter that one of them
     applies never fails by route; and only among the strategies the
     ``held`` artifacts serve (the queried namespace's; those the config
-    builds by default). Raises ``InvalidFilterError`` when none applies
-    them all.
+    builds by default), each checked against the indexes of those
+    artifacts when given (``check_strategy_filter_keys``). Raises
+    ``InvalidFilterError`` when none applies them all.
     """
     routable = routable_strategies(chain.config, held)
     if not filters:
@@ -109,7 +119,7 @@ def auto_candidates(
     refusals: list[str] = []
     for routed in routable:
         try:
-            check_strategy_filter_keys(chain, filters, routed)
+            check_strategy_filter_keys(chain, filters, routed, held)
         except InvalidFilterError as e:
             refusals.append(f"{routed.value}: {e}")
         else:
@@ -239,9 +249,14 @@ def validate_filter_keys(
         )
 
 
-def check_requested_filter_keys(chain: GraphRAGChain, rag_input: RAGInput) -> None:
+def check_requested_filter_keys(
+    chain: GraphRAGChain,
+    rag_input: RAGInput,
+    artifacts: Collection[IndexArtifact] | None = None,
+) -> None:
     """Refuse filter keys an explicit strategy refuses, before any model
-    call (a follow-up rewrite, query processing); ``auto`` checks them
+    call (a follow-up rewrite, query processing), against the indexes of
+    the queried namespace's ``artifacts`` when given; ``auto`` checks them
     before routing (``_resolve_strategy``), but for the schema
     annotation keys, which no strategy applies on a schema that writes
     none (``_check_schema_filter_keys``)."""
@@ -250,4 +265,6 @@ def check_requested_filter_keys(chain: GraphRAGChain, rag_input: RAGInput) -> No
     if rag_input.search_strategy is SearchStrategy.AUTO:
         _check_schema_filter_keys(chain, rag_input.filters)
     else:
-        check_strategy_filter_keys(chain, rag_input.filters, rag_input.search_strategy)
+        check_strategy_filter_keys(
+            chain, rag_input.filters, rag_input.search_strategy, artifacts
+        )

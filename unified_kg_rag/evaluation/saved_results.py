@@ -33,7 +33,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared import EvaluationException, get_logger
 
 from .answer_match_evaluator import TOKENS_KEY
-from .comparison import Run
+from .comparison import USAGE_SCHEMA, Run
 
 logger = get_logger(__name__)
 
@@ -214,19 +214,48 @@ def _answer_scoring(manifest: dict[str, Any] | None) -> Any:
     return scoring
 
 
+def dataset_dense_script(
+    manifests: Sequence[tuple[str, dict[str, Any] | None]],
+) -> bool | None:
+    """Whether the runs' dataset holds Han, Hangul or Kana text, as their
+    manifests record it (``dataset.dense_script``): ``True`` if one does,
+    ``False`` if every one that records it says not, ``None`` when none
+    records it (saved before it was recorded)."""
+    recorded = [
+        flag
+        for _, manifest in manifests
+        if isinstance(
+            flag := ((manifest or {}).get("dataset") or {}).get("dense_script"), bool
+        )
+    ]
+    if not recorded:
+        return None
+    return any(recorded)
+
+
 def check_answer_scoring(
     manifests: Sequence[tuple[str, dict[str, Any] | None]],
+    *,
+    dense_script: bool | None = None,
 ) -> list[str]:
     """Refuse runs whose exact match and token F1 read the answer
     differently (``answer_scoring``: ``evaluation.answer_span``,
     ``answer_normalization`` and the ``token_f1_tokens`` it implies; a run
-    saved before that was recorded tokenized by whitespace); returns warnings for runs that do not record
-    it. ``manifests`` are ``(label, run manifest)`` pairs.
+    saved before that was recorded tokenized by whitespace); returns
+    warnings for runs that do not record it. ``manifests`` are ``(label,
+    run manifest)`` pairs.
+
+    The tokenizations differ only on Han, Hangul and Kana text, so
+    ``token_f1_tokens`` is left out of the comparison when the dataset
+    holds none: ``dense_script`` (the caller's dataset), else what the
+    manifests record (``dataset_dense_script``); unknown, it is compared.
 
     Raises:
         EvaluationException: Two runs scored with answer_match record
             different settings.
     """
+    if dense_script is None:
+        dense_script = dataset_dense_script(manifests)
     scored: dict[str, list[str]] = {}
     unknown: list[str] = []
     for label, manifest in manifests:
@@ -234,6 +263,8 @@ def check_answer_scoring(
         if scoring is _UNKNOWN:
             unknown.append(label)
         elif scoring is not None:  # None: answer_match was not enabled
+            if dense_script is False and isinstance(scoring, dict):
+                scoring = {k: v for k, v in scoring.items() if k != TOKENS_KEY}
             key = json.dumps(scoring, sort_keys=True)
             scored.setdefault(key, []).append(label)
     if len(scored) > 1:
@@ -248,7 +279,9 @@ def check_answer_scoring(
             "answer_normalization (a run that records token_f1_tokens "
             "'whitespace' under answer_normalization 'default' was scored "
             "before token F1 tokenized Chinese, Japanese and Korean by "
-            "character: re-run it)."
+            "character, and one that records 'script_aware' before it "
+            "dropped only Korean particles of their closed class: re-run "
+            "it)."
         )
     if unknown and scored:
         return [
@@ -258,6 +291,24 @@ def check_answer_scoring(
             "others."
         ]
     return []
+
+
+def rerank_unmetered(
+    manifests: Sequence[tuple[str, dict[str, Any] | None]],
+) -> set[str]:
+    """The labels of the runs whose usage records count no rerank request:
+    their manifest records a ``usage_schema`` below ``USAGE_SCHEMA`` 2, or
+    none (saved before it was recorded). A run without a manifest is not
+    known, and not named."""
+    return {
+        label
+        for label, manifest in manifests
+        if manifest is not None
+        and not (
+            isinstance(schema := manifest.get("usage_schema"), int)
+            and schema >= USAGE_SCHEMA
+        )
+    }
 
 
 def dataset_warnings(

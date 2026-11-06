@@ -51,23 +51,21 @@ def configured_index_prefixes(config: Config) -> list[str]:
     """Index prefixes the configured pipeline actually builds.
 
     This is the default sweep when a query pins no ``index_prefixes``. An
-    index whose artifact a switch turns off (``ARTIFACT_SWITCHES``: claims,
-    the relationship vectors, community reports) is skipped, so the sweep
-    never queries an alias that was never created; community reports also
-    need ``graphrag`` among the effective ``indexing.methodologies``.
-    Explicit ``index_prefixes`` still reach any mapped index.
+    index whose artifact a run of the config does not build
+    (``artifacts_to_build``: a switch of ``ARTIFACT_SWITCHES`` turns it off,
+    or no effective methodology reads it, as the entities under ``raptor``
+    alone) is skipped, so the sweep never queries an alias that was never
+    created. Explicit ``index_prefixes`` still reach any mapped index.
     """
     return [prefix for prefix, _ in _configured(config)]
 
 
 def _configured(config: Config) -> list[tuple[str, IndexArtifact]]:
-    off = config.artifacts_switched_off
     built = artifacts_to_build(config)
     return [
         (prefix, artifact)
         for prefix, artifact in _prefix_artifacts(config)
-        if artifact not in off
-        and (artifact is not IndexArtifact.COMMUNITY_REPORTS or artifact in built)
+        if artifact in built
     ]
 
 
@@ -85,3 +83,34 @@ def held_index_prefixes(config: Config, held: Collection[IndexArtifact]) -> list
     """Of ``configured_index_prefixes``, those whose artifact the namespace
     holds (``held``), so a sweep never searches an index it lacks."""
     return [prefix for prefix, artifact in _configured(config) if artifact in held]
+
+
+def readable_artifacts(
+    config: Config, held: Collection[IndexArtifact] | None
+) -> frozenset[IndexArtifact]:
+    """The artifacts a query reads: those a run of the config builds
+    (``artifacts_to_build``) that the queried namespace holds (``held``,
+    ``held_artifacts_of``; all of them when ``None``). A strategy reads an
+    optional index (claims, the relationship vectors, the reports) only
+    when it is among these, as the default sweep does."""
+    built = artifacts_to_build(config)
+    return built if held is None else built & frozenset(held)
+
+
+def readable_index_prefixes(
+    config: Config, prefixes: list[str] | None, held: Collection[IndexArtifact]
+) -> list[str]:
+    """Of the index ``prefixes`` a strategy reads (every configured one when
+    ``None``), those whose artifact the namespace holds (``held``): the
+    indexes a filter key must be declared on. A prefix of no known
+    artifact is kept."""
+    if prefixes is None:
+        return held_index_prefixes(config, held)
+    o = config.indexing.opensearch
+    artifacts = dict(_prefix_artifacts(config))
+    artifacts[o.summary_nodes_index_prefix] = IndexArtifact.SUMMARY_TREE
+    return [
+        prefix
+        for prefix in prefixes
+        if prefix not in artifacts or artifacts[prefix] in held
+    ]

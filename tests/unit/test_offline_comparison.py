@@ -43,6 +43,7 @@ from unified_kg_rag.evaluation.report import comparison_markdown
 from unified_kg_rag.evaluation.saved_results import (
     check_answer_scoring,
     load_saved_runs,
+    rerank_unmetered,
 )
 from unified_kg_rag.shared import EvaluationException
 
@@ -205,6 +206,53 @@ class TestCostBlock:
         assert usd == pytest.approx(2.0 + 4 * 2.0 / 1000)
         # A reranker without a price leaves the answer unpriced, as a model.
         assert answer_cost_usd(used, {"m-a": llm_price}) == (None, {"reranker"})
+
+    def test_no_usd_delta_against_a_run_that_metered_no_rerank(self) -> None:
+        """Regression: a baseline saved before rerank requests were metered
+        priced none, so the USD delta credited the strategy with its
+        rerank cost."""
+        from unified_kg_rag.domain.models import LLMUsage
+
+        prices = {
+            "m-a": ModelPrice(
+                input_per_million_tokens=3.0, output_per_million_tokens=15.0
+            ),
+            "reranker": ModelPrice(per_thousand_rerank_search_units=2.0),
+        }
+        old = _run({"q1": 1.0}, "local", tokens=1000)
+        new = _run({"q1": 1.0}, "mix", tokens=1000)
+        llm = new[1][0].usage.by_model["m-a"].model_dump()
+        rerank = {"rerank_calls": 1, "rerank_search_units": 1}
+        new[1][0].usage = LLMUsage(
+            **{**llm, **rerank},
+            by_model={"m-a": llm, "reranker": rerank},
+        )
+        runs = {"baseline:local": [old], "mix": [new]}
+        both = cost_comparison(runs, prices=prices)
+        assert "usage/cost_usd" in both["deltas_vs_baseline"]["mix"]
+        cost = cost_comparison(runs, prices=prices, unmetered_rerank={"baseline:local"})
+        assert "usage/cost_usd" not in cost["deltas_vs_baseline"]["mix"]
+        # The other measures still pair, and each side keeps its own USD.
+        assert "usage/llm_calls" in cost["deltas_vs_baseline"]["mix"]
+        assert cost["strategies"]["mix"]["usd_total"] is not None
+        (warning,) = cost["warnings"]
+        assert "baseline:local" in warning and "usage_schema 2" in warning
+        # Every side unmetered: like with like, no warning.
+        same = cost_comparison(
+            runs, prices=prices, unmetered_rerank={"baseline:local", "mix"}
+        )
+        assert "usage/cost_usd" in same["deltas_vs_baseline"]["mix"]
+        assert same["warnings"] == []
+
+    def test_runs_without_a_usage_schema_meter_no_rerank(self) -> None:
+        assert rerank_unmetered(
+            [
+                ("old", {"answer_scoring": None}),
+                ("v1", {"usage_schema": 1}),
+                ("now", {"usage_schema": 2}),
+                ("unknown", None),
+            ]
+        ) == {"old", "v1"}
 
     def test_a_price_entry_must_name_what_it_prices(self) -> None:
         from pydantic import ValidationError
@@ -628,6 +676,66 @@ def test_baseline_results_compare_and_refuse_other_answer_scoring(
         run_evaluation.InvalidDatasetError, match="different answer_scoring"
     ):
         _cli(["--from-results", str(other), "--baseline-results", str(earlier)])
+
+
+@pytest.mark.parametrize(
+    ("question", "refused"),
+    [("Who ships the widgets?", False), ("누가 위젯을 배송하나?", True)],
+    ids=["english", "korean"],
+)
+async def test_a_baseline_is_checked_against_the_dataset_before_any_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, question: str, refused: bool
+) -> None:
+    """A baseline saved before token_f1_tokens was recorded (whitespace
+    tokens) is refused only where the dataset holds Han, Hangul or Kana
+    text, before any answer is generated."""
+    earlier = tmp_path / "earlier"
+    _save(
+        earlier,
+        "local",
+        _run(_BASE, "local"),
+        stamp="20260101_090000_aaaaaaaa",
+        order=["local"],
+        started=_T0,
+    )
+    data = tmp_path / "eval.json"
+    data.write_text(
+        json.dumps([{"id": "q1", "question": question, "answer": "Vendor"}]),
+        encoding="utf-8",
+    )
+    answered: list[str] = []
+
+    class _Chain:
+        async def ainvoke(self, inputs: dict, config: Any = None) -> dict:
+            answered.append(inputs["query"])
+            meta = {"search_strategy": "local", "processing_time": 0.1}
+            return {"answer": "Vendor", "sources": [], "metadata": meta}
+
+    monkeypatch.setattr(run_evaluation, "display_ascii_art", lambda **_: None)
+    config = Config()
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    args = run_evaluation.CommandLineInterface().parser.parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--baseline-results",
+            str(earlier),
+            "--search-strategy",
+            "local",
+            "--output-directory",
+            str(tmp_path / "out"),
+        ]
+    )
+    runner = run_evaluation.EvaluationRunner(args, _Chain(), config)  # type: ignore[arg-type]
+    if refused:
+        with pytest.raises(
+            run_evaluation.InvalidDatasetError, match="token_f1_tokens 'whitespace'"
+        ):
+            await runner.run()
+        assert answered == []
+    else:
+        await runner.run()
+        assert question in answered
 
 
 def test_saved_runs_need_their_reports(tmp_path: Path) -> None:
@@ -1154,12 +1262,67 @@ def test_markdown_lists_the_pairwise_judge(tmp_path: Path, monkeypatch) -> None:
     assert "| mix vs local | 4 | 0 | 75% | 0.25 [0.00, 0.50] |" in text
 
 
+def test_the_tokenization_is_compared_only_on_dense_script_datasets() -> None:
+    """Regression: an English-only dataset was refused against a run
+    saved before token_f1_tokens was recorded, although every tokenization
+    scores Latin text alike."""
+    old = {"answer_span": "first_line", "answer_normalization": "default"}
+    now = {**old, "token_f1_tokens": "script_aware_v2"}
+    pair = [("before", {"answer_scoring": old}), ("now", {"answer_scoring": now})]
+    assert check_answer_scoring(pair, dense_script=False) == []
+    with pytest.raises(EvaluationException, match="token_f1_tokens"):
+        check_answer_scoring(pair, dense_script=True)
+    # Without the caller's dataset, what the manifests record.
+    english = {"dense_script": False}
+    recorded = [
+        ("before", {"answer_scoring": old}),
+        ("now", {"answer_scoring": now, "dataset": english}),
+    ]
+    assert check_answer_scoring(recorded) == []
+    korean = [
+        recorded[0],
+        ("now", {"answer_scoring": now, "dataset": {"dense_script": True}}),
+    ]
+    with pytest.raises(EvaluationException):
+        check_answer_scoring(korean)
+    # The other settings are compared whatever the dataset.
+    squad = {**old, "answer_normalization": "official_squad"}
+    with pytest.raises(EvaluationException):
+        check_answer_scoring(
+            [("before", {"answer_scoring": squad}), recorded[1]], dense_script=False
+        )
+
+
+def test_a_run_of_the_earlier_korean_particle_rule_is_not_compared() -> None:
+    """``script_aware`` dropped any one to three Hangul syllables after a
+    gold word: its Korean token F1 differs from a run of now."""
+    scoring = {"answer_span": "first_line", "answer_normalization": "default"}
+    with pytest.raises(EvaluationException, match="'script_aware'"):
+        check_answer_scoring(
+            [
+                (
+                    "before",
+                    {"answer_scoring": {**scoring, "token_f1_tokens": "script_aware"}},
+                ),
+                (
+                    "now",
+                    {
+                        "answer_scoring": {
+                            **scoring,
+                            "token_f1_tokens": "script_aware_v2",
+                        }
+                    },
+                ),
+            ]
+        )
+
+
 def test_runs_saved_before_script_aware_tokens_are_not_compared() -> None:
     """A run saved before token_f1_tokens was recorded tokenized by
     whitespace: comparable with an official-normalization run of now, not
     with a default-normalization one."""
     old = {"answer_span": "first_line", "answer_normalization": "default"}
-    now = {**old, "token_f1_tokens": "script_aware"}
+    now = {**old, "token_f1_tokens": "script_aware_v2"}
     with pytest.raises(EvaluationException, match="token_f1_tokens 'whitespace'"):
         check_answer_scoring(
             [("before", {"answer_scoring": old}), ("now", {"answer_scoring": now})]

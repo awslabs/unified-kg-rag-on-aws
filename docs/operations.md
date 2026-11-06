@@ -233,8 +233,9 @@ Then deploy and start runs as usual:
   ([Capacity sizing](#capacity-sizing)).
 - **Queries.** `run-rag` and `run-eval` tasks of the query task definition
   see the same profile. A strategy whose methodology the namespace does not
-  hold exits 2 (`MethodologyNotIndexedError`) before any model call, and
-  `auto` routes only among the held ones.
+  hold exits 2 (`MethodologyNotIndexedError`) before any model call
+  (`run-eval` checks every strategy it compares, or each query's own,
+  before its first answer), and `auto` routes only among the held ones.
 - **Removing a methodology.** The next run that writes the namespace records
   its artifacts gone and its strategies are refused from then on. Nothing is
   deleted: a [one-off](#run-a-one-off-ingestion-task) run with

@@ -66,8 +66,12 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.exceptions import InvalidFilterError
+from unified_kg_rag.shared.exceptions import (
+    InvalidFilterError,
+    MethodologyNotIndexedError,
+)
 from unified_kg_rag.shared.usage import merge_usage, usage_scope
+from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 from .answer_match_evaluator import (
     SPAN_FALLBACK_KEY,
@@ -75,6 +79,7 @@ from .answer_match_evaluator import (
     answer_scoring,
 )
 from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
+from .comparison import USAGE_SCHEMA
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
@@ -554,7 +559,8 @@ class EvaluationManager:
         usage scope, so the next timed answer does not pay for opening the
         store connections and the models' first calls. Its question is no
         dataset question, so it fills no extraction cache entry they read;
-        it uses no conversation memory. A failure is logged, not raised."""
+        it uses no conversation memory. A failure is logged, not raised,
+        but a ``MethodologyNotIndexedError``: every query would fail."""
         inputs = {
             key: query.metadata[key] for key in _WARM_UP_KEYS if key in query.metadata
         }
@@ -562,6 +568,9 @@ class EvaluationManager:
             await self.rag_chain.ainvoke(
                 {**inputs, "query": _WARM_UP_QUESTION, "use_memory": False}
             )
+        except MethodologyNotIndexedError:
+            # The namespace serves no query of this strategy: fail fast.
+            raise
         except Exception as e:  # noqa: BLE001 - a warm-up is best-effort
             logger.warning(
                 "The warm-up query failed (%s); the first timed answers may "
@@ -1123,6 +1132,19 @@ class EvaluationManager:
         )
 
     @staticmethod
+    def holds_dense_script(
+        queries: list[EvaluationQuery], ground_truths: list[EvaluationGroundTruth]
+    ) -> bool:
+        """Whether a question, a gold answer or an answer alias holds Han,
+        Hangul or Kana text (``has_dense_script``)."""
+        texts: list[str] = [q.question for q in queries]
+        texts += [gt.ground_truth for gt in ground_truths]
+        for q in queries:
+            aliases = q.metadata.get("answer_aliases") or []
+            texts += [aliases] if isinstance(aliases, str) else list(aliases)
+        return any(isinstance(t, str) and has_dense_script(t) for t in texts)
+
+    @staticmethod
     def benchmarks_of(queries: list[EvaluationQuery]) -> dict[str, int]:
         """Queries per ``metadata.benchmark`` label (rows without one: none)."""
         return dict(
@@ -1242,6 +1264,11 @@ class EvaluationManager:
             # The benchmark the rows were prepared from (prepare-benchmark's
             # metadata.benchmark), so a summary says which one it scored.
             dataset["benchmarks"] = self.benchmarks_of(queries)
+            # Token F1's tokenizations differ only on Han, Hangul and Kana
+            # text: without any, runs scored with either compare.
+            dataset["dense_script"] = self.holds_dense_script(
+                queries, ground_truths or []
+            )
         if eval_data_path is not None:
             path = Path(eval_data_path)
             content = path.read_bytes()
@@ -1307,6 +1334,9 @@ class EvaluationManager:
                 if EvaluatorType.ANSWER_MATCH in enabled
                 else None
             ),
+            # What the usage records count (USAGE_SCHEMA: 2 meters the
+            # rerank requests), so a comparison prices like with like.
+            "usage_schema": USAGE_SCHEMA,
             "pairwise_judge": (
                 {
                     "overall": evaluation.pairwise_overall,

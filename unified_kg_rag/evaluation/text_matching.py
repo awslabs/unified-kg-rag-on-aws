@@ -213,35 +213,128 @@ _KOREAN_UNITS = (
 )
 
 
-def _is_particle(suffix: str) -> bool:
+# Korean particles (josa) and the copula's common endings, the closed word
+# class the standard grammar lists (National Institute of Korean Language,
+# Standard Korean Language Dictionary, part of speech 조사; the copula
+# 이다): case particles, auxiliary particles, the conjunctive ones, and the
+# copula's declarative, polite, connective and adnominal endings. Token F1
+# drops only a run of these after a reference word (``_KOREAN_JOSA_RUN``),
+# so "서울은" counts as "서울" but "서울대학교" does not.
+_KOREAN_JOSA = (
+    # Case particles.
+    "이",
+    "가",
+    "께서",
+    "에서",
+    "에게서",
+    "한테서",
+    "을",
+    "를",
+    "의",
+    "에",
+    "에게",
+    "한테",
+    "께",
+    "더러",
+    "로",
+    "으로",
+    "로서",
+    "으로서",
+    "로써",
+    "으로써",
+    "와",
+    "과",
+    "하고",
+    "랑",
+    "이랑",
+    "보다",
+    "처럼",
+    "만큼",
+    "같이",
+    # Auxiliary particles.
+    "은",
+    "는",
+    "도",
+    "만",
+    "까지",
+    "부터",
+    "마저",
+    "조차",
+    "밖에",
+    "마다",
+    "대로",
+    "뿐",
+    "나",
+    "이나",
+    "라도",
+    "이라도",
+    "요",
+    "야",
+    "이야",
+    # The copula and its endings.
+    "이다",
+    "다",
+    "입니다",
+    "이에요",
+    "예요",
+    "이요",
+    "였다",
+    "이었다",
+    "이며",
+    "며",
+    "이고",
+    "고",
+    "인",
+    "라고",
+    "이라고",
+    "라는",
+    "이라는",
+    "란",
+    "이란",
+)
+# A run of at most three of them ("에서는", "으로도", "이었다").
+_KOREAN_JOSA_RUN = re.compile(
+    "(?:"
+    + "|".join(sorted(map(re.escape, _KOREAN_JOSA), key=len, reverse=True))
+    + "){1,3}"
+)
+
+
+def _is_particle(suffix: str, *, strict: bool = False) -> bool:
+    """True if Hangul ``suffix`` reads as an attached particle: a run of the
+    closed class ``_KOREAN_JOSA`` with ``strict`` (token F1), else any one
+    to three Hangul syllables (containment and coverage, recall-style)."""
+    if strict:
+        return _KOREAN_JOSA_RUN.fullmatch(suffix) is not None
     return 0 < len(suffix) <= _MAX_KOREAN_SUFFIX and all(
         is_hangul_syllable(ch) for ch in suffix
     )
 
 
-def _number_suffix_keeps_value(suffix: str) -> bool:
+def _number_suffix_keeps_value(suffix: str, *, strict: bool = False) -> bool:
     """True if Hangul ``suffix`` after a number is a unit and/or a particle."""
     if not suffix or suffix[0] in _KOREAN_MAGNITUDES:
         return False
     for unit in _KOREAN_UNITS:
         if suffix.startswith(unit):
             rest = suffix[len(unit) :]
-            return not rest or _is_particle(rest)
-    return _is_particle(suffix)
+            return not rest or _is_particle(rest, strict=strict)
+    return _is_particle(suffix, strict=strict)
 
 
-def _token_matches(expected: str, actual: str) -> bool:
+def _token_matches(expected: str, actual: str, *, strict: bool = False) -> bool:
     # A word may carry an attached particle: "서울은", "AWS는". A bare number
     # may carry a unit and a particle ("2024년에", "3명이"), but not a
-    # magnitude numeral ("3억", "5천"), which changes the value.
+    # magnitude numeral ("3억", "5천"), which changes the value. ``strict``
+    # (token F1) takes only the closed class of particles as one.
     if expected == actual:
         return True
     if not actual.startswith(expected):
         return False
     suffix = actual[len(expected) :]
     if _NUMBER.fullmatch(expected):
-        return _number_suffix_keeps_value(suffix)
-    return _is_particle(suffix)
+        return _number_suffix_keeps_value(suffix, strict=strict)
+    return _is_particle(suffix, strict=strict)
 
 
 # One Han, Hangul or Kana letter, or a run of anything else.
@@ -252,20 +345,27 @@ def script_tokens(prediction: str, reference: str) -> tuple[list[str], list[str]
     """Token-F1 tokens of a normalized prediction and reference, by script.
 
     Whitespace words, except that a Han, Hangul or Kana letter is a token of
-    its own, as the Chinese (CMRC 2018) and Korean (KorQuAD) reading
-    comprehension benchmarks score F1 by character: Chinese and Japanese put
-    no space between words, so a whitespace word is a whole clause there,
-    and a Korean word carries its particles. A prediction word that is a
-    reference word plus an attached Korean particle or a number's unit
-    ("서울은" for "서울", "2024년에" for "2024년"; ``_token_matches``) first
-    counts as that word, so the particle costs no precision. Latin words and
-    numbers stay whole ("2024年" is "2024", "年").
+    its own, as the character F1 of the Chinese (CMRC 2018) and Korean
+    (KorQuAD 1.0) evaluation scripts: Chinese and Japanese put no space
+    between words, so a whitespace word is a whole clause there, and a
+    Korean word carries its particles. Unlike those scripts, which split
+    every character, Latin words and numbers stay whole ("2024年" is
+    "2024", "年"), and a prediction word that is a reference word plus a
+    run of Korean particles from their closed class (``_KOREAN_JOSA``) or a
+    number's unit ("서울은" for "서울", "2024년에" for "2024년") first
+    counts as that word, so the particle costs no precision (KorQuAD
+    charges its characters). Any other Hangul after a reference word stays
+    ("서울대학교" is five letters against "서울").
     """
     reference_words = sorted(set(reference.split()), key=len, reverse=True)
 
     def bare(word: str) -> str:
         return next(
-            (r for r in reference_words if r != word and _token_matches(r, word)),
+            (
+                r
+                for r in reference_words
+                if r != word and _token_matches(r, word, strict=True)
+            ),
             word,
         )
 

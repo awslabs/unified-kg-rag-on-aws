@@ -691,27 +691,36 @@ def test_rank_within_type_keeps_each_store_in_its_slots() -> None:
 
 
 @pytest.mark.parametrize(
-    ("metadata", "translation", "language"),
+    ("metadata", "translation", "language", "reports_language"),
     [
-        ({"query_language": "Korean"}, {}, "Korean"),
+        # A requested language (an additional target language, say): the
+        # primer and actions write in it, the HyDE report in the reports'.
+        ({"query_language": "Korean"}, {}, "Korean", "English"),
         # Untranslated, the index is in its source language, not the target.
         (
             {},
             {"enabled": False, "source_language": "ja", "target_language": "en"},
             "Japanese",
+            "Japanese",
         ),
-        ({}, {"enabled": True, "target_language": "zh"}, "Chinese"),
+        ({}, {"enabled": True, "target_language": "zh"}, "Chinese", "Chinese"),
     ],
     ids=["from-the-chain", "index-as-written", "translated-index"],
 )
 async def test_every_drift_prompt_writes_in_the_query_language(
-    metadata: dict[str, Any], translation: dict[str, Any], language: str
+    metadata: dict[str, Any],
+    translation: dict[str, Any],
+    language: str,
+    reports_language: str,
 ) -> None:
     strat = _strategy(n_depth=1)
     for name, value in translation.items():
         setattr(strat.config.processing.translation, name, value)
     await strat.asearch(SearchQuery(query="question", metadata=metadata))
 
-    calls = [*strat.hyde.calls, *strat.primer.calls, *strat.action.calls]
+    calls = [*strat.primer.calls, *strat.action.calls]
     assert strat.hyde.calls and strat.primer.calls and strat.action.calls
     assert {call["target_language"] for call in calls} == {language}
+    # The hypothetical answer searches the community reports only, which
+    # are written in the index language.
+    assert {call["target_language"] for call in strat.hyde.calls} == {reports_language}

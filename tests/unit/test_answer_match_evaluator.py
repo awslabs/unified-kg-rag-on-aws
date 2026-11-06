@@ -274,6 +274,37 @@ class TestScriptAwareTokenF1:
     ) -> None:
         assert token_f1(prediction, reference) == pytest.approx(expected)
 
+    @pytest.mark.parametrize(
+        ("prediction", "reference", "expected"),
+        [
+            # Particles and copula endings of the closed class, alone or
+            # in a run, cost nothing.
+            ("서울은", "서울", 1.0),
+            ("서울에서는", "서울", 1.0),
+            ("서울입니다", "서울", 1.0),
+            ("서울이었다", "서울", 1.0),
+            ("2024년에", "2024년", 1.0),
+            ("3명이", "3명", 1.0),
+            # Other Hangul after a gold word is another word: 2 of 5 letters.
+            ("서울대학교", "서울", 2 * 0.4 / 1.4),
+            ("서울특별시", "서울", 2 * 0.4 / 1.4),
+            ("이순신장군", "이순신", 2 * 0.6 / 1.6),
+            ("부산시청", "부산", 2 * 0.5 / 1.5),
+            ("김철수", "김", 2 * (1 / 3) / (4 / 3)),
+        ],
+    )
+    def test_only_korean_particles_are_dropped(
+        self, prediction: str, reference: str, expected: float
+    ) -> None:
+        """Regression: any one to three Hangul syllables after a gold word
+        were dropped as a particle, so "서울대학교" scored 1.0 against
+        "서울"."""
+        assert token_f1(prediction, reference) == pytest.approx(expected)
+
+    def test_containment_stays_lenient(self) -> None:
+        # answer_contains (recall-style) keeps the wider rule.
+        assert answer_contains("서울특별시에 있다", "서울") == 1.0
+
     def test_the_official_normalizations_keep_whitespace_tokens(
         self, config: Config
     ) -> None:
@@ -287,7 +318,7 @@ class TestScriptAwareTokenF1:
         report = _report(config, "東京都です", "東京都", {})
         values = {m.metric_type.value: m.value for m in report.metrics}
         assert values["token_f1"] == pytest.approx(2 * 0.6 / 1.6)
-        assert report.metadata["token_f1_tokens"] == "script_aware"
+        assert report.metadata["token_f1_tokens"] == "script_aware_v2"
 
 
 def _report(config: Config, answer: str, ground_truth: str, metadata: dict):
