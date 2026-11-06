@@ -564,6 +564,11 @@ def test_a_summary_passes_a_filter_only_when_all_its_documents_do(
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 
     config, providers, _, _ = setup(tmp_path)
+    # Text unit ids, hence the tree's clusters, are keyed by the source
+    # scope, by default the corpus directory: pytest's tmp_path differs
+    # from run to run, and some of its trees had no single-category node.
+    # One fixed scope gives every run the tree that has them.
+    config.processing.document_parsing.source_scope = "corpus"
     source = corpus(tmp_path)
     # Half the documents are of category "north", half "south", as
     # pre-parsed documents carrying their filters (read without a parsing
