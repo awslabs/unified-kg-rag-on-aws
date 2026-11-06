@@ -12,8 +12,15 @@ flattened into one list of distinct files in rank order (a file ranks where
 the first source naming it ranks), and the metrics count files, not sources:
 a community report is attributed to many files, so counting it as one source
 let five random reports cover most of a small corpus and score near-perfect
-hit@5. A source that maps to no file is *unattributable* and contributes no
-file:
+hit@5. The passages come first: the files of the sources that name their own
+file (text units) in their rank order, then the lineage files of the derived
+sources (``DERIVED_SOURCE_TYPES``: summaries, community reports, entities,
+relationships, claims) in theirs. A derived source stands for every file of
+its lineage, so at its own rank one high-ranked summary or report of twenty
+files filled the top ``k`` and crowded out the passages ranked after it
+(``tree`` scored below its own passages' ``text`` row). A strategy that
+reports only derived sources (``global``) ranks as before. A source that
+maps to no file is *unattributable* and contributes no file:
 
 - ``hit_at_k``: 1.0 if any reference is among the top ``k`` files.
 - ``recall_at_k``: fraction of distinct references among the top ``k`` files.
@@ -87,6 +94,12 @@ SKIP_REASON_NO_SOURCES_BY_CONFIG = "no_sources_by_config"
 BY_SOURCE_TYPE_KEY = "by_source_type"
 UNKNOWN_SOURCE_TYPE = "unknown"
 
+# The section types attributed to the files of their text_unit_ids lineage
+# rather than to a file of their own: their files rank after the passages'.
+DERIVED_SOURCE_TYPES = frozenset(
+    {"claim", "community", "entity", "relationship", "summary"}
+)
+
 # A file extension: "." + 1-5 ASCII alphanumerics with at least one letter, so
 # "Version 2.0" or "Route 66" keep their numeric tail, and not a version
 # (".v2"), so "notes.v1" and "notes.v2" are different names.
@@ -127,13 +140,26 @@ def source_keys(identifier: str) -> frozenset[str]:
     return frozenset(k for k in (name, stem) if k)
 
 
-def ranked_files(sources: list[list[str]]) -> list[frozenset[str]]:
+def ranked_files(
+    sources: list[list[str]], types: list[str] | None = None
+) -> list[frozenset[str]]:
     """Match keys of the distinct files of ``sources``, in rank order.
 
     A file ranks where the first source naming it ranks; within one source,
     files keep the source's order. Files that reduce to the same name count
-    once.
+    once. With ``types`` (parallel to ``sources``), the sources of a
+    ``DERIVED_SOURCE_TYPES`` type come after the others, each part in rank
+    order.
     """
+    if types is not None:
+        derived = [
+            i
+            for i, source_type in enumerate(types[: len(sources)])
+            if source_type in DERIVED_SOURCE_TYPES
+        ]
+        derived_set = set(derived)
+        order = [i for i in range(len(sources)) if i not in derived_set] + derived
+        sources = [sources[i] for i in order]
     seen: set[str] = set()
     files: list[frozenset[str]] = []
     for idents in sources:
@@ -206,7 +232,7 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             if isinstance(ref, str) and (key := reference_key(ref)):
                 references.setdefault(key, ref.strip())
 
-        files = ranked_files(sources)
+        files = ranked_files(sources, source_types)
         metadata: dict[str, Any] = {
             **self._extract_search_metadata(result),
             "k": self.k,

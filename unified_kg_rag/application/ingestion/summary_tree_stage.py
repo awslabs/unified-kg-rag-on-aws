@@ -58,6 +58,10 @@ _VECTOR_PAGE = 250
 
 
 class SummaryTreeStage(_RegistryStage):
+    # The tree is built from the stored text units, so it is built after a
+    # code upgrade changed the earlier stages' cache keys too.
+    READS_STORES = True
+
     def __init__(
         self,
         config: Config,

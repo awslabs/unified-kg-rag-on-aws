@@ -387,12 +387,20 @@ no source of that type (`global` by design), so check the metric's `pairs` /
 
 Did the sources the answer model saw include the gold documents?
 
-- **Attribution.** Text-unit sources name their file; entity, relationship
-  and community-report sources are attributed to the files of the text units
-  they cite, the file holding most of them first.
+- **Attribution.** Text-unit sources name their file; entity, relationship,
+  claim, community-report and summary-tree sources are attributed to the
+  files of the text units they cite, the file holding most of them first.
 - **k counts files, not sources**: the sources are flattened into one list of
   distinct files in rank order, so a community report attributed to many
   files cannot inflate hit@k.
+- **Passages first.** The files of the text units come first, in their rank
+  order, then the files of the attributed sources, in theirs. One
+  high-ranked summary or report stands for every file of its lineage, and
+  at its own rank it filled the top `k` with them and pushed out the
+  passages ranked after it (on a MuSiQue sample, `tree` recall@5 0.59 where
+  its `text` row was 0.68; with passages first both are 0.68, and `local`
+  moves by -0.003 to -0.008). A strategy that reports only attributed
+  sources (`global`) ranks them as before.
 - **Per source type.** `by_source_type` (aggregated in
   `grouped_statistics.source_type`) has the same metrics per section type; its
   `text` row, the text units the answer model read verbatim, is the fairest

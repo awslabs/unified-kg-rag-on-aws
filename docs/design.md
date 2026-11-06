@@ -2265,7 +2265,19 @@ earlier stage keeps its cache key), run when `raptor` is selected, `application/
    `BatchProcessor` and the run's LLM response cache), one level at a time,
    bottom-up. A cluster whose input (its children's texts in id order, the
    language and the summary settings: `input_key`) equals a node of the
-   live tree takes that node's summary and makes no call.
+   live tree takes that node's summary and makes no call. *Length:* the
+   prompt asks for the words (characters for Japanese, Chinese and Korean)
+   that 90% of `max_summary_tokens` holds at the rate the token counter
+   that bounds the summary gives the cluster's own texts, so the hint
+   follows the counter (the script-aware estimate scaled for the model's
+   tokenizer, or tiktoken) and the language: a fixed 0.75 words per token
+   asked for 225 words where that counter counts about 2 tokens a word,
+   and 95% of the summaries of a MuSiQue tree were cut mid-sentence. A
+   summary still over the budget keeps its longest prefix of whole
+   sentences within it (`shared/utils/sentences.py`: `。！？．` anywhere,
+   `.!?…` before whitespace and not a `.` before a lowercase word, a line
+   break), and is cut at a character only when its first sentence is
+   longer than the budget.
 5. *Embedding and write.* The summaries are embedded by the vector
    indexer (`embed_summary_texts`, which takes the stored vector of a text
    whose digest the live summary index holds), and the whole tree is
@@ -2276,6 +2288,11 @@ earlier stage keeps its cache key), run when `raptor` is selected, `application/
 The stage runs in its own usage scope (`run-ingestion` reports its calls,
 tokens and cost as for any stage) and inside the run's lease and write
 fence. It is skipped, with a warning, when the run's indexing stage failed.
+It declares `PipelineStage.READS_STORES`: a run of it alone requires no
+upstream stage to be backed by the stage cache (`resume._check_upstream_complete`;
+after an upgrade the earlier stages' keys change while the stores still
+hold their output), and probes only the indices the namespace lacks, as an
+incremental run does, rather than every index of a full build.
 
 **Clustering** (each step deterministic: inputs sorted by id, seeded by
 `random_state`, coordinates rounded to 1e-6 so a BLAS thread count does not
@@ -2428,7 +2445,9 @@ leaves always ground the answer. A summary reads `Summary (level 2, 14
 passages): ...`; its source carries `level`, `child_ids`, `text_unit_ids`,
 `n_leaves` and `lineage_complete`, so a user can expand it to the passages,
 and the retrieval evaluator attributes it through its lineage (a `summary`
-row in `by_source_type`). A summary is index content written by a model at
+row in `by_source_type`), its files ranked after the passages' as every
+lineage-attributed source's are (a summary at its own rank filled the top
+`k` with its lineage). A summary is index content written by a model at
 ingestion, as a community report is; it is not `synthesized` (query-time
 model output) and is reported as a source. Summaries are not used by
 `naive`, `global` or `drift` (deferred until measured: each would change a

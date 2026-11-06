@@ -219,7 +219,10 @@ indexing:
 - **Adding `raptor` later** builds only the tree, on the next run (an
   unchanged corpus included) or with `run-ingestion --enabled-stages
   summary_tree`, from the stored text units: no re-extraction and no
-  rebuild of the namespace.
+  rebuild of the namespace. The stage reads only the stores, so the
+  `--enabled-stages summary_tree` run works under the pipeline id that
+  built the namespace even when an upgrade changed the earlier stages'
+  cache keys, and it runs no earlier stage.
 - **Incremental runs** rebuild the tree from the stored text units and swap
   it in. A cluster whose children are unchanged takes its stored summary (no
   model call); the clustering starts from a sample of the node ids that a
