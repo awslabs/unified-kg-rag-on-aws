@@ -1049,7 +1049,7 @@ class TestRunIndexCreationCheck:
         mocker.patch.object(
             pipe,
             "_check_index_creation",
-            side_effect=lambda context: order.append("check"),
+            side_effect=lambda context, **_: order.append("check"),
         )
         mocker.patch.object(pipe, "_emit_stage_metrics")
         mocker.patch.object(pipe, "_should_stop_pipeline", return_value=False)

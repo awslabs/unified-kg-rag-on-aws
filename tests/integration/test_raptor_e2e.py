@@ -262,6 +262,56 @@ def test_adding_raptor_builds_only_the_tree(
     assert tree_nodes(providers)
 
 
+@pytest.mark.parametrize("registry", [True, False])
+def test_adding_raptor_with_only_the_tree_stage_survives_changed_cache_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    registry: bool,
+    no_aws,  # noqa: F811 - the fixture
+) -> None:
+    # The guide's path: `--enabled-stages summary_tree` under the pipeline id
+    # that built the namespace. After an upgrade changes the stage cache keys
+    # the earlier stages no longer look completed; the tree reads only the
+    # stores, so it is built anyway, and nothing upstream runs again; it
+    # probes only the indices the namespace lacks, as an incremental run.
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+    from unified_kg_rag.application.ingestion import pipeline_manager
+
+    config, providers, _, calls = setup(
+        tmp_path, [Methodology.GRAPHRAG, Methodology.LIGHTRAG], registry=registry
+    )
+    source = corpus(tmp_path)
+    cache = tmp_path / "run-1"
+    context = ingest(config, providers, source, cache)
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+
+    keyed = pipeline_manager.stage_cache_key
+    monkeypatch.setattr(
+        pipeline_manager,
+        "stage_cache_key",
+        lambda *args, **kwargs: keyed(*args, **kwargs) + "-upgraded",
+    )
+    probes: list[bool] = []
+    monkeypatch.setattr(
+        OpenSearchIndexer,
+        "check_index_creation",
+        lambda self, suffix=None, *, rebuild=True: probes.append(rebuild),
+    )
+    config.indexing.methodologies = [
+        Methodology.GRAPHRAG,
+        Methodology.LIGHTRAG,
+        Methodology.RAPTOR,
+    ]
+    before = Counter(calls.kinds)
+    context = ingest(config, providers, source, cache, {PipelineStageType.SUMMARY_TREE})
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert set(calls.since(before)) == {"summary"}
+    assert tree_nodes(providers)
+    # Without the registry the run is a full build, which probed every index.
+    assert probes == ([] if registry else [False])
+
+
 def test_an_incremental_tree_converges_with_a_full_build(
     tmp_path: Path, no_aws  # noqa: F811 - the fixture
 ) -> None:

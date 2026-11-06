@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
@@ -212,6 +212,11 @@ class PipelineStage(ABC):
         PipelineStageType.CLAIM_RESOLUTION,
         PipelineStageType.GLEANING,
     }
+
+    # Whether the stage reads its input from the stores, not from earlier
+    # stages' output (summary_tree): a run of such stages alone needs no
+    # upstream stage cached and creates no artifact index of the run.
+    READS_STORES: ClassVar[bool] = False
 
     def __init__(
         self,

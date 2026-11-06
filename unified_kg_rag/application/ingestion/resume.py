@@ -566,8 +566,13 @@ def _check_upstream_complete(
     enabled stage: an earlier stage failed or lost its cached output, so
     this run's stages (a later phase, say) would run on missing inputs.
     A resume point downstream of the enabled stages means they are all
-    done, and the run skips them."""
-    if not pipeline.stages:
+    done, and the run skips them. A run of stages that read the stores
+    (``PipelineStage.READS_STORES``: summary_tree) needs no upstream
+    output: an upstream stage the cache no longer backs (a code upgrade
+    changed its key) does not stop it."""
+    if not pipeline.stages or all(
+        getattr(stage, "READS_STORES", False) is True for stage in pipeline.stages
+    ):
         return
     if start_stage_name not in pipeline._ORDER or start_stage_name in {
         stage.name for stage in pipeline.stages

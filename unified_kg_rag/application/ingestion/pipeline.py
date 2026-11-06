@@ -1465,6 +1465,13 @@ class DataIngestionPipeline:
         )
 
         index_creation_checked = False
+        # Stages that only read the stores (summary_tree) create no index of
+        # the namespace's: a run of them probes only the missing ones.
+        rebuilds = not all(
+            getattr(stage, "READS_STORES", False) is True
+            for stage in stages_to_execute
+            if stage.name not in completed_stage_names
+        )
         for stage in stages_to_execute:
             if stage.name in completed_stage_names:
                 logger.info("Skipping previously completed stage: '%s'", stage.name)
@@ -1477,7 +1484,7 @@ class DataIngestionPipeline:
                 if not index_creation_checked and (
                     stage.name not in self._MODEL_FREE_STAGES
                 ):
-                    self._check_index_creation(context)
+                    self._check_index_creation(context, rebuilds=rebuilds)
                     index_creation_checked = True
                 result = self._execute_stage(stage, context)
                 self._emit_stage_metrics(context, stage.name)
@@ -1506,7 +1513,9 @@ class DataIngestionPipeline:
         }
     )
 
-    def _check_index_creation(self, context: PipelineContext) -> None:
+    def _check_index_creation(
+        self, context: PipelineContext, *, rebuilds: bool = True
+    ) -> None:
         """Have the vector store refuse the run now, before any model call,
         rather than in the indexing stage after extraction: an incremental
         run's live indices built for other settings
@@ -1515,7 +1524,9 @@ class DataIngestionPipeline:
         full build or reset, an incremental run's missing ones). An
         incremental run with no document to (re)extract (no change, or only
         deletions) creates no index: only its live indices are checked, so it
-        is refused like the next run that extracts would be. Any other
+        is refused like the next run that extracts would be. A run that
+        ``rebuilds`` nothing (only store-reading stages) is checked as an
+        incremental one, for the indices it lacks. Any other
         failure of the check is logged: the stages then meet the store's
         error themselves.
 
@@ -1538,7 +1549,9 @@ class DataIngestionPipeline:
                 if incremental:
                     indexer.check_index_settings(suffix)
                 if not incremental or context.documents:
-                    indexer.check_index_creation(suffix, rebuild=not incremental)
+                    indexer.check_index_creation(
+                        suffix, rebuild=rebuilds and not incremental
+                    )
             finally:
                 indexer.close()
         except (ConfigurationError, NamespaceLeaseError, StoreConnectionError):
