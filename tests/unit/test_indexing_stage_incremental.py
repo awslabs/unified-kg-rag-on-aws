@@ -119,6 +119,9 @@ class _RecordingManager:
     def clear_pending_commit(self) -> None:
         return None
 
+    def clear_stripped_summaries(self) -> None:
+        return None
+
     def index_delta(self, **kwargs: Any) -> dict[str, IndexingStats]:
         self.calls.append(("index_delta", kwargs))
         written = len(kwargs.get("entities") or [])

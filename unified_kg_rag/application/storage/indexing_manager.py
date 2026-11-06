@@ -22,9 +22,11 @@ from unified_kg_rag.application.storage.reannotation import (
 from unified_kg_rag.application.storage.removal import TextUnitRemoval
 from unified_kg_rag.application.storage.stored_items import (
     _PENDING_COMMIT,
+    _STRIPPED_SUMMARIES,
     IndexingTask,
     _annotations,
     _Described,
+    _note_ids,
     _with_sources,
     stripped_descriptions,
     unit_records,
@@ -204,7 +206,13 @@ class IndexingManager:
         # the commit summarizes such an item from its records rather than
         # extending that summary (see _merge_suffix). Not a summary a removal
         # reused (community detection's, made for the report the run stores).
+        # Noted in the extraction store before the strip writes them, for a
+        # commit of a later run if this one dies before its own.
         self._stripped_ids: dict[str, set[str]] = {}
+        # By suffix, the ids the stored summary note lists (see
+        # note_stripped_summaries), once read or written by this run: a
+        # removal that dies before the commit leaves them to its successor.
+        self._noted_stripped_ids: dict[str, set[str]] = {}
         # By suffix, the ids of the run's delta items (see expect_delta): a
         # removal that derives one again leaves its summary to the commit.
         self._delta_ids: dict[str, set[str]] = {}
@@ -753,6 +761,48 @@ class IndexingManager:
             self._delete_note(_PENDING_COMMIT, suffix)
         self._commit_note_suffixes.clear()
 
+    def read_stripped_summaries(
+        self, suffix: str, records: Mapping[str, Any] | None = None
+    ) -> None:
+        """Add the ids of the stored summary note of ``suffix`` (see
+        :meth:`note_stripped_summaries`) to the items this run's commit does
+        not extend; read once per run (from ``records``, the extraction
+        records a caller read with it, when given). A failed read raises."""
+        if suffix in self._noted_stripped_ids:
+            return
+        if records is None:
+            records = self.vector_indexer.read_extraction_records(
+                [_STRIPPED_SUMMARIES], suffix=suffix
+            )
+        ids = _note_ids(records.get(_STRIPPED_SUMMARIES), "ids")
+        self._noted_stripped_ids[suffix] = ids
+        if ids:
+            self._stripped_ids.setdefault(suffix, set()).update(ids)
+
+    def note_stripped_summaries(self, suffix: str) -> None:
+        """Note the items of ``suffix`` whose stored summary the commit must
+        not extend (``_stripped_ids``, with those of a stored note), before a
+        strip writes them. They live in memory only: a run that dies between
+        the strip and the commit leaves the stored copies stripped, and its
+        successor's removal finds nothing left to strip, so its commit
+        would extend them (a summary of a summary, or kept removed lines).
+        Raises when the write fails, before the strip writes anything."""
+        self.read_stripped_summaries(suffix)
+        ids = self._stripped_ids.get(suffix, set())
+        if ids <= self._noted_stripped_ids[suffix]:
+            return
+        self._write_note(_STRIPPED_SUMMARIES, suffix, {"ids": sorted(ids)})
+        self._noted_stripped_ids[suffix] = set(ids)
+
+    def clear_stripped_summaries(self) -> None:
+        """Delete the summary notes this run read or wrote, once its
+        commit's writes succeeded (best-effort: one left only makes a later
+        commit summarize its items from their records, as a full build)."""
+        for suffix, ids in sorted(self._noted_stripped_ids.items()):
+            if ids:
+                self._delete_note(_STRIPPED_SUMMARIES, suffix)
+        self._noted_stripped_ids.clear()
+
     def discard_retired_ids(self) -> None:
         """Keep the re-keyed items' old ids (their writes failed, or the
         commit did not get to them: deleting them would lose the items), and
@@ -794,6 +844,7 @@ class IndexingManager:
         self._removed_record_keys.clear()
         self._offered_summaries.clear()
         self._stripped_ids.clear()
+        self._noted_stripped_ids.clear()
         self._delta_ids.clear()
 
     def expect_delta(

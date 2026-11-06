@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from unified_kg_rag.application.storage.stored_items import (
     _PENDING_STRIP,
+    _STRIPPED_SUMMARIES,
     IndexingTask,
     _claim_text,
     _is_summary,
@@ -187,9 +188,13 @@ class TextUnitRemoval:
         # finished (see _note_pending_strip): the items need not cite the
         # removed units any more. Read on every removal (one record): a
         # retry need not remove the same units.
-        note = vector.read_extraction_records([_PENDING_STRIP], suffix=suffix).get(
-            _PENDING_STRIP
+        notes = vector.read_extraction_records(
+            [_PENDING_STRIP, _STRIPPED_SUMMARIES], suffix=suffix
         )
+        note = notes.get(_PENDING_STRIP)
+        # And the items an earlier strip noted for its commit, which may
+        # not have run (see note_stripped_summaries).
+        m.read_stripped_summaries(suffix, notes)
         # A claim the earlier strip re-keyed onto a noted entity cites no
         # removed unit: it is found through its subject or object.
         noted_claims = sorted(
@@ -411,6 +416,13 @@ class TextUnitRemoval:
             return {**results, f"graph_read_{suffix}": stats}, note.noted
         if not new_entities and not new_relationships:
             return results, note.noted
+        try:
+            self._m.note_stripped_summaries(suffix)
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            logger.error("Noting the stripped summaries in '%s' failed: %s", suffix, e)
+            stats = IndexingStats(total_items=len(entity_ids) + len(relationship_ids))
+            stats.add_error(str(e), count=stats.total_items)
+            return {**results, f"graph_read_{suffix}": stats}, note.noted
         logger.info(
             "Removing %d text units from %d shared entities and %d shared "
             "relationships in '%s'",
