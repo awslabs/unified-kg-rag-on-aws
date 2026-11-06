@@ -249,7 +249,7 @@ See [`iac/README.md`](iac/README.md).
   `mode=` are gone (`GraphRAGChain(cfg).asearch(q)`, read `out.search_results.results`) (#333). It rejects unknown
   keyword arguments, and only `Providers` / `build_providers` take `boto_session` (`providers=Providers(config,
   boto_session=...)`, for `DataIngestionPipeline` too) (#218, #577). `DataIngestionPipeline` takes every argument
-  after `target_directory` by keyword, so a session passed fifth fails instead of binding to `metrics_sink` (#PR).
+  after `target_directory` by keyword, so a session passed fifth fails instead of binding to `metrics_sink` (#589).
 - One injection path: `doc_status=`, `vector_indexer=`, `graph_indexer=`, `model_factory=` and `retriever_builders=`
   cannot be combined with `providers=`; a subclass that overrode `_build_graph_retriever` /
   `_build_document_retriever` injects `retriever_builders` (#212, #216, #221).
@@ -361,7 +361,7 @@ From a `main` checkout (formats and keys no release had):
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
 - Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
-  (#564, #PR): reset once to summarize from the lines (one call per such item over the threshold), or leave it.
+  (#564, #589): reset once to summarize from the lines (one call per such item over the threshold), or leave it.
 - #565 changed the translation, description summary and gleaning prompts (gleaning re-keys every gleaned record,
   claims too): a reset translates, extracts and gleans every unit again, the cost of a first build; incremental runs
   use the new prompts for new and changed documents only. A reset also types untyped merges and re-cuts one-line
@@ -487,7 +487,7 @@ From a `main` checkout (formats and keys no release had):
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
   call counts from its start, so cancelled and background calls are billed at an estimated input; a response that
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
-  #563, #PR).
+  #563, #589).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
   `total_files_skipped`, `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and
   `total_documents_without_claims`; a run with failed units ends with a WARNING naming them per stage (#518, #532).
@@ -569,7 +569,7 @@ From a `main` checkout (formats and keys no release had):
 - An incremental run finds what a changed or deleted document contributed by the text units every item cites, strips
   shared items and re-derives them (summarizing from lines as a full build does, also when several edited documents
   share an item or spell it otherwise), moves an item to the id a full build gives it, and deletes extraction records
-  nothing names (#325, #327, #564, #PR). With fuzzy resolution on, it folds a delta entity into its one best stored
+  nothing names (#325, #327, #564, #589). With fuzzy resolution on, it folds a delta entity into its one best stored
   match and never joins two stored ones until a reset (#564).
 - Re-runs reuse what is unchanged: vectors carry a digest of their text and model, so indexing embeds only changed
   texts; the `intelligent` chunker's boundary answers and community report answers live in the extraction store; a
@@ -665,7 +665,7 @@ Queries and retrieval.
   entirely fails the query or is recorded in `degraded_error`, and a fatal model error fails the query even under
   `processing.ignore_errors` (#264, #267, #348, #354, #360, #567). A dynamic-selection rating is its answer's first
   number clamped to 1-10 (`8/10`, `Score: 2`; none counts in `global_unrated_report_count`), not a number of a
-  mention of the scale (`On a scale of 1-10, I'd rate 8` is 8) (#567, #PR).
+  mention of the scale (`On a scale of 1-10, I'd rate 8` is 8) (#567, #589).
 - A suffix nothing was ingested under fails with `No indices found` (#227); indices of another embedding model or
   dimension fail with a `ConfigurationError`, and queries embed with `models.embedding.dimension` (#232).
 - `run-rag` and `run-eval` query `processing.document_parsing.index_value` when `--suffix` is not given (they
