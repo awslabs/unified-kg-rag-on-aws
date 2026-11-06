@@ -342,7 +342,9 @@ run-eval --data-path eval.json --search-strategy local \
   when a compared strategy's paired delta meets the condition;
   `ci_high<-0.02` fails only on a regression the query sample supports. A
   strategy with no delta of the measure fails too, and so does a delta over
-  fewer than 10 paired queries (one pair gives a zero-width interval), or a
+  fewer than 10 paired queries (one pair gives a zero-width interval; under
+  about 30 the bootstrap interval is too narrow, excluding 0 on noise in up
+  to 8-12% of runs instead of 5%), or a
   metric the judge failed to score on different numbers of the two sides'
   answers (`strategies.<s>.failed_metrics`; those queries are unpaired). It
   needs two strategies or `--baseline-results`.

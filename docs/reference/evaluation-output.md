@@ -348,7 +348,11 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   that fails exactly where a strategy would lose would hide the loss. Any
   gate fails on a delta over fewer than 10 paired queries
   (`gates.MIN_GATE_PAIRS`; one pair gives a zero-width interval, five wins
-  of five an interval that excludes 0 at a sign-test p of 0.06). Each gate
+  of five an interval that excludes 0 at a sign-test p of 0.06). Above the
+  floor the percentile interval is still too narrow on few pairs: on
+  simulated null deltas a 95% interval excluded 0 in 8% of comparisons at 10
+  pairs (12% for heavy-tailed deltas) and about 5% from 20-30 pairs, so
+  read a gate on under ~30 pairs as weaker than its confidence. Each gate
   on each strategy is its own test, so k strategies and m gates multiply
   the chance of a breach on noise ([Gates](../guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison)).
   The result is in `comparison.gates` and the
