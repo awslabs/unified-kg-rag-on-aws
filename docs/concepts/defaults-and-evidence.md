@@ -317,14 +317,39 @@ entity they do not name, but no default selects it: it adds about 10 s to
 the median query. `decompose` stays off, costing more for no gain over
 the loop.
 
-Not measured: MuSiQue is the only question set, all multi-hop, so whether
-the router leaves single-hop and sensemaking questions to the other
-strategies, and what a misroute costs there, is untested; route a sample
-of your own questions with `run-eval --search-strategy auto` before
-relying on it. In 62 of the 238 controller rounds over `mix` the verdict
-named no new bridge entity and mix reran without keywords; such a round
-now runs only its text searches (Design §6.3), which this run predates.
-To keep `auto` off it, list the strategies without `iterative`:
+This run did not measure whether the router leaves single-hop and
+sensemaking questions to the other strategies (the second run below did).
+In 62 of its 238 controller rounds over `mix` the verdict named no new
+bridge entity and mix reran without keywords; such a round now runs only
+its text searches (Design §6.3), which this run predates.
+
+A second run on 2026-11-06 (package at commit `85d7e6ec`, with that fix)
+repeated the comparison and measured the routing:
+
+- **`iterative` over `mix` against `mix`**, one repeat: `answer_contains`
+  +13.0 points [+8.0, +18.0] (28 wins, 2 losses), token F1 +3.7 [-1.5, +9.1]
+  and EM +2.5, both n.s.; recall@5 +14.4, last hop in the context +21.5 (43
+  wins, 0 losses). p50 8.0 s to 15.3 s, p95 12.6 s to 26.3 s; +$0.0016 a
+  query. No round reran `mix` without keywords; the controller stopped after round
+  0 on 61 questions, after one follow-up round on 44 and after two on 95.
+- **`auto` on the 200 MuSiQue questions** (two routing passes): 191 and 193
+  routed to `iterative`, the rest to `local`. Each question answered by the
+  strategy it was routed to, against `mix`: `answer_contains` +12.0 [+7.0,
+  +17.0]. The router added
+  1.35 s at the median and $0.0005 a query; the entity extraction it starts
+  alongside is not read on a route to `iterative` over `mix`, about $0.003
+  a query.
+- **Misroutes.** Of 150 routing decisions on the 50 sensemaking questions
+  (three passes) none went to `iterative` (45 to 48 of 50 to `global`, the
+  rest to `mix`). On 100 single-hop questions (the first sub-question of
+  100 of the MuSiQue questions, one supporting paragraph each) 2 and 4 of
+  100 went to `iterative`, all answered correctly, and `auto` matched `mix`:
+  `answer_contains` 0.99 against 0.99.
+
+So `iterative` stays routable and the router's guidance stands; route a
+sample of your own questions with `run-eval --search-strategy auto` before
+relying on it. To keep `auto` off it, list the strategies without
+`iterative`:
 
 ```yaml
 search:
