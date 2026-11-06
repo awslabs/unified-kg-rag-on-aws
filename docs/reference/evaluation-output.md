@@ -55,15 +55,18 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   `search.abstention.mode: mark` an answer starting with `[NO_ANSWER]` or one
   declined by the insufficient-context policy): `completed` (results whose
   answer generation did not fail, declines included) = `abstained`
-  (declined) + `answered` (not declined), `abstention_rate`
-  (`abstained / completed`), and the same per strategy actually used
+  (declined) + `answered` (not declined), `failed` (answer generation
+  failed: no decline), `abstention_rate`
+  (`abstained / (completed + failed)`), and the same per strategy actually used
   (`per_strategy`). "Answered" means not declined everywhere, as in
   `answer_match` `coverage`. With `answerable: false` items:
   `unanswerable` and `answerable` blocks of the same shape, `precision`
   (declines on unanswerable items / all declines; `null` without any),
-  `recall` (unanswerable items declined) and `f1`. With `answer_match`:
+  `recall` (unanswerable items declined, over all of them: a failed answer
+  is no decline) and `f1`. With `answer_match`:
   `answer_match` {metric: `coverage`, `accuracy`, `selective_accuracy`,
-  `overall_accuracy`} over the answerable items (a decline scores 0;
+  `overall_accuracy`} over the answerable items (a decline or a failed
+  answer scores 0;
   `overall_accuracy`, present with unanswerable items, counts a decline on
   one as correct). With `mode: off` a model declining in its own words is not
   detected, so `recall` is a lower bound. Each result carries `abstained`
@@ -109,7 +112,9 @@ The console prints the same summary.
   does the `assertion` evaluator, and `assertion_scoring` records its
   `trials`;
 - `answer_scoring`: the `answer_span` and `answer_normalization` exact
-  match and token F1 used (with `answer_match`), and `models.answer_span`
+  match and token F1 used and the token-F1 tokenization they imply
+  (`token_f1_tokens`: `script_aware` or `whitespace`) (with
+  `answer_match`), and `models.answer_span`
   the extracting model; runs scored differently are not comparable on
   those two metrics;
 - `retrieval_config_sha256`, a hash of every configuration setting that
@@ -179,6 +184,17 @@ strategies, or `--repeats`) saves every run's files and adds
   supported when its interval excludes 0; a 10-point difference on binary
   metrics is detected in 15% of runs with 50 queries and 59% with 200, so
   compare on a few hundred queries.
+- `abstention/recall` and `abstention/precision` (in `strategies.<s>.metrics`
+  and `deltas_vs_baseline.<s>`, with `metadata.answerable: false` items):
+  recall is per unanswerable query whether its answer declined (1) or not
+  (0; a failed answer is no decline), paired like a metric, also per
+  category and per query in the CSV. Precision (declines on unanswerable
+  queries over all declines) is a ratio, not a per-query mean: its
+  `mean_delta` is the difference of the two precisions and its interval
+  recomputes both on each resample of the queries; `pairs` counts the
+  queries either side declined, `queries` (in `metrics`) those the strategy
+  declined, and it is absent when a side declined nothing. Both are
+  `--fail-if` measures (`abstention/recall:ci_high<0`).
 - `deltas_by_category.<s>.<category>.<metric>`: the same deltas over each
   dataset `category` (MuSiQue's hop count, say). Each interval is per
   category and not corrected for the number of categories and metrics read,
@@ -208,8 +224,10 @@ strategies, or `--repeats`) saves every run's files and adds
     one token per Hangul, kana or Han character, so not whitespace words),
     `ratio` (candidate over baseline), `relative_difference` ((candidate -
     baseline) over the longer, -1 to 1) and `bucket` under `per_query`;
-    `buckets.<ratio>` (`<0.67x`, `0.67-0.9x`, `0.9-1.1x`, `1.1-1.5x`,
-    `>1.5x`) with the pairs and, per criterion, the wins, ties and
+    `buckets.<ratio>` (`<=0.67x`, `0.67-0.91x`, `0.91-1.1x`, `1.1-1.5x`,
+    `>=1.5x`: symmetric in the log ratio, so a candidate 1.5 times as long
+    and one 1/1.5 times as long sit in mirror buckets) with the pairs and,
+    per criterion, the wins, ties and
     `candidate_win_rate` in that bucket; `score_correlation.<criterion>`,
     the Pearson correlation of `relative_difference` with the pair's score
     (null under 3 pairs or without variation). A win rate rising with the
@@ -309,7 +327,9 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   reads it as its baseline pools this run in as repeats.
 - Runs whose exact
   match and token F1 read the answer differently (`answer_scoring` in the
-  run manifest: `evaluation.answer_span`, `answer_normalization`) are
+  run manifest: `evaluation.answer_span`, `answer_normalization`,
+  `token_f1_tokens`; a run saved before `token_f1_tokens` was recorded
+  tokenized by whitespace) are
   refused (exit 2), checked before any answer is generated; runs of different
   datasets are warned about (only their shared query ids pair).
 - `--fail-if <measure>:<stat><op><value>` (repeatable) exits 1 when a
@@ -328,7 +348,11 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   that fails exactly where a strategy would lose would hide the loss. Any
   gate fails on a delta over fewer than 10 paired queries
   (`gates.MIN_GATE_PAIRS`; one pair gives a zero-width interval, five wins
-  of five an interval that excludes 0 at a sign-test p of 0.06). Each gate
+  of five an interval that excludes 0 at a sign-test p of 0.06). Above the
+  floor the percentile interval is still too narrow on few pairs: on
+  simulated null deltas a 95% interval excluded 0 in 8% of comparisons at 10
+  pairs (12% for heavy-tailed deltas) and about 5% from 20-30 pairs, so
+  read a gate on under ~30 pairs as weaker than its confidence. Each gate
   on each strategy is its own test, so k strategies and m gates multiply
   the chance of a breach on noise ([Gates](../guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison)).
   The result is in `comparison.gates` and the
@@ -423,7 +447,13 @@ positive|negative, source?}]`, or bare strings, which are positive).
   `models.roles.evaluation` (prompt `custom_prompts.assertion_judgement_*`),
   each labelling every assertion `supported`, `contradicted` or `absent`
   from the answer alone. Each trial shows the assertions in a shuffled order
-  seeded by the query id and trial. The labels are fixed tokens in a JSON
+  seeded by the query id, one no earlier trial of the query used while any
+  is left (`n` assertions have `n!` orders). A deterministic judge
+  (temperature 0) labels an order the same way each time, so an item with
+  fewer orders than trials (one assertion, or two with three trials)
+  repeats a call; `distinct_orders` in the report counts the orders used.
+  The judge calls of every query and trial share
+  `processing.max_concurrency`. The labels are fixed tokens in a JSON
   reply, so the parse does not depend on the language.
 - **Scores.** An assertion takes a label when more than half of the
   successful trials gave it (BenchmarkQED's pass rule). Per query:
@@ -432,7 +462,7 @@ positive|negative, source?}]`, or bare strings, which are positive).
   ones; `negative_assertion_violation_rate` = negative ones supported /
   negative ones. The summary's means are over queries. Each report records
   `assertion_labels` (per assertion, the share of trials per label),
-  `trials` and `failed_trials`.
+  `trials`, `distinct_orders` and `failed_trials`.
 - **Failures and skips.** A trial whose call fails, or whose reply misses an
   assertion, labels one twice or uses another label, fails; the scores read
   the others. A query with no successful trial records its metrics in
@@ -511,6 +541,13 @@ list, top level or under `metadata`, which wins), taking the maximum.
   (`-5`, `1.5`, `C++`); `evaluation.answer_normalization: official_squad` is
   the official script (MuSiQue's evaluation uses it too) and `hotpotqa` adds
   HotpotQA's rule that a `yes`/`no`/`noanswer` span or gold earns token F1
-  only when the two are equal. Token F1 splits on whitespace, so for Chinese
-  and Japanese it degrades to exact match, and Korean particles make both
+  only when the two are equal. Under `default` token F1 tokenizes by script
+  (`token_f1_tokens: script_aware` in each report): a Han, Hangul or Kana
+  letter is a token of its own, as CMRC 2018 and KorQuAD score Chinese and
+  Korean by character, and a Korean particle attached to a gold word
+  (`서울은` for `서울`) is dropped first, so `東京都です` scores 0.75
+  against `東京都`. Under `official_squad` and `hotpotqa` tokens are
+  whitespace words, as in those scripts (`whitespace`), so for Chinese and
+  Japanese token F1 degrades to exact match there. Exact match compares
+  whole strings, so a Korean particle or a CJK copula still makes it
   under-count.

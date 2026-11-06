@@ -212,6 +212,20 @@ def test_settings_repr_and_description_hold_no_secret() -> None:
     assert safe_url(url) == "https://collector.example.com:4318/v1/traces"
 
 
+@pytest.mark.parametrize(
+    ("url", "safe"),
+    [
+        ("http://[::1]:4318/v1/traces?key=s", "http://[::1]:4318/v1/traces"),
+        ("http://u:p@[2001:db8::7]/v1", "http://[2001:db8::7]/v1"),  # gitleaks:allow
+        ("http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1"),
+    ],
+)
+def test_safe_url_keeps_ipv6_brackets(url: str, safe: str) -> None:
+    """Regression: an IPv6 host lost its brackets ("http://::1:4318"), a URL
+    no client parses, in the run manifest and the endpoint description."""
+    assert safe_url(url) == safe
+
+
 # --- backend construction ----------------------------------------------------
 
 

@@ -405,19 +405,22 @@ class EvaluationSummary(BaseModel):
     abstention_statistics: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Abstentions (EvaluationResult.abstained) among the completed "
-            "queries (answer generation did not fail): 'completed' = "
-            "'abstained' (declined) + 'answered' (not declined), "
-            "'abstention_rate', the same per actual "
+            "Abstentions (EvaluationResult.abstained): 'completed' (answer "
+            "generation did not fail) = 'abstained' (declined) + 'answered' "
+            "(not declined), 'failed' (answer generation failed: not a "
+            "decline), 'abstention_rate' (abstained / (completed + failed)), "
+            "the same per actual "
             "search strategy ('per_strategy'). With items marked "
             "metadata.answerable=false: 'unanswerable' and 'answerable' blocks "
             "of the same shape, and 'precision' (abstentions on unanswerable "
             "items / all abstentions; null without any), 'recall' "
-            "(unanswerable items abstained on) and 'f1'. With answer_match: "
+            "(unanswerable items abstained on, over all of them, failed ones "
+            "included) and 'f1'. With answer_match: "
             "'answer_match' {metric: {'coverage', 'accuracy', "
             "'selective_accuracy', 'overall_accuracy'}} over the answerable "
-            "items (a decline scores 0; overall counts a decline on an "
-            "unanswerable item as correct). Without search.abstention.mode: "
+            "items (a decline or a failed answer scores 0; overall counts a "
+            "decline on an unanswerable item as correct). Without "
+            "search.abstention.mode: "
             "mark only the no-context reply counts, so recall is a lower bound."
         ),
     )

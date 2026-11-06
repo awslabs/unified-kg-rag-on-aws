@@ -55,7 +55,7 @@ from typing import Any
 
 import numpy as np
 
-from unified_kg_rag.adapters.evaluators.base import judge_model_kwargs
+from unified_kg_rag.adapters.evaluators.base import error_digest, judge_model_kwargs
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.langchain import LLMJsonOutputParser
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
@@ -88,9 +88,14 @@ _BOOTSTRAP: dict[str, Any] = {"resamples": 2000, "confidence": 0.95, "seed": 0}
 # The keys of the differential mode's statement split.
 _OVERLAP_KEYS = ("shared", "unique_1", "unique_2")
 # Buckets of the answer-length ratio (candidate over baseline, in estimated
-# tokens), shortest first. 0.9-1.1 (both ends included) holds the pairs whose
-# lengths differ by about a tenth or less; 1.5 is half again as long.
-LENGTH_BUCKETS = ("<0.67x", "0.67-0.9x", "0.9-1.1x", "1.1-1.5x", ">1.5x")
+# tokens), shortest first, symmetric in the log ratio: a candidate 1.5 times
+# as long as the baseline and one 1/1.5 (0.67) times as long sit in mirror
+# buckets. The middle one holds the pairs within a factor 1.1 either way
+# (0.91-1.1, both ends included); the outer ones a factor 1.5 or more.
+LENGTH_BUCKETS = ("<=0.67x", "0.67-0.91x", "0.91-1.1x", "1.1-1.5x", ">=1.5x")
+_NEAR, _FAR = math.log(1.1), math.log(1.5)
+# Float error on a ratio such as 2/3 must not move it off its boundary.
+_LOG_TOLERANCE = 1e-9
 # A correlation over fewer pairs says nothing.
 _MIN_CORRELATION_PAIRS = 3
 
@@ -101,16 +106,18 @@ _Judged = tuple[dict[str, str], dict[str, bool] | None, dict[str, list[str]] | N
 
 
 def length_bucket(ratio: float) -> str:
-    """The ``LENGTH_BUCKETS`` label of a candidate/baseline length ratio."""
-    if ratio < 2 / 3:
+    """The ``LENGTH_BUCKETS`` label of a candidate/baseline length ratio, by
+    ``|log ratio|``: a ratio and its reciprocal land in mirror buckets."""
+    if ratio <= 0:
         return LENGTH_BUCKETS[0]
-    if ratio < 0.9:
-        return LENGTH_BUCKETS[1]
-    if ratio <= 1.1:
+    if math.isinf(ratio):
+        return LENGTH_BUCKETS[4]
+    spread = abs(math.log(ratio))
+    if spread <= _NEAR + _LOG_TOLERANCE:
         return LENGTH_BUCKETS[2]
-    if ratio < 1.5:
-        return LENGTH_BUCKETS[3]
-    return LENGTH_BUCKETS[4]
+    if spread < _FAR - _LOG_TOLERANCE:
+        return LENGTH_BUCKETS[1] if ratio < 1 else LENGTH_BUCKETS[3]
+    return LENGTH_BUCKETS[0] if ratio < 1 else LENGTH_BUCKETS[4]
 
 
 def answer_lengths(baseline: str, candidate: str) -> dict[str, Any]:
@@ -474,7 +481,13 @@ class PairwiseJudge:
             )
             return outcome, consistent, None
         except Exception as e:  # noqa: BLE001 - a failed pair is counted, not fatal
-            logger.warning("Pairwise judge failed for '%s': %s", candidate.query_id, e)
+            # The error may quote the judge's reply: a digest at WARNING.
+            logger.warning(
+                "Pairwise judge failed for '%s': %s",
+                candidate.query_id,
+                error_digest(e),
+            )
+            logger.debug("Pairwise judge error for '%s': %s", candidate.query_id, e)
             return None
 
 

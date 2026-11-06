@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
+    error_digest,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.observability.endpoints import safe_url
@@ -68,7 +69,11 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 from unified_kg_rag.shared.usage import merge_usage, usage_scope
 
-from .answer_match_evaluator import SPAN_FALLBACK_KEY, AnswerMatchEvaluator
+from .answer_match_evaluator import (
+    SPAN_FALLBACK_KEY,
+    AnswerMatchEvaluator,
+    answer_scoring,
+)
 from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
@@ -640,12 +645,14 @@ class EvaluationManager:
                     )
                 )
             except Exception as e:  # noqa: BLE001 - isolate one query's failure
+                # The error may quote the answer: a digest at ERROR, the
+                # traceback at DEBUG.
                 logger.error(
                     "Failed to process result for query '%s': %s",
                     query.query_id,
-                    e,
-                    exc_info=True,
+                    error_digest(e),
                 )
+                logger.debug("Result processing error", exc_info=True)
                 results.append(
                     EvaluationResult(
                         query_id=query.query_id,
@@ -1042,12 +1049,14 @@ class EvaluationManager:
                     )
                 all_reports.extend(reports)
             except Exception as e:  # noqa: BLE001 - recorded per query below
+                # The error may quote a judge's reply: a digest at ERROR, the
+                # traceback at DEBUG.
                 logger.error(
                     "Failed to run '%s' evaluation: %s",
                     evaluator_type.value,
-                    e,
-                    exc_info=True,
+                    error_digest(e),
                 )
+                logger.debug("Evaluation run error", exc_info=True)
                 # Every answer is already generated: record the crash per query
                 # (as the per-query path in BaseGraphRAGEvaluator does) so the results
                 # are still saved and the summary counts the metrics as failed;
@@ -1294,10 +1303,7 @@ class EvaluationManager:
             # How exact match and token F1 read an answer: two runs scored
             # differently are not comparable on them.
             "answer_scoring": (
-                {
-                    "answer_span": evaluation.answer_span,
-                    "answer_normalization": evaluation.answer_normalization,
-                }
+                answer_scoring(evaluation)
                 if EvaluatorType.ANSWER_MATCH in enabled
                 else None
             ),
@@ -1460,47 +1466,56 @@ class EvaluationManager:
         results: list[EvaluationResult],
         reports: list[EvaluationReport] | None = None,
     ) -> dict[str, Any]:
-        """Abstentions among the completed queries (answer generation did
-        not fail), and how well they track answerability.
+        """Abstentions, and how well they track answerability.
+
+        A failed answer (answer generation failed) is no decline: it counts
+        as not declined and, with ``answer_match``, as a wrong answer, so a
+        strategy cannot look better by failing where it would decline or
+        answer wrongly.
 
         Always: the overall and per-strategy counts, ``completed`` =
-        ``abstained`` (declined) + ``answered`` (not declined), and the
-        rate. With items marked ``metadata.answerable=false``: the ``unanswerable`` and ``answerable``
-        blocks and the decline ``precision`` (abstentions that were on
-        unanswerable items), ``recall`` (unanswerable items declined) and
+        ``abstained`` (declined) + ``answered`` (not declined), ``failed``
+        and ``abstention_rate`` (``abstained`` over ``completed`` +
+        ``failed``). With items marked ``metadata.answerable=false``: the
+        ``unanswerable`` and ``answerable`` blocks and the decline
+        ``precision`` (abstentions that were on unanswerable items),
+        ``recall`` (unanswerable items declined, over all of them) and
         ``f1``. With ``answer_match`` reports: per metric, ``coverage``
-        (answerable items answered), ``accuracy`` (over every scored
-        answerable item, a decline scoring 0), ``selective_accuracy`` (over
-        the answered ones) and, with unanswerable items, ``overall_accuracy``
-        (a correct answer or a correct decline, over both).
+        (answerable items not declined), ``accuracy`` (over every scored
+        answerable item, a decline or a failed answer scoring 0),
+        ``selective_accuracy`` (over the ones not declined) and, with
+        unanswerable items, ``overall_accuracy`` (a correct answer or a
+        correct decline, over both).
         """
-        completed = [r for r in results if not r.error]
-        if not completed:
+        if not results:
             return {}
 
         def _rate(group: list[EvaluationResult]) -> dict[str, Any]:
-            abstained = sum(1 for r in group if r.abstained)
+            failed = sum(1 for r in group if r.error)
+            abstained = sum(1 for r in group if r.abstained and not r.error)
+            completed = len(group) - failed
             return {
-                "completed": len(group),
+                "completed": completed,
                 "abstained": abstained,
-                "answered": len(group) - abstained,
+                "answered": completed - abstained,
+                "failed": failed,
                 "abstention_rate": abstained / len(group),
             }
 
         by_strategy: dict[str, list[EvaluationResult]] = defaultdict(list)
-        for r in completed:
+        for r in results:
             if r.search_strategy:
                 by_strategy[r.search_strategy].append(r)
         stats: dict[str, Any] = {
-            **_rate(completed),
+            **_rate(results),
             "per_strategy": {k: _rate(v) for k, v in sorted(by_strategy.items())},
         }
         # Abstentions are the fixed no-context reply and, under
         # search.abstention.mode: mark, answers starting with the decline
         # token; a model that declines in its own words without the token is
         # not detected, so with mode off recall is a lower bound.
-        unanswerable = [r for r in completed if cls._is_unanswerable(r)]
-        answerable = [r for r in completed if not cls._is_unanswerable(r)]
+        unanswerable = [r for r in results if cls._is_unanswerable(r)]
+        answerable = [r for r in results if not cls._is_unanswerable(r)]
         if unanswerable:
             stats["unanswerable"] = _rate(unanswerable)
             if answerable:
@@ -1529,7 +1544,9 @@ class EvaluationManager:
         reports: list[EvaluationReport],
     ) -> dict[str, dict[str, float | None]]:
         """Coverage and accuracy of each answer_match metric together, so
-        declining more cannot look like answering better."""
+        declining (or failing) more cannot look like answering better. A
+        failed answerable item with a reference answer scores 0 (it has no
+        report)."""
         scores: dict[str, dict[str, float]] = defaultdict(dict)
         for report in reports:
             if report.evaluator_type is not EvaluatorType.ANSWER_MATCH:
@@ -1538,20 +1555,31 @@ class EvaluationManager:
                 scores[metric.metric_type.value][report.query_id] = metric.value
         if not scores:
             return {}
-        abstained = {r.query_id for r in answerable if r.abstained}
-        declined_unanswerable = sum(1 for r in unanswerable if r.abstained)
+        abstained = {r.query_id for r in answerable if r.abstained and not r.error}
+        failed = {
+            r.query_id
+            for r in answerable
+            if r.error and AnswerMatchEvaluator._references(r.ground_truth, r.metadata)
+        }
+        declined_unanswerable = sum(
+            1 for r in unanswerable if r.abstained and not r.error
+        )
         block: dict[str, dict[str, float | None]] = {}
         for name, values in sorted(scores.items()):
-            scored = [q for q in (r.query_id for r in answerable) if q in values]
+            scored = [
+                q
+                for q in (r.query_id for r in answerable)
+                if q in values or q in failed
+            ]
             if not scored:
                 continue
             kept = [q for q in scored if q not in abstained]
-            total = sum(values[q] for q in scored)
+            total = sum(values.get(q, 0.0) for q in scored)
             entry: dict[str, float | None] = {
                 "coverage": len(kept) / len(scored),
                 "accuracy": total / len(scored),
                 "selective_accuracy": (
-                    sum(values[q] for q in kept) / len(kept) if kept else None
+                    sum(values.get(q, 0.0) for q in kept) / len(kept) if kept else None
                 ),
             }
             if unanswerable:

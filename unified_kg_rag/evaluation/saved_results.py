@@ -32,6 +32,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
 
+from .answer_match_evaluator import TOKENS_KEY
 from .comparison import Run
 
 logger = get_logger(__name__)
@@ -205,15 +206,21 @@ _UNKNOWN = object()
 def _answer_scoring(manifest: dict[str, Any] | None) -> Any:
     if manifest is None or "answer_scoring" not in manifest:
         return _UNKNOWN
-    return manifest["answer_scoring"]
+    scoring = manifest["answer_scoring"]
+    if isinstance(scoring, dict) and TOKENS_KEY not in scoring:
+        # Saved before the tokenization was recorded: token F1 read
+        # whitespace words then, under every normalization.
+        scoring = {**scoring, TOKENS_KEY: "whitespace"}
+    return scoring
 
 
 def check_answer_scoring(
     manifests: Sequence[tuple[str, dict[str, Any] | None]],
 ) -> list[str]:
     """Refuse runs whose exact match and token F1 read the answer
-    differently (``answer_scoring``: ``evaluation.answer_span`` and
-    ``answer_normalization``); returns warnings for runs that do not record
+    differently (``answer_scoring``: ``evaluation.answer_span``,
+    ``answer_normalization`` and the ``token_f1_tokens`` it implies; a run
+    saved before that was recorded tokenized by whitespace); returns warnings for runs that do not record
     it. ``manifests`` are ``(label, run manifest)`` pairs.
 
     Raises:
@@ -238,7 +245,10 @@ def check_answer_scoring(
             "the runs scored exact_match and token_f1 with different "
             f"answer_scoring settings ({listed}); they are not comparable. "
             "Re-run one side with the other's evaluation.answer_span and "
-            "answer_normalization."
+            "answer_normalization (a run that records token_f1_tokens "
+            "'whitespace' under answer_normalization 'default' was scored "
+            "before token F1 tokenized Chinese, Japanese and Korean by "
+            "character: re-run it)."
         )
     if unknown and scored:
         return [

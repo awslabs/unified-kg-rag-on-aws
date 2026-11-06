@@ -75,6 +75,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.evaluation import EvaluationManager
+from unified_kg_rag.evaluation.answer_match_evaluator import answer_scoring
 from unified_kg_rag.evaluation.closed_book import (
     CLOSED_BOOK_ARM,
     closed_book_arms,
@@ -318,7 +319,8 @@ class CommandLineInterface:
                 "Regression gate, repeatable: exit 1 when a compared strategy's "
                 "paired delta against the baseline meets the condition, or has "
                 "no delta of MEASURE. MEASURE is an <evaluator>/<metric> of "
-                "deltas_vs_baseline or a cost measure (usage/llm_calls, "
+                "deltas_vs_baseline (abstention/recall and abstention/precision "
+                "with unanswerable items) or a cost measure (usage/llm_calls, "
                 "usage/input_tokens, usage/output_tokens, usage/total_tokens, "
                 "usage/cost_usd, latency/response_time_seconds); STAT is "
                 "mean_delta, ci_low or ci_high; OP is <, <=, > or >=. Example: "
@@ -914,10 +916,7 @@ class EvaluationRunner:
         evaluation = self.config.evaluation
         if EvaluatorType.ANSWER_MATCH not in evaluation.enabled_evaluators:
             return None
-        return {
-            "answer_span": evaluation.answer_span,
-            "answer_normalization": evaluation.answer_normalization,
-        }
+        return answer_scoring(evaluation)
 
     def _saved_runs_input(self) -> "_Measured":
         """The comparison input rebuilt from ``--from-results``."""

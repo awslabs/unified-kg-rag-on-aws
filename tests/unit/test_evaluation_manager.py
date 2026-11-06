@@ -1121,6 +1121,7 @@ class TestComparability:
         assert manifest["answer_scoring"] == {
             "answer_span": "first_line",
             "answer_normalization": "default",
+            "token_f1_tokens": "script_aware",
         }
         assert manifest["models"]["answer_span"] is None
         manager.config.evaluation.answer_span = "extracted"
@@ -1532,6 +1533,7 @@ class TestAbstention:
             "completed": 2,
             "abstained": 1,
             "answered": 1,
+            "failed": 0,
             "abstention_rate": 0.5,
         }
         assert summary.metric_outcomes["answer_match"]["answer_contains"] == {
@@ -1566,6 +1568,7 @@ class TestAbstention:
             "completed": 3,
             "abstained": 1,
             "answered": 2,
+            "failed": 0,
             "abstention_rate": pytest.approx(1 / 3),
         }
         assert stats["precision"] == 0.5 and stats["recall"] == 0.5
@@ -1581,6 +1584,62 @@ class TestAbstention:
         assert contains["selective_accuracy"] == 0.5
         # A, plus the correct decline of D, over all five.
         assert contains["overall_accuracy"] == pytest.approx(2 / 5)
+
+    def test_failed_answers_count_as_not_declined(self) -> None:
+        """Regression: failed answers were dropped, so a strategy that failed
+        on half the unanswerable items and declined the rest had recall 1.0
+        (one that declined 8 of 10 had 0.8), and its failed answerable items
+        left accuracy untouched."""
+
+        def result(i: int, *, answerable: bool, **fields: Any) -> EvaluationResult:
+            return EvaluationResult(
+                query_id=f"{'a' if answerable else 'u'}{i}",
+                question="q",
+                generated_answer="" if fields.get("error") else "x",
+                ground_truth="Vendor" if answerable else "",
+                search_strategy="s",
+                metadata={} if answerable else {"answerable": False},
+                **fields,
+            )
+
+        declines = [result(i, answerable=False, abstained=i < 8) for i in range(10)]
+        failures = [
+            result(i, answerable=False, error=i < 5, abstained=i >= 5)
+            for i in range(10)
+        ]
+        stats = EvaluationManager._calculate_abstention_statistics
+        assert stats(declines)["recall"] == pytest.approx(0.8)
+        failing = stats(failures)
+        assert failing["recall"] == pytest.approx(0.5)
+        assert failing["unanswerable"] == {
+            "completed": 5,
+            "abstained": 5,
+            "answered": 0,
+            "failed": 5,
+            "abstention_rate": 0.5,
+        }
+        # A failed answerable item scores 0 in accuracy, as a wrong answer.
+        answerable = [
+            result(0, answerable=True),
+            result(1, answerable=True, error=True),
+        ]
+        reports = [
+            EvaluationReport(
+                query_id="a0",
+                evaluator_type=EvaluatorType.ANSWER_MATCH,
+                metrics=[
+                    EvaluationMetric(
+                        metric_type=EvaluationMetricType.ANSWER_CONTAINS, value=1.0
+                    )
+                ],
+            )
+        ]
+        block = stats(answerable, reports)["answer_match"]["answer_contains"]
+        assert block == {
+            "coverage": 1.0,
+            "accuracy": 0.5,
+            "selective_accuracy": 0.5,
+        }
 
     async def test_no_decline_means_no_precision(self, config: Config) -> None:
         _, _, summary = await self._run(

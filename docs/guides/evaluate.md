@@ -124,7 +124,16 @@ set, filtered so the corpus does not answer them:
   ones) and `overall_accuracy` (a correct answer or a correct decline, over
   both kinds). Read coverage and accuracy together: declining more raises
   selective accuracy and lowers coverage. Its counts are `completed`
-  (answers that did not fail) = `abstained` + `answered` (not declined).
+  (answers that did not fail) = `abstained` + `answered` (not declined),
+  and `failed`. A failed answer is no decline: it lowers recall, and on an
+  answerable question it scores 0 in accuracy, so failing cannot pass for
+  declining.
+- A comparison (`--search-strategy a,b`, `--baseline-results`) pairs the
+  declines too: `abstention/recall` (per unanswerable query, declined or
+  not) and `abstention/precision` (declines on unanswerable questions over
+  all declines, its interval from resampling the queries) sit with the
+  metrics in `deltas_vs_baseline`, so
+  `--fail-if abstention/recall:ci_high<0` gates a supported drop.
 - Each saved result keeps `abstained`, `abstention_reason`,
   `context_sufficient`, `insufficiency_reason` and, for `iterative`, its run
   record (rounds, stop reason, verdicts), so a run can be analysed from its
@@ -333,7 +342,9 @@ run-eval --data-path eval.json --search-strategy local \
   when a compared strategy's paired delta meets the condition;
   `ci_high<-0.02` fails only on a regression the query sample supports. A
   strategy with no delta of the measure fails too, and so does a delta over
-  fewer than 10 paired queries (one pair gives a zero-width interval), or a
+  fewer than 10 paired queries (one pair gives a zero-width interval; under
+  about 30 the bootstrap interval is too narrow, excluding 0 on noise in up
+  to 8-12% of runs instead of 5%), or a
   metric the judge failed to score on different numbers of the two sides'
   answers (`strategies.<s>.failed_metrics`; those queries are unpaired). It
   needs two strategies or `--baseline-results`.

@@ -9,6 +9,7 @@ import string
 import unicodedata
 
 from unified_kg_rag.shared.utils.scripts import (
+    DENSE_SCRIPT_LETTERS,
     drop_dense_script_spaces,
     has_dense_script,
     is_dense_script_char,
@@ -241,6 +242,42 @@ def _token_matches(expected: str, actual: str) -> bool:
     if _NUMBER.fullmatch(expected):
         return _number_suffix_keeps_value(suffix)
     return _is_particle(suffix)
+
+
+# One Han, Hangul or Kana letter, or a run of anything else.
+_SCRIPT_TOKEN = re.compile(f"[{DENSE_SCRIPT_LETTERS}]|[^{DENSE_SCRIPT_LETTERS}]+")
+
+
+def script_tokens(prediction: str, reference: str) -> tuple[list[str], list[str]]:
+    """Token-F1 tokens of a normalized prediction and reference, by script.
+
+    Whitespace words, except that a Han, Hangul or Kana letter is a token of
+    its own, as the Chinese (CMRC 2018) and Korean (KorQuAD) reading
+    comprehension benchmarks score F1 by character: Chinese and Japanese put
+    no space between words, so a whitespace word is a whole clause there,
+    and a Korean word carries its particles. A prediction word that is a
+    reference word plus an attached Korean particle or a number's unit
+    ("서울은" for "서울", "2024년에" for "2024년"; ``_token_matches``) first
+    counts as that word, so the particle costs no precision. Latin words and
+    numbers stay whole ("2024年" is "2024", "年").
+    """
+    reference_words = sorted(set(reference.split()), key=len, reverse=True)
+
+    def bare(word: str) -> str:
+        return next(
+            (r for r in reference_words if r != word and _token_matches(r, word)),
+            word,
+        )
+
+    def split(words: list[str]) -> list[str]:
+        return [
+            token.strip()
+            for word in words
+            for token in _SCRIPT_TOKEN.findall(word)
+            if token.strip()
+        ]
+
+    return split([bare(w) for w in prediction.split()]), split(reference.split())
 
 
 def _compact_window_matches(expected: str, actual: list[str]) -> bool:

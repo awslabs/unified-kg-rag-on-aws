@@ -82,5 +82,7 @@ processing:
 ## 한국어·CJK 답변 평가
 
 `answer_match` 평가기는 한국어 조사와 단위를 허용하고, CJK 문자 옆의 띄어쓰기를 무시하며,
-한국어·중국어·일본어의 예/아니요 답을 읽습니다. 이 언어들에서는 token F1이 낮게 나옵니다.
+한국어·중국어·일본어의 예/아니요 답을 읽습니다. 기본 정규화에서 token F1은 한자·한글·가나
+한 글자를 토큰 하나로 셉니다(문자 단위 F1). exact match는 조사가 붙은 답을 여전히 낮게
+셉니다.
 규칙은 [`answer_match`](../reference/evaluation-output.md#answer_match)(영문)에 있습니다.

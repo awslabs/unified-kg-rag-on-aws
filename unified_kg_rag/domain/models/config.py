@@ -5756,8 +5756,12 @@ class EvaluationConfig(BaseModel):
         description=(
             "Judge calls per answer of the assertion evaluator: each labels "
             "every assertion of the item supported, contradicted or absent "
-            "(assertions shuffled per trial), and the metrics average the "
-            "trials that succeeded. A query whose trials all failed records "
+            "(assertions shuffled per trial, in an order no earlier trial "
+            "used while one is left), and an assertion takes the label a "
+            "majority (more than half) of the trials that succeeded gave it. "
+            "A deterministic judge (temperature 0) repeats itself on an item "
+            "with fewer orders than trials (one assertion, or two with three "
+            "trials). A query whose trials all failed records "
             "its metrics as failed, never as 0."
         ),
     )

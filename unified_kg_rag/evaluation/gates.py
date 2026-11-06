@@ -8,7 +8,8 @@ when the condition holds: ``answer_match/token_f1:ci_high<-0.02`` fails when
 the interval of the token-F1 delta lies wholly below -0.02 (a supported
 regression), ``usage/total_tokens:mean_delta>500`` when the answers cost 500
 more tokens per query on average. ``<measure>`` is a key of
-``deltas_vs_baseline`` (``<evaluator>/<metric>``) or of
+``deltas_vs_baseline`` (``<evaluator>/<metric>``, or ``abstention/recall``
+and ``abstention/precision`` with unanswerable items) or of
 ``cost.deltas_vs_baseline`` (``usage/llm_calls``, ``usage/input_tokens``,
 ``usage/output_tokens``, ``usage/total_tokens``, ``usage/cost_usd``,
 ``latency/response_time_seconds``). A measure a strategy has no delta for
@@ -53,7 +54,13 @@ STATS = ("mean_delta", "ci_low", "ci_high")
 # sign test gives p = 2 * 0.5**5 = 0.06. 10 is a round floor at which a
 # one-sided result survives that test (9 wins of 10: p = 0.02); real
 # comparisons need a few hundred queries (docs/guides/evaluate.md, "When a
-# difference counts").
+# difference counts"). The floor is not where the interval becomes exact:
+# the percentile bootstrap is anti-conservative on few pairs. Simulated on
+# null deltas (3,000 comparisons each, 2,000 resamples), the 95% interval
+# excluded 0 in 8% of them at 10 pairs of 0/1-metric deltas (12% for
+# heavy-tailed t3 deltas), 5% from 20-30 pairs (7% for t3 at 30-50), against
+# the nominal 5%; a gate read on under ~30 pairs breaches on noise more often
+# than its confidence says.
 MIN_GATE_PAIRS = 10
 _OPS: dict[str, Callable[[float, float], bool]] = {
     "<=": operator.le,

@@ -12,11 +12,16 @@ MIT); negative ones are written by hand.
 Per answer and trial, one judge call (``models.roles.evaluation``,
 ``AssertionJudgementPrompt``) labels every assertion of the item
 ``supported``, ``contradicted`` or ``absent``; the assertions are shuffled
-per trial with a seed of the query id and trial, so their order is no
-position bias, and the labels are mapped back. ``evaluation.assertion_trials``
-trials run per answer. An assertion takes a label when more than half of the
-successful trials gave it (BenchmarkQED's pass rule: a trial mean above 0.5).
-Per query:
+per trial with a seed of the query id, so their order is no position bias,
+and the labels are mapped back. ``evaluation.assertion_trials`` trials run
+per answer, each in an order no earlier trial of the query used while one is
+left (``n`` assertions have ``n!`` orders). A deterministic judge (temperature
+0) gives the same labels for the same order, so an item with fewer orders
+than trials (one assertion, or two with three trials) repeats a call that
+adds no information; the report records ``distinct_orders``. The judge calls
+of all queries and trials share ``processing.max_concurrency``. An assertion
+takes a label when more than half of the successful trials gave it (a
+majority vote: BenchmarkQED's pass rule, a trial mean above 0.5). Per query:
 
 - ``assertion_recall``: positive assertions supported / positive assertions.
 - ``assertion_contradiction_rate``: positive assertions contradicted /
@@ -37,6 +42,7 @@ answer and assertions.
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 from collections.abc import Sequence
 from datetime import datetime
@@ -48,6 +54,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
+    error_digest,
     judge_model_kwargs,
 )
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
@@ -111,11 +118,25 @@ def assertions_of(metadata: dict[str, Any]) -> list[EvaluationAssertion]:
 
 def trial_order(query_id: str, trial: int, count: int) -> list[int]:
     """The order the assertions are shown in for one trial: a permutation of
-    ``range(count)`` seeded by the query id and trial (the same in every
-    run and process)."""
-    order = list(range(count))
-    random.Random(f"{query_id}\0{trial}").shuffle(order)  # nosec B311 - not crypto
-    return order
+    ``range(count)`` seeded by the query id (the same in every run and
+    process). The trials of a query take distinct orders until all ``count!``
+    are used, then repeat them in the same sequence."""
+    distinct = math.factorial(count) if count < 13 else None  # 13! > 6e9
+    cycle = trial if distinct is None else trial % distinct
+    rng = random.Random(f"{query_id}\0order")  # nosec B311 - not crypto
+    seen: list[list[int]] = []
+    while len(seen) <= cycle:
+        order = list(range(count))
+        rng.shuffle(order)
+        if order not in seen:
+            seen.append(order)
+    return seen[cycle]
+
+
+def distinct_orders(count: int, trials: int) -> int:
+    """How many of ``trials`` trials show ``count`` assertions in an order no
+    other trial used."""
+    return trials if count >= 13 else min(trials, math.factorial(count))
 
 
 def parse_verdicts(output: Any, count: int) -> list[str]:
@@ -211,6 +232,10 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
 
     def _initialize_evaluator(self, **kwargs: Any) -> None:
         self.trials = self.config.evaluation.assertion_trials
+        # One limit for every judge call: the batch runs max_concurrency
+        # queries at once and each its trials at once, so without it the
+        # calls in flight were max_concurrency x assertion_trials.
+        self._slots: tuple[asyncio.AbstractEventLoop, asyncio.Semaphore] | None = None
         self.chain = setup_chain(
             self.providers.llm_factory,
             self.config.model_id(ModelRole.EVALUATION),
@@ -224,6 +249,17 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
     def metric_types(self) -> list[EvaluationMetricType]:
         return [*_POSITIVE_METRICS, *_NEGATIVE_METRICS]
 
+    def _judge_slot(self) -> asyncio.Semaphore:
+        """The semaphore bounding judge calls, one per event loop (a
+        semaphore is bound to the loop it first waits in)."""
+        loop = asyncio.get_running_loop()
+        if self._slots is None or self._slots[0] is not loop:
+            self._slots = (
+                loop,
+                asyncio.Semaphore(self.config.processing.max_concurrency),
+            )
+        return self._slots[1]
+
     async def _trial(
         self,
         result: EvaluationResult,
@@ -232,13 +268,14 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
     ) -> list[str]:
         """One trial's label per assertion, in the assertions' own order."""
         order = trial_order(result.query_id, trial, len(assertions))
-        output = await self.chain.ainvoke(
-            {
-                "question": result.question,
-                "answer": result.generated_answer,
-                "assertions": _numbered(assertions, order),
-            }
-        )
+        async with self._judge_slot():
+            output = await self.chain.ainvoke(
+                {
+                    "question": result.question,
+                    "answer": result.generated_answer,
+                    "assertions": _numbered(assertions, order),
+                }
+            )
         shown = parse_verdicts(output, len(assertions))
         labels = [""] * len(assertions)
         for position, index in enumerate(order):
@@ -268,12 +305,12 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
             return_exceptions=True,
         )
         trials: list[list[str]] = []
-        errors: list[str] = []
+        errors: list[Exception] = []
         for outcome in outcomes:
             if isinstance(outcome, BaseException):
                 if not isinstance(outcome, Exception):
                     raise outcome  # a cancellation is not a failed trial
-                errors.append(str(outcome) or type(outcome).__name__)
+                errors.append(outcome)
             else:
                 trials.append(outcome)
         attempted = [m for m in self.metric_types() if m.value not in skipped]
@@ -283,17 +320,25 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
             "positive_assertions": kinds.count("positive"),
             "negative_assertions": kinds.count("negative"),
             "trials": self.trials,
+            "distinct_orders": distinct_orders(len(assertions), self.trials),
             "failed_trials": len(errors),
         }
         if skipped:
             metadata[SKIPPED_METRICS_KEY] = skipped
+        # The error may quote the judge's reply: a digest at WARNING, the
+        # text at DEBUG.
         if not trials:
             logger.warning(
                 "Assertion judge failed every trial for '%s': %s",
                 query.query_id,
-                errors[-1] if errors else "no trial ran",
+                error_digest(errors[-1]) if errors else "no trial ran",
             )
-            reason = f"Assertion judge failed: {errors[-1] if errors else 'no trial'}"
+            if errors:
+                logger.debug(
+                    "Assertion judge error for '%s': %s", query.query_id, errors[-1]
+                )
+            last = (str(errors[-1]) or type(errors[-1]).__name__) if errors else ""
+            reason = f"Assertion judge failed: {last or 'no trial'}"
             metadata[FAILED_METRICS_KEY] = {m.value: reason for m in attempted}
             return self._report(query, result, [], metadata)
         if errors:
@@ -303,7 +348,10 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
                 len(errors),
                 self.trials,
                 query.query_id,
-                errors[-1],
+                error_digest(errors[-1]),
+            )
+            logger.debug(
+                "Assertion judge error for '%s': %s", query.query_id, errors[-1]
             )
         aggregate = aggregate_trials(kinds, trials)
         metadata["assertion_labels"] = [

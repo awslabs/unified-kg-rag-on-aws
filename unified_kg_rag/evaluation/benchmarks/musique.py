@@ -22,7 +22,11 @@ file (``musique_full_v1.0_*.jsonl``, downloaded the same way): each is the
 question of an answerable twin with one or more supporting paragraphs
 replaced. An item is left out when its twin is in the answerable sample, or
 when the exact text of a removed paragraph is in the pooled corpus (MuSiQue
-reuses paragraphs across questions): see ``select_unanswerable``.
+reuses paragraphs across questions): see ``select_unanswerable``. The
+answerable questions still come from the answerable file
+(``unanswerable_source`` is the full one), so they are the MuSiQue-Ans
+sample the seed draws without ``unanswerable``; a full file given alone
+supplies both, its answerable half labelled ``musique-full-answerable``.
 ``hops`` filters by hop count or draws an answerable quota per hop.
 """
 
@@ -135,6 +139,12 @@ def parse_hops(value: str) -> dict[int, int | None]:
     if len({quota is None for quota in hops.values()}) > 1:
         raise ValueError("give a quota for every hop count or for none")
     return hops
+
+
+def has_unanswerable(source: Path) -> bool:
+    """Whether the MuSiQue JSONL ``source`` holds an unanswerable item (a
+    full file)."""
+    return any(not item.get("answerable", True) for item in _items(source))
 
 
 def hop_count(item_id: str) -> int | None:
@@ -359,32 +369,42 @@ def prepare(
     seed: int = 0,
     unanswerable: int | None = None,
     hops: dict[int, int | None] | None = None,
+    unanswerable_source: Path | None = None,
 ) -> dict[str, Any]:
     """Write ``corpus/`` and ``eval_data.json`` for (a sample of) ``source``.
 
     ``limit`` answerable questions are drawn with ``seed`` (all when
     ``None``), from the hop counts ``hops`` names (with quotas: exactly that
-    many per hop count). Unanswerable items (in the full, non-``ans`` files)
-    are skipped unless ``unanswerable`` asks for that many
-    (:func:`select_unanswerable`, same seed, same hop counts); they are
-    written with ``metadata.answerable: false``. The answerable half of a
-    full file is not MuSiQue-Ans (its paragraphs and answer aliases differ),
-    so its rows are labelled ``musique-full-answerable`` instead of
-    ``musique``, with a WARNING. The answerable sample does not depend on
+    many per hop count). Unanswerable items are skipped unless
+    ``unanswerable`` asks for that many (:func:`select_unanswerable`, same
+    seed, same hop counts), drawn from the full file
+    ``unanswerable_source`` (with their twins, its answerable half), or from
+    ``source`` itself when it is a full file and ``unanswerable_source`` is
+    not given; they are written with ``metadata.answerable: false``. The
+    answerable half of a full file is not MuSiQue-Ans (its paragraphs and
+    answer aliases differ), so answerable rows drawn from one are labelled
+    ``musique-full-answerable`` instead of ``musique``, with a WARNING. The
+    answerable sample is the one ``source`` and ``seed`` draw without
     ``unanswerable``.
 
     Raises:
-        InvalidBenchmarkDataError: ``unanswerable`` with a file that has
-            none, or a sample the file cannot supply.
+        InvalidBenchmarkDataError: ``unanswerable`` with no file that has
+            unanswerable items, or a sample the files cannot supply.
     """
     check_output_directory(output_dir)
     corpus = output_dir / "corpus"
     every_item = list(_items(source))
     items = [i for i in every_item if i.get("answerable", True)]
-    unanswerable_items = [i for i in every_item if not i.get("answerable", True)]
+    full_items = (
+        list(_items(unanswerable_source))
+        if unanswerable and unanswerable_source is not None
+        else every_item
+    )
+    unanswerable_items = [i for i in full_items if not i.get("answerable", True)]
     if unanswerable and not unanswerable_items:
+        named = unanswerable_source or source
         raise InvalidBenchmarkDataError(
-            f"{source} has no unanswerable items: --unanswerable needs a "
+            f"{named} has no unanswerable items: --unanswerable needs a "
             f"MuSiQue full file ({FULL_DEV_FILE}, the default download with "
             "--unanswerable)"
         )
@@ -410,8 +430,9 @@ def prepare(
                 for i in unanswerable_items
                 if not hops or hop_count(str(i.get("id", ""))) in hops
             ],
-            # Twins come from the whole file, sampled or not.
-            {str(i["id"]): i for i in every_item if i.get("answerable", True)},
+            # Twins come from the whole full file, sampled or not: its
+            # answerable half tells which paragraphs were removed.
+            {str(i["id"]): i for i in full_items if i.get("answerable", True)},
             items,
             unanswerable,
             rng,

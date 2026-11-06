@@ -15,6 +15,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIP_REASON_EMPTY_REFERENCE,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
+    error_digest,
     judge_model_kwargs,
 )
 from unified_kg_rag.adapters.providers import Providers
@@ -125,8 +126,9 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
             )
         except Exception as e:
             logger.error(
-                "Failed to initialize LangChain evaluator: %s", e, exc_info=True
+                "Failed to initialize LangChain evaluator: %s", error_digest(e)
             )
+            logger.debug("LangChain evaluator initialization error", exc_info=True)
             raise EvaluationException(
                 f"Failed to initialize LangChain evaluator: {e}"
             ) from e
@@ -225,9 +227,14 @@ class LangChainEvaluator(BaseGraphRAGEvaluator):
         The failure is recorded under the report's ``failed_metrics`` instead,
         matching RAGAS's NaN-skip behaviour.
         """
+        # The error may quote the judge's reply: a digest at ERROR.
         logger.error(
-            "Evaluation failed for '%s' on query '%s': %s", metric_type, query_id, error
+            "Evaluation failed for '%s' on query '%s': %s",
+            metric_type,
+            query_id,
+            error_digest(error),
         )
+        logger.debug("Evaluation error on query '%s': %s", query_id, error)
         return f"Evaluation failed: {error}"
 
     def _create_report(

@@ -29,6 +29,14 @@ about too, as are runs whose exact match and token F1 read different answer
 spans (``evaluation.answer_span``), and extracted spans that fell back to
 the first line (``answer_span_fallbacks``).
 
+With unanswerable items (``metadata.answerable: false``) the declines are
+paired too: ``abstention/recall`` is per unanswerable query whether its
+answer declined (a failed answer did not), a per-query mean like a metric;
+``abstention/precision`` (declines on unanswerable queries over all
+declines) is a ratio, so its delta's interval recomputes both precisions on
+each resample of the queries (``_precision_delta``). Both are ``--fail-if``
+measures.
+
 Given each query's category, ``deltas_by_category`` repeats the deltas per
 category. Its intervals are per category and uncorrected for the number of
 categories and metrics compared: read them as exploratory.
@@ -127,13 +135,29 @@ def _scored_metrics(runs: Mapping[str, Sequence[Run]]) -> dict[str, set[str]]:
     return scored
 
 
+# The decline measures of a dataset with unanswerable items
+# (``metadata.answerable: false``): per query, whether the answer declined.
+ABSTENTION_RECALL = "abstention/recall"
+ABSTENTION_PRECISION = "abstention/precision"
+
+
+def _unanswerable(result: EvaluationResult) -> bool:
+    return result.metadata.get("answerable") is False
+
+
+def _declined(result: EvaluationResult) -> bool:
+    return bool(result.abstained) and not result.error
+
+
 def per_query_means(
     runs: Sequence[Run], failed_scores: Mapping[str, set[str]] | None = None
 ) -> dict[str, dict[str, float]]:
     """``{"evaluator/metric": {query_id: mean over the runs that scored it}}``.
 
     A query whose answer failed in a run counts 0 in that run for each metric
-    ``failed_scores`` lists for it.
+    ``failed_scores`` lists for it. An unanswerable query also has
+    ``abstention/recall``: 1 when its answer declined, else 0 (a failed
+    answer is no decline).
     """
     values: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for reports, results in runs:
@@ -145,6 +169,11 @@ def per_query_means(
             if result.error:
                 for key in (failed_scores or {}).get(result.query_id, ()):
                     values[key][result.query_id].append(0.0)
+            if _unanswerable(result):
+                # Declined (1) or not (0); a failed answer is no decline.
+                values[ABSTENTION_RECALL][result.query_id].append(
+                    float(_declined(result))
+                )
     return {
         key: {qid: float(np.mean(v)) for qid, v in by_query.items()}
         for key, by_query in sorted(values.items())
@@ -194,6 +223,71 @@ def _delta_stats(
         "ties": sum(d == 0 for d in diff),
         "losses": sum(d < 0 for d in diff),
         "per_query": dict(zip(paired, diff, strict=True)),
+    }
+
+
+def _decline_shares(
+    strategy_runs: Sequence[Run],
+) -> tuple[dict[str, float], set[str]]:
+    """Per query, the share of the runs whose answer declined (a failed one
+    did not), and the unanswerable queries."""
+    declined: dict[str, list[float]] = defaultdict(list)
+    unanswerable: set[str] = set()
+    for _, results in strategy_runs:
+        for result in results:
+            declined[result.query_id].append(float(_declined(result)))
+            if _unanswerable(result):
+                unanswerable.add(result.query_id)
+    return {q: float(np.mean(v)) for q, v in declined.items()}, unanswerable
+
+
+def _precision(shares: Mapping[str, float], unanswerable: set[str]) -> float | None:
+    """Declines on unanswerable queries over all declines (``None``: none)."""
+    total = sum(shares.values())
+    if not total:
+        return None
+    return sum(v for q, v in shares.items() if q in unanswerable) / total
+
+
+def _precision_delta(
+    base: tuple[dict[str, float], set[str]],
+    other: tuple[dict[str, float], set[str]],
+    *,
+    resamples: int,
+    confidence: float,
+    seed: int,
+) -> dict[str, Any] | None:
+    """Paired delta of the decline precision over the queries both answered.
+
+    Precision is a ratio over the declines, not a mean over queries, so the
+    interval resamples the queries (as ``bootstrap_ci``) and recomputes both
+    sides' precision on each resample; a resample where one side declined
+    nothing is left out. ``pairs`` counts the queries either side declined:
+    the ones the ratio rests on. ``None`` when either side declined none.
+    """
+    paired = sorted(set(base[0]) & set(other[0]))
+    unanswerable = base[1] | other[1]
+    one = np.asarray([base[0][q] for q in paired], dtype=float)
+    two = np.asarray([other[0][q] for q in paired], dtype=float)
+    hit = np.asarray([q in unanswerable for q in paired], dtype=float)
+    if not paired or not one.sum() or not two.sum():
+        return None
+    point = float((two * hit).sum() / two.sum() - (one * hit).sum() / one.sum())
+    rng = np.random.default_rng(seed)
+    index = rng.integers(0, len(paired), size=(resamples, len(paired)))
+    one_total, two_total = one[index].sum(axis=1), two[index].sum(axis=1)
+    valid = (one_total > 0) & (two_total > 0)
+    diffs = (two * hit)[index].sum(axis=1)[valid] / two_total[valid] - (one * hit)[
+        index
+    ].sum(axis=1)[valid] / one_total[valid]
+    tail = (1.0 - confidence) / 2 * 100
+    low, high = np.percentile(diffs, [tail, 100 - tail]) if diffs.size else (point,) * 2
+    return {
+        "pairs": int(((one > 0) | (two > 0)).sum()),
+        "unpaired": len(set(base[0]) ^ set(other[0])),
+        "mean_delta": point,
+        "ci_low": float(low),
+        "ci_high": float(high),
     }
 
 
@@ -304,6 +398,7 @@ def _paired_comparison(
     baseline = strategies[0]
     failed_scores = _strategy_failed_scores(runs, _scored_metrics(runs))
     means = {s: per_query_means(runs[s], failed_scores[s]) for s in strategies}
+    declines = {s: _decline_shares(runs[s]) for s in strategies}
     summary: dict[str, Any] = {}
     for strategy in strategies:
         run_means = [
@@ -362,6 +457,24 @@ def _paired_comparison(
             # is unpaired for that metric, not scored.
             "failed_metrics": _failed_metric_counts(runs[strategy]),
         }
+        if declines[strategy][1]:
+            per_repeat_precision = [
+                p
+                for p in (_precision(*_decline_shares([run])) for run in runs[strategy])
+                if p is not None
+            ]
+            precision = _precision(*declines[strategy])
+            if precision is not None:
+                metrics[ABSTENTION_PRECISION] = {
+                    "mean": precision,
+                    # The queries the ratio rests on: those declined.
+                    "queries": sum(v > 0 for v in declines[strategy][0].values()),
+                    "repeat_stdev": (
+                        float(np.std(per_repeat_precision, ddof=1))
+                        if len(per_repeat_precision) > 1
+                        else None
+                    ),
+                }
         fallbacks = _span_fallbacks(runs[strategy])
         if fallbacks is not None:
             # Extracted spans that fell back to the answer's first line.
@@ -379,6 +492,12 @@ def _paired_comparison(
             delta = _delta_stats(base, means[strategy].get(key, {}), **stats)
             if delta is not None:
                 by_metric[key] = delta
+        if declines[baseline][1] or declines[strategy][1]:
+            precision_delta = _precision_delta(
+                declines[baseline], declines[strategy], **stats
+            )
+            if precision_delta is not None:
+                by_metric[ABSTENTION_PRECISION] = precision_delta
         deltas[strategy] = by_metric
     cost = cost_comparison(runs, prices=prices, **stats)
     warnings = [

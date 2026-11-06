@@ -114,7 +114,14 @@ musique --unanswerable N`이 코퍼스로 답할 수 없도록 걸러 낸 질문
   `selective_accuracy`(답한 질문만), `overall_accuracy`(맞힌 답이나 맞는 거절, 두 종류
   전체)를 보고합니다. coverage와 accuracy를 함께 읽으세요. 거절을 늘리면 selective
   accuracy는 오르고 coverage는 떨어집니다. 개수는 `completed`(답변 생성이 실패하지 않은
-  결과) = `abstained`(거절) + `answered`(거절하지 않음)입니다.
+  결과) = `abstained`(거절) + `answered`(거절하지 않음)와 `failed`입니다. 답변 생성이 실패한
+  결과는 거절이 아니므로 recall을 낮추고, 답할 수 있는 질문이면 accuracy에서 0점입니다.
+  실패가 거절로 보이지 않습니다.
+- 비교(`--search-strategy a,b`, `--baseline-results`)는 거절도 짝지어 비교합니다.
+  `abstention/recall`(답할 수 없는 질의마다 거절 여부)과 `abstention/precision`(거절 중 답할
+  수 없는 질문의 비율. 구간은 질의를 재표본추출해 구합니다)이 `deltas_vs_baseline`에 지표와
+  함께 들어가므로 `--fail-if abstention/recall:ci_high<0`으로 뒷받침되는 하락을 게이트로
+  걸 수 있습니다.
 - 저장된 결과마다 `abstained`, `abstention_reason`, `context_sufficient`,
   `insufficiency_reason`과 `iterative`의 실행 기록(라운드 수, 멈춘 이유, 판정)이 남으므로 결과
   파일만으로 실행을 분석할 수 있습니다
@@ -294,7 +301,8 @@ run-eval --data-path eval.json --search-strategy local \
 - **게이트.** `--fail-if <measure>:<stat><op><value>`(여러 번 지정 가능)는 비교한 전략의
   짝지은 차이가 조건을 만족하면 종료 코드 1로 끝냅니다. `ci_high<-0.02`는 질의 표본이
   뒷받침하는 성능 저하일 때만 실패합니다. 그 측정값의 차이가 없는 전략도 실패하고, 짝지은
-  질의가 10개 미만인 차이(짝 하나면 구간의 폭이 0입니다)와 판정 모델이 두 쪽 답변에서 채점하지
+  질의가 10개 미만인 차이(짝 하나면 구간의 폭이 0입니다. 30개 미만이면 부트스트랩 구간이 너무
+  좁아 잡음만으로 0을 벗어나는 비율이 5%가 아니라 최대 8-12%입니다)와 판정 모델이 두 쪽 답변에서 채점하지
   못한 횟수가 다른 지표(`strategies.<s>.failed_metrics`. 그 질의는 짝을 이루지 못합니다)도
   실패합니다. 전략 두 개 이상이나 `--baseline-results`가 필요합니다.
 - **게이트 개수.** 비교한 전략마다 게이트 하나하나가 별개의 검정입니다. `ci_high<0` 게이트는

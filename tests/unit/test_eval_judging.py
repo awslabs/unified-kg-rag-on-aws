@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -65,18 +66,32 @@ class TestLengthBuckets:
     @pytest.mark.parametrize(
         ("ratio", "bucket"),
         [
-            (0.5, "<0.67x"),
-            (0.8, "0.67-0.9x"),
-            (0.9, "0.9-1.1x"),
-            (1.0, "0.9-1.1x"),
-            (1.1, "0.9-1.1x"),
+            (0.5, "<=0.67x"),
+            (2 / 3, "<=0.67x"),
+            (0.8, "0.67-0.91x"),
+            (0.9, "0.67-0.91x"),
+            (1 / 1.1, "0.91-1.1x"),
+            (1.0, "0.91-1.1x"),
+            (1.1, "0.91-1.1x"),
             (1.2, "1.1-1.5x"),
-            (1.5, ">1.5x"),
-            (9.0, ">1.5x"),
+            (1.5, ">=1.5x"),
+            (9.0, ">=1.5x"),
+            (0.0, "<=0.67x"),
+            (float("inf"), ">=1.5x"),
         ],
     )
     def test_ratio_buckets(self, ratio: float, bucket: str) -> None:
         assert pairwise.length_bucket(ratio) == bucket
+
+    @pytest.mark.parametrize("ratio", [1.05, 1.1, 1.3, 1.5, 2.0, 7 / 3])
+    def test_buckets_are_symmetric_in_the_log_ratio(self, ratio: float) -> None:
+        """Regression: 0.9 shared the middle bucket with 1.1 although 1/0.9
+        is 1.11, and 2/3 left the outer bucket that 1.5 was in."""
+        buckets = pairwise.LENGTH_BUCKETS
+        mirror = {b: buckets[len(buckets) - 1 - i] for i, b in enumerate(buckets)}
+        assert (
+            pairwise.length_bucket(1 / ratio) == mirror[pairwise.length_bucket(ratio)]
+        )
 
     @pytest.mark.parametrize(
         ("short", "long"),
@@ -100,7 +115,7 @@ class TestLengthBuckets:
         # same "length". The script-aware estimate sees the longer answer.
         lengths = pairwise.answer_lengths(short, long)
         assert lengths["candidate_tokens"] > 2 * lengths["baseline_tokens"]
-        assert lengths["bucket"] == ">1.5x"
+        assert lengths["bucket"] == ">=1.5x"
         assert 0 < lengths["relative_difference"] < 1
 
     def test_summary_reports_win_rates_per_bucket_and_correlation(self) -> None:
@@ -118,14 +133,14 @@ class TestLengthBuckets:
         }
         summary = pairwise.length_summary(lengths, outcomes, ["comprehensiveness"])
         buckets = summary["buckets"]
-        assert buckets[">1.5x"]["pairs"] == 2
-        assert buckets[">1.5x"]["criteria"]["comprehensiveness"][
+        assert buckets[">=1.5x"]["pairs"] == 2
+        assert buckets[">=1.5x"]["criteria"]["comprehensiveness"][
             "candidate_win_rate"
         ] == pytest.approx(1.0)
-        assert buckets["<0.67x"]["criteria"]["comprehensiveness"][
+        assert buckets["<=0.67x"]["criteria"]["comprehensiveness"][
             "candidate_win_rate"
         ] == pytest.approx(0.0)
-        assert buckets["0.9-1.1x"]["criteria"]["comprehensiveness"][
+        assert buckets["0.91-1.1x"]["criteria"]["comprehensiveness"][
             "candidate_win_rate"
         ] == pytest.approx(0.5)
         assert buckets["1.1-1.5x"]["pairs"] == 0
@@ -192,10 +207,10 @@ class TestPairwiseLength:
         assert out["mode"] == "standard"
         length = out["length"]
         assert length["pairs"] == 2
-        assert length["buckets"][">1.5x"]["criteria"]["comprehensiveness"][
+        assert length["buckets"][">=1.5x"]["criteria"]["comprehensiveness"][
             "candidate_win_rate"
         ] == pytest.approx(1.0)
-        assert length["buckets"]["<0.67x"]["criteria"]["comprehensiveness"][
+        assert length["buckets"]["<=0.67x"]["criteria"]["comprehensiveness"][
             "candidate_win_rate"
         ] == pytest.approx(0.0)
         assert set(length["per_query"]) == {"a", "b"}
@@ -397,6 +412,22 @@ class TestAssertionParsing:
         others = {tuple(assertion_evaluator.trial_order("q1", t, 6)) for t in range(5)}
         assert len(others) > 1
 
+    @pytest.mark.parametrize(("count", "trials"), [(3, 3), (3, 6), (4, 5), (2, 3)])
+    def test_trials_take_distinct_orders_while_any_is_left(
+        self, count: int, trials: int
+    ) -> None:
+        """Regression: each trial drew its order independently, so two of
+        three trials could repeat one, which a deterministic judge answers
+        identically."""
+        orders = [
+            tuple(assertion_evaluator.trial_order("q7", t, count))
+            for t in range(trials)
+        ]
+        distinct = assertion_evaluator.distinct_orders(count, trials)
+        assert len(set(orders)) == distinct == min(trials, math.factorial(count))
+        # Past count! orders, they repeat in the same sequence.
+        assert orders[distinct:] == orders[: trials - distinct]
+
     def test_a_label_needs_more_than_half_the_trials(self) -> None:
         kinds = ["positive", "positive", "negative"]
         trials = [
@@ -492,6 +523,33 @@ class TestAssertionEvaluator:
                 f"{n}. {texts[i]}" for n, i in enumerate(order, start=1)
             ]
         assert report.evaluator_type is EvaluatorType.ASSERTION
+
+    def test_judge_calls_share_one_concurrency_limit(self, mocker) -> None:
+        """Regression: max_concurrency queries ran their trials at once, so
+        max_concurrency x assertion_trials judge calls were in flight."""
+
+        class _Slow(_AssertionJudge):
+            in_flight = peak = 0
+
+            async def ainvoke(self, inputs: dict[str, Any]) -> Any:
+                type(self).in_flight += 1
+                type(self).peak = max(type(self).peak, type(self).in_flight)
+                await asyncio.sleep(0.01)
+                type(self).in_flight -= 1
+                return await super().ainvoke(inputs)
+
+        judge = _Slow(lambda t, n: "supported")
+        evaluator = _evaluator(mocker, judge, trials=3)
+        evaluator.config.processing.max_concurrency = 2
+        evaluator.show_progress = False
+        results = [_scored(_result(f"q{i}", "a"), ["x", "y"]) for i in range(4)]
+        queries = [EvaluationQuery(query_id=r.query_id, question="?") for r in results]
+        reports = asyncio.run(
+            evaluator.aevaluate_batch(queries, results, [""] * len(results))
+        )
+        assert len(judge.calls) == 12 and all(r.metrics for r in reports)
+        assert _Slow.peak == 2
+        assert reports[0].metadata["distinct_orders"] == 2
 
     def test_labels_map_back_from_the_shuffled_order(self, mocker) -> None:
         verdicts = {"widgets": "supported", "weekly": "contradicted", "cash": "absent"}
@@ -799,8 +857,8 @@ def test_the_markdown_report_has_the_length_table() -> None:
     markdown = comparison_markdown(comparison)
     assert "differential mode" in markdown
     assert "Win rate by answer length" in markdown
-    assert "| global vs local | >1.5x | 1 | 1.00 |" in markdown
-    assert "| global vs local | 0.9-1.1x | 1 | 0.50 |" in markdown
+    assert "| global vs local | >=1.5x | 1 | 1.00 |" in markdown
+    assert "| global vs local | 0.91-1.1x | 1 | 0.50 |" in markdown
 
 
 def test_the_judge_prompts_declare_their_variables() -> None:

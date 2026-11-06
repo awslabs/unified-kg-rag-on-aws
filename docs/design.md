@@ -2862,8 +2862,18 @@ distractors. Two leaks make a naive pool answerable:
    paragraph's exact text (whitespace-normalized) is in the pool so far, and
    none of its own paragraphs is a removed paragraph of an item already kept;
    a kept item's paragraphs join the pool. Either rule excludes it as
-   `contaminated`. The pool starts from the answerable sample, so the
-   answerable set is the one the same seed draws without `--unanswerable`.
+   `contaminated`. The pool starts from the answerable sample.
+
+The answerable sample is drawn from the answerable file (MuSiQue-Ans: the
+default download, or `--data-path`) and the unanswerable items from the full
+file (downloaded beside it, or `--unanswerable-data-path`), whose answerable
+half supplies each item's twin (which paragraphs were removed). So the
+answerable set is the one the same seed draws without `--unanswerable`. The
+two files are not interchangeable: every item's paragraph set differs
+between them, and a seed draws a different sample from the full file's
+answerable half (17 of 200 shared on the dev split at seed 0), so drawing
+both from the full file, as a full file given alone as `--data-path` still
+does (labelled `musique-full-answerable`), changes the answerable scores.
 
 Unanswerable rows carry `metadata.answerable: false`, no answer or
 reference sources, `metadata.benchmark: musique-full-unanswerable` and the
@@ -2920,7 +2930,17 @@ report. Unanswerable items are scored only by abstention:
 items, abstentions as 0), `selective_accuracy` (over the answered ones) and,
 with unanswerable items, `overall_accuracy` (a correct answer or a correct
 decline, over both). Coverage and accuracy are reported together so a
-strategy cannot look precise by declining more.
+strategy cannot look precise by declining more. A failed answer is no
+decline: it counts against recall and scores 0 in accuracy (with a
+reference answer), so a strategy cannot look better by failing either.
+
+A paired comparison carries the declines as measures: `abstention/recall`
+is a per-query 0/1 (declined) on the unanswerable queries, averaged over
+repeats and paired like any metric (bootstrap interval, per category, per
+query); `abstention/precision` is a ratio over the declines, so its delta is
+the difference of the two precisions and its interval comes from
+recomputing both on each resample of the queries (`pairs` = queries either
+side declined; absent when one side declined none). `--fail-if` reads both.
 
 Failure modes: a model that ignores the marker instruction looks like
 `mode: off` (recall falls, nothing breaks); one that writes the token
@@ -2950,10 +2970,11 @@ records each judged pair's answer lengths in estimated tokens
 Hangul, kana or Han character, about four characters per token elsewhere,
 so a Korean or Japanese answer is not measured in whitespace words) and
 reports, under `length`, the candidate's win rate per bucket of the length
-ratio (candidate over baseline: below 0.67, 0.67-0.9, 0.9-1.1, 1.1-1.5,
-above 1.5) and, per criterion, the correlation between the relative length
+ratio (candidate over baseline: at most 0.67, 0.67-0.91, 0.91-1.1, 1.1-1.5,
+at least 1.5; symmetric in the log ratio, so 1.5 and 1/1.5 sit in mirror
+buckets) and, per criterion, the correlation between the relative length
 difference and the pair's score. A win rate that rises with the ratio, with
-few pairs in the 0.9-1.1 bucket, is a length effect, not a quality one. Free:
+few pairs in the 0.91-1.1 bucket, is a length effect, not a quality one. Free:
 no model call.
 
 **Differential mode (`evaluation.pairwise_mode: differential`, or
@@ -2984,11 +3005,17 @@ answer supports (positive) or must not state (negative, for example a known
 hallucination). Per answer and trial, one `assertion_judgement` call (the
 evaluation role) labels every assertion of the item `supported`,
 `contradicted` or `absent`, in a shuffled order seeded by the query id and
-trial, so the assertion order is no position bias. Per query, over its
-successful trials: `assertion_recall` (positive assertions labelled
-supported, averaged over trials), `assertion_contradiction_rate` (positive
+trial, so the assertion order is no position bias (the trials of a query
+take distinct orders while any is left). An assertion takes the label more
+than half of the query's successful trials gave it (a majority vote,
+BenchmarkQED's pass rule). Per query: `assertion_recall` (positive
+assertions labelled supported), `assertion_contradiction_rate` (positive
 ones contradicted) and `negative_assertion_violation_rate` (negative ones
-supported). A trial whose call fails, or whose reply misses an assertion or
+supported). A deterministic judge (temperature 0) labels one order the same
+way every time, so an item with fewer orders than trials (one assertion, or
+two with three trials) repeats a call that adds nothing; the report records
+`distinct_orders`. The judge calls of all queries and trials share
+`processing.max_concurrency`. A trial whose call fails, or whose reply misses an assertion or
 uses another label, is a failed trial; a query with no successful trial
 records its metrics under `failed_metrics`, never as 0. A query without
 assertions, or without one of the two kinds, skips the metrics it cannot

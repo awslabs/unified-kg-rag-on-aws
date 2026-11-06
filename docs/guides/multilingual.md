@@ -96,5 +96,7 @@ incremental run re-extracts every document of the scope).
 
 The `answer_match` evaluator tolerates Korean particles and units, ignores
 spacing next to CJK letters and reads Korean, Chinese and Japanese yes/no
-answers; token F1 under-counts for these languages. The rules:
+answers; under the default normalization token F1 counts a Han, Hangul or
+Kana letter as a token (character F1), while exact match still under-counts
+an answer with a particle. The rules:
 [`answer_match`](../reference/evaluation-output.md#answer_match).
