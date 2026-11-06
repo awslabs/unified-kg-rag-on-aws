@@ -402,7 +402,7 @@ From a `main` checkout (formats and keys no release had):
   `indexing` as before. A tree built from a `main` checkout before (#601) is summarized again by its next build
   (the summaries' length changed): as many calls as building it. `tree` retrieval scores saved before (#601) rank a
   summary's lineage files above the passages; evaluate again to compare.
-- (#PR) `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by whitespace, so a
+- (#606) `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by whitespace, so a
   default-normalization run is refused against them (exit 2) until one side is scored again (an `official_squad` or
   `hotpotqa` run still compares). Their `abstention_statistics` left failed answers out (rate and recall over the
   completed answers), and pairwise length buckets are renamed (`<=0.67x`, `0.67-0.91x`, `0.91-1.1x`, `>=1.5x`).
@@ -466,7 +466,7 @@ From a `main` checkout (formats and keys no release had):
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,
-  #269, #PR). See
+  #269, #606). See
   [observability](docs/guides/observability.md).
 - Incremental indexing: the extraction-settings fingerprint (#224, #332); `indexing.max_document_failures` with
   own-error accounting and `documents_retrying` (#175, #431); source scopes and `--retire-source-scope` (#134,
@@ -592,7 +592,7 @@ From a `main` checkout (formats and keys no release had):
   falling back to the first line), `evaluation.answer_normalization` (`official_squad`, `hotpotqa`), recorded in the
   manifest's `answer_scoring` with the token-F1 tokenization; under `default`, token F1 counts a Han, Hangul or Kana
   letter as a token and drops a Korean particle on a gold word, so Chinese, Japanese and Korean answers get partial
-  credit (#324, #516, #PR).
+  credit (#324, #516, #606).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
@@ -613,7 +613,7 @@ From a `main` checkout (formats and keys no release had):
   split is downloaded beside it, or `--unanswerable-data-path`). A comparison pairs `abstention/recall` and
   `abstention/precision`, both `--fail-if` measures. Each saved result keeps `abstention_reason`,
   `context_sufficient`, `insufficiency_reason` and the `iterative` run record. Measured on 100 + 100 MuSiQue
-  questions, `mark` stays opt-in and `hedge` the default (#593, #600, #PR). See
+  questions, `mark` stays opt-in and `hedge` the default (#593, #600, #606). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
 - Evaluation of open-ended answers, all opt-in (defaults unchanged until a measured experiment decides): the
   pairwise judge reports win rates per answer-length bucket in estimated tokens (symmetric in the log ratio) and
@@ -624,7 +624,7 @@ From a `main` checkout (formats and keys no release had):
   `evaluation.assertion_trials`, a majority over trials in distinct assertion orders, every judge call within
   `processing.max_concurrency`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions
   in five classes and source-cited assertions from your corpus, after Microsoft BenchmarkQED (MIT; no BenchmarkQED
-  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval (#595, #PR). See
+  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval (#595, #606). See
   [evaluation](docs/guides/evaluate.md#assertions-length-control-and-a-closed-book-bound).
 - Comparison cost: per strategy calls, tokens and latency per query (mean, p50, p95) with paired deltas, a USD
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and
@@ -979,7 +979,7 @@ Deployment (CDK).
 - Logs carry no query text, entity names or model output at INFO, no local variables in tracebacks, no ANSI codes
   when piped, and no relationship endpoints or output previews from gleaning; an evaluator or judge error is logged
   as its type and a digest, its text at DEBUG; a unit test fails on a new INFO+ log call that passes them (#156,
-  #173, #245, #255, #PR).
+  #173, #245, #255, #606).
 - CLI output escapes the data it prints, and `run-rag` strips terminal control characters (#173, #408).
 - Prompts delimit corpus and retrieved text as data that cannot close its tags, the community report's claim lines
   included (#179, #182, #565); the LLM XML parser never resolves DOCTYPE entities (#578).
