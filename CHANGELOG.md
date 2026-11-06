@@ -513,7 +513,7 @@ From a `main` checkout (formats and keys no release had):
   `search.abstention.on_insufficient` (`hedge`, `abstain`) applies when a strategy sets its metadata
   `context_sufficient` to false (none does yet). `answer_match` scores a decline on an answerable question (the
   no-context reply included) 0 without a span call, and `abstention_statistics` adds decline precision, recall and F1
-  and per `answer_match` metric coverage, accuracy, selective and overall accuracy (#PR). See
+  and per `answer_match` metric coverage, accuracy, selective and overall accuracy (#593). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
 - Comparison cost: per strategy calls, tokens and latency per query (mean, p50, p95) with paired deltas, a USD
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and
