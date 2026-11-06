@@ -23,12 +23,14 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Mapping
+from functools import reduce
 from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.adapters.provider_registry import (
     RETRIEVER_PROVIDER_ROLES,
     ProviderRole,
     get_provider_builder,
+    provider_endpoint,
     provider_kind,
     register_provider,
 )
@@ -228,9 +230,23 @@ class Providers:
                 NullGraphIndexer,
             )
 
-            return NullGraphIndexer(self.config)
+            return NullGraphIndexer(self.config, store=self._configured_graph_store())
         indexer: GraphIndexer = self._build(ProviderRole.GRAPH_INDEXER)
         return indexer
+
+    def _configured_graph_store(self) -> Callable[[], GraphIndexer] | None:
+        """Builds the configured graph store's writer, when the store is set
+        up (its endpoint set, for a kind that declares one): a run that
+        writes no graph still clears its namespaces in it on a full build
+        (``NullGraphIndexer``), and one without an endpoint needs none."""
+        endpoint = provider_endpoint(
+            ProviderRole.GRAPH_RETRIEVER, self.kind(ProviderRole.GRAPH_INDEXER)
+        )
+        if endpoint is not None and not reduce(
+            getattr, endpoint[0].split("."), self.config
+        ):
+            return None
+        return lambda: self._build(ProviderRole.GRAPH_INDEXER)
 
     def build_vector_indexer(self) -> VectorIndexer:
         """A new vector/lexical-store writer (the caller closes it)."""

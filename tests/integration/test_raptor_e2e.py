@@ -304,6 +304,45 @@ def test_adding_raptor_builds_only_the_tree(
     assert tree_nodes(providers)
 
 
+def test_a_raptor_only_reset_clears_the_graph_it_no_longer_maintains(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # A reset to raptor alone left the graph store's vertices and edges,
+    # those of documents deleted since included; a reset empties its vector
+    # indices of what it no longer builds, and with a graph store configured
+    # (the embedded one here) its graph too.
+    from unified_kg_rag.adapters.storage.sqlite_graph_indexer import (
+        SQLiteGraphIndexer,
+    )
+
+    config, providers, _, _ = setup(
+        tmp_path, [Methodology.GRAPHRAG, Methodology.LIGHTRAG, Methodology.RAPTOR]
+    )
+    source = corpus(tmp_path)
+    context = ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+
+    def graph_names() -> list[str]:
+        graph = SQLiteGraphIndexer(config)
+        try:
+            return sorted(name for _, name in graph.read_entity_names())
+        finally:
+            graph.close()
+
+    assert graph_names()
+    entities = config.indexing.opensearch.entities_index_prefix
+    assert e2e._stored(config, providers, entities)
+
+    (source / "mill.txt").unlink()
+    config.indexing.methodologies = [Methodology.RAPTOR]
+    config.indexing.reset = True
+    context = ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert graph_names() == []
+    assert e2e._stored(config, providers, entities) == []
+    assert record(providers)["methodologies"] == ["raptor"]
+
+
 def test_a_reset_without_raptor_deletes_the_tree(
     tmp_path: Path, no_aws  # noqa: F811 - the fixture
 ) -> None:
