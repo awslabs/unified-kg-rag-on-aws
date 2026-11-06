@@ -22,6 +22,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     Constants,
+    IndexArtifact,
     Methodology,
     RetrievalResult,
     SearchQuery,
@@ -544,11 +545,10 @@ class LocalSearchStrategy(PPRRankingMixin):
         return {str(seed.source): float(seed.score or 0.0) for seed in seeds}
 
     async def _retrieve_claims(self, query: SearchQuery) -> list[RetrievalResult]:
-        # Only consume the claims (covariate) index when extraction is enabled;
-        # otherwise the index is empty/absent and querying it is pure overhead.
-        if (
-            not self.document_retriever
-            or not self.config.processing.claim_extraction.enabled
+        # Only consume the claims (covariate) index when it is built and the
+        # namespace holds it; otherwise querying it is pure overhead.
+        if not self.document_retriever or not self._reads_artifact(
+            query, IndexArtifact.CLAIMS
         ):
             return []
 
@@ -578,9 +578,11 @@ class LocalSearchStrategy(PPRRankingMixin):
     ) -> list[RetrievalResult]:
         # Pull the community reports most relevant to the query so local context
         # carries the community-level synthesis (mirrors MS GraphRAG local
-        # search). The community-reports index always exists on the GraphRAG
-        # path; degrade to no section on any retrieval error.
-        if not self.document_retriever:
+        # search), where the namespace holds them; degrade to no section on
+        # any retrieval error.
+        if not self.document_retriever or not self._reads_artifact(
+            query, IndexArtifact.COMMUNITY_REPORTS
+        ):
             return []
         if self._source_kinds_skip_reports(query):
             logger.info(
@@ -628,13 +630,17 @@ class LocalSearchStrategy(PPRRankingMixin):
         report (a seed graph's alone has none) adds nothing. ``None`` when no
         entity names a community (the entities index holds no
         ``community_ids``, so a walk under a document filter or the entity
-        hits a failed expansion leaves behind have none), when a
-        ``source_kinds`` filter reads no report, under a range on
+        hits a failed expansion leaves behind have none), when the namespace
+        holds no report or a ``source_kinds`` filter reads none, under a range on
         ``community_id``, or when the caller's ``community_id`` or ``level``
         filter admits none of these level-0 communities (it asks for other
         ones): the caller reads the similar reports then, under that filter.
         """
-        if not self.document_retriever or self._source_kinds_skip_reports(query):
+        if (
+            not self.document_retriever
+            or self._source_kinds_skip_reports(query)
+            or not self._reads_artifact(query, IndexArtifact.COMMUNITY_REPORTS)
+        ):
             return None
         matches = self.community_matches(entity_nodes)
         if not matches or self.filters_exclude_members(query.filters, matches):
@@ -733,12 +739,11 @@ class LocalSearchStrategy(PPRRankingMixin):
         self, query: SearchQuery
     ) -> list[RetrievalResult]:
         # Add a relationship section (relationship descriptions for the query).
-        # Gated on the relationship VECTOR index being built — for a GraphRAG-only
-        # deployment with build_relationship_vector_index=False the index is
-        # absent, so querying it is pure overhead.
-        if (
-            not self.document_retriever
-            or not self.config.indexing.opensearch.build_relationship_vector_index
+        # Gated on the relationship VECTOR index being built and held — for a
+        # GraphRAG-only deployment with build_relationship_vector_index=False
+        # the index is absent, so querying it is pure overhead.
+        if not self.document_retriever or not self._reads_artifact(
+            query, IndexArtifact.RELATIONSHIP_VECTORS
         ):
             return []
 
@@ -770,7 +775,7 @@ class LocalSearchStrategy(PPRRankingMixin):
         # retrieved) ones first.
         if (
             not self.config.search.local_search.include_bridge_relationships
-            or not self.config.indexing.opensearch.build_relationship_vector_index
+            or not self._reads_artifact(query, IndexArtifact.RELATIONSHIP_VECTORS)
         ):
             return []
         relationships = await self._fetch_incident_relationships(

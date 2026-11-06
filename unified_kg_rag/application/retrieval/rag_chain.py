@@ -731,7 +731,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # only among the strategies that apply every filter key, so whether
         # a key is refused never depends on the route a question takes.
         routable = filter_validation.auto_candidates(
-            self, state.get("filters"), state.get("held_artifacts")
+            self,
+            state.get("filters"),
+            # What auto routes among; each candidate's filter keys are
+            # checked against these indexes.
+            state.get("held_artifacts"),
         )
         if len(routable) == 1:
             # Nothing to choose between: no router call.
@@ -1714,11 +1718,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         search: bool,
     ) -> RAGOutput | SearchOutput:
         rag_input, input_dict = self._prepare_invoke(input)
-        filter_validation.check_requested_filter_keys(self, rag_input)
         await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
         # What auto routes among (cached since the check).
         input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
             self, rag_input.suffix
+        )
+        # Filter keys after the methodology check, against the indexes the
+        # namespace holds: a key only an index it lacks declares would be
+        # dropped everywhere.
+        filter_validation.check_requested_filter_keys(
+            self, rag_input, input_dict["held_artifacts"]
         )
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
@@ -2177,11 +2186,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The answer chunks of :meth:`astream`; the speculative extractions
         the route did not read go to ``leftovers``."""
         rag_input, input_dict = self._prepare_invoke(input)
-        filter_validation.check_requested_filter_keys(self, rag_input)
         await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
         # What auto routes among (cached since the check).
         input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
             self, rag_input.suffix
+        )
+        # Filter keys after the methodology check, against the indexes the
+        # namespace holds: a key only an index it lacks declares would be
+        # dropped everywhere.
+        filter_validation.check_requested_filter_keys(
+            self, rag_input, input_dict["held_artifacts"]
         )
         search_config = self.config.search
         deadline = _QueryDeadline(

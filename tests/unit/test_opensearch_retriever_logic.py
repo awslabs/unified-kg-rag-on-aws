@@ -21,7 +21,7 @@ from unified_kg_rag.adapters.retrieval.base import entity_content, query_scope
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
-from unified_kg_rag.domain.models import Config, SearchQuery, SearchType
+from unified_kg_rag.domain.models import Config, Methodology, SearchQuery, SearchType
 from unified_kg_rag.domain.models.config import LanguageCode
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 from unified_kg_rag.shared.utils.scripts import is_dense_script_char
@@ -132,9 +132,12 @@ def test_normalize_index_prefixes_none_all_when_everything_built(
 def test_normalize_index_prefixes_none_follows_optional_index_flags(
     retriever, config
 ) -> None:
+    # A graphrag-only config (the one lightrag's relationship vectors
+    # off leaves) without reports.
+    config.indexing.methodologies = [Methodology.GRAPHRAG]
     config.processing.claim_extraction.enabled = True
     config.indexing.opensearch.build_relationship_vector_index = False
-    config.graph.community_detection.enabled = False
+    config.graph.community_detection.report_generation.enabled = False
     o = config.indexing.opensearch
     assert retriever._normalize_index_prefixes(None) == [
         o.text_units_index_prefix,

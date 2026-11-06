@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
 from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     GraphEdge,
+    IndexArtifact,
     RetrievalResult,
     SearchQuery,
     SearchType,
@@ -100,7 +101,7 @@ class PPRRankingMixin(BaseSearchStrategy):
         ``search.ppr_search.fact_search_type`` (kNN by default, HippoRAG 2's
         query-to-fact similarity); none without the relationship vector
         index."""
-        if not self.config.indexing.opensearch.build_relationship_vector_index:
+        if not self._reads_artifact(query, IndexArtifact.RELATIONSHIP_VECTORS):
             return []
         return await self._index_hits(
             query,

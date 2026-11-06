@@ -474,7 +474,8 @@ From a `main` checkout (formats and keys no release had):
   `tree_graph_text_units`), reranks them together, keeps `max_nodes_per_level` summaries of a level and expands each
   to `expand_children` of its passages; a summary is reported with its lineage, keeps a document filter only when
   all its documents share it, and goes, with every summary above it, when one of its text units is removed. Under a
-  filter key the summary index does not store (`community_ids`, `source_kinds`) `tree` reads no summary
+  filter key the text units store and the summary index does not (`community_ids`, `source_kinds`; not an entity
+  key, which leaves both unfiltered alike, #PR) `tree` reads no summary
   (`metadata.summaries_skipped_for_filters`) where it returned them unfiltered, the graph buckets run where the
   queried namespace holds the entities index (not where the config would build one), and their text units are the
   best-weighted that pass the filters (#607).
@@ -500,7 +501,11 @@ From a `main` checkout (formats and keys no release had):
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
   reads less declares its artifacts (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace
-  that holds the text units, and `simple` sweeps only the indexes it holds (#607). `hipporag` holds what `lightrag`
+  that holds the text units, and `simple` sweeps only the indexes it holds (#607). A filter key is checked, after
+  the methodology check, against the indexes the strategy reads that the namespace holds and a run of the config
+  builds, so a key only an absent index declares (`type` on a `raptor`-only namespace) is refused
+  (`InvalidFilterError`) instead of being dropped; the default sweep and the optional indexes a strategy reads
+  (claims, relationship vectors, reports) follow the same artifacts (#PR). `hipporag` holds what `lightrag`
   builds, so `ppr` is served wherever `lightrag` is, and `raptor` reads a summary tree (#599). Without a build
   record (a namespace ingested before them), a query takes the namespace to hold what a run of the config builds,
   `hipporag` included (#602). With `graph.community_detection.report_generation.enabled: false` a run builds no

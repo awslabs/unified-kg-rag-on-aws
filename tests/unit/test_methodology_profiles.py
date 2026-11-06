@@ -414,6 +414,126 @@ def test_a_run_creates_only_the_indices_of_what_it_builds() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "selected",
+    [(G, L), (G,), (L,), (H,), (R,), (L, R)],
+    ids=lambda m: "+".join(x.value for x in m),
+)
+def test_the_default_sweep_reads_only_what_a_run_builds(selected) -> None:
+    """The default index sweep (and so a filter key check) skips an index
+    no effective methodology reads (the entities, relationships and
+    reports under raptor alone), not only one a switch turns off."""
+    config = _config(*selected)
+    built = mp.artifacts_to_build(config)
+    expected = [
+        prefix
+        for prefix, artifact in index_prefixes._prefix_artifacts(config)
+        if artifact in built
+    ]
+    assert index_prefixes.configured_index_prefixes(config) == expected
+    if selected == (R,):
+        assert expected == [config.indexing.opensearch.text_units_index_prefix]
+
+
+# The strategies' reads of an optional index: (strategy, artifact, the
+# config field of its index prefix).
+_OPTIONAL_READS = [
+    (SearchStrategy.LOCAL, A.CLAIMS, "claims_index_prefix"),
+    (SearchStrategy.LOCAL, A.RELATIONSHIP_VECTORS, "relationships_index_prefix"),
+    (SearchStrategy.LOCAL, A.COMMUNITY_REPORTS, "community_reports_index_prefix"),
+    (SearchStrategy.PPR, A.RELATIONSHIP_VECTORS, "relationships_index_prefix"),
+]
+
+
+async def _searched_prefixes(
+    config: Config,
+    strategy: SearchStrategy,
+    held: frozenset[IndexArtifact],
+    filters: dict | None = None,
+) -> set[str]:
+    from tests.fixtures.fakes.retrievers import FakeRetriever
+    from unified_kg_rag.domain.models import RetrieverRole, SearchQuery
+
+    document, graph = FakeRetriever("document"), FakeRetriever("graph")
+    instance = get_strategy_spec(strategy).strategy_class(
+        config=config,
+        retrievers={
+            RetrieverRole.DOCUMENT.value: document,
+            RetrieverRole.GRAPH.value: graph,
+        },
+    )
+    instance.hybrid_scorer.fuse_and_rerank_results = (  # type: ignore[method-assign]
+        lambda results_dict, top_k, retrieval_multiplier=1, query=None, **_kw: [
+            r for results in results_dict.values() for r in results
+        ]
+    )
+    await instance.asearch(
+        SearchQuery(
+            query="who founded acme",
+            entity_focus=["Acme"],
+            filters=filters,
+            metadata={index_prefixes.HELD_ARTIFACTS_KEY: sorted(a.value for a in held)},
+        )
+    )
+    return {prefix for call in document.calls for prefix in (call.index_prefixes or [])}
+
+
+@pytest.mark.parametrize(
+    ("strategy", "artifact", "prefix_field"),
+    _OPTIONAL_READS,
+    ids=lambda v: getattr(v, "value", v),
+)
+async def test_a_strategy_reads_an_optional_index_only_where_built_and_held(
+    strategy: SearchStrategy, artifact: IndexArtifact, prefix_field: str
+) -> None:
+    """Each switch of ``ARTIFACT_SWITCHES`` that turns the artifact off
+    stops the strategy reading its index, as it does the default sweep,
+    and so does a namespace that does not hold it (its build record)."""
+    switches = [s for s in ARTIFACT_SWITCHES if artifact in s.artifacts]
+    assert switches
+    every = frozenset(A)
+    for switch in switches:
+        on = Config(
+            **merge_over(
+                _setting(switch.key, True),
+                _setting("processing.claim_extraction.enabled", True),
+            )
+        )
+        off = Config(
+            **merge_over(
+                _setting("processing.claim_extraction.enabled", True),
+                _setting(switch.key, False),
+            )
+        )
+        prefix = getattr(on.indexing.opensearch, prefix_field)
+        # Unfiltered, and under a document filter (the graph walk then
+        # passes over the relationships index, where it is read).
+        for filters in (None, {"attr_category": "x"}):
+            label = f"{switch.key} {filters}"
+            assert prefix in await _searched_prefixes(
+                on, strategy, every, filters
+            ), label
+            assert prefix not in await _searched_prefixes(
+                on, strategy, every - {artifact}, filters
+            ), label
+            assert prefix not in await _searched_prefixes(
+                off, strategy, every, filters
+            ), label
+
+
+async def test_ppr_seeds_entities_where_the_namespace_holds_no_facts() -> None:
+    """Without the relationship vectors the namespace holds, PPR seeds the
+    PageRank from entity hits instead of facts, as it does when the
+    config builds none."""
+    config = Config()
+    entities = config.indexing.opensearch.entities_index_prefix
+    every = frozenset(A)
+    assert entities not in await _searched_prefixes(config, SearchStrategy.PPR, every)
+    assert entities in await _searched_prefixes(
+        config, SearchStrategy.PPR, every - {A.RELATIONSHIP_VECTORS}
+    )
+
+
 def test_the_switch_table_names_boolean_settings() -> None:
     assert {s.key: s.artifacts for s in ARTIFACT_SWITCHES} == {
         "graph.community_detection.enabled": {A.COMMUNITIES, A.COMMUNITY_REPORTS},

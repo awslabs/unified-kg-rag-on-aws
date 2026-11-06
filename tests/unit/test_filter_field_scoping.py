@@ -14,6 +14,7 @@ via ``__new__`` with fake clients.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 import pytest
@@ -726,6 +727,11 @@ def _strategy_chain(config: Config) -> GraphRAGChain:
     chain = object.__new__(GraphRAGChain)
     chain.config = config
     chain._get_strategy_instance = strategies.__getitem__  # type: ignore[method-assign]
+    # What a query's methodology check reads first (the namespace's build
+    # record, through the document retriever; none here: the config's).
+    chain._cache_lock = threading.RLock()
+    chain._held_artifacts = {}
+    chain._get_retriever = lambda role: both[role.value]  # type: ignore[method-assign]
     return chain
 
 

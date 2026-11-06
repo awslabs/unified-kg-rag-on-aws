@@ -1040,7 +1040,12 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   holds `hipporag` too, as it holds the relationship vectors `ppr` reads),
   and passes the held artifacts to the strategy
   (`SearchQuery.metadata["held_artifacts"]`), which reads only the optional
-  indexes the namespace holds (`simple`'s sweep, `tree`'s graph buckets).
+  indexes the namespace holds and a run of the config builds
+  (`index_prefixes.readable_artifacts`: `simple`'s sweep, `tree`'s graph
+  buckets, `local`'s claims, relationship and report sections, `ppr`'s
+  facts). After the methodology check, a query's filter keys are checked
+  against the same indexes (`readable_index_prefixes`), so a key only an
+  index the namespace lacks declares is refused, not dropped.
   An explicit strategy whose
   methodology (or declared artifacts) is not held raises `MethodologyNotIndexedError` (a
   `ConfigurationError`; `run-rag` exits 2) before any model call, naming

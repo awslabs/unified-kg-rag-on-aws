@@ -38,6 +38,7 @@ from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.models import (
     Config,
     GraphEdge,
+    IndexArtifact,
     Methodology,
     RetrievalResult,
     RetrieverRole,
@@ -47,7 +48,11 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.models.config import language_name
-from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
+from unified_kg_rag.domain.retrieval.index_prefixes import (
+    configured_index_prefixes,
+    held_artifacts_of,
+    readable_artifacts,
+)
 from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
 from unified_kg_rag.shared import get_logger, observability
@@ -496,6 +501,15 @@ class BaseSearchStrategy(ABC):
     def _built_prefixes(self, *prefixes: str) -> list[str]:
         """The ``prefixes`` the configured pipeline builds."""
         return [p for p in configured_index_prefixes(self.config) if p in prefixes]
+
+    def _reads_artifact(self, query: SearchQuery, artifact: IndexArtifact) -> bool:
+        """Whether ``query``'s searches read the optional index ``artifact``
+        (claims, the relationship vectors, the reports): a run of the config
+        builds it and the queried namespace holds it
+        (``readable_artifacts``, from the held artifacts the chain sets)."""
+        return artifact in readable_artifacts(
+            self.config, held_artifacts_of(query.metadata)
+        )
 
     @property
     def graph_retriever(self) -> BaseGraphRAGRetriever | None:
@@ -956,7 +970,7 @@ class BaseSearchStrategy(ABC):
         if (
             filtered
             and self.document_retriever is not None
-            and self.config.indexing.opensearch.build_relationship_vector_index
+            and self._reads_artifact(query, IndexArtifact.RELATIONSHIP_VECTORS)
         ):
             walked = await self._expand_over_passing_relationships(
                 query, list(dict.fromkeys(str(s) for s in seed_entity_ids))
@@ -1292,9 +1306,8 @@ class BaseSearchStrategy(ABC):
                 or None
             }
         )
-        indexed = (
-            self.document_retriever is not None
-            and self.config.indexing.opensearch.build_relationship_vector_index
+        indexed = self.document_retriever is not None and self._reads_artifact(
+            query, IndexArtifact.RELATIONSHIP_VECTORS
         )
         graph = self.graph_retriever
         if indexed and (

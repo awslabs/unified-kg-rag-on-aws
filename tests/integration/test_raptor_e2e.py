@@ -749,6 +749,69 @@ def test_tree_reads_what_the_namespace_holds_under_any_config(
         chain.close()
 
 
+def test_a_filter_key_no_held_index_declares_is_refused(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    """On a raptor-only namespace, a key only the entities or relationships
+    index declares is refused, under the raptor config and under one
+    naming every methodology alike: no index the namespace holds would
+    apply it, and the query ran unfiltered (simple swept the configured
+    entities index the namespace lacks)."""
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        GraphRAGChain,
+        RAGInput,
+    )
+    from unified_kg_rag.domain.models import SearchStrategy
+    from unified_kg_rag.shared import InvalidFilterError, MethodologyNotIndexedError
+
+    config, providers, server, _ = setup(tmp_path)
+    context = ingest(config, providers, corpus(tmp_path), tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    wide = config.model_copy(deep=True)
+    wide.indexing.methodologies = [
+        Methodology.GRAPHRAG,
+        Methodology.LIGHTRAG,
+        Methodology.RAPTOR,
+    ]
+    for query_config in (config, wide):
+        chain = GraphRAGChain(query_config, providers=providers)
+        try:
+            before = len(server.chat_models)
+            for strategy in (
+                SearchStrategy.SIMPLE,
+                SearchStrategy.TREE,
+                SearchStrategy.AUTO,
+            ):
+                for key, value in (("type", "NO_SUCH_TYPE"), ("description", "x")):
+                    with pytest.raises(InvalidFilterError, match=key):
+                        ask(chain, search_strategy=strategy, filters={key: value})
+                    stream = RAGInput(
+                        query=QUESTION,
+                        search_strategy=strategy,
+                        filters={key: value},
+                    )
+                    with pytest.raises(InvalidFilterError, match=key):
+                        list(chain.stream(stream))
+            # Refused before any model call.
+            assert len(server.chat_models) == before
+            # A strategy the namespace does not serve is refused as such
+            # first, whatever its filter keys.
+            with pytest.raises(MethodologyNotIndexedError):
+                ask(
+                    chain,
+                    search_strategy=SearchStrategy.LOCAL,
+                    filters={"no_such_key": "x"},
+                )
+            # A key the text units declare still filters.
+            for strategy in (SearchStrategy.SIMPLE, SearchStrategy.TREE):
+                out = ask(
+                    chain, search_strategy=strategy, filters={"attr_category": "none"}
+                )
+                assert not out.sources, strategy
+        finally:
+            chain.close()
+
+
 def test_tree_is_refused_where_no_tree_was_built(
     tmp_path: Path, no_aws  # noqa: F811 - the fixture
 ) -> None:
@@ -787,6 +850,13 @@ def test_tree_adds_the_graph_signal_where_entities_are_indexed(
         assert meta["graph_signal"] == "on" and meta["graph_seeds"] > 0
         assert meta["sources"]["tree_graph_text_units"] > 0
         assert meta["sources"]["tree_graph_summaries"] > 0
+        # A key the entities declare and the text units do not filters the
+        # graph seeds; it leaves the text units and the summaries
+        # unfiltered alike, so no summary is skipped for it.
+        meta = ask(chain, filters={"type": "NO_SUCH_TYPE"}).search_results.metadata
+        assert "summaries_skipped_for_filters" not in meta
+        assert meta["sources"]["tree_summaries"] > 0
+        assert meta["sources"]["tree_text_units"] > 0
         off = config.model_copy(deep=True)
         off.search.tree_search.graph_signal = "off"
         off_chain = GraphRAGChain(off, providers=providers)
