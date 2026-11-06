@@ -82,6 +82,11 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   and under `standard` an inflected form ("vendors"), matches only through
   the vector side.
 - kNN is exact (every filtered document is scored), so cost grows linearly.
+  The products run on numpy's BLAS: `run-eval` and `run-rag` default
+  `OPENBLAS_NUM_THREADS` to 1, because concurrent queries each starting a
+  thread per core spent about 8 times the CPU for the same scores. Set it
+  to 1 in the environment of any other process serving concurrent queries
+  (an async server, a worker) before numpy loads.
 - Each searched index is held in memory (about documents x dimension x 4
   bytes per vector field), sized for about 100,000 documents (a larger one
   logs a warning: use OpenSearch). The first query after a write reloads the

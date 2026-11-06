@@ -2670,6 +2670,15 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   one set of clients. Blocking calls run in `asyncio.to_thread`, on a default
   executor sized to `processing.io_workers` (which bounds concurrent Bedrock
   calls; `configure_event_loop` for async hosts).
+- Concurrent queries in one process share one interpreter lock: their
+  Python work (fusion, MMR, the embedded engine's scoring) runs one at a
+  time, so a query's latency under N concurrent ones grows with N times its
+  CPU. The hot paths stay vectorized or compiled (the dense-script test is
+  one regex; the embedded engine lists only what an id lookup or an
+  exclusion names), and the query CLIs start with one BLAS thread
+  (`launch.one_blas_thread`, `OPENBLAS_NUM_THREADS=1` unless set): with a
+  thread per core per kNN product, 40 concurrent local queries spent about
+  8 times the CPU for the same scores.
 
 ### 8.3 Multilingual Processing
 

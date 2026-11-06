@@ -60,11 +60,30 @@ def run_ingestion() -> Any:
     return _run("run_ingestion_pipeline")
 
 
+# numpy's OpenBLAS starts a thread per core for each large product, as the
+# embedded vector store's kNN scoring is. Concurrent queries in one process
+# (run-eval runs processing.max_concurrency at once) each did, and under 40
+# of them the process spent about 8 times the CPU of one thread per product,
+# and every query waited longer, for the same scores. Read once, when numpy
+# loads, so it is set here, before any import; a value in the environment is
+# kept.
+BLAS_THREAD_VARIABLES: tuple[str, ...] = ("OPENBLAS_NUM_THREADS",)
+
+
+def one_blas_thread() -> None:
+    """Default the BLAS thread count to 1 for a query CLI (an environment
+    value wins)."""
+    for name in BLAS_THREAD_VARIABLES:
+        os.environ.setdefault(name, "1")
+
+
 def run_rag() -> Any:
+    one_blas_thread()
     return _run("run_rag_chain")
 
 
 def run_eval() -> Any:
+    one_blas_thread()
     return _run("run_evaluation")
 
 

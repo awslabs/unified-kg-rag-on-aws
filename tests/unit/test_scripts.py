@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
+from unified_kg_rag.shared.utils import scripts
 from unified_kg_rag.shared.utils.scripts import (
     drop_dense_script_spaces,
     has_dense_script,
@@ -29,6 +32,30 @@ def test_not_dense_script_letters(ch: str) -> None:
 def test_has_dense_script() -> None:
     assert has_dense_script("Acme 코리아")
     assert not has_dense_script("Acme Korea")
+
+
+def _in_letter_ranges(ch: str) -> bool:
+    return any(lo <= ord(ch) <= hi for lo, hi in scripts._DENSE_SCRIPT_LETTER_RANGES)
+
+
+def test_dense_script_char_matches_the_letter_ranges_at_every_code_point() -> None:
+    # The compiled class answers as the range table it is built from.
+    differing = [
+        cp
+        for cp in range(0x110000)
+        if is_dense_script_char(chr(cp)) != _in_letter_ranges(chr(cp))
+    ]
+    assert differing == []
+
+
+@given(st.text(alphabet=st.characters(codec=None), max_size=40))
+def test_has_dense_script_is_any_dense_letter(text: str) -> None:
+    assert has_dense_script(text) == any(_in_letter_ranges(ch) for ch in text)
+
+
+def test_dense_script_char_takes_one_character() -> None:
+    with pytest.raises(TypeError):
+        is_dense_script_char("가나")
 
 
 def test_is_hangul_syllable() -> None:

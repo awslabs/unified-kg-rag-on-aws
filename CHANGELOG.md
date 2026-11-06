@@ -651,6 +651,15 @@ From a `main` checkout (formats and keys no release had):
   #354).
 - DRIFT is MS GraphRAG's DRIFT (HyDE primer, follow-up local searches, reduce), with one rerank per query and at
   most about 27 LLM calls at the defaults; each primer fold's reports are its answer's evidence, and its metadata
+- Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
+  one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
+  local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
+  beside `match_all` nor every other document for a kNN filter that only excludes (the seed-graph predicate on text
+  units). `run-eval` and `run-rag` default `OPENBLAS_NUM_THREADS` to 1 (a value in the environment wins): with a BLAS
+  thread per core for each kNN product, 40 concurrent local queries on the embedded stores spent about 8 times the
+  CPU. Results are unchanged; on 200 MuSiQue questions on the embedded stores, 40 at once with the model calls faked,
+  a local query's retrieval took about half as long (`support` 19-20 s to 9-10 s, `ppr` 23-25 s to 11 s on a loaded
+  host) for a tenth of the process CPU (#PR).
   counts follow-ups by `report_selection` (#323, #347, #541, #567).
 - `auto` routes with the fast model, falls back to the first routable strategy, and starts the extractions its
   strategies read alongside the router call (one round trip fewer; the unread one still runs and is billed); query
