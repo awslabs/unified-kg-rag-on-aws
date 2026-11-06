@@ -348,14 +348,15 @@ From a `main` checkout (formats and keys no release had):
 - Stored items: an index built before #508 (seed properties unmapped; such an entities index is refused, exit 2),
   #562 (relationships store their type, else `Relationship: A -> B`) or #383/#410 (removals written ahead) needs the
   same reset; for a deleted document restored mid-removal, deleting its registry record is enough.
-- Those resets reuse the stored extraction records and vectors: they ask the model only for the reports of the
-  communities that cluster differently.
 - #574 analyzers: an OpenSearch namespace translating into `de`, `es`, `fr`, `it`, `ja`, `pt`, `ru` or `zh` stops
-  before any model call (exit 2, `was built for other language settings`) until one `indexing.reset: true` run
-  (records and vectors reused), or set `language_analyzers: {en: english, ko: nori}`.
+  before any model call (exit 2, `was built for other language settings`) until one `indexing.reset: true` run, or
+  set `language_analyzers: {en: english, ko: nori}`.
 - #574 legal forms: entity `name_key` follows the larger table; reset with a new or no `--pipeline-id` to merge
-  designator variants (no extraction call; a summary and embedding per newly merged entity over the threshold, and
-  the re-clustered reports), or entities stored apart stay apart.
+  designator variants, or entities stored apart stay apart.
+- One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
+  extraction records and vectors: beyond what the items below name, the model is asked only for the reports of the
+  communities that cluster differently and a summary and embedding per newly merged entity over the threshold. On
+  an index built before #565 it costs a first build (the #565 prompts below).
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
 - Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
