@@ -158,7 +158,7 @@ cp config-template.yaml config.yaml
 ```
 
 `uv run`은 프로젝트 환경에서 CLI를 실행합니다. `pip`로 설치했다면 가상 환경을 활성화하고
-`uv run` 없이 실행하세요. 코퍼스를 인덱싱한 뒤 두 방법론 중 하나로 질의합니다.
+`uv run` 없이 실행하세요. 코퍼스를 인덱싱한 뒤 GraphRAG나 LightRAG 전략으로 질의합니다.
 
 ```bash
 uv run run-ingestion --source-directory ./source --config-path config.yaml

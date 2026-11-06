@@ -645,7 +645,8 @@ answers or latency:
   `iterative`, slower for those queries
   ([Follow-up rounds](./guides/query.md#follow-up-rounds-for-multi-hop-questions)).
 - `search.local_search.text_unit_ranking` (`ppr` by default, or `support`):
-  how `local` and DRIFT's follow-ups order their text units
+  how `local` orders its text units; DRIFT's follow-ups keep their own key,
+  `search.drift_search.text_unit_ranking` (`support` by default)
   ([Personalized PageRank](./guides/query.md#personalized-pagerank-ppr)).
 
 `indexing.methodologies` is read by both tasks: set it for the deployment
@@ -1209,7 +1210,7 @@ These fire between runs too, so degradation shows before a run breaks on it:
 
 | Alarm | Fires when | What to do |
 |---|---|---|
-| `QueryLatencyHigh` | The p90 latency of `run-rag --metrics-sink cloudwatch` queries is above `query_latency_alarm_seconds` (default 60) in 2 of 3 5-minute periods | The dashboard's per-strategy widget shows which strategy is slow; check Bedrock latency and throttles and OpenSearch search latency. `global` and `drift` make many model calls per query by design. The metric's `Strategy` is the requested one, so `auto` covers the queries it routes to `iterative` (a controller call and up to `max_rounds` more searches: [Follow-up rounds](./guides/query.md#follow-up-rounds-for-multi-hop-questions); leave it out of `search.auto_routable_strategies` to opt out). `local`, and each DRIFT follow-up, rank text units by PageRank by default, which adds a text-unit search, a relationship kNN search, a Neptune edge read and a query embedding to each ([Local PPR ranking](./concepts/defaults-and-evidence.md#local-ppr-ranking); `search.local_search.text_unit_ranking: support` drops them) |
+| `QueryLatencyHigh` | The p90 latency of `run-rag --metrics-sink cloudwatch` queries is above `query_latency_alarm_seconds` (default 60) in 2 of 3 5-minute periods | The dashboard's per-strategy widget shows which strategy is slow; check Bedrock latency and throttles and OpenSearch search latency. `global` and `drift` make many model calls per query by design. The metric's `Strategy` is the requested one, so `auto` covers the queries it routes to `iterative` (a controller call and up to `max_rounds` more searches: [Follow-up rounds](./guides/query.md#follow-up-rounds-for-multi-hop-questions); leave it out of `search.auto_routable_strategies` to opt out). `local` ranks text units by PageRank by default, which adds a text-unit search, a relationship kNN search, a Neptune edge read and a query embedding to each query ([Local PPR ranking](./concepts/defaults-and-evidence.md#local-ppr-ranking); `search.local_search.text_unit_ranking: support` drops them); DRIFT's follow-ups add them only with `search.drift_search.text_unit_ranking: ppr` |
 
 `run-rag` publishes `query_latency_ms` only with `--metrics-sink cloudwatch`
 (`--mode rag` queries, failed ones included: a query that ran past
