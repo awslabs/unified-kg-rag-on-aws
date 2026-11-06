@@ -23,16 +23,14 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field, fields
+from typing import Any
 
 import numpy as np
 
 from unified_kg_rag.domain.models import Constants, SummaryNode
+from unified_kg_rag.domain.models.config import SummaryTreeConfig
 from unified_kg_rag.shared.utils import compute_hash
-
-if TYPE_CHECKING:
-    from unified_kg_rag.domain.models.config import SummaryTreeConfig
 
 # Covariance regularization of the Gaussian mixtures (scikit-learn's
 # reg_covar, which RAPTOR's GaussianMixture uses).
@@ -53,21 +51,28 @@ _BOUNDED_GRID = 8
 _UPSTREAM_MAX_CLUSTERS = 50
 
 
+def _default(name: str) -> Any:
+    return SummaryTreeConfig.model_fields[name].default
+
+
 @dataclass(frozen=True)
 class TreeSettings:
-    """The clustering and assembly settings of one tree build."""
+    """The clustering and assembly settings of one tree build: the fields of
+    ``indexing.summary_tree`` (``SummaryTreeConfig``) the build reads, with
+    its defaults. A plain record, not validated, so the fidelity tests can
+    set what the config refuses."""
 
-    algorithm: str = "kmeans"
-    target_children: int = 6
-    soft_threshold: float = 0.1
-    reduction_dims: int = 10
-    bic_grid: str = "bounded"
-    max_levels: int = 5
-    min_nodes_to_cluster: int = 11
-    min_level_shrink: float = 0.2
-    max_cluster_tokens: int = 8000
-    max_lineage_text_units: int = 10000
-    random_state: int = 42
+    algorithm: str = _default("algorithm")
+    target_children: int = _default("target_children")
+    soft_threshold: float = _default("soft_threshold")
+    reduction_dims: int = _default("reduction_dims")
+    bic_grid: str = _default("bic_grid")
+    max_levels: int = _default("max_levels")
+    min_nodes_to_cluster: int = _default("min_nodes_to_cluster")
+    min_level_shrink: float = _default("min_level_shrink")
+    max_cluster_tokens: int = _default("max_cluster_tokens")
+    max_lineage_text_units: int = _default("max_lineage_text_units")
+    random_state: int = _default("random_state")
     # RAPTOR summarizes a cluster of one node; this promotes it instead.
     # True only to compare with the original (tests/fidelity).
     summarize_single: bool = False
@@ -75,17 +80,11 @@ class TreeSettings:
     @classmethod
     def from_config(cls, config: SummaryTreeConfig) -> TreeSettings:
         return cls(
-            algorithm=config.algorithm,
-            target_children=config.target_children,
-            soft_threshold=config.soft_threshold,
-            reduction_dims=config.reduction_dims,
-            bic_grid=config.bic_grid,
-            max_levels=config.max_levels,
-            min_nodes_to_cluster=config.min_nodes_to_cluster,
-            min_level_shrink=config.min_level_shrink,
-            max_cluster_tokens=config.max_cluster_tokens,
-            max_lineage_text_units=config.max_lineage_text_units,
-            random_state=config.random_state,
+            **{
+                f.name: getattr(config, f.name)
+                for f in fields(cls)
+                if f.name in SummaryTreeConfig.model_fields
+            }
         )
 
 

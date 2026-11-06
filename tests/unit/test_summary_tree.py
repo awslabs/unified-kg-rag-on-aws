@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -94,6 +96,10 @@ def test_settings_follow_the_config() -> None:
         7,
     )
     assert not settings.summarize_single
+    # One source: the config's fields and defaults.
+    assert TreeSettings() == TreeSettings.from_config(SummaryTreeConfig())
+    names = {f.name for f in dataclasses.fields(TreeSettings)} - {"summarize_single"}
+    assert names <= set(SummaryTreeConfig.model_fields)
 
 
 def test_reduction_is_sign_fixed_rounded_and_scale_free() -> None:
