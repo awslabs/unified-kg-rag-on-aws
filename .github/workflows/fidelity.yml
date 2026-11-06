@@ -35,7 +35,12 @@ env:
   RAPTOR_REPO: https://github.com/parthsarthi03/raptor
   RAPTOR_COMMIT: 7da1d48a7e1d7dec61a63c9d9aae84e2dfaa5767  # pragma: allowlist secret
   # HippoRAG's own pin; scikit-learn as uv.lock has it; benchmark-qed from PyPI.
+  # The overlay is resolved outside the lock, so --exclude-newer freezes the
+  # transitive dependencies (igraph's and benchmark-qed's) at the day after the
+  # newest upload in uv.lock: a weekly run differs from the last one only when
+  # this date or a pin changes. Move it forward with the lock.
   WITH_ORIGINALS: >-
+    --exclude-newer 2026-11-04T00:00:00Z
     --with python-igraph==0.11.8
     --with scikit-learn==1.9.1
     --with benchmark-qed==0.4.0

@@ -829,9 +829,9 @@ From a `main` checkout (formats and keys no release had):
 - CI: development tools in the `dev` group, parallel suites on every vCPU, coverage across jobs, a layering test,
   weekly property-test exploration, license checks, and an ASH security gate (#119, #257, #297, #303, #428, #456,
   #464, #465, #470, #512, #541, #568, #578). A weekly `fidelity` workflow runs the parity tests against the original
-  HippoRAG 2, RAPTOR and BenchmarkQED at pinned commits and versions, and the heavy RAPTOR fidelity cases that pull
-  requests now sample (`weekly` marker); the build backend (`hatchling`) is pinned and ASH resolves its scanners as
-  of a fixed date (#604).
+  HippoRAG 2, RAPTOR and BenchmarkQED at pinned commits and versions (their dependencies resolved as of a fixed
+  date), and the heavy RAPTOR fidelity cases that pull requests now sample (`weekly` marker); the build backend
+  (`hatchling`) is pinned and ASH resolves its scanners as of a fixed date (#604, #611).
 
 ### Deprecated
 - `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and will be removed: the default Claude 5.x
