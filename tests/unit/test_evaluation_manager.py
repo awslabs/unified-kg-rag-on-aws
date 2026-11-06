@@ -760,6 +760,7 @@ class TestWarmUp:
     ) -> None:
         from unified_kg_rag.domain.models import EvaluationGroundTruth
 
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
         manager = EvaluationManager(config, rag_chain=object())
         english = [EvaluationQuery(query_id="q1", question="Who ships?")]
         truths = [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")]
