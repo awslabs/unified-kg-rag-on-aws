@@ -317,11 +317,30 @@ def test_every_consumer_reads_the_same_switch_table(switch) -> None:
     assert not switch.artifacts & mp.artifacts_to_build(off)
     assert not switch.artifacts & on.artifacts_switched_off
     assert switch.artifacts <= off.artifacts_switched_off
-    # The default sweep searches an index of the artifact only when it is on.
+    # The default sweep searches an index of the artifact only when it is on,
+    # and a run creates one only then (rebuild or incremental, in a fresh
+    # namespace).
     for prefix, artifact in index_prefixes._prefix_artifacts(on):
         if artifact in switch.artifacts:
             assert prefix in index_prefixes.configured_index_prefixes(on)
             assert prefix not in index_prefixes.configured_index_prefixes(off)
+            for rebuild in (True, False):
+                assert prefix in _created(on, rebuild=rebuild)
+                assert prefix not in _created(off, rebuild=rebuild)
+    # The pipeline skips the stages only the switched-off artifacts need,
+    # even when an explicit stage list names them.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    def skipped(config: Config) -> set[PipelineStageType]:
+        return {
+            stage
+            for stage, allows in DataIngestionPipeline.CONFIG_ENABLED.items()
+            if stage is not S.GLEANING and not allows(config)
+        }
+
+    assert skipped(off) - skipped(on) == mp.selected_stages(on) - (
+        mp.selected_stages(off)
+    )
     # A switch leaves out the methodologies that require them.
     needing = {
         m
@@ -339,6 +358,60 @@ def test_every_consumer_reads_the_same_switch_table(switch) -> None:
                     {"indexing": {"methodologies": [m.value for m in needing]}},
                 )
             )
+
+
+def _created(
+    config: Config, *, rebuild: bool, live: frozenset[str] = frozenset()
+) -> set[str]:
+    """The index prefixes a run of ``config`` creates in a namespace whose
+    ``live`` prefixes have an index."""
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+
+    indexer = OpenSearchIndexer.__new__(OpenSearchIndexer)
+    indexer.config = config
+    indexer.opensearch_config = config.indexing.opensearch
+    indexer.analyzer = "standard"
+    indexer.language = "en"
+    indexer._embedding_dimension = 8
+    indexer._index_limits = {}
+    indexer._get_name = lambda prefix, suffix: prefix  # type: ignore[method-assign]
+    indexer._live_index = lambda alias: alias if alias in live else None  # type: ignore[method-assign]
+    return {alias for alias, _ in indexer._mappings_to_create(None, rebuild)}
+
+
+def test_a_run_creates_only_the_indices_of_what_it_builds() -> None:
+    o = Config().indexing.opensearch
+    graph_indices = {
+        o.entities_index_prefix,
+        o.relationships_index_prefix,
+        o.community_reports_index_prefix,
+        o.claims_index_prefix,
+    }
+    raptor = _config(R)
+    for rebuild in (True, False):
+        assert _created(raptor, rebuild=rebuild) == {
+            o.text_units_index_prefix,
+            o.summary_nodes_index_prefix,
+            o.extraction_records_index_prefix,
+        }
+    # A rebuild replaces the live index of a type it does not build with an
+    # empty one (a methodology removed); an incremental run leaves it.
+    assert _created(raptor, rebuild=True, live=frozenset(graph_indices)) >= (
+        graph_indices
+    )
+    assert not _created(raptor, rebuild=False, live=frozenset(graph_indices)) & (
+        graph_indices
+    )
+    # Not the summary tree's: its stage writes (and a reset deletes) it.
+    assert o.summary_nodes_index_prefix not in _created(
+        Config(), rebuild=True, live=frozenset({o.summary_nodes_index_prefix})
+    )
+    assert _created(_config(L), rebuild=True) == {
+        o.text_units_index_prefix,
+        o.entities_index_prefix,
+        o.relationships_index_prefix,
+        o.extraction_records_index_prefix,
+    }
 
 
 def test_the_switch_table_names_boolean_settings() -> None:

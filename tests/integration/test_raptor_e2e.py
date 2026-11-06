@@ -129,6 +129,23 @@ def record(providers: Providers) -> dict[str, Any]:
     return stored
 
 
+def live_indices(config: Config, providers: Providers) -> set[str]:
+    """The vector-store index prefixes with a live index in the namespace."""
+    from unified_kg_rag.domain.retrieval.index_prefixes import index_artifacts
+
+    indexer = providers.build_vector_indexer()
+    try:
+        return {
+            prefix
+            for prefix in index_artifacts(config)
+            if indexer.opensearch_client.get_index_name_by_alias(
+                indexer._get_name(prefix, None)
+            )
+        }
+    finally:
+        indexer.close()
+
+
 def tree_nodes(providers: Providers) -> list[dict[str, Any]]:
     indexer = providers.build_vector_indexer()
     try:
@@ -193,9 +210,15 @@ def test_a_raptor_only_ingestion_builds_a_tree_and_no_graph(
     assert all(n["text"].startswith("Summary: ") for n in nodes)
     tree = tree_record(providers)
     assert tree is not None and tree["nodes"] == len(nodes)
-    # No graph was built: the graph store was never opened.
+    # No graph was built: the graph store was never opened, and the vector
+    # store holds no index of what the run does not build.
     graph = Path(config.providers.graph.sqlite_path)
     assert not graph.exists() or not graph.stat().st_size
+    indices = config.indexing.opensearch
+    assert live_indices(config, providers) == {
+        indices.text_units_index_prefix,
+        indices.summary_nodes_index_prefix,
+    }
 
     # A run with nothing new builds nothing: the tree is current.
     before = Counter(calls.kinds)
@@ -204,6 +227,21 @@ def test_a_raptor_only_ingestion_builds_a_tree_and_no_graph(
     assert calls.since(before) == Counter()
     assert shape(tree_nodes(providers)) == shape(nodes)
     assert record(providers)["methodologies"] == ["raptor"]
+
+
+def test_a_raptor_only_full_build_creates_no_graph_indices(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Without the registry every run is a full build, which empties each
+    # index type it does not build: only where one is live.
+    config, providers, _, _ = setup(tmp_path, registry=False)
+    context = ingest(config, providers, corpus(tmp_path), tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    indices = config.indexing.opensearch
+    assert live_indices(config, providers) == {
+        indices.text_units_index_prefix,
+        indices.summary_nodes_index_prefix,
+    }
 
 
 def test_a_raptor_only_namespace_needs_no_graph_store(

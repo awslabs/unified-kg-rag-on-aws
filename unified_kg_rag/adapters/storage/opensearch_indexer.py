@@ -54,6 +54,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import DEFAULT_INDEX_SETTINGS
 from unified_kg_rag.domain.models.provider_config import BEDROCK
+from unified_kg_rag.domain.retrieval.index_prefixes import index_artifacts
 from unified_kg_rag.ports.indexer import (
     AnnotatedKind,
     IndexingStats,
@@ -1899,33 +1900,30 @@ class OpenSearchIndexer(VectorIndexer):
     def _mappings_to_create(
         self, suffix: str | None, rebuild: bool
     ) -> list[tuple[str, dict[str, Any]]]:
-        """The aliases and mappings of the indices of ``suffix`` a run creates: every
-        vector index it builds on a ``rebuild`` (a full build or reset, empty
-        ones included), otherwise those of the types it may write that have
-        no live index; and the extraction records' when it has none."""
+        """The aliases and mappings of the indices of ``suffix`` a run creates:
+        on a ``rebuild`` (a full build or reset), every index of an artifact
+        it builds (``artifacts_to_build``; empty ones included) and the empty
+        replacement of a live index of one it does not (``_index_item_type``;
+        not the summary tree's, which its stage writes); otherwise those of
+        the artifacts it builds that have no live index. And the extraction
+        records' when it has none."""
         config = self.opensearch_config
-        builds = {
-            config.relationships_index_prefix: config.build_relationship_vector_index,
-            # Built by the summary_tree stage, for the raptor methodology.
-            config.summary_nodes_index_prefix: (
-                IndexArtifact.SUMMARY_TREE in artifacts_to_build(self.config)
-            ),
-        }
-        if not rebuild:
-            # An incremental run upserts only the types it extracted.
-            builds[config.claims_index_prefix] = (
-                self.config.processing.claim_extraction.enabled
-            )
-            builds[config.community_reports_index_prefix] = (
-                IndexArtifact.COMMUNITY_REPORTS in artifacts_to_build(self.config)
-            )
-        mappings = [
-            (alias, spec.mapping())
-            for spec in self._specs()
-            if builds.get(spec.alias_prefix, True)
-            and (alias := self._get_name(spec.alias_prefix, suffix))
-            and (rebuild or not self._live_index(alias))
-        ]
+        built = artifacts_to_build(self.config)
+        artifacts = index_artifacts(self.config)
+        mappings = []
+        for spec in self._specs():
+            alias = self._get_name(spec.alias_prefix, suffix)
+            artifact = artifacts[spec.alias_prefix]
+            if artifact in built:
+                creates = rebuild or not self._live_index(alias)
+            else:
+                creates = (
+                    rebuild
+                    and artifact is not IndexArtifact.SUMMARY_TREE
+                    and bool(self._live_index(alias))
+                )
+            if creates:
+                mappings.append((alias, spec.mapping()))
         records_alias = self._get_name(config.extraction_records_index_prefix, suffix)
         if not self._live_index(records_alias):
             mappings.append((records_alias, self._get_extraction_records_mapping()))
@@ -2262,10 +2260,15 @@ class OpenSearchIndexer(VectorIndexer):
         """Build a new index per suffix and swap the alias onto it.
 
         A suffix in ``suffixes`` without items gets an empty index, so the
-        alias stops serving the previous build's documents.
+        alias stops serving the previous build's documents; of a type the
+        run does not build (``artifacts_to_build``: a ``raptor``-only run's
+        entities), only where a live index has such documents.
         """
         if not items and not suffixes:
             return IndexingStats()
+        unbuilt = index_artifacts(self.config)[spec.alias_prefix] not in (
+            artifacts_to_build(self.config)
+        )
 
         logger.info("Indexing %s %s", len(items), spec.name)
         total_stats = IndexingStats()
@@ -2273,6 +2276,9 @@ class OpenSearchIndexer(VectorIndexer):
         for suffix, chunk_items in self._group_items_by_suffix(items, suffixes).items():
             alias_name = self._get_name(spec.alias_prefix, suffix)
             index_name = ""
+            if unbuilt and not chunk_items and not self._live_index(alias_name):
+                # Nothing to replace: no index of a type the run never builds.
+                continue
 
             try:
                 index_name = self._new_index_name(alias_name, spec.alias_prefix, suffix)

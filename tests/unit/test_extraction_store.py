@@ -98,9 +98,15 @@ def _record(unit: TextUnit) -> TextUnitExtraction:
 
 
 def _created_specs(indexer: Any) -> list[Any]:
-    """The index types a run of the default methodologies creates: all but
-    the summary tree's, which only the raptor methodology builds."""
-    return [spec for spec in indexer._specs() if spec.name != "summary nodes"]
+    """The index types a run of the indexer's config creates in a fresh
+    namespace: those of the artifacts it builds (by default not the claims',
+    nor the summary tree's, which only the raptor methodology builds)."""
+    from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
+    from unified_kg_rag.domain.retrieval.index_prefixes import index_artifacts
+
+    built = artifacts_to_build(indexer.config)
+    artifacts = index_artifacts(indexer.config)
+    return [spec for spec in indexer._specs() if artifacts[spec.alias_prefix] in built]
 
 
 class TestPayload:
@@ -764,11 +770,10 @@ class TestOpenSearchExtractionRecords:
         self, tmp_path, rebuild: bool
     ) -> None:
         # No relationship vectors when they are off; no community reports
-        # without community detection on an incremental run (a full build
-        # creates every index, empty ones included).
+        # without community detection. A full build creates the empty
+        # replacement of a live index of a type it does not build only.
         engine, _ = _strict_engine(tmp_path / "vector.sqlite3", lambda _: None)
-        config = Config()
-        config.graph.community_detection.enabled = False
+        config = Config(indexing={"methodologies": ["graphrag"]})
         config.indexing.opensearch.build_relationship_vector_index = False
         indexer = _probing_indexer(config, engine)
         prefixes = config.indexing.opensearch
@@ -776,9 +781,20 @@ class TestOpenSearchExtractionRecords:
         assert (
             indexer._get_name(prefixes.relationships_index_prefix, "x") not in aliases
         )
-        reports = indexer._get_name(prefixes.community_reports_index_prefix, "x")
-        assert (reports in aliases) is rebuild
         assert indexer._get_name(prefixes.entities_index_prefix, "x") in aliases
+        light = Config(indexing={"methodologies": ["lightrag"]})
+        indexer = _probing_indexer(light, engine)
+        reports = indexer._get_name(prefixes.community_reports_index_prefix, "x")
+        aliases = {alias for alias, _ in indexer._mappings_to_create("x", rebuild)}
+        assert reports not in aliases
+        index = indexer._new_index_name(
+            reports, prefixes.community_reports_index_prefix, "x"
+        )
+        engine.create_index(index, indexer._spec("community reports").mapping())
+        engine.update_alias(reports, index)
+        indexer = _probing_indexer(light, engine)
+        aliases = {alias for alias, _ in indexer._mappings_to_create("x", rebuild)}
+        assert (reports in aliases) is rebuild
 
     def test_probes_a_stopped_run_left_are_deleted_first(self, tmp_path) -> None:
         # A run stopped between the probe's create and delete (SIGTERM: the

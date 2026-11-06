@@ -1010,7 +1010,10 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   that writes the namespace records them gone, and its strategies fail fast.
   Nothing is deleted: a reset with the remaining methodologies replaces the
   community-reports index with an empty one and drops the graph's community
-  vertices (the rebuild sweep, §5.2).
+  vertices (the rebuild sweep, §5.2). A run creates no vector index of an
+  artifact it does not build (`artifacts_to_build`; a `raptor`-only run has
+  no entities index): a full build only empties a live one, and the
+  index-creation probe counts the same indices.
 - **Query time.** Every strategy class declares `methodology`
   (`BaseSearchStrategy.methodology`): `graphrag` for `local`, `global`,
   `drift` and `simple`, `lightrag` for `mix`, `hybrid` and `naive`,

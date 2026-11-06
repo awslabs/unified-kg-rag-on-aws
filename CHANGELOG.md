@@ -506,7 +506,8 @@ From a `main` checkout (formats and keys no release had):
   a methodology asks before deleting more than `indexing.max_deletion_share` of the scope's documents, as an
   incremental run does; a run without community detection (`[lightrag]`) exports `visualization_data.json` without
   communities; a run that builds no graph-store artifact (`[raptor]`) writes no graph store, so `run-ingestion`
-  needs no Neptune endpoint for it (#608). See [methodology
+  needs no Neptune endpoint for it (#608), and a run creates (and probes) no vector index of an artifact it does not
+  build, emptying only a live one on a full build (#PR). See [methodology
   profiles](docs/concepts/overview.md#methodology-profiles) and [Design
   §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible

@@ -31,6 +31,17 @@ def _prefix_artifacts(config: Config) -> list[tuple[str, IndexArtifact]]:
     ]
 
 
+def index_artifacts(config: Config) -> dict[str, IndexArtifact]:
+    """Every vector-store index prefix the indexer writes (the swept ones and
+    the summary tree's) with the artifact it holds."""
+    return {
+        **dict(_prefix_artifacts(config)),
+        config.indexing.opensearch.summary_nodes_index_prefix: (
+            IndexArtifact.SUMMARY_TREE
+        ),
+    }
+
+
 def all_index_prefixes(config: Config) -> list[str]:
     """Every document index prefix, in sweep order."""
     return [prefix for prefix, _ in _prefix_artifacts(config)]
