@@ -409,17 +409,20 @@ _LOCATION_FIELDS = frozenset(
 # to classify it costs a cache miss, never a stale hit.
 _UNCLASSIFIED = _EVERY_CALL
 
-# Fields added to a keyed section whose default keeps the behaviour from
-# before they existed: they count only once set to something else, so an
-# upgrade re-keys no stage cache or extraction record and changes no
-# recorded extraction settings or evaluation manifest. Take a field out
-# when its default stops matching the earlier behaviour.
+# Fields added to a keyed (or answer-shaping) section whose default keeps
+# the behaviour from before they existed: they count only once set to
+# something else, so an upgrade re-keys no stage cache or extraction record
+# and changes no recorded extraction settings or evaluation manifest. Take a
+# field out when its default stops matching the earlier behaviour.
 _KEYED_ONCE_SET = frozenset(
     {
         "processing.graph_extraction.relationship_types",
         "processing.graph_extraction.relationship_patterns",
         "processing.graph_extraction.schema_mode",
         "processing.graph_extraction.schema_source.kind",
+        "search.abstention.mode",
+        "search.abstention.strip_marker",
+        "search.abstention.on_insufficient",
     }
 )
 

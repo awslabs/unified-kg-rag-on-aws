@@ -74,6 +74,9 @@ _KEYED_ONCE_SET = frozenset(
         "processing.graph_extraction.relationship_patterns",
         "processing.graph_extraction.schema_mode",
         "processing.graph_extraction.schema_source.kind",
+        "search.abstention.mode",
+        "search.abstention.strip_marker",
+        "search.abstention.on_insufficient",
     }
 )
 
