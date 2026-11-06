@@ -28,6 +28,22 @@ jobs:
         with:
           # Nothing here pushes, and the uploaded artifacts must not carry the token.
           persist-credentials: false
+          # Full history and branches, so the next step can check the tag is on main.
+          fetch-depth: 0
+
+      - name: Check the tag commit is on main
+        # A release is cut from reviewed history only: a tag on a topic branch
+        # (or any commit main does not contain) fails here.
+        if: github.event_name == 'push'
+        env:
+          TAG: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          commit="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          if ! git merge-base --is-ancestor "$commit" "refs/remotes/origin/${DEFAULT_BRANCH}"; then
+            echo "tag ${TAG} (${commit}) is not on ${DEFAULT_BRANCH}" >&2
+            exit 1
+          fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -41,19 +57,27 @@ jobs:
       - name: Check the tag matches the package version and write the notes
         # A tag push fails unless the tag is v<__version__> and CHANGELOG.md
         # has a non-empty section for that version. The dry run uses the
-        # package version and falls back to [Unreleased].
+        # package version and falls back to [Unreleased] (a placeholder line
+        # when that is empty, right after a release). A release body resolves
+        # no relative link, so repo-relative targets become URLs of the tagged
+        # tree (of the commit, for a dry run).
         env:
           EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
-          NOTES_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/CHANGELOG.md
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          SHA: ${{ github.sha }}
         run: |
           if [ "$EVENT" = "push" ]; then
+            tree="$REPO_URL/blob/$TAG/"
             uv run --no-project python scripts/changelog_section.py "$TAG" \
-              --check-package --full-notes-url "$NOTES_URL" > release-notes.md
+              --check-package --link-base "$tree" \
+              --full-notes-url "${tree}CHANGELOG.md" > release-notes.md
           else
+            tree="$REPO_URL/blob/$SHA/"
             version="$(uv run --no-project python scripts/changelog_section.py --print-package-version)"
             uv run --no-project python scripts/changelog_section.py "$version" \
-              --check-package --fallback-unreleased --full-notes-url "$NOTES_URL" > release-notes.md
+              --check-package --fallback-unreleased --link-base "$tree" \
+              --full-notes-url "${tree}CHANGELOG.md" > release-notes.md
           fi
           wc -c release-notes.md
 

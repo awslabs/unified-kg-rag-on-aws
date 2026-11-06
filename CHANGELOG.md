@@ -62,9 +62,9 @@ stored is read again: follow *Upgrading* in order.
   Ingestion renders nothing: see *Configuration*.
 
 #### Configuration
-- Unknown keys, in the file or as `UKR__` variables, fail the load; `--allow-unknown-keys` (every CLI) or
-  `allow_unknown_keys=True` (`get_config`, `ConfigLoader`) warns instead (#335). A moved key fails naming its
-  replacement, a removed key loads with a WARNING and is ignored: the generated [Moved
+- Unknown keys, in the file or as `UKR__` variables, fail the load; `--allow-unknown-keys` (every CLI but
+  `prepare-benchmark`) or `allow_unknown_keys=True` (`get_config`, `ConfigLoader`) warns instead (#335). A moved key
+  fails naming its replacement, a removed key loads with a WARNING and is ignored: the generated [Moved
   keys](docs/reference/configuration.md#moved-keys) and [Removed keys](docs/reference/configuration.md#removed-keys)
   tables list them (#334, #344, #467, #468, #470, #577). [`config-template.yaml`](config-template.yaml) is a short
   starting file; every key is in the [configuration reference](docs/reference/configuration.md) (#468).
@@ -108,8 +108,7 @@ stored is read again: follow *Upgrading* in order.
 - Removed settings that change behaviour where you had set them (each loads with a WARNING):
   `search.reranking.enabled: false` no longer turns reranking off (set `providers.rerank.kind: none`);
   `search.fusion.method: weighted` fuses by RRF (weighted fusion is gone); `fixing.enabled: false` no longer stops
-  output fixing; `indexing.cross_run_merge: false` no longer overwrites (an incremental run always merges);
-  `search.local_search.type_quota` is the constant `BaseSearchStrategy.TYPE_QUOTA` (the mix is
+  output fixing; `search.local_search.type_quota` is the constant `BaseSearchStrategy.TYPE_QUOTA` (the mix is
   `search.token_manager.type_budgets`); `cache.chunking` (an entry over 1,000 items or 50 MB is always chunked);
   `indexing.opensearch.persist_embedding_cache` (the S3 embedding cache is gone: an incremental run embeds only its
   delta) (#344, #468, #577).
@@ -121,27 +120,29 @@ stored is read again: follow *Upgrading* in order.
   for lists and mappings); the 0.2.3 names are no longer read (#335). `NEPTUNE_ENDPOINT` is
   `UKR__AWS__NEPTUNE__ENDPOINT`; `OPENSEARCH_ENDPOINT` / `_USERNAME` / `_PASSWORD` are
   `UKR__AWS__OPENSEARCH__ENDPOINT` / `__USERNAME` / `__PASSWORD`; `BEDROCK_REGION` is
-  `UKR__AWS__BEDROCK__REGION_NAME`; `BEDROCK_GUARDRAIL_IDENTIFIER` / `_VERSION` are
-  `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` / `__VERSION`; `S3_BUCKET_NAME` is `UKR__AWS__S3__BUCKET_NAME`;
-  `LOG_LEVEL` / `LOG_FORMAT` / `LOG_TO_FILE` / `LOG_FILE_PATH` are `UKR__LOGGING__LEVEL` / `__LOG_FORMAT` /
-  `__LOG_TO_FILE` / `__LOG_FILE_PATH`; `OPENSEARCH_NUMBER_OF_REPLICAS` is
+  `UKR__AWS__BEDROCK__REGION_NAME`; `BEDROCK_GUARDRAIL_IDENTIFIER` is `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`;
+  `S3_BUCKET_NAME` is `UKR__AWS__S3__BUCKET_NAME`; `LOG_LEVEL` / `LOG_FORMAT` / `LOG_TO_FILE` / `LOG_FILE_PATH` are
+  `UKR__LOGGING__LEVEL` / `__LOG_FORMAT` / `__LOG_TO_FILE` / `__LOG_FILE_PATH`; the container's
+  `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID` are `UKR_SOURCE_DIRECTORY` / `UKR_PIPELINE_ID`. Names 0.2.3
+  never read (only development builds after it did) are gone as well: `BEDROCK_GUARDRAIL_VERSION` is
+  `UKR__AWS__BEDROCK__GUARDRAIL__VERSION`; `OPENSEARCH_NUMBER_OF_REPLICAS` is
   `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`; `OPENSEARCH_KOREAN_ANALYZER` is
-  `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`; `GRAPHRAG_DOC_STATUS_TABLE` / `_CREATE_TABLE` are
-  `UKR__AWS__DYNAMODB__TABLE_NAME` / `__CREATE_TABLE_IF_MISSING`; `GRAPHRAG_SOURCE_SCOPE` is
-  `UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`; `GRAPHRAG_OBSERVABILITY_ENABLED` / `_BACKEND` are
-  `UKR__OBSERVABILITY__ENABLED` / `__BACKEND`; `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID` /
-  `GRAPHRAG_METRICS_ENVIRONMENT` are `UKR_SOURCE_DIRECTORY` / `UKR_PIPELINE_ID` / `UKR_METRICS_ENVIRONMENT`. The CDK
-  stacks and the container entrypoint set the new names.
+  `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`; `GRAPHRAG_DOC_STATUS_TABLE` (which the 0.2.3 CDK stack set
+  but the library ignored) / `_CREATE_TABLE` are `UKR__AWS__DYNAMODB__TABLE_NAME` / `__CREATE_TABLE_IF_MISSING`;
+  `GRAPHRAG_SOURCE_SCOPE` is `UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`; `GRAPHRAG_OBSERVABILITY_ENABLED` /
+  `_BACKEND` are `UKR__OBSERVABILITY__ENABLED` / `__BACKEND`; `GRAPHRAG_METRICS_ENVIRONMENT` is
+  `UKR_METRICS_ENVIRONMENT`. The CDK stacks and the container entrypoint set the new names.
 - `AWS_REGION` and `AWS_PROFILE` fill `aws.region_name` / `aws.profile_name` only when the file leaves them unset
   (`UKR__AWS__REGION_NAME` overrides the file); switching `--backend` or a provider flag keeps a value you set even
   when it equals the old preset's (#335).
 - `indexing.opensearch.index_settings` refuses the `knn` keys and a setting spelled both with and without `index.`
   (set ef_search with `vector_search.ef_search`); the `"NONE"` alias of `aws.s3.encryption.encryption_type` is gone
   (use `BUCKET_DEFAULT`) (#216, #408).
-- Fusion buckets: a simple search's is `vector_all` (an `opensearch_all` weight applies to it with a WARNING); an
-  `opensearch_community_reports` weight is dropped with a WARNING, as no strategy emits it (#584). A
-  `lightrag_linked_chunks` weight weighs only the chunks the matched entities cite; the relationships' chunks are
-  their own `lightrag_relation_chunks` stream, 1.0 unless set (#521, #530).
+- Fusion buckets: a simple search's is `vector_all` (an `opensearch_all` weight applies to it with a WARNING); a weight
+  on `opensearch_community_reports`, or on 0.2.3's `opensearch_candidate_community_reports` and
+  `opensearch_expanded_community_reports` (in its template), is dropped with a WARNING, as no strategy emits them
+  (#584, #588). A `lightrag_linked_chunks` weight weighs only the chunks the matched entities cite; the
+  relationships' chunks are their own `lightrag_relation_chunks` stream, 1.0 unless set (#521, #530).
 - Defaults (set the 0.2.3 value to keep its behaviour; the measured ones are explained in [defaults and
   evidence](docs/concepts/defaults-and-evidence.md)):
 
@@ -156,6 +157,7 @@ stored is read again: follow *Upgrading* in order.
 | `processing.max_concurrency` | 20 | 40, 20 under `backend: local` (#310) |
 | `processing.similarity_threshold` | 0.6 | 0.85; similarity matching is opt-in (`processing.fuzzy_entity_resolution`) (#214) |
 | `indexing.neptune.property_max_length` | 1000 | 4000 (#132) |
+| `indexing.cross_run_merge` | `false`: an incremental run overwrote the stored entities and relationships with its delta's | removed (loads with a WARNING): an incremental run always merges its delta into the stored graph (#344) |
 | `indexing.max_deletion_share` | no guard | 0.5: an incremental run deleting more of its scope asks first (#518) |
 | `indexing.opensearch.language_analyzers` | `en: english`, `ko: nori`, others `standard` | also `de`, `es`, `fr`, `it`, `pt`, `ru` stemmers and `ja`/`zh: cjk` bigrams (#574) |
 | `graph.community_detection.auto_resolution` | `true` | `false` (#141) |
@@ -302,7 +304,8 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    and expect RRF ordering where you set `search.fusion.method: weighted` (#577).
 4. A custom `fusion_weights.lightrag_linked_chunks` weight: set `lightrag_relation_chunks` too (usually the same
    value) to keep weighting every LightRAG graph chunk; mix and hybrid recall are sensitive to it (#521, #530).
-   Rename an `opensearch_all` weight to `vector_all` and drop `opensearch_community_reports` (#584).
+   Rename an `opensearch_all` weight to `vector_all` and drop `opensearch_community_reports`,
+   `opensearch_candidate_community_reports` and `opensearch_expanded_community_reports` (#584, #588).
 5. A role with a custom IAM policy needs `dynamodb:BatchGetItem`, `BatchWriteItem`, `Query` and `DescribeTable` on
    the registry table (`UpdateTimeToLive` where the library creates it), `bedrock:ApplyGuardrail` on the guardrail,
    and `bedrock:CountTokens` with `InvokeModel`. With `bedrock_model_arns`, list the reranking model too: the Rerank
@@ -528,12 +531,15 @@ From a `main` checkout (formats and keys no release had):
   rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
   `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528).
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
-  workflow that publishes a GitHub release (nothing on PyPI yet) (#572).
+  workflow that publishes a GitHub release (nothing on PyPI yet): the tag must be on `main`, and the notes'
+  repo-relative links point at the tagged tree (#572, #588).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy (packed by tokens, on the fast model), steps
   down to a shallower cut over `max_reports_per_level`, credits key points only to their reports, and dynamic
-  selection descends to the leaves (#318, #347, #354).
+  selection descends to the leaves; it makes no separate reduce call: the answer model reads the ranked key points
+  (0.2.3 reduced them on `map_reduce_model_id`, Claude Haiku 4.5, into a `synthesized_summary` result) (#318, #347,
+  #354).
 - DRIFT is MS GraphRAG's DRIFT (HyDE primer, follow-up local searches, reduce), with one rerank per query and at
   most about 27 LLM calls at the defaults; each primer fold's reports are its answer's evidence, and its metadata
   counts follow-ups by `report_selection` (#323, #347, #541, #567).

@@ -134,9 +134,88 @@ def test_version_has_one_source() -> None:
 
 
 def test_changelog_has_an_unreleased_section() -> None:
-    # The dry run publishes nothing but still renders the notes it would use.
+    # The dry run publishes nothing but still renders the notes it would use;
+    # the section may be empty (right after a release), not missing.
     text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert _script().extract_section(text, "Unreleased")
+    assert _script().extract_section(text, "Unreleased", allow_empty=True) is not None
+
+
+def test_dry_run_accepts_an_empty_unreleased_section() -> None:
+    # Right after a release [Unreleased] is empty and the dry run still builds;
+    # a tagged version's own empty section still fails.
+    module = _script()
+    released = "## [Unreleased]\n\n## [0.3.0] - 2026-12-01\n\n- A fix.\n"
+    notes = module.release_notes(released, "0.3.1.dev0", fallback_unreleased=True)
+    assert notes == module.NO_UNRELEASED_CHANGES
+    with pytest.raises(module.ChangelogError, match="no `## \\[0.3.1.dev0\\]`"):
+        module.release_notes(released, "0.3.1.dev0")
+    # The tag push (no fallback) still rejects an empty [Unreleased]-only file
+    # and an empty section for the tagged version.
+    with pytest.raises(module.ChangelogError, match="empty"):
+        module.release_notes("## [Unreleased]\n\n## [0.3.1]\n", "0.3.1")
+
+
+BASE = "https://github.com/o/r/blob/v0.3.0/"
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        (
+            "[ref](docs/reference/configuration.md#moved-keys)",
+            f"[ref]({BASE}docs/reference/configuration.md#moved-keys)",
+        ),
+        ("[t](./config-template.yaml)", f"[t]({BASE}config-template.yaml)"),
+        ("[i](../../issues/1)", "[i](https://github.com/o/r/issues/1)"),
+        ("[f](#upgrading)", "[f](#upgrading)"),
+        ("[a](https://example.invalid/x)", "[a](https://example.invalid/x)"),
+        ("[m](mailto:x@example.invalid)", "[m](mailto:x@example.invalid)"),
+        ("[p](//example.invalid/x)", "[p](//example.invalid/x)"),
+        (
+            "![logo](docs/img/logo.png)",
+            "![logo](https://github.com/o/r/raw/v0.3.0/docs/img/logo.png)",
+        ),
+        ('[t](iac/README.md "IaC")', f'[t]({BASE}iac/README.md "IaC")'),
+        ("[b](<docs/a b.md>)", f"[b](<{BASE}docs/a b.md>)"),
+        ("[two\n  lines](docs/x.md)", f"[two\n  lines]({BASE}docs/x.md)"),
+        ("[x]: docs/x.md", f"[x]: {BASE}docs/x.md"),
+        ("[y]: https://example.invalid/y", "[y]: https://example.invalid/y"),
+        (
+            "- see [a](a.md) and [b](b.md).",
+            f"- see [a]({BASE}a.md) and [b]({BASE}b.md).",
+        ),
+    ],
+)
+def test_link_base_resolves_repo_relative_targets(given: str, expected: str) -> None:
+    assert _script().absolutize_links(given, BASE) == expected
+
+
+def test_link_base_without_a_trailing_slash() -> None:
+    assert _script().absolutize_links("[a](a.md)", BASE.rstrip("/")) == (
+        f"[a]({BASE}a.md)"
+    )
+
+
+def test_main_link_base(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "## [0.3.0]\n\n- See [docs](docs/index.md) and [top](#x).\n", "utf-8"
+    )
+    args = ["v0.3.0", "--changelog", str(changelog), "--link-base", BASE]
+    assert _script().main(args) == 0
+    assert (
+        capsys.readouterr().out == f"- See [docs]({BASE}docs/index.md) and [top](#x).\n"
+    )
+
+
+def test_real_unreleased_notes_have_no_repo_relative_links() -> None:
+    # Every repo-relative target in the real notes becomes an absolute URL.
+    module = _script()
+    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    notes = module.extract_section(text, "Unreleased", allow_empty=True)
+    targets = module._INLINE_TARGET.findall(module.absolutize_links(notes, BASE))
+    relative = [t for _, _, t in targets if not module._NOT_REPO_RELATIVE.match(t)]
+    assert relative == []
 
 
 def test_short_notes_are_unchanged() -> None:

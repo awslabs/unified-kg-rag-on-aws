@@ -96,8 +96,8 @@ CI ([`.github/workflows/quality.yml`](./.github/workflows/quality.yml)) runs the
 
 ```bash
 uv run pre-commit run --all-files                       # ruff, isort, black, mypy and file hygiene
-uv run pytest -m "not aws"                              # unit, property and integration suites
-uv run --extra otel --extra eval --extra viz pytest -m "not aws" --cov=unified_kg_rag  # with coverage, as CI measures it
+uv run pytest -m "not aws and not perf"                 # unit, property and integration suites
+uv run --extra otel --extra eval --extra viz --extra ontology pytest -m "not aws and not perf" --cov=unified_kg_rag  # with coverage, as CI measures it
 ```
 
 Add `-n logical` to run the suite on every logical CPU through pytest-xdist, as CI does (`-n auto` counts physical
@@ -259,7 +259,8 @@ The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `
    it, and update the link references at the bottom: `[Unreleased]` compares `vX.Y.Z...HEAD`, and `[X.Y.Z]` compares
    the previous tag with `vX.Y.Z` (the first tagged release links to `releases/tag/vX.Y.Z` instead).
 3. Optionally, run the `release` workflow by hand (Actions, Run workflow) on the branch: it is a dry run that builds and
-   checks the artifacts and publishes nothing.
+   checks the artifacts and publishes nothing. Its notes fall back to `[Unreleased]`, a placeholder line when that
+   section is empty (right after a release).
 4. Land the pull request, then tag the merge commit on `main` and push the tag:
 
    ```bash
@@ -267,12 +268,14 @@ The version lives in one place, `__version__` in `unified_kg_rag/__init__.py`; `
    git push origin vX.Y.Z
    ```
 
-   The tag push runs [.github/workflows/release.yml](./.github/workflows/release.yml). It fails unless the tag is
-   `v` plus `__version__` and the changelog has a non-empty section for that version; it builds the sdist and wheel,
-   runs `twine check --strict`, checks both carry LICENSE and NOTICE, installs the wheel in a clean environment, and
-   creates the GitHub release with both files and that changelog section as its notes
-   (`scripts/changelog_section.py`; a section longer than a release body allows ends with a link to the full
-   changelog). A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.
+   The tag push runs [.github/workflows/release.yml](./.github/workflows/release.yml). It fails unless the tagged
+   commit is on `main`, the tag is `v` plus `__version__` and the changelog has a non-empty section for that version;
+   it builds the sdist and wheel, runs `twine check --strict`, checks both carry LICENSE and NOTICE, installs the
+   wheel in a clean environment, and creates the GitHub release with both files and that changelog section as its
+   notes
+   (`scripts/changelog_section.py`; a release body resolves no relative link, so `--link-base` points the section's
+   repo-relative links at the tagged tree, and a section longer than a release body allows ends with a link to the
+   full changelog). A version with an `a`, `b`, `rc` or `.dev` segment is marked as a pre-release.
 5. In a follow-up pull request, set `__version__` to the next development version (`X.Y.(Z+1).dev0` or
    `X.(Y+1).0.dev0`).
 

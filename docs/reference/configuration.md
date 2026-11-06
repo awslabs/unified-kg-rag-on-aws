@@ -608,7 +608,7 @@ Search result fusion configuration
 |---|---|---|---|
 | `rrf_k` | integer (≥ 1) | `60` | The k constant of reciprocal rank fusion: each result adds 1 / (rrf_k + rank). |
 | `diversity_lambda` | number (≥ 0.0, ≤ 1.0) | `0.5` | MMR lambda for diversity filtering: score = lambda*relevance - (1-lambda)*max_similarity, with relevance min-max normalized to [0, 1] over the fused candidates. 1.0 = pure relevance (no diversity), 0.0 = maximum diversity. Lower values penalize redundant results more strongly. Filtering is skipped at 1.0 (no diversity benefit). On 200 MuSiQue mix questions 0.7 and 1.0 measured no significant answer difference against 0.5 (answer_contains -1.0 points [-3.75, +1.5] and -2.25 [-5.25, +0.5]). |
-| `fusion_weights` | dict[string, number] | `{}` | Per-source-bucket weights: reciprocal rank fusion scales each bucket's 1/(rrf_k + rank) term. Keys are the source buckets the search strategies emit: local (graph_entities, text_units, relationships, bridge_relationships, community_reports, claims), LightRAG (lightrag_entities, lightrag_relationships, lightrag_endpoint_entities, lightrag_incident_relationships, lightrag_chunks, lightrag_linked_chunks (the chunks the entities cite), lightrag_relation_chunks (those the relationships cite)), simple (vector_all), global (text_units) and drift (results). A bucket without a key weighs 1.0 (the default: none). A weight on the former bucket opensearch_all applies to vector_all, with a warning. |
+| `fusion_weights` | dict[string, number] | `{}` | Per-source-bucket weights: reciprocal rank fusion scales each bucket's 1/(rrf_k + rank) term. Keys are the source buckets the search strategies emit: local (graph_entities, text_units, relationships, bridge_relationships, community_reports, claims), LightRAG (lightrag_entities, lightrag_relationships, lightrag_endpoint_entities, lightrag_incident_relationships, lightrag_chunks, lightrag_linked_chunks (the chunks the entities cite), lightrag_relation_chunks (those the relationships cite)), simple (vector_all), global (text_units) and drift (results). A bucket without a key weighs 1.0 (the default: none). A weight on the former bucket opensearch_all applies to vector_all, with a warning; one on the retired opensearch_community_reports, opensearch_candidate_community_reports or opensearch_expanded_community_reports is dropped, with a warning. |
 
 ### `search.reranking`
 
@@ -983,7 +983,7 @@ These keys, and any key under them, load with a WARNING and are ignored.
 | Former key | Why |
 |---|---|
 | `aws.bedrock.guardrail.apply_to` | the guardrail screens the user query and the answer only; ingestion and evaluation models are never guarded |
-| `indexing.cross_run_merge` | an incremental run always merges its delta into the stored graph; turning that off overwrote entities other documents still cite |
+| `indexing.cross_run_merge` | an incremental run always merges its delta into the stored graph; without the merge (false, 0.2.3's default) a run overwrote entities other documents still cite |
 | `graph.visualization.enabled` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
 | `graph.visualization.embedding_method` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
 | `graph.visualization.layout_method` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
@@ -994,9 +994,9 @@ These keys, and any key under them, load with a WARNING and are ignored.
 | `search.local_search.type_quota` | the fusion slots local search and DRIFT reserve per section type are fixed (BaseSearchStrategy.TYPE_QUOTA); search.token_manager.type_budgets sets each type's share of the context |
 | `cache.chunking` | a stage-cache entry of more than 1,000 items or 50 MB is always written in chunk files |
 | `search.lightrag_search.structured_keyword_output` | keyword extraction parses the model's text answer; the structured output pilot was removed before any release |
-| `search.global_search.reduce_with_llm` | global search runs no reduce call: the ranked key points go to the answer model as one context section (the default before) |
-| `search.global_search.map_reduce_model_id` | global search runs no reduce call: the ranked key points go to the answer model as one context section (the default before) |
-| `models.roles.global_reduce` | global search runs no reduce call: the ranked key points go to the answer model as one context section (the default before) |
+| `search.global_search.reduce_with_llm` | global search runs no reduce call: the ranked key points go to the answer model as one context section (0.2.3 reduced them with map_reduce_model_id by default) |
+| `search.global_search.map_reduce_model_id` | global search runs no reduce call: the ranked key points go to the answer model as one context section (0.2.3 reduced them with map_reduce_model_id by default) |
+| `models.roles.global_reduce` | global search runs no reduce call: the ranked key points go to the answer model as one context section (0.2.3 reduced them with map_reduce_model_id by default) |
 | `search.fusion.method` | results are always fused by reciprocal rank fusion (rrf, the default before); weighted fusion is gone |
 | `graph.visualization.centrality.calculate_closeness` | the visualization computes degree, betweenness and PageRank centrality; closeness and eigenvector centrality were never displayed |
 | `graph.visualization.centrality.calculate_eigenvector` | the visualization computes degree, betweenness and PageRank centrality; closeness and eigenvector centrality were never displayed |

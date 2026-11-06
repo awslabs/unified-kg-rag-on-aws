@@ -24,8 +24,9 @@ allowlist of exceptions is empty; keep it so).
   CHANGELOG "Breaking" entry for a removal or rename). Inside the package,
   import from it only `__version__`.
 - **`domain/`**: technology-agnostic core — `models/` (Pydantic), pure
-  algorithms (`ingestion/` merge/delta/resolve/analyze, stage cache keys,
-  document identity, visualization data and layout; `retrieval/` store names,
+  algorithms (`ingestion/` merge/delta/resolve/analyze, community clustering
+  (`community_clustering`), stage cache keys, document identity,
+  visualization data and layout; `retrieval/` store names,
   index prefixes, hybrid normalization), and `prompts/` templates. Imports
   only `shared`: no port or adapter, not even for typing — domain code that
   reads a store declares the subset it needs as its own `Protocol`
@@ -60,8 +61,10 @@ allowlist of exceptions is empty; keep it so).
   translator/document converter), `renderers/`, `evaluators/` (incl. the
   evaluator bases).
 - **`application/`**: orchestration — `ingestion/` (pipeline + stages, stage
-  cache and resume managers), `storage/indexing_manager`,
-  `retrieval/rag_chain`, `prompts/`, `config.py` (`get_config`), and the
+  cache and resume managers, `resume`, `pipeline_metrics`),
+  `storage/indexing_manager` (with `cross_run_merge`, `removal`,
+  `reannotation`, `stored_items`), `retrieval/rag_chain` (with
+  `query_processing`, `filter_validation`), `prompts/`, `config.py` (`get_config`), and the
   composition root `bootstrap.py`. Only `bootstrap.py` and `cli/` (the entry
   points; pyproject scripts resolve to `unified_kg_rag.application.cli.*`)
   import vendor bindings or port implementations; everything else receives
@@ -204,7 +207,7 @@ Layout: `tests/{unit,integration,property,fixtures/fakes}/`. Markers: `unit`,
   in `tests/integration/test_doc_status_conformance.py`.
 - Coverage gate ratchets up with measured coverage (the `--cov-fail-under` floor in
   `quality.yml` sits just under it: currently 95, measured ~96%). Run:
-  `uv run --extra otel --extra eval --extra viz pytest -m "not aws" -n logical --cov=unified_kg_rag`.
+  `uv run --extra otel --extra eval --extra viz --extra ontology pytest -m "not aws and not perf" -n logical --cov=unified_kg_rag`.
 
 ## Quality gate
 
@@ -226,7 +229,7 @@ contributors **and** to Claude Code working in this repo.
   imperative mood, ≤72-char subject. Types: `feat`, `fix`, `docs`, `refactor`,
   `test`, `chore`, `style`, `perf`, `ci`, `build`. Body explains *why*, not
   *what* the diff already shows.
-- **Green before you push.** Run `uv run pytest -m "not aws"` and the pre-commit
+- **Green before you push.** Run `uv run pytest -m "not aws and not perf"` and the pre-commit
   hooks (ruff/black/isort/mypy) locally; never push a commit that fails the CI
   quality gate. Fix formatting *before* committing, not in a follow-up.
 - **No force-push to `main`, no history rewrites**: they break every clone,
