@@ -342,6 +342,36 @@ async def test_an_insufficient_round_zero_runs_one_seeded_follow_up() -> None:
     assert "context_sufficient" not in result.metadata
 
 
+async def test_the_rerank_calls_are_counted_in_the_query_s_usage() -> None:
+    from unified_kg_rag.shared.usage import usage_scope
+
+    script = _Script(controller=[INSUFFICIENT, SUFFICIENT])
+    strategy, *_ = _strategy(script)
+
+    with usage_scope() as meter:
+        result = await strategy.asearch(_query())
+    used = meter.snapshot()
+
+    # The fusion's one rerank: a rerank call of one search unit, under the
+    # rerank role and the rerank model, and no model call.
+    model = Config().rerank_model_id
+    assert (used["rerank_calls"], used["rerank_search_units"]) == (1, 1)
+    assert used["by_role"]["rerank"]["rerank_calls"] == 1
+    assert used["by_model"][getattr(model, "value", model)]["llm_calls"] == 0
+    assert result.metadata["iterative"]["usage"]["rerank_calls"] == 1
+
+
+def test_a_rerank_request_counts_a_search_unit_per_hundred_documents() -> None:
+    from unified_kg_rag.shared.usage import record_rerank_call, usage_scope
+
+    with usage_scope() as meter:
+        for documents in (1, 100, 101, 250):
+            record_rerank_call("reranker", documents=documents)
+    used = meter.snapshot()
+    assert (used["rerank_calls"], used["rerank_search_units"]) == (4, 1 + 1 + 2 + 3)
+    assert used["llm_calls"] == 0
+
+
 async def test_follow_up_candidates_keep_their_provenance() -> None:
     strategy, *_ = _strategy(_Script(controller=[INSUFFICIENT, SUFFICIENT]))
 
@@ -415,6 +445,37 @@ async def test_bridge_entities_alone_drive_a_round_without_queries() -> None:
     assert documents.calls == []
 
 
+async def test_a_round_follows_at_most_five_bridge_entities() -> None:
+    bridges = [f"Site {n}" for n in range(8)]
+    script = _Script(controller=[_verdict(False, bridges), SUFFICIENT])
+    strategy, _, later, _, _ = _strategy(script, max_next_queries=0)
+
+    await strategy.asearch(_query())
+
+    (seeded,) = later.queries
+    assert seeded.entity_focus == bridges[:5]
+
+
+async def test_the_controller_reads_the_answer_s_budget_by_default() -> None:
+    script = _Script(controller=[SUFFICIENT])
+    strategy, *_ = _strategy(script)
+    budgets: list[Any] = []
+    pack = strategy.token_manager.optimize_context
+
+    def recorded(results: Any, text: str, budget: Any, *args: Any) -> Any:
+        budgets.append(budget)
+        return pack(results, text, budget, *args)
+
+    strategy.token_manager.optimize_context = recorded  # type: ignore[method-assign]
+    await strategy.asearch(_query())
+    await strategy.asearch(_query(max_tokens=4000))
+    strategy.settings.controller_context_tokens = 2000
+    await strategy.asearch(_query(max_tokens=4000))
+
+    # None: the token manager's answer budget (max_context_tokens).
+    assert budgets == [None, 4000, 2000]
+
+
 async def test_at_most_max_next_queries_are_searched() -> None:
     queries = ["q one", "q two", "q three"]
     script = _Script(controller=[_verdict(False, ["Depot"], queries), SUFFICIENT])
@@ -485,7 +546,31 @@ async def test_the_deadline_cancels_a_follow_up_round_mid_way() -> None:
     assert result.results == ROUND_0
     meta = result.metadata["iterative"]
     assert (meta["rounds"], meta["stop_reason"]) == (0, "deadline")
-    assert "context_sufficient" not in result.metadata
+    # The controller judged round 0 insufficient before the deadline cut the
+    # round it started: what is returned is what it judged.
+    assert result.metadata["context_sufficient"] is False
+    assert result.metadata["insufficiency_reason"] == "deadline"
+
+
+async def test_a_deadline_after_a_judged_round_keeps_that_verdict() -> None:
+    config = Config()
+    config.search.model_timeout_seconds = 1.0
+    script = _Script(controller=[INSUFFICIENT, _verdict(False, ["Harbor"])])
+    strategy, _, later, _, _ = _strategy(config=config, script=script)
+
+    def round_answer(query: SearchQuery) -> list[RetrievalResult]:
+        later.delay = 30.0  # the second follow-up round outlasts the deadline
+        return [DEPOT, HARBOR]
+
+    later.answer = round_answer
+    with retry_deadline(time.monotonic() + 1.4):
+        result = await strategy.asearch(_query())
+
+    assert "Depot is located in Harbor." in _contents(result)
+    meta = result.metadata["iterative"]
+    assert (meta["rounds"], meta["stop_reason"]) == (1, "deadline")
+    assert result.metadata["context_sufficient"] is False
+    assert result.metadata["insufficiency_reason"] == "deadline"
 
 
 async def test_no_round_starts_without_time_for_the_answer() -> None:
@@ -927,3 +1012,95 @@ async def test_auto_offers_iterative_and_prefetches_what_its_base_reads() -> Non
     assert offered["strategies"] == "global, iterative"
     assert "2. ITERATIVE SEARCH" in offered["strategy_descriptions"]
     assert started == {"entities": False, "keywords": True}
+
+
+# --- the output guardrail ------------------------------------------------------
+
+
+class _MaskingGuard:
+    """Masks "Secret" in an output and refuses one naming "Forbidden"."""
+
+    def __init__(self) -> None:
+        self.checked: list[str] = []
+
+    async def acheck(self, text: str, source: Any, **kwargs: Any) -> Any:
+        from unified_kg_rag.ports.guardrail import GuardAction, GuardVerdict
+
+        self.checked.append(text)
+        if "Forbidden" in text:
+            return GuardVerdict(action=GuardAction.BLOCKED, text="Refused.")
+        if "Secret" in text:
+            return GuardVerdict(
+                action=GuardAction.MASKED, text=text.replace("Secret", "{NAME}")
+            )
+        return GuardVerdict(action=GuardAction.NONE, text=text)
+
+
+def _guarded_chain(guard: _MaskingGuard) -> GraphRAGChain:
+    config = Config()
+    config.aws.bedrock.guardrail.identifier = "test-guardrail"
+    config.providers.rerank.kind = "none"
+    return GraphRAGChain(
+        config=config,
+        model_factory=ScriptedLLMFactory(lambda _s, _h: "unused"),
+        retriever_builders={
+            "document": lambda: _Documents(),
+            "graph": lambda: _Documents(),
+        },
+        guard=guard,  # type: ignore[arg-type]
+    )
+
+
+def _iterative_result(**iterative: Any) -> SearchResult:
+    return SearchResult(
+        query=_query(),
+        results=list(ROUND_0),
+        total_results=len(ROUND_0),
+        search_strategy="iterative_search",
+        processing_time=0.0,
+        metadata={"iterative": {"rounds": 1, **iterative}},
+    )
+
+
+async def test_the_model_written_follow_ups_are_screened_as_outputs() -> None:
+    guard = _MaskingGuard()
+    chain = _guarded_chain(guard)
+    records: list[dict[str, Any]] = []
+    result = _iterative_result(
+        searched=["Where is Secret Depot?", "Forbidden query"],
+        verdicts=[
+            {
+                "round": 0,
+                "sufficient": False,
+                "bridge_entities": ["Secret Depot", "Harbor"],
+                "next_queries": ["Where is Secret Depot?"],
+            }
+        ],
+        steps=[{"step": 1, "question": "Forbidden step", "answered": True}],
+    )
+
+    screened = await chain._screen_synthesized(result, records)
+
+    meta = screened.metadata["iterative"]
+    assert meta["searched"] == ["Where is {NAME} Depot?"]
+    assert meta["verdicts"][0]["bridge_entities"] == ["{NAME} Depot", "Harbor"]
+    assert meta["verdicts"][0]["next_queries"] == ["Where is {NAME} Depot?"]
+    assert meta["steps"][0] == {"step": 1, "question": "", "answered": True}
+    assert meta["rounds"] == 1
+    assert len(records) == 4  # one per intervening string
+    # The caller's result is left as it was.
+    assert result.metadata["iterative"]["searched"][0] == "Where is Secret Depot?"
+
+
+async def test_clean_follow_ups_cost_one_check() -> None:
+    guard = _MaskingGuard()
+    chain = _guarded_chain(guard)
+    result = _iterative_result(
+        searched=["Where is Depot?"],
+        verdicts=[{"bridge_entities": ["Depot"], "next_queries": ["Where is Depot?"]}],
+    )
+
+    screened = await chain._screen_synthesized(result, [])
+
+    assert screened.metadata == result.metadata
+    assert guard.checked == ["Where is Depot?\nDepot\nWhere is Depot?"]

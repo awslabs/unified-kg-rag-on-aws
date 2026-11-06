@@ -4294,13 +4294,19 @@ class IterativeSearchConfig(BaseModel):
         ),
     )
     controller_context_tokens: int | None = Field(
-        default=8000,
+        default=None,
         ge=256,
         description=(
             "Token budget of the context each controller call (and each "
             "decomposition step) reads: the round's candidates packed as the "
-            "answer's context is, cut to this. null packs them to the "
-            "answer's budget. The answer itself always gets its full budget."
+            "answer's context is, cut to this. null (the default) packs them "
+            "to the answer's budget (the request's max_tokens, else "
+            "search.token_manager.max_context_tokens), so the controller "
+            "judges the context the answer reads; a smaller value saves "
+            "fast-model input tokens, but with large chunks the controller "
+            "then misses passages the answer gets (at 8000 and ~1200-token "
+            "chunks it read 3 of the answer's 11). The answer itself always "
+            "gets its full budget."
         ),
     )
 

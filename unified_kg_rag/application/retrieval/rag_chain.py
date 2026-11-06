@@ -218,6 +218,70 @@ NO_CONTEXT_ANSWER = (
     "this question."
 )
 
+# The search metadata of iterative search and its model-written text: the
+# follow-up queries searched (``searched``), and each verdict's bridge
+# entities and follow-up queries and each decomposition step's question.
+_ITERATIVE_KEY = "iterative"
+_ITERATIVE_MODEL_TEXT: dict[str, tuple[str, ...]] = {
+    "searched": (),
+    "verdicts": ("bridge_entities", "next_queries"),
+    "steps": ("question",),
+}
+
+
+def _model_texts(iterative: dict[str, Any]) -> list[tuple[str, str]]:
+    """The model-written strings of ``iterative`` metadata, as (field, text)."""
+    found: list[tuple[str, str]] = []
+    for key, inner in _ITERATIVE_MODEL_TEXT.items():
+        value = iterative.get(key)
+        if not isinstance(value, list):
+            continue
+        if not inner:
+            found.extend((key, v) for v in value if isinstance(v, str) and v)
+            continue
+        for record in value:
+            if not isinstance(record, dict):
+                continue
+            for field_name in inner:
+                item = record.get(field_name)
+                items = item if isinstance(item, list) else [item]
+                found.extend((field_name, v) for v in items if isinstance(v, str) and v)
+    return found
+
+
+def _replace_model_texts(
+    iterative: dict[str, Any], screened: dict[str, str | None]
+) -> dict[str, Any]:
+    """``iterative`` with each model-written string replaced by its screened
+    text; a refused one (``None``) is left out of its list, or emptied."""
+
+    def one(value: Any) -> Any:
+        if isinstance(value, list):
+            return [screened.get(v, v) for v in value if screened.get(v, v) is not None]
+        if isinstance(value, str):
+            text = screened.get(value, value)
+            return "" if text is None else text
+        return value
+
+    out = dict(iterative)
+    for key, inner in _ITERATIVE_MODEL_TEXT.items():
+        value = iterative.get(key)
+        if not isinstance(value, list):
+            continue
+        if not inner:
+            out[key] = one(value)
+            continue
+        out[key] = [
+            (
+                {**r, **{f: one(r[f]) for f in inner if f in r}}
+                if isinstance(r, dict)
+                else r
+            )
+            for r in value
+        ]
+    return out
+
+
 DEFAULT_ERROR_MESSAGE: str = (
     "I apologize, but an error occurred while processing your request. Please try again in a moment."
 )
@@ -1808,6 +1872,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 output.search_results = await self._screen_synthesized(
                     output.search_results, guard_records
                 )
+                if isinstance(output, RAGOutput) and _ITERATIVE_KEY in output.metadata:
+                    # The answer's copy of the search metadata, screened too.
+                    output.metadata[_ITERATIVE_KEY] = (
+                        output.search_results.metadata.get(_ITERATIVE_KEY)
+                    )
                 if guard_records:
                     output.metadata["guardrail"] = guard_records
                 if isinstance(output, RAGOutput):
@@ -1945,9 +2014,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         ``asearch``), so with ``check_output`` they must not reach the caller
         unscreened. Retrieved results are corpus text and pass as they are.
         """
-        if not self._screen_outputs or not any(
-            self._is_synthesized(r.metadata) for r in search_results.results
-        ):
+        if not self._screen_outputs:
+            return search_results
+        search_results = await self._screen_model_metadata(search_results, records)
+        if not any(self._is_synthesized(r.metadata) for r in search_results.results):
             return search_results
         assert self.guard is not None
         kept: list[RetrievalResult] = []
@@ -1964,6 +2034,43 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 kept.append(result.model_copy(update={"content": verdict.text}))
         return search_results.model_copy(
             update={"results": kept, "total_results": len(kept)}
+        )
+
+    async def _screen_model_metadata(
+        self, search_results: SearchResult, records: list[dict[str, Any]]
+    ) -> SearchResult:
+        """``search_results`` with the model-written text of its metadata
+        (``iterative``'s follow-up queries, bridge entities and step
+        questions, ``_ITERATIVE_MODEL_TEXT``) screened as a synthesized
+        result is: masked, or left out when refused. One check reads them
+        all; only when it intervenes is each checked on its own."""
+        iterative = search_results.metadata.get(_ITERATIVE_KEY)
+        if not isinstance(iterative, dict):
+            return search_results
+        texts = [text for _, text in _model_texts(iterative)]
+        if not texts:
+            return search_results
+        assert self.guard is not None
+        verdict = await self.guard.acheck("\n".join(texts), GuardSource.OUTPUT)
+        if not verdict.intervened:
+            return search_results
+        screened: dict[str, str | None] = {}
+        for text in dict.fromkeys(texts):
+            one = await self.guard.acheck(text, GuardSource.OUTPUT)
+            if one.intervened:
+                records.append(_guard_record(GuardSource.OUTPUT, one))
+            screened[text] = (
+                None
+                if one.intervened and one.action is GuardAction.BLOCKED
+                else (one.text if one.intervened else text)
+            )
+        return search_results.model_copy(
+            update={
+                "metadata": {
+                    **search_results.metadata,
+                    _ITERATIVE_KEY: _replace_model_texts(iterative, screened),
+                }
+            }
         )
 
     @staticmethod

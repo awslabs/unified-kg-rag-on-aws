@@ -7,10 +7,13 @@ import os
 import re
 import unicodedata
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
+from itertools import zip_longest
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
+
+_T = TypeVar("_T")
 
 # Fraction of CPUs to use for the default process/thread-pool worker count.
 _DEFAULT_WORKER_CPU_FRACTION = 0.8
@@ -86,6 +89,18 @@ def default_max_workers() -> int:
 # treated as a separator (handled before this runs).
 RE_INVALID_CHARS = re.compile(r"[^\w\s]", re.UNICODE)
 RE_EXTRA_SPACES = re.compile(r"\s+")
+
+
+def interleave(lists: Iterable[Iterable[_T]]) -> list[_T]:
+    """The items of several ranked lists in one: their first items, then
+    their second ones, and so on (what an equal-weight rank fusion of the
+    lists keeps when one list's scores do not compare with another's)."""
+    return [
+        item
+        for same_rank in zip_longest(*(list(items) for items in lists))
+        for item in same_rank
+        if item is not None
+    ]
 
 
 def compute_hash(data: str, length: int = 16) -> str:
