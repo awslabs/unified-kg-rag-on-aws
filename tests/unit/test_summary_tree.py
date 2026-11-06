@@ -10,6 +10,7 @@ import dataclasses
 import numpy as np
 import pytest
 
+from tests.fixtures.collapsed_tree import collapsed_tree_reference
 from unified_kg_rag.domain.ingestion.summary_tree import (
     Cluster,
     Leaf,
@@ -18,7 +19,6 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     bic_candidates,
     build_tree,
     choose_k,
-    collapsed_tree_reference,
     fit_mixture,
     gmm_clusters,
     kmeans,

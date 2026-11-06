@@ -350,13 +350,11 @@ def test_the_tree_strategy_holds_the_collapsed_trees_top_five(
     import asyncio
     from unittest.mock import MagicMock
 
+    from tests.fixtures.collapsed_tree import collapsed_tree_reference
     from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
     from unified_kg_rag.adapters.providers import Providers
     from unified_kg_rag.adapters.search_strategies.tree_search import (
         TreeSearchStrategy,
-    )
-    from unified_kg_rag.domain.ingestion.summary_tree import (
-        collapsed_tree_reference,
     )
     from unified_kg_rag.domain.models import Methodology, SearchQuery, SearchType
 

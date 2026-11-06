@@ -2605,10 +2605,10 @@ upstream's answers, and the tests run in CI without upstream installed:
   nodes summarized, no shrink stop): node count per layer, child sets, the
   token-bound splits and the stopping layer must be equal. They are, on all
   12 recorded trees (40-90 leaves of 150-700 words, 3,500-word bound).
-- *Collapsed-tree selection, exact.* `collapsed_tree_reference` (a test
-  helper, not a product mode: cosine order, `top_k` 10, stop at the first
-  node over the 3,500-token budget) must select upstream's node ids in
-  upstream's order (it does on all 40 cases); the shipped `tree` strategy
+- *Collapsed-tree selection, exact.* `collapsed_tree_reference`
+  (`tests/fixtures/collapsed_tree.py`, not a product mode: cosine order,
+  `top_k` 10, stop at the first node over the 3,500-token budget) must
+  select upstream's node ids in upstream's order (it does on all 40 cases); the shipped `tree` strategy
   on the embedded store, vector search without rerank, graph buckets or
   expansion, must hold the reference's top 5 in its top 10.
 - *Clustering, by agreement.* The BIC-chosen k equals upstream's
