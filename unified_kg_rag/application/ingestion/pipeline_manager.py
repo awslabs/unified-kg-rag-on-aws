@@ -511,7 +511,11 @@ class PipelineResumeManager:
             # Every recorded stage completed: resume at the stage after the
             # last one, so a phased run picks up its own window instead of
             # re-running the previous phase's last stage. A run whose last
-            # recorded stage is the final one re-runs it.
+            # recorded stage is the final one re-runs it; so does one that
+            # ended at indexing, which caches no output: the stage after it
+            # (summary_tree) reads only what it stored, and a run without it
+            # re-runs indexing as before (a later phase that runs only
+            # summary_tree starts there, its first enabled stage).
             if not stage_results:
                 resume_stage = "document_loading"
             else:
@@ -520,6 +524,7 @@ class PipelineResumeManager:
                 resume_stage = (
                     _CANONICAL_STAGE_ORDER[position + 1]
                     if position + 1 < len(_CANONICAL_STAGE_ORDER)
+                    and last != PipelineStageType.INDEXING.value
                     else last
                 )
 

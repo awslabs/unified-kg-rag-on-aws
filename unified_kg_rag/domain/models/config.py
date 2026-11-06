@@ -90,6 +90,8 @@ class PipelineStageType(Enum):
     GRAPH_ANALYSIS = "graph_analysis"
     COMMUNITY_DETECTION = "community_detection"
     INDEXING = "indexing"
+    # RAPTOR's summary tree over the stored text units (raptor methodology).
+    SUMMARY_TREE = "summary_tree"
 
 
 class ChunkingStrategy(str, Enum):
@@ -360,6 +362,7 @@ class ModelRole(str, Enum):
     GLEANING = "gleaning"
     CLAIM_EXTRACTION = "claim_extraction"
     COMMUNITY_REPORT = "community_report"
+    SUMMARY_TREE = "summary_tree"
     QUERY_TRANSLATION = "query_translation"
     ENTITY_EXTRACTION = "entity_extraction"
     STRATEGY_SELECTION = "strategy_selection"
@@ -387,6 +390,10 @@ _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
     ModelRole.GLEANING: ("default", "refines each text unit's extraction"),
     ModelRole.CLAIM_EXTRACTION: ("default", "extracts claims"),
     ModelRole.COMMUNITY_REPORT: ("default", "writes community reports"),
+    ModelRole.SUMMARY_TREE: (
+        "default",
+        "summarizes each cluster of the summary tree (raptor methodology)",
+    ),
     ModelRole.QUERY_TRANSLATION: ("fast", "translates the query"),
     ModelRole.ENTITY_EXTRACTION: (
         "default",
@@ -470,6 +477,7 @@ class RoleModelsConfig(BaseModel):
     gleaning: str | None = _role_field(ModelRole.GLEANING)
     claim_extraction: str | None = _role_field(ModelRole.CLAIM_EXTRACTION)
     community_report: str | None = _role_field(ModelRole.COMMUNITY_REPORT)
+    summary_tree: str | None = _role_field(ModelRole.SUMMARY_TREE)
     query_translation: str | None = _role_field(ModelRole.QUERY_TRANSLATION)
     entity_extraction: str | None = _role_field(ModelRole.ENTITY_EXTRACTION)
     strategy_selection: str | None = _role_field(ModelRole.STRATEGY_SELECTION)
@@ -5009,6 +5017,16 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for re-summarizing over-long merged entity/relationship descriptions",
     )
+    tree_summary_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for summarizing one cluster of the "
+        "summary tree (raptor methodology)",
+    )
+    tree_summary_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for summarizing one cluster of the "
+        "summary tree; it must keep {passages}",
+    )
     graph_refinement_system: str | None = Field(
         default=None,
         description="Custom system prompt for improving and refining extracted graph entities and relationships",
@@ -5372,6 +5390,7 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "community_report": frozenset({"entities", "relationships"}),
     "corpus_profile": frozenset({"corpus_sample"}),
     "description_summarization": frozenset({"descriptions"}),
+    "tree_summary": frozenset({"passages"}),
     "decomposition_step": frozenset({"query", "context"}),
     "drift_action": frozenset({"query", "context"}),
     "drift_hyde": frozenset({"query"}),

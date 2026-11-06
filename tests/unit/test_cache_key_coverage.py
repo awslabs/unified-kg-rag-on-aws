@@ -78,6 +78,33 @@ _KEYED_ONCE_SET = frozenset(
         "search.abstention.mode",
         "search.abstention.strip_marker",
         "search.abstention.on_insufficient",
+        # The raptor methodology's (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
+        "indexing.opensearch.summary_nodes_index_prefix",
+        "models.roles.summary_tree",
+        "custom_prompts.tree_summary_system",
+        "custom_prompts.tree_summary_human",
+        *(
+            f"indexing.summary_tree.{name}"
+            for name in (
+                "scope",
+                "partition_by",
+                "algorithm",
+                "target_children",
+                "soft_threshold",
+                "reduction_dims",
+                "bic_grid",
+                "max_levels",
+                "min_nodes_to_cluster",
+                "min_level_shrink",
+                "max_cluster_tokens",
+                "max_summary_tokens",
+                "max_lineage_text_units",
+                "min_leaves_per_tree",
+                "refresh",
+                "random_state",
+                "max_leaves_in_memory",
+            )
+        ),
     }
 )
 

@@ -71,6 +71,7 @@ from unified_kg_rag.domain.models import (
     ModelRole,
     PipelineStageType,
 )
+from unified_kg_rag.domain.models.config import SummaryTreeConfig
 from unified_kg_rag.domain.models.provider_config import BEDROCK
 from unified_kg_rag.domain.models.schema import (
     EntityTypeItem,
@@ -200,6 +201,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "models.roles.gleaning": Keyed(_P.GLEANING),
     "models.roles.claim_extraction": Keyed(_P.CLAIM_EXTRACTION),
     "models.roles.community_report": Keyed(_P.COMMUNITY_DETECTION),
+    "models.roles.summary_tree": Keyed(_P.SUMMARY_TREE, per_document=False),
     "models.roles.query_translation": Unkeyed(_QUERY),
     "models.roles.entity_extraction": Unkeyed(_QUERY),
     "models.roles.strategy_selection": Unkeyed(_QUERY),
@@ -232,6 +234,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         "indexing.opensearch.community_reports_index_prefix",
         "indexing.opensearch.relationships_index_prefix",
         "indexing.opensearch.claims_index_prefix",
+        "indexing.opensearch.summary_nodes_index_prefix",
         "indexing.opensearch.extraction_records_index_prefix",
         "indexing.neptune.entity_label_prefix",
         "indexing.neptune.community_label_prefix",
@@ -321,6 +324,15 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         "custom_prompts.community_report_human",
     ),
     "graph.visualization": _neutral("renders the finished graph"),
+    # The summary tree is built from the stored text units after indexing:
+    # its settings key that stage alone, never what a document produces.
+    **_keyed_at(
+        _P.SUMMARY_TREE,
+        "indexing.summary_tree",
+        "custom_prompts.tree_summary_system",
+        "custom_prompts.tree_summary_human",
+        per_document=False,
+    ),
     # --- indexing, stores and query time -----------------------------------
     # Which stages run and what the build record names, never what a stage
     # that runs produces (its switch keys a stage it turns off, which then
@@ -463,6 +475,13 @@ _KEYED_ONCE_SET = frozenset(
         "search.abstention.mode",
         "search.abstention.strip_marker",
         "search.abstention.on_insufficient",
+        # The raptor methodology's settings (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in), added with
+        # it: at their defaults they change nothing a run or a query did.
+        "indexing.opensearch.summary_nodes_index_prefix",
+        "models.roles.summary_tree",
+        "custom_prompts.tree_summary_system",
+        "custom_prompts.tree_summary_human",
+        *(f"indexing.summary_tree.{name}" for name in SummaryTreeConfig.model_fields),
     }
 )
 
@@ -1178,6 +1197,73 @@ def community_report_fingerprint(config: Config) -> str:
         ModelRole.COMMUNITY_REPORT,
         CommunityReportPrompt,
         "graph.community_detection.report_generation",
+    )
+
+
+def index_language(config: Config) -> str:
+    """The language the text units are indexed and embedded in, and the
+    summary tree is written in: the target language when translation runs,
+    the source language otherwise (the query side's index language)."""
+    translation = config.processing.translation
+    language = (
+        translation.target_language
+        if translation.enabled
+        else translation.source_language
+    )
+    return language.value
+
+
+def tree_summary_fingerprint(config: Config) -> str:
+    """Fingerprint the settings one summary of the summary tree depends on
+    beside its children's texts: every model call's settings, the
+    ``summary_tree`` role's model, the summary length, the index language
+    and ``TreeSummaryPrompt`` (code, or its ``custom_prompts`` override). A
+    node records the digest of its input under it (``input_key``), so a
+    rebuild reuses a summary only when it was made the same way."""
+    from unified_kg_rag.domain.prompts import TreeSummaryPrompt
+    from unified_kg_rag.domain.prompts.base import fill_slots
+
+    resolved = TreeSummaryPrompt.resolve(config.custom_prompts)
+    return _digest(
+        {
+            "record": "tree_summary",
+            "version": _ANSWER_FORMAT_VERSION,
+            "settings": _settings(
+                config, lambda rule: rule.per_document and rule.stage is None
+            ),
+            "model": to_jsonable_python(config.model_id(ModelRole.SUMMARY_TREE)),
+            "max_summary_tokens": config.indexing.summary_tree.max_summary_tokens,
+            "language": index_language(config),
+            "prompt": compute_hash(
+                fill_slots(
+                    resolved.system_prompt_template
+                    + "\n"
+                    + resolved.human_prompt_template,
+                    TreeSummaryPrompt.inlined_slots(config),
+                )
+            ),
+        }
+    )
+
+
+def summary_tree_fingerprint(config: Config) -> str:
+    """Fingerprint what a summary tree is built with beside its leaves: the
+    tree settings, the summaries' (``tree_summary_fingerprint``) and the
+    embedding model and dimension. The build record keeps it, so a run
+    whose fingerprint and leaf set are the stored ones builds nothing."""
+    tree = config.indexing.summary_tree.model_dump(
+        mode="json", exclude={"refresh", "max_leaves_in_memory"}
+    )
+    return _digest(
+        {
+            "record": "summary_tree",
+            "tree": tree,
+            "summaries": tree_summary_fingerprint(config),
+            "embedding": [
+                to_jsonable_python(config.embedding_model_id),
+                config.models.embedding.dimension,
+            ],
+        }
     )
 
 

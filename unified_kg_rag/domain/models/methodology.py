@@ -87,8 +87,9 @@ DEFAULT_METHODOLOGIES: tuple[Methodology, ...] = (
 )
 
 # Artifacts no ingestion stage of this version builds: a methodology that
-# requires one cannot be selected yet.
-UNBUILT_ARTIFACTS: frozenset[IndexArtifact] = frozenset({IndexArtifact.SUMMARY_TREE})
+# requires one cannot be selected yet. None: the summary_tree stage builds
+# raptor's tree.
+UNBUILT_ARTIFACTS: frozenset[IndexArtifact] = frozenset()
 
 
 def available_methodologies() -> tuple[Methodology, ...]:

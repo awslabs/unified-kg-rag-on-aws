@@ -36,6 +36,8 @@ ARTIFACT_STAGES: dict[IndexArtifact, frozenset[PipelineStageType]] = {
     _A.COMMUNITIES: frozenset({_S.COMMUNITY_DETECTION, _S.INDEXING}),
     _A.COMMUNITY_REPORTS: frozenset({_S.COMMUNITY_DETECTION, _S.INDEXING}),
     _A.CLAIMS: frozenset({_S.CLAIM_RESOLUTION, _S.INDEXING}),
+    # Built from the stored text units after indexing (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
+    _A.SUMMARY_TREE: frozenset({_S.SUMMARY_TREE}),
 }
 
 # The stage whose completion shows a run built the artifact (indexing, which
@@ -49,6 +51,7 @@ ARTIFACT_PRODUCERS: dict[IndexArtifact, PipelineStageType] = {
     _A.COMMUNITIES: _S.COMMUNITY_DETECTION,
     _A.COMMUNITY_REPORTS: _S.COMMUNITY_DETECTION,
     _A.CLAIMS: _S.CLAIM_RESOLUTION,
+    _A.SUMMARY_TREE: _S.SUMMARY_TREE,
 }
 
 # The stages whose output each stage reads (optional ones included: their
@@ -66,6 +69,10 @@ STAGE_DEPENDENCIES: dict[PipelineStageType, frozenset[PipelineStageType]] = {
     _S.GRAPH_ANALYSIS: frozenset({_S.GRAPH_RESOLUTION}),
     _S.COMMUNITY_DETECTION: frozenset({_S.GRAPH_RESOLUTION, _S.GRAPH_ANALYSIS}),
     _S.INDEXING: frozenset({_S.TEXT_CHUNKING}),
+    # Reads the text units indexing stored (not the run's context),
+    # translated when translation is on: the tree is written in the index
+    # language.
+    _S.SUMMARY_TREE: frozenset({_S.INDEXING, _S.TRANSLATION}),
 }
 
 # Stages the artifacts are built without: pre-parsed documents need no
@@ -78,13 +85,13 @@ OPTIONAL_STAGES: frozenset[PipelineStageType] = frozenset(
 # Artifacts an incremental run cannot add to a namespace that lacks them: it
 # builds them for its delta only (communities cluster the run's graph, the
 # relationship vectors embed the run's relationships). Adding one rebuilds
-# the namespace from its stored extractions instead.
+# the namespace from its stored extractions instead. Not the summary tree:
+# its stage builds it over every stored text unit on any run.
 CORPUS_WIDE_ARTIFACTS: frozenset[IndexArtifact] = frozenset(
     {
         _A.RELATIONSHIP_VECTORS,
         _A.COMMUNITIES,
         _A.COMMUNITY_REPORTS,
-        _A.SUMMARY_TREE,
     }
 )
 

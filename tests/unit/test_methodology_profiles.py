@@ -74,9 +74,31 @@ def test_every_buildable_artifact_has_its_stages() -> None:
     assert set(mp.STAGE_DEPENDENCIES) == set(S)
 
 
-def test_raptor_waits_for_its_summary_tree_stage() -> None:
-    assert available_methodologies() == (G, L, H)
-    assert A.SUMMARY_TREE in METHODOLOGY_PROFILES[R].required
+def test_raptor_builds_its_summary_tree_after_indexing() -> None:
+    assert available_methodologies() == (G, L, H, R)
+    assert UNBUILT_ARTIFACTS == frozenset()
+    assert METHODOLOGY_PROFILES[R].required == {A.TEXT_UNITS, A.SUMMARY_TREE}
+    assert mp.ARTIFACT_PRODUCERS[A.SUMMARY_TREE] is S.SUMMARY_TREE
+    assert mp.STAGE_DEPENDENCIES[S.SUMMARY_TREE] == {S.INDEXING, S.TRANSLATION}
+    # Built from what the stores hold: adding it rebuilds nothing.
+    assert A.SUMMARY_TREE not in mp.CORPUS_WIDE_ARTIFACTS
+
+
+def test_raptor_alone_runs_no_graph_stage() -> None:
+    # Translation runs too (a no-op unless processing.translation is on):
+    # the tree is written in the index language.
+    assert mp.selected_stages(_config(R)) == {
+        S.DOCUMENT_PARSING,
+        S.DOCUMENT_LOADING,
+        S.TEXT_CHUNKING,
+        S.TRANSLATION,
+        S.INDEXING,
+        S.SUMMARY_TREE,
+    }
+    # Beside the default methodologies it adds the tree stage alone.
+    assert mp.selected_stages(_config(G, L, R)) - mp.selected_stages(_config(G, L)) == {
+        S.SUMMARY_TREE
+    }
 
 
 def test_lightrag_and_hipporag_need_no_community() -> None:
@@ -107,7 +129,14 @@ def test_stages_for_closes_over_what_each_stage_reads() -> None:
         S.TEXT_CHUNKING,
         S.INDEXING,
     }
-    assert mp.stages_for([A.SUMMARY_TREE]) == frozenset()
+    assert mp.stages_for([A.SUMMARY_TREE]) == {
+        S.DOCUMENT_PARSING,
+        S.DOCUMENT_LOADING,
+        S.TEXT_CHUNKING,
+        S.TRANSLATION,
+        S.INDEXING,
+        S.SUMMARY_TREE,
+    }
 
 
 # --- selection -----------------------------------------------------------
@@ -117,12 +146,14 @@ def test_the_default_selects_every_stage() -> None:
     config = Config()
     assert config.indexing.methodologies == list(DEFAULT_METHODOLOGIES)
     # Claims are off by default; their switch alone governs their stages.
+    # The summary tree is raptor's, not a default methodology.
     assert set(S) - mp.selected_stages(config) == {
         S.CLAIM_EXTRACTION,
         S.CLAIM_RESOLUTION,
+        S.SUMMARY_TREE,
     }
     config.processing.claim_extraction.enabled = True
-    assert mp.selected_stages(config) == set(S)
+    assert mp.selected_stages(config) == set(S) - {S.SUMMARY_TREE}
 
 
 def test_lightrag_alone_runs_no_community_detection() -> None:
@@ -153,9 +184,12 @@ def test_the_pipeline_skips_what_no_selected_methodology_needs() -> None:
     assert {"graph_extraction", "graph_resolution", "graph_analysis"} <= names
     _StubStage.instances = []
     stages, _ = _pipeline_for_init(Config())._initialize_stages()
-    # The default: every stage but the claims, which are off.
+    # The default: every stage but the claims, which are off, and the
+    # summary tree (raptor).
     assert {s.name for s in stages} == {
-        s.value for s in S if s not in (S.CLAIM_EXTRACTION, S.CLAIM_RESOLUTION)
+        s.value
+        for s in S
+        if s not in (S.CLAIM_EXTRACTION, S.CLAIM_RESOLUTION, S.SUMMARY_TREE)
     }
 
 
@@ -200,11 +234,11 @@ def test_an_explicit_stage_list_wins_and_warns(caplog) -> None:
 def test_an_unknown_methodology_names_the_valid_ones() -> None:
     with pytest.raises(
         ValidationError,
-        match="unknown methodology 'lightrg'; valid: graphrag, lightrag, hipporag",
+        match="unknown methodology 'lightrg'; valid: graphrag, lightrag, "
+        "hipporag, raptor",
     ):
         _config_raw(["lightrg"])
-    with pytest.raises(ValidationError, match="'raptor' is not available"):
-        _config_raw(["raptor"])
+    assert _config_raw(["raptor"]).indexing.methodologies == [R]
     with pytest.raises(ValidationError):
         _config_raw([])
     assert Config(
