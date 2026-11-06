@@ -1798,8 +1798,16 @@ through the strategy registry, so there is no dispatch on the base:
    the graph walk; mix's `ll_keywords`; the first follow-up query is the
    search text) without its own rerank, and each new follow-up query
    searches the text units (`round_top_k`, 5) under the request's
-   `search_type`. A query already searched (case-folded) or a bridge already
-   followed (`compact_name_key`, so `동부 창고` and `동부창고` are one) is
+   `search_type`. A round whose verdict names no new bridge entity (only
+   new queries) reruns `local`, which then looks its entities up by the
+   search text, but not `mix`: mix seeds its entity and relationship
+   searches from keywords alone, and without a bridge those would be the
+   question's, which round 0 already searched, so the round is its text
+   searches. (Rerunning mix with empty keywords, as the first version did,
+   made it fall back to the search text as a keyword, or search no entity
+   when the text passed `raw_query_fallback_max_len`: 62 of 238 controller
+   rounds in the measured run.) A query already searched (case-folded) or
+   a bridge already followed (`compact_name_key`, so `동부 창고` and `동부창고` are one) is
    not searched again, and the controller is shown the searched list: the
    redundant searches ReaRAG (arXiv 2503.21729) reports for open-ended
    search agents, which run on until their iteration limit, are what the
@@ -1824,7 +1832,9 @@ through the strategy registry, so there is no dispatch on the base:
 steps in MuSiQue's notation (`#1` is step 1's answer); each step, with its
 references replaced by the earlier answers (an unanswered one by its
 question), runs one follow-up round (the step's answers are its bridge
-entities) and is answered from those candidates by one call
+entities; a step without one, step 1 always, keeps the question's own
+keywords on `mix`, since the step's answer reads only its own round) and is
+answered from those candidates by one call
 (`DecompositionStepPrompt`, an empty answer when they state none). The steps'
 candidates are fused with round 0's once, as in 4. The step answers are not
 passed to the answer model: it reads retrieved evidence only.

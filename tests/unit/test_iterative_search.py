@@ -744,6 +744,115 @@ async def test_a_mix_round_is_seeded_through_its_low_level_keywords() -> None:
     assert seeded.metadata["search_strategy"] == "mix"
 
 
+# A bridge the first round followed, named again beside a new query.
+FOLLOWED_AGAIN = _verdict(False, ["Depot"], ["Where is Harbor?"])
+
+
+@pytest.mark.parametrize(("base", "reruns"), [("mix", 1), ("local", 2)])
+async def test_a_round_without_a_new_bridge_reruns_only_what_it_seeds(
+    base: str, reruns: int
+) -> None:
+    # mix seeds its graph search from keywords, and without a new bridge
+    # those are the question's, which round 0 searched: the round searches
+    # the text units alone. local looks its entities up by the new query.
+    script = _Script(controller=[INSUFFICIENT, FOLLOWED_AGAIN, SUFFICIENT])
+    strategy, _, later, documents, _ = _strategy(script, base=base)
+
+    result = await strategy.asearch(_query(ll_keywords=["Vendor"]))
+
+    assert len(later.queries) == reruns
+    if base == "local":
+        assert later.queries[1].query == "Where is Harbor?"
+        assert later.queries[1].entity_focus == []
+    assert [c.query for c in documents.calls] == [FOLLOW_UP, "Where is Harbor?"]
+    meta = result.metadata["iterative"]
+    assert (meta["rounds"], meta["stop_reason"]) == (2, "sufficient")
+
+
+@pytest.mark.parametrize(
+    ("steps", "answer", "low", "high"),
+    [
+        (STEPS[:2], "Carrier", ["Vendor"], ["storage"]),
+        (
+            ["한빛상사가 맡긴 운송사는?", "#1의 창고는?"],
+            "바다운송",
+            ["한빛상사"],
+            ["물류"],
+        ),
+        (
+            ["東邦商事が委託した運送会社は?", "#1の倉庫は?"],
+            "海運",
+            ["東邦商事"],
+            ["物流"],
+        ),
+    ],
+    ids=["en", "ko", "ja"],
+)
+async def test_a_mix_step_without_a_bridge_keeps_the_question_keywords(
+    steps: list[str], answer: str, low: list[str], high: list[str]
+) -> None:
+    script = _Script(
+        decomposition=[{"steps": steps}],
+        step=[{"answer": answer}, {"answer": "x"}],
+    )
+    strategy, _, later, _, _ = _strategy(script, base="mix", decompose=True)
+
+    await strategy.asearch(_query(hl_keywords=high, ll_keywords=low))
+
+    keywords = [(q.ll_keywords, q.hl_keywords) for q in later.queries]
+    assert keywords == [(low, high), ([answer], [])]
+
+
+LONG_STEP = "Which logistics firm does Vendor hire for its freight shipments?"
+
+
+@pytest.mark.parametrize(
+    ("decompose", "script"),
+    [
+        (True, _Script(decomposition=[{"steps": [LONG_STEP]}], step=[{"answer": ""}])),
+        (
+            False,
+            _Script(
+                controller=[
+                    _verdict(False, ["Depot"], [FOLLOW_UP]),
+                    _verdict(False, ["Depot"], [LONG_STEP]),
+                    SUFFICIENT,
+                ]
+            ),
+        ),
+    ],
+    ids=["decompose", "controller"],
+)
+async def test_a_mix_round_never_runs_without_keywords(
+    decompose: bool, script: _Script, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The follow-up rounds run the real mix search: without a bridge they
+    # used to rerun it with no keyword at all, so it fell back to the search
+    # text as a keyword or, over 50 characters, searched no entity.
+    documents = _Documents()
+    strategy, *_ = _strategy(
+        script, base="mix", decompose=decompose, documents=documents
+    )
+    del strategy.follow_up.asearch  # the real mix search, not the stub
+
+    with caplog.at_level("WARNING"):
+        await strategy.asearch(
+            _query(hl_keywords=["storage"], ll_keywords=["Vendor", "storage site"])
+        )
+
+    assert "No keywords extracted" not in caplog.text
+    entity_searches = [
+        c.query
+        for c in documents.calls
+        if c.index_prefixes == [Config().indexing.opensearch.entities_index_prefix]
+    ]
+    # The graph search is seeded: by the question's keywords for the step
+    # without a bridge, by the bridge in the controller's round 1, and
+    # not rerun in its round 2, which names no new bridge.
+    assert entity_searches == (["Vendor, storage site"] if decompose else ["Depot"])
+    assert all(c.filters == FILTERS for c in documents.calls)
+
+
 def test_auto_never_routes_to_iterative() -> None:
     with pytest.raises(ValueError, match="iterative"):
         Config.model_validate(

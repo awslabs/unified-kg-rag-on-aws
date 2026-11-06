@@ -502,7 +502,10 @@ From a `main` checkout (formats and keys no release had):
   (`mix` or `local`) runs first, then a fast-model controller (`models.roles.query_controller`) judges the packed
   context and, when it does not answer the question, names the bridge entities and follow-up queries that seed up to
   `max_rounds` (2) more base searches and text-unit searches under the same filters; the rounds are fused (buckets
-  `iterative_round_<n>`, `iterative_round_<n>_text`) and reranked, and the answer is generated once.
+  `iterative_round_<n>`, `iterative_round_<n>_text`) and reranked, and the answer is generated once. A `mix` round
+  that names no new bridge entity runs its text searches alone, and a decomposition step without one keeps the
+  question's keywords, where `mix` reran with no keyword (falling back to the search text, or no entity search past
+  `raw_query_fallback_max_len`) (#PR).
   `decompose: true` splits the question into steps instead (KAG-style). `metadata["context_insufficient"]` reports a
   final insufficient verdict, `metadata["iterative"]` the rounds and their model usage; new
   `custom_prompts.iterative_controller_*`, `query_decomposition_*` and `decomposition_step_*` (#594). See
