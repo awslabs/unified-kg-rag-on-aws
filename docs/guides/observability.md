@@ -192,7 +192,9 @@ it.
 ## Account-level backstop: Bedrock model invocation logging
 
 Bedrock model invocation logging records every `InvokeModel` / `Converse`
-request and response in a region, embeddings included, to CloudWatch Logs or S3, whatever this package's tracing does:
+request and response in a region to CloudWatch Logs or S3, whatever this
+package's tracing does (the text with `textDataDeliveryEnabled`; embedding
+vectors only with `embeddingDataDeliveryEnabled`, off in the example below):
 use it as the audit record and traces for the per-query breakdown. It does not
 cover the Rerank call (`bedrock-agent-runtime`), and it holds full prompt and
 response text, so protect its destination like captured content (restricted

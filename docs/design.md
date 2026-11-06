@@ -617,8 +617,9 @@ gets its models and stores from the run's `Providers` bundle.
   community is reported once. A Leiden failure fails the stage instead of
   truncating the hierarchy.
 - **Determinism.** Leiden's partition depends on insertion order and
-  `graspologic_native` returns labels in a per-process order, so the detector
-  sorts nodes and edges and renumbers each level by its smallest member id:
+  `graspologic_native` returns labels in a per-process order, so the clustering
+  (`domain/ingestion/community_clustering.py`) sorts nodes and edges and
+  renumbers each level by its smallest member id:
   the same graph and `random_state` always yield the same communities and ids.
 - **Reports (MS GraphRAG parity, two deliberate deviations below).** A report's input takes the community's
   entities by degree (document-backed, §4.5), capped at

@@ -96,8 +96,8 @@ CI ([`.github/workflows/quality.yml`](./.github/workflows/quality.yml)) runs the
 
 ```bash
 uv run pre-commit run --all-files                       # ruff, isort, black, mypy and file hygiene
-uv run pytest -m "not aws"                              # unit, property and integration suites
-uv run --extra otel --extra eval --extra viz pytest -m "not aws" --cov=unified_kg_rag  # with coverage, as CI measures it
+uv run pytest -m "not aws and not perf"                 # unit, property and integration suites
+uv run --extra otel --extra eval --extra viz --extra ontology pytest -m "not aws and not perf" --cov=unified_kg_rag  # with coverage, as CI measures it
 ```
 
 Add `-n logical` to run the suite on every logical CPU through pytest-xdist, as CI does (`-n auto` counts physical
