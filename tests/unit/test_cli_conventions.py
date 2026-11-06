@@ -58,6 +58,21 @@ def _ctrl_c_raises():
     signal.signal(signal.SIGINT, previous)
 
 
+def _without_blas_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset OPENBLAS_NUM_THREADS for one test, and restore it afterwards
+    even when the launcher under test sets it: ``delenv`` of an absent
+    variable records nothing to undo, so the launcher's "1" outlived the
+    test."""
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "")
+    monkeypatch.delenv("OPENBLAS_NUM_THREADS")
+
+
+@pytest.fixture(autouse=True)
+def _blas_threads_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The query launchers set it; none of this module's tests may leave it.
+    _without_blas_threads(monkeypatch)
+
+
 PARSERS: dict[str, Callable[[], argparse.ArgumentParser]] = {
     "run-ingestion": run_ingestion_pipeline.CommandLineInterface._setup_arguments,
     "run-rag": run_rag_chain.CommandLineInterface._setup_arguments,
@@ -658,6 +673,17 @@ def test_a_cli_main_gets_the_ctrl_c_handler_back(monkeypatch) -> None:
         signal.signal(signal.SIGINT, interrupt)
 
 
+def test_a_launchers_blas_default_does_not_outlive_the_test() -> None:
+    from unified_kg_rag.application.cli import launch
+
+    before = os.environ.get("OPENBLAS_NUM_THREADS")
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        _without_blas_threads(monkeypatch)
+        launch.one_blas_thread()
+        assert os.environ["OPENBLAS_NUM_THREADS"] == "1"
+    assert os.environ.get("OPENBLAS_NUM_THREADS") == before
+
+
 @pytest.mark.parametrize(
     ("entry", "module"),
     [
@@ -676,7 +702,6 @@ def test_each_launcher_entry_runs_its_own_cli(
 
     from unified_kg_rag.application.cli import launch
 
-    monkeypatch.delenv("OPENBLAS_NUM_THREADS", raising=False)
     loaded: list[str] = []
 
     def load(name: str) -> SimpleNamespace:
@@ -706,7 +731,6 @@ def test_query_launchers_default_blas_to_one_thread_before_any_import(
 
     from unified_kg_rag.application.cli import launch
 
-    monkeypatch.delenv("OPENBLAS_NUM_THREADS", raising=False)
     seen: list[str | None] = []
 
     def load(name: str) -> SimpleNamespace:

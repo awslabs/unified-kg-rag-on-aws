@@ -156,14 +156,21 @@ class TestLoneLetters:
         assert tokenize("Yes I agree") == ["yes", "i", "agree"]
         assert tokenize("Vitamin A") == tokenize("vitamin a")
 
+    @pytest.mark.perf
     def test_many_dashes_normalize_in_linear_time(self) -> None:
         # Each dash once sliced the whole text: 4,000 dashes in 70 KB took
         # seconds. Linear, it takes milliseconds; the bound only catches a
-        # quadratic regression.
+        # quadratic regression. CPU time: a busy runner delays the process,
+        # it does not add to it.
         text = "word-" * 4_000 + "x" * 50_000
-        started = time.perf_counter()
+        started = time.process_time()
         tokens = tokenize(text)
-        assert time.perf_counter() - started < 1.0
+        assert time.process_time() - started < 1.0
+        assert tokens.count("word") == 4_000
+
+    def test_many_dashes_normalize_to_words(self) -> None:
+        # The timing check's input, on every run: its result.
+        tokens = tokenize("word-" * 4_000 + "x" * 50_000)
         assert tokens.count("word") == 4_000
 
 

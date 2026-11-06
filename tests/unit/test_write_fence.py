@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextvars
+import multiprocessing
 import os
 import signal
 import threading
@@ -30,6 +31,7 @@ import unified_kg_rag.adapters.aws.opensearch as opensearch_mod
 import unified_kg_rag.application.ingestion.namespace_lease as lease_mod
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.fixtures.pool_tasks import slow_match, slow_minhash
 from unified_kg_rag.adapters.aws.opensearch import OpenSearchClient
 from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
@@ -774,22 +776,20 @@ def test_a_stop_does_not_wait_for_the_model_calls_in_flight() -> None:
     assert time.time() - started < 1.5
 
 
-def _slow_match(name: str) -> list[tuple[str, float]]:
-    time.sleep(0.2)
-    return []
-
-
-def _slow_minhash(item: tuple[int, str], **_: Any) -> None:
-    time.sleep(0.2)
-    return None
-
-
 class _RecordingProcessPool(ProcessPoolExecutor):
     """A real process pool that records the futures it hands out, and keeps
     no reference to itself: the code under test holds its pool in a local,
-    which is collected once the block raised."""
+    which is collected once the block raised.
+
+    Its workers start from a fork server, not by forking the test process:
+    that process runs threads (the watcher below, pytest-xdist's), and a
+    child forked while one of them held a lock can hang on it forever."""
 
     futures: list[concurrent.futures.Future[Any]] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("mp_context", multiprocessing.get_context("forkserver"))
+        super().__init__(*args, **kwargs)
 
     def submit(self, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
         future = super().submit(fn, *args, **kwargs)
@@ -861,12 +861,13 @@ def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(
     # they all ran before the interpreter could exit.
     from unified_kg_rag.domain.ingestion import graph_resolver
 
-    monkeypatch.setattr(graph_resolver, "find_all_matches_for_entity_task", _slow_match)
+    monkeypatch.setattr(graph_resolver, "find_all_matches_for_entity_task", slow_match)
     monkeypatch.setattr(graph_resolver, "ProcessPoolExecutor", _RecordingProcessPool)
     resolver = graph_resolver.EntityResolver(Config(), 2, True)
 
     def resolve() -> None:
-        for _ in resolver._match_in_pool(MagicMock(), [f"n{i}" for i in range(40)]):
+        # The matcher goes to each worker pickled; the stand-in task ignores it.
+        for _ in resolver._match_in_pool(None, [f"n{i}" for i in range(40)]):  # type: ignore[arg-type]
             pass
 
     _stopped_once_running(resolve, total=40)
@@ -879,7 +880,7 @@ def test_a_stop_cancels_the_queued_tasks_of_the_dedup_process_pool(
     from unified_kg_rag.adapters.ingestion import loader as loader_mod
     from unified_kg_rag.domain.models import Document
 
-    monkeypatch.setattr(loader_mod, "compute_minhash", _slow_minhash)
+    monkeypatch.setattr(loader_mod, "compute_minhash", slow_minhash)
     monkeypatch.setattr(loader_mod, "ProcessPoolExecutor", _RecordingProcessPool)
     loader = loader_mod.DirectoryLoader(tmp_path)
     loader.max_workers = 2

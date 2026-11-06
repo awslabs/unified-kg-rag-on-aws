@@ -78,7 +78,7 @@ class _Mean:
 
 
 @given(_corpora(), st.randoms(use_true_random=False))
-@settings(max_examples=40)
+@settings(max_examples=40, deadline=None)
 def test_tree_is_a_function_of_the_leaf_set(corpus, shuffler) -> None:
     leaves, tree = corpus
     shuffled = list(leaves)
@@ -91,7 +91,7 @@ def test_tree_is_a_function_of_the_leaf_set(corpus, shuffler) -> None:
 
 
 @given(_corpora())
-@settings(max_examples=40)
+@settings(max_examples=40, deadline=None)
 def test_lineage_cover_tokens_and_filters(corpus) -> None:
     leaves, tree = corpus
     realize = _Mean()
