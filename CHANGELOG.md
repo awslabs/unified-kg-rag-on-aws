@@ -421,6 +421,18 @@ From a `main` checkout (formats and keys no release had):
   keeps its extraction records and indices; the community report prompt now names its language, so the next full
   build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
   date written as `2024年3月` is found under it, so nothing else re-runs.
+- (#602) `local` orders its text units by HippoRAG 2's PageRank by default
+  (`search.local_search.text_unit_ranking: ppr`): answers can change. DRIFT's follow-up local searches keep the
+  earlier order (`search.drift_search.text_unit_ranking: support`, unmeasured under DRIFT with `ppr`) (#607). Nothing is re-indexed or re-run; each local
+  query adds a text-unit search, a relationship kNN search, an edge read and one query embedding (about 0.1 s on
+  the embedded stores), and without the relationship vector index the PageRank is seeded by the entities and
+  passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
+- (#607) A query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the `rerank` role and
+  the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the rerank model has a
+  price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets both token prices or
+  the rerank price; one with neither, or one token price alone, is refused at load. Nothing is re-run.
+- (#607) `naive` and `simple` are served by every namespace that holds the text units (a `raptor`-only or
+  `lightrag`-only one, where they were refused), and `simple` sweeps only the indexes the namespace holds.
 
 ### Added
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
@@ -438,7 +450,11 @@ From a `main` checkout (formats and keys no release had):
   the namespace has an entities index (buckets `tree_text_units`, `tree_summaries`, `tree_graph_summaries`,
   `tree_graph_text_units`), reranks them together, keeps `max_nodes_per_level` summaries of a level and expands each
   to `expand_children` of its passages; a summary is reported with its lineage, keeps a document filter only when
-  all its documents share it, and goes, with every summary above it, when one of its text units is removed.
+  all its documents share it, and goes, with every summary above it, when one of its text units is removed. Under a
+  filter key the summary index does not store (`community_ids`, `source_kinds`) `tree` reads no summary
+  (`metadata.summaries_skipped_for_filters`) where it returned them unfiltered, the graph buckets run where the
+  queried namespace holds the entities index (not where the config would build one), and their text units are the
+  best-weighted that pass the filters (#607).
   Settings: `indexing.summary_tree`, `search.tree_search`, `search.token_manager.type_budgets.summary`; the
   `VectorIndexer` port gains the summary-tree methods (each with a "cannot" default). Differential tests against the
   original code ship with recorded fixtures. Failed summaries and, with `refresh: on_reset`, the text units no
@@ -570,16 +586,22 @@ From a `main` checkout (formats and keys no release had):
   (falling back to the search text, or no entity search past `raw_query_fallback_max_len`) (#598). On 200 MuSiQue
   questions over `mix`: `answer_contains` +12.5 points, token F1 +5.2, p95 11.1 s to 27.4 s
   ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)).
-  `decompose: true` splits the question into steps instead (KAG-style). `metadata["context_insufficient"]` reports a
-  final insufficient verdict, `metadata["iterative"]` the rounds and their model usage; new
-  `custom_prompts.iterative_controller_*`, `query_decomposition_*` and `decomposition_step_*` (#594). See
+  `decompose: true` splits the question into steps instead (KAG-style). The controller reads the context packed to
+  the answer's budget (`controller_context_tokens: null`; at 8000, with ~1200-token chunks it read 3 of the answer's
+  11 passages; MuSiQue's short chunks fit either way), a round follows at most five bridge entities, and the
+  follow-up queries, bridge entities and step questions in `metadata["iterative"]` are screened by the output
+  guardrail with `check_output` (#607). `metadata["context_sufficient"]: false` reports a final insufficient verdict,
+  a deadline that cancels the round such a verdict started included (`insufficiency_reason: deadline`, #607);
+  `metadata["iterative"]` the rounds and their model usage; new `custom_prompts.iterative_controller_*`,
+  `query_decomposition_*` and `decomposition_step_*` (#594). See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
   call counts from its start, so cancelled and background calls are billed at an estimated input; a response that
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
-  #563, #589).
+  #563, #589). Rerank requests count apart (`rerank_calls`, `rerank_search_units`, one per 100 documents), priced by
+  `evaluation.prices.<rerank model>.per_thousand_rerank_search_units` (#607).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
   `total_files_skipped`, `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and
   `total_documents_without_claims`; a run with failed units ends with a WARNING naming them per stage (#518, #532).
@@ -614,6 +636,9 @@ From a `main` checkout (formats and keys no release had):
   `abstention/precision`, both `--fail-if` measures. Each saved result keeps `abstention_reason`,
   `context_sufficient`, `insufficiency_reason` and the `iterative` run record. Measured on 100 + 100 MuSiQue
   questions, `mark` stays opt-in and `hedge` the default (#593, #600, #606). See
+  questions, `mark` stays opt-in and `hedge` the default (#593, #600). Under `abstain` an answer the model writes
+  instead of the decline is replaced by the no-context reply (invoke and stream), and a streamed decline keeps the
+  space at a chunk boundary after the token (#607). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
 - Evaluation of open-ended answers, all opt-in (defaults unchanged until a measured experiment decides): the
   pairwise judge reports win rates per answer-length bucket in estimated tokens (symmetric in the log ratio) and

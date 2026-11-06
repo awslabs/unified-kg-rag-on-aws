@@ -9,6 +9,7 @@ from unified_kg_rag.adapters.retrieval.base import (
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.domain.models import (
+    IndexArtifact,
     Methodology,
     RetrievalResult,
     RetrieverRole,
@@ -19,6 +20,8 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.retrieval.index_prefixes import (
     all_index_prefixes,
     configured_index_prefixes,
+    held_artifacts_of,
+    held_index_prefixes,
 )
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
@@ -26,7 +29,12 @@ from unified_kg_rag.shared.utils import text_digest
 logger = get_logger(__name__)
 
 
-@register_strategy(SearchStrategy.SIMPLE, required_roles=(RetrieverRole.DOCUMENT,))
+@register_strategy(
+    SearchStrategy.SIMPLE,
+    required_roles=(RetrieverRole.DOCUMENT,),
+    # It sweeps the indexes the namespace holds: the text units at least.
+    required_artifacts=frozenset({IndexArtifact.TEXT_UNITS}),
+)
 class SimpleSearchStrategy(BaseSearchStrategy):
     methodology = Methodology.GRAPHRAG
 
@@ -123,11 +131,18 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         # Simple search sweeps every index by default. When the caller hasn't
         # pinned index_prefixes and some optional index is not built by the
         # configured pipeline (claims off, no relationship vector index, no
-        # community detection), pin the sweep to the indices that do exist so
-        # any document backend honours the same gates as OpenSearchRetriever.
+        # community detection) or not held by the queried namespace (a
+        # lightrag-only one has no reports, a raptor-only one no entities),
+        # pin the sweep to the indices that do exist so any document backend
+        # honours the same gates as OpenSearchRetriever.
         if query.index_prefixes:
             return query
-        configured = configured_index_prefixes(self.config)
+        held = held_artifacts_of(query.metadata)
+        configured = (
+            configured_index_prefixes(self.config)
+            if held is None
+            else held_index_prefixes(self.config, held)
+        )
         if configured == all_index_prefixes(self.config):
             return query
         return query.model_copy(update={"index_prefixes": configured})

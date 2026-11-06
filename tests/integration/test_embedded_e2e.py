@@ -383,7 +383,9 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
                 server.input_tokens - tokens_before[0],
                 server.output_tokens - tokens_before[1],
             ), strategy
-            assert set(usage["by_role"]) == {"query"}, strategy
+            # Rerank requests count under their own role, and are no calls.
+            assert set(usage["by_role"]) - {"rerank"} == {"query"}, strategy
+            assert usage["by_role"].get("rerank", {}).get("llm_calls", 0) == 0
             assert server.answers > answers_before, strategy
             assert out.search_results.results, strategy
             # Cited: the sources are stored artifacts.

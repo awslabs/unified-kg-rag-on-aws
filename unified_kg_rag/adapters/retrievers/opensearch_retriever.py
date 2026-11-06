@@ -5,7 +5,6 @@ import json
 import time
 from collections import OrderedDict
 from collections.abc import Collection, Coroutine
-from itertools import zip_longest
 from typing import Any, ClassVar
 
 from structlog.contextvars import get_contextvars
@@ -67,6 +66,7 @@ from unified_kg_rag.shared.exceptions import (
 )
 from unified_kg_rag.shared.utils import (
     EMBEDDING_FIELD_SUFFIX,
+    interleave,
     strip_embedding_fields,
     text_digest,
 )
@@ -727,12 +727,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         the indices' hits rank by rank keeps what an equal-weight rank fusion
         of the indices would.
         """
-        return [
-            hit
-            for same_rank in zip_longest(*per_index)
-            for hit in same_rank
-            if hit is not None
-        ]
+        return interleave(per_index)
 
     def _importance_sort(
         self, prefix: str, query: SearchQuery, search_type: SearchType

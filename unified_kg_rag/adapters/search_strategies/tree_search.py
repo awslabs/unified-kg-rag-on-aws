@@ -31,10 +31,10 @@ from typing import Any
 from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy
+from unified_kg_rag.adapters.retrieval.ppr_ranking import document_unit_ids
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
-from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     IndexArtifact,
     Methodology,
@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
@@ -55,19 +56,12 @@ TEXT_BUCKET = "tree_text_units"
 SUMMARY_BUCKET = "tree_summaries"
 GRAPH_SUMMARY_BUCKET = "tree_graph_summaries"
 GRAPH_TEXT_BUCKET = "tree_graph_text_units"
+# The entities-index hits that seed the graph buckets (not a bucket).
+_SEEDS = "tree_graph_seeds"
 # A summary's expanded passages sit just below it in the fused order.
 _EXPANSION_STEP = 1e-6
 # Levels of child lookups that resolve a cut lineage at most (max_levels).
 _MAX_LINEAGE_DEPTH = 10
-
-
-def _units(result: RetrievalResult) -> list[str]:
-    """The document text units a result cites (seed units left out)."""
-    return [
-        str(unit)
-        for unit in (result.metadata or {}).get("text_unit_ids") or []
-        if unit and not is_seed_unit(str(unit))
-    ]
 
 
 @register_strategy(SearchStrategy.TREE, required_roles=(RetrieverRole.DOCUMENT,))
@@ -78,13 +72,31 @@ class TreeSearchStrategy(BaseSearchStrategy):
     # The text units ground the answer: they take what the summaries leave.
     spare_context_budget_first = (SectionType.TEXT,)
 
-    def _graph_signal(self) -> bool:
-        """Whether the graph buckets run: on (``auto``) where the namespace's
-        methodologies build the entities index."""
-        return (
-            self.config.search.tree_search.graph_signal == "auto"
-            and IndexArtifact.ENTITIES in artifacts_to_build(self.config)
+    def _graph_signal(self, query: SearchQuery | None = None) -> bool:
+        """Whether the graph buckets run: on (``auto``) where the queried
+        namespace holds the entities index (``query``'s held artifacts; the
+        configured methodologies' when it names none, or without a query)."""
+        if self.config.search.tree_search.graph_signal != "auto":
+            return False
+        held = held_artifacts_of(query.metadata) if query is not None else None
+        if held is None:
+            held = artifacts_to_build(self.config)
+        return IndexArtifact.ENTITIES in held
+
+    def _summary_unfiltered_keys(self, query: SearchQuery) -> list[str]:
+        """The caller's filter keys the summary index does not declare (the
+        text units do: ``community_ids``, ``source_kinds``): the retriever
+        would drop them there and return summaries unfiltered, so the
+        summaries are left out instead (fail-closed)."""
+        retriever = self.document_retriever
+        if not query.filters or retriever is None:
+            return []
+        declared = retriever.filter_fields_for(
+            [self.config.indexing.opensearch.summary_nodes_index_prefix]
         )
+        if declared is None:
+            return []
+        return sorted(key for key in query.filters if not declared.declares(key))
 
     def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
         o = self.config.indexing.opensearch
@@ -139,7 +151,8 @@ class TreeSearchStrategy(BaseSearchStrategy):
                 "expanded_passages": len(expanded),
             }
         )
-        if not buckets.get(SUMMARY_BUCKET) and await self._tree_missing(query):
+        searched = SUMMARY_BUCKET in buckets
+        if searched and not buckets[SUMMARY_BUCKET] and await self._tree_missing(query):
             metadata["summary_tree"] = "missing"
         logger.info(
             "Tree search completed - %d results (%d summaries) in %.3fs",
@@ -177,49 +190,63 @@ class TreeSearchStrategy(BaseSearchStrategy):
                 filters=self._scoped_filters(query),
             )
 
-        searches = [
-            self._safe_aretrieve(
+        unfiltered = self._summary_unfiltered_keys(query)
+        if unfiltered:
+            logger.info(
+                "Tree search reads no summary: the summary index does not "
+                "store the filter keys %s",
+                ", ".join(unfiltered),
+            )
+            metadata["summaries_skipped_for_filters"] = unfiltered
+        searches = {
+            TEXT_BUCKET: self._safe_aretrieve(
                 retriever,
                 search(o.text_units_index_prefix, tree.text_top_k),
                 "Tree text",
-            ),
-            self._safe_aretrieve(
+            )
+        }
+        if not unfiltered:
+            searches[SUMMARY_BUCKET] = self._safe_aretrieve(
                 retriever,
                 search(o.summary_nodes_index_prefix, tree.summary_top_k),
                 "Tree summaries",
-            ),
-        ]
-        graph = self._graph_signal()
-        if graph:
-            searches.append(
-                self._safe_aretrieve(
-                    retriever,
-                    search(o.entities_index_prefix, tree.graph_seed_entities),
-                    "Tree graph seeds",
-                )
             )
-        found = await gather_or_cancel(searches)
-        buckets = {TEXT_BUCKET: found[0], SUMMARY_BUCKET: found[1]}
-        metadata["graph_signal"] = "on" if graph else "unavailable"
+        graph = self._graph_signal(query)
+        if graph:
+            searches[_SEEDS] = self._safe_aretrieve(
+                retriever,
+                search(o.entities_index_prefix, tree.graph_seed_entities),
+                "Tree graph seeds",
+            )
+        found = dict(
+            zip(searches, await gather_or_cancel(list(searches.values())), strict=True)
+        )
+        seeds = found.pop(_SEEDS, [])[: tree.graph_seed_entities]
+        buckets = found
         if tree.graph_signal == "off":
             metadata["graph_signal"] = "off"
+        else:
+            metadata["graph_signal"] = "on" if graph else "unavailable"
         if graph:
-            seeds = found[2][: tree.graph_seed_entities]
             metadata["graph_seeds"] = len(seeds)
-            buckets.update(await self._graph_buckets(query, seeds))
+            buckets.update(
+                await self._graph_buckets(query, seeds, summaries=not unfiltered)
+            )
         return buckets
 
     async def _graph_buckets(
-        self, query: SearchQuery, seeds: list[RetrievalResult]
+        self, query: SearchQuery, seeds: list[RetrievalResult], *, summaries: bool
     ) -> dict[str, list[RetrievalResult]]:
-        """The summaries and text units citing the seeds' text units, each
-        scored by the seeds' weights (``1 / (1 + rank)``) it covers; a
-        summary over ``sqrt(n_leaves)``, so a root does not win by size."""
+        """The summaries (with ``summaries``) and text units citing the
+        seeds' text units, each scored by the seeds' weights
+        (``1 / (1 + rank)``) it covers; a summary over ``sqrt(n_leaves)``, so
+        a root does not win by size. The text units are the best-weighted
+        that pass the caller's filters, up to ``text_top_k``."""
         retriever = self.document_retriever
         weights: dict[str, float] = defaultdict(float)
         lineages: list[tuple[float, set[str]]] = []
         for rank, seed in enumerate(seeds):
-            units = set(_units(seed))
+            units = set(document_unit_ids(seed))
             if not units:
                 continue
             weight = 1.0 / (1 + rank)
@@ -230,12 +257,50 @@ class TreeSearchStrategy(BaseSearchStrategy):
             return {}
         o = self.config.indexing.opensearch
         tree = self.config.search.tree_search
+        ranked = sorted(weights, key=lambda u: (-weights[u], u))
+        buckets: dict[str, list[RetrievalResult]] = {}
+        if summaries:
+            buckets[GRAPH_SUMMARY_BUCKET] = await self._graph_summaries(
+                query, ranked, lineages
+            )
+        top_units = await self._passing_ranked_units(query, ranked, tree.text_top_k)
+        if not top_units:
+            buckets[GRAPH_TEXT_BUCKET] = []
+            return buckets
+        unit_hits = await self._fetch_by_ids(
+            retriever,
+            SearchQuery(
+                query="",
+                search_type=SearchType.LEXICAL,
+                top_k=len(top_units),
+                index_prefixes=[o.text_units_index_prefix],
+                suffix=query.suffix,
+                filters=self._scoped_filters(query, id=top_units),
+            ),
+            "Tree graph text",
+        )
+        order = {unit: index for index, unit in enumerate(top_units)}
+        buckets[GRAPH_TEXT_BUCKET] = sorted(
+            unit_hits, key=lambda r: order.get(str(r.source), len(order))
+        )
+        return buckets
+
+    async def _graph_summaries(
+        self,
+        query: SearchQuery,
+        ranked: list[str],
+        lineages: list[tuple[float, set[str]]],
+    ) -> list[RetrievalResult]:
+        """The summary nodes citing the ``ranked`` text units, best covering
+        first (``_graph_buckets``)."""
+        retriever = self.document_retriever
+        assert retriever is not None  # the caller checks
+        o = self.config.indexing.opensearch
+        tree = self.config.search.tree_search
         limits = await retriever.aindex_limits(
             o.summary_nodes_index_prefix, query.suffix
         )
-        cited = sorted(weights, key=lambda u: (-weights[u], u))[
-            : limits.max_terms_count
-        ]
+        cited = ranked[: limits.max_terms_count]
         nodes = await self._safe_aretrieve(
             retriever,
             SearchQuery(
@@ -257,32 +322,14 @@ class TreeSearchStrategy(BaseSearchStrategy):
         )
 
         def node_score(node: RetrievalResult) -> float:
-            held = set(_units(node))
+            held = set(document_unit_ids(node))
             leaves = int((node.metadata or {}).get("n_leaves") or len(held) or 1)
             covered = sum(weight for weight, units in lineages if units & held)
             return covered / math.sqrt(leaves)
 
-        ranked_nodes = sorted(nodes, key=lambda n: (-node_score(n), str(n.source)))[
+        return sorted(nodes, key=lambda n: (-node_score(n), str(n.source)))[
             : tree.summary_top_k
         ]
-        top_units = sorted(weights, key=lambda u: (-weights[u], u))[: tree.text_top_k]
-        unit_hits = await self._fetch_by_ids(
-            retriever,
-            SearchQuery(
-                query="",
-                search_type=SearchType.LEXICAL,
-                top_k=len(top_units),
-                index_prefixes=[o.text_units_index_prefix],
-                suffix=query.suffix,
-                filters=self._scoped_filters(query, id=top_units),
-            ),
-            "Tree graph text",
-        )
-        order = {unit: index for index, unit in enumerate(top_units)}
-        ranked_units = sorted(
-            unit_hits, key=lambda r: order.get(str(r.source), len(order))
-        )
-        return {GRAPH_SUMMARY_BUCKET: ranked_nodes, GRAPH_TEXT_BUCKET: ranked_units}
 
     # --- selection, expansion, rendering ------------------------------------------
 
@@ -368,7 +415,7 @@ class TreeSearchStrategy(BaseSearchStrategy):
         the nodes whose lineage is whole."""
         metadata = summary.metadata or {}
         if metadata.get("lineage_complete", True) is not False:
-            return sorted(_units(summary))
+            return sorted(document_unit_ids(summary))
         retriever = self.document_retriever
         assert retriever is not None
         prefix = self.config.indexing.opensearch.summary_nodes_index_prefix
@@ -399,7 +446,7 @@ class TreeSearchStrategy(BaseSearchStrategy):
                         str(c) for c in (child.metadata or {}).get("child_ids") or []
                     )
                 else:
-                    units.update(_units(child))
+                    units.update(document_unit_ids(child))
         return sorted(units)
 
     @staticmethod

@@ -9,7 +9,9 @@ from langchain_core.runnables import RunnableConfig
 from unified_kg_rag.adapters.retrieval.base import scope_filters
 from unified_kg_rag.adapters.retrieval.ppr_ranking import (
     PPRRankingMixin,
+    document_unit_ids,
     endpoint_ids,
+    entity_id,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
@@ -50,6 +52,9 @@ class LocalSearchStrategy(PPRRankingMixin):
     # The section types reranked against the query. DRIFT, whose follow-up
     # queries are local searches, clears it and reranks their evidence once.
     rerank_types: frozenset[str] = frozenset({SectionType.TEXT.value})
+    # How the text units are ranked: search.local_search.text_unit_ranking,
+    # unless the instance sets it (DRIFT's follow-ups read their own).
+    text_unit_ranking: str | None = None
 
     def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
         # Entities, their reports, relationships and claims, and the text
@@ -160,14 +165,19 @@ class LocalSearchStrategy(PPRRankingMixin):
                 "expanded_entity_count": chain_stats["expanded_entity_count"],
                 "text_unit_count": chain_stats["text_unit_count"],
                 "report_selection": "membership" if by_membership else "similarity",
-                "text_unit_ranking": self.config.search.local_search.text_unit_ranking,
+                "text_unit_ranking": self._text_unit_ranking(),
                 **({"ppr": chain_stats["ppr"]} if "ppr" in chain_stats else {}),
                 "rerank": rerank.summary(),
             },
         )
 
+    def _text_unit_ranking(self) -> str:
+        return (
+            self.text_unit_ranking or self.config.search.local_search.text_unit_ranking
+        )
+
     def _ranks_by_ppr(self) -> bool:
-        return self.config.search.local_search.text_unit_ranking == "ppr"
+        return self._text_unit_ranking() == "ppr"
 
     async def _retrieve_entity_chain(
         self, query: SearchQuery
@@ -262,6 +272,13 @@ class LocalSearchStrategy(PPRRankingMixin):
         )
 
         async def text_units_of_quota() -> dict[str, list[RetrievalResult]]:
+            if passage_hits:
+                # The PageRank's passage hits came with their text: only the
+                # other ranked units are fetched.
+                ranked = await self._passages_in_order(
+                    query, ranked_unit_ids, text_quota, passage_hits
+                )
+                return {"text_units": ranked} if ranked else {}
             chosen = await self._passing_ranked_units(
                 query, ranked_unit_ids, text_quota
             )
@@ -321,17 +338,17 @@ class LocalSearchStrategy(PPRRankingMixin):
         expansion did not reach is read from the entities index. The passage
         hits are seeds and candidates of the ranking, not a fusion bucket of
         their own. ``[]`` (support ranking) when nothing seeds a passage."""
-        reached = {self._entity_id(node) for node in entity_nodes}
+        reached = {entity_id(node) for node in entity_nodes}
         endpoints = [
             end
             for end in dict.fromkeys(e for hit in fact_hits for e in endpoint_ids(hit))
             if end not in reached
         ]
         nodes = [*entity_nodes, *await self._entities_by_id(query, endpoints)]
-        counts = {self._entity_id(node): self._text_unit_count(node) for node in nodes}
+        counts = {entity_id(node): self._text_unit_count(node) for node in nodes}
         own: dict[str, float] = {}
         for hit in seed_hits:
-            key = self._entity_id(hit)
+            key = entity_id(hit)
             own[key] = own.get(key, 0.0) + float(hit.score or 0.0)
         ranked, stats = await self._ppr_rank(
             query,
@@ -817,19 +834,11 @@ class LocalSearchStrategy(PPRRankingMixin):
         )
 
     @staticmethod
-    def _entity_id(node: RetrievalResult) -> str:
-        return str((node.metadata or {}).get("id") or node.source or "")
-
-    @staticmethod
     def _text_unit_count(node: RetrievalResult) -> int:
-        # `text_unit_ids` is a list from either store (graph expansion keeps a
-        # one-unit lineage a list: `_LIST_PROPERTIES`).
-        #
-        # Only document units count: an entity a seed graph states is not
-        # more generic for it (one seed citation never pushes an entity over
-        # the threshold).
-        ids = node.metadata.get("text_unit_ids") or []
-        return sum(1 for unit_id in ids if not is_seed_unit(str(unit_id)))
+        # The document units it cites, each once (``document_unit_ids``, as
+        # the ppr strategy counts them): an entity a seed graph states is
+        # not more generic for it, nor one whose lineage repeats an id.
+        return len(document_unit_ids(node))
 
     @classmethod
     def _filter_entities(
@@ -848,7 +857,7 @@ class LocalSearchStrategy(PPRRankingMixin):
         filtered_nodes = [
             node
             for node in expanded_entity_nodes
-            if cls._entity_id(node) in seed_ids
+            if entity_id(node) in seed_ids
             or cls._text_unit_count(node) <= frequency_threshold
         ]
 

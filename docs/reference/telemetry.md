@@ -67,9 +67,12 @@ build records each call (the tokens its response reports) for the query or
 ingestion stage that made it. `RAGOutput.metadata["usage"]` (and
 `SearchOutput.metadata["usage"]`) holds the query's `llm_calls`,
 `input_tokens`, `output_tokens`, `cache_hits`, `estimated_calls`,
-`cache_read_input_tokens`, `cache_write_input_tokens`, `request_retries`
-and `failed_calls`, and the same counts
-`by_role` (the model's purpose: `query`, `ingestion`, `evaluation`) and
+`cache_read_input_tokens`, `cache_write_input_tokens`, `request_retries`,
+`failed_calls`, `rerank_calls` and `rerank_search_units` (the reranker's
+requests and their billed search units, one per 100 documents a request
+ranks; not model calls), and the same counts
+`by_role` (the model's purpose: `query`, `ingestion`, `evaluation`;
+`rerank` for the reranker) and
 `by_model` (the model id the factory resolved). `run-ingestion
 --output-format json` reports `token_usage` (the stages this run executed,
 with `stages.<stage>`), `--metrics-sink cloudwatch` emits it per stage

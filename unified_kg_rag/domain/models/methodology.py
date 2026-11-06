@@ -108,6 +108,14 @@ def artifacts_of(methodologies: Iterable[Methodology]) -> frozenset[IndexArtifac
     )
 
 
+def required_artifacts_of(
+    methodologies: Iterable[Methodology],
+) -> frozenset[IndexArtifact]:
+    """Every artifact the methodologies require: what a namespace holding
+    them holds at least."""
+    return frozenset().union(*(METHODOLOGY_PROFILES[m].required for m in methodologies))
+
+
 def methodologies_holding(
     artifacts: Iterable[IndexArtifact],
 ) -> tuple[Methodology, ...]:

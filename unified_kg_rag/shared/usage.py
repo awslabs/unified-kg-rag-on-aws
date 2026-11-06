@@ -13,7 +13,9 @@ no scope is open is not recorded: the callback costs one context-variable
 read.
 
 Counts are kept per model role (the purpose the model was built for:
-``query``, ``ingestion``, ``evaluation``) and per model id. A response the
+``query``, ``ingestion``, ``evaluation``; ``rerank`` for the reranker) and
+per model id. A rerank request is no model call: it counts in
+``rerank_calls`` and its billed ``rerank_search_units``. A response the
 ingestion response cache served, a chunk-boundary answer the extraction
 store served, or a query extraction the RAG chain's extraction cache
 served, is a cache hit, not a call: it spends no tokens.
@@ -54,12 +56,14 @@ from typing import Any
 __all__ = [
     "CACHED_RESPONSE_KEY",
     "COUNT_FIELDS",
+    "RERANK_DOCUMENTS_PER_UNIT",
     "LLMCall",
     "UsageMeter",
     "current_meter",
     "merge_usage",
     "record_cache_hit",
     "record_llm_call",
+    "record_rerank_call",
     "start_llm_call",
     "usage_scope",
 ]
@@ -75,7 +79,13 @@ COUNT_FIELDS: tuple[str, ...] = (
     "cache_write_input_tokens",
     "request_retries",
     "failed_calls",
+    "rerank_calls",
+    "rerank_search_units",
 )
+
+# Documents one rerank search unit covers (Amazon Bedrock bills a rerank
+# query per 100 documents; one with more counts as several).
+RERANK_DOCUMENTS_PER_UNIT = 100
 
 # Set in the ``generation_info`` of a response the LLM response cache served,
 # so the usage callback counts it as a cache hit rather than a call.
@@ -95,6 +105,8 @@ class _Counts:
     cache_write_input_tokens: int = 0
     request_retries: int = 0
     failed_calls: int = 0
+    rerank_calls: int = 0
+    rerank_search_units: int = 0
 
     def add(self, other: _Counts) -> None:
         for name in COUNT_FIELDS:
@@ -275,6 +287,15 @@ def record_llm_call(
             estimated_calls=int(estimated),
         ),
     )
+
+
+def record_rerank_call(model: str, *, documents: int) -> None:
+    """Record one rerank request of ``documents`` documents, under the
+    ``rerank`` role: not a model call (``llm_calls``) but a rerank call and
+    its search units (one per ``RERANK_DOCUMENTS_PER_UNIT`` documents),
+    which Amazon Bedrock bills per thousand."""
+    units = max(1, -(-documents // RERANK_DOCUMENTS_PER_UNIT))
+    _record("rerank", model, _Counts(rerank_calls=1, rerank_search_units=units))
 
 
 def record_cache_hit(role: str, model: str) -> None:

@@ -71,7 +71,8 @@ half of their cost, so `auto` never picks it
 ([evidence](../concepts/defaults-and-evidence.md#the-ppr-strategy)).
 `local` orders its text units the same way by default
 (`search.local_search.text_unit_ranking: ppr`; `support` restores the
-earlier order). See [Retrieval](../concepts/retrieval.md) and
+earlier order); DRIFT's follow-up local searches keep `support`
+(`search.drift_search.text_unit_ranking`), unmeasured with `ppr`. See [Retrieval](../concepts/retrieval.md) and
 [Design §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking).
 
 ## Rerank status

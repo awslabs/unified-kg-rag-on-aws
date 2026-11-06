@@ -72,6 +72,23 @@ class LLMUsageCounts(BaseModel):
         ),
     )
 
+    rerank_calls: int = Field(
+        default=0,
+        description=(
+            "Rerank requests that returned (search.reranking); not in "
+            "llm_calls, under the rerank role and the rerank model id."
+        ),
+    )
+    rerank_search_units: int = Field(
+        default=0,
+        description=(
+            "The rerank requests' search units, one per 100 documents a "
+            "request ranks (Amazon Bedrock bills rerank per thousand); a "
+            "lower bound where a document is longer than the model reads as "
+            "one."
+        ),
+    )
+
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
@@ -84,7 +101,7 @@ class LLMUsage(LLMUsageCounts):
         default_factory=dict,
         description=(
             "Per model role (the purpose the model was built for: query, "
-            "ingestion, evaluation)."
+            "ingestion, evaluation; rerank for the reranker)."
         ),
     )
     by_model: dict[str, LLMUsageCounts] = Field(

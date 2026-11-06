@@ -7,8 +7,15 @@ strategies that pin a sweep explicitly, so any document backend honours the
 same ingestion gates.
 """
 
+from collections.abc import Collection, Mapping
+from typing import Any
+
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import Config, IndexArtifact
+
+# ``SearchQuery.metadata`` key of the index artifacts the queried namespace
+# holds (``IndexArtifact`` values), which the chain sets.
+HELD_ARTIFACTS_KEY = "held_artifacts"
 
 
 def all_index_prefixes(config: Config) -> list[str]:
@@ -49,4 +56,35 @@ def configured_index_prefixes(config: Config) -> list[str]:
         prefix
         for prefix in all_index_prefixes(config)
         if optional_enabled.get(prefix, True)
+    ]
+
+
+def held_artifacts_of(
+    metadata: Mapping[str, Any] | None,
+) -> frozenset[IndexArtifact] | None:
+    """The artifacts ``SearchQuery.metadata`` says the namespace holds
+    (``HELD_ARTIFACTS_KEY``), or ``None`` when it does not say (a caller
+    that drives a strategy directly)."""
+    values = (metadata or {}).get(HELD_ARTIFACTS_KEY)
+    if not isinstance(values, list):
+        return None
+    known = {a.value: a for a in IndexArtifact}
+    return frozenset(known[v] for v in values if isinstance(v, str) and v in known)
+
+
+def held_index_prefixes(config: Config, held: Collection[IndexArtifact]) -> list[str]:
+    """Of ``configured_index_prefixes``, those whose artifact the namespace
+    holds (``held``), so a sweep never searches an index it lacks."""
+    opensearch = config.indexing.opensearch
+    artifact = {
+        opensearch.text_units_index_prefix: IndexArtifact.TEXT_UNITS,
+        opensearch.entities_index_prefix: IndexArtifact.ENTITIES,
+        opensearch.relationships_index_prefix: IndexArtifact.RELATIONSHIP_VECTORS,
+        opensearch.claims_index_prefix: IndexArtifact.CLAIMS,
+        opensearch.community_reports_index_prefix: IndexArtifact.COMMUNITY_REPORTS,
+    }
+    return [
+        prefix
+        for prefix in configured_index_prefixes(config)
+        if artifact.get(prefix) is None or artifact[prefix] in held
     ]

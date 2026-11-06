@@ -221,8 +221,9 @@ fewer tokens. Similarity stays the default
 ## Local PPR ranking
 
 `search.local_search.text_unit_ranking` orders the text units of `local`'s
-expanded entities (and of each DRIFT follow-up's) before the text quota cuts
-them. `ppr`, the default, ranks them by HippoRAG 2's Personalized PageRank
+expanded entities before the text quota cuts them (DRIFT's follow-ups keep
+`support`, `search.drift_search.text_unit_ranking`: these runs measured
+`local` alone). `ppr`, the default, ranks them by HippoRAG 2's Personalized PageRank
 over the expanded entities, their relationships and the passages they cite,
 seeded by local's entities, the question's passage hits and the endpoints of
 its relationship hits ([Design §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking));

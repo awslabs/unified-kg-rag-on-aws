@@ -33,10 +33,12 @@ cancelled when it would not.
 ``SearchResult.metadata["context_sufficient"]`` is ``False`` (with the
 stop reason under ``insufficiency_reason``) when the last
 controller verdict said the context does not answer the question and no
-further round could run (the round cap, or nothing new to search), or, with
-``decompose``, when the last step found no answer. It is never set on a
-degraded run (a failed or unparsable model call, the deadline), whose
-verdict is unknown. ``search.abstention.on_insufficient`` acts on it
+further round could run (the round cap, nothing new to search, or the
+deadline cancelling the follow-up round that verdict started: the returned
+candidates are the ones it judged), or, with ``decompose``, when the last
+step found no answer. It is never set on a degraded run (a failed or
+unparsable model call), nor when the deadline ends a run before the
+controller judged what it returns, whose verdict is unknown. ``search.abstention.on_insufficient`` acts on it
 (hedge or abstain); this strategy only reports it.
 """
 
@@ -45,7 +47,6 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -90,7 +91,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
 )
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.usage import usage_scope
-from unified_kg_rag.shared.utils import parse_llm_json, text_digest
+from unified_kg_rag.shared.utils import interleave, parse_llm_json, text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
@@ -104,6 +105,10 @@ ROUND_TEXT_BUCKET = "iterative_round_{}_text"
 _CONTROLLER_KEYS = ("sufficient", "next_queries", "bridge_entities")
 _DECOMPOSITION_KEYS = ("steps",)
 _STEP_KEYS = ("answer",)
+# Bridge entities one round follows at most (the most follow-up queries a
+# round may ask for, each naming one): a controller that lists more does
+# not multiply the round's lookups.
+_MAX_BRIDGE_ENTITIES = 5
 # A decomposition step's reference to an earlier step's answer: #1, #2, ...
 _STEP_REFERENCE = re.compile(r"#(\d+)")
 
@@ -160,17 +165,6 @@ def _flag(value: Any) -> bool | None:
 
 def _query_key(text: str) -> str:
     return " ".join(text.casefold().split())
-
-
-def _interleave(lists: Iterable[list[RetrievalResult]]) -> list[RetrievalResult]:
-    """The hits of several searches in one ranked list: their first hits,
-    then their second ones, and so on (fusion keeps each item's first
-    place)."""
-    pending = [list(hits) for hits in lists]
-    merged: list[RetrievalResult] = []
-    for rank in range(max((len(hits) for hits in pending), default=0)):
-        merged.extend(hits[rank] for hits in pending if rank < len(hits))
-    return merged
 
 
 @register_strategy(SearchStrategy.ITERATIVE, wraps=_base_strategy)
@@ -349,12 +343,17 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             run.stop_reason = "deadline"
             return current
         scope = asyncio.timeout(budget)
+        # Whether the controller found ``current`` insufficient: a deadline
+        # that ends the follow-up round after that verdict returns it as
+        # judged.
+        judged_insufficient = False
         try:
             async with scope:
                 while True:
                     verdict = await self._judge(query, current, run, config)
                     if verdict is None:
                         return current
+                    judged_insufficient = not verdict.sufficient
                     if verdict.sufficient:
                         run.stop_reason = "sufficient"
                         return current
@@ -384,6 +383,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                     pool.update(streams)
                     run.rounds = round_no
                     current = await self._fuse(query, first, pool, rerank, run)
+                    judged_insufficient = False
         except TimeoutError:
             if not scope.expired():
                 raise
@@ -393,6 +393,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                 run.rounds + 1,
             )
             run.stop_reason = "deadline"
+            run.insufficient = judged_insufficient
             return current
 
     async def _judge(
@@ -450,8 +451,8 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         self, queries: list[str], bridges: list[str], run: _Run
     ) -> tuple[list[str], list[str]]:
         """The follow-up queries not searched yet (at most
-        ``max_next_queries``) and the bridge entities not followed yet,
-        recorded as searched and followed."""
+        ``max_next_queries``) and the bridge entities not followed yet (at
+        most ``_MAX_BRIDGE_ENTITIES``), recorded as searched and followed."""
         asked = {_query_key(q) for q in run.searched}
         fresh: list[str] = []
         for text in queries:
@@ -462,6 +463,8 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                 fresh.append(text)
         names: list[str] = []
         for name in bridges:
+            if len(names) >= _MAX_BRIDGE_ENTITIES:
+                break
             key = compact_name_key(name)
             if key and key not in run.bridge_keys:
                 run.bridge_keys.add(key)
@@ -587,7 +590,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
     ) -> str | None:
         """The answer the step's candidates give (``""`` when they state
         none); ``None`` when the call failed (``run.degraded``)."""
-        context = await self._pack(_interleave(streams), step, query)
+        context = await self._pack(interleave(streams), step, query)
         run.llm_calls += 1
         try:
             raw = await self.step_answerer.ainvoke(
@@ -663,7 +666,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             if base_task is not None:
                 streams[ROUND_BUCKET.format(round_no)] = base_task.result().results
             if text_tasks:
-                streams[ROUND_TEXT_BUCKET.format(round_no)] = _interleave(
+                streams[ROUND_TEXT_BUCKET.format(round_no)] = interleave(
                     task.result() for task in text_tasks
                 )
             if observability.is_enabled():
@@ -739,7 +742,9 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         self, results: list[RetrievalResult], text: str, query: SearchQuery
     ) -> str:
         """``results`` packed as the base's answer context is, within
-        ``controller_context_tokens`` (and the query's own budget)."""
+        ``controller_context_tokens`` (and the query's own budget); without
+        either, the answer's budget, so the controller judges what the
+        answer will read."""
         budgets = [
             b
             for b in (self.settings.controller_context_tokens, query.max_tokens)

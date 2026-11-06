@@ -97,6 +97,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
+    IndexArtifact,
     Methodology,
     ModelRole,
     RetrievalResult,
@@ -132,6 +133,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     MarkerStreamFilter,
     split_marker,
 )
+from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
 from unified_kg_rag.ports.guardrail import (
     ContentGuardPort,
     GroundingContext,
@@ -217,6 +219,70 @@ NO_CONTEXT_ANSWER = (
     "I could not find relevant information in the available data to answer "
     "this question."
 )
+
+# The search metadata of iterative search and its model-written text: the
+# follow-up queries searched (``searched``), and each verdict's bridge
+# entities and follow-up queries and each decomposition step's question.
+_ITERATIVE_KEY = "iterative"
+_ITERATIVE_MODEL_TEXT: dict[str, tuple[str, ...]] = {
+    "searched": (),
+    "verdicts": ("bridge_entities", "next_queries"),
+    "steps": ("question",),
+}
+
+
+def _model_texts(iterative: dict[str, Any]) -> list[tuple[str, str]]:
+    """The model-written strings of ``iterative`` metadata, as (field, text)."""
+    found: list[tuple[str, str]] = []
+    for key, inner in _ITERATIVE_MODEL_TEXT.items():
+        value = iterative.get(key)
+        if not isinstance(value, list):
+            continue
+        if not inner:
+            found.extend((key, v) for v in value if isinstance(v, str) and v)
+            continue
+        for record in value:
+            if not isinstance(record, dict):
+                continue
+            for field_name in inner:
+                item = record.get(field_name)
+                items = item if isinstance(item, list) else [item]
+                found.extend((field_name, v) for v in items if isinstance(v, str) and v)
+    return found
+
+
+def _replace_model_texts(
+    iterative: dict[str, Any], screened: dict[str, str | None]
+) -> dict[str, Any]:
+    """``iterative`` with each model-written string replaced by its screened
+    text; a refused one (``None``) is left out of its list, or emptied."""
+
+    def one(value: Any) -> Any:
+        if isinstance(value, list):
+            return [screened.get(v, v) for v in value if screened.get(v, v) is not None]
+        if isinstance(value, str):
+            text = screened.get(value, value)
+            return "" if text is None else text
+        return value
+
+    out = dict(iterative)
+    for key, inner in _ITERATIVE_MODEL_TEXT.items():
+        value = iterative.get(key)
+        if not isinstance(value, list):
+            continue
+        if not inner:
+            out[key] = one(value)
+            continue
+        out[key] = [
+            (
+                {**r, **{f: one(r[f]) for f in inner if f in r}}
+                if isinstance(r, dict)
+                else r
+            )
+            for r in value
+        ]
+    return out
+
 
 DEFAULT_ERROR_MESSAGE: str = (
     "I apologize, but an error occurred while processing your request. Please try again in a moment."
@@ -511,7 +577,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         self._cache_lock = threading.RLock()
         # What each queried suffix's index namespace holds, with when it was
         # read (methodology_check; guarded by the cache lock).
-        self._held_methodologies: dict[str, tuple[float, tuple[Methodology, ...]]] = {}
+        self._held_methodologies: dict[str, tuple[float, frozenset[IndexArtifact]]] = {}
         # The schema annotation fields the configured extraction schema
         # writes (filter_validation._schema_annotation_fields), loaded on the
         # first filter on one of them; None until then, and for good once a
@@ -985,6 +1051,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
         resolved_strategy: SearchStrategy = state["resolved_strategy"]
+        # What the namespace holds (cached since the methodology check): a
+        # strategy reads only those of its optional indexes it holds.
+        held = await methodology_check.namespace_artifacts(self, state.get("suffix"))
         search_query = SearchQuery(
             query=processed.final_query,
             search_type=state.get("search_type", SearchType.HYBRID),
@@ -1002,6 +1071,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             metadata={
                 "search_strategy": resolved_strategy.value,
                 "query_language": query_processing.query_language(self, state),
+                HELD_ARTIFACTS_KEY: sorted(a.value for a in held),
             },
         )
         with observability.span(
@@ -1302,8 +1372,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # Never ask the LLM to answer from an empty/placeholder context: retrieval
         # produced nothing, so generating anyway invites a confident hallucination
         # with no supporting sources. Short-circuit to an explicit "cannot answer".
-        context = str(state.get("context") or "").strip()
-        if not context or context == EMPTY_CONTEXT_PLACEHOLDER:
+        if self._context_is_empty(state):
             return RunnableLambda(lambda _: NO_CONTEXT_ANSWER)
 
         enable_thinking = state.get("enable_thinking", False)
@@ -1378,7 +1447,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             if marked and self.config.search.abstention.strip_marker:
                 state["answer"] = rest or NO_CONTEXT_ANSWER
         if self._declines_insufficient(state):
-            # Declined by policy, whatever the model wrote.
+            # Declined by policy, whatever the model wrote: an answer it gave
+            # instead of the decline is not shown.
+            if not marked:
+                state["answer"] = NO_CONTEXT_ANSWER
             state["abstention_reason"] = REASON_INSUFFICIENT_CONTEXT
         else:
             state["abstention_reason"] = REASON_MARKER if marked else None
@@ -1399,9 +1471,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     def _grounding_context(self, state: dict[str, Any]) -> GroundingContext | None:
         """The question and context the answer model was given, or ``None``
         when it was given no context (the fixed no-context answer)."""
-        context = str(state.get("context") or "")
-        if not context.strip() or context.strip() == EMPTY_CONTEXT_PLACEHOLDER:
+        if self._context_is_empty(state):
             return None
+        context = str(state.get("context") or "")
         optimized: OptimizedContext | None = state.get("optimized_context")
         return GroundingContext(
             query=self._question(state),
@@ -1439,14 +1511,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # map-reduce summary) are LLM output the model may read, not retrieved
         # evidence, so they are never reported as sources on either path.
         optimized: OptimizedContext | None = state.get("optimized_context")
-        context = str(state.get("context") or "").strip()
         if optimized is None:
             sources = [
                 GraphRAGChain._source_entry(r, r.content, truncated=False)
                 for r in sr.results
                 if not GraphRAGChain._is_synthesized(r.metadata)
             ]
-        elif not context or context == EMPTY_CONTEXT_PLACEHOLDER:
+        elif GraphRAGChain._context_is_empty(state):
             # The answer step short-circuited: the model saw no context at all.
             sources = []
         else:
@@ -1461,7 +1532,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             **sr.metadata,
         }
         reason = state.get("abstention_reason")
-        if reason is None and (not context or context == EMPTY_CONTEXT_PLACEHOLDER):
+        if reason is None and GraphRAGChain._context_is_empty(state):
             # The answer step returned the fixed NO_CONTEXT_ANSWER.
             reason = REASON_NO_CONTEXT
         if reason is not None:
@@ -1805,6 +1876,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 output.search_results = await self._screen_synthesized(
                     output.search_results, guard_records
                 )
+                if isinstance(output, RAGOutput) and _ITERATIVE_KEY in output.metadata:
+                    # The answer's copy of the search metadata, screened too.
+                    output.metadata[_ITERATIVE_KEY] = (
+                        output.search_results.metadata.get(_ITERATIVE_KEY)
+                    )
                 if guard_records:
                     output.metadata["guardrail"] = guard_records
                 if isinstance(output, RAGOutput):
@@ -1942,9 +2018,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         ``asearch``), so with ``check_output`` they must not reach the caller
         unscreened. Retrieved results are corpus text and pass as they are.
         """
-        if not self._screen_outputs or not any(
-            self._is_synthesized(r.metadata) for r in search_results.results
-        ):
+        if not self._screen_outputs:
+            return search_results
+        search_results = await self._screen_model_metadata(search_results, records)
+        if not any(self._is_synthesized(r.metadata) for r in search_results.results):
             return search_results
         assert self.guard is not None
         kept: list[RetrievalResult] = []
@@ -1961,6 +2038,43 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 kept.append(result.model_copy(update={"content": verdict.text}))
         return search_results.model_copy(
             update={"results": kept, "total_results": len(kept)}
+        )
+
+    async def _screen_model_metadata(
+        self, search_results: SearchResult, records: list[dict[str, Any]]
+    ) -> SearchResult:
+        """``search_results`` with the model-written text of its metadata
+        (``iterative``'s follow-up queries, bridge entities and step
+        questions, ``_ITERATIVE_MODEL_TEXT``) screened as a synthesized
+        result is: masked, or left out when refused. One check reads them
+        all; only when it intervenes is each checked on its own."""
+        iterative = search_results.metadata.get(_ITERATIVE_KEY)
+        if not isinstance(iterative, dict):
+            return search_results
+        texts = [text for _, text in _model_texts(iterative)]
+        if not texts:
+            return search_results
+        assert self.guard is not None
+        verdict = await self.guard.acheck("\n".join(texts), GuardSource.OUTPUT)
+        if not verdict.intervened:
+            return search_results
+        screened: dict[str, str | None] = {}
+        for text in dict.fromkeys(texts):
+            one = await self.guard.acheck(text, GuardSource.OUTPUT)
+            if one.intervened:
+                records.append(_guard_record(GuardSource.OUTPUT, one))
+            screened[text] = (
+                None
+                if one.intervened and one.action is GuardAction.BLOCKED
+                else (one.text if one.intervened else text)
+            )
+        return search_results.model_copy(
+            update={
+                "metadata": {
+                    **search_results.metadata,
+                    _ITERATIVE_KEY: _replace_model_texts(iterative, screened),
+                }
+            }
         )
 
     @staticmethod
@@ -2147,6 +2261,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 if self._reads_marker(state)
                 else None
             )
+            # Under on_insufficient: abstain only a decline is shown; an
+            # answer the model wrote instead becomes the fixed reply.
+            declining = marker is not None and self._declines_insufficient(state)
             while True:
                 async with deadline.scope(started):
                     try:
@@ -2160,6 +2277,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 chunks.append(text)
                 if not self._screen_outputs:
                     shown = marker.feed(text) if marker is not None else text
+                    if declining and marker is not None and not marker.marked:
+                        shown = ""
                     if shown:
                         delivered = True
                         yield shown
@@ -2183,6 +2302,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     yield verdict.text
             elif marker is not None:
                 rest = marker.finish()
+                if declining and not marker.marked:
+                    rest = ""
                 if not delivered and not rest and state["answer"]:
                     # Only the token: the stripped answer's fixed reply.
                     rest = state["answer"]

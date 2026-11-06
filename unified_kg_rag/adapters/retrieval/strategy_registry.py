@@ -15,6 +15,7 @@ registries it lives with what it registers: the strategies are
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from enum import Enum
@@ -22,10 +23,12 @@ from typing import TYPE_CHECKING, TypeVar
 
 from unified_kg_rag.domain.models import (
     Config,
+    IndexArtifact,
     Methodology,
     RetrieverRole,
     SearchStrategy,
 )
+from unified_kg_rag.domain.models.methodology import required_artifacts_of
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
 
@@ -63,6 +66,11 @@ class StrategySpec:
             what that one reads and packs the context as that one does
             (``wrapped_strategy``), and the wrapper reads its methodology
             (``strategy_methodology``).
+        required_artifacts: The index artifacts the strategy reads, for one
+            that reads less than its methodology requires (``naive`` reads
+            the text units alone): a namespace holding them serves it,
+            whatever methodology built them. ``None``: its methodology's
+            required artifacts.
     """
 
     strategy_class: type[BaseSearchStrategy]
@@ -72,6 +80,7 @@ class StrategySpec:
     query_inputs: frozenset[QueryInput] = frozenset()
     needs_community_reports: bool = False
     wraps: Callable[[Config], SearchStrategy] | None = None
+    required_artifacts: frozenset[IndexArtifact] | None = None
 
     @property
     def methodology(self) -> Methodology | None:
@@ -95,6 +104,7 @@ def register_strategy(
     query_inputs: frozenset[QueryInput] = frozenset(),
     needs_community_reports: bool = False,
     wraps: Callable[[Config], SearchStrategy] | None = None,
+    required_artifacts: frozenset[IndexArtifact] | None = None,
 ) -> Callable[[StrategyT], StrategyT]:
     """Class decorator that registers a search strategy under ``strategy``.
 
@@ -108,6 +118,8 @@ def register_strategy(
             ``graphrag``.
         wraps: The strategy it runs the search of, under a config
             (``StrategySpec.wraps``).
+        required_artifacts: The index artifacts it reads, when fewer than
+            its methodology requires (``StrategySpec.required_artifacts``).
 
     Raises:
         ValueError: If ``strategy`` is already registered to another class.
@@ -126,6 +138,9 @@ def register_strategy(
             query_inputs=frozenset(query_inputs),
             needs_community_reports=needs_community_reports,
             wraps=wraps,
+            required_artifacts=(
+                None if required_artifacts is None else frozenset(required_artifacts)
+            ),
         )
         logger.debug(
             "Registered search strategy '%s' -> %s", strategy.value, cls.__name__
@@ -177,18 +192,42 @@ def strategy_methodology(
     return get_strategy_spec(wrapped_strategy(strategy, config)).methodology
 
 
+def strategy_artifacts(
+    strategy: SearchStrategy, config: Config
+) -> frozenset[IndexArtifact] | None:
+    """The index artifacts ``strategy`` declares it reads under ``config``
+    (``StrategySpec.required_artifacts``; for a wrapper, the strategy it
+    wraps), or ``None``: its methodology's required ones."""
+    own = get_strategy_spec(strategy).required_artifacts
+    if own is not None:
+        return own
+    return get_strategy_spec(wrapped_strategy(strategy, config)).required_artifacts
+
+
 def serves(
     strategy: SearchStrategy, held: Collection[Methodology], config: Config
 ) -> bool:
-    """Whether ``strategy`` reads one of the ``held`` methodologies under
-    ``config`` (one that declares none even through what it wraps is kept),
-    and one that needs community reports a namespace holding ``graphrag``."""
+    """Whether a namespace holding the ``held`` methodologies serves
+    ``strategy`` under ``config``: it holds the artifacts the strategy
+    declares it reads (``strategy_artifacts``), else the strategy's
+    methodology (one that declares none even through what it wraps is
+    kept); one that needs community reports, ``graphrag``."""
     spec = get_strategy_spec(strategy)
     if spec.needs_community_reports and Methodology.GRAPHRAG not in held:
         return False
+    needed = strategy_artifacts(strategy, config)
+    if needed is not None:
+        return needed <= required_artifacts_of(held)
     methodology = strategy_methodology(strategy, config)
     return methodology is None or methodology in held
 
+
+# The fallbacks routable_strategies has warned about (configured strategies,
+# held methodologies, fallback): each is warned about once per process.
+_WARNED_FALLBACKS: set[
+    tuple[tuple[SearchStrategy, ...], tuple[Methodology, ...], SearchStrategy]
+] = set()
+_WARNED_LOCK = threading.Lock()
 
 # What auto falls back to when no configured strategy reads a held
 # methodology: GraphRAG's and LightRAG's general-purpose strategies, then any.
@@ -233,7 +272,12 @@ def routable_strategies(
             + "): re-run ingestion with indexing.methodologies naming one of "
             + ", ".join(m.value for m in Methodology)
         )
-    logger.warning(
+    warned = (tuple(configured), tuple(sorted(held)), fallback)
+    with _WARNED_LOCK:
+        first = warned not in _WARNED_FALLBACKS
+        _WARNED_FALLBACKS.add(warned)
+    # Once per configuration and namespace holdings, not on every query.
+    (logger.warning if first else logger.debug)(
         "No strategy in search.auto_routable_strategies (%s) reads what the "
         "index namespace holds (%s); auto uses %s",
         ", ".join(s.value for s in configured),

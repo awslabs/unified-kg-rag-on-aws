@@ -3930,8 +3930,9 @@ class LocalSearchConfig(BaseModel):
     text_unit_ranking: Literal["support", "ppr"] = Field(
         default="ppr",
         description=(
-            "How local search (and each DRIFT follow-up) orders the text units "
-            "of its expanded entities before the text quota cuts them. 'ppr' "
+            "How local search orders the text units of its expanded entities "
+            "before the text quota cuts them (DRIFT's follow-up local searches: "
+            "search.drift_search.text_unit_ranking). 'ppr' "
             "(the default): HippoRAG 2's Personalized PageRank over the "
             "expanded entities, their relationships and their text units, "
             "seeded by the seed entities (hit score over the text units "
@@ -4019,6 +4020,18 @@ class DriftSearchConfig(BaseModel):
         ge=128,
         description="Token budget for the ranked intermediate answers handed to "
         "the answer model; the best-scored answers are taken first.",
+    )
+    text_unit_ranking: Literal["support", "ppr"] = Field(
+        default="support",
+        description=(
+            "How each follow-up local search orders its text units "
+            "(search.local_search.text_unit_ranking's values). support (the "
+            "default): what DRIFT was measured with. ppr was measured for "
+            "local alone and costs each follow-up a text-unit search, a "
+            "relationship search, an edge read and a query embedding (up to "
+            "k_followups * n_depth = 20 of each a query, near the query "
+            "deadline), so DRIFT keeps support until a run measures it."
+        ),
     )
 
 
@@ -4294,13 +4307,19 @@ class IterativeSearchConfig(BaseModel):
         ),
     )
     controller_context_tokens: int | None = Field(
-        default=8000,
+        default=None,
         ge=256,
         description=(
             "Token budget of the context each controller call (and each "
             "decomposition step) reads: the round's candidates packed as the "
-            "answer's context is, cut to this. null packs them to the "
-            "answer's budget. The answer itself always gets its full budget."
+            "answer's context is, cut to this. null (the default) packs them "
+            "to the answer's budget (the request's max_tokens, else "
+            "search.token_manager.max_context_tokens), so the controller "
+            "judges the context the answer reads; a smaller value saves "
+            "fast-model input tokens, but with large chunks the controller "
+            "then misses passages the answer gets (at 8000 and ~1200-token "
+            "chunks it read 3 of the answer's 11). The answer itself always "
+            "gets its full budget."
         ),
     )
 
@@ -4310,8 +4329,11 @@ class PPRSearchConfig(BaseModel):
     settings also serve search.local_search.text_unit_ranking: ppr).
 
     Opt-in: the defaults are HippoRAG 2's (damping 0.5, passage node weight
-    0.05, 5 linked facts), the ones local's measured ranking uses; the ppr
-    strategy's answers are not measured yet. See docs/design.md §6.4.
+    0.05, link_top_k 5). local's measured ranking uses the PageRank ones
+    (damping, passage node weight, passage seeds, iterations, edges per
+    entity) but seeds by its own search.local_search.ppr_seed_relationships
+    with no link_top_k cut; the ppr strategy's answers are not measured
+    yet. See docs/design.md §6.4.
     """
 
     fact_top_k: int = Field(
@@ -5552,15 +5574,36 @@ def _template_variables(template: str) -> set[str]:
 
 
 class ModelPrice(BaseModel):
-    """A model's on-demand price, for run-eval's USD cost estimate."""
+    """A model's on-demand price, for run-eval's USD cost estimate: a
+    language model's token prices, or a rerank model's search-unit price."""
 
     model_config = ConfigDict(extra="forbid")
 
-    input_per_million_tokens: float = Field(
-        ge=0, description="USD per million input tokens."
+    input_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "USD per million input tokens (a language model's; set with "
+            "output_per_million_tokens)."
+        ),
     )
-    output_per_million_tokens: float = Field(
-        ge=0, description="USD per million output tokens."
+    output_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "USD per million output tokens (a language model's; set with "
+            "input_per_million_tokens)."
+        ),
+    )
+    per_thousand_rerank_search_units: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "A rerank model's USD per thousand search units (usage "
+            "rerank_search_units: one per rerank request of up to 100 "
+            "documents; Amazon Bedrock's price per 1,000 queries). An entry "
+            "sets this, the two token prices, or both."
+        ),
     )
     cache_read_per_million_tokens: float | None = Field(
         default=None,
@@ -5580,6 +5623,22 @@ class ModelPrice(BaseModel):
             "input price for the 5-minute cache). null = the input price."
         ),
     )
+
+    @model_validator(mode="after")
+    def _priced(self) -> "ModelPrice":
+        tokens = (self.input_per_million_tokens, self.output_per_million_tokens)
+        if (tokens[0] is None) != (tokens[1] is None):
+            raise ValueError(
+                "a model price sets both input_per_million_tokens and "
+                "output_per_million_tokens, or neither (a rerank model's)"
+            )
+        if tokens[0] is None and self.per_thousand_rerank_search_units is None:
+            raise ValueError(
+                "a model price sets input_per_million_tokens and "
+                "output_per_million_tokens (a language model), or "
+                "per_thousand_rerank_search_units (a rerank model)"
+            )
+        return self
 
 
 class EvaluationConfig(BaseModel):
@@ -5791,7 +5850,10 @@ class EvaluationConfig(BaseModel):
             "estimate, token counts only. No prices ship with the package: "
             "fill in the current Amazon Bedrock on-demand prices of your "
             "region. input_tokens includes the cache reads and writes; each "
-            "is priced at its own rate when the model's price sets one."
+            "is priced at its own rate when the model's price sets one. The "
+            "rerank model is priced too (per_thousand_rerank_search_units; "
+            "a local cross-encoder at 0): an answer with an unpriced model "
+            "that was called, reranker included, has no USD estimate."
         ),
     )
 

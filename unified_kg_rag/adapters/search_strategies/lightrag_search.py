@@ -46,6 +46,7 @@ from unified_kg_rag.domain.ingestion.chunk_length import LATIN_CHARS_PER_TOKEN
 from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     Config,
+    IndexArtifact,
     Methodology,
     RetrievalResult,
     RetrieverRole,
@@ -165,7 +166,13 @@ def _latin_equivalent_length(text: str) -> int:
 @register_strategy(
     SearchStrategy.HYBRID, query_inputs=frozenset({QueryInput.DUAL_KEYWORDS})
 )
-@register_strategy(SearchStrategy.NAIVE, required_roles=(RetrieverRole.DOCUMENT,))
+@register_strategy(
+    SearchStrategy.NAIVE,
+    required_roles=(RetrieverRole.DOCUMENT,),
+    # Chunk retrieval alone: any namespace serves it (every methodology
+    # stores the text units).
+    required_artifacts=frozenset({IndexArtifact.TEXT_UNITS}),
+)
 class LightRAGSearchStrategy(BaseSearchStrategy):
     """Dual-level keyword retrieval (LightRAG) over the shared hybrid stack.
 

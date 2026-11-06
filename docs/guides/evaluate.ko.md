@@ -199,6 +199,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 없고 비교가 경고합니다. `input_tokens`에는 프롬프트 캐시 읽기·쓰기 토큰이 들어 있습니다.
 그 단가(`cache_read_per_million_tokens`, `cache_write_per_million_tokens`)를 주면 따로
 계산하고, 없으면 입력 단가로 계산합니다(Claude에서 캐시 읽기는 입력의 10분의 1이므로 상한값).
+재순위화(rerank) 모델도 검색 단위(search unit) 1,000개당 가격으로 넣습니다(사용량
+`rerank_search_units`: 문서 100개까지의 재순위화 요청 하나에 1단위. 로컬 크로스 인코더는 0).
 
 ```yaml
 evaluation:
@@ -209,6 +211,7 @@ evaluation:
       cache_read_per_million_tokens: 0.0
       cache_write_per_million_tokens: 0.0
     "global.<fast-model-id>": {input_per_million_tokens: 0.0, output_per_million_tokens: 0.0}
+    "<rerank-model-id>": {per_thousand_rerank_search_units: 0.0}
 ```
 
 추정치는 사용량에 기록된 호출만 다룹니다. botocore가 다시 보낸 요청(`request_retries`), 실패한

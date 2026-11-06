@@ -64,7 +64,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 안에서 같았고 비용은 그 3분의 1에서 절반이었으므로 `auto`는 이 전략을 고르지 않습니다
 ([근거](../concepts/defaults-and-evidence.md#the-ppr-strategy), 영문). `local`은 기본값으로
 같은 방식으로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking: ppr`,
-`support`로 바꾸면 이전 순서). [검색](../concepts/retrieval.ko.md)과
+`support`로 바꾸면 이전 순서). DRIFT의 후속 local 검색은 `support`를 유지합니다
+(`search.drift_search.text_unit_ranking`. `ppr`로는 측정하지 않음). [검색](../concepts/retrieval.ko.md)과
 [설계 §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking)(영문)을
 참고하세요.
 

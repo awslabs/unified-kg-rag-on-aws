@@ -696,7 +696,14 @@ def answer_cost_usd(
     unpriced = {
         model
         for model, counts in usage.by_model.items()
-        if counts.llm_calls and model not in prices
+        if (counts.llm_calls and _token_rates(prices.get(model)) is None)
+        or (
+            counts.rerank_calls
+            and (
+                model not in prices
+                or prices[model].per_thousand_rerank_search_units is None
+            )
+        )
     }
     if unpriced:
         return None, unpriced
@@ -710,17 +717,30 @@ def answer_cost_usd(
 
 def _counts_usd(counts: LLMUsageCounts, price: ModelPrice) -> float:
     """The USD of one model's counts: ``input_tokens`` includes the cache
-    reads and writes, each priced at its own rate when ``price`` has one."""
+    reads and writes, each priced at its own rate when ``price`` has one;
+    a rerank model's search units at their own price."""
     cached = counts.cache_read_input_tokens + counts.cache_write_input_tokens
-    rate = price.input_per_million_tokens
+    rate, output = _token_rates(price) or (0.0, 0.0)
     read = price.cache_read_per_million_tokens
     write = price.cache_write_per_million_tokens
+    units = price.per_thousand_rerank_search_units or 0.0
     return (
         max(0, counts.input_tokens - cached) * rate
         + counts.cache_read_input_tokens * (rate if read is None else read)
         + counts.cache_write_input_tokens * (rate if write is None else write)
-        + counts.output_tokens * price.output_per_million_tokens
-    ) / 1e6
+        + counts.output_tokens * output
+    ) / 1e6 + counts.rerank_search_units * units / 1e3
+
+
+def _token_rates(price: ModelPrice | None) -> tuple[float, float] | None:
+    """A price's (input, output) USD per million tokens; ``None`` when it
+    has none (a rerank model's, or no price)."""
+    if price is None:
+        return None
+    rates = (price.input_per_million_tokens, price.output_per_million_tokens)
+    if rates[0] is None or rates[1] is None:
+        return None
+    return rates[0], rates[1]
 
 
 def _distribution(values: Sequence[float]) -> dict[str, float] | None:

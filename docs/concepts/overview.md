@@ -96,12 +96,14 @@ what its strategies read:
 | Profile | Builds | Strategies | Ingestion model calls |
 |---|---|---|---|
 | `[graphrag, lightrag]` (default) | Text units, entities, relationships and their vectors, the graph, communities and their reports | Every strategy | Chunk boundaries, extraction and gleaning per text unit, description summaries, one report per community |
-| `[lightrag]` | The same without communities and reports | `mix`, `hybrid`, `naive`, `auto` | The same without the Leiden pass and the report calls |
+| `[lightrag]` | The same without communities and reports | `mix`, `hybrid`, `naive`, `simple`, `auto` | The same without the Leiden pass and the report calls |
 | `[graphrag]` | The default's | `local`, `global`, `drift`, `simple`, `auto` | The default's; also set `indexing.opensearch.build_relationship_vector_index: false` to skip the relationship embeddings, at the cost of `local`'s relationship section |
-| `[raptor]` (opt-in, unmeasured) | Text units and a summary tree over them (RAPTOR) | `tree`, `auto` | Chunk boundaries and about one summary per five or six text units: no graph extraction ([summary tree](../guides/ingest.md#a-raptor-summary-tree-opt-in)) |
+| `[raptor]` (opt-in, unmeasured) | Text units and a summary tree over them (RAPTOR) | `tree`, `naive`, `simple`, `auto` | Chunk boundaries and about one summary per five or six text units: no graph extraction ([summary tree](../guides/ingest.md#a-raptor-summary-tree-opt-in)) |
 
 `hipporag` names what `lightrag` builds, for the strategies that read it,
-and `iterative` reads what its base (`local` or `mix`) reads.
+and `iterative` reads what its base (`local` or `mix`) reads. `naive` reads
+the text units alone and `simple` the indexes the namespace holds, so every
+profile serves them.
 The index namespace records what it holds: a query whose strategy reads a
 methodology it does not hold fails before any model call, naming what it
 holds and how to add the methodology, and `auto` routes only among the held
@@ -210,7 +212,7 @@ purpose:
 - **A lighter ingestion limits the strategies.** A namespace without
   communities (`indexing.methodologies: [lightrag]`, or
   `graph.community_detection.enabled: false`) holds no `graphrag`: `local`,
-  `global`, `drift` and `simple` are refused there; without the relationship vector index
+  `global` and `drift` are refused there (`simple` sweeps what it holds); without the relationship vector index
   (`indexing.opensearch.build_relationship_vector_index: false`) `mix` and
   `hybrid` lose high-level keywords, `local` its relationship section, and
   graph expansion under a document filter keeps entities on the

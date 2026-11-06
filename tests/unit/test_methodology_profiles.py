@@ -18,6 +18,7 @@ from tests.unit.test_pipeline_init_resume import _pipeline_for_init, _StubStage
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     _REGISTRY,
     get_strategy_spec,
+    routable_strategies,
     serves,
     strategy_methodology,
 )
@@ -492,7 +493,10 @@ async def test_a_query_reads_what_the_namespace_holds_before_refusing() -> None:
     message = str(refused.value)
     assert "'global' reads the graphrag methodology" in message
     assert "namespace 'tenant-a' does not hold" in message
-    assert "holds lightrag, hipporag; its strategies: mix, hybrid, naive" in message
+    assert (
+        "holds lightrag, hipporag; its strategies: simple, mix, hybrid, naive, "
+        "iterative, ppr, or auto" in message
+    )
     # Cached per suffix; a refusal read the record again first.
     assert records.reads == 3
     await chain.acheck_methodology(SearchStrategy.MIX, None)
@@ -534,6 +538,28 @@ async def test_without_a_readable_record_the_config_stands_in() -> None:
         await _chain(Config(), light, broken).acheck_methodology(SearchStrategy.GLOBAL)
 
 
+async def test_naive_and_simple_are_served_where_their_indexes_are_held() -> None:
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    # naive reads the text units alone, simple sweeps the indexes held:
+    # neither needs its class's methodology.
+    tree_only = _Records(_record(A.TEXT_UNITS, A.SUMMARY_TREE).model_dump(mode="json"))
+    light = _Records(_record(*LIGHT).model_dump(mode="json"))
+    for records in (tree_only, light):
+        for strategy in (SearchStrategy.NAIVE, SearchStrategy.SIMPLE):
+            assert await _chain(Config(), records).acheck_methodology(strategy)
+    with pytest.raises(MethodologyNotIndexedError, match="'local' reads the graphrag"):
+        await _chain(Config(), tree_only).acheck_methodology(SearchStrategy.LOCAL)
+    # Without the text units they are refused, naming what is missing.
+    nothing = _Records(_record().model_dump(mode="json"))
+    with pytest.raises(MethodologyNotIndexedError, match="reads the text_units"):
+        await _chain(Config(), nothing).acheck_methodology(SearchStrategy.NAIVE)
+    # auto may route to them on such a namespace too.
+    config = Config(search={"auto_routable_strategies": ["naive", "local"]})
+    assert routable_strategies(config, [R]) == (SearchStrategy.NAIVE,)
+    assert serves(SearchStrategy.SIMPLE, [L], Config())
+
+
 async def test_iterative_is_refused_where_its_base_is_not_held() -> None:
     from unified_kg_rag.shared import MethodologyNotIndexedError
 
@@ -545,3 +571,17 @@ async def test_iterative_is_refused_where_its_base_is_not_held() -> None:
         await _chain(over_local, light).acheck_methodology(SearchStrategy.ITERATIVE)
     over_mix = Config(search={"iterative_search": {"base": "mix"}})
     assert await _chain(over_mix, light).acheck_methodology(SearchStrategy.ITERATIVE)
+
+
+def test_the_auto_fallback_is_warned_about_once(caplog) -> None:
+    import logging
+
+    from unified_kg_rag.adapters.retrieval import strategy_registry
+
+    strategy_registry._WARNED_FALLBACKS.clear()
+    config = Config(search={"auto_routable_strategies": ["global", "drift"]})
+    with caplog.at_level(logging.DEBUG, logger=strategy_registry.logger.name):
+        for _ in range(3):
+            assert routable_strategies(config, [R]) == (SearchStrategy.TREE,)
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "auto uses tree" in warnings[0].getMessage()
