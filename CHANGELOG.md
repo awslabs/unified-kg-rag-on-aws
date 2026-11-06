@@ -878,8 +878,9 @@ Queries and retrieval.
   Hangul and Kana words by character bigrams (#567).
 - A query is translated, and its entities and keywords extracted in `target_language`, only when ingestion
   translates or the caller asks (`RAGInput.target_language`) (#567, #583).
-- DRIFT (HyDE expansion, primer, actions) and global search's map points write in the query's language, the index
-  language when none is requested (`source_language` with translation disabled), not always `target_language`;
+- DRIFT (primer, actions) and global search's map points write in the query's language, the index language when
+  none is requested (`source_language` with translation disabled), not always `target_language`, and DRIFT's HyDE
+  expansion in the index language, the community reports' it searches, whatever language is requested (#PR);
   query entities a model separates with `、`, `，` or `；` (or one per line) are split into entities, not read as
   one; global search reads a relevance rating past a scale written as `10점 만점에`, `10点満点中` or `满分10分`;
   LightRAG's raw-query fallback counts a CJK or Hangul character as 4 against

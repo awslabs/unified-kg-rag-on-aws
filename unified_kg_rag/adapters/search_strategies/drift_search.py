@@ -35,6 +35,7 @@ from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.models import (
     Config,
     Methodology,
@@ -45,6 +46,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.domain.models.config import language_name
 from unified_kg_rag.domain.models.methodology import REPORT_READER_ARTIFACTS
 from unified_kg_rag.domain.prompts import (
     DriftActionPrompt,
@@ -329,7 +331,10 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 {
                     "query": query.query,
                     "template": template[0].content,
-                    "target_language": self.query_language(query),
+                    # The reports' language (the index's), not a requested
+                    # answer language: the hypothetical report only finds
+                    # reports.
+                    "target_language": language_name(index_language(self.config)),
                 },
                 config,
             )

@@ -2817,9 +2817,12 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   are embedded in it, and the graph indexes' text fields are analyzed for it
   (`OpenSearchIndexer.language`). The chain records the query's language in
   `SearchQuery.metadata["query_language"]` (the requested one, else the
-  index language); a strategy's own prompts (DRIFT's HyDE, primer and
-  actions, global's map points, iterative's controller) read it through
+  index language); a strategy's own prompts (DRIFT's primer and actions,
+  global's map points, iterative's controller) read it through
   `BaseSearchStrategy.query_language`, falling back to the index language.
+  DRIFT's HyDE writes in the index language whatever was requested: its
+  hypothetical report only searches the community reports, which are
+  written in it.
   The extraction-record and answer fingerprints key the index language
   under their earlier `target_language` field, so a translated index keeps
   its records. Where the translation settings do not say it (translation
