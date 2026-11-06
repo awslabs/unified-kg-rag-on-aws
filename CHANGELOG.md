@@ -8,15 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 The first release after 0.2.3, the initial public snapshot (commit `81ea498`,
-never tagged): GraphRAG and LightRAG retrieval on one Amazon Bedrock, Neptune,
-OpenSearch and DynamoDB stack, now also runnable without an AWS account. Every
-entry compares with 0.2.3. A fix to a feature added in this same cycle is folded
+never tagged), which ran GraphRAG and LightRAG retrieval on one Amazon Bedrock,
+Neptune, OpenSearch and DynamoDB stack. This release adds HippoRAG 2 and RAPTOR
+retrieval, methodology profiles that build only what the selected methodologies
+read, and a local mode that runs without an AWS account. Every entry compares
+with 0.2.3. A fix to a feature added in this same cycle is folded
 into that feature's entry, so *Fixed* lists only bugs 0.2.3 had. Nothing 0.2.3
 stored is read again: follow *Upgrading* in order.
 
 ### Highlights
-- Two retrieval methodologies on one stack: GraphRAG (`auto`/`drift`/`global`/`local`/`simple`) and LightRAG
-  (`mix`/`hybrid`/`naive`).
+- Four retrieval methodologies on one stack, selectable at index time (`indexing.methodologies`) and per query:
+  GraphRAG (`drift`/`global`/`local`/`simple`), LightRAG (`mix`/`hybrid`/`naive`), HippoRAG 2's Personalized
+  PageRank (`ppr`) and an opt-in RAPTOR summary tree (`tree`); a namespace builds only what its methodologies read
+  and refuses a strategy it cannot serve (#596, #597, #599, #602).
+- `local` orders its text units by HippoRAG 2's PageRank, and `auto` routes multi-hop questions to `iterative`
+  follow-up rounds over `mix`: both defaults are measured (#594, #598, #602).
 - Global search and DRIFT follow MS GraphRAG: a cut of the community hierarchy, and DRIFT's primer, follow-up and
   reduce loop (#318, #323, #347).
 - Local mode: `backend: local` runs on Ollama or an OpenAI-compatible server with embedded SQLite stores (#209,
@@ -35,7 +41,8 @@ stored is read again: follow *Upgrading* in order.
   (#497-#515).
 - A query deadline and always-on LLM usage accounting (#522, #526).
 - Evaluation: LLM-free evaluators, paired strategy comparison with cost and bootstrap intervals, a pairwise judge
-  and a MuSiQue preparer (#121, #324, #526).
+  and a MuSiQue preparer (#121, #324, #526); declines on unanswerable questions, an assertion judge,
+  length-controlled pairwise judging and a closed-book arm, all opt-in (#593, #595, #600).
 - OpenTelemetry tracing over OTLP, Langfuse or Arize Phoenix (#207, #208).
 - Claude Sonnet 5.5 and Haiku 5.5 are the default tiers (#117, #170).
 - The CDK stack gains a read-only query role, alarms and a one-task Step Functions ingestion (#157, #211, #319,
@@ -172,7 +179,7 @@ stored is read again: follow *Upgrading* in order.
 | `search.output_ceilings` | the model's maximum output | 4096 for routing, query extraction and relevance ratings (#525) |
 | `search.answer_prompt_style` | every strategy concise | `{global: comprehensive}`, merged under your map (#533) |
 | `search.global_search.evidence_tokens` | every cited report the budget holds | 4000; `null` removes the cap (#533) |
-| `search.local_search.text_unit_ranking` (local's and DRIFT follow-ups' text-unit order) | by how many expanded entities cite a unit (no setting) | `ppr`, HippoRAG 2's PageRank; `support` is the earlier order (#597, #602) |
+| `search.local_search.text_unit_ranking` (local's text-unit order) | by how many expanded entities cite a unit (no setting) | `ppr`, HippoRAG 2's PageRank; `support` is the earlier order, which DRIFT's follow-ups keep (`search.drift_search.text_unit_ranking`) (#597, #602, #607) |
 | `evaluation.enabled_evaluators` | `langchain`, `ragas` | `ragas`, `answer_match`, `retrieval`, `graph_aware`; `langchain` is opt-in (#121, #576) |
 | `evaluation.max_context_tokens` | 8192 | `null`, the answer budget (#315) |
 | `run-eval` warm-up | none | one unscored, untimed query per strategy and run, not configurable (#529, #577) |
@@ -382,48 +389,34 @@ From a `main` checkout (formats and keys no release had):
 - #577: `search.global_search.reduce_with_llm: true` no longer makes a reduce call and `evaluation.warm_up_query:
   false` no longer skips the warm-up (both warn); a run resumed across it finds no stage-cache entry
   (`fixing.enabled` keyed every stage), but the LLM response cache serves its model calls.
-- (#596) A namespace ingested with `graph.community_detection.enabled: false` holds `lightrag` only: `local` and
-  `simple` are now refused there (`MethodologyNotIndexedError`, `run-rag` exits 2) where they answered without the
-  report section, and `auto` routes among `mix`/`hybrid`/`naive`; ingest with `graphrag` to use them. A build
-  record written earlier names no artifacts: queries take the namespace to hold every methodology whose artifacts a
-  run of the configured `indexing.methodologies` builds (the default: `graphrag`, `lightrag` and `hipporag`, #602)
-  until the next run that writes the namespace records them, and that run rebuilds nothing. Default configurations
-  run the same stages under the same stage-cache keys.
-- (#598) `auto` may now route a multi-hop question to `iterative` (`search.auto_routable_strategies` adds it): about
-  10 s more at the median and +$0.002 for the queries it takes, and a LightRAG-only namespace now makes a router
-  call (between `mix` and `iterative`) where it made none. To keep the earlier routing, set
-  `search.auto_routable_strategies: [local, mix, global]`; nothing is re-run.
-- (#599) `raptor` can be selected (`indexing.methodologies`); without it nothing changes: no stage cache, extraction
-  record or evaluation manifest is keyed by the new settings at their defaults, and the text units are stored as
-  before. Adding `raptor` to a namespace builds its summary tree on the next run, or with `run-ingestion
+- #596 methodology profiles: a namespace ingested with `graph.community_detection.enabled: false` holds no
+  `graphrag`: `local` is now refused there (`MethodologyNotIndexedError`, `run-rag` exits 2) where it answered
+  without the report section, as are `global` and `drift`, while `naive` and `simple` still serve it (#607); `auto`
+  routes among the strategies of `search.auto_routable_strategies` it serves (`mix` and `iterative` by default).
+  Ingest with `graphrag` to use the others. A build record written earlier names no artifacts: queries take the
+  namespace to hold every methodology whose artifacts a run of the configured `indexing.methodologies` builds (the
+  default `[graphrag, lightrag]` holds `hipporag` too, #602) until the next run that writes the namespace records
+  them, and that run rebuilds nothing. Default configurations run the same stages under the same stage-cache keys.
+- #598 iterative routing: `auto` may now route a multi-hop question to `iterative`
+  (`search.auto_routable_strategies` adds it): about 10 s more at the median and +$0.002 for the queries it takes,
+  and a LightRAG-only namespace now makes a router call (between `mix` and `iterative`) where it made none. To keep
+  the earlier routing, set `search.auto_routable_strategies: [local, mix, global]`; nothing is re-run.
+- #599 RAPTOR: `raptor` can be selected (`indexing.methodologies`); without it nothing changes: no stage cache,
+  extraction record or evaluation manifest is keyed by the new settings at their defaults, and the text units are
+  stored as before. Adding `raptor` to a namespace builds its summary tree on the next run, or with `run-ingestion
   --enabled-stages summary_tree`, from the stored text units: no re-extraction, about one summary call per five or
   six text units on the default tier (the MuSiQue benchmark store's 3,318 text units: about 580 calls, $2-8 with
   Sonnet 5.5, $0.1-0.4 with `models.roles.summary_tree: fast`). A completed pipeline id re-run resumes at
-  `indexing` as before. A tree built from a `main` checkout before (#601) is summarized again by its next build
-  (the summaries' length changed): as many calls as building it. `tree` retrieval scores saved before (#601) rank a
+  `indexing` as before. A tree built from a `main` checkout before #601 is summarized again by its next build (the
+  summaries' length changed): as many calls as building it. `tree` retrieval scores saved before #601 rank a
   summary's lineage files above the passages; evaluate again to compare.
-- (#606) `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by whitespace, so a
-  default-normalization run is refused against them (exit 2) until one side is scored again (an `official_squad` or
-  `hotpotqa` run still compares). Their `abstention_statistics` left failed answers out (rate and recall over the
-  completed answers), and pairwise length buckets are renamed (`<=0.67x`, `0.67-0.91x`, `0.91-1.1x`, `>=1.5x`).
-  `prepare-benchmark musique --unanswerable` without `--data-path` now also downloads the answerable split and
-  draws the answerable questions from it (labelled `musique`); prepare again for that sample. Nothing else re-runs.
-- (#608) Translations are stored from the first run after upgrading: that run still asks the model for every unit
-  it translates, with the new translation prompt, so a reset of a translated namespace translates and re-extracts
-  every unit once more (the cost of a first build; an incremental run only its new and changed documents), and later
-  resets reuse them. Community report answers stored before are found under their earlier key (nothing is asked
-  again). A graph with entities without relationships may lose its top community level at its next clustering (its
-  reports go, no call is added, global search's `community_depth` cuts one level higher). A document with a
-  paragraph longer than a chunk is cut otherwise when it is next chunked (a reset or an edit), and those chunks are
-  extracted again. `graph_metrics.average_clustering` is empty unless
-  `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
-  now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`.
-- (#602) `local` (and each DRIFT follow-up) orders its text units by HippoRAG 2's PageRank by default
-  (`search.local_search.text_unit_ranking: ppr`): answers can change. Nothing is re-indexed or re-run; each local
-  query adds a text-unit search, a relationship kNN search, an edge read and one query embedding (about 0.1 s on
-  the embedded stores), and without the relationship vector index the PageRank is seeded by the entities and
+- #602 local ranking: `local` orders its text units by HippoRAG 2's PageRank by default
+  (`search.local_search.text_unit_ranking: ppr`): answers can change. DRIFT's follow-up local searches keep the
+  earlier order (`search.drift_search.text_unit_ranking: support`, #607). Nothing is re-indexed or re-run; each
+  local query adds a text-unit search, a relationship kNN search, an edge read and one query embedding (about 0.1 s
+  on the embedded stores), and without the relationship vector index the PageRank is seeded by the entities and
   passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
-- (#605) One index language: a namespace ingested with `processing.translation.enabled: false` and a
+- #605 one index language: a namespace ingested with `processing.translation.enabled: false` and a
   `source_language` other than `target_language` was extracted, summarized and reported in `target_language`; its
   incremental runs now stop before any model call (exit 2, `was built for other language settings`, the graph
   indexes' analyzers follow `source_language`) until one `indexing.reset: true` run, which costs a first build
@@ -431,18 +424,28 @@ From a `main` checkout (formats and keys no release had):
   keeps its extraction records and indices; the community report prompt now names its language, so the next full
   build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
   date written as `2024年3月` is found under it, so nothing else re-runs.
-- (#602) `local` orders its text units by HippoRAG 2's PageRank by default
-  (`search.local_search.text_unit_ranking: ppr`): answers can change. DRIFT's follow-up local searches keep the
-  earlier order (`search.drift_search.text_unit_ranking: support`, unmeasured under DRIFT with `ppr`) (#607). Nothing is re-indexed or re-run; each local
-  query adds a text-unit search, a relationship kNN search, an edge read and one query embedding (about 0.1 s on
-  the embedded stores), and without the relationship vector index the PageRank is seeded by the entities and
-  passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
-- (#607) A query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the `rerank` role and
-  the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the rerank model has a
-  price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets both token prices or
-  the rerank price; one with neither, or one token price alone, is refused at load. Nothing is re-run.
-- (#607) `naive` and `simple` are served by every namespace that holds the text units (a `raptor`-only or
-  `lightrag`-only one, where they were refused), and `simple` sweeps only the indexes the namespace holds.
+- #606 evaluation results: `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by
+  whitespace, so a default-normalization run is refused against them (exit 2) until one side is scored again (an
+  `official_squad` or `hotpotqa` run still compares). Their `abstention_statistics` left failed answers out (rate
+  and recall over the completed answers), and pairwise length buckets are renamed (`<=0.67x`, `0.67-0.91x`,
+  `0.91-1.1x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path` now also downloads the
+  answerable split and draws the answerable questions from it (labelled `musique`); prepare again for that sample.
+  Nothing else re-runs.
+- #607 rerank metering: a query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the
+  `rerank` role and the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the
+  rerank model has a price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets
+  both token prices or the rerank price; one with neither, or one token price alone, is refused at load. Nothing is
+  re-run.
+- #608 stored translations: translations are stored from the first run after upgrading: that run still asks the
+  model for every unit it translates, with the new translation prompt, so a reset of a translated namespace
+  translates and re-extracts every unit once more (the cost of a first build; an incremental run only its new and
+  changed documents), and later resets reuse them. Community report answers stored before are found under their
+  earlier key (nothing is asked again). A graph with entities without relationships may lose its top community
+  level at its next clustering (its reports go, no call is added, global search's `community_depth` cuts one level
+  higher). A document with a paragraph longer than a chunk is cut otherwise when it is next chunked (a reset or an
+  edit), and those chunks are extracted again. `graph_metrics.average_clustering` is empty unless
+  `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
+  now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`.
 
 ### Added
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
@@ -467,37 +470,37 @@ From a `main` checkout (formats and keys no release had):
   best-weighted that pass the filters (#607).
   Settings: `indexing.summary_tree`, `search.tree_search`, `search.token_manager.type_budgets.summary`; the
   `VectorIndexer` port gains the summary-tree methods (each with a "cannot" default). Differential tests against the
-  original code ship with recorded fixtures. Failed summaries and, with `refresh: on_reset`, the text units no
-  summary covers are EMF metrics (`total_tree_summaries_failed`, `total_tree_uncovered_leaves`) on the CDK
-  dashboard's "Summary tree (EMF)" widget (#603). See [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in)
-  and [Design §6.5](docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
   original code ship with recorded fixtures. The build record keeps naming a live tree while a run rebuilds it (the
   summaries citing removed text deleted first), so `tree` is served during and after a write run, and is refused
   only once a tree build fails; a full build without `raptor` deletes the tree's indices; a partial tree is built
   again under `refresh: on_reset`; the leaves' vectors are read as float32 arrays (about 15 KiB per leaf read instead
   of 40-60 KiB, about 50 KiB at the build's peak) and `max_leaves_in_memory` is checked before they are read, at a
-  default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#608). See
+  default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#608). Failed summaries and, with
+  `refresh: on_reset`, the text units no summary covers are EMF metrics (`total_tree_summaries_failed`,
+  `total_tree_uncovered_leaves`) on the CDK dashboard's "Summary tree (EMF)" widget (#603). See
   [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
   [Design §6.5](docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
-- Methodology profiles (#596): `indexing.methodologies` (default `[graphrag, lightrag]`, today's union) selects what
-  ingestion builds, so a LightRAG-only corpus (`[lightrag]`) runs no community detection and makes no report call.
-  On the CDK stack the `methodologies` context key sets it on both task definitions, so every state-machine run
-  builds the profile (#603).
-  The build record names the artifacts and methodologies a namespace holds; a query whose strategy reads another
-  methodology fails before any model call naming what the namespace holds and how to add it, and `auto` routes only
-  among the held ones. Adding a methodology to an incremental namespace rebuilds it once from its stored
+- Methodology profiles (#596): `indexing.methodologies` (default `[graphrag, lightrag]`, what one ingestion built
+  before) selects what ingestion builds, so a LightRAG-only corpus (`[lightrag]`) runs no community detection and
+  makes no report call. On the CDK stack the `methodologies` context key sets it on both task definitions, so every
+  state-machine run builds the profile (#603). The build record names the artifacts and methodologies a namespace
+  holds; a query whose strategy reads what the namespace does not hold fails before any model call, naming what it
+  holds and what adding the methodology costs (for `raptor`, the tree alone) (#PR), and `auto` routes only among the
+  strategies it serves. Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
-  them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's); `hipporag`
-  holds what `lightrag` builds and `raptor` reads a summary tree (#599). See [methodology
-  holds what `lightrag` builds and `raptor` is reserved. Without a build record (a namespace ingested before
-  them), a query takes the namespace to hold what a run of the config builds, so the default holds `hipporag` and
-  serves `ppr` (#602). With `graph.community_detection.report_generation.enabled: false` a run builds no reports,
-  so an incremental run no longer takes them for missing and rebuilds the namespace; the rebuild that adds a
-  methodology asks before deleting more than `indexing.max_deletion_share` of the scope's documents, as an
+  them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
+  reads less declares its artifacts (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace
+  that holds the text units, and `simple` sweeps only the indexes it holds (#607). `hipporag` holds what `lightrag`
+  builds, so `ppr` is served wherever `lightrag` is, and `raptor` reads a summary tree (#599). Without a build
+  record (a namespace ingested before them), a query takes the namespace to hold what a run of the config builds,
+  `hipporag` included (#602). With `graph.community_detection.report_generation.enabled: false` a run builds no
+  reports, so an incremental run no longer takes them for missing and rebuilds the namespace; the rebuild that adds
+  a methodology asks before deleting more than `indexing.max_deletion_share` of the scope's documents, as an
   incremental run does; a run without community detection (`[lightrag]`) exports `visualization_data.json` without
   communities; a run that builds no graph-store artifact (`[raptor]`) writes no graph store, so `run-ingestion`
   needs no Neptune endpoint for it (#608). See [methodology
-  profiles](docs/concepts/overview.md#methodology-profiles) and [Design §4.6](docs/design.md#46-methodology-profiles).
+  profiles](docs/concepts/overview.md#methodology-profiles) and [Design
+  §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the
   `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). See [local
@@ -606,17 +609,16 @@ From a `main` checkout (formats and keys no release had):
   under the same filters; the rounds are fused (buckets `iterative_round_<n>`, `iterative_round_<n>_text`) and
   reranked, and the answer is generated once. A `mix` round that names no new bridge entity runs its text searches
   alone, and a decomposition step without one keeps the question's keywords, where `mix` reran with no keyword
-  (falling back to the search text, or no entity search past `raw_query_fallback_max_len`) (#598). On 200 MuSiQue
-  questions over `mix`: `answer_contains` +12.5 points, token F1 +5.2, p95 11.1 s to 27.4 s
-  ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)).
-  `decompose: true` splits the question into steps instead (KAG-style). The controller reads the context packed to
-  the answer's budget (`controller_context_tokens: null`; at 8000, with ~1200-token chunks it read 3 of the answer's
-  11 passages; MuSiQue's short chunks fit either way), a round follows at most five bridge entities, and the
-  follow-up queries, bridge entities and step questions in `metadata["iterative"]` are screened by the output
-  guardrail with `check_output` (#607). `metadata["context_sufficient"]: false` reports a final insufficient verdict,
-  a deadline that cancels the round such a verdict started included (`insufficiency_reason: deadline`, #607);
-  `metadata["iterative"]` the rounds and their model usage; new `custom_prompts.iterative_controller_*`,
-  `query_decomposition_*` and `decomposition_step_*` (#594). See
+  (falling back to the search text, or no entity search past `raw_query_fallback_max_len`) (#598). Over `mix` it
+  answered multi-hop questions significantly better than `mix`, at more than twice the p95 latency
+  ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)). `decompose: true` splits the
+  question into steps instead (KAG-style). `metadata["context_sufficient"]: false` reports a final insufficient
+  verdict, `metadata["iterative"]` the rounds and their model usage; new `custom_prompts.iterative_controller_*`,
+  `query_decomposition_*` and `decomposition_step_*` (#594). The controller reads the context packed to the
+  answer's budget (`controller_context_tokens: null`; a smaller cap left it the first passages of long chunks), a
+  round follows at most five bridge entities, a deadline that cancels the round an insufficient verdict started
+  reports it (`insufficiency_reason: deadline`), and the follow-up queries, bridge entities and step questions in
+  `metadata["iterative"]` are screened by the output guardrail with `check_output` (#607). See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
@@ -642,13 +644,13 @@ From a `main` checkout (formats and keys no release had):
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
   [benchmarks](docs/guides/benchmarks.md).
-- Unanswerable questions and declines (opt-in; defaults unchanged): `prepare-benchmark musique --unanswerable N` adds
-  MuSiQue-Full unanswerable questions (`metadata.answerable: false`, the full dev split downloaded at a pinned
-  revision, SHA-256 checked), leaving out any whose answerable twin is sampled or whose removed supporting paragraph's
-  exact text is in the pooled corpus (34-50% of candidates on the dev split), and reports the counts; `--hops 3,4` or
-  `--hops 2=50,3=50,4=100` filters or sets per-hop quotas. `search.abstention.mode: mark` asks the answer model to
-  start a declined answer with the fixed token `[NO_ANSWER]` (detected in any answer language, stripped by default)
-  and reports it in `metadata.abstained` / `abstention_reason`, with its sources kept;
+- Unanswerable questions and declines (opt-in; defaults unchanged): `prepare-benchmark musique --unanswerable N`
+  adds MuSiQue-Full unanswerable questions (`metadata.answerable: false`, the full dev split downloaded at a pinned
+  revision, SHA-256 checked), leaving out any whose answerable twin is sampled or whose removed supporting
+  paragraph's exact text is in the pooled corpus (34-50% of candidates on the dev split), and reports the counts;
+  `--hops 3,4` or `--hops 2=50,3=50,4=100` filters or sets per-hop quotas. `search.abstention.mode: mark` asks the
+  answer model to start a declined answer with the fixed token `[NO_ANSWER]` (detected in any answer language,
+  stripped by default) and reports it in `metadata.abstained` / `abstention_reason`, with its sources kept;
   `search.abstention.on_insufficient` (`hedge`, `abstain`) applies when a strategy sets its metadata
   `context_sufficient` to false (`iterative` does). `answer_match` scores a decline on an answerable question (the
   no-context reply included) 0 without a span call, and `abstention_statistics` counts `completed` = `abstained` +
@@ -658,12 +660,11 @@ From a `main` checkout (formats and keys no release had):
   split is downloaded beside it, or `--unanswerable-data-path`). A comparison pairs `abstention/recall` and
   `abstention/precision`, both `--fail-if` measures. Each saved result keeps `abstention_reason`,
   `context_sufficient`, `insufficiency_reason` and the `iterative` run record. Measured on 100 + 100 MuSiQue
-  questions, `mark` stays opt-in and `hedge` the default (#593, #600, #606). See
-  questions, `mark` stays opt-in and `hedge` the default (#593, #600). Under `abstain` an answer the model writes
-  instead of the decline is replaced by the no-context reply (invoke and stream), and a streamed decline keeps the
-  space at a chunk boundary after the token (#607). See
+  questions, `mark` stays opt-in and `hedge` the default (#593, #600, #606). Under `abstain` an answer the model
+  writes instead of the decline is replaced by the no-context reply (invoke and stream), and a streamed decline
+  keeps the space at a chunk boundary after the token (#607). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
-- Evaluation of open-ended answers, all opt-in (defaults unchanged until a measured experiment decides): the
+- Evaluation of open-ended answers, all opt-in: the
   pairwise judge reports win rates per answer-length bucket in estimated tokens (symmetric in the log ratio) and
   their correlation with length;
   `evaluation.pairwise_mode: differential` (`run-eval --pairwise-mode differential`, model role
@@ -708,21 +709,22 @@ From a `main` checkout (formats and keys no release had):
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release (nothing on PyPI yet): the tag must be on `main`, and the notes'
   repo-relative links point at the tagged tree (#572, #588).
-- HippoRAG 2 retrieval, opt-in (docs/design.md §6.4): the `ppr` search strategy (`search.ppr_search`; `auto` never
-  routes to it, and `search.auto_routable_strategies` refuses it until a measurement shows where it wins) seeds a
-  Personalized PageRank with the question's relationship hits (kNN, `fact_search_type`) and text-unit hits (BM25 +
-  vector), runs it over the graph neighbourhood of the facts' entities and the passages they cite, and fuses the
-  ranked passages, the passage hits and the facts (fusion buckets `ppr_passages`, `ppr_seed_text_units`,
-  `ppr_facts`) with the optional rerank; no query-time LLM call besides the answer. It reads methodology `hipporag`
-  (a `[hipporag]` or `[lightrag]` namespace serves it; one without the relationship vector index refuses it).
-  `search.local_search.text_unit_ranking: ppr` (the default, see *Defaults*) orders local's (and DRIFT's
-  follow-ups') text units by the same PageRank, seeded by local's entities, the question's passage hits and the
-  endpoints of its `ppr_seed_relationships` (5) relationship hits: on 200 MuSiQue questions, two repeats, against
-  `support` it raised `answer_contains` by 3.5 points (95% CI +0.5 to +6.75) and recall@5 by 6.1 (+2.9 to +9.4),
-  EM and token F1 n.s., for about 0.1 s more retrieval a query
-  ([evidence](docs/concepts/defaults-and-evidence.md#local-ppr-ranking)) (#602). Graph retrievers gain
-  `aneighbourhood_edges` (Neptune, Gremlin Server, SQLite; the relationships index under a document filter), and
-  `SearchQuery.max_hops` overrides the expansion depth (#597).
+- HippoRAG 2's Personalized PageRank (docs/design.md §6.4): the opt-in `ppr` strategy and `local`'s default
+  text-unit order. The `ppr` search strategy (`search.ppr_search`; `auto` never routes to it, and
+  `search.auto_routable_strategies` refuses it until a measurement shows where it wins) seeds a Personalized
+  PageRank with the question's relationship hits (kNN, `fact_search_type`) and text-unit hits (BM25 + vector), runs
+  it over the graph neighbourhood of the facts' entities and the passages they cite, and fuses the ranked passages,
+  the passage hits and the facts (fusion buckets `ppr_passages`, `ppr_seed_text_units`, `ppr_facts`) with the
+  optional rerank; no query-time LLM call besides the answer. It reads methodology `hipporag`, which every namespace
+  with the relationship vector index holds (the default, `[lightrag]`, `[hipporag]`, `[graphrag]` with its
+  relationship vectors); one without it refuses `ppr`. `search.local_search.text_unit_ranking: ppr` (the default,
+  see *Defaults*) orders local's text units by the same PageRank, seeded by local's entities, the question's passage
+  hits and the endpoints of its `ppr_seed_relationships` (5) relationship hits: measured better than `support` on
+  multi-hop questions, for about 0.1 s more retrieval a query
+  ([evidence](docs/concepts/defaults-and-evidence.md#local-ppr-ranking)) (#602); DRIFT's follow-up local searches
+  keep `support` (`search.drift_search.text_unit_ranking`) (#607). Graph retrievers gain `aneighbourhood_edges`
+  (Neptune, Gremlin Server, SQLite; the relationships index under a document filter), and `SearchQuery.max_hops`
+  overrides the expansion depth (#597).
 
 ### Changed
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
@@ -839,9 +841,6 @@ From a `main` checkout (formats and keys no release had):
 ### Fixed
 Bugs present in 0.2.3.
 
-- An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
-  the other communities read as a partition, so global search's cut depths depended on it (#608).
-
 Queries and retrieval.
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
   top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal
@@ -915,6 +914,8 @@ Ingestion and incremental indexing.
   queries used `source_language`, so the graph held a second language. The community report prompt names its
   output language. Claim dates written as `2024年3月15日`, `2024년 3월 15일` or `2022年第3四半期` read as calendar
   dates and placeholders such as `不明` or `미상` as unknown (#605).
+- An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
+  the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed
   occurrence; `parse_llm_json` the last object that parses, preferring the caller's keys); a single cut-off answer
   is still flagged, and nameless entities in complete sections are retried as malformed (#532, #536, #541, #560).
