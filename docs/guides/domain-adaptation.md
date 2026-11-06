@@ -125,8 +125,13 @@ by default), `query_rewrite`, `entity_extraction`,
 `keywords_extraction`, `global_map`, `pairwise_comparison` (the
 `--pairwise-judge` judge; keep its JSON verdict format, with an `overall`
 verdict under `evaluation.pairwise_overall`), `answer_span_extraction` (the
-`evaluation.answer_span: extracted` span extractor) and the prompt-tuning
-`corpus_profile`. Every key with its default:
+`evaluation.answer_span: extracted` span extractor), the
+`--pairwise-mode differential` steps `pairwise_overlap` and
+`pairwise_differential`, `assertion_judgement` (the `assertion` evaluator),
+`closed_book_answer` (`run-eval --closed-book`), the `prepare-benchmark
+assertions` steps `benchmark_activity_context`, `benchmark_questions`,
+`benchmark_claims`, `benchmark_assertions` and `benchmark_validation` (keep
+their JSON formats) and the prompt-tuning `corpus_profile`. Every key with its default:
 [Configuration Reference](../reference/configuration.md#custom_prompts).
 
 ### Validation at load

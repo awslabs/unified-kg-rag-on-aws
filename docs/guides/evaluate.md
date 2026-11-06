@@ -4,7 +4,7 @@
 
 `run-eval --data-path <dataset.json>` answers every question of a dataset and
 scores the answers and their sources. Three evaluators need no LLM and cost
-nothing; two use an LLM judge. Several strategies (or `--repeats`) turn the run
+nothing; three use an LLM judge. Several strategies (or `--repeats`) turn the run
 into a paired comparison.
 
 Every flag with its default: [CLI Reference](../reference/cli.md#run-eval).
@@ -29,8 +29,13 @@ at two more judge calls per query; to run it, list it with the others:
 | `graph_aware` | no | `expected_entities` / `expected_relationships` | entity and relationship coverage (recall), in the answer and in the retrieved sources |
 | `langchain` | judge | `answer` | `correctness`, `partial_correctness` |
 | `ragas` | judge | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
+| `assertion` | judge | `assertions` | `assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate` (opt-in) |
 
-The two judges need the `eval` extra (`uv sync --extra eval`, [Install](../getting-started/aws.md#install));
+`assertion` is opt-in too (add it to `enabled_evaluators`): it checks each
+answer against the item's assertions, `evaluation.assertion_trials` (default
+3) judge calls per answer, and needs no extra; see
+[Assertions, length control and a closed-book bound](#assertions-length-control-and-a-closed-book-bound).
+The `langchain` and `ragas` judges need the `eval` extra (`uv sync --extra eval`, [Install](../getting-started/aws.md#install));
 without it `run-eval` stops before the first query with exit `2`, naming the
 extra, even with `processing.ignore_errors: true`. The judge-free run above
 needs no extra. Any other enabled evaluator that cannot be built (no Bedrock
@@ -65,7 +70,11 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
       { "source": "AI", "target": "machine learning" },
       "machine learning -> data processing"
     ],
-    "metadata": { "search_strategy": "global", "answer_aliases": ["AI and ML"] }
+    "metadata": { "search_strategy": "global", "answer_aliases": ["AI and ML"] },
+    "assertions": [
+      "The documents discuss machine learning.",
+      { "text": "The documents describe quantum hardware.", "kind": "negative" }
+    ]
   },
   {
     "id": "q2",
@@ -74,6 +83,10 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
 ]
 ```
 
+- `assertions` (for the `assertion` evaluator): statements a good answer
+  supports (a string, or `{"text", "kind": "positive"}`) or must not state
+  (`"kind": "negative"`, a known hallucination, say), each with an optional
+  `source` for a reviewer. Write them in the language the answers are in.
 - Per-item `metadata` (e.g. `search_strategy`) overrides the CLI defaults for
   that question. `id` may also be given as `query_id`.
 - Mark a question the corpus cannot answer with
@@ -176,7 +189,10 @@ How to read it:
 - **Pairwise judge.** `--pairwise-judge` adds the GraphRAG / LightRAG
   head-to-head LLM judge (comprehensiveness, diversity, empowerment,
   directness), each pair judged in both orders; read `candidate_win_rate`
-  next to `position_consistency`.
+  next to `position_consistency` and the win rates per answer-length bucket
+  (`length`): LLM judges prefer the longer answer, so a win rate that rises
+  with the length ratio is length, not quality. `--pairwise-mode
+  differential` judges only what differs between the answers (below).
 - **Cost and latency.** `cost.strategies.<s>` and `cost.deltas_vs_baseline`
   give the answers' calls, tokens and latency per query, paired like the
   metrics; a failed answer counts with what it spent before failing.
@@ -211,6 +227,59 @@ The estimate covers the calls the usage records: botocore's resent requests
 are not priced, so CloudWatch's invocation count and the bill can run a
 little higher (measured:
 [Usage records against the bill](../concepts/defaults-and-evidence.md#usage-records-against-the-bill)).
+
+## Assertions, length control and a closed-book bound
+
+Open-ended (global) questions have no gold answer, and a pairwise judge
+prefers the longer answer. Three opt-in tools measure around both; none
+changes a default until a measured experiment decides
+([Design: §9.2](../design.md#92-length-controlled-judging-assertions-and-the-closed-book-arm)).
+
+1. Generate questions and assertions from your own corpus, in the style of
+   Microsoft BenchmarkQED (its code is MIT; none of its data is used):
+
+   ```bash
+   prepare-benchmark assertions --source-directory corpus/ \
+     --output-directory bench/assertions --questions-per-class 10 \
+     --config-path config.yaml
+   ```
+
+   It writes `eval_data.json` with questions in five classes (`category`:
+   `data_local`, `data_global`, `data_linked`, `activity_local`,
+   `activity_global`), assertions for the three data classes,
+   `text_units.jsonl` (the text every assertion cites, with file and
+   offsets: review the assertions against it before you trust the set) and
+   `generation_report.json` (seed, models, drops, usage). It calls the
+   evaluation model (`models.roles.evaluation`) three to four times per data
+   question plus once per cluster and per activity question, and embeds at
+   most `--max-units` text units; it prints the calls and tokens it spent
+   (and a USD estimate with `evaluation.prices`). The questions and
+   assertions are in `--language` (default
+   `processing.translation.source_language`). The same seed and the same
+   model replies give the same files.
+2. Score the answers on the assertions and judge them without length bias:
+
+   ```bash
+   run-eval --data-path bench/assertions/eval_data.json \
+     --search-strategy global,mix --pairwise-judge --pairwise-mode differential \
+     --closed-book --config-path config.yaml   # enabled_evaluators: [assertion, ...]
+   ```
+
+   - `assertion_recall` is the share of an item's positive assertions the
+     answer supports (an assertion counts when more than half of its trials
+     say so), `assertion_contradiction_rate` the share it contradicts and
+     `negative_assertion_violation_rate` the share of negative assertions it
+     states. A judge failure leaves the metric failed, never 0. Gate on it
+     like any metric: `--fail-if "assertion/assertion_recall:ci_high<-0.02"`.
+   - `--pairwise-mode differential` asks the fast tier
+     (`models.roles.pairwise_overlap`) for the statements both answers make
+     and those only one makes, then judges the unique ones only; one more
+     fast call per pair.
+   - `--closed-book` adds the `closed_book` arm: the answer model answers
+     every question with no retrieval. A strategy that does not beat it
+     measures what the model already knows. The comparison marks it "(no
+     retrieval)" and gates skip it; its retrieval and context metrics score
+     an empty source list.
 
 ## Rebuilding, re-judging and gating a comparison
 
