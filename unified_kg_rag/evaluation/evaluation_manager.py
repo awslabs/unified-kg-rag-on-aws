@@ -66,7 +66,10 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.exceptions import InvalidFilterError
+from unified_kg_rag.shared.exceptions import (
+    InvalidFilterError,
+    MethodologyNotIndexedError,
+)
 from unified_kg_rag.shared.usage import merge_usage, usage_scope
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
@@ -556,7 +559,8 @@ class EvaluationManager:
         usage scope, so the next timed answer does not pay for opening the
         store connections and the models' first calls. Its question is no
         dataset question, so it fills no extraction cache entry they read;
-        it uses no conversation memory. A failure is logged, not raised."""
+        it uses no conversation memory. A failure is logged, not raised,
+        but a ``MethodologyNotIndexedError``: every query would fail."""
         inputs = {
             key: query.metadata[key] for key in _WARM_UP_KEYS if key in query.metadata
         }
@@ -564,6 +568,9 @@ class EvaluationManager:
             await self.rag_chain.ainvoke(
                 {**inputs, "query": _WARM_UP_QUESTION, "use_memory": False}
             )
+        except MethodologyNotIndexedError:
+            # The namespace serves no query of this strategy: fail fast.
+            raise
         except Exception as e:  # noqa: BLE001 - a warm-up is best-effort
             logger.warning(
                 "The warm-up query failed (%s); the first timed answers may "

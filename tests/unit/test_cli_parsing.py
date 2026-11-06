@@ -1045,6 +1045,74 @@ async def test_eval_runner_checks_filter_keys_when_loading(
         await runner.run()
 
 
+@pytest.mark.parametrize(
+    ("strategies", "item_strategy"),
+    [("local,global", None), ("auto", "global")],
+    ids=["comparison", "item-strategy"],
+)
+async def test_eval_runner_refuses_an_unheld_strategy_before_any_answer(
+    config, mocker, tmp_path, strategies: str, item_strategy: str | None
+) -> None:
+    """Regression: a strategy the namespace does not serve failed every
+    query (a warm-up failure logged, then each answer), and the run
+    exited 1 on its failure budget instead of 2 like run-rag."""
+    import json
+
+    from unified_kg_rag.shared import ConfigurationError, MethodologyNotIndexedError
+
+    answered: list[str] = []
+
+    class _Unheld(_DictChain):
+        async def acheck_methodology(self, strategy, suffix=None):
+            if strategy.value == "global":
+                raise MethodologyNotIndexedError(
+                    "Search strategy 'global' reads the community_reports"
+                )
+            return ()
+
+        async def ainvoke(self, inputs, config=None):
+            answered.append(inputs["query"])
+            return await super().ainvoke(inputs, config)
+
+    config.evaluation.enabled_evaluators = []
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    item = {"question": "Who ships?", "answer": "Vendor"}
+    if item_strategy:
+        item["metadata"] = {"search_strategy": item_strategy}
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps([item]))
+    args = _eval_parser().parse_args(
+        ["--data-path", str(data), "--output-directory", str(tmp_path / "out")]
+        + ["--search-strategy", strategies]
+    )
+    runner = run_evaluation.EvaluationRunner(args, _Unheld(False), config)
+    with pytest.raises(MethodologyNotIndexedError, match="global") as raised:
+        await runner.run()
+    assert answered == []
+    # main() exits 2 on a ConfigurationError, as run-rag does.
+    assert isinstance(raised.value, ConfigurationError)
+
+
+async def test_eval_failure_budget_message_explains_a_total_failure(
+    config, mocker, tmp_path, capsys
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = []
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
+    args = _eval_parser().parse_args(
+        ["--data-path", str(data), "--output-directory", str(tmp_path / "out")]
+    )
+    runner = run_evaluation.EvaluationRunner(args, _DictChain(True), config)
+    assert await runner.run() == 1
+    out = " ".join(capsys.readouterr().out.split())
+    # Not "allowed failure rate: 1.0" next to 1/1 failed.
+    assert "allowed failure rate" not in out
+    assert "breaches at any value" in out
+
+
 def test_eval_parser_takes_a_strategy_list() -> None:
     args = _eval_parser().parse_args(
         ["--data-path", "d", "--search-strategy", "local, mix,global"]

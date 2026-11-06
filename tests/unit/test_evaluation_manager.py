@@ -739,6 +739,22 @@ class TestWarmUp:
         assert inputs["use_memory"] is False
         assert "warm-up query failed" in caplog.text
 
+    async def test_a_strategy_the_namespace_does_not_serve_fails_fast(
+        self, config: Config
+    ) -> None:
+        # Every query would fail as the warm-up did: raised, not logged.
+        from unified_kg_rag.shared import MethodologyNotIndexedError
+
+        class _Chain:
+            async def ainvoke(self, inputs, config=None):
+                raise MethodologyNotIndexedError("reads the raptor methodology")
+
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        manager = EvaluationManager(config, rag_chain=_Chain())
+        query = EvaluationQuery(query_id="q1", question="Who ships?")
+        with pytest.raises(MethodologyNotIndexedError, match="raptor"):
+            await manager.warm_up(query)
+
     def test_the_manifest_records_dense_script_and_the_usage_schema(
         self, config: Config
     ) -> None:

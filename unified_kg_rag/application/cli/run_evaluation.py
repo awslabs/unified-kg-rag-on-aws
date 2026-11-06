@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import argparse
+import inspect
 import json
 import logging
 import shutil
@@ -112,6 +113,7 @@ from unified_kg_rag.shared import (
     ConfigurationError,
     DataProcessingError,
     EvaluationException,
+    MethodologyNotIndexedError,
     get_logger,
     observability,
     setup_logging,
@@ -121,6 +123,8 @@ from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
 
 logger = get_logger(__name__)
+
+_STRATEGY_VALUES = frozenset(s.value for s in SearchStrategy)
 
 
 class InvalidDatasetError(DataProcessingError):
@@ -867,8 +871,10 @@ class EvaluationRunner:
         breaches = measured.breaches
         if breaches:
             console.print(
-                f"[red]Failure budget exceeded ({markup_safe('; '.join(breaches))}; allowed "
-                f"failure rate: {self.args.max_failure_rate}).[/red]"
+                f"[red]Failure budget exceeded ({markup_safe('; '.join(breaches))}; "
+                f"--max-failure-rate {self.args.max_failure_rate}, which a run "
+                "whose every query, or every attempt of a metric, failed "
+                "breaches at any value).[/red]"
             )
             exit_code = EXIT_FAILURE
         if gate_failures:
@@ -932,6 +938,36 @@ class EvaluationRunner:
             )
         except EvaluationException as e:
             raise InvalidDatasetError(f"--baseline-results: {e}") from e
+
+    async def _check_methodologies(
+        self,
+        queries: list[EvaluationQuery],
+        strategies: list[str] | None,
+    ) -> None:
+        """Refuse, before any answer, a strategy a queried namespace does
+        not serve (``MethodologyNotIndexedError``: every one of its queries
+        would fail; exit 2, as ``run-rag``): each of ``strategies`` (a
+        comparison's), else each query's own, on each query's suffix."""
+        check = getattr(self.rag_chain, "acheck_methodology", None)
+        if not inspect.iscoroutinefunction(check):
+            return
+        pairs = dict.fromkeys(
+            (strategy, q.metadata.get("suffix"))
+            for q in queries
+            for strategy in (
+                strategies
+                if strategies is not None
+                else [q.metadata.get("search_strategy")]
+            )
+            if strategy and strategy in _STRATEGY_VALUES
+        )
+        for strategy, suffix in pairs:
+            try:
+                await check(SearchStrategy(strategy), suffix)
+            except MethodologyNotIndexedError as e:
+                raise MethodologyNotIndexedError(
+                    f"--search-strategy {strategy}: {e}"
+                ) from e
 
     def _answer_scoring(self) -> dict[str, Any] | None:
         """The answer_scoring this run's manifests will record."""
@@ -1066,6 +1102,7 @@ class EvaluationRunner:
                 for q in queries
             ]
         self._check_baseline_scoring(baseline, queries, ground_truths)
+        await self._check_methodologies(queries, strategies if comparing else None)
 
         runs: dict[str, list[Run]] = {}
         summaries: list[dict[str, Any]] = []
