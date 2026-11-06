@@ -583,7 +583,9 @@ From a `main` checkout (formats and keys no release had):
   See [evaluate](docs/guides/evaluate.md) and [evaluation output](docs/reference/evaluation-output.md).
 - Answer scoring: `evaluation.answer_span` (`first_line` default, `full`, or `extracted` by a fast model, cached,
   falling back to the first line), `evaluation.answer_normalization` (`official_squad`, `hotpotqa`), recorded in the
-  manifest's `answer_scoring` (#324, #516).
+  manifest's `answer_scoring` with the token-F1 tokenization; under `default`, token F1 counts a Han, Hangul or Kana
+  letter as a token and drops a Korean particle on a gold word, so Chinese, Japanese and Korean answers get partial
+  credit (#324, #516, #PR).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See

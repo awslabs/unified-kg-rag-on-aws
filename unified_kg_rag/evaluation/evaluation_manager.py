@@ -69,7 +69,11 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 from unified_kg_rag.shared.usage import merge_usage, usage_scope
 
-from .answer_match_evaluator import SPAN_FALLBACK_KEY, AnswerMatchEvaluator
+from .answer_match_evaluator import (
+    SPAN_FALLBACK_KEY,
+    AnswerMatchEvaluator,
+    answer_scoring,
+)
 from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
@@ -1299,10 +1303,7 @@ class EvaluationManager:
             # How exact match and token F1 read an answer: two runs scored
             # differently are not comparable on them.
             "answer_scoring": (
-                {
-                    "answer_span": evaluation.answer_span,
-                    "answer_normalization": evaluation.answer_normalization,
-                }
+                answer_scoring(evaluation)
                 if EvaluatorType.ANSWER_MATCH in enabled
                 else None
             ),

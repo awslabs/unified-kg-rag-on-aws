@@ -249,6 +249,47 @@ class TestNormalization:
         assert token_f1("a", "vendor") == 0.0
 
 
+class TestScriptAwareTokenF1:
+    """Regression: tokens were whitespace words, so a Chinese or Japanese
+    answer was one token (F1 0 unless exact) and a Korean word with a
+    particle never matched its gold word."""
+
+    @pytest.mark.parametrize(
+        ("prediction", "reference", "expected"),
+        [
+            # 3 of 5 characters / 3 of 3: P 0.6, R 1.
+            ("東京都です。", "東京都", 0.75),
+            ("北京市是中国的首都", "北京市", 0.5),
+            # "서울은" counts as "서울"; then 2 of 10 syllables.
+            ("서울은 한국의 수도입니다.", "서울", 2 * 0.2 / 1.2),
+            ("서울은", "서울", 1.0),
+            ("2024年に締結", "2024年", 2 * 0.4 / 1.4),
+            ("대금은 3억 원입니다", "3억 원", 2 * 0.5 / 1.5),
+            ("東京", "大阪", 0.0),
+            ("The capital is Tokyo.", "Tokyo", 0.5),
+        ],
+    )
+    def test_dense_scripts_score_by_character(
+        self, prediction: str, reference: str, expected: float
+    ) -> None:
+        assert token_f1(prediction, reference) == pytest.approx(expected)
+
+    def test_the_official_normalizations_keep_whitespace_tokens(
+        self, config: Config
+    ) -> None:
+        assert token_f1("東京都です", "東京都", script_aware=False) == 0.0
+        config.evaluation.answer_normalization = "official_squad"
+        report = _report(config, "東京都です", "東京都", {})
+        values = {m.metric_type.value: m.value for m in report.metrics}
+        assert values["token_f1"] == 0.0
+        assert report.metadata["token_f1_tokens"] == "whitespace"
+        config.evaluation.answer_normalization = "default"
+        report = _report(config, "東京都です", "東京都", {})
+        values = {m.metric_type.value: m.value for m in report.metrics}
+        assert values["token_f1"] == pytest.approx(2 * 0.6 / 1.6)
+        assert report.metadata["token_f1_tokens"] == "script_aware"
+
+
 def _report(config: Config, answer: str, ground_truth: str, metadata: dict):
     evaluator = AnswerMatchEvaluator(config)
     result = EvaluationResult(

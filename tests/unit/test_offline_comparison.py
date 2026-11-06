@@ -40,7 +40,11 @@ from unified_kg_rag.evaluation.comparison import (
 )
 from unified_kg_rag.evaluation.gates import gate_breaches, parse_gate
 from unified_kg_rag.evaluation.report import comparison_markdown
-from unified_kg_rag.evaluation.saved_results import load_saved_runs
+from unified_kg_rag.evaluation.saved_results import (
+    check_answer_scoring,
+    load_saved_runs,
+)
+from unified_kg_rag.shared import EvaluationException
 
 pytestmark = pytest.mark.unit
 
@@ -1104,3 +1108,25 @@ def test_markdown_lists_the_pairwise_judge(tmp_path: Path, monkeypatch) -> None:
     text = md.read_text(encoding="utf-8")
     assert code == 0 and "## Pairwise judge" in text
     assert "| mix vs local | 4 | 0 | 75% | 0.25 [0.00, 0.50] |" in text
+
+
+def test_runs_saved_before_script_aware_tokens_are_not_compared() -> None:
+    """A run saved before token_f1_tokens was recorded tokenized by
+    whitespace: comparable with an official-normalization run of now, not
+    with a default-normalization one."""
+    old = {"answer_span": "first_line", "answer_normalization": "default"}
+    now = {**old, "token_f1_tokens": "script_aware"}
+    with pytest.raises(EvaluationException, match="token_f1_tokens 'whitespace'"):
+        check_answer_scoring(
+            [("before", {"answer_scoring": old}), ("now", {"answer_scoring": now})]
+        )
+    squad = {"answer_span": "first_line", "answer_normalization": "official_squad"}
+    assert (
+        check_answer_scoring(
+            [
+                ("before", {"answer_scoring": squad}),
+                ("now", {"answer_scoring": {**squad, "token_f1_tokens": "whitespace"}}),
+            ]
+        )
+        == []
+    )

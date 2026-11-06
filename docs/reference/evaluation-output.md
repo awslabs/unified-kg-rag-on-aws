@@ -112,7 +112,9 @@ The console prints the same summary.
   does the `assertion` evaluator, and `assertion_scoring` records its
   `trials`;
 - `answer_scoring`: the `answer_span` and `answer_normalization` exact
-  match and token F1 used (with `answer_match`), and `models.answer_span`
+  match and token F1 used and the token-F1 tokenization they imply
+  (`token_f1_tokens`: `script_aware` or `whitespace`) (with
+  `answer_match`), and `models.answer_span`
   the extracting model; runs scored differently are not comparable on
   those two metrics;
 - `retrieval_config_sha256`, a hash of every configuration setting that
@@ -323,7 +325,9 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   reads it as its baseline pools this run in as repeats.
 - Runs whose exact
   match and token F1 read the answer differently (`answer_scoring` in the
-  run manifest: `evaluation.answer_span`, `answer_normalization`) are
+  run manifest: `evaluation.answer_span`, `answer_normalization`,
+  `token_f1_tokens`; a run saved before `token_f1_tokens` was recorded
+  tokenized by whitespace) are
   refused (exit 2), checked before any answer is generated; runs of different
   datasets are warned about (only their shared query ids pair).
 - `--fail-if <measure>:<stat><op><value>` (repeatable) exits 1 when a
@@ -525,6 +529,13 @@ list, top level or under `metadata`, which wins), taking the maximum.
   (`-5`, `1.5`, `C++`); `evaluation.answer_normalization: official_squad` is
   the official script (MuSiQue's evaluation uses it too) and `hotpotqa` adds
   HotpotQA's rule that a `yes`/`no`/`noanswer` span or gold earns token F1
-  only when the two are equal. Token F1 splits on whitespace, so for Chinese
-  and Japanese it degrades to exact match, and Korean particles make both
+  only when the two are equal. Under `default` token F1 tokenizes by script
+  (`token_f1_tokens: script_aware` in each report): a Han, Hangul or Kana
+  letter is a token of its own, as CMRC 2018 and KorQuAD score Chinese and
+  Korean by character, and a Korean particle attached to a gold word
+  (`서울은` for `서울`) is dropped first, so `東京都です` scores 0.75
+  against `東京都`. Under `official_squad` and `hotpotqa` tokens are
+  whitespace words, as in those scripts (`whitespace`), so for Chinese and
+  Japanese token F1 degrades to exact match there. Exact match compares
+  whole strings, so a Korean particle or a CJK copula still makes it
   under-count.

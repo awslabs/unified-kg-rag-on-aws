@@ -75,6 +75,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.evaluation import EvaluationManager
+from unified_kg_rag.evaluation.answer_match_evaluator import answer_scoring
 from unified_kg_rag.evaluation.closed_book import (
     CLOSED_BOOK_ARM,
     closed_book_arms,
@@ -915,10 +916,7 @@ class EvaluationRunner:
         evaluation = self.config.evaluation
         if EvaluatorType.ANSWER_MATCH not in evaluation.enabled_evaluators:
             return None
-        return {
-            "answer_span": evaluation.answer_span,
-            "answer_normalization": evaluation.answer_normalization,
-        }
+        return answer_scoring(evaluation)
 
     def _saved_runs_input(self) -> "_Measured":
         """The comparison input rebuilt from ``--from-results``."""

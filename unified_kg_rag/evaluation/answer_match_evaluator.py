@@ -38,20 +38,27 @@ records the span mode (``answer_span``) and the text scored
   word that answers the question (not a heading, not the determiner in
   "there is no clause", not part of a longer word such as "예외").
 - ``exact_match``: 1.0 if the normalized span equals the normalized reference.
-- ``token_f1``: harmonic mean of token precision/recall over whitespace tokens
-  (multiset overlap). Under ``hotpotqa`` a span or reference that is "yes",
-  "no" or "noanswer" scores 0 unless the two are equal.
+- ``token_f1``: harmonic mean of token precision/recall (multiset overlap).
+  Under ``default`` the tokens are script-aware
+  (``text_matching.script_tokens``): whitespace words, but a Han, Hangul or
+  Kana letter is a token of its own (character F1, as CMRC 2018 and KorQuAD
+  score Chinese and Korean), after a Korean particle attached to a reference
+  word is stripped. Under ``official_squad`` and ``hotpotqa`` they are
+  whitespace words, as in those scripts, so for Chinese and Japanese token
+  F1 degrades to exact match there. Under ``hotpotqa`` a span or reference
+  that is "yes", "no" or "noanswer" scores 0 unless the two are equal.
 
 References are the dataset ``answer`` plus optional ``metadata.answer_aliases``
 (a string or list of strings); each metric takes the max over references.
 A query with no reference is skipped. An abstained answer
 (``EvaluationResult.abstained``: the no-context reply, or a declined answer
 under ``search.abstention``) is a wrong answer: every metric scores 0, with
-``abstained`` in the report and no span extraction call. Tokens are whitespace-delimited, so for
-scripts written without spaces (Chinese, Japanese) token F1 degrades to exact
-match. Korean is space-delimited but attaches particles to words ("서울은"), so
-a correct answer rarely matches a bare gold token exactly; both metrics
-under-count for Korean.
+``abstained`` in the report and no span extraction call. Exact match
+compares whole normalized strings, so it under-counts an answer that adds
+a Korean particle ("서울은" for "서울") or a Chinese or Japanese copula.
+Each report records the token-F1 tokenization (``token_f1_tokens``:
+``script_aware`` or ``whitespace``), as does the run manifest's
+``answer_scoring``.
 """
 
 from __future__ import annotations
@@ -90,7 +97,12 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import NO_ANSWER_SPAN, AnswerSpanExtractionPrompt
 from unified_kg_rag.shared import EvaluationException, get_logger
 
-from .text_matching import normalize_answer, normalize_answer_squad, phrase_in_text
+from .text_matching import (
+    normalize_answer,
+    normalize_answer_squad,
+    phrase_in_text,
+    script_tokens,
+)
 
 logger = get_logger(__name__)
 
@@ -98,6 +110,7 @@ logger = get_logger(__name__)
 # scored, why an extracted span fell back to the first line, and that the
 # answer was a decline (scored 0).
 ANSWER_SPAN_KEY = "answer_span"
+TOKENS_KEY = "token_f1_tokens"
 SCORED_SPAN_KEY = "scored_span"
 SPAN_FALLBACK_KEY = "answer_span_fallback"
 ABSTAINED_KEY = "abstained"
@@ -229,10 +242,16 @@ def token_f1(
     normalize: Callable[[str], str] = normalize_answer,
     *,
     yes_no_exact: bool = False,
+    script_aware: bool | None = None,
 ) -> float:
     """Token F1; with ``yes_no_exact`` (HotpotQA's rule) a prediction or
     reference that normalizes to "yes", "no" or "noanswer" scores 0 unless
-    the two normalize equal."""
+    the two normalize equal. ``script_aware`` (default: with the default
+    ``normalize_answer``) tokenizes by script (``text_matching.script_tokens``:
+    a Han, Hangul or Kana letter per token, Korean particles stripped);
+    otherwise tokens are whitespace words, as in the official scripts."""
+    if script_aware is None:
+        script_aware = normalize is normalize_answer
     normalized_prediction = normalize(prediction)
     normalized_reference = normalize(reference)
     if (
@@ -241,8 +260,13 @@ def token_f1(
         and {normalized_prediction, normalized_reference} & _HOTPOTQA_EXACT_ONLY
     ):
         return 0.0
-    pred_tokens = normalized_prediction.split()
-    ref_tokens = normalized_reference.split()
+    if script_aware:
+        pred_tokens, ref_tokens = script_tokens(
+            normalized_prediction, normalized_reference
+        )
+    else:
+        pred_tokens = normalized_prediction.split()
+        ref_tokens = normalized_reference.split()
     if not pred_tokens or not ref_tokens:
         return float(pred_tokens == ref_tokens)
     overlap = sum((Counter(pred_tokens) & Counter(ref_tokens)).values())
@@ -251,6 +275,25 @@ def token_f1(
     precision = overlap / len(pred_tokens)
     recall = overlap / len(ref_tokens)
     return 2 * precision * recall / (precision + recall)
+
+
+def token_f1_tokens(normalization: str) -> str:
+    """The token-F1 tokenization of an ``evaluation.answer_normalization``:
+    ``script_aware`` under ``default``, ``whitespace`` under the official
+    scripts' normalizations."""
+    return "script_aware" if normalization == "default" else "whitespace"
+
+
+def answer_scoring(evaluation: Any) -> dict[str, Any]:
+    """How exact match and token F1 read an answer under the
+    ``EvaluationConfig`` ``evaluation`` (the run manifest's
+    ``answer_scoring``): two runs scored differently are not comparable on
+    them."""
+    return {
+        "answer_span": evaluation.answer_span,
+        "answer_normalization": evaluation.answer_normalization,
+        TOKENS_KEY: token_f1_tokens(evaluation.answer_normalization),
+    }
 
 
 class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
@@ -417,9 +460,16 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             normalize_answer if normalization == "default" else normalize_answer_squad
         )
         yes_no_exact = normalization == "hotpotqa"
+        script_aware = token_f1_tokens(normalization) == "script_aware"
         em = max(exact_match(span, ref, normalize) for ref in references)
         f1 = max(
-            token_f1(span, ref, normalize, yes_no_exact=yes_no_exact)
+            token_f1(
+                span,
+                ref,
+                normalize,
+                yes_no_exact=yes_no_exact,
+                script_aware=script_aware,
+            )
             for ref in references
         )
         return EvaluationReport(
@@ -439,6 +489,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                 **self._extract_search_metadata(result),
                 "num_references": len(references),
                 ANSWER_SPAN_KEY: self.answer_span,
+                TOKENS_KEY: token_f1_tokens(normalization),
                 # The whole answer is in the result already.
                 **({} if self.answer_span == "full" else {SCORED_SPAN_KEY: span}),
                 **span_metadata,
