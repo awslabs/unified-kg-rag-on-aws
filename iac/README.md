@@ -197,6 +197,12 @@ did-you-mean hint.
 | `cache_bucket_name` | — | Reuse an S3 cache bucket |
 | `corpus_bucket_name` | — | A bucket the corpus (or an evaluation dataset) is read from: both task roles get read access and, in `private` mode, the S3 endpoint allows it |
 
+**Application**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `methodologies` | — | Retrieval methodologies ingestion builds: `graphrag`, `lightrag`, `hipporag`, `raptor` (a list, or comma-separated). Sets `UKR__INDEXING__METHODOLOGIES` on both task definitions: every state-machine run builds this profile, and a query of a namespace without a build record reads it. An unknown name fails synth; unset, the image config's `indexing.methodologies` decides (default `graphrag`, `lightrag`). Adding or removing one: [Methodology profiles on the CDK stack](../docs/operations.md#methodology-profiles-on-the-cdk-stack) |
+
 **Compute**
 
 | Key | Default | Meaning |
@@ -473,7 +479,8 @@ docker push "$REGISTRY/graphrag-app:latest"
   `UKR__AWS__DYNAMODB__TABLE_NAME`,
   `UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING=false`,
   `UKR_METRICS_ENVIRONMENT` (`env_name`, the dimension the alarms watch) and,
-  when set, `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` and `__VERSION`.
+  when set, `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` and `__VERSION` and
+  `UKR__INDEXING__METHODOLOGIES` (`methodologies`).
 - Cache uploads use the bucket's default encryption, so with `use_cmk=true`
   objects are encrypted with the CMK.
 

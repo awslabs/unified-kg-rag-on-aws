@@ -431,6 +431,8 @@ From a `main` checkout (formats and keys no release had):
   [Design §6.5](docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
 - Methodology profiles (#596): `indexing.methodologies` (default `[graphrag, lightrag]`, today's union) selects what
   ingestion builds, so a LightRAG-only corpus (`[lightrag]`) runs no community detection and makes no report call.
+  On the CDK stack the `methodologies` context key sets it on both task definitions, so every state-machine run
+  builds the profile (#PR).
   The build record names the artifacts and methodologies a namespace holds; a query whose strategy reads another
   methodology fails before any model call naming what the namespace holds and how to add it, and `auto` routes only
   among the held ones. Adding a methodology to an incremental namespace rebuilds it once from its stored

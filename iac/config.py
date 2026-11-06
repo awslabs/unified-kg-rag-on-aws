@@ -132,6 +132,14 @@ cannot leave its setting at the default:
                                        Search on in the account/region and an
                                        image built with the `otel` extra
 
+  # --- Application ---
+  methodologies       None             retrieval methodologies ingestion builds
+                                       (UKR__INDEXING__METHODOLOGIES on both task
+                                       definitions, a JSON list): graphrag,
+                                       lightrag, hipporag, raptor (a list, or a
+                                       comma-separated string with -c); unset =
+                                       the image config's indexing.methodologies
+
   # --- Compute sizing (Fargate) ---
   fargate_cpu         2048             task vCPU units (in-task ProcessPool
                                        extractors scale with vCPU count)
@@ -371,6 +379,38 @@ def _as_secret_keys(key: str, value: Any) -> tuple[str, ...]:
     return names
 
 
+# The names of unified_kg_rag.domain.models.methodology.Methodology (the IaC
+# environment does not install the package; a test pins the two together).
+METHODOLOGIES = ("graphrag", "lightrag", "hipporag", "raptor")
+
+
+def _as_methodologies(key: str, value: Any) -> tuple[str, ...] | None:
+    """Methodology names: a JSON list, or a comma-separated string; each
+    once, in the order given."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        items: list[Any] = value.split(",")
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        raise ValueError(
+            f"{key} must be a list of methodologies or a comma-separated "
+            f"string, got {value!r}"
+        )
+    names = tuple(
+        dict.fromkeys(str(item).strip().lower() for item in items if str(item).strip())
+    )
+    unknown = [name for name in names if name not in METHODOLOGIES]
+    if unknown:
+        problem = "unknown methodology " + ", ".join(map(repr, unknown))
+    elif not names:
+        problem = "no methodology given"
+    else:
+        return names
+    raise ValueError(f"{key}: {problem}; valid: {', '.join(METHODOLOGIES)}")
+
+
 def _check_fargate_size(cpu: int, memory: int) -> None:
     if cpu not in _FARGATE_MEMORY:
         raise ValueError(
@@ -518,6 +558,11 @@ class DeploymentConfig:
         "LANGFUSE_PUBLIC_KEY",
         "LANGFUSE_SECRET_KEY",
     )
+    # indexing.methodologies of both tasks (UKR__INDEXING__METHODOLOGIES), so
+    # every state-machine run builds the profile and a query of a namespace
+    # without a build record reads it. None: the image config decides, and
+    # the templates are exactly as without the key.
+    methodologies: tuple[str, ...] | None = None
 
     @property
     def collector_cache_prefix(self) -> str:
@@ -812,6 +857,7 @@ class DeploymentConfig:
                     "LANGFUSE_PUBLIC_KEY,LANGFUSE_SECRET_KEY",
                 ),
             ),
+            methodologies=_as_methodologies("methodologies", ctx("methodologies")),
         )
         # ECR limits a pull-through cache repository prefix to 30 characters.
         if config.enable_cloudwatch_tracing and len(config.collector_cache_prefix) > 30:

@@ -163,6 +163,31 @@ def test_korean_analyzer_is_one_the_domain_has(
     )
 
 
+def _query_environment(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    task_defs = _compute_template(context).find_resources("AWS::ECS::TaskDefinition")
+    (task_def,) = [v for k, v in task_defs.items() if k.startswith("QueryTask")]
+    (container,) = task_def["Properties"]["ContainerDefinitions"]
+    return {e["Name"]: e["Value"] for e in container["Environment"]}
+
+
+def test_a_methodology_profile_reaches_both_tasks() -> None:
+    # Old behaviour: no context key set indexing.methodologies, so a profile
+    # set by a one-off task was undone by the next state-machine run, and a
+    # query of a namespace without a build record read the image default.
+    # Name must match the unified_kg_rag.application.config env override.
+    context = {"methodologies": "lightrag,raptor"}
+    for env in (_task_environment(context), _query_environment(context)):
+        assert json.loads(env["UKR__INDEXING__METHODOLOGIES"]) == [
+            "lightrag",
+            "raptor",
+        ]
+
+
+def test_without_a_methodology_profile_the_image_config_decides() -> None:
+    for env in (_task_environment(), _query_environment()):
+        assert "UKR__INDEXING__METHODOLOGIES" not in env
+
+
 def test_an_unpinned_guardrail_warns_that_the_tasks_apply_draft() -> None:
     from aws_cdk.assertions import Annotations, Match
 

@@ -578,6 +578,13 @@ class ComputeStack(Stack):
             # config model only accepts "structured" | "plain".
             "UKR__LOGGING__LOG_FORMAT": "structured",
         }
+        if self.config.methodologies:
+            # On both tasks: ingestion builds the profile on every state
+            # machine run, and a query of a namespace without a build record
+            # takes it to hold what this profile builds.
+            environment["UKR__INDEXING__METHODOLOGIES"] = json.dumps(
+                list(self.config.methodologies)
+            )
         if self.guardrail_identifier:
             environment["UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER"] = (
                 self.guardrail_identifier

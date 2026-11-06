@@ -258,3 +258,64 @@ def test_a_private_deployment_needs_the_secret_in_its_region(
         return
     with pytest.raises(ValueError, match="observability_secret_arn is in 'us-east-1'"):
         config.check_deploy_region("us-west-2")
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),
+        ("lightrag", ("lightrag",)),
+        (" LightRAG , raptor,lightrag ", ("lightrag", "raptor")),
+        (["graphrag", "hipporag"], ("graphrag", "hipporag")),
+    ],
+    ids=["unset", "one", "cli-string-deduplicated", "json-list"],
+)
+def test_methodologies_parse_a_list_or_a_cli_string(
+    value: Any, expected: tuple[str, ...] | None
+) -> None:
+    context = {} if value is None else {"methodologies": value}
+    assert _config(context).methodologies == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("lightrag,graph_rag", "unknown methodology 'graph_rag'; valid: graphrag"),
+        (" , ", "no methodology given"),
+        (3, "must be a list of methodologies"),
+    ],
+)
+def test_methodologies_fail_at_synth_naming_the_valid_ones(
+    value: Any, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _config({"methodologies": value})
+
+
+def test_methodology_names_are_the_packages() -> None:
+    # The IaC environment does not install the package: read the enum's
+    # values from its source, so a methodology added there is accepted here.
+    import ast
+    from pathlib import Path
+
+    from iac.config import METHODOLOGIES
+
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "unified_kg_rag"
+        / "domain"
+        / "models"
+        / "methodology.py"
+    )
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    (enum,) = (
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "Methodology"
+    )
+    values = tuple(
+        node.value.value
+        for node in enum.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+    )
+    assert values and values == METHODOLOGIES
