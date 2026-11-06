@@ -595,7 +595,7 @@ From a `main` checkout (formats and keys no release had):
   passages in the context (95% CI +8.4 to +13.8) and raised recall@5 after the rerank by 4.1 (+1.0 to +7.1), for
   about 0.4 s a query; answers are not measured yet. Graph retrievers gain
   `aneighbourhood_edges` (Neptune, Gremlin Server, SQLite; the relationships index under a document filter), and
-  `SearchQuery.max_hops` overrides the expansion depth (#PR).
+  `SearchQuery.max_hops` overrides the expansion depth (#597).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy (packed by tokens, on the fast model), steps
