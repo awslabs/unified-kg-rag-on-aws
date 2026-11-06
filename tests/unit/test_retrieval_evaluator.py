@@ -34,6 +34,7 @@ def _score(
     ranked: list[list[str]],
     refs: list[str],
     strategy: str | None = None,
+    types: list[str] | None = None,
 ) -> dict:
     result = EvaluationResult(
         query_id="q",
@@ -41,6 +42,7 @@ def _score(
         generated_answer="a",
         ground_truth="",
         retrieved_source_ids=ranked,
+        retrieved_source_types=types or [],
         search_strategy=strategy,
         metadata={"reference_sources": refs},
     )
@@ -146,6 +148,28 @@ class TestMetrics:
         assert out["metadata"]["first_relevant_rank"] == 4
         assert out["metadata"]["num_ranked_files"] == 4
         assert out["fraction"] == 1.0
+
+    @pytest.mark.parametrize("derived", ["summary", "community", "entity"])
+    def test_passages_rank_before_the_lineage_of_derived_sources(
+        self, evaluator: RetrievalEvaluator, derived: str
+    ) -> None:
+        # tree: a summary of three files ranked first, then its passages and
+        # the next passage. At its rank its lineage filled k=2, crowding out
+        # the gold passage at rank 3.
+        ranked = [["a.txt", "b.txt", "c.txt"], ["a.txt"], ["vendor.txt"]]
+        out = _score(evaluator, ranked, ["vendor.txt"], types=[derived, "text", "text"])
+        assert out["metrics"] == {"hit_at_k": 1.0, "recall_at_k": 1.0, "mrr": 0.5}
+        assert out["metadata"]["num_ranked_files"] == 4
+
+    def test_derived_sources_alone_rank_as_reported(
+        self, evaluator: RetrievalEvaluator
+    ) -> None:
+        # global: community reports only, so their order is the ranking.
+        ranked = [["a.pdf", "b.pdf", "c.pdf"], ["vendor.pdf"]]
+        out = _score(
+            evaluator, ranked, ["vendor.pdf"], types=["community", "community"]
+        )
+        assert out["metrics"] == {"hit_at_k": 0.0, "recall_at_k": 0.0, "mrr": 0.25}
 
     def test_repeated_file_counts_once(self, evaluator: RetrievalEvaluator) -> None:
         ranked = [["a.pdf"], ["A.pdf"], ["vendor.pdf"]]
