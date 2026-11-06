@@ -390,3 +390,28 @@ def test_package_modules_log_through_get_logger() -> None:
             ):
                 found.append(f"{relative}:{node.lineno}")
     assert found == [], f"use shared.get_logger(__name__): {found}"
+
+
+def test_package_loggers_carry_their_module_name() -> None:
+    # A module that logs under another module's name hides its records from
+    # a filter on its own name (the split-out pipeline and chain helpers did).
+    import ast
+
+    import unified_kg_rag
+
+    root = Path(unified_kg_rag.__file__).parent
+    found: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "get_logger"
+                and not (
+                    len(node.args) == 1
+                    and isinstance(node.args[0], ast.Name)
+                    and node.args[0].id == "__name__"
+                )
+            ):
+                found.append(f"{path.relative_to(root).as_posix()}:{node.lineno}")
+    assert found == [], f"use get_logger(__name__): {found}"

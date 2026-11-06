@@ -8,7 +8,7 @@ apply every key).
 
 The functions take the chain they validate for: it holds the config and
 the strategy instances (``_get_strategy_instance``), and it keeps
-``check_filter_keys`` and ``_validate_filter_keys`` as delegates.
+``check_filter_keys`` as a delegate.
 """
 
 from __future__ import annotations
@@ -35,9 +35,7 @@ from unified_kg_rag.shared.exceptions import SchemaSourceError
 if TYPE_CHECKING:
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
 
-# The chain's logger: the records keep the name they had before this module
-# was split out of it.
-logger = get_logger("unified_kg_rag.application.retrieval.rag_chain")
+logger = get_logger(__name__)
 
 
 def check_filter_keys(

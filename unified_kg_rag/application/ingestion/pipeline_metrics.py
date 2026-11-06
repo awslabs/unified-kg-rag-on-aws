@@ -4,9 +4,9 @@
 pipeline's metrics sink after each stage and when the run ends, and the
 summary logged at its end.
 
-The functions that read the pipeline (its cache manager, enabled stages,
-``METRIC_STAGES`` and metrics sink) take the ``DataIngestionPipeline``,
-which keeps a delegating method for each of them.
+The functions that read the pipeline (its cache manager, enabled stages
+and metrics sink) take the ``DataIngestionPipeline``, which keeps a
+delegating method for each of them.
 """
 
 from __future__ import annotations
@@ -24,9 +24,7 @@ from unified_kg_rag.shared.usage import merge_usage
 if TYPE_CHECKING:
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 
-# The pipeline's logger: the records keep the name they had before this
-# module was split out of it.
-logger = get_logger("unified_kg_rag.application.ingestion.pipeline")
+logger = get_logger(__name__)
 
 # The PipelineStageResult.metrics key of the stage's LLM usage
 # (shared.usage snapshot).
@@ -235,7 +233,7 @@ def emit_metrics(
         return last[-1] if last else None
 
     def emitted(name: str) -> bool:
-        stages = pipeline.METRIC_STAGES.get(name)
+        stages = METRIC_STAGES.get(name)
         if stage_name is None:
             return stages is None
         return stages is not None and completes(stages) == stage_name

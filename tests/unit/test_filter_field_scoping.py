@@ -37,6 +37,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     entity_properties,
 )
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.application.retrieval import filter_validation
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Claim,
@@ -597,17 +598,17 @@ def test_neptune_schema_covers_indexed_entity_properties(config: Config) -> None
 
 def test_chain_accepts_keys_some_retriever_declares(config: Config) -> None:
     retrievers = [_retriever(config, _FakeOpenSearchClient()), _neptune(config)]
-    GraphRAGChain._validate_filter_keys(
+    filter_validation.validate_filter_keys(
         {"type": "PERSON", "attr_category": "research", "status": "open"},
         retrievers,
     )
-    GraphRAGChain._validate_filter_keys(None, retrievers)
+    filter_validation.validate_filter_keys(None, retrievers)
 
 
 def test_chain_rejects_key_no_retriever_declares(config: Config) -> None:
     retrievers = [_retriever(config, _FakeOpenSearchClient()), _neptune(config)]
     with pytest.raises(InvalidFilterError) as exc:
-        GraphRAGChain._validate_filter_keys(
+        filter_validation.validate_filter_keys(
             {"category": "research", "entity_type": "person", "type": "PERSON"},
             retrievers,
         )
@@ -620,7 +621,7 @@ def test_chain_rejects_key_no_retriever_declares(config: Config) -> None:
 def test_chain_scopes_validation_to_the_strategy_retrievers(config: Config) -> None:
     # ``status`` exists only on the OpenSearch claims index.
     with pytest.raises(InvalidFilterError, match="status"):
-        GraphRAGChain._validate_filter_keys({"status": "open"}, [_neptune(config)])
+        filter_validation.validate_filter_keys({"status": "open"}, [_neptune(config)])
 
 
 def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
@@ -938,7 +939,6 @@ def test_global_reserves_community_ids_only_with_text_unit_slots(
 
 
 def test_auto_logs_the_strategies_the_filters_leave_out(config: Config, mocker) -> None:
-    from unified_kg_rag.application.retrieval import filter_validation
     from unified_kg_rag.domain.models import SearchStrategy
 
     chain = _strategy_chain(config)
@@ -1115,7 +1115,7 @@ def test_chain_accepts_any_key_for_a_backend_without_schema(config: Config) -> N
         def filter_fields(self) -> None:
             return None
 
-    GraphRAGChain._validate_filter_keys(
+    filter_validation.validate_filter_keys(
         {"anything": "goes"},
         [_neptune(config), _CustomRetriever()],  # type: ignore[list-item]
     )

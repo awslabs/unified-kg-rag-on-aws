@@ -1012,15 +1012,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         queries (an interactive session)."""
         filter_validation.check_filter_keys(self, filters, strategy)
 
-    @staticmethod
-    def _validate_filter_keys(
-        filters: dict[str, Any] | None,
-        retrievers: list[BaseGraphRAGRetriever],
-        prefixes: list[str] | None = None,
-    ) -> None:
-        """``filter_validation.validate_filter_keys``."""
-        filter_validation.validate_filter_keys(filters, retrievers, prefixes)
-
     def _get_strategy_instance(
         self, strategy_type: SearchStrategy
     ) -> BaseSearchStrategy:
