@@ -23,6 +23,10 @@ run-rag --query "How does entity X relate to Y?" \
 # Retrieval only, JSON output
 run-rag --query "..." --mode search --output-format json --config-path config.yaml
 
+# HippoRAG 2 PageRank (opt-in; auto never routes to it)
+run-rag --query "Where was the founder of the company that acquired X born?" \
+  --search-strategy ppr --config-path config.yaml
+
 # Verbose (entities, top sources, metrics) with attribute filters
 run-rag --query "..." --verbose --filters attr_category:research type:person \
   --config-path config.yaml
@@ -48,6 +52,19 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 저장소별로 필터할 수 있는 모든 필드, 값의 유형, 날짜, 전략별로 적용되는 키, 그래프
 확장의 필터 처리는 [필터 레퍼런스](../reference/filters.md)(영문)에 있습니다. 필터는 접근
 제어 수단이 아닙니다([접근 제어 경계가 아님](../concepts/scopes-and-namespaces.ko.md#접근-제어-경계가-아님)).
+
+## 개인화 PageRank(`ppr`)
+
+`--search-strategy ppr`은 HippoRAG 2의 검색으로 답합니다. 질문의 관계·문단 검색
+결과를 시작점으로 그 주변 그래프에 PageRank를 실행해 문단 순위를 정합니다(질의 엔티티
+추출 없이 LLM 호출 1회). 관계 벡터 인덱스와 그래프가 필요하고 커뮤니티 보고서는 필요하지
+않습니다. 설정은 `search.ppr_search`이고, 융합 버킷(`ppr_passages`,
+`ppr_seed_text_units`, `ppr_facts`)에는 `search.fusion.fusion_weights`를 쓸 수 있습니다.
+`search.local_search.text_unit_ranking: ppr`는 같은 방식으로 `local`의 텍스트 단위
+순서를 정합니다. 둘 다 측정 전까지는 선택 사항입니다.
+[검색](../concepts/retrieval.ko.md)과
+[설계 §6.4](../design.md#64-hipporag-2-personalized-pagerank-opt-in-ppr-local-ranking)(영문)을
+참고하세요.
 
 ## 재순위화 상태
 

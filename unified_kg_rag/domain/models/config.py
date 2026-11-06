@@ -51,6 +51,7 @@ from .provider_config import (
 )
 from .retrieval import (
     SearchStrategy,
+    SearchType,
     validate_path_segment,
     validate_safe_name,
 )
@@ -3487,11 +3488,12 @@ class FusionConfig(BaseModel):
             "lightrag_endpoint_entities, lightrag_incident_relationships, "
             "lightrag_chunks, lightrag_linked_chunks (the chunks the entities "
             "cite), lightrag_relation_chunks (those the relationships cite)), "
-            "simple (vector_all), global (text_units), drift (results) and "
+            "simple (vector_all), global (text_units), drift (results), "
             "iterative (iterative_round_<n>, round n's base search, 0 the "
             "first; iterative_round_<n>_text, its follow-up queries' text "
             "units; fused once more over the rounds, the base's own buckets "
-            "fused within each). A "
+            "fused within each) and ppr (ppr_passages, ppr_seed_text_units, "
+            "ppr_facts). A "
             "bucket without a key weighs 1.0 (the default: none). A weight on "
             "the former bucket opensearch_all applies to vector_all, with a "
             "warning; one on the retired opensearch_community_reports, "
@@ -3747,6 +3749,44 @@ class LocalSearchConfig(BaseModel):
             "repeats), membership scored exact match 4.0 points (95% CI "
             "-7.75 to -0.25) and token F1 4.1 points (-7.7 to -0.6) lower, "
             "for about 0.5% fewer tokens."
+        ),
+    )
+    text_unit_ranking: Literal["support", "ppr"] = Field(
+        default="support",
+        description=(
+            "How local search (and each DRIFT follow-up) orders the text units "
+            "of its expanded entities before the text quota cuts them. "
+            "'support': by how many expanded entities cite a unit, then the "
+            "best citing entity's score (the default). 'ppr' (opt-in): "
+            "HippoRAG 2's Personalized PageRank over the expanded entities, "
+            "their relationships and their text units, seeded by the seed "
+            "entities (hit score over the text units cited), the endpoints of "
+            "the question's ppr_seed_relationships relationship hits (kNN) and "
+            "its search.ppr_search.passage_seed_top_k text-unit hits (BM25 + "
+            "vector, weighted by passage_node_weight), which it ranks too; the "
+            "PageRank settings are search.ppr_search's. On 200 MuSiQue "
+            "questions (retrieval only) it raised the supporting passages in "
+            "the context by 11.0 points (95% CI +8.4 to +13.8) and recall@5 "
+            "after the rerank by 4.1 (+1.0 to +7.1), against 6.4 for fusing "
+            "the same passage hits without the PageRank, for about 0.4 s more "
+            "a query on the embedded stores; answers are not measured yet, so "
+            "support stays the default. Costs a text-unit search, a "
+            "relationship search and an edge read a query. See "
+            "docs/design.md §6.4."
+        ),
+    )
+    ppr_seed_relationships: int = Field(
+        default=5,
+        ge=0,
+        description=(
+            "text_unit_ranking: ppr only: also seed the PageRank with the "
+            "endpoints of the question's this many relationships-index hits "
+            "(HippoRAG 2's query-to-fact seeding, under "
+            "search.ppr_search.fact_search_type), each adding the mean score "
+            "of its hits to the entity's own seed score before the division by "
+            "the text units it cites; an endpoint the expansion did not reach "
+            "is read from the entities index. 0 = off (the measured setting "
+            "is 5). Needs indexing.opensearch.build_relationship_vector_index."
         ),
     )
 
@@ -4078,6 +4118,146 @@ class IterativeSearchConfig(BaseModel):
     )
 
 
+class PPRSearchConfig(BaseModel):
+    """HippoRAG 2 Personalized PageRank (the ``ppr`` strategy; its PageRank
+    settings also serve search.local_search.text_unit_ranking: ppr).
+
+    Opt-in: the defaults are HippoRAG 2's (damping 0.5, passage node weight
+    0.05, 5 linked facts), the ones local's measured ranking uses; the ppr
+    strategy's answers are not measured yet. See docs/design.md §6.4.
+    """
+
+    fact_top_k: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Relationships-index hits of the question (the facts, searched by "
+            "fact_search_type) that seed the ppr strategy's PageRank through "
+            "their endpoint entities, each endpoint weighted by the mean score "
+            "of its facts (relative to the best) over the text units it cites "
+            "(HippoRAG 2's linking_top_k, 5); the facts also form the "
+            "ppr_facts fusion bucket. Without the relationship vector index "
+            "the entities-index hits of the question seed instead, this many."
+        ),
+    )
+    fact_search_type: SearchType | None = Field(
+        default=SearchType.VECTOR,
+        description=(
+            "How the facts (relationships-index hits) are searched, for the "
+            "ppr strategy and local's ppr_seed_relationships: vector (the "
+            "default: kNN of the question against the relationship "
+            "descriptions, HippoRAG 2's query-to-fact similarity and the "
+            "measured setting), lexical, hybrid, or null for the request's "
+            "search_type. The passage seeds always use the request's (BM25 + "
+            "vector by default)."
+        ),
+    )
+    link_top_k: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Seed entities that keep their weight, best first (HippoRAG 2's "
+            "link_top_k)."
+        ),
+    )
+    entity_seed_top_k: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Also seed with this many entities-index hits of the question "
+            "(weighted by hit score over the text units they cite). 0 = off "
+            "(HippoRAG 2 seeds from facts only)."
+        ),
+    )
+    passage_seed_top_k: int = Field(
+        default=20,
+        ge=0,
+        description=(
+            "Text-unit hits of the question (BM25 + vector under the default "
+            "hybrid search) that seed the PageRank as passage nodes, weighted "
+            "by passage_node_weight times their min-max normalized score; "
+            "in the ppr strategy they also form the ppr_seed_text_units fusion "
+            "bucket. 0 = no passage seeds."
+        ),
+    )
+    passage_node_weight: float = Field(
+        default=0.05,
+        ge=0.0,
+        description=(
+            "Reset weight of the best passage seed relative to a fact's score "
+            "(HippoRAG 2's passage_node_weight, 0.05): small, so the facts' "
+            "entities steer the walk and the passage search breaks ties."
+        ),
+    )
+    damping: float = Field(
+        default=0.5,
+        gt=0.0,
+        lt=1.0,
+        description=(
+            "Probability that the PageRank walk follows an edge rather than "
+            "restarting at the seeds (HippoRAG 2: 0.5). At 0.5 at most "
+            "0.5^(h+1) of the mass lies more than h hops from the seeds, "
+            "which is why a bounded neighbourhood stands in for the whole "
+            "graph."
+        ),
+    )
+    max_iterations: int = Field(
+        default=30,
+        ge=1,
+        description="Power-iteration steps at most",
+    )
+    tolerance: float = Field(
+        default=1e-6,
+        gt=0.0,
+        description="The power iteration stops once the L1 change is below this",
+    )
+    max_hops: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "Depth of the ppr strategy's graph expansion around the seed "
+            "entities (local's ranking uses local's own expansion)."
+        ),
+    )
+    max_neighbourhood_entities: int = Field(
+        default=100,
+        ge=1,
+        description=(
+            "Entities besides the seeds the ppr strategy's expansion keeps "
+            "(its top_k; the expansion over-fetches by "
+            "indexing.neptune.traversal_fetch_multiplier and splits the "
+            "budget across the seeds by fact score)."
+        ),
+    )
+    max_edges_per_vertex: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "Relationships one entity contributes to the PageRank graph at "
+            "most, the first by relationship id, so a hub cannot fill it."
+        ),
+    )
+    entity_frequency_threshold: int = Field(
+        default=20,
+        ge=1,
+        description=(
+            "An entity citing more document text units than this links to "
+            "none of them in the ppr strategy's graph, a seed too (it still "
+            "passes its mass on through its relationships); local's ranking "
+            "uses search.local_search.entity_frequency_threshold."
+        ),
+    )
+    rerank: bool = Field(
+        default=True,
+        description=(
+            "Rerank the ppr strategy's passages with the configured reranker, "
+            "as local reranks its text units; false keeps the fused order "
+            "(rerank status skipped), closer to HippoRAG 2, which does not "
+            "rerank passages."
+        ),
+    )
+
+
 def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrategy]:
     if SearchStrategy.AUTO in strategies:
         raise ValueError("auto_routable_strategies cannot include 'auto'")
@@ -4085,6 +4265,12 @@ def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrate
         raise ValueError(
             "auto_routable_strategies cannot include 'iterative': it is "
             "opt-in and unmeasured, so the router does not pick it; select "
+            "it explicitly"
+        )
+    if SearchStrategy.PPR in strategies:
+        raise ValueError(
+            "auto_routable_strategies cannot include 'ppr' until a "
+            "measurement shows where it wins (docs/design.md §6.4); select "
             "it explicitly"
         )
     return strategies
@@ -4226,9 +4412,10 @@ class SearchConfig(BaseModel):
             "namespace holds are offered (on a LightRAG-only namespace none "
             "of local, global, drift and simple), and local or mix is used "
             "when nothing is left; with one strategy left no router call is "
-            "made. auto itself is rejected; every strategy stays selectable "
-            "explicitly, and one of a methodology the namespace does not "
-            "hold is refused."
+            "made. auto itself is rejected, and so are iterative and ppr "
+            "until a measurement shows where they win; every strategy stays "
+            "selectable explicitly, and one of a methodology the namespace "
+            "does not hold is refused."
         ),
     )
     hybrid: HybridConfig = Field(
@@ -4256,6 +4443,10 @@ class SearchConfig(BaseModel):
     iterative_search: IterativeSearchConfig = Field(
         default_factory=IterativeSearchConfig,
         description="Iterative bridge follow-up search configuration (opt-in)",
+    )
+    ppr_search: PPRSearchConfig = Field(
+        default_factory=PPRSearchConfig,
+        description="HippoRAG 2 Personalized PageRank search configuration",
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"

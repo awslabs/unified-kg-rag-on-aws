@@ -1960,12 +1960,16 @@ reports it above its dense-retrieval baselines on the multi-hop sets
 on a measured answer-level result (§9.1).
 
 - **`ppr` strategy** (`adapters/search_strategies/ppr_search.py`,
-  `methodology = "hipporag"`, config `search.ppr_search`): the HippoRAG 2
-  retrieval as a strategy of its own. No query-time LLM call besides the
-  answer (no entity or keyword extraction). It reads the entities,
-  relationships (and their vector index), text units and the graph; no
-  community report, so it serves an index built with
-  `graph.community_detection.enabled: false`. `auto` never routes to it
+  `methodology = Methodology.HIPPORAG`, config `search.ppr_search`): the
+  HippoRAG 2 retrieval as a strategy of its own. No query-time LLM call
+  besides the answer (no entity or keyword extraction). It reads the
+  entities, relationships and their vector index, text units and the graph
+  (the `hipporag` profile of §4.6, what `lightrag` builds); no community
+  report, so it serves a namespace built with `indexing.methodologies:
+  [hipporag]` or `[lightrag]`, and a namespace without the relationship
+  vector index (`[graphrag]` with `build_relationship_vector_index: false`)
+  refuses it before any model call (`MethodologyNotIndexedError`). The
+  `local` ranking below stays a `graphrag` strategy. `auto` never routes to it
   (`search.auto_routable_strategies` refuses it) until a measurement says
   where it wins.
 - **`local` ranking** (`search.local_search.text_unit_ranking: ppr`,
@@ -1992,8 +1996,9 @@ on a measured answer-level result (§9.1).
    (*passage seeds*) under the request's `search_type` (BM25 + kNN fused by
    default), so vector, lexical and graph signals all seed. With
    `entity_seed_top_k` (default 0) the entities-index hits of the question
-   seed too; without the relationship vector index they take the facts'
-   place (`fact_top_k` of them), so the strategy still seeds the graph.
+   seed too; should the relationship vector index be off at query time on a
+   namespace that holds it, they take the facts' place (`fact_top_k` of
+   them), so the strategy still seeds the graph.
 2. *Neighbourhood*: graph expansion (§6, the graph walk or, under a document
    filter, the walk over the relationships index) from the facts' endpoints
    and the entity hits, `max_hops` (2) deep, at most

@@ -5,7 +5,7 @@
 It is a distribution, it equals the exact solution of its linear system,
 raising a node's reset mass never lowers its score, and the PPR of a graph
 cut to the ``h``-hop ball around the seeds differs from the whole graph's by
-at most ``2 d^(h+1)`` in L1: the bound docs/design.md §6.3 rests on.
+at most ``2 d^(h+1)`` in L1: the bound docs/design.md §6.4 rests on.
 """
 
 from __future__ import annotations

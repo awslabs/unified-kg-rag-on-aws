@@ -1742,7 +1742,7 @@ def test_graph_expansion_does_not_depend_on_the_edge_write_order(
     assert x.endswith("Path: S2 -> X"), x
 
 
-# --- neighbourhood edges (the PageRank graph, docs/design.md §6.3) -----------
+# --- neighbourhood edges (the PageRank graph, docs/design.md §6.4) -----------
 
 
 def _edges_within(

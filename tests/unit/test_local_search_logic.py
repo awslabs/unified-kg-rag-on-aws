@@ -58,6 +58,7 @@ def _bare_strategy(
                 entity_frequency_threshold=20,
                 seed_score_ratio=0.6,
                 report_selection="similarity",
+                text_unit_ranking="support",
             ),
             hybrid=SimpleNamespace(lexical_weight=0.5, vector_weight=0.5),
             max_concurrency=4,

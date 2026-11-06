@@ -14,7 +14,7 @@ the scores and the passage order. Run them with::
     HIPPORAG_SRC=/path/to/HippoRAG uv run --with python-igraph==0.11.8 \\
         pytest tests/unit/test_ppr_hipporag_parity.py
 
-docs/design.md §6.3 lists the deliberate differences (a bounded
+docs/design.md §6.4 lists the deliberate differences (a bounded
 neighbourhood, hybrid seeds, no recognition-memory filter), which these
 fixtures leave out: they compare the algorithm on identical inputs.
 """

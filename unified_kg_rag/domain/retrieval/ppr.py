@@ -8,7 +8,7 @@ the question and with a passage search, over a graph of entities and the
 passages that cite them, and ranks the passages by their PPR score. This
 module is that algorithm, reimplemented on in-memory data: the search
 strategies read the graph and the seeds from the stores
-(docs/design.md §6.3) and hand them here.
+(docs/design.md §6.4) and hand them here.
 
 - :func:`personalized_pagerank`: power iteration on an undirected weighted
   graph, the mass of a node without edges returned to the reset vector (as
@@ -181,7 +181,7 @@ def summed_seed_weights(
     """Entity reset weights for ``local``'s ranking: an entity's own hit
     score (``entity_scores``) plus the mean score of the ``facts`` naming
     it, divided by the passages it cites (at least 1). The variant measured
-    on this stack (docs/design.md §6.3); ``seed_weights`` is HippoRAG 2's
+    on this stack (docs/design.md §6.4); ``seed_weights`` is HippoRAG 2's
     for the ``ppr`` strategy. Non-positive totals seed nothing."""
     fact_scores: dict[str, list[float]] = {}
     for score, entities in facts:

@@ -669,6 +669,14 @@ STRATEGY_ROUTING_GUIDE: dict[SearchStrategy, str] = {
      part of
    - Examples: "Where was the founder of the company that acquired the startup born", "Which port serves the
      warehouse of the carrier the supplier hired\"""",
+    SearchStrategy.PPR: """PPR SEARCH
+   - Method: The relationships and passages most similar to the question seed a personalized PageRank over the
+     graph around them, which ranks the passages that connect the facts
+   - Purpose: Multi-hop questions whose facts chain through a few entities, without query-time entity extraction
+   - Optimal for: Bridge questions over two or more facts, questions whose entities the question does not name
+     exactly
+   - Examples: "Where was the founder of the company that acquired the startup born", "Which city hosts the
+     plant of the supplier the buyer chose\"""",
 }
 
 

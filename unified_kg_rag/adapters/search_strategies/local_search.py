@@ -6,7 +6,11 @@ from typing import Any, ClassVar
 
 from langchain_core.runnables import RunnableConfig
 
-from unified_kg_rag.adapters.retrieval.base import BaseSearchStrategy, scope_filters
+from unified_kg_rag.adapters.retrieval.base import scope_filters
+from unified_kg_rag.adapters.retrieval.ppr_ranking import (
+    PPRRankingMixin,
+    endpoint_ids,
+)
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
     register_strategy,
@@ -24,15 +28,20 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
+from unified_kg_rag.domain.retrieval.ppr import summed_seed_weights
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
-from unified_kg_rag.shared.utils.concurrency import gather_bounded, gather_or_cancel
+from unified_kg_rag.shared.utils.concurrency import (
+    cancel_on_exit,
+    gather_bounded,
+    gather_or_cancel,
+)
 
 logger = get_logger(__name__)
 
 
 @register_strategy(SearchStrategy.LOCAL, query_inputs=frozenset({QueryInput.ENTITIES}))
-class LocalSearchStrategy(BaseSearchStrategy):
+class LocalSearchStrategy(PPRRankingMixin):
     methodology = Methodology.GRAPHRAG
 
     # Entities-index hits fetched per focus entity, among which its exact
@@ -151,14 +160,44 @@ class LocalSearchStrategy(BaseSearchStrategy):
                 "expanded_entity_count": chain_stats["expanded_entity_count"],
                 "text_unit_count": chain_stats["text_unit_count"],
                 "report_selection": "membership" if by_membership else "similarity",
+                "text_unit_ranking": self.config.search.local_search.text_unit_ranking,
+                **({"ppr": chain_stats["ppr"]} if "ppr" in chain_stats else {}),
                 "rerank": rerank.summary(),
             },
         )
 
+    def _ranks_by_ppr(self) -> bool:
+        return self.config.search.local_search.text_unit_ranking == "ppr"
+
     async def _retrieve_entity_chain(
         self, query: SearchQuery
-    ) -> tuple[dict[str, list[RetrievalResult]], dict[str, int]]:
-        """Entities -> Neptune expansion -> ranked text units (the dependent chain)."""
+    ) -> tuple[dict[str, list[RetrievalResult]], dict[str, Any]]:
+        """Entities -> Neptune expansion -> ranked text units (the dependent chain).
+
+        Under ``text_unit_ranking: ppr`` the PageRank's seed searches (the
+        passage hits and, with ``ppr_seed_relationships``, the relationship
+        hits of the question) start first and run alongside the entities
+        and the expansion; they are cancelled if the chain fails."""
+        if not self._ranks_by_ppr():
+            return await self._entity_chain(query, None)
+        seeds = asyncio.ensure_future(
+            gather_or_cancel(
+                [
+                    self._passage_seed_hits(query),
+                    self._fact_hits(
+                        query, self.config.search.local_search.ppr_seed_relationships
+                    ),
+                ]
+            )
+        )
+        async with cancel_on_exit([seeds]):
+            return await self._entity_chain(query, seeds)
+
+    async def _entity_chain(
+        self,
+        query: SearchQuery,
+        ppr_seeds: asyncio.Future[list[list[RetrievalResult]]] | None,
+    ) -> tuple[dict[str, list[RetrievalResult]], dict[str, Any]]:
         candidate_hits = await self._find_candidate_entities(query)
         candidate_entity_ids = [str(hit.source) for hit in candidate_hits]
         logger.debug(
@@ -205,7 +244,16 @@ class LocalSearchStrategy(BaseSearchStrategy):
         # Fusion keeps at most the text quota of them: fetch no more (the
         # first that pass, under a filter on text units).
         text_quota = self._per_type_quota(query.top_k)[SectionType.TEXT.value]
-        ranked_unit_ids = self._rank_text_unit_ids(filtered_entity_nodes)
+        passage_hits: list[RetrievalResult] = []
+        ppr_stats: dict[str, Any] | None = None
+        ranked_unit_ids: list[str] = []
+        if ppr_seeds is not None:
+            passage_hits, fact_hits = await ppr_seeds
+            ranked_unit_ids, ppr_stats = await self._ppr_ranked_unit_ids(
+                query, filtered_entity_nodes, candidate_hits, passage_hits, fact_hits
+            )
+        if not ranked_unit_ids:
+            ranked_unit_ids = self._rank_text_unit_ids(filtered_entity_nodes)
         logger.debug(
             "Found %s text units: '%s%s'",
             len(ranked_unit_ids),
@@ -248,12 +296,56 @@ class LocalSearchStrategy(BaseSearchStrategy):
             all_results["bridge_relationships"] = bridge_relationships
         if reports_task is not None and (member := reports_task.result()) is not None:
             all_results[self._MEMBER_REPORTS] = member
-        stats = {
+        stats: dict[str, Any] = {
             "candidate_entity_count": len(candidate_entity_ids),
             "expanded_entity_count": len(expanded_entity_ids),
             "text_unit_count": len(text_units.get("text_units", [])),
         }
+        if ppr_stats is not None:
+            stats["ppr"] = ppr_stats
         return all_results, stats
+
+    async def _ppr_ranked_unit_ids(
+        self,
+        query: SearchQuery,
+        entity_nodes: list[RetrievalResult],
+        seed_hits: list[RetrievalResult],
+        passage_hits: list[RetrievalResult],
+        fact_hits: list[RetrievalResult],
+    ) -> tuple[list[str], dict[str, Any]]:
+        """``text_unit_ranking: ppr``: the expanded entities' text units and
+        the passage hits by PageRank score (docs/design.md §6.4), and the
+        run's counts. An entity weighs its seed hit's score plus the mean
+        score of the relationship hits naming it, over the text units it
+        cites (``summed_seed_weights``); a relationship endpoint the
+        expansion did not reach is read from the entities index. The passage
+        hits are seeds and candidates of the ranking, not a fusion bucket of
+        their own. ``[]`` (support ranking) when nothing seeds a passage."""
+        reached = {self._entity_id(node) for node in entity_nodes}
+        endpoints = [
+            end
+            for end in dict.fromkeys(e for hit in fact_hits for e in endpoint_ids(hit))
+            if end not in reached
+        ]
+        nodes = [*entity_nodes, *await self._entities_by_id(query, endpoints)]
+        counts = {self._entity_id(node): self._text_unit_count(node) for node in nodes}
+        own: dict[str, float] = {}
+        for hit in seed_hits:
+            key = self._entity_id(hit)
+            own[key] = own.get(key, 0.0) + float(hit.score or 0.0)
+        ranked, stats = await self._ppr_rank(
+            query,
+            nodes,
+            summed_seed_weights(
+                own,
+                [(float(hit.score or 0.0), endpoint_ids(hit)) for hit in fact_hits],
+                counts,
+            ),
+            passage_hits,
+            frequency_threshold=self.config.search.local_search.entity_frequency_threshold,
+        )
+        stats["fact_seeds"] = len(fact_hits)
+        return ranked, stats
 
     @staticmethod
     def _with_hit_filters(

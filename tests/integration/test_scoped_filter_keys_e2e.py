@@ -28,6 +28,9 @@ _SCOPING = [
     SearchStrategy.MIX,
     SearchStrategy.HYBRID,
 ]
+# ppr returns passages and relationships, no entity: an entity id filter
+# keeps nothing of it (test_an_id_filter_leaves_ppr_nothing_else).
+_EDGE_SCOPING = [*_SCOPING, SearchStrategy.PPR]
 
 
 @pytest.fixture(scope="module")
@@ -65,7 +68,7 @@ def _search(chain: GraphRAGChain, strategy: SearchStrategy, filters: dict) -> li
     ).search_results.results
 
 
-@pytest.mark.parametrize("strategy", _SCOPING, ids=lambda s: s.value)
+@pytest.mark.parametrize("strategy", _EDGE_SCOPING, ids=lambda s: s.value)
 def test_a_source_id_filter_keeps_only_that_sources_edges(
     stored: Any, strategy: SearchStrategy
 ) -> None:
@@ -89,8 +92,16 @@ def test_an_id_filter_keeps_only_that_artifact(
     assert ids == {vendor}, strategy
 
 
+def test_an_id_filter_leaves_ppr_nothing_else(stored: Any) -> None:
+    chain, entities = stored
+    vendor = entities["Vendor"]
+    results = _search(chain, SearchStrategy.PPR, {"id": [vendor]})
+    ids = {(r.metadata or {}).get("id") or r.chunk_id or r.source for r in results}
+    assert ids <= {vendor}
+
+
 @pytest.mark.parametrize("key", ["id", "source_id", "target_id"])
-@pytest.mark.parametrize("strategy", _SCOPING, ids=lambda s: s.value)
+@pytest.mark.parametrize("strategy", _EDGE_SCOPING, ids=lambda s: s.value)
 def test_a_range_on_a_scoped_key_is_refused(
     stored: Any, strategy: SearchStrategy, key: str
 ) -> None:

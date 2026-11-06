@@ -70,6 +70,9 @@ class SearchStrategy(str, Enum):
     # Wraps local or mix (search.iterative_search.base): bounded follow-up
     # rounds on the bridge entities a fast-model controller names.
     ITERATIVE = "iterative"
+    # HippoRAG 2 Personalized PageRank over entities and passages (opt-in;
+    # not routable by auto until measured).
+    PPR = "ppr"
 
 
 class SearchType(str, Enum):

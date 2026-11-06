@@ -1246,7 +1246,7 @@ class BaseSearchStrategy(ABC):
         """The relationships between two of ``vertex_ids`` (entity ids), each
         vertex contributing at most its first ``per_vertex`` by id
         (``BaseGraphRAGRetriever.aneighbourhood_edges``), for a PPR over a
-        neighbourhood the expansion reached (docs/design.md §6.3).
+        neighbourhood the expansion reached (docs/design.md §6.4).
 
         Under a document filter the graph cannot tell which edges a passing
         document states, so they are read from the relationships index, as
