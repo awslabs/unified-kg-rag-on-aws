@@ -381,6 +381,17 @@ class PipelineMetrics(BaseModel):
         description="Incremental runs: stored items whose derived attributes "
         "the indexing stage could not recompute (they keep their stored ones)",
     )
+    total_tree_summaries_failed: int = Field(
+        default=0,
+        description="Summaries of the RAPTOR summary tree that failed (their "
+        "children moved up a level: the tree is partial until a run builds "
+        "them again)",
+    )
+    total_tree_uncovered_leaves: int = Field(
+        default=0,
+        description="indexing.summary_tree.refresh: on_reset: stored text units "
+        "no summary of the tree covers until a reset rebuilds it",
+    )
     gleaning_improvement_rate: float = Field(
         default=0.0,
         description="Entities plus relationships gleaning added, per entity "

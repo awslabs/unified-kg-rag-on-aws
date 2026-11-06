@@ -81,6 +81,8 @@ METRIC_STAGES: dict[str, frozenset[str]] = {
     "total_documents_deleted": frozenset({"indexing"}),
     "total_records_not_stored": frozenset({"graph_resolution", "claim_extraction"}),
     "underived_items": frozenset({"indexing"}),
+    "total_tree_summaries_failed": frozenset({"summary_tree"}),
+    "total_tree_uncovered_leaves": frozenset({"summary_tree"}),
     "total_gleaning_failures": frozenset({"gleaning"}),
     "total_claim_extraction_failures": frozenset({"claim_extraction"}),
 }
@@ -201,6 +203,14 @@ def create_pipeline_metrics(
         ),
         "underived_items": int(
             get_stage_metric(context, "indexing", "underived_items")
+        ),
+        # A partial summary tree degrades tree retrieval without failing the
+        # run; so do the text units an on_reset tree leaves uncovered.
+        "total_tree_summaries_failed": int(
+            get_stage_metric(context, "summary_tree", "summaries_failed")
+        ),
+        "total_tree_uncovered_leaves": int(
+            get_stage_metric(context, "summary_tree", "tree_uncovered_leaves")
         ),
         "cache_hit_rate": cache_stats.hit_rate,
         "cache_size_mb": cache_stats.total_size_mb,
