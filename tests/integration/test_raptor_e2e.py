@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from tests.fixtures.fakes.chat_models import CountingResponder
+from tests.fixtures.fakes.chat_models import SUMMARY_TREE_PROMPT, CountingResponder
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - fixture
@@ -710,7 +710,7 @@ def test_a_partial_tree_is_reported_to_the_metrics_sink(
     failed: list[int] = []
 
     def flaky(system: str, human: str) -> str:
-        if TREE_PROMPT in system and not failed:
+        if SUMMARY_TREE_PROMPT in system and not failed:
             failed.append(1)
             return ""  # answered nothing: the summary failed
         return calls(system, human)
