@@ -469,7 +469,7 @@ Visualization configuration
 
 #### `graph.visualization.centrality`
 
-Node centrality metrics the visualization sizes nodes and plots by (computed at render time; no ingestion stage reads them)
+Node centrality metrics the static renderer's centrality chart plots (computed at render time; no ingestion stage reads them). The interactive graph sizes nodes by degree, not by these.
 
 | Key | Type | Default | Description |
 |---|---|---|---|

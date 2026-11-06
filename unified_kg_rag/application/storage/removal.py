@@ -9,6 +9,7 @@ from unified_kg_rag.application.storage.stored_items import (
     _PENDING_STRIP,
     IndexingTask,
     _claim_text,
+    _is_summary,
     _note_ids,
     _other_spellings_of_parts,
     _reads_back,
@@ -524,8 +525,8 @@ class TextUnitRemoval:
     ) -> None:
         """Record in the run state what a strip's derivation decided: the
         ids it retires, the vector-only copies (``absent``, see
-        :meth:`_read_shared`), the entities it derived and the items it
-        summarized (``made``)."""
+        :meth:`_read_shared`), the entities it derived and the items whose
+        stored summary the commit must not extend."""
         m = self._m
         m._merge._retire(suffix, derived.id_remap, derived.split_from, derived.dropped)
         # Not an absent id this strip writes (a part split off again
@@ -542,7 +543,17 @@ class TextUnitRemoval:
         m._derived_entities.setdefault(suffix, {}).update(
             {e.id: e for e in new_entities}
         )
-        m._stripped_ids.setdefault(suffix, set()).update(made)
+        # Not extended by the commit (see CrossRunMerge): what this strip
+        # summarized, and every item it wrote unsummarized — what it left
+        # for the commit to summarize, and a spelling folding into it. Their
+        # stored summary (if any) was made of lines the strip removed, so
+        # extending it would summarize a summary, or keep removed lines,
+        # where a full build summarizes the lines once.
+        m._stripped_ids.setdefault(suffix, set()).update(
+            made
+            | {e.id for e in new_entities if not _is_summary(e)}
+            | {r.id for r in new_relationships if not _is_summary(r)}
+        )
 
     def _strip_note_ids(
         self, suffix: str, derived: Derived

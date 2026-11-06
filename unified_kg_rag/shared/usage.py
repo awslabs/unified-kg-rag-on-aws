@@ -219,6 +219,20 @@ class LLMCall:
             )
         )
 
+    def finish_estimated(self, *, output_tokens: int, request_retries: int = 0) -> None:
+        """The call returned reporting no tokens: it stays an estimated call
+        at its estimated input tokens, with ``output_tokens`` estimated from
+        its response, after ``request_retries`` resent requests."""
+        self._settle(
+            _Counts(
+                llm_calls=1,
+                input_tokens=self._estimate,
+                output_tokens=output_tokens,
+                estimated_calls=1,
+                request_retries=request_retries,
+            )
+        )
+
     def served_from_cache(self) -> None:
         """The LLM response cache answered: a cache hit, not a call."""
         self._settle(_Counts(cache_hits=1))
@@ -244,8 +258,10 @@ def record_llm_call(
     cache_read_input_tokens: int = 0,
     cache_write_input_tokens: int = 0,
     request_retries: int = 0,
+    estimated: bool = False,
 ) -> None:
-    """Record one finished model call that was not counted at its start."""
+    """Record one finished model call that was not counted at its start
+    (``estimated``: its tokens are estimates, not reported)."""
     _record(
         role,
         model,
@@ -256,6 +272,7 @@ def record_llm_call(
             cache_read_input_tokens=cache_read_input_tokens,
             cache_write_input_tokens=cache_write_input_tokens,
             request_retries=request_retries,
+            estimated_calls=int(estimated),
         ),
     )
 

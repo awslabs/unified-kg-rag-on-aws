@@ -489,3 +489,32 @@ async def test_a_call_whose_model_reports_no_usage_keeps_its_estimate() -> None:
     assert snapshot["llm_calls"] == 1
     assert snapshot["estimated_calls"] == 1
     assert snapshot["input_tokens"] == estimate_token_count(prompt) > 0
+
+
+@pytest.mark.parametrize("started", [True, False])
+def test_a_response_without_usage_keeps_its_retries_and_estimates_its_output(
+    started: bool,
+) -> None:
+    # A response that reported no tokens dropped the requests botocore
+    # resent inside the call, and its output read as 0 tokens.
+    handler = UsageCallbackHandler("m", role="query")
+    run_id = uuid4()
+    answer = "an answer of several words about the Vendor"
+    prompt = "a fairly long prompt " * 20
+    with usage.usage_scope() as meter:
+        if started:
+            handler.on_chat_model_start(
+                {}, [[HumanMessage(content=prompt)]], run_id=run_id
+            )
+        handler.on_llm_end(
+            _result(
+                content=answer,
+                response_metadata={"ResponseMetadata": {"RetryAttempts": 2}},
+            ),
+            run_id=run_id,
+        )
+    snapshot = meter.snapshot()
+    assert (snapshot["llm_calls"], snapshot["estimated_calls"]) == (1, 1)
+    assert snapshot["request_retries"] == 2
+    assert snapshot["output_tokens"] == estimate_token_count(answer) > 0
+    assert snapshot["input_tokens"] == (estimate_token_count(prompt) if started else 0)

@@ -87,8 +87,14 @@ class _MapPoint:
         self.report_ids = report_ids or []
 
 
-# A rating's number: the first one in the answer.
+# A rating's number: the first one in the answer that is not part of a
+# mention of the scale ("1-10", "1 to 10", "out of 10", "/10").
 _FIRST_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+_SCALE_MENTION = re.compile(
+    r"(?<![\d.])[01]\s*(?:-|\u2013|to)\s*10{1,2}(?![\d.])"
+    r"|(?:\bout\s+of|/)\s*10{1,2}(?![\d.])",
+    re.IGNORECASE,
+)
 
 
 def _record(degraded: list[str] | None, error: Exception) -> None:
@@ -569,15 +575,16 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         ``None`` when the answer holds no number.
 
         The prompt asks for a bare 1-10 rating; a model that writes "8/10",
-        "Score: 2" or a reason after the number is read by its first number,
-        clamped to 1-10 (an "85" read as a percentage is still the top
-        rating). A float() of the whole answer read each of those as the
-        default 5 and "nan" as NaN, which no threshold drops."""
+        "Score: 2" or a reason after the number is read by its first number
+        outside a mention of the scale ("On a scale of 1-10, I'd rate 8" is
+        8, not 1), clamped to 1-10 (an "85" read as a percentage is still
+        the top rating). A float() of the whole answer read each of those as
+        the default 5 and "nan" as NaN, which no threshold drops."""
         async with semaphore:
             llm_output = await self.community_relevance_scorer.ainvoke(
                 {"community_summary": report.content, "query": query.query}, config
             )
-        found = _FIRST_NUMBER.search(str(llm_output))
+        found = _FIRST_NUMBER.search(_SCALE_MENTION.sub(" ", str(llm_output)))
         if found is None:
             return None
         return min(max(float(found.group()), 1.0), 10.0) / 10.0

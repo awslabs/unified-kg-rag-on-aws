@@ -61,6 +61,13 @@ async def test_rating_is_normalized_into_the_unit_interval(
         ("8/10", 0.8),
         ("Score: 2", 0.2),
         ("1\n\nIrrelevant: the community is about cats", 0.1),
+        ("1\n\nIrrelevant", 0.1),
+        ("10/10", 1.0),
+        ("Rating: 3 out of 10", 0.3),
+        # A mention of the scale is not the rating (it was read as 1).
+        ("On a scale of 1-10, I would rate this 8", 0.8),
+        ("On a scale of 1 to 10: 7", 0.7),
+        ("On a scale of 0\u201310, 6", 0.6),
         # Clamped to the prompt's 1-10 scale.
         ("85", 1.0),
         ("0", 0.1),
@@ -70,7 +77,9 @@ async def test_a_rating_is_read_by_its_first_number(text: str, expected: float) 
     assert await _rate(text) == pytest.approx(expected)
 
 
-@pytest.mark.parametrize("text", ["no number here", "nan", "inf", ""])
+@pytest.mark.parametrize(
+    "text", ["no number here", "nan", "inf", "", "On a scale of 1-10: high"]
+)
 async def test_a_rating_without_a_number_is_unrated(text: str) -> None:
     # "nan" was read as NaN, which no threshold drops.
     assert await _rate(text) is None
