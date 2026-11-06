@@ -81,6 +81,9 @@ def safe_url(url: str) -> str:
     """``url`` without userinfo, query or fragment (they may hold a key)."""
     parts = urlsplit(url)
     host = parts.hostname or ""
+    if ":" in host:
+        # An IPv6 literal keeps its brackets ("http://[::1]:4318").
+        host = f"[{host}]"
     if parts.port:
         host = f"{host}:{parts.port}"
     return urlunsplit((parts.scheme, host, parts.path, "", ""))

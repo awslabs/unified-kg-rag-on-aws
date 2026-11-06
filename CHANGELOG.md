@@ -464,8 +464,9 @@ From a `main` checkout (formats and keys no release had):
   `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). See [local
   mode](docs/guides/local-mode.md).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
-  GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture; CDK
-  `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219, #269). See
+  GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
+  its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,
+  #269, #PR). See
   [observability](docs/guides/observability.md).
 - Incremental indexing: the extraction-settings fingerprint (#224, #332); `indexing.max_document_failures` with
   own-error accounting and `documents_retrying` (#175, #431); source scopes and `--retire-source-scope` (#134,
