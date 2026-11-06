@@ -85,7 +85,7 @@ def _follow_ups(payload: dict[str, Any]) -> list[str]:
     return [str(q).strip() for q in raw if str(q).strip()]
 
 
-@register_strategy(SearchStrategy.DRIFT, needs_community_reports=True)
+@register_strategy(SearchStrategy.DRIFT)
 class DriftSearchStrategy(BaseSearchStrategy):
     methodology = Methodology.GRAPHRAG
 

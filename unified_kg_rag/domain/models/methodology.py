@@ -11,7 +11,7 @@ strategy's methodology the namespace does not hold fails fast. Pure: no
 config, stage or store import.
 """
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -131,19 +131,65 @@ def parse_artifacts(values: Iterable[object]) -> frozenset[IndexArtifact]:
     return frozenset(known[v] for v in values if isinstance(v, str) and v in known)
 
 
+@dataclass(frozen=True)
+class ArtifactSwitch:
+    """A configuration switch that, set false, turns ``artifacts`` off: no
+    run builds them. ``deselects``: a selected methodology that requires one
+    of them is left out of the effective ones (``buildable``); a switch that
+    only skips a build (report generation, with communities still detected)
+    leaves the selection as it is."""
+
+    key: str
+    artifacts: frozenset[IndexArtifact]
+    deselects: bool = True
+
+
+# Every switch that turns an index artifact off, by its dotted config key:
+# what a run builds (``artifacts_to_build``), the effective methodologies,
+# the default index sweep (``configured_index_prefixes``) and the messages
+# naming a switch all read this table.
+ARTIFACT_SWITCHES: tuple[ArtifactSwitch, ...] = (
+    ArtifactSwitch(
+        "graph.community_detection.enabled",
+        frozenset({_A.COMMUNITIES, _A.COMMUNITY_REPORTS}),
+    ),
+    ArtifactSwitch(
+        "graph.community_detection.report_generation.enabled",
+        frozenset({_A.COMMUNITY_REPORTS}),
+        deselects=False,
+    ),
+    ArtifactSwitch(
+        "indexing.opensearch.build_relationship_vector_index",
+        frozenset({_A.RELATIONSHIP_VECTORS}),
+    ),
+    ArtifactSwitch("processing.claim_extraction.enabled", frozenset({_A.CLAIMS})),
+)
+
+
 def switched_off_artifacts(
-    *, communities: bool, relationship_vectors: bool
+    is_on: Callable[[str], bool], *, deselecting: bool = False
 ) -> frozenset[IndexArtifact]:
-    """The artifacts a configuration switch turns off:
-    ``graph.community_detection.enabled`` (``communities``) and
-    ``indexing.opensearch.build_relationship_vector_index``
-    (``relationship_vectors``)."""
-    off: set[IndexArtifact] = set()
-    if not communities:
-        off |= {IndexArtifact.COMMUNITIES, IndexArtifact.COMMUNITY_REPORTS}
-    if not relationship_vectors:
-        off.add(IndexArtifact.RELATIONSHIP_VECTORS)
-    return frozenset(off)
+    """The artifacts the switches that are off turn off (``is_on`` reads a
+    switch by its key); with ``deselecting``, only those of the switches
+    that deselect a methodology (``ArtifactSwitch.deselects``)."""
+    return frozenset().union(
+        *(
+            switch.artifacts
+            for switch in ARTIFACT_SWITCHES
+            if (switch.deselects or not deselecting) and not is_on(switch.key)
+        )
+    )
+
+
+def deselecting_switches(artifacts: Iterable[IndexArtifact]) -> list[str]:
+    """The keys of the deselecting switches that turn any of ``artifacts``
+    off, in table order, as a message names them."""
+    wanted = frozenset(artifacts)
+    return [
+        switch.key
+        for switch in ARTIFACT_SWITCHES
+        if switch.deselects and switch.artifacts & wanted
+    ]
 
 
 def buildable(

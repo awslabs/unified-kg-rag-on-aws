@@ -407,9 +407,9 @@ class BaseSearchStrategy(ABC):
     # The methodology whose index artifacts the strategy reads
     # (docs/design.md#46-methodology-profiles): a query on a namespace that
     # does not hold it fails before any model call, and auto routes only to
-    # strategies of held methodologies. Every registered strategy sets it; a
-    # strategy that wraps another sets it on the instance from the wrapped
-    # one (the chain reads the instance's).
+    # strategies of held methodologies. Every registered strategy sets it
+    # but one that wraps another, which reads the wrapped one's
+    # (``strategy_registry.strategy_methodology``).
     methodology: Methodology | None = None
     # Section types that take the context budget other types leave unused
     # before the rest share it (``TokenManager.optimize_context``).

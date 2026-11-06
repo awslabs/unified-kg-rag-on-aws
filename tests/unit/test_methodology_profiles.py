@@ -36,12 +36,15 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     SearchStrategy,
 )
+from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.domain.models.methodology import (
+    ARTIFACT_SWITCHES,
     DEFAULT_METHODOLOGIES,
     METHODOLOGY_PROFILES,
     UNBUILT_ARTIFACTS,
     methodologies_holding,
 )
+from unified_kg_rag.domain.retrieval import index_prefixes
 
 pytestmark = pytest.mark.unit
 
@@ -284,6 +287,77 @@ def test_switches_leave_out_what_they_turn_off() -> None:
         )
 
 
+def _setting(key: str, value: bool) -> dict:
+    """The config sections that set the dotted ``key`` to ``value``."""
+    first, *rest = key.split(".")
+    nested: object = value
+    for part in reversed(rest):
+        nested = {part: nested}
+    return {first: nested}
+
+
+@pytest.mark.parametrize("switch", ARTIFACT_SWITCHES, ids=lambda s: s.key)
+def test_every_consumer_reads_the_same_switch_table(switch) -> None:
+    """A switch turns the same artifacts off for what a run builds, the
+    default index sweep, the effective methodologies and the messages."""
+    on, off = Config(**_setting(switch.key, True)), Config(
+        **_setting(switch.key, False)
+    )
+    assert on._switch_on(switch.key) and not off._switch_on(switch.key)
+    assert switch.artifacts <= mp.artifacts_to_build(on)
+    assert not switch.artifacts & mp.artifacts_to_build(off)
+    assert not switch.artifacts & on.artifacts_switched_off
+    assert switch.artifacts <= off.artifacts_switched_off
+    # The default sweep searches an index of the artifact only when it is on.
+    for prefix, artifact in index_prefixes._prefix_artifacts(on):
+        if artifact in switch.artifacts:
+            assert prefix in index_prefixes.configured_index_prefixes(on)
+            assert prefix not in index_prefixes.configured_index_prefixes(off)
+    # A deselecting switch leaves out the methodologies that require them.
+    needing = {
+        m
+        for m in DEFAULT_METHODOLOGIES
+        if METHODOLOGY_PROFILES[m].required & switch.artifacts
+    }
+    expected = set(DEFAULT_METHODOLOGIES) - (needing if switch.deselects else set())
+    assert set(off.effective_methodologies) == expected
+    assert set(on.effective_methodologies) == set(DEFAULT_METHODOLOGIES)
+    if switch.deselects and needing:
+        with pytest.raises(ValidationError, match=f"{switch.key}: false"):
+            Config(
+                **merge_over(
+                    _setting(switch.key, False),
+                    {"indexing": {"methodologies": [m.value for m in needing]}},
+                )
+            )
+
+
+def test_the_switch_table_names_boolean_settings() -> None:
+    assert {s.key: (s.artifacts, s.deselects) for s in ARTIFACT_SWITCHES} == {
+        "graph.community_detection.enabled": (
+            {A.COMMUNITIES, A.COMMUNITY_REPORTS},
+            True,
+        ),
+        "graph.community_detection.report_generation.enabled": (
+            {A.COMMUNITY_REPORTS},
+            False,
+        ),
+        "indexing.opensearch.build_relationship_vector_index": (
+            {A.RELATIONSHIP_VECTORS},
+            True,
+        ),
+        "processing.claim_extraction.enabled": ({A.CLAIMS}, True),
+    }
+    config = Config()
+    for switch in ARTIFACT_SWITCHES:
+        assert isinstance(config._switch_on(switch.key), bool), switch.key
+        section, _, field = switch.key.rpartition(".")
+        owner = config
+        for part in section.split("."):
+            owner = getattr(owner, part)
+        assert type(owner).model_fields[field].annotation is bool, switch.key
+
+
 # --- stage cache keys and manifests ----------------------------------------
 
 
@@ -476,7 +550,7 @@ class _Records:
         return self.record
 
 
-def _chain(config: Config, records: _Records, instances: dict | None = None):
+def _chain(config: Config, records: _Records):
     import threading
 
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
@@ -487,17 +561,9 @@ def _chain(config: Config, records: _Records, instances: dict | None = None):
     chain._held_methodologies = {}
     chain._get_retriever = lambda role: records  # type: ignore[method-assign]
 
-    def instance(strategy: SearchStrategy):
-        if instances is not None and strategy in instances:
-            found = instances[strategy]
-            if isinstance(found, Exception):
-                raise found
-            return found
-        return get_strategy_spec(strategy).strategy_class.__new__(
-            get_strategy_spec(strategy).strategy_class
-        )
-
-    chain._get_strategy_instance = instance  # type: ignore[method-assign]
+    # The check reads the registry: it never builds a strategy.
+    chain.built = []  # type: ignore[attr-defined]
+    chain._get_strategy_instance = chain.built.append  # type: ignore[attr-defined]
     return chain
 
 
@@ -529,8 +595,6 @@ async def test_a_query_reads_what_the_namespace_holds_before_refusing() -> None:
 
 
 async def test_without_a_readable_record_the_config_stands_in() -> None:
-    from types import SimpleNamespace
-
     from unified_kg_rag.shared import MethodologyNotIndexedError
 
     # A store error, or no record: what a run of the config builds.
@@ -545,16 +609,18 @@ async def test_without_a_readable_record_the_config_stands_in() -> None:
     chain = _chain(_config(L), _Records(None))
     with pytest.raises(MethodologyNotIndexedError):
         await chain.acheck_methodology(SearchStrategy.LOCAL)
-    # A wrapper's instance declares the wrapped strategy's methodology; one
-    # that cannot be built is judged by its class.
+    # A wrapper reads the wrapped strategy's methodology from the registry,
+    # without building a strategy: iterative
+    # over mix is served by a LightRAG namespace, over local refused.
     light = _Records(_record(*LIGHT).model_dump(mode="json"))
-    wrapped = {SearchStrategy.LOCAL: SimpleNamespace(methodology=L)}
-    assert await _chain(Config(), light, wrapped).acheck_methodology(
-        SearchStrategy.LOCAL
-    )
-    broken = {SearchStrategy.GLOBAL: RuntimeError("no store")}
+    config = Config()
+    config.search.iterative_search.base = "mix"  # type: ignore[assignment]
+    assert await _chain(config, light).acheck_methodology(SearchStrategy.ITERATIVE)
+    config.search.iterative_search.base = "local"  # type: ignore[assignment]
+    chain = _chain(config, light)
     with pytest.raises(MethodologyNotIndexedError):
-        await _chain(Config(), light, broken).acheck_methodology(SearchStrategy.GLOBAL)
+        await chain.acheck_methodology(SearchStrategy.ITERATIVE)
+    assert chain.built == []
 
 
 async def test_naive_and_simple_are_served_where_their_indexes_are_held() -> None:

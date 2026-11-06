@@ -23,16 +23,14 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field, fields
+from typing import Any
 
 import numpy as np
 
 from unified_kg_rag.domain.models import Constants, SummaryNode
+from unified_kg_rag.domain.models.config import SummaryTreeConfig
 from unified_kg_rag.shared.utils import compute_hash
-
-if TYPE_CHECKING:
-    from unified_kg_rag.domain.models.config import SummaryTreeConfig
 
 # Covariance regularization of the Gaussian mixtures (scikit-learn's
 # reg_covar, which RAPTOR's GaussianMixture uses).
@@ -53,21 +51,28 @@ _BOUNDED_GRID = 8
 _UPSTREAM_MAX_CLUSTERS = 50
 
 
+def _default(name: str) -> Any:
+    return SummaryTreeConfig.model_fields[name].default
+
+
 @dataclass(frozen=True)
 class TreeSettings:
-    """The clustering and assembly settings of one tree build."""
+    """The clustering and assembly settings of one tree build: the fields of
+    ``indexing.summary_tree`` (``SummaryTreeConfig``) the build reads, with
+    its defaults. A plain record, not validated, so the fidelity tests can
+    set what the config refuses."""
 
-    algorithm: str = "kmeans"
-    target_children: int = 6
-    soft_threshold: float = 0.1
-    reduction_dims: int = 10
-    bic_grid: str = "bounded"
-    max_levels: int = 5
-    min_nodes_to_cluster: int = 11
-    min_level_shrink: float = 0.2
-    max_cluster_tokens: int = 8000
-    max_lineage_text_units: int = 10000
-    random_state: int = 42
+    algorithm: str = _default("algorithm")
+    target_children: int = _default("target_children")
+    soft_threshold: float = _default("soft_threshold")
+    reduction_dims: int = _default("reduction_dims")
+    bic_grid: str = _default("bic_grid")
+    max_levels: int = _default("max_levels")
+    min_nodes_to_cluster: int = _default("min_nodes_to_cluster")
+    min_level_shrink: float = _default("min_level_shrink")
+    max_cluster_tokens: int = _default("max_cluster_tokens")
+    max_lineage_text_units: int = _default("max_lineage_text_units")
+    random_state: int = _default("random_state")
     # RAPTOR summarizes a cluster of one node; this promotes it instead.
     # True only to compare with the original (tests/fidelity).
     summarize_single: bool = False
@@ -75,17 +80,11 @@ class TreeSettings:
     @classmethod
     def from_config(cls, config: SummaryTreeConfig) -> TreeSettings:
         return cls(
-            algorithm=config.algorithm,
-            target_children=config.target_children,
-            soft_threshold=config.soft_threshold,
-            reduction_dims=config.reduction_dims,
-            bic_grid=config.bic_grid,
-            max_levels=config.max_levels,
-            min_nodes_to_cluster=config.min_nodes_to_cluster,
-            min_level_shrink=config.min_level_shrink,
-            max_cluster_tokens=config.max_cluster_tokens,
-            max_lineage_text_units=config.max_lineage_text_units,
-            random_state=config.random_state,
+            **{
+                f.name: getattr(config, f.name)
+                for f in fields(cls)
+                if f.name in SummaryTreeConfig.model_fields
+            }
         )
 
 
@@ -635,15 +634,14 @@ def _bounded_clusters(
     over it is clustered again (at least in two) until it fits, and packed
     in id order when clustering cannot split it."""
     vectors = np.stack([entry.vector for entry in entries])
-    pending: list[tuple[list[Entry], bool]] = [
-        ([entries[i] for i in members], False)
+    pending: list[list[Entry]] = [
+        [entries[i] for i in members]
         for members in partition(vectors, False, [entry.id for entry in entries])
     ]
     done: list[list[Entry]] = []
     seen: set[tuple[str, ...]] = set()
     while pending:
-        members, _ = pending.pop(0)
-        members = sorted(members, key=lambda entry: entry.id)
+        members = sorted(pending.pop(0), key=lambda entry: entry.id)
         key = tuple(entry.id for entry in members)
         if key in seen:
             continue
@@ -659,10 +657,9 @@ def _bounded_clusters(
         )
         parts = [[members[i] for i in group] for group in sub if group]
         if len(parts) < 2 or any(len(part) == len(members) for part in parts):
-            for group in _pack_by_tokens(members, settings.max_cluster_tokens):
-                pending.append((group, True))
+            pending.extend(_pack_by_tokens(members, settings.max_cluster_tokens))
             continue
-        pending.extend((part, True) for part in parts)
+        pending.extend(parts)
     return done
 
 
@@ -809,33 +806,3 @@ def _summary_node(
         input_key=realized.input_key,
         attributes=node_attributes or None,
     )
-
-
-def collapsed_tree_reference(
-    query_vector: Sequence[float],
-    candidates: Sequence[tuple[str, Sequence[float], int]],
-    *,
-    top_k: int = 10,
-    max_tokens: int = 3500,
-) -> list[str]:
-    """RAPTOR's collapsed-tree selection, for comparison only (not a product
-    mode): ``candidates`` (id, vector, tokens) by cosine distance to the
-    query, the first ``top_k`` taken in order until one would pass
-    ``max_tokens``."""
-    query = np.asarray(query_vector, dtype=np.float64)
-    query = query / (np.linalg.norm(query) or 1.0)
-
-    def distance(vector: Sequence[float]) -> float:
-        v = np.asarray(vector, dtype=np.float64)
-        return 1.0 - float(query @ v) / (float(np.linalg.norm(v)) or 1.0)
-
-    ranked = sorted(range(len(candidates)), key=lambda i: distance(candidates[i][1]))
-    selected: list[str] = []
-    used = 0
-    for index in ranked[:top_k]:
-        node, _, tokens = candidates[index]
-        if used + tokens > max_tokens:
-            break
-        selected.append(node)
-        used += tokens
-    return selected

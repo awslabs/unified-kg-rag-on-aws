@@ -60,16 +60,16 @@ class TestRegisteredQueryInputs:
     ) -> None:
         assert get_strategy_spec(strategy).query_inputs == expected
         state = {"resolved_strategy": strategy}
-        assert GraphRAGChain._needs_query_entities(state) is (
+        assert query_processing.needs_query_entities(state, Config()) is (
             QueryInput.ENTITIES in expected
         )
-        assert GraphRAGChain._needs_dual_keywords(state) is (
+        assert query_processing.needs_dual_keywords(state, Config()) is (
             QueryInput.DUAL_KEYWORDS in expected
         )
 
     def test_unresolved_strategy_extracts_entities_only(self) -> None:
-        assert GraphRAGChain._needs_query_entities({}) is True
-        assert GraphRAGChain._needs_dual_keywords({}) is False
+        assert query_processing.needs_query_entities({}, Config()) is True
+        assert query_processing.needs_dual_keywords({}, Config()) is False
 
 
 @pytest.fixture

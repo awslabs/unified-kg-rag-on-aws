@@ -1069,8 +1069,8 @@ class AssertionBenchmarkGenerator:
             replies = await self._step(
                 "questions",
                 [
-                    self._activity_call(question_class, description, *job)
-                    for job in jobs
+                    self._activity_call(question_class, description, role, task, units)
+                    for role, task, _, units in jobs
                 ],
             )
             candidates: list[Candidate] = []
@@ -1099,7 +1099,6 @@ class AssertionBenchmarkGenerator:
         description: str,
         role: str,
         task: str,
-        label: int,
         units: list[TextUnit],
     ) -> Callable[[], Awaitable[Any]]:
         if question_class == "activity_local":

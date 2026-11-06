@@ -299,7 +299,7 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
             reason = SKIP_REASON_NO_ASSERTIONS if not kinds else SKIP_REASON_NO_NEGATIVE
             skipped.update({m.value: reason for m in _NEGATIVE_METRICS})
         if not assertions:
-            return self._report(query, result, [], {SKIPPED_METRICS_KEY: skipped})
+            return self._report(query, [], {SKIPPED_METRICS_KEY: skipped})
         outcomes = await asyncio.gather(
             *(self._trial(result, assertions, t) for t in range(self.trials)),
             return_exceptions=True,
@@ -340,7 +340,7 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
             last = (str(errors[-1]) or type(errors[-1]).__name__) if errors else ""
             reason = f"Assertion judge failed: {last or 'no trial'}"
             metadata[FAILED_METRICS_KEY] = {m.value: reason for m in attempted}
-            return self._report(query, result, [], metadata)
+            return self._report(query, [], metadata)
         if errors:
             logger.warning(
                 "Assertion judge failed %s of %s trials for '%s' (scored on the "
@@ -367,12 +367,11 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
             for m in attempted
             if aggregate[m.value] is not None
         ]
-        return self._report(query, result, metrics, metadata)
+        return self._report(query, metrics, metadata)
 
     def _report(
         self,
         query: EvaluationQuery,
-        result: EvaluationResult,
         metrics: list[EvaluationMetric],
         metadata: dict[str, Any],
     ) -> EvaluationReport:

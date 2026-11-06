@@ -58,9 +58,6 @@ class StrategySpec:
             DOCUMENT), not concrete backends. The composition root binds each
             role to an adapter, so strategies stay backend-agnostic.
         query_inputs: Query-side extractions the strategy reads.
-        needs_community_reports: Whether the strategy answers from community
-            reports, which only a namespace holding ``graphrag`` has (a
-            strategy declaring ``methodology`` graphrag needs no flag).
         wraps: For a strategy that runs another one's search (``iterative``),
             the strategy it wraps under a config. The chain then extracts
             what that one reads and packs the context as that one does
@@ -78,7 +75,6 @@ class StrategySpec:
         default=(RetrieverRole.DOCUMENT, RetrieverRole.GRAPH)
     )
     query_inputs: frozenset[QueryInput] = frozenset()
-    needs_community_reports: bool = False
     wraps: Callable[[Config], SearchStrategy] | None = None
     required_artifacts: frozenset[IndexArtifact] | None = None
 
@@ -102,7 +98,6 @@ def register_strategy(
         RetrieverRole.GRAPH,
     ),
     query_inputs: frozenset[QueryInput] = frozenset(),
-    needs_community_reports: bool = False,
     wraps: Callable[[Config], SearchStrategy] | None = None,
     required_artifacts: frozenset[IndexArtifact] | None = None,
 ) -> Callable[[StrategyT], StrategyT]:
@@ -113,9 +108,6 @@ def register_strategy(
         required_roles: Retriever roles to inject when instantiating it.
         query_inputs: Query-side extractions the strategy reads; the chain
             skips the LLM calls for the rest.
-        needs_community_reports: The strategy answers from community reports;
-            ``auto`` does not route to it on a namespace without
-            ``graphrag``.
         wraps: The strategy it runs the search of, under a config
             (``StrategySpec.wraps``).
         required_artifacts: The index artifacts it reads, when fewer than
@@ -136,7 +128,6 @@ def register_strategy(
             strategy_class=cls,
             required_roles=tuple(required_roles),
             query_inputs=frozenset(query_inputs),
-            needs_community_reports=needs_community_reports,
             wraps=wraps,
             required_artifacts=(
                 None if required_artifacts is None else frozenset(required_artifacts)
@@ -211,10 +202,7 @@ def serves(
     ``strategy`` under ``config``: it holds the artifacts the strategy
     declares it reads (``strategy_artifacts``), else the strategy's
     methodology (one that declares none even through what it wraps is
-    kept); one that needs community reports, ``graphrag``."""
-    spec = get_strategy_spec(strategy)
-    if spec.needs_community_reports and Methodology.GRAPHRAG not in held:
-        return False
+    kept)."""
     needed = strategy_artifacts(strategy, config)
     if needed is not None:
         return needed <= required_artifacts_of(held)

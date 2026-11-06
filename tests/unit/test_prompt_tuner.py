@@ -525,6 +525,15 @@ class TestRenderExample:
         )
         assert PromptTuner._evidence_span(text, "本当") == "本当ですか？"
 
+    def test_sentences_end_where_the_shared_splitter_ends_them(self) -> None:
+        # "e.g. the" continues a sentence; a closing quote stays with its stop.
+        text = 'Buyers, e.g. the Vendor, sign. "Vendor pays." Buyer agrees.'
+        assert (
+            PromptTuner._evidence_span(text, "Buyers", "Vendor")
+            == "Buyers, e.g. the Vendor, sign."
+        )
+        assert PromptTuner._evidence_span(text, "pays") == '"Vendor pays."'
+
     def test_latin_period_inside_a_token_is_not_a_boundary(self) -> None:
         text = "Version 3.5 of the Vendor contract applies. Buyer agrees."
         assert (

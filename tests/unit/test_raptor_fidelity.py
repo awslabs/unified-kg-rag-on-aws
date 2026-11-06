@@ -30,6 +30,7 @@ import numpy as np
 import pytest
 
 from tests.fixtures import raptor_fidelity as shared
+from tests.fixtures.collapsed_tree import collapsed_tree_reference
 from unified_kg_rag.domain.ingestion import summary_tree as st
 from unified_kg_rag.domain.ingestion.summary_tree import (
     Cluster,
@@ -37,7 +38,6 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     Realized,
     TreeSettings,
     build_tree,
-    collapsed_tree_reference,
     node_id,
 )
 

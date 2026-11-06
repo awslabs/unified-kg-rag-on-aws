@@ -41,6 +41,7 @@ from unified_kg_rag.adapters.search_strategies.lightrag_search import (
 from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
 )
+from unified_kg_rag.application.retrieval import query_processing
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Config,
@@ -857,18 +858,18 @@ def test_iterative_reads_what_its_base_reads(
     assert wrapped_strategy(SearchStrategy.ITERATIVE, config) is SearchStrategy(base)
     assert query_inputs(SearchStrategy.ITERATIVE, config) == frozenset({inputs})
     state = {"resolved_strategy": SearchStrategy.ITERATIVE}
-    assert GraphRAGChain._needs_query_entities(state, config) is (
+    assert query_processing.needs_query_entities(state, config) is (
         inputs is QueryInput.ENTITIES
     )
-    assert GraphRAGChain._needs_dual_keywords(state, config) is (
+    assert query_processing.needs_dual_keywords(state, config) is (
         inputs is QueryInput.DUAL_KEYWORDS
     )
     spec = get_strategy_spec(wrapped_strategy(SearchStrategy.ITERATIVE, config))
     assert spec.strategy_class.spare_context_budget_first == spare
-    # It needs no artifact the base does not: the same stores, no reports.
+    # It needs no artifact the base does not: the same stores and methodology.
     own = get_strategy_spec(SearchStrategy.ITERATIVE)
     assert own.required_roles == spec.required_roles
-    assert not own.needs_community_reports
+    assert own.methodology is None and own.required_artifacts is None
 
     strategy, *_ = _strategy(_Script(controller=[SUFFICIENT]), base=base)
     assert isinstance(strategy.base, cls) and isinstance(strategy.follow_up, cls)

@@ -120,7 +120,7 @@ def stages_for(artifacts: Iterable[IndexArtifact]) -> frozenset[PipelineStageTyp
 
 def artifacts_to_build(config: Config) -> frozenset[IndexArtifact]:
     """What a run of ``config`` builds: every artifact its effective
-    methodologies read whose switch is on, and claims when
+    methodologies read whose switch is on (``ARTIFACT_SWITCHES``), and claims when
     ``processing.claim_extraction`` is on (per-document extraction output,
     which its switch alone governs). Community reports are switched off by
     ``report_generation.enabled`` too: a run never builds them then, so an
@@ -128,15 +128,7 @@ def artifacts_to_build(config: Config) -> frozenset[IndexArtifact]:
     artifacts = set(artifacts_of(config.effective_methodologies))
     if config.processing.claim_extraction.enabled:
         artifacts.add(_A.CLAIMS)
-    else:
-        artifacts.discard(_A.CLAIMS)
-    if not config.indexing.opensearch.build_relationship_vector_index:
-        artifacts.discard(_A.RELATIONSHIP_VECTORS)
-    if not config.graph.community_detection.enabled:
-        artifacts -= {_A.COMMUNITIES, _A.COMMUNITY_REPORTS}
-    if not config.graph.community_detection.report_generation.enabled:
-        artifacts.discard(_A.COMMUNITY_REPORTS)
-    return frozenset(artifacts)
+    return frozenset(artifacts - config.artifacts_switched_off)
 
 
 def writes_graph_store(config: Config) -> bool:

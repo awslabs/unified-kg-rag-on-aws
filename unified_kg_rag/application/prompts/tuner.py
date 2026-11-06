@@ -69,15 +69,11 @@ from unified_kg_rag.shared.utils import (
     parse_llm_json,
     text_digest,
 )
+from unified_kg_rag.shared.utils.sentences import sentence_ends
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 logger = get_logger(__name__)
 
-# Sentence or line boundaries for picking a verbatim evidence span. Latin
-# sentence-final punctuation needs following whitespace (so "3.5" or "e.g."
-# mid-token is not a boundary); CJK terminators (。！？) end a sentence on
-# their own, since CJK text has no space between sentences.
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|(?<=[\u3002\uff01\uff1f])\s*|\n+")
 # Target length of an evidence span cut from a long sentence.
 _MAX_EVIDENCE_CHARS = 200
 # Hard cap when the names themselves lie further apart than the target; a
@@ -574,8 +570,11 @@ class PromptTuner:
         if not wanted:
             return None
         folded_wanted = [n.casefold() for n in wanted]
-        for sentence in _SENTENCE_SPLIT.split(text):
-            span = sentence.strip()
+        # Sentences or lines (``sentence_ends``: a CJK stop ends one on its
+        # own, a Latin one only before whitespace and not in "3.5" or "e.g.").
+        starts = [0, *sentence_ends(text)]
+        for start, end in zip(starts, [*starts[1:], len(text)], strict=True):
+            span = text[start:end].strip()
             folded = span.casefold()
             if not span or not all(n in folded for n in folded_wanted):
                 continue

@@ -25,7 +25,6 @@ from langchain_core.runnables import RunnableConfig
 from unified_kg_rag.adapters.llm.chain_factory import usage_model_id
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
-    get_strategy_spec,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     query_inputs as strategy_query_inputs,
@@ -218,8 +217,8 @@ async def process_query(
     # The strategy is resolved (AUTO routing included) before this step,
     # so only pay for the LLM extractions the resolved strategy reads.
     needs = {
-        "entities": chain._needs_query_entities(inputs, chain.config),
-        "keywords": chain._needs_dual_keywords(inputs, chain.config),
+        "entities": needs_query_entities(inputs, chain.config),
+        "keywords": needs_dual_keywords(inputs, chain.config),
     }
     tasks: dict[str, Any] = {
         name: prefetched.pop(name)
@@ -287,24 +286,23 @@ async def process_query(
     }
 
 
-def _reads(strategy: Any, config: Config | None) -> frozenset[QueryInput]:
-    """The extractions ``strategy`` reads: under ``config``, a wrapping
-    strategy's are those of the one it wraps (``iterative``'s base)."""
-    if config is None:
-        return get_strategy_spec(strategy).query_inputs
-    return strategy_query_inputs(strategy, config)
-
-
-def needs_query_entities(state: dict[str, Any], config: Config | None = None) -> bool:
+def needs_query_entities(state: dict[str, Any], config: Config) -> bool:
+    """Whether the resolved strategy reads the query's entities (under
+    ``config``, a wrapper reads what it wraps: ``iterative``'s base)."""
     # Without a resolved strategy (direct step invocation) stay conservative
     # and extract, matching the pre-gating behavior.
     strategy = state.get("resolved_strategy")
-    return strategy is None or QueryInput.ENTITIES in _reads(strategy, config)
+    return strategy is None or QueryInput.ENTITIES in strategy_query_inputs(
+        strategy, config
+    )
 
 
-def needs_dual_keywords(state: dict[str, Any], config: Config | None = None) -> bool:
+def needs_dual_keywords(state: dict[str, Any], config: Config) -> bool:
+    """Whether the resolved strategy reads the dual-level keywords."""
     strategy = state.get("resolved_strategy")
-    return strategy is not None and QueryInput.DUAL_KEYWORDS in _reads(strategy, config)
+    return strategy is not None and QueryInput.DUAL_KEYWORDS in (
+        strategy_query_inputs(strategy, config)
+    )
 
 
 def query_language(chain: GraphRAGChain, inputs: dict[str, Any]) -> str:
