@@ -138,10 +138,11 @@ stored is read again: follow *Upgrading* in order.
 - `indexing.opensearch.index_settings` refuses the `knn` keys and a setting spelled both with and without `index.`
   (set ef_search with `vector_search.ef_search`); the `"NONE"` alias of `aws.s3.encryption.encryption_type` is gone
   (use `BUCKET_DEFAULT`) (#216, #408).
-- Fusion buckets: a simple search's is `vector_all` (an `opensearch_all` weight applies to it with a WARNING); an
-  `opensearch_community_reports` weight is dropped with a WARNING, as no strategy emits it (#584). A
-  `lightrag_linked_chunks` weight weighs only the chunks the matched entities cite; the relationships' chunks are
-  their own `lightrag_relation_chunks` stream, 1.0 unless set (#521, #530).
+- Fusion buckets: a simple search's is `vector_all` (an `opensearch_all` weight applies to it with a WARNING); a weight
+  on `opensearch_community_reports`, or on 0.2.3's `opensearch_candidate_community_reports` and
+  `opensearch_expanded_community_reports` (in its template), is dropped with a WARNING, as no strategy emits them
+  (#584, #PR). A `lightrag_linked_chunks` weight weighs only the chunks the matched entities cite; the
+  relationships' chunks are their own `lightrag_relation_chunks` stream, 1.0 unless set (#521, #530).
 - Defaults (set the 0.2.3 value to keep its behaviour; the measured ones are explained in [defaults and
   evidence](docs/concepts/defaults-and-evidence.md)):
 
@@ -302,7 +303,8 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    and expect RRF ordering where you set `search.fusion.method: weighted` (#577).
 4. A custom `fusion_weights.lightrag_linked_chunks` weight: set `lightrag_relation_chunks` too (usually the same
    value) to keep weighting every LightRAG graph chunk; mix and hybrid recall are sensitive to it (#521, #530).
-   Rename an `opensearch_all` weight to `vector_all` and drop `opensearch_community_reports` (#584).
+   Rename an `opensearch_all` weight to `vector_all` and drop `opensearch_community_reports`,
+   `opensearch_candidate_community_reports` and `opensearch_expanded_community_reports` (#584, #PR).
 5. A role with a custom IAM policy needs `dynamodb:BatchGetItem`, `BatchWriteItem`, `Query` and `DescribeTable` on
    the registry table (`UpdateTimeToLive` where the library creates it), `bedrock:ApplyGuardrail` on the guardrail,
    and `bedrock:CountTokens` with `InvokeModel`. With `bedrock_model_arns`, list the reranking model too: the Rerank

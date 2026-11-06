@@ -125,16 +125,25 @@ class TestRenamedFusionBuckets:
         )
         assert config.search.fusion.fusion_weights == {"vector_all": 0.5}
 
+    @pytest.mark.parametrize(
+        "retired",
+        [
+            "opensearch_community_reports",
+            # The buckets 0.2.3's global search emitted.
+            "opensearch_candidate_community_reports",
+            "opensearch_expanded_community_reports",
+        ],
+    )
     def test_a_weight_on_a_retired_bucket_is_dropped_with_a_warning(
-        self, caplog: pytest.LogCaptureFixture
+        self, caplog: pytest.LogCaptureFixture, retired: str
     ) -> None:
-        weights = {"opensearch_community_reports": 3.0, "text_units": 2.0}
+        weights = {retired: 3.0, "text_units": 2.0}
         with caplog.at_level(logging.WARNING):
             config = Config.model_validate(
                 {"search": {"fusion": {"fusion_weights": weights}}}
             )
         assert config.search.fusion.fusion_weights == {"text_units": 2.0}
-        assert "'opensearch_community_reports'" in caplog.text
+        assert f"'{retired}'" in caplog.text
 
 
 class TestResultKey:

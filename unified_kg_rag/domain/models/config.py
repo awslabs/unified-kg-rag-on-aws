@@ -3340,8 +3340,15 @@ class HybridConfig(BaseModel):
 # keyed by the old name loads as the new one, with a warning.
 RENAMED_FUSION_BUCKETS: dict[str, str] = {"opensearch_all": "vector_all"}
 # Buckets no strategy emits any more: a weight keyed by one is dropped, with
-# a warning (global search fuses only its text units).
-RETIRED_FUSION_BUCKETS: frozenset[str] = frozenset({"opensearch_community_reports"})
+# a warning (global search fuses only its text units; 0.2.3's emitted the
+# candidate and expanded report buckets, and its template listed all three).
+RETIRED_FUSION_BUCKETS: frozenset[str] = frozenset(
+    {
+        "opensearch_community_reports",
+        "opensearch_candidate_community_reports",
+        "opensearch_expanded_community_reports",
+    }
+)
 
 
 @functools.cache
@@ -3401,7 +3408,9 @@ class FusionConfig(BaseModel):
             "simple (vector_all), global (text_units) and drift (results). A "
             "bucket without a key weighs 1.0 (the default: none). A weight on "
             "the former bucket opensearch_all applies to vector_all, with a "
-            "warning."
+            "warning; one on the retired opensearch_community_reports, "
+            "opensearch_candidate_community_reports or "
+            "opensearch_expanded_community_reports is dropped, with a warning."
         ),
     )
 
