@@ -346,10 +346,17 @@ def test_a_record_names_what_its_artifacts_hold() -> None:
         L,
         H,
     )
-    # A record from before profiles, or none: the configured methodologies.
+    # A record from before profiles, or none: what a run of the config
+    # builds holds, hipporag (lightrag's artifacts) included.
     legacy = {k: v for k, v in dump.items() if k not in ("artifacts", "methodologies")}
-    assert mp.held_methodologies(legacy, Config()) == (G, L)
-    assert mp.held_methodologies(None, _config(L)) == (L,)
+    assert mp.held_methodologies(legacy, Config()) == (G, L, H)
+    assert mp.held_methodologies(None, _config(L)) == (L, H)
+    no_vectors = Config(
+        indexing={"opensearch": {"build_relationship_vector_index": False}}
+    )
+    assert mp.held_methodologies(None, no_vectors) == (G,)
+    no_communities = Config(graph={"community_detection": {"enabled": False}})
+    assert mp.held_methodologies(None, no_communities) == (L, H)
     # An artifact a later version names is skipped.
     assert mp.held_methodologies(
         {"artifacts": [*dump["artifacts"], "x"]}, Config()
@@ -503,10 +510,15 @@ async def test_without_a_readable_record_the_config_stands_in() -> None:
 
     from unified_kg_rag.shared import MethodologyNotIndexedError
 
-    # A store error, or no record: the configured methodologies, as before.
+    # A store error, or no record: what a run of the config builds.
     for record in (RuntimeError("store down"), None):
         chain = _chain(Config(), _Records(record))  # type: ignore[arg-type]
-        assert await chain.acheck_methodology(SearchStrategy.GLOBAL) == (G, L)
+        assert await chain.acheck_methodology(SearchStrategy.GLOBAL) == (G, L, H)
+    # A store from before build records, built by the default run, holds the
+    # relationship vectors ppr reads: ppr is served, not refused.
+    assert await _chain(Config(), _Records(None)).acheck_methodology(
+        SearchStrategy.PPR
+    ) == (G, L, H)
     chain = _chain(_config(L), _Records(None))
     with pytest.raises(MethodologyNotIndexedError):
         await chain.acheck_methodology(SearchStrategy.LOCAL)

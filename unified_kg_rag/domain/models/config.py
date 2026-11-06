@@ -6014,8 +6014,8 @@ class Config(BaseModel):
     def effective_methodologies(self) -> tuple[Methodology, ...]:
         """``indexing.methodologies`` without those whose required artifacts a
         switch turns off (docs/design.md#46-methodology-profiles): what
-        ingestion builds and, without a build record, what a query takes the
-        namespace to hold."""
+        ingestion builds (without a build record, a query takes the namespace
+        to hold every methodology whose required artifacts these build)."""
         return buildable(self.indexing.methodologies, self._switched_off_artifacts)
 
     # --- resolved models -----------------------------------------------------

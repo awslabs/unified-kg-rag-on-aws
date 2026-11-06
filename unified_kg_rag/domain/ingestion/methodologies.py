@@ -185,10 +185,13 @@ def held_methodologies(
     """The methodologies an index namespace holds: those whose required
     artifacts its build record names; without a record that names them (none
     written, a backend without index metadata, a record from before
-    methodology profiles) the configured effective methodologies."""
+    methodology profiles) those whose required artifacts a run of ``config``
+    builds (``artifacts_to_build``): a store the default graphrag + lightrag
+    run built before build records holds hipporag too, which reads what
+    lightrag does."""
     artifacts = stored_artifacts(record)
     if artifacts is None:
-        return config.effective_methodologies
+        artifacts = artifacts_to_build(config)
     return methodologies_holding(artifacts)
 
 

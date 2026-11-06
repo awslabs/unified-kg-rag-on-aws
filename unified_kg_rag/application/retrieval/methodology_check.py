@@ -55,8 +55,8 @@ async def namespace_methodologies(
 ) -> tuple[Methodology, ...]:
     """The methodologies the index namespace of ``suffix`` holds: from its
     build record, else (no record, one from before methodology profiles, a
-    backend without index metadata, an unreadable one) the configured
-    effective methodologies."""
+    backend without index metadata, an unreadable one) those a run of the
+    config builds (``held_methodologies``)."""
     key = suffix or ""
     now = time.monotonic()
     with chain._cache_lock:

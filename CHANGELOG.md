@@ -384,9 +384,10 @@ From a `main` checkout (formats and keys no release had):
 - (#596) A namespace ingested with `graph.community_detection.enabled: false` holds `lightrag` only: `local` and
   `simple` are now refused there (`MethodologyNotIndexedError`, `run-rag` exits 2) where they answered without the
   report section, and `auto` routes among `mix`/`hybrid`/`naive`; ingest with `graphrag` to use them. A build
-  record written earlier names no artifacts: queries read the configured `indexing.methodologies` until the next
-  run that writes the namespace records them, and that run rebuilds nothing. Default configurations run the same
-  stages under the same stage-cache keys.
+  record written earlier names no artifacts: queries take the namespace to hold every methodology whose artifacts a
+  run of the configured `indexing.methodologies` builds (the default: `graphrag`, `lightrag` and `hipporag`, #PR)
+  until the next run that writes the namespace records them, and that run rebuilds nothing. Default configurations
+  run the same stages under the same stage-cache keys.
 - (#598) `auto` may now route a multi-hop question to `iterative` (`search.auto_routable_strategies` adds it): about
   10 s more at the median and +$0.002 for the queries it takes, and a LightRAG-only namespace now makes a router
   call (between `mix` and `iterative`) where it made none. To keep the earlier routing, set
@@ -430,6 +431,9 @@ From a `main` checkout (formats and keys no release had):
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's); `hipporag`
   holds what `lightrag` builds and `raptor` reads a summary tree (#599). See [methodology
+  holds what `lightrag` builds and `raptor` is reserved. Without a build record (a namespace ingested before
+  them), a query takes the namespace to hold what a run of the config builds, so the default holds `hipporag` and
+  serves `ppr` (#PR). See [methodology
   profiles](docs/concepts/overview.md#methodology-profiles) and [Design §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the

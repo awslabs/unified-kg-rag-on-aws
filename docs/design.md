@@ -993,8 +993,11 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   `GraphRAGChain` reads the namespace's build record through the document
   retriever (`aread_build_record`, cached per suffix for
   `methodology_check.HELD_TTL_SECONDS`, read again before a refusal) and derives what it
-  holds (`held_methodologies`; the configured effective methodologies when
-  there is no record or it predates profiles). An explicit strategy whose
+  holds (`held_methodologies`; when there is no record or it predates
+  profiles, every methodology whose required artifacts a run of the config
+  builds, `artifacts_to_build`: a store the default run built before records
+  holds `hipporag` too, as it holds the relationship vectors `ppr` reads).
+  An explicit strategy whose
   methodology is not held raises `MethodologyNotIndexedError` (a
   `ConfigurationError`; `run-rag` exits 2) before any model call, naming
   what the namespace holds, the strategies that serve it and how to add the
