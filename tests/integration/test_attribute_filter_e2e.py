@@ -19,7 +19,11 @@ from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from unified_kg_rag.adapters.ingestion.chunker import BaseChunker
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
-from unified_kg_rag.domain.models import PipelineStageStatus, SearchStrategy
+from unified_kg_rag.domain.models import (
+    Methodology,
+    PipelineStageStatus,
+    SearchStrategy,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -30,6 +34,8 @@ _STRATEGIES = [s for s in SearchStrategy if s is not SearchStrategy.AUTO]
 def chain(tmp_path_factory: pytest.TempPathFactory) -> Any:
     tmp_path = tmp_path_factory.mktemp("attribute-filters")
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    # Every methodology's strategies are asked: raptor's tree too.
+    config.indexing.methodologies = [*config.indexing.methodologies, Methodology.RAPTOR]
     server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
     providers = e2e._providers(
         config, server, e2e.FakeCrossEncoder("synthetic-reranker")

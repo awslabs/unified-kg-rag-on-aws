@@ -67,6 +67,7 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     TextChunkingStage,
     TranslationStage,
 )
+from unified_kg_rag.application.ingestion.summary_tree_stage import SummaryTreeStage
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.domain.ingestion.cache_keys import (
     corpus_manifest_fingerprint,
@@ -160,7 +161,8 @@ class DataIngestionPipeline:
     """The ingestion pipeline: documents in, an indexed knowledge graph out.
 
     Runs the stages of ``STAGE_CLASSES`` in order (parse, load, chunk,
-    translate, extract, glean, resolve, claims, analyze, communities, index),
+    translate, extract, glean, resolve, claims, analyze, communities, index,
+    summary tree),
     skipping those ``pipeline_config.stages_enabled``, a config section
     (``CONFIG_ENABLED``) or the selected ``indexing.methodologies`` turn off
     (``_stage_enabled``). Each stage's output is cached under the
@@ -186,6 +188,7 @@ class DataIngestionPipeline:
         PipelineStageType.GRAPH_ANALYSIS: GraphAnalysisStage,
         PipelineStageType.COMMUNITY_DETECTION: CommunityDetectionStage,
         PipelineStageType.INDEXING: IndexingStage,
+        PipelineStageType.SUMMARY_TREE: SummaryTreeStage,
     }
 
     # Stage names in run order.
@@ -496,6 +499,10 @@ class DataIngestionPipeline:
                 "reuse_stored": not self.pipeline_config.force_rebuild,
             },
             PipelineStageType.INDEXING: {
+                "doc_status": doc_status,
+                "reuse_stored": not self.pipeline_config.force_rebuild,
+            },
+            PipelineStageType.SUMMARY_TREE: {
                 "doc_status": doc_status,
                 "reuse_stored": not self.pipeline_config.force_rebuild,
             },

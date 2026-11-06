@@ -386,13 +386,17 @@ class TestResumeReadsCacheOnce:
 
 def _all_stages_pipeline(config: Config, root: Path) -> DataIngestionPipeline:
     """Like ``_pipeline``, with every stage enabled except those ``config``
-    switches off (claim extraction is off by default)."""
+    switches off (claim extraction is off by default) and the summary tree
+    (raptor's, not a default methodology)."""
     pipeline = _pipeline(config, root)
     pipeline.stages = [
         SimpleNamespace(name=stage.value)
         for stage in DataIngestionPipeline.STAGE_CLASSES
-        if stage != PipelineStageType.CLAIM_EXTRACTION
-        or config.processing.claim_extraction.enabled
+        if (
+            stage != PipelineStageType.CLAIM_EXTRACTION
+            or config.processing.claim_extraction.enabled
+        )
+        and stage != PipelineStageType.SUMMARY_TREE
     ]
     return pipeline
 

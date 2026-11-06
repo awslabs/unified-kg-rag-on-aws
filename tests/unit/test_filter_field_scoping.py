@@ -352,6 +352,7 @@ def test_schema_matches_indexer_mappings(config: Config) -> None:
         "relationships": indexer._get_relationships_mapping,
         "claims": indexer._get_claims_mapping,
         "community_reports": indexer._get_community_reports_mapping,
+        "summary_nodes": indexer._get_summary_nodes_mapping,
     }
     schema = opensearch_filter_fields(
         config.processing.translation.target_language.value
@@ -1511,6 +1512,7 @@ def test_typed_filter_fields_match_the_mappings(config: Config) -> None:
         indexer._get_relationships_mapping,
         indexer._get_claims_mapping,
         indexer._get_community_reports_mapping,
+        indexer._get_summary_nodes_mapping,
     ):
         for name, spec in func()["mappings"]["properties"].items():
             if spec.get("type") in kinds:

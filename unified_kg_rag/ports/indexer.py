@@ -14,8 +14,10 @@ from unified_kg_rag.domain.models import (
     Config,
     Constants,
     Entity,
+    IndexArtifact,
     IndexBuildRecord,
     Relationship,
+    SummaryNode,
     TextUnit,
     validate_safe_name,
 )
@@ -591,6 +593,93 @@ class VectorIndexer(BaseIndexer):
         what the namespace holds. ``None`` when there is none or it cannot
         be read (logged). Default: ``None`` (no index metadata)."""
         return None
+
+    # --- the summary tree (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in) -----------------------------
+    # Every method has a "cannot" default, so a backend without the tree
+    # keeps working: the summary_tree stage then skips with a warning.
+
+    def scan_text_units(
+        self,
+        suffix: str | None,
+        *,
+        fields: list[str],
+        page_size: int | None = None,
+    ) -> list[dict[str, Any]] | None:
+        """Every stored text unit of ``suffix`` (a dict of ``id`` and the
+        stored ``fields``, a vector field included when named), in id
+        order, read a page at a time (``page_size`` documents at most);
+        the seed graphs' units are left out, as every text search leaves
+        them out. ``[]`` without a live index; ``None`` (the default) when
+        the backend cannot page its text units. Raises when a read fails."""
+        return None
+
+    def read_summary_nodes(
+        self, suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]] | None:
+        """Every node of ``suffix``'s live summary tree (``id`` and the
+        stored ``fields``), in id order; ``[]`` without one, ``None`` (the
+        default) when the backend keeps no summary tree. Raises when a read
+        fails."""
+        return None
+
+    def read_summary_tree_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """The ``SummaryTreeRecord`` dump written with ``suffix``'s live
+        summary tree, ``None`` without one (the default)."""
+        return None
+
+    def embed_summary_texts(
+        self, texts: list[str], suffix: str | None
+    ) -> list[list[float] | None] | None:
+        """Vectors of ``texts`` with this store's embedding model (``None``
+        for a text that failed), taking the stored vector of a text the live
+        summary tree of ``suffix`` holds unchanged. ``None`` (the default):
+        the backend cannot embed for the tree."""
+        return None
+
+    def write_summary_tree(
+        self,
+        nodes: list[SummaryNode],
+        vectors: Mapping[str, list[float]],
+        suffix: str | None,
+        record: dict[str, Any],
+    ) -> IndexingStats:
+        """Replace ``suffix``'s summary tree with ``nodes`` (each with its
+        vector in ``vectors``, by id) and ``record``, at once: queries read
+        the old tree until the new one is complete. A failed write keeps the
+        old tree. The default writes nothing and reports every node failed."""
+        stats = IndexingStats(total_items=len(nodes))
+        stats.add_error(
+            f"{type(self).__name__} keeps no summary tree", max(1, len(nodes))
+        )
+        return stats
+
+    def delete_summary_nodes_citing(
+        self, text_unit_ids: list[str], suffix: str
+    ) -> IndexingStats:
+        """Delete every summary node of ``suffix`` citing one of
+        ``text_unit_ids`` and every node above it: a summary paraphrases
+        its children, so it goes with any of them (a removal). Default
+        deletes nothing; adapters that override it report a failed read as
+        failed items."""
+        return IndexingStats()
+
+    def delete_summary_nodes_outside(
+        self, text_unit_ids: Collection[str], suffix: str
+    ) -> IndexingStats:
+        """Delete every summary node of ``suffix`` citing a text unit not in
+        ``text_unit_ids`` (all a full build wrote), and every node above it.
+        Default deletes nothing; adapters that override it report a failed
+        read as failed items."""
+        return IndexingStats()
+
+    def add_build_artifacts(
+        self, artifacts: Collection[IndexArtifact], suffix: str | None
+    ) -> bool:
+        """Name ``artifacts`` in the build record of ``suffix``'s indices
+        besides those it names (the summary tree, built after the record);
+        a record naming none is left as it is. Returns whether a record
+        changed. Default changes nothing."""
+        return False
 
     def prune_text_unit_communities(
         self, community_ids: list[str], suffix: str | None = None

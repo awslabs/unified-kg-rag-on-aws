@@ -20,7 +20,7 @@ import pytest
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
-from unified_kg_rag.domain.models import Config, SearchStrategy
+from unified_kg_rag.domain.models import Config, Methodology, SearchStrategy
 
 pytestmark = pytest.mark.integration
 
@@ -35,6 +35,8 @@ class _FailingCrossEncoder(e2e.FakeCrossEncoder):
 def chain(tmp_path_factory: pytest.TempPathFactory):
     tmp: Path = tmp_path_factory.mktemp("rerank-status")
     config: Config = e2e._config(tmp / "stores", tmp / "viz")
+    # Every strategy is asked: raptor's tree too.
+    config.indexing.methodologies = [*config.indexing.methodologies, Methodology.RAPTOR]
     # Global search reranks only the text units it is asked to add.
     config.search.global_search.text_unit_slots = 5
     server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)

@@ -54,6 +54,7 @@ from unified_kg_rag.domain.models import (
     EvaluationGroundTruth,
     EvaluationQuery,
     EvaluatorType,
+    Methodology,
     PipelineConfig,
     PipelineContext,
     PipelineStageStatus,
@@ -297,6 +298,8 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
 ) -> None:
     stores, viz = tmp_path / "stores", tmp_path / "viz-data"
     config = _config(stores, viz)
+    # Every strategy is asked: raptor's tree too.
+    config.indexing.methodologies = [*config.indexing.methodologies, Methodology.RAPTOR]
     assert (config.providers.graph.kind, config.providers.vector.kind) == (
         "sqlite",
         "sqlite",

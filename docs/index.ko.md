@@ -30,7 +30,7 @@
 | 설명 | [검색](./concepts/retrieval.ko.md), [범위와 네임스페이스](./concepts/scopes-and-namespaces.ko.md) | 검색 전략과 언제 어떤 전략을 쓸지, 하이브리드 점수와 재순위화, 답변 형식, 컨텍스트 예산. 인덱스 접미사, 소스 범위, 네임스페이스, 접미사와 필터가 접근 제어가 아닌 이유 |
 | 사용 방법 | [`iac/README.md`](../iac/README.md)(영문) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |
 | 사용 방법 | [Local mode](./guides/local-mode.md)(영문), [설정](./guides/configure.ko.md) | 로컬 공급자, AWS 모드와 다른 점, 컨테이너로 띄운 저장소. 설정을 읽는 순서, 대부분의 실행에서 바꾸는 설정, 환경 변수, 로그에 남는 내용 |
-| 사용 방법 | [수집](./guides/ingest.ko.md), [다국어 코퍼스](./guides/multilingual.ko.md), [질의](./guides/query.ko.md) | 12개 단계, 재개와 강제 재구축, S3 동기화, 응답 캐시, 대규모 코퍼스와 비용 조절 수단. 번역, 분석기, CJK 텍스트의 청크 크기. 질의 실행, 필터, 재순위화 상태, 질의 제한 시간, 대화형 모드와 메모리 |
+| 사용 방법 | [수집](./guides/ingest.ko.md), [다국어 코퍼스](./guides/multilingual.ko.md), [질의](./guides/query.ko.md) | 13개 단계, 재개와 강제 재구축, S3 동기화, 응답 캐시, 대규모 코퍼스와 비용 조절 수단. 번역, 분석기, CJK 텍스트의 청크 크기. 질의 실행, 필터, 재순위화 상태, 질의 제한 시간, 대화형 모드와 메모리 |
 | 사용 방법 | [증분 인덱싱](./guides/incremental.ko.md) | 레지스트리 켜기, 코퍼스나 설정을 바꿀 때 일어나는 일, 재구축과 두 가지 재구축 신호, 삭제 범위와 대량 삭제, 코퍼스 옮기기, 실패한 문서와 격리된 문서, 동시 실행 |
 | 사용 방법 | [도메인 적응](./guides/domain-adaptation.ko.md) | 엔티티 유형, 프롬프트 튜닝, 사용자 정의 프롬프트 재정의와 그 검사, 재정의할 수 없는 프롬프트 |
 | 사용 방법 | [Extraction schema](./guides/extraction-schema.md), [Ontology](./guides/ontology.md), [Seed graphs](./guides/seed-graphs.md)(영문) | 스키마 모드, 유형과 패턴 선언, 저장하는 스키마 필드와 그 필터, 스키마를 바꾸면 다시 실행되는 것. OWL/RDFS 온톨로지에서 스키마 읽기. 이미 가진 지식 그래프 합치기, 시드가 스키마와 문서를 만날 때의 규칙, 수명 주기와 비용 |

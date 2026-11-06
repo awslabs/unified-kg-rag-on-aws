@@ -38,6 +38,8 @@ class SectionType(str, Enum):
     ENTITY = "entity"
     GENERAL = "general"
     RELATIONSHIP = "relationship"
+    # A node of the summary tree (the tree strategy).
+    SUMMARY = "summary"
     TEXT = "text"
 
 
@@ -358,6 +360,7 @@ class TokenManager:
         SectionType.CLAIM: "claim",
         SectionType.COMMUNITY: "community",
         SectionType.GENERAL: "general",
+        SectionType.SUMMARY: "summary",
     }
 
     def _type_budget_shares(
@@ -579,6 +582,7 @@ class TokenManager:
         SectionType.RELATIONSHIP: "Knowledge Graph — Relationships",
         SectionType.CLAIM: "Claims",
         SectionType.COMMUNITY: "Community Reports",
+        SectionType.SUMMARY: "Summaries",
         SectionType.GENERAL: "Other Context",
     }
 

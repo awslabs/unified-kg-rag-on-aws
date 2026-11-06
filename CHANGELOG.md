@@ -391,8 +391,31 @@ From a `main` checkout (formats and keys no release had):
   10 s more at the median and +$0.002 for the queries it takes, and a LightRAG-only namespace now makes a router
   call (between `mix` and `iterative`) where it made none. To keep the earlier routing, set
   `search.auto_routable_strategies: [local, mix, global]`; nothing is re-run.
+- (#599) `raptor` can be selected (`indexing.methodologies`); without it nothing changes: no stage cache, extraction
+  record or evaluation manifest is keyed by the new settings at their defaults, and the text units are stored as
+  before. Adding `raptor` to a namespace builds its summary tree on the next run, or with `run-ingestion
+  --enabled-stages summary_tree`, from the stored text units: no re-extraction, about one summary call per five or
+  six text units on the default tier (the MuSiQue benchmark store's 3,318 text units: about 580 calls, $2-8 with
+  Sonnet 5.5, $0.1-0.4 with `models.roles.summary_tree: fast`). A completed pipeline id re-run resumes at
+  `indexing` as before.
 
 ### Added
+- RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
+  after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
+  mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index
+  language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps the rebuilt tree into its own
+  index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children are unchanged reuses its
+  summary. `raptor` alone runs no graph stage. The `tree` strategy (`auto` routes to it only on a `raptor`-only
+  namespace) fuses BM25 + kNN searches of the text units and of every level of summaries, plus the summaries and
+  passages citing the entities a raw-query search finds where the namespace has an entities index (buckets
+  `tree_text_units`, `tree_summaries`, `tree_graph_summaries`, `tree_graph_text_units`), reranks them together,
+  keeps `max_nodes_per_level` summaries of a level and expands each to `expand_children` of its passages; a summary
+  is reported with its lineage, keeps a document filter only when all its documents share it, and goes, with every
+  summary above it, when one of its text units is removed. Settings: `indexing.summary_tree`,
+  `search.tree_search`, `search.token_manager.type_budgets.summary`; the `VectorIndexer` port gains the summary-tree
+  methods (each with a "cannot" default). Differential tests against the original code ship with recorded fixtures.
+  See [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
+  [Design §6.5](docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
 - Methodology profiles (#596): `indexing.methodologies` (default `[graphrag, lightrag]`, today's union) selects what
   ingestion builds, so a LightRAG-only corpus (`[lightrag]`) runs no community detection and makes no report call.
   The build record names the artifacts and methodologies a namespace holds; a query whose strategy reads another
@@ -400,7 +423,7 @@ From a `main` checkout (formats and keys no release had):
   among the held ones. Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's); `hipporag`
-  holds what `lightrag` builds and `raptor` is reserved. See [methodology
+  holds what `lightrag` builds and `raptor` reads a summary tree (#599). See [methodology
   profiles](docs/concepts/overview.md#methodology-profiles) and [Design §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the

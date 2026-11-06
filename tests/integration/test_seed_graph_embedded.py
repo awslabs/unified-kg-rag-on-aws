@@ -40,6 +40,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
+    Methodology,
     PipelineConfig,
     PipelineContext,
     PipelineStageStatus,
@@ -116,6 +117,11 @@ class _Harness:
         self.seed.parent.mkdir()
         self.seed.write_text(_seed_text())
         self.config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+        # Every strategy is asked: raptor's tree too.
+        self.config.indexing.methodologies = [
+            *self.config.indexing.methodologies,
+            Methodology.RAPTOR,
+        ]
         # Every LLM stage on: none may see a seed unit.
         self.config.processing.gleaning.enabled = True
         self.config.processing.gleaning.max_rounds = 1

@@ -3,7 +3,7 @@
 > 🇰🇷 한국어판: [ingest.ko.md](./ingest.ko.md)
 
 Ingestion turns a directory of documents into a knowledge graph in the graph
-and vector stores. `run-ingestion --source-directory <dir>` runs the 12 stages ([Design §4](../design.md#4-ingestion-pipeline) shows them),
+and vector stores. `run-ingestion --source-directory <dir>` runs the 13 stages ([Design §4](../design.md#4-ingestion-pipeline) shows them),
 checkpoints each one, and resumes after the last valid stage when re-run with
 the same `--pipeline-id`. With the doc-status registry on it is incremental
 ([Incremental indexing](./incremental.md)).
@@ -13,7 +13,7 @@ Which indexes a run writes, and which documents it may delete, follow from its
 index suffix and source scope ([Scopes and namespaces](../concepts/scopes-and-namespaces.md)).
 A Korean or mixed-language corpus: [Multilingual corpora](./multilingual.md).
 
-## The 12 pipeline stages
+## The 13 pipeline stages
 
 In run order; `--enabled-stages` / `--resume-from-stage` take the **names**
 (case-insensitive):
@@ -36,6 +36,9 @@ In run order; `--enabled-stages` / `--resume-from-stage` take the **names**
     (only when `indexing.methodologies` selects `graphrag`).
 12. **`indexing`**: writes to OpenSearch and Neptune (and the registry when
     enabled).
+13. **`summary_tree`** (only when `indexing.methodologies` selects
+    `raptor`): RAPTOR's summary tree over the stored text units, which the
+    `tree` strategy searches ([below](#a-raptor-summary-tree-opt-in)).
 
 A run includes the stages its [methodology profile](#methodology-profiles)
 needs. An explicit `--enabled-stages` list wins: a listed stage runs and an
@@ -186,6 +189,55 @@ indexing:
   Nothing is deleted. To delete them, run once with `indexing.reset: true`
   and the remaining methodologies: the rebuild replaces the community-reports
   index with an empty one and drops the graph's community vertices.
+
+## A RAPTOR summary tree (opt-in)
+
+`raptor` (not a default) builds a summary tree after indexing: the stored
+text units are clustered by their vectors, each cluster is summarized
+(`models.roles.summary_tree`, the default tier), the summaries are
+clustered and summarized again, up to `indexing.summary_tree.max_levels`
+(5), and the tree is written into its own index for the `tree` strategy
+([Retrieval](../concepts/retrieval.md#search-strategies--when-to-use-which)).
+Opt-in and unmeasured: whether it answers better than `naive` is for an
+experiment to decide.
+
+```yaml
+indexing:
+  methodologies: [raptor]                     # text units and the tree only
+  # methodologies: [graphrag, lightrag, raptor]  # the tree beside the graph
+  summary_tree:
+    algorithm: kmeans          # or gmm (RAPTOR's Gaussian mixture, slower)
+    partition_by: [category]   # optional: one tree per filter value
+```
+
+- **What `raptor` alone runs.** Parsing, loading, chunking, translation
+  (when on), indexing and the tree: no graph extraction, gleaning,
+  resolution, claims or communities, so a `raptor`-only namespace costs
+  about $1-8 per million corpus tokens (the summaries; the tree is about
+  one call per five or six text units), against roughly $1,000 for the
+  default graph ingest. Only `tree` serves it; `auto` falls back to it.
+- **Adding `raptor` later** builds only the tree, on the next run (an
+  unchanged corpus included) or with `run-ingestion --enabled-stages
+  summary_tree`, from the stored text units: no re-extraction and no
+  rebuild of the namespace.
+- **Incremental runs** rebuild the tree from the stored text units and swap
+  it in. A cluster whose children are unchanged takes its stored summary (no
+  model call); the clustering starts from a sample of the node ids that a
+  small delta barely moves, so most clusters survive one. A removed
+  document's summaries, and every summary above them, are deleted with its
+  text units, before the tree is built again, so no summary of removed text
+  is served even when the run stops in between. `refresh: on_reset` keeps
+  the tree until a reset (removals still delete their summaries).
+- **Filters.** A summary keeps a document filter key only when all its
+  documents share the value, so under a filter it is kept only when all its
+  documents pass; `partition_by` keeps whole trees pure on those keys.
+- **Languages.** Summaries are written in the index language (the target
+  language when translation runs, the source language otherwise), and their
+  text is analyzed with that language's analyzer.
+- **Limits.** A tree holds at most `max_leaves_in_memory` (200,000) text
+  units (their vectors are clustered in memory): split larger corpora with
+  `partition_by` or `scope: document` (one tree per document, RAPTOR's own
+  setting; documents of fewer than three text units get none).
 
 ## Cost levers
 

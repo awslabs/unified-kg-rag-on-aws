@@ -90,6 +90,8 @@ class PipelineStageType(Enum):
     GRAPH_ANALYSIS = "graph_analysis"
     COMMUNITY_DETECTION = "community_detection"
     INDEXING = "indexing"
+    # RAPTOR's summary tree over the stored text units (raptor methodology).
+    SUMMARY_TREE = "summary_tree"
 
 
 class ChunkingStrategy(str, Enum):
@@ -360,6 +362,7 @@ class ModelRole(str, Enum):
     GLEANING = "gleaning"
     CLAIM_EXTRACTION = "claim_extraction"
     COMMUNITY_REPORT = "community_report"
+    SUMMARY_TREE = "summary_tree"
     QUERY_TRANSLATION = "query_translation"
     ENTITY_EXTRACTION = "entity_extraction"
     STRATEGY_SELECTION = "strategy_selection"
@@ -387,6 +390,10 @@ _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
     ModelRole.GLEANING: ("default", "refines each text unit's extraction"),
     ModelRole.CLAIM_EXTRACTION: ("default", "extracts claims"),
     ModelRole.COMMUNITY_REPORT: ("default", "writes community reports"),
+    ModelRole.SUMMARY_TREE: (
+        "default",
+        "summarizes each cluster of the summary tree (raptor methodology)",
+    ),
     ModelRole.QUERY_TRANSLATION: ("fast", "translates the query"),
     ModelRole.ENTITY_EXTRACTION: (
         "default",
@@ -470,6 +477,7 @@ class RoleModelsConfig(BaseModel):
     gleaning: str | None = _role_field(ModelRole.GLEANING)
     claim_extraction: str | None = _role_field(ModelRole.CLAIM_EXTRACTION)
     community_report: str | None = _role_field(ModelRole.COMMUNITY_REPORT)
+    summary_tree: str | None = _role_field(ModelRole.SUMMARY_TREE)
     query_translation: str | None = _role_field(ModelRole.QUERY_TRANSLATION)
     entity_extraction: str | None = _role_field(ModelRole.ENTITY_EXTRACTION)
     strategy_selection: str | None = _role_field(ModelRole.STRATEGY_SELECTION)
@@ -2876,6 +2884,15 @@ class OpenSearchIndexingConfig(BaseModel):
         max_length=100,
         description="Index name prefix for claim (covariate) documents (lowercase letters, digits, '-' and '_', not starting with '-' or '_')",
     )
+    summary_nodes_index_prefix: str = Field(
+        default="graphrag-summary-nodes",
+        min_length=1,
+        max_length=100,
+        description="Index name prefix for the summary tree's nodes "
+        "(built only for the raptor methodology, indexing.summary_tree) "
+        "(lowercase letters, digits, '-' and '_', not starting with '-' or "
+        "'_')",
+    )
     extraction_records_index_prefix: str = Field(
         default="graphrag-extraction-records",
         min_length=1,
@@ -3076,6 +3093,7 @@ class OpenSearchIndexingConfig(BaseModel):
         "community_reports_index_prefix",
         "relationships_index_prefix",
         "claims_index_prefix",
+        "summary_nodes_index_prefix",
         "extraction_records_index_prefix",
     )
     @classmethod
@@ -3170,6 +3188,147 @@ class CommunityCompactionConfig(BaseModel):
     )
 
 
+class SummaryTreeConfig(BaseModel):
+    """RAPTOR's summary tree over the stored text units (opt-in, unmeasured).
+
+    Built when ``indexing.methodologies`` selects ``raptor`` (not a
+    default): after indexing, the ``summary_tree`` stage clusters the
+    namespace's stored text units by their vectors, summarizes each cluster
+    with ``models.roles.summary_tree`` in the index language, clusters the
+    summaries again, and writes the tree into its own index
+    (``indexing.opensearch.summary_nodes_index_prefix``), which the
+    ``tree`` strategy searches. The tree is rebuilt whenever the stored text
+    units or these settings change; a cluster whose children are unchanged
+    reuses its summary and makes no model call. Adding ``raptor`` to an
+    existing namespace builds only the tree, from the stored text units
+    (``run-ingestion --enabled-stages summary_tree`` builds it without
+    re-ingesting); a call is about one per five or six text units.
+    """
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    scope: Literal["corpus", "document"] = Field(
+        default="corpus",
+        description="corpus: one tree over every text unit of the index "
+        "namespace (one per partition_by value tuple); document: one tree "
+        "per document (RAPTOR's own setting), none for a document of fewer "
+        "than min_leaves_per_tree text units.",
+    )
+    partition_by: list[str] = Field(
+        default_factory=list,
+        description="Document filter keys (a document's metadata filters) "
+        "whose value tuple splits the corpus into separate trees, so every "
+        "node is pure on them and survives a filter on them (a summary is "
+        "kept under a filter only when all its documents pass it).",
+    )
+    algorithm: Literal["kmeans", "gmm"] = Field(
+        default="kmeans",
+        description="kmeans: hard k-means over the PCA-reduced vectors, "
+        "k = ceil(n / target_children) per level. gmm: RAPTOR's Gaussian "
+        "mixture with BIC-chosen k, global then local, soft membership "
+        "(soft_threshold). Both are numpy-only and seeded (random_state).",
+    )
+    target_children: int = Field(
+        default=6,
+        ge=2,
+        le=50,
+        description="Children per summary node aimed at (kmeans' k, and the "
+        "centre of gmm's bounded BIC grid). RAPTOR's trees average 6.7.",
+    )
+    soft_threshold: float = Field(
+        default=0.1,
+        gt=0.0,
+        lt=1.0,
+        description="gmm only: a node joins every cluster whose posterior "
+        "exceeds this (RAPTOR's threshold), its likeliest one when none does.",
+    )
+    reduction_dims: int = Field(
+        default=10,
+        ge=2,
+        le=100,
+        description="PCA dimensions the vectors are reduced to before "
+        "clustering (RAPTOR's reduction_dimension; PCA replaces its UMAP).",
+    )
+    bic_grid: Literal["bounded", "upstream"] = Field(
+        default="bounded",
+        description="gmm only: the cluster counts BIC compares. bounded: at "
+        "most 8 values around n / target_children; upstream: 1 to 49, as "
+        "RAPTOR's code (slow on large levels).",
+    )
+    max_levels: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="Summary levels above the text units at most (RAPTOR's "
+        "num_layers).",
+    )
+    min_nodes_to_cluster: int = Field(
+        default=11,
+        ge=2,
+        description="A level of at most this many nodes is not clustered "
+        "again: its nodes are the roots (RAPTOR's reduction_dimension + 1).",
+    )
+    min_level_shrink: float = Field(
+        default=0.2,
+        ge=0.0,
+        lt=1.0,
+        description="Stop when the next level would hold more than "
+        "(1 - this) of the current one's nodes: no structure is left to "
+        "summarize. 0 never stops for it (RAPTOR's behaviour).",
+    )
+    max_cluster_tokens: int = Field(
+        default=8000,
+        ge=256,
+        description="A cluster whose children hold more tokens than this "
+        "(the summary prompt's input) is clustered again until it fits "
+        "(RAPTOR's max_length_in_cluster, 3500 cl100k tokens).",
+    )
+    max_summary_tokens: int = Field(
+        default=300,
+        ge=32,
+        le=4000,
+        description="Length a summary aims at; a longer answer is cut to it.",
+    )
+    max_lineage_text_units: int = Field(
+        default=10000,
+        ge=100,
+        description="Text-unit ids a node stores at most (its provenance and "
+        "removal key); above it the node keeps its child ids and the "
+        "lineage is resolved through them at query time.",
+    )
+    min_leaves_per_tree: int = Field(
+        default=3,
+        ge=2,
+        description="scope: document only: a document with fewer text units "
+        "gets no tree.",
+    )
+    refresh: Literal["every_run", "on_reset"] = Field(
+        default="every_run",
+        description="every_run: rebuild the tree on every run whose stored "
+        "text units changed. on_reset: delta runs only delete the nodes of "
+        "removed text (always done) and report the text units no summary "
+        "covers (tree_uncovered_leaves); indexing.reset rebuilds.",
+    )
+    random_state: int = Field(
+        default=42, description="Seed of the clustering's initializations."
+    )
+    max_leaves_in_memory: int = Field(
+        default=200_000,
+        ge=1,
+        description="Text units one tree may hold, read into memory with "
+        "their vectors (about 4 KB each at 1,024 dimensions); a larger tree "
+        "fails the stage, naming partition_by and scope: document.",
+    )
+
+    @field_validator("partition_by")
+    @classmethod
+    def _strip_partition_keys(cls, keys: list[str]) -> list[str]:
+        stripped = [key.strip() for key in keys]
+        if not all(stripped):
+            raise ValueError("partition_by entries must not be empty")
+        return list(dict.fromkeys(stripped))
+
+
 class IndexingConfig(BaseModel):
     # A suffix set in code (config.indexing.additional_suffix = ...) is
     # checked too: an index name the engine refuses read as a refused index
@@ -3183,7 +3342,9 @@ class IndexingConfig(BaseModel):
             "The retrieval methodologies ingestion builds: graphrag (local, "
             "global, drift, simple; communities and community reports), "
             "lightrag (mix, hybrid, naive; the relationship vector index), "
-            "hipporag (what lightrag builds). A run builds only what the "
+            "hipporag (what lightrag builds), raptor (tree; the text units and "
+            "a summary tree over them, indexing.summary_tree, without graph "
+            "extraction). A run builds only what the "
             "selected ones read: without graphrag no community detection "
             "and no report calls. A query whose strategy reads a methodology "
             "the index namespace does not hold fails before any model call. "
@@ -3193,8 +3354,8 @@ class IndexingConfig(BaseModel):
             "without deleting them. graph.community_detection.enabled: "
             "false leaves out graphrag and "
             "indexing.opensearch.build_relationship_vector_index: false "
-            "lightrag and hipporag. raptor is reserved: no stage builds its "
-            "summary tree yet."
+            "lightrag and hipporag. Adding raptor builds only its tree, from "
+            "the stored text units."
         ),
     )
     reset: bool = Field(
@@ -3330,6 +3491,12 @@ class IndexingConfig(BaseModel):
         "their exclusive artifacts (shared ones are kept) and deletes their "
         "records once the removal succeeded. Never the run's own scope. "
         "run-ingestion --retire-source-scope adds to this list.",
+    )
+
+    summary_tree: SummaryTreeConfig = Field(
+        default_factory=SummaryTreeConfig,
+        description="RAPTOR's summary tree over the stored text units, which "
+        "the tree strategy searches (built for the raptor methodology).",
     )
 
     @field_validator("methodologies", mode="before")
@@ -3902,6 +4069,13 @@ class ContextTypeBudgetConfig(BaseModel):
         description="Relative share for untyped sections — global search's "
         "map-reduce synthesis lands here.",
     )
+    summary: float = Field(
+        default=0.50,
+        ge=0.0,
+        description="Relative share for summary-tree sections (the tree "
+        "strategy only, beside text's 0.50: at most half the context, and "
+        "the text units take what the summaries leave)",
+    )
 
     @model_validator(mode="after")
     def validate_at_least_one_positive_share(self) -> "ContextTypeBudgetConfig":
@@ -4259,6 +4433,64 @@ class PPRSearchConfig(BaseModel):
     )
 
 
+class TreeSearchConfig(BaseModel):
+    """RAPTOR summary-tree search (``tree``, opt-in, unmeasured; the
+    ``raptor`` methodology).
+
+    Fuses, by RRF, a hybrid search of the text units, one of every level of
+    the summary tree (RAPTOR's collapsed tree) and, where the namespace has
+    an entities index, the summaries and text units that cite the entities a
+    hybrid search with the raw query finds; reranks the leaves and the
+    summaries together; keeps at most ``max_nodes_per_level`` summaries of a
+    level and expands each to ``expand_children`` of its own passages, so
+    the answer cites the original text.
+    """
+
+    graph_signal: Literal["auto", "off"] = Field(
+        default="auto",
+        description="auto: add the graph buckets (tree_graph_summaries, "
+        "tree_graph_text_units) where the namespace's methodologies build the "
+        "entities index (graphrag or lightrag besides raptor); off: never. "
+        "No model call either way.",
+    )
+    graph_seed_entities: int = Field(
+        default=8,
+        ge=1,
+        le=50,
+        description="Entities the raw-query entity search takes as graph seeds.",
+    )
+    text_top_k: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description="Text units each text bucket searches for, and the most "
+        "the fused result keeps (expanded passages aside).",
+    )
+    summary_top_k: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Summaries the summary buckets search for, and the most "
+        "the fused result keeps (RAPTOR's collapsed tree takes top_k 10).",
+    )
+    max_nodes_per_level: int = Field(
+        default=3,
+        ge=1,
+        le=50,
+        description="Summaries of one tree level the context keeps at most, so "
+        "neither the roots nor the first level take every summary slot.",
+    )
+    expand_children: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        description="Passages of its own lineage each kept summary brings "
+        "(the best by the query, under the caller's filters), so the answer "
+        "cites original text. 0 keeps the summaries alone (RAPTOR's "
+        "collapsed tree).",
+    )
+
+
 def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrategy]:
     if SearchStrategy.AUTO in strategies:
         raise ValueError("auto_routable_strategies cannot include 'auto'")
@@ -4267,6 +4499,11 @@ def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrate
             "auto_routable_strategies cannot include 'ppr' until a "
             "measurement shows where it wins (docs/design.md §6.4); select "
             "it explicitly"
+        )
+    if SearchStrategy.TREE in strategies:
+        raise ValueError(
+            "auto_routable_strategies cannot include 'tree': it is opt-in and "
+            "unmeasured, so the router does not pick it; select it explicitly"
         )
     return strategies
 
@@ -4447,6 +4684,10 @@ class SearchConfig(BaseModel):
     ppr_search: PPRSearchConfig = Field(
         default_factory=PPRSearchConfig,
         description="HippoRAG 2 Personalized PageRank search configuration",
+    )
+    tree_search: TreeSearchConfig = Field(
+        default_factory=TreeSearchConfig,
+        description="RAPTOR summary-tree search configuration (opt-in)",
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
@@ -4850,6 +5091,16 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for re-summarizing over-long merged entity/relationship descriptions",
     )
+    tree_summary_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for summarizing one cluster of the "
+        "summary tree (raptor methodology)",
+    )
+    tree_summary_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for summarizing one cluster of the "
+        "summary tree; it must keep {passages}",
+    )
     graph_refinement_system: str | None = Field(
         default=None,
         description="Custom system prompt for improving and refining extracted graph entities and relationships",
@@ -5213,6 +5464,7 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "community_report": frozenset({"entities", "relationships"}),
     "corpus_profile": frozenset({"corpus_sample"}),
     "description_summarization": frozenset({"descriptions"}),
+    "tree_summary": frozenset({"passages"}),
     "decomposition_step": frozenset({"query", "context"}),
     "drift_action": frozenset({"query", "context"}),
     "drift_hyde": frozenset({"query"}),

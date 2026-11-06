@@ -61,6 +61,7 @@ def test_field_mappings_cover_all_indices(retriever, config) -> None:
         o.relationships_index_prefix,
         o.claims_index_prefix,
         o.community_reports_index_prefix,
+        o.summary_nodes_index_prefix,
     }
 
 
@@ -122,7 +123,10 @@ def test_normalize_index_prefixes_none_all_when_everything_built(
 ) -> None:
     config.processing.claim_extraction.enabled = True
     out = retriever._normalize_index_prefixes(None)
-    assert set(out) == set(retriever._field_mappings.keys())
+    # Every index but the summary tree's, which only the tree strategy names.
+    assert set(out) == set(retriever._field_mappings.keys()) - {
+        config.indexing.opensearch.summary_nodes_index_prefix
+    }
 
 
 def test_normalize_index_prefixes_none_follows_optional_index_flags(

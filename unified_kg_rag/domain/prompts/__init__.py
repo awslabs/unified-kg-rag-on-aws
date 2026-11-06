@@ -13,6 +13,7 @@ from .data_processing import (
     DescriptionSummarizationPrompt,
     TextChunkingPrompt,
     TextTranslationPrompt,
+    TreeSummaryPrompt,
 )
 from .evaluation import (
     ASSERTION_VERDICTS,
@@ -93,4 +94,5 @@ __all__ = [
     "TextChunkingPrompt",
     "TextTranslationPrompt",
     "TranslationPrompt",
+    "TreeSummaryPrompt",
 ]

@@ -83,7 +83,13 @@ def _knn_fields(mapping: dict[str, Any]) -> list[dict[str, Any]]:
 class TestMapping:
     def test_the_default_mapping_is_unchanged(self, tmp_path: Path) -> None:
         indexer = _indexer(Config(), _RemoteEngine(tmp_path / "v.sqlite3"))
-        fields = [f for spec in indexer._specs() for f in _knn_fields(spec.mapping())]
+        # The summary tree's index (raptor only) is new; the others' are not.
+        fields = [
+            f
+            for spec in indexer._specs()
+            if spec.name != "summary nodes"
+            for f in _knn_fields(spec.mapping())
+        ]
         assert len(fields) == 8
         assert {json.dumps(field) for field in fields} == {_DEFAULT_KNN_FIELD}
 

@@ -25,6 +25,7 @@ from unified_kg_rag.application.ingestion import pipeline_metrics
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     Config,
+    Methodology,
     PipelineConfig,
     PipelineStageResult,
     PipelineStageStatus,
@@ -708,6 +709,8 @@ def _binding_stub(stage_type: PipelineStageType, cls: type):
 def test_real_stage_init_signatures_accept_injected_kwargs() -> None:
     cfg = Config()
     cfg.processing.claim_extraction.enabled = True
+    # raptor too: every stage is built.
+    cfg.indexing.methodologies = [*cfg.indexing.methodologies, Methodology.RAPTOR]
     pipe = _pipeline_for_init(cfg)
     real = DataIngestionPipeline.STAGE_CLASSES
     pipe.STAGE_CLASSES = {st: _binding_stub(st, cls) for st, cls in real.items()}

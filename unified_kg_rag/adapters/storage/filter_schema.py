@@ -201,6 +201,8 @@ TYPED_FILTER_FIELDS: dict[str, str] = {
     "weight": _NUMBER,
     "rating": _NUMBER,
     "n_tokens": _INTEGER,
+    "n_leaves": _INTEGER,
+    "lineage_complete": _BOOLEAN,
     "level": _INTEGER,
     "depth": _INTEGER,
     "max_cut_depth": _INTEGER,
@@ -377,6 +379,8 @@ UNDECLARED_MAPPED_FIELDS: dict[str, frozenset[str]] = {
     # Rendered in the relationship's context line, but no filter key (see
     # the relationships' fields below).
     "relationships": frozenset({"type"}),
+    # The digest a summary is reused by.
+    "summary_nodes": frozenset({"input_key"}),
 }
 
 
@@ -472,6 +476,25 @@ def opensearch_filter_fields(
                     "description",
                     "source_text",
                     "text_unit_ids",
+                }
+            ),
+            _OPENSEARCH_DOCUMENT_PREFIXES,
+        ),
+        # The summary tree's nodes hold a document key only when all their
+        # documents share its value (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in): fail-closed.
+        "summary_nodes": FilterFields(
+            frozenset(
+                {
+                    "id",
+                    "text",
+                    "level",
+                    "text_unit_ids",
+                    "child_ids",
+                    "n_leaves",
+                    "n_tokens",
+                    "lineage_complete",
+                    "language",
+                    "partition",
                 }
             ),
             _OPENSEARCH_DOCUMENT_PREFIXES,

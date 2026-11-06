@@ -72,6 +72,12 @@ significant difference ([evidence](./defaults-and-evidence.md#lightrag-chunk-pic
 |---|---|---|
 | `iterative` | Multi-hop questions whose last hop is about an entity the question does not name | Runs `search.iterative_search.base` (`mix` by default, or `local`), then a fast-model controller (`models.roles.query_controller`) reads the packed context: if it does not answer the question, the base search reruns seeded with the bridge entities the controller names and its follow-up queries search the passages, for at most `max_rounds` (2) rounds; the rounds' candidates are fused and reranked, and the answer model answers once. `decompose: true` splits the question into steps instead. About 1-3 fast-model calls more than the base a query. On 200 MuSiQue questions, over `mix`: `answer_contains` +12.5 points and token F1 +5.2 against `mix`, p95 latency 11 s to 27 s ([evidence](./defaults-and-evidence.md#iterative-follow-up-rounds)). `auto` may route multi-hop questions to it; no default selects it ([design](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in)). |
 
+**RAPTOR summary tree (opt-in, unmeasured; the `raptor` methodology):**
+
+| Strategy | Use when | How it works |
+|---|---|---|
+| `tree` | Questions whose answer spans several related passages, or needs a passage and the gist around it | Needs a namespace built with `raptor` in `indexing.methodologies`: after indexing, the text units are clustered by their vectors and each cluster summarized (`models.roles.summary_tree`), level by level, in the index language. A query fuses by RRF a BM25 + kNN search of the text units, one of every level of summaries (RAPTOR's collapsed tree) and, where the namespace also holds the entities index, the summaries and passages citing the entities the raw query finds (no model call); the cross-encoder reranks passages and summaries together, at most `max_nodes_per_level` (3) summaries of a level are kept, and each brings `expand_children` (2) of its own passages, so the answer cites original text. A summary is reported as a source with its lineage (`text_unit_ids`, `child_ids`). Costs about what `naive` costs, plus a few searches. Selected explicitly only: `auto` does not route to it until it is measured, except on a `raptor`-only namespace, where it is the one strategy left ([design](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)). |
+
 ## Hybrid scoring and rerank
 
 Every strategy fuses its per-source results (BM25, vector, graph) by
