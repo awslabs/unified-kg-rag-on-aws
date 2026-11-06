@@ -663,7 +663,8 @@ Queries and retrieval.
 - Global search: a map batch over the model's context is left unrated instead of failing, a map step that fails
   entirely fails the query or is recorded in `degraded_error`, and a fatal model error fails the query even under
   `processing.ignore_errors` (#264, #267, #348, #354, #360, #567). A dynamic-selection rating is its answer's first
-  number clamped to 1-10 (`8/10`, `Score: 2`; none counts in `global_unrated_report_count`) (#567).
+  number clamped to 1-10 (`8/10`, `Score: 2`; none counts in `global_unrated_report_count`), not a number of a
+  mention of the scale (`On a scale of 1-10, I'd rate 8` is 8) (#567, #PR).
 - A suffix nothing was ingested under fails with `No indices found` (#227); indices of another embedding model or
   dimension fail with a `ConfigurationError`, and queries embed with `models.embedding.dimension` (#232).
 - `run-rag` and `run-eval` query `processing.document_parsing.index_value` when `--suffix` is not given (they
