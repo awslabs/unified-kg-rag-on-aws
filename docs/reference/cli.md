@@ -156,7 +156,8 @@ Guide: [Benchmarks](../guides/benchmarks.md). Also takes the [provider flags](#p
 |---|---|---|
 | `benchmark` | required | Benchmark to prepare: musique, or assertions (questions and assertions generated from --source-directory). |
 | `--output-directory` | required | Directory for corpus/ and eval_data.json (corpus/ must be new or empty). |
-| `--data-path` | — | Local official JSONL (e.g. musique_ans_v1.0_dev.jsonl from the official download; a musique_full_v1.0_*.jsonl for --unanswerable); default: download the answerable dev split, or the full one with --unanswerable. |
+| `--data-path` | — | Local official JSONL of the answerable questions (e.g. musique_ans_v1.0_dev.jsonl from the official download; a musique_full_v1.0_*.jsonl supplies its answerable half, labelled musique-full-answerable, and with --unanswerable and no --unanswerable-data-path the unanswerable questions too); default: download the answerable dev split. |
+| `--unanswerable-data-path` | — | Local musique_full_v1.0_*.jsonl to draw the --unanswerable questions from (the answerable ones still come from --data-path or the default download); default: the --data-path file when it is a full file, else download the full dev split. |
 | `--limit` | — | Number of answerable questions to sample (default: all 2,417 of dev). |
 | `--unanswerable` `N` | — | Also write N unanswerable questions of the full split (metadata.answerable: false), leaving out any whose answerable twin is sampled or whose removed supporting paragraph's exact text is in the pooled corpus; the counts are reported (default: none). |
 | `--hops` `HOPS` | — | Hop counts to sample from: a list (3,4) filters both answerable and unanswerable questions; quotas (2=50,3=50,4=100) draw exactly that many answerable questions per hop count, instead of --limit (default: every hop count, sampled as one pool). |

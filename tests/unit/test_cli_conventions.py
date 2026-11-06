@@ -68,10 +68,13 @@ PARSERS: dict[str, Callable[[], argparse.ArgumentParser]] = {
 }
 
 # The file and directory flags any CLI may have: an input corpus directory,
-# an input data file, where the command writes, and the config file.
+# an input data file (and prepare-benchmark's second one, the MuSiQue full
+# file of the unanswerable questions), where the command writes, and the
+# config file.
 FILE_FLAGS = {
     "--source-directory",
     "--data-path",
+    "--unanswerable-data-path",
     "--output-directory",
     "--output-path",
     "--cache-directory",

@@ -2862,8 +2862,18 @@ distractors. Two leaks make a naive pool answerable:
    paragraph's exact text (whitespace-normalized) is in the pool so far, and
    none of its own paragraphs is a removed paragraph of an item already kept;
    a kept item's paragraphs join the pool. Either rule excludes it as
-   `contaminated`. The pool starts from the answerable sample, so the
-   answerable set is the one the same seed draws without `--unanswerable`.
+   `contaminated`. The pool starts from the answerable sample.
+
+The answerable sample is drawn from the answerable file (MuSiQue-Ans: the
+default download, or `--data-path`) and the unanswerable items from the full
+file (downloaded beside it, or `--unanswerable-data-path`), whose answerable
+half supplies each item's twin (which paragraphs were removed). So the
+answerable set is the one the same seed draws without `--unanswerable`. The
+two files are not interchangeable: every item's paragraph set differs
+between them, and a seed draws a different sample from the full file's
+answerable half (17 of 200 shared on the dev split at seed 0), so drawing
+both from the full file, as a full file given alone as `--data-path` still
+does (labelled `musique-full-answerable`), changes the answerable scores.
 
 Unanswerable rows carry `metadata.answerable: false`, no answer or
 reference sources, `metadata.benchmark: musique-full-unanswerable` and the

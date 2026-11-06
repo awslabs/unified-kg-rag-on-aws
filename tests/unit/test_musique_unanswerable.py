@@ -313,7 +313,10 @@ def test_cli_reports_the_selection(tmp_path: Path, capsys) -> None:
     [
         ["--hops", "5"],
         ["--hops", "2=1", "--limit", "1"],
-        ["--unanswerable", "1"],  # an answerable-only file
+        # An answerable-only file as the unanswerable source.
+        ["--unanswerable", "1", "--unanswerable-data-path", "{source}"],
+        ["--unanswerable-data-path", "{source}"],  # without --unanswerable
+        ["--unanswerable", "1", "--unanswerable-data-path", "{missing}"],
     ],
 )
 def test_cli_usage_errors(tmp_path: Path, flags: list[str]) -> None:
@@ -321,6 +324,7 @@ def test_cli_usage_errors(tmp_path: Path, flags: list[str]) -> None:
 
     answerable, _ = _pair("2hop__1", ["One.", "Two."], ["Noise."])
     source = _write(tmp_path / "ans.jsonl", [answerable])
+    flags = [f.format(source=source, missing=tmp_path / "missing.jsonl") for f in flags]
     with pytest.raises(SystemExit) as exit_info:
         prepare_benchmark.main(
             [
@@ -335,11 +339,59 @@ def test_cli_usage_errors(tmp_path: Path, flags: list[str]) -> None:
     assert exit_info.value.code == 2
 
 
-def test_cli_downloads_the_full_split_for_unanswerable(tmp_path: Path, mocker) -> None:
+def _ans_file(full: Path, tmp_path: Path) -> Path:
+    """The MuSiQue-Ans counterpart of ``full``: its answerable items with
+    another distractor each (the Ans and Full files differ so)."""
+    items = []
+    for line in full.read_text(encoding="utf-8").splitlines():
+        item = json.loads(line)
+        if item["answerable"]:
+            extra = {
+                "idx": len(item["paragraphs"]),
+                "title": "Extra",
+                "paragraph_text": f"Extra {item['id']} distractor.",
+                "is_supporting": False,
+            }
+            items.append({**item, "paragraphs": [*item["paragraphs"], extra]})
+    return _write(tmp_path / "ans.jsonl", items)
+
+
+def test_the_answerable_half_comes_from_the_answerable_file(tmp_path: Path) -> None:
+    """Regression: with --unanswerable the answerable questions were drawn
+    from the full file's answerable half, another sample of other
+    paragraphs ("musique-full-answerable"), not the MuSiQue-Ans sample the
+    seed draws without it."""
+    full = _full_file(tmp_path)
+    ans = _ans_file(full, tmp_path)
+    musique.prepare(ans, tmp_path / "a", limit=3, seed=5)
+    counts = musique.prepare(
+        ans, tmp_path / "b", limit=3, seed=5, unanswerable=2, unanswerable_source=full
+    )
+    assert counts["benchmark"] == "musique"
+    rows = _rows(tmp_path / "b")
+    answerable = [r for r in rows if "answerable" not in r["metadata"]]
+    assert answerable == _rows(tmp_path / "a")
+    unanswerable = _unanswerable(rows)
+    assert len(unanswerable) == 2
+    # Twins of the sampled questions stay out.
+    sampled = {r["query_id"] for r in answerable}
+    assert not {r["query_id"].removesuffix("__unanswerable") for r in unanswerable} & (
+        sampled
+    )
+    assert "Extra.txt" in {p.name for p in (tmp_path / "b" / "corpus").iterdir()}
+
+
+def test_cli_downloads_both_splits_for_unanswerable(tmp_path: Path, mocker) -> None:
     from unified_kg_rag.application.cli import prepare_benchmark
 
-    source = _full_file(tmp_path)
-    download = mocker.patch.object(musique, "download_dev", return_value=source)
+    full = _full_file(tmp_path)
+    ans = _ans_file(full, tmp_path)
+
+    def fake_download(destination: Path, *, full: bool = False) -> Path:
+        return full_file if full else ans
+
+    full_file = full
+    download = mocker.patch.object(musique, "download_dev", side_effect=fake_download)
     prepare_benchmark.main(
         [
             "musique",
@@ -351,6 +403,32 @@ def test_cli_downloads_the_full_split_for_unanswerable(tmp_path: Path, mocker) -
             "1",
         ]
     )
-    destination = download.call_args.args[0]
-    assert destination.name == musique.FULL_DEV_FILE
-    assert download.call_args.kwargs == {"full": True}
+    calls = [(c.args[0].name, c.kwargs) for c in download.call_args_list]
+    assert calls == [
+        ("musique_ans_v1.0_dev.jsonl", {}),
+        (musique.FULL_DEV_FILE, {"full": True}),
+    ]
+    rows = _rows(tmp_path / "b")
+    assert {r["metadata"]["benchmark"] for r in rows} == {
+        "musique",
+        "musique-full-unanswerable",
+    }
+    # A full file given as --data-path supplies both halves, no download.
+    download.reset_mock()
+    prepare_benchmark.main(
+        [
+            "musique",
+            "--output-directory",
+            str(tmp_path / "c"),
+            "--data-path",
+            str(full),
+            "--limit",
+            "2",
+            "--unanswerable",
+            "1",
+        ]
+    )
+    download.assert_not_called()
+    assert "musique-full-answerable" in {
+        r["metadata"]["benchmark"] for r in _rows(tmp_path / "c")
+    }

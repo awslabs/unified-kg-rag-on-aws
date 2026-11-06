@@ -78,10 +78,22 @@ def _parser() -> argparse.ArgumentParser:
         "--data-path",
         type=Path,
         help=(
-            "Local official JSONL (e.g. musique_ans_v1.0_dev.jsonl from the "
-            "official download; a musique_full_v1.0_*.jsonl for "
-            "--unanswerable); default: download the answerable dev split, or "
-            "the full one with --unanswerable"
+            "Local official JSONL of the answerable questions (e.g. "
+            "musique_ans_v1.0_dev.jsonl from the official download; a "
+            "musique_full_v1.0_*.jsonl supplies its answerable half, labelled "
+            "musique-full-answerable, and with --unanswerable and no "
+            "--unanswerable-data-path the unanswerable questions too); "
+            "default: download the answerable dev split"
+        ),
+    )
+    parser.add_argument(
+        "--unanswerable-data-path",
+        type=Path,
+        help=(
+            "Local musique_full_v1.0_*.jsonl to draw the --unanswerable "
+            "questions from (the answerable ones still come from --data-path "
+            "or the default download); default: the --data-path file when it "
+            "is a full file, else download the full dev split"
         ),
     )
     parser.add_argument(
@@ -125,8 +137,11 @@ def main(argv: list[str] | None = None) -> None:
     if args.benchmark == "assertions":
         _assertions(args, as_json)
         return
-    if args.data_path is not None and not args.data_path.is_file():
-        usage_error(f"benchmark data not found: '{args.data_path}'")
+    for path in (args.data_path, args.unanswerable_data_path):
+        if path is not None and not path.is_file():
+            usage_error(f"benchmark data not found: '{path}'")
+    if args.unanswerable_data_path is not None and args.unanswerable is None:
+        usage_error("--unanswerable-data-path needs --unanswerable")
     if args.hops and None not in args.hops.values() and args.limit is not None:
         usage_error("--hops quotas set the sample size; drop --limit")
     try:
@@ -135,13 +150,20 @@ def main(argv: list[str] | None = None) -> None:
     except EvaluationException as e:
         usage_error(str(e))
     try:
-        full = args.unanswerable is not None
         source = args.data_path or musique.download_dev(
-            args.output_directory
-            / "source"
-            / (musique.FULL_DEV_FILE if full else "musique_ans_v1.0_dev.jsonl"),
-            full=full,
+            args.output_directory / "source" / "musique_ans_v1.0_dev.jsonl"
         )
+        unanswerable_source = args.unanswerable_data_path
+        if (
+            args.unanswerable is not None
+            and unanswerable_source is None
+            and not musique.has_unanswerable(source)
+        ):
+            # The answerable questions stay MuSiQue-Ans: the same sample the
+            # seed draws without --unanswerable.
+            unanswerable_source = musique.download_dev(
+                args.output_directory / "source" / musique.FULL_DEV_FILE, full=True
+            )
         counts = musique.prepare(
             source,
             args.output_directory,
@@ -149,6 +171,7 @@ def main(argv: list[str] | None = None) -> None:
             seed=args.seed,
             unanswerable=args.unanswerable,
             hops=args.hops,
+            unanswerable_source=unanswerable_source,
         )
     except KeyboardInterrupt:
         console.print("\n[yellow]Benchmark preparation interrupted by user.[/yellow]")

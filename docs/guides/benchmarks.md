@@ -64,8 +64,9 @@ whether the chain declines them
 They come from MuSiQue-Full, which pairs every answerable question with an
 unanswerable twin: the same question with one or more supporting paragraphs
 replaced by distractors. The full dev split is downloaded the same way
-(pinned mirror revision, SHA-256 checked); `--data-path` takes a local
-`musique_full_v1.0_*.jsonl`, and an answerable-only file is a usage error.
+(pinned mirror revision, SHA-256 checked), next to the answerable one;
+`--unanswerable-data-path` takes a local `musique_full_v1.0_*.jsonl` instead
+(an answerable-only file there is a usage error).
 
 Pooled naively, many of them are answerable after all, so each is checked
 against the corpus being written:
@@ -87,9 +88,13 @@ answerable questions). Unanswerable rows have the query id
 `reference_sources`, `metadata.benchmark: musique-full-unanswerable` and the
 twin's answer (`metadata.twin_answer`, `twin_answer_aliases`): an answer that
 names it came from a near-duplicate paragraph the exact-text filter cannot
-see, or from the model's own knowledge. The answerable questions are then the
-answerable half of the full file (`musique-full-answerable`), the same sample
-the seed draws without `--unanswerable`.
+see, or from the model's own knowledge. The answerable questions still come
+from the answerable file (the default download or `--data-path`), labelled
+`musique`: the same sample the seed draws without `--unanswerable`, so the
+answerable scores compare with a run without it. A full file given as
+`--data-path` without `--unanswerable-data-path` supplies both kinds; its
+answerable half is labelled `musique-full-answerable` (its paragraphs and
+answer aliases differ from MuSiQue-Ans) and is another sample.
 
 `--hops` picks the hop counts: `--hops 3,4` samples both kinds from 3- and
 4-hop questions only; `--hops 2=50,3=50,4=100` draws exactly that many
