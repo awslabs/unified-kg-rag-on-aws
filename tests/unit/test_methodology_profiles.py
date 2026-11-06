@@ -36,12 +36,15 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     SearchStrategy,
 )
+from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.domain.models.methodology import (
+    ARTIFACT_SWITCHES,
     DEFAULT_METHODOLOGIES,
     METHODOLOGY_PROFILES,
     UNBUILT_ARTIFACTS,
     methodologies_holding,
 )
+from unified_kg_rag.domain.retrieval import index_prefixes
 
 pytestmark = pytest.mark.unit
 
@@ -282,6 +285,77 @@ def test_switches_leave_out_what_they_turn_off() -> None:
                 "opensearch": {"build_relationship_vector_index": False},
             }
         )
+
+
+def _setting(key: str, value: bool) -> dict:
+    """The config sections that set the dotted ``key`` to ``value``."""
+    first, *rest = key.split(".")
+    nested: object = value
+    for part in reversed(rest):
+        nested = {part: nested}
+    return {first: nested}
+
+
+@pytest.mark.parametrize("switch", ARTIFACT_SWITCHES, ids=lambda s: s.key)
+def test_every_consumer_reads_the_same_switch_table(switch) -> None:
+    """A switch turns the same artifacts off for what a run builds, the
+    default index sweep, the effective methodologies and the messages."""
+    on, off = Config(**_setting(switch.key, True)), Config(
+        **_setting(switch.key, False)
+    )
+    assert on._switch_on(switch.key) and not off._switch_on(switch.key)
+    assert switch.artifacts <= mp.artifacts_to_build(on)
+    assert not switch.artifacts & mp.artifacts_to_build(off)
+    assert not switch.artifacts & on.artifacts_switched_off
+    assert switch.artifacts <= off.artifacts_switched_off
+    # The default sweep searches an index of the artifact only when it is on.
+    for prefix, artifact in index_prefixes._prefix_artifacts(on):
+        if artifact in switch.artifacts:
+            assert prefix in index_prefixes.configured_index_prefixes(on)
+            assert prefix not in index_prefixes.configured_index_prefixes(off)
+    # A deselecting switch leaves out the methodologies that require them.
+    needing = {
+        m
+        for m in DEFAULT_METHODOLOGIES
+        if METHODOLOGY_PROFILES[m].required & switch.artifacts
+    }
+    expected = set(DEFAULT_METHODOLOGIES) - (needing if switch.deselects else set())
+    assert set(off.effective_methodologies) == expected
+    assert set(on.effective_methodologies) == set(DEFAULT_METHODOLOGIES)
+    if switch.deselects and needing:
+        with pytest.raises(ValidationError, match=f"{switch.key}: false"):
+            Config(
+                **merge_over(
+                    _setting(switch.key, False),
+                    {"indexing": {"methodologies": [m.value for m in needing]}},
+                )
+            )
+
+
+def test_the_switch_table_names_boolean_settings() -> None:
+    assert {s.key: (s.artifacts, s.deselects) for s in ARTIFACT_SWITCHES} == {
+        "graph.community_detection.enabled": (
+            {A.COMMUNITIES, A.COMMUNITY_REPORTS},
+            True,
+        ),
+        "graph.community_detection.report_generation.enabled": (
+            {A.COMMUNITY_REPORTS},
+            False,
+        ),
+        "indexing.opensearch.build_relationship_vector_index": (
+            {A.RELATIONSHIP_VECTORS},
+            True,
+        ),
+        "processing.claim_extraction.enabled": ({A.CLAIMS}, True),
+    }
+    config = Config()
+    for switch in ARTIFACT_SWITCHES:
+        assert isinstance(config._switch_on(switch.key), bool), switch.key
+        section, _, field = switch.key.rpartition(".")
+        owner = config
+        for part in section.split("."):
+            owner = getattr(owner, part)
+        assert type(owner).model_fields[field].annotation is bool, switch.key
 
 
 # --- stage cache keys and manifests ----------------------------------------

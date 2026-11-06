@@ -37,6 +37,7 @@ from .methodology import (
     artifacts_of,
     available_methodologies,
     buildable,
+    deselecting_switches,
     switched_off_artifacts,
 )
 from .provider_config import (
@@ -6092,43 +6093,43 @@ class Config(BaseModel):
         """Refuse a selection a switch leaves nothing of (every selected
         methodology needs an artifact a switch turns off)."""
         if not self.effective_methodologies:
-            off = sorted(
-                {
-                    a.value
-                    for m in self.indexing.methodologies
-                    for a in METHODOLOGY_PROFILES[m].required
-                    & self._switched_off_artifacts
-                }
-            )
+            off = {
+                a
+                for m in self.indexing.methodologies
+                for a in METHODOLOGY_PROFILES[m].required & self._switched_off_artifacts
+            }
             raise ValueError(
                 "indexing.methodologies ("
                 + ", ".join(m.value for m in self.indexing.methodologies)
-                + f") needs {', '.join(off)}, which "
-                + " and ".join(self._artifact_switches(set(off)))
+                + f") needs {', '.join(sorted(a.value for a in off))}, which "
+                + " and ".join(self._artifact_switches(off))
                 + " turns off: select another methodology or turn it back on"
             )
         return self
 
+    def _switch_on(self, key: str) -> bool:
+        """The value of the boolean setting at dotted ``key``
+        (``ARTIFACT_SWITCHES``)."""
+        value: Any = self
+        for part in key.split("."):
+            value = getattr(value, part)
+        return bool(value)
+
     @property
     def _switched_off_artifacts(self) -> frozenset[IndexArtifact]:
-        return switched_off_artifacts(
-            communities=self.graph.community_detection.enabled,
-            relationship_vectors=(
-                self.indexing.opensearch.build_relationship_vector_index
-            ),
-        )
+        """What the deselecting switches turn off (``effective_methodologies``)."""
+        return switched_off_artifacts(self._switch_on, deselecting=True)
+
+    @property
+    def artifacts_switched_off(self) -> frozenset[IndexArtifact]:
+        """The index artifacts a switch set false turns off: no run of this
+        config builds them (``ARTIFACT_SWITCHES``)."""
+        return switched_off_artifacts(self._switch_on)
 
     @staticmethod
-    def _artifact_switches(artifacts: Collection[str]) -> list[str]:
+    def _artifact_switches(artifacts: Collection[IndexArtifact]) -> list[str]:
         """The switches that turn ``artifacts`` off, as a message names them."""
-        switches = []
-        if {"communities", "community_reports"} & set(artifacts):
-            switches.append("graph.community_detection.enabled: false")
-        if "relationship_vectors" in artifacts:
-            switches.append(
-                "indexing.opensearch.build_relationship_vector_index: false"
-            )
-        return switches
+        return [f"{key}: false" for key in deselecting_switches(artifacts)]
 
     @property
     def effective_methodologies(self) -> tuple[Methodology, ...]:
@@ -6333,7 +6334,7 @@ class Config(BaseModel):
         dropped = [m for m in self.indexing.methodologies if m not in effective]
         if dropped and "methodologies" in self.indexing.model_fields_set:
             off = {
-                a.value
+                a
                 for m in dropped
                 for a in METHODOLOGY_PROFILES[m].required & self._switched_off_artifacts
             }
