@@ -100,9 +100,44 @@ def _hard(labels: list[list[int]]) -> list[int]:
     return [min(row) if row else -1 for row in labels]
 
 
+# Pull requests run a sample of the clustering cases (minutes of EM in all);
+# the weekly fidelity workflow (.github/workflows/fidelity.yml) runs them all.
+weekly = pytest.mark.weekly
+# One case for each cluster count the original chose (1 to 5).
+_SAMPLED_CLUSTERINGS = (
+    "cluster-36",
+    "cluster-13",
+    "cluster-2",
+    "cluster-12",
+    "cluster-22",
+)
+_SAMPLED_TWO_STEPS = ("two-step-1", "two-step-5")
+
+
+def _sampled(cases: list[dict[str, Any]], sample: tuple[str, ...]) -> list[Any]:
+    return [
+        pytest.param(
+            case, id=case["case"], marks=() if case["case"] in sample else weekly
+        )
+        for case in cases
+    ]
+
+
 # --- clustering, by agreement -------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "case",
+    [c for c in UPSTREAM["clustering"] if c["case"] in _SAMPLED_CLUSTERINGS],
+    ids=lambda c: c["case"],
+)
+def test_bic_picks_the_originals_cluster_count_on_a_sample(
+    case: dict[str, Any],
+) -> None:
+    assert st.choose_k(_points(case), SETTINGS, expected=1.0) == case["k"]
+
+
+@weekly
 @pytest.mark.slow
 @pytest.mark.timeout(900)
 def test_bic_picks_the_originals_cluster_count() -> None:
@@ -131,9 +166,7 @@ def test_soft_memberships_agree_with_the_original() -> None:
 
 @pytest.mark.slow
 @pytest.mark.timeout(600)
-@pytest.mark.parametrize(
-    "case", UPSTREAM["two_step"], ids=[c["case"] for c in UPSTREAM["two_step"]]
-)
+@pytest.mark.parametrize("case", _sampled(UPSTREAM["two_step"], _SAMPLED_TWO_STEPS))
 def test_the_two_step_finds_the_originals_global_clusters(
     case: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -335,6 +368,9 @@ def _upstream_cluster_utils() -> Any:
                 sys.modules[name] = module
 
 
+@weekly
+@pytest.mark.slow
+@pytest.mark.timeout(900)
 def test_the_recorded_answers_are_the_originals() -> None:
     upstream = _upstream_cluster_utils()
     for case in UPSTREAM["clustering"][:5]:

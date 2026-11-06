@@ -1,0 +1,104 @@
+name: fidelity
+
+# Weekly differential tests against the original libraries. The parity tests
+# skip themselves where the original is missing (none is a dependency), so
+# the quality job never runs them; this one installs each at a pinned
+# version or commit, outside the lock, and fails if any test still skips.
+# It also runs the `weekly` cases pull requests only sample.
+#
+# - HippoRAG 2 (OSU-NLP-Group/HippoRAG, MIT): its seeding and PPR call,
+#   executed from a checkout's source, plus python-igraph (its PPR).
+# - RAPTOR (parthsarthi03/raptor, MIT): its clustering, executed from a
+#   checkout (with scikit-learn), against the recorded answers in
+#   tests/fixtures/raptor/.
+# - BenchmarkQED (microsoft/benchmark-qed, MIT): the package, never its
+#   datasets.
+
+on:
+  schedule:
+    - cron: "41 4 * * 1" # Mondays 04:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fidelity
+  cancel-in-progress: false
+
+env:
+  HYPOTHESIS_PROFILE: ci
+  # The commits and versions the parity tests were written against; bump them
+  # together with the tests.
+  HIPPORAG_REPO: https://github.com/OSU-NLP-Group/HippoRAG
+  HIPPORAG_COMMIT: d5c8329422e0a0b834a15874545cb6a74b4f9b26
+  RAPTOR_REPO: https://github.com/parthsarthi03/raptor
+  RAPTOR_COMMIT: 7da1d48a7e1d7dec61a63c9d9aae84e2dfaa5767
+  # HippoRAG's own pin; scikit-learn as uv.lock has it; benchmark-qed from PyPI.
+  WITH_ORIGINALS: >-
+    --with python-igraph==0.11.8
+    --with scikit-learn==1.9.1
+    --with benchmark-qed==0.4.0
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.23"
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        # eval brings pandas, which the BenchmarkQED comparison needs.
+        run: uv sync --locked --extra eval
+
+      - name: Check out the originals at their pinned commits
+        # Source only, outside the workspace: never vendored or installed.
+        run: |
+          fetch() {
+            git init -q "$1"
+            git -C "$1" fetch -q --depth 1 "$2" "$3"
+            git -C "$1" checkout -q FETCH_HEAD
+            [ "$(git -C "$1" rev-parse HEAD)" = "$3" ] || { echo "$1: not at $3"; exit 1; }
+          }
+          fetch "$RUNNER_TEMP/HippoRAG" "$HIPPORAG_REPO" "$HIPPORAG_COMMIT"
+          fetch "$RUNNER_TEMP/raptor" "$RAPTOR_REPO" "$RAPTOR_COMMIT"
+          test -f "$RUNNER_TEMP/HippoRAG/src/hipporag/HippoRAG.py"
+          test -f "$RUNNER_TEMP/raptor/raptor/cluster_utils.py"
+
+      - name: Check the originals are importable
+        # Each parity test skips without its original, which would let this
+        # job pass without comparing anything.
+        run: |
+          # shellcheck disable=SC2086 # WITH_ORIGINALS is a list of flags
+          uv run --frozen $WITH_ORIGINALS python -c "import benchmark_qed, igraph, pandas, sklearn"
+
+      - name: Parity tests and the weekly fidelity cases
+        # -m overrides the default selector (pyproject addopts), so the
+        # `weekly` cases run too.
+        env:
+          HIPPORAG_SRC: ${{ runner.temp }}/HippoRAG
+          RAPTOR_UPSTREAM: ${{ runner.temp }}/raptor
+        run: |
+          # shellcheck disable=SC2086
+          uv run --frozen $WITH_ORIGINALS pytest -m "not aws and not perf" -rs -n logical \
+            --junitxml="$RUNNER_TEMP/fidelity.xml" \
+            tests/unit/test_ppr_hipporag_parity.py \
+            tests/unit/test_raptor_fidelity.py \
+            tests/unit/test_benchmarkqed_parity.py
+
+      - name: Fail on a skipped parity test
+        run: >-
+          python3 -c "import sys, xml.etree.ElementTree as ET;
+          root = ET.parse(sys.argv[1]).getroot();
+          skipped = [c.get('classname') + '::' + c.get('name')
+          for c in root.iter('testcase') if c.find('skipped') is not None];
+          sys.exit(f'skipped: {skipped}' if skipped else 0)"
+          "$RUNNER_TEMP/fidelity.xml"

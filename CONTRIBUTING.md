@@ -96,8 +96,8 @@ CI ([`.github/workflows/quality.yml`](./.github/workflows/quality.yml)) runs the
 
 ```bash
 uv run pre-commit run --all-files                       # ruff, isort, black, mypy and file hygiene
-uv run pytest -m "not aws and not perf"                 # unit, property and integration suites
-uv run --extra otel --extra eval --extra viz --extra ontology pytest -m "not aws and not perf" --cov=unified_kg_rag  # with coverage, as CI measures it
+uv run pytest                                           # unit, property and integration suites
+uv run --extra otel --extra eval --extra viz --extra ontology pytest --cov=unified_kg_rag  # with coverage, as CI measures it
 ```
 
 Add `-n logical` to run the suite on every logical CPU through pytest-xdist, as CI does (`-n auto` counts physical
@@ -112,7 +112,9 @@ test runner; tests that need an extra skip there; mark a new one with `tests/fix
 `coverage-combined` job adds the local-store job's coverage (the Neptune and OpenSearch adapters against real stores)
 to the quality job's and writes the total to its job summary; it reports only, the floor applies to the quality job's
 own report. A weekly [`hypothesis-explore`](./.github/workflows/hypothesis-explore.yml) run draws the property tests
-from random seeds with a larger budget (`HYPOTHESIS_PROFILE=explore`); pull requests stay derandomized (`ci`).
+from random seeds with a larger budget (`HYPOTHESIS_PROFILE=explore`); pull requests stay derandomized (`ci`). A weekly
+[`fidelity`](./.github/workflows/fidelity.yml) run installs the original HippoRAG 2, RAPTOR and BenchmarkQED at pinned
+commits and versions (outside the lock) and runs the parity tests that skip without them, failing if any still skips.
 `iac/` is a separate uv project; if you change it, also run `cd iac && uv sync && uv run cdk synth -c enable_cdk_nag=true && uv run pytest` (see [`iac/README.md`](./iac/README.md)).
 
 When a pull request changes `pyproject.toml` or `uv.lock`, the
@@ -152,7 +154,9 @@ images in `docker/compose.local.yaml`. These pins it cannot read; bump them by h
   `FakeDocStatusStore`) rather than ad-hoc boto3 mocks, and `moto` when an adapter must be exercised against a boto3
   surface.
 - Markers: `unit`, `integration`, `property`, `aws` (real AWS, excluded in CI), `slow` (over 5 s; CI still runs
-  them) and `perf` (timing assertions; deselected by default and run only by the weekly `hypothesis-explore` job). `tests/conftest.py` applies `unit`, `integration` or `property` by the directory a test lives in. Each test
+  them), `perf` (timing assertions; deselected by default and run only by the weekly `hypothesis-explore` job) and
+  `weekly` (heavy fidelity cases; deselected by default, pull requests run a sample and the weekly `fidelity` job all
+  of them). `tests/conftest.py` applies `unit`, `integration` or `property` by the directory a test lives in. Each test
   times out after 120 s.
 - `tests/integration/test_local_stores.py` runs against the local containers in `docker/compose.local.yaml` when
   `LOCAL_STORES=1` is set.

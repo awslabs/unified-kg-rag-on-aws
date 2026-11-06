@@ -108,7 +108,7 @@ jobs:
           # measures no branches) at a fraction of the C tracer's cost.
           COVERAGE_CORE: sysmon
         run: >-
-          uv run pytest -m "not aws and not perf" -n logical
+          uv run pytest -m "not aws and not perf and not weekly" -n logical
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
           --cov-fail-under=95
@@ -306,7 +306,7 @@ jobs:
         run: uv sync --python 3.11 --frozen --extra eval --extra viz --extra ontology
 
       - name: pytest
-        run: uv run --python 3.11 --frozen pytest -m "not aws and not perf" -q -n logical
+        run: uv run --python 3.11 --frozen pytest -m "not aws and not perf and not weekly" -q -n logical
 
   python-3-13:
     # Early warning for the next interpreter, not a support claim:
@@ -336,7 +336,7 @@ jobs:
         run: uv sync --python 3.13 --frozen --extra otel --extra eval --extra viz --extra ontology
 
       - name: pytest
-        run: uv run --python 3.13 --frozen pytest -m "not aws and not perf" -q -n logical
+        run: uv run --python 3.13 --frozen pytest -m "not aws and not perf and not weekly" -q -n logical
 
   iac:
     # Synthesize the CDK app with cdk-nag enabled so the Well-Architected
