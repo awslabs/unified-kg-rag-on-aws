@@ -224,8 +224,10 @@ strategies, or `--repeats`) saves every run's files and adds
     one token per Hangul, kana or Han character, so not whitespace words),
     `ratio` (candidate over baseline), `relative_difference` ((candidate -
     baseline) over the longer, -1 to 1) and `bucket` under `per_query`;
-    `buckets.<ratio>` (`<0.67x`, `0.67-0.9x`, `0.9-1.1x`, `1.1-1.5x`,
-    `>1.5x`) with the pairs and, per criterion, the wins, ties and
+    `buckets.<ratio>` (`<=0.67x`, `0.67-0.91x`, `0.91-1.1x`, `1.1-1.5x`,
+    `>=1.5x`: symmetric in the log ratio, so a candidate 1.5 times as long
+    and one 1/1.5 times as long sit in mirror buckets) with the pairs and,
+    per criterion, the wins, ties and
     `candidate_win_rate` in that bucket; `score_correlation.<criterion>`,
     the Pearson correlation of `relative_difference` with the pair's score
     (null under 3 pairs or without variation). A win rate rising with the
@@ -441,7 +443,13 @@ positive|negative, source?}]`, or bare strings, which are positive).
   `models.roles.evaluation` (prompt `custom_prompts.assertion_judgement_*`),
   each labelling every assertion `supported`, `contradicted` or `absent`
   from the answer alone. Each trial shows the assertions in a shuffled order
-  seeded by the query id and trial. The labels are fixed tokens in a JSON
+  seeded by the query id, one no earlier trial of the query used while any
+  is left (`n` assertions have `n!` orders). A deterministic judge
+  (temperature 0) labels an order the same way each time, so an item with
+  fewer orders than trials (one assertion, or two with three trials)
+  repeats a call; `distinct_orders` in the report counts the orders used.
+  The judge calls of every query and trial share
+  `processing.max_concurrency`. The labels are fixed tokens in a JSON
   reply, so the parse does not depend on the language.
 - **Scores.** An assertion takes a label when more than half of the
   successful trials gave it (BenchmarkQED's pass rule). Per query:
@@ -450,7 +458,7 @@ positive|negative, source?}]`, or bare strings, which are positive).
   ones; `negative_assertion_violation_rate` = negative ones supported /
   negative ones. The summary's means are over queries. Each report records
   `assertion_labels` (per assertion, the share of trials per label),
-  `trials` and `failed_trials`.
+  `trials`, `distinct_orders` and `failed_trials`.
 - **Failures and skips.** A trial whose call fails, or whose reply misses an
   assertion, labels one twice or uses another label, fails; the scores read
   the others. A query with no successful trial records its metrics in

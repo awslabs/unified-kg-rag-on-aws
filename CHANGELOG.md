@@ -402,6 +402,12 @@ From a `main` checkout (formats and keys no release had):
   `indexing` as before. A tree built from a `main` checkout before (#601) is summarized again by its next build
   (the summaries' length changed): as many calls as building it. `tree` retrieval scores saved before (#601) rank a
   summary's lineage files above the passages; evaluate again to compare.
+- (#PR) `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by whitespace, so a
+  default-normalization run is refused against them (exit 2) until one side is scored again (an `official_squad` or
+  `hotpotqa` run still compares). Their `abstention_statistics` left failed answers out (rate and recall over the
+  completed answers), and pairwise length buckets are renamed (`<=0.67x`, `0.67-0.91x`, `0.91-1.1x`, `>=1.5x`).
+  `prepare-benchmark musique --unanswerable` without `--data-path` now also downloads the answerable split and
+  draws the answerable questions from it (labelled `musique`); prepare again for that sample. Nothing else re-runs.
 - (#602) `local` (and each DRIFT follow-up) orders its text units by HippoRAG 2's PageRank by default
   (`search.local_search.text_unit_ranking: ppr`): answers can change. Nothing is re-indexed or re-run; each local
   query adds a text-unit search, a relationship kNN search, an edge read and one query embedding (about 0.1 s on
@@ -614,9 +620,10 @@ From a `main` checkout (formats and keys no release had):
   `evaluation.pairwise_mode: differential` (`run-eval --pairwise-mode differential`, model role
   `models.roles.pairwise_overlap`) judges only the statements unique to each answer; the `assertion` evaluator
   (`assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`;
-  `evaluation.assertion_trials`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions
+  `evaluation.assertion_trials`, a majority over trials in distinct assertion orders, every judge call within
+  `processing.max_concurrency`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions
   in five classes and source-cited assertions from your corpus, after Microsoft BenchmarkQED (MIT; no BenchmarkQED
-  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval (#595). See
+  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval (#595, #PR). See
   [evaluation](docs/guides/evaluate.md#assertions-length-control-and-a-closed-book-bound).
 - Comparison cost: per strategy calls, tokens and latency per query (mean, p50, p95) with paired deltas, a USD
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and

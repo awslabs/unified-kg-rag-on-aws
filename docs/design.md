@@ -2970,10 +2970,11 @@ records each judged pair's answer lengths in estimated tokens
 Hangul, kana or Han character, about four characters per token elsewhere,
 so a Korean or Japanese answer is not measured in whitespace words) and
 reports, under `length`, the candidate's win rate per bucket of the length
-ratio (candidate over baseline: below 0.67, 0.67-0.9, 0.9-1.1, 1.1-1.5,
-above 1.5) and, per criterion, the correlation between the relative length
+ratio (candidate over baseline: at most 0.67, 0.67-0.91, 0.91-1.1, 1.1-1.5,
+at least 1.5; symmetric in the log ratio, so 1.5 and 1/1.5 sit in mirror
+buckets) and, per criterion, the correlation between the relative length
 difference and the pair's score. A win rate that rises with the ratio, with
-few pairs in the 0.9-1.1 bucket, is a length effect, not a quality one. Free:
+few pairs in the 0.91-1.1 bucket, is a length effect, not a quality one. Free:
 no model call.
 
 **Differential mode (`evaluation.pairwise_mode: differential`, or
@@ -3004,11 +3005,17 @@ answer supports (positive) or must not state (negative, for example a known
 hallucination). Per answer and trial, one `assertion_judgement` call (the
 evaluation role) labels every assertion of the item `supported`,
 `contradicted` or `absent`, in a shuffled order seeded by the query id and
-trial, so the assertion order is no position bias. Per query, over its
-successful trials: `assertion_recall` (positive assertions labelled
-supported, averaged over trials), `assertion_contradiction_rate` (positive
+trial, so the assertion order is no position bias (the trials of a query
+take distinct orders while any is left). An assertion takes the label more
+than half of the query's successful trials gave it (a majority vote,
+BenchmarkQED's pass rule). Per query: `assertion_recall` (positive
+assertions labelled supported), `assertion_contradiction_rate` (positive
 ones contradicted) and `negative_assertion_violation_rate` (negative ones
-supported). A trial whose call fails, or whose reply misses an assertion or
+supported). A deterministic judge (temperature 0) labels one order the same
+way every time, so an item with fewer orders than trials (one assertion, or
+two with three trials) repeats a call that adds nothing; the report records
+`distinct_orders`. The judge calls of all queries and trials share
+`processing.max_concurrency`. A trial whose call fails, or whose reply misses an assertion or
 uses another label, is a failed trial; a query with no successful trial
 records its metrics under `failed_metrics`, never as 0. A query without
 assertions, or without one of the two kinds, skips the metrics it cannot
