@@ -45,6 +45,12 @@ from unified_kg_rag.adapters.local.rerank import (
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.adapters.local.token_counter import LocalTokenCounter
 from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
+from unified_kg_rag.adapters.retrievers.graph_expansion import GraphExpansionRetriever
+from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
+from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
+from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import (
+    SQLiteGraphRetriever,
+)
 from unified_kg_rag.adapters.storage.neptune_indexer import NeptuneIndexer
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
@@ -116,6 +122,12 @@ PAIRS = [
     (SQLiteSearchEngine, SearchEngineClient),
     (BedrockGuardrail, ContentGuardPort),
     (FakeRetriever, BaseGraphRAGRetriever),
+    # The concrete retrievers override the base's methods; a strategy calls
+    # them through the base's shapes.
+    (OpenSearchRetriever, BaseGraphRAGRetriever),
+    (NeptuneRetriever, BaseGraphRAGRetriever),
+    (SQLiteGraphRetriever, BaseGraphRAGRetriever),
+    (GraphExpansionRetriever, BaseGraphRAGRetriever),
 ]
 
 

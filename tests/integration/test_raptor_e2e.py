@@ -566,16 +566,18 @@ def test_a_summary_passes_a_filter_only_when_all_its_documents_do(
     config, providers, _, _ = setup(tmp_path)
     source = corpus(tmp_path)
     # Half the documents are of category "north", half "south", as
-    # pre-parsed documents carrying their filters.
+    # pre-parsed documents carrying their filters (read without a parsing
+    # stage: parsed again, the JSON would be text without filters).
     parsed = tmp_path / "parsed"
     parsed.mkdir()
     for index, path in enumerate(sorted(source.glob("*.txt"))):
         (parsed / f"{path.stem}.json").write_text(
             json.dumps(
                 {
-                    "content": path.read_text(),
+                    "document_id": path.stem,
+                    "page_content": path.read_text(),
                     "file_name": path.name,
-                    "file_path": str(path),
+                    "file_path": path.name,
                     "metadata": {
                         "filters": {"category": "north" if index % 2 else "south"}
                     },
@@ -583,18 +585,18 @@ def test_a_summary_passes_a_filter_only_when_all_its_documents_do(
             )
         )
         path.unlink()
-    context = ingest(config, providers, parsed, tmp_path / "run-1")
+    stages = set(PipelineStageType) - {PipelineStageType.DOCUMENT_PARSING}
+    context = ingest(config, providers, parsed, tmp_path / "run-1", stages)
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     nodes = tree_nodes(providers)
-    mixed = [
-        n for n in nodes if "category" not in (n["attributes"].get("filters") or {})
-    ]
     pure = [n for n in nodes if (n["attributes"].get("filters") or {}).get("category")]
-    assert nodes and (mixed or pure)
+    assert nodes and pure, nodes
+    assert all(n["text"].startswith("Summary: ") for n in nodes)
 
     chain = GraphRAGChain(config, providers=providers)
     try:
         out = ask(chain, filters={"attr_category": "north"})
+        assert by_type(out, "summary") and by_type(out, "text"), out.sources
         for entry in out.sources:
             if entry["metadata"]["section_type"] == "summary":
                 filters = entry["metadata"]["attributes"]["filters"]

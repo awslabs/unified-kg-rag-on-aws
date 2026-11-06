@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import random
+import time
+
 import pytest
 
 from unified_kg_rag.domain.models import GraphEdge
@@ -159,3 +162,56 @@ def test_a_passage_graph_without_seed_mass_ranks_nothing() -> None:
     # A passage seed alone ranks: it is added as a node.
     ranked, _ = PassageGraph().rank_passages({}, {"p": 0.05})
     assert [unit for unit, _ in ranked] == ["p"]
+
+
+def _ranking_seconds(entities: int, runs: int, cap: float) -> float:
+    """The least CPU time of ``runs`` builds and rankings of a passage graph
+    with ``entities`` entities, three relationships and two passages each
+    (local's ``text_unit_ranking: ppr`` per query); stops after a run over
+    ``cap`` seconds (it already fails)."""
+    rng = random.Random(entities)
+    names = [f"entity-{i:06d}" for i in range(entities)]
+    relationships = [
+        (names[i], names[rng.randrange(entities)])
+        for i in range(entities)
+        for _ in range(3)
+    ]
+    best = float("inf")
+    for _ in range(runs):
+        # CPU time: a busy runner delays the process, it does not add to it.
+        start = time.process_time()
+        graph = PassageGraph()
+        for source, target in relationships:
+            graph.add_relationship(source, target)
+        for i, name in enumerate(names):
+            graph.link_passages(
+                name, [f"unit-{i:06d}", f"unit-{(i + 1) % entities:06d}"]
+            )
+        ranked, result = graph.rank_passages(
+            dict.fromkeys(names[:: max(1, entities // 20)], 1.0),
+            {f"unit-{i:06d}": 0.05 for i in range(0, entities, 50)},
+            # Every run takes all its iterations: the time measures the size,
+            # not how soon the scores settle.
+            max_iterations=30,
+            tolerance=0.0,
+        )
+        best = min(best, time.process_time() - start)
+        assert result is not None and result.iterations == 30
+        assert len(ranked) == entities
+        if best > cap:
+            break
+    return best
+
+
+# Four times the graph takes about four times as long; a quadratic step
+# would take sixteen.
+_SCALING_BOUND = 8.0
+
+
+@pytest.mark.perf
+@pytest.mark.slow
+@pytest.mark.timeout(300)
+def test_ranking_passages_grows_linearly_with_the_graph() -> None:
+    small = _ranking_seconds(5_000, runs=3, cap=float("inf"))
+    large = _ranking_seconds(20_000, runs=3, cap=_SCALING_BOUND * small)
+    assert large / small < _SCALING_BOUND, f"{small:.2f} s -> {large:.2f} s"
