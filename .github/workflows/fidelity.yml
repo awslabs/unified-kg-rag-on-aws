@@ -31,9 +31,9 @@ env:
   # The commits and versions the parity tests were written against; bump them
   # together with the tests.
   HIPPORAG_REPO: https://github.com/OSU-NLP-Group/HippoRAG
-  HIPPORAG_COMMIT: d5c8329422e0a0b834a15874545cb6a74b4f9b26
+  HIPPORAG_COMMIT: d5c8329422e0a0b834a15874545cb6a74b4f9b26  # pragma: allowlist secret
   RAPTOR_REPO: https://github.com/parthsarthi03/raptor
-  RAPTOR_COMMIT: 7da1d48a7e1d7dec61a63c9d9aae84e2dfaa5767
+  RAPTOR_COMMIT: 7da1d48a7e1d7dec61a63c9d9aae84e2dfaa5767  # pragma: allowlist secret
   # HippoRAG's own pin; scikit-learn as uv.lock has it; benchmark-qed from PyPI.
   WITH_ORIGINALS: >-
     --with python-igraph==0.11.8
