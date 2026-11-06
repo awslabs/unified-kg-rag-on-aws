@@ -255,7 +255,8 @@ backend fills each role is open (`providers.graph.kind` /
 
 - **Search strategies**: `@register_strategy(...)`
   (`adapters/retrieval/strategy_registry.py`): a class, its required roles and
-  query inputs, keyed by `SearchStrategy`.
+  query inputs, keyed by `SearchStrategy`; a wrapper (`iterative`) names the
+  strategy it runs under a config (`wraps`, §6.3).
 - **Providers**: `@register_provider(ProviderRole.X, "kind")`
   (`adapters/provider_registry.py`): the builder `providers.<role>.kind`
   selects, for every model, store and registry role.
@@ -1665,6 +1666,182 @@ chunks. Short queries without keywords use the raw query as low-level
 keywords (`raw_query_fallback_max_len`). Upstream LightRAG has no multi-hop
 traversal, hence graph expansion is opt-in.
 
+### 6.3 Iterative bridge follow-up (`iterative_search.py`, opt-in)
+
+`iterative` is opt-in and unmeasured: no default selects it, `auto` never
+routes to it (`search.auto_routable_strategies` refuses it), and whether it
+helps is for a measured experiment to decide, not assumed. It targets one
+failure: on 200 MuSiQue questions (v15 benchmark index) about 53 of `mix`'s
+96 failures lacked a supporting passage, and the missing one was a later
+hop's far more often than the first's (the last hop's 14-16% against the
+first's 0-5%): round 0 finds the passage that names the bridge entity, not
+the passage about it.
+
+**Data flow.** The strategy wraps a base strategy by composition
+(`search.iterative_search.base`: `local` or `mix`, default `mix`), built
+through the strategy registry, so there is no dispatch on the base:
+
+1. *Round 0* is the base's own search, unchanged (its fusion, rerank and
+   quotas). A round 0 the controller calls sufficient returns the base's
+   results as they are, so `iterative` then answers as the base does.
+2. *Control.* A fast-model call (`models.roles.query_controller`,
+   `IterativeControllerPrompt`) reads the question and the candidates packed
+   as the answer's context is (the base's `spare_context_budget_first`),
+   within `controller_context_tokens` (8000), plus what was already
+   searched. It returns JSON (`parse_llm_json` with answer keys):
+   `sufficient`, `known_facts`, `bridge_entities` (as the context writes
+   them) and at most `max_next_queries` (2) `next_queries` naming them.
+3. *Follow-up round.* The base search reruns seeded with the new bridge
+   entities (local's `entity_focus`, so each is looked up by name and seeds
+   the graph walk; mix's `ll_keywords`; the first follow-up query is the
+   search text) without its own rerank, and each new follow-up query
+   searches the text units (`round_top_k`, 5) under the request's
+   `search_type`. A query already searched (case-folded) or a bridge already
+   followed (`compact_name_key`, so `동부 창고` and `동부창고` are one) is
+   not searched again, and the controller is shown the searched list: the
+   redundant searches ReaRAG (arXiv 2503.21729) reports for open-ended
+   search agents, which run on until their iteration limit, are what the
+   caps and the dedupe prevent.
+4. *Fusion.* Every round's candidates are fused once more by RRF, one
+   bucket per round: `iterative_round_<n>` (round n's base search, round 0
+   the first) and `iterative_round_<n>_text` (its follow-up queries' text
+   units, interleaved), each weighable through `search.fusion.fusion_weights`
+   (the base's own buckets were fused, with their weights, inside each
+   round). The base's rerank types (`text` for both bases) are reranked
+   against the question and the follow-up queries joined, and each section
+   type keeps the larger of round 0's count of it and the type quota
+   (`TYPE_QUOTA`), so a round-0 item leaves only when a new one outranks
+   it. Back to 2 while rounds remain (`max_rounds`, 2); the last round is
+   judged too, so the final verdict is known.
+5. *Answer.* The chain packs the final candidates into the usual token
+   budget and the answer model answers once (the chain's answer step,
+   output guardrail, grounding check and sources, unchanged).
+
+`decompose: true` replaces 2-4 with one KAG-style pass: one call
+(`QueryDecompositionPrompt`) writes at most `max_rounds + 1` single-hop
+steps in MuSiQue's notation (`#1` is step 1's answer); each step, with its
+references replaced by the earlier answers (an unanswered one by its
+question), runs one follow-up round (the step's answers are its bridge
+entities) and is answered from those candidates by one call
+(`DecompositionStepPrompt`, an empty answer when they state none). The steps'
+candidates are fused with round 0's once, as in 4. The step answers are not
+passed to the answer model: it reads retrieved evidence only.
+
+**Layers.** The strategy is an adapter (`adapters/search_strategies/`),
+registered with `@register_strategy(SearchStrategy.ITERATIVE,
+wraps=...)`. `StrategySpec.wraps` names, per config, the strategy a wrapper
+runs; `wrapped_strategy()` resolves it, and the chain reads the wrapped
+strategy's query inputs (`query_processing.needs_query_entities` /
+`needs_dual_keywords` with the config) and context packing
+(`spare_context_budget_first`) through it, so `iterative` extracts and
+packs exactly what its base does, and needs no index, store or community
+report the base does not (same retriever roles, `needs_community_reports`
+false). Whatever else is declared per strategy (a methodology a namespace
+must have indexed) should be read through `wrapped_strategy()` too. Its
+filter checks delegate to the base (`filtered_index_prefixes`,
+`filtered_retrievers`, `reserved_filter_keys`). The prompts are in
+`domain/prompts/retrieval.py` (overridable as `custom_prompts.
+iterative_controller_*`, `query_decomposition_*`, `decomposition_step_*`),
+the settings in `search.iterative_search`.
+
+**Languages.** The chain passes the query's language in
+`SearchQuery.metadata["query_language"]` (`query_processing.query_language`:
+the requested language, else the index's, which is the source language when
+translation is off and the target language when it is on); the controller,
+decomposition and step prompts write their queries and bridge names in it,
+names as the context writes them. Nothing in the strategy parses text but
+JSON and `#n`; dedupe uses case folding and `compact_name_key`, which drops
+spaces next to Han, Hangul and Kana. The text searches go through the
+configured analyzers (the embedded engine's bigrams for dense scripts).
+
+**Filters, scopes and provenance.** Every round's base search is the
+caller's query with seeds added (`model_copy`, so its filters, suffix and
+`search_type` are kept), and every text search uses `_scoped_filters`, so
+a document filter or tenant scope applies in every round with the same
+code-injected predicates as the base's. Fusion copies results, so a cited
+follow-up passage keeps the provenance the base reports (`text_unit_ids`,
+document attributes, `iri`, `source_kinds`, `attributes.filters`); no
+synthesized item is added, so every source is retrieved evidence and the
+retrieval evaluator scores it as any other.
+
+**Deadline.** A follow-up round starts only while the query deadline
+(`search.query_timeout_seconds`) leaves `search.model_timeout_seconds` for
+the answer, and the rounds run in one `asyncio.timeout` that ends there:
+past it the round in flight (its controller call, base search and text
+searches) is cancelled and the answer reads what the rounds before it
+found (`stop_reason: deadline`). Without a deadline the round cap alone
+bounds it.
+
+**Failure modes.**
+
+| Event | Outcome |
+|---|---|
+| Controller or step call raises a fatal error (no model access) | The query fails, as in every strategy |
+| Any other failed call (throttled past its retries) | The rounds stop; the answer reads the earlier rounds' candidates; `degraded` names the step and `degraded_error` the error type |
+| Unreadable controller JSON (no `sufficient`), or a plan with no steps | As above, without `degraded_error` (`controller_unparsed`, `decomposition_unparsed`) |
+| A store request of a round fails | Degrades that sub-search to nothing (`_safe_aretrieve`), as in the base; fatal store errors fail the query |
+| Deadline reached | The round in flight is cancelled (`deadline`) |
+| Insufficient after the round cap, or nothing new to search | `SearchResult.metadata["context_insufficient"] = True` |
+
+**Contract: `context_insufficient`.** Set (to `True`, absent otherwise)
+only on a positive verdict: the controller's last verdict was insufficient
+and no further round could run (`max_rounds` reached or no new lead), or,
+with `decompose`, the last step found no answer. A degraded or timed-out run
+never sets it, its verdict being unknown. The strategy does not abstain; an
+abstention policy reads the flag from `RAGOutput.metadata` (the chain
+copies the search metadata there). `metadata["iterative"]` records the base,
+mode, rounds, `stop_reason`, round 0's own rerank outcome (`rerank` is the
+last fusion's), the searched queries, each verdict (sufficient,
+bridge entities, queries, the number of known facts), the steps, the
+results added over round 0, and the rounds' own model calls and tokens
+(`usage`, by model; the query's `metadata["usage"]` counts them too).
+
+**Cost.** Per query at most `max_rounds + 1` controller calls (3), or
+`max_rounds + 2` decomposition and step calls (4), on the fast tier;
+`max_rounds` reruns of the base search without rerank, up to
+`max_rounds * max_next_queries` text searches, and one rerank call per
+round. At the 2026-11 list prices (Haiku 5.5 $0.10 / $0.50 per million
+tokens, Cohere Rerank 3.5 $2 per 1,000 search units), a controller call
+reading 8,000 context tokens costs about $0.001 and a rerank $0.002, so
+the worst case adds about $0.007 a query to `mix`'s (most queries stop
+after round 0 or 1, KAG reports 84-98% after its first round); latency adds
+one fast-model call per round plus a base search and a rerank, an estimated
+3-12 s for two rounds (unmeasured). The answer is generated once.
+
+**Fidelity: what the papers do and what we changed.** Neither IRCoT nor
+KAG is ported as a library (there is nothing to diff against algorithm by
+algorithm; their published settings are compared instead):
+
+| | IRCoT (Trivedi et al., ACL 2023, arXiv 2212.10509) | KAG (Liang et al., arXiv 2409.13731) | `iterative` |
+|---|---|---|---|
+| Loop | Interleaves one chain-of-thought sentence with one retrieval: the first query is the question, each later one the last generated sentence (code: `query_source="question_or_last_generated_sentence"`) | Logical-form planner splits the question into sub-queries with operators (Retrieval, Sort, Math, Deduce, Output) linked by variables; each answered by graph retrieval, falling back to hybrid chunk and subgraph retrieval below a threshold; a Judge decides answerability, SupplyQuery writes a supplementary question (reflection, adopted from ReSP) | Controller loop: a sufficiency verdict, then follow-up queries and bridge entities; `decompose`: natural-language steps with `#n` references, no operators |
+| Query per step | Last CoT sentence | Sub-query or supplementary question | Controller-written queries naming the bridge entities, plus the bridge entities as graph seeds |
+| Retrieval per step | BM25 (Elasticsearch), K paragraphs, K tuned over {2, 4, 6, 8} (configs default 6) | Graph, then hybrid | The full base search (BM25 + kNN + graph walk for local; mix's dual-level streams) plus `round_top_k` (5) text units, fused by RRF and reranked |
+| Collection cap | 15 paragraphs (`global_max_num_paras`) | — | The answer's token budget, each section type at round 0's share |
+| Steps cap | 8 in the paper (footnote 4), 10 in the code default (`max_num_sentences`) | Reflection n = 3 rounds (`ref3`; benchmark configs `max_iteration: 3`) | `max_rounds` 2 follow-up rounds (3 retrieval rounds, as `ref3`); `decompose`: 3 steps |
+| Stop | The sentence says "answer is", or the cap | Judge says answered, or the cap | Controller says sufficient, nothing new to search, the cap, or the deadline |
+| Final answer | A separate reader always (reading the CoT's own answer scored lower: MuSiQue F1 30.8 vs 24.9, Flan-T5-XXL) | Generator over the sub-answers | The answer model once, from retrieved evidence only |
+| Models | Flan-T5 (base to XXL), GPT-3 code-davinci-002 | DeepSeek-V2 (baselines mixed backbones) | Controller on the fast tier (Haiku 5.5), answer on the default tier |
+
+Why the changes: an LLM call per sentence (IRCoT) or per logical form (KAG)
+costs more per query than a bounded number of fast-model verdicts, and
+Adaptive-RAG measured IRCoT-style multi-step retrieval at 2.1-4.7 times the
+steps and 3.3-8.8 times the time of single-step retrieval; the graph and
+dense signals we already have make the bridge entity a better next query
+than the last CoT sentence, whose text is a statement rather than a
+question; the logical-form operators target numeric and comparative
+questions our benchmarks do not exercise. The reported effects that
+motivate it are modest and setting-dependent: IRCoT's QA F1 gain on
+MuSiQue was +5.0 (Flan-T5-XXL) and +7.1 (GPT-3), retrieval recall +3.5 and
++12.5; KAG's reflection (ref1 to ref3) gained +4.4 F1 on MuSiQue for its
+hybrid variant (44.3 to 48.7) but +0.2 and +1.2 on HotpotQA and 2Wiki. KAG's
+current code re-plans the original question on a retry rather than writing
+a supplementary question as the paper describes; ours follows the paper's
+supplementary-question form. Our expected gain is the own-data ceiling of
+about +11 points of answer F1 if every missing last-hop passage were
+recovered, realistically +3 to +5, below the 6-8 point minimum effect 200
+questions detect: hence the measured experiment before any default.
+
 ---
 
 ## 7. Hybrid Scoring and Token Management
@@ -2249,7 +2426,7 @@ This section is the single reference for extending the framework. Extensions com
 - **Plugins**, which live in your own package and import only from `unified_kg_rag` (§2.5): backends through the provider registry or constructor injection, and renderers, parsers, schema sources and seed sources through their registries. None needs a change to the framework's code.
 - **In-tree changes**, made in a fork or contributed upstream: a search strategy and an evaluator. `register_strategy` is keyed by the closed `SearchStrategy` enum, which `RAGInput.search_strategy`, `--search-strategy` and `search.auto_routable_strategies` validate against, so a new strategy adds an enum member; an evaluator adds an `EvaluatorType` member and a branch in `EvaluationManager._resolve_evaluator_class`. The registry still keeps the chain's dispatch code unchanged.
 
-- **New search strategy** (in-tree): Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it. Regenerate the references (the new member is a `--search-strategy` choice and a config value): `uv run python scripts/gen_cli_reference.py` and `uv run python scripts/gen_config_reference.py`. A minimal strategy, a document search fused and reranked like `simple` (`adapters/search_strategies/simple_search.py` is the full version, with the index gates):
+- **New search strategy** (in-tree): Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. A strategy answering from community reports also passes `needs_community_reports=True`, so `auto` skips it when none are built. A strategy that runs another one's search (as `iterative` runs `local` or `mix`) passes `wraps=` a function of the config naming it: the chain then extracts what that one reads and packs its context as that one does (`wrapped_strategy`), and the wrapper builds its base through `get_strategy_spec(...).strategy_class`, not by name. Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it. Regenerate the references (the new member is a `--search-strategy` choice and a config value): `uv run python scripts/gen_cli_reference.py` and `uv run python scripts/gen_config_reference.py`. A minimal strategy, a document search fused and reranked like `simple` (`adapters/search_strategies/simple_search.py` is the full version, with the index gates):
 
   ```python
   # unified_kg_rag/adapters/search_strategies/keyword_search.py
