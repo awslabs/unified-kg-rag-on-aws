@@ -432,7 +432,7 @@ From a `main` checkout (formats and keys no release had):
 - #606 evaluation results: `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by
   whitespace, so on a dataset with Han, Hangul or Kana text a default-normalization run is refused against them
   (exit 2) until one side is scored again (an `official_squad` or `hotpotqa` run, or any run on a dataset without
-  such text, still compares). Results saved from #606 until #PR record `script_aware`: their Korean token F1
+  such text, still compares). Results saved from #606 until #613 record `script_aware`: their Korean token F1
   dropped any one to three Hangul syllables after a gold word, so they are refused the same way. Their
   `abstention_statistics` left failed answers out (rate and recall over the completed answers), and pairwise length
   buckets are renamed (`<=0.67x`, `0.67-0.91x`, `0.91-1.1x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path` now also downloads the
@@ -442,7 +442,7 @@ From a `main` checkout (formats and keys no release had):
   `rerank` role and the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the
   rerank model has a price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets
   both token prices or the rerank price; one with neither, or one token price alone, is refused at load. Results
-  saved before #PR record no `usage_schema`: a comparison against them gives no USD delta (a warning names them)
+  saved before #613 record no `usage_schema`: a comparison against them gives no USD delta (a warning names them)
   until they are run again. Nothing is re-run.
 - #608 stored translations: translations are stored from the first run after upgrading: that run still asks the
   model for every unit it translates, with the new translation prompt, so a reset of a translated namespace
@@ -478,7 +478,7 @@ From a `main` checkout (formats and keys no release had):
   to `expand_children` of its passages; a summary is reported with its lineage, keeps a document filter only when
   all its documents share it, and goes, with every summary above it, when one of its text units is removed. Under a
   filter key the text units store and the summary index does not (`community_ids`, `source_kinds`; not an entity
-  key, which leaves both unfiltered alike, #PR) `tree` reads no summary
+  key, which leaves both unfiltered alike, #613) `tree` reads no summary
   (`metadata.summaries_skipped_for_filters`) where it returned them unfiltered, the graph buckets run where the
   queried namespace holds the entities index (not where the config would build one), and their text units are the
   best-weighted that pass the filters (#607).
@@ -500,7 +500,7 @@ From a `main` checkout (formats and keys no release had):
   state-machine run builds the profile (#603). The build record names the artifacts and methodologies a namespace
   holds; a query whose strategy reads what the namespace does not hold fails before any model call, naming what it
   holds and what adding the methodology costs (for `raptor`, the tree alone) (#609); `run-eval` refuses one
-  before its first answer (exit 2, as `run-rag`) (#PR), and `auto` routes only among the strategies it serves.
+  before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only among the strategies it serves.
   Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
@@ -509,7 +509,7 @@ From a `main` checkout (formats and keys no release had):
   the methodology check, against the indexes the strategy reads that the namespace holds and a run of the config
   builds, so a key only an absent index declares (`type` on a `raptor`-only namespace) is refused
   (`InvalidFilterError`) instead of being dropped; the default sweep and the optional indexes a strategy reads
-  (claims, relationship vectors, reports) follow the same artifacts (#PR). `hipporag` holds what `lightrag`
+  (claims, relationship vectors, reports) follow the same artifacts (#613). `hipporag` holds what `lightrag`
   builds, so `ppr` is served wherever `lightrag` is, and `raptor` reads a summary tree (#599). Without a build
   record (a namespace ingested before them), a query takes the namespace to hold what a run of the config builds,
   `hipporag` included (#602). With `graph.community_detection.report_generation.enabled: false` a run builds no
@@ -650,7 +650,7 @@ From a `main` checkout (formats and keys no release had):
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
   #563, #589). Rerank requests count apart (`rerank_calls`, `rerank_search_units`, one per 100 documents), priced by
   `evaluation.prices.<rerank model>.per_thousand_rerank_search_units` (#607); the run manifest records
-  `usage_schema: 2`, and a comparison gives no USD delta against a run saved before it (#PR).
+  `usage_schema: 2`, and a comparison gives no USD delta against a run saved before it (#613).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
   `total_files_skipped`, `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and
   `total_documents_without_claims`; a run with failed units ends with a WARNING naming them per stage (#518, #532).
@@ -663,7 +663,7 @@ From a `main` checkout (formats and keys no release had):
   falling back to the first line), `evaluation.answer_normalization` (`official_squad`, `hotpotqa`), recorded in the
   manifest's `answer_scoring` with the token-F1 tokenization; under `default`, token F1 counts a Han, Hangul or Kana
   letter as a token and drops a run of Korean particles (their closed class) on a gold word, so Chinese, Japanese and
-  Korean answers get partial credit (#324, #516, #606, #PR).
+  Korean answers get partial credit (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
@@ -885,7 +885,7 @@ Queries and retrieval.
   translates or the caller asks (`RAGInput.target_language`) (#567, #583).
 - DRIFT (primer, actions) and global search's map points write in the query's language, the index language when
   none is requested (`source_language` with translation disabled), not always `target_language`, and DRIFT's HyDE
-  expansion in the index language, the community reports' it searches, whatever language is requested (#PR);
+  expansion in the index language, the community reports' it searches, whatever language is requested (#613);
   query entities a model separates with `、`, `，` or `；` (or one per line) are split into entities, not read as
   one; global search reads a relevance rating past a scale written as `10점 만점에`, `10点満点中` or `满分10分`;
   LightRAG's raw-query fallback counts a CJK or Hangul character as 4 against
