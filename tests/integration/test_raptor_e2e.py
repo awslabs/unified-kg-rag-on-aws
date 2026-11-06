@@ -677,3 +677,52 @@ def test_the_retrieval_evaluator_scores_tree_with_a_summary_row(
     assert "summary" in results[0].retrieved_source_types
     assert summary.metric_statistics["hit_at_k"]["mean"] == 1.0
     assert "summary" in summary.grouped_statistics["source_type"]
+
+
+def test_a_partial_tree_is_reported_to_the_metrics_sink(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # A failed summary moves its children up a level without failing the
+    # run: the operator learns of it only from this metric (the dashboard's
+    # summary-tree widget reads it).
+    config, providers, server, calls = setup(tmp_path)
+    failed: list[int] = []
+
+    def flaky(system: str, human: str) -> str:
+        if TREE_PROMPT in system and not failed:
+            failed.append(1)
+            return ""  # answered nothing: the summary failed
+        return calls(system, human)
+
+    server.respond = flaky
+
+    class Sink:
+        def __init__(self) -> None:
+            self.emitted: dict[str, float] = {}
+
+        def emit(self, namespace: str, metrics: dict, dimensions: dict) -> None:
+            self.emitted.update(metrics)
+
+    sink = Sink()
+    cache = tmp_path / "run-1"
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(
+            stages_enabled=dict.fromkeys(PipelineStageType, True),
+            local_directory=cache,
+        ),
+        source_directory=corpus(tmp_path),
+        providers=providers,
+        metrics_sink=sink,
+    )
+    try:
+        context = pipeline.run(corpus(tmp_path), pipeline_id=cache.name)
+    finally:
+        pipeline.close()
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert failed
+    assert sink.emitted["total_tree_summaries_failed"] >= 1
+    assert sink.emitted["total_tree_uncovered_leaves"] == 0
+    tree = tree_record(providers)
+    assert tree is not None and tree["partial"] is True

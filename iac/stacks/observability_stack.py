@@ -93,6 +93,12 @@ DOCUMENT_METRICS: tuple[str, ...] = (
 # left out: a corpus that holds files no loader reads (images, archives) would
 # alarm on every run, so their count is on the dashboard only.
 NOT_INDEXED_METRICS: tuple[str, ...] = (FILES_FAILED, DOCUMENTS_FAILED)
+# The summary_tree stage's degradations (PipelineMetrics fields), one value
+# per run that builds a RAPTOR tree.
+SUMMARY_TREE_METRICS: tuple[str, ...] = (
+    "total_tree_summaries_failed",
+    "total_tree_uncovered_leaves",
+)
 
 # The pipeline stages, in order: each emits duration_<stage>_seconds when it
 # finishes (pinned against PipelineStageType by the tests).
@@ -374,6 +380,15 @@ class ObservabilityStack(Stack):
             cw.GraphWidget(
                 title="Document outcomes (EMF)",
                 left=[self._emf(name) for name in DOCUMENT_METRICS],
+            ),
+        )
+        # A partial RAPTOR summary tree (summaries that failed: their
+        # children moved up a level) and, with refresh: on_reset, the text
+        # units no summary covers: tree retrieval degrades, the run succeeds.
+        dashboard.add_widgets(
+            cw.GraphWidget(
+                title="Summary tree (EMF)",
+                left=[self._emf(name) for name in SUMMARY_TREE_METRICS],
             ),
         )
         dashboard.add_widgets(

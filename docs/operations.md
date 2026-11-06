@@ -12,6 +12,7 @@ commands are in [`iac/README.md`](../iac/README.md#after-deploy).
 | Size the ingestion task and estimate a run's time | [Capacity sizing](#capacity-sizing) |
 | Resume, recompute or rebuild an ingestion | [Re-ingest](#re-ingest) |
 | Run a reset or answer a confirmation on a deployed stack | [Run a one-off ingestion task](#run-a-one-off-ingestion-task) |
+| Build only some methodologies (LightRAG-only, a RAPTOR tree), add or remove one, delete a summary tree | [Methodology profiles on the CDK stack](#methodology-profiles-on-the-cdk-stack) |
 | Keep a corpus up to date | [Incremental indexing](./guides/incremental.md) (the rules), [Incremental runs](#incremental-runs) |
 | Recover a run that stopped | [Interrupted runs](#interrupted-runs) |
 | Find out why a document is `FAILED` or `QUARANTINED` | [Failed documents](#failed-documents), [Quarantined documents](#quarantined-documents) |
@@ -67,6 +68,15 @@ disk (`ingestion_ephemeral_storage_gib`) holds the synced corpus, the parsed
 documents and the stage cache: about twice the corpus plus the cache
 (`IngestionTaskEphemeralStorage` fires at 90%).
 
+With `raptor` selected, the `summary_tree` stage reads every text unit of a
+tree into memory with its vector and text: the whole namespace (or one
+`partition_by` value), not the run's delta, so an incremental run of a few
+documents into a large namespace needs the memory of the whole tree. Size
+`fargate_memory` for the largest tree on top of the run's own peak; the stage
+refuses a tree over `indexing.summary_tree.max_leaves_in_memory` (split it with
+`partition_by` or `scope: document`,
+[A RAPTOR summary tree](./guides/ingest.md#a-raptor-summary-tree-opt-in)).
+
 Run time is dominated by model calls, which run `processing.max_concurrency`
 (default 40) at a time:
 
@@ -74,7 +84,13 @@ Run time is dominated by model calls, which run `processing.max_concurrency`
 time ~ calls x average call latency / max_concurrency + about 8 ms per unit
 calls ~ units x (1 extraction + gleaning rounds that add something + 1 claim
         extraction, when claims are on) + 1 report per community
+        + 1 summary per 5-6 text units of each summary tree the run rebuilds
+          (raptor; a cluster whose children are unchanged reuses its summary)
 ```
+
+A [methodology profile](#methodology-profiles-on-the-cdk-stack) drops terms:
+without `graphrag` there are no reports, and `raptor` alone makes only the
+summary calls (with claims off, the default: claims bring back extraction).
 
 The 8 ms per unit is the rest of the pipeline (parsing, resolution,
 community detection, indexing) on the embedded stores
@@ -175,6 +191,74 @@ Each answer covers one question; keep only the ones the run asks:
   deletions, so with the reset on it changes nothing.
 
 Neither confirmation answers a resume's integrity check (`--yes` does).
+
+An override lasts one task. The next state-machine run starts from the task
+definition's environment and the image config again, so a setting every run
+must keep, such as `indexing.methodologies`, belongs in the image config or a
+CDK context key ([Methodology profiles on the CDK stack](#methodology-profiles-on-the-cdk-stack)):
+a one-off run that added a methodology is undone by the next state-machine run,
+which records the added artifacts gone.
+
+### Methodology profiles on the CDK stack
+
+`indexing.methodologies` ([Methodology profiles](./guides/ingest.md#methodology-profiles))
+is read by both tasks: ingestion builds what it names, and a query of a
+namespace without a build record (one ingested before profiles) takes the
+namespace to hold what it builds. Set it for the deployment, in one of two
+places:
+
+- The `methodologies` context key (`-c methodologies=lightrag,raptor`,
+  [`iac/README.md`](../iac/README.md#configuration-cdkjson-context---c-keyvalue)):
+  `UKR__INDEXING__METHODOLOGIES` on the ingestion and the query task
+  definitions. Synth refuses an unknown name; unset, the image config
+  decides.
+- `indexing.methodologies` in `docker/config.yaml`, baked into the image
+  ([Shipping configuration](#shipping-configuration-to-the-deployed-tasks)).
+  The context key overrides it.
+
+Then deploy and start runs as usual:
+
+- **Adding a methodology.** The next execution builds what it adds. Adding
+  `graphrag`, `lightrag` or `hipporag` to a namespace that lacks their
+  artifacts rebuilds the namespace once (a WARNING says so), and is refused
+  (exit 2, nothing written) when the namespace holds another source scope
+  ([Methodology profiles](./guides/ingest.md#methodology-profiles)). Adding
+  `raptor` builds only the summary tree, from the stored text units, an
+  unchanged corpus included: plan for its calls and memory
+  ([Capacity sizing](#capacity-sizing)).
+- **Queries.** `run-rag` and `run-eval` tasks of the query task definition
+  see the same profile. A strategy whose methodology the namespace does not
+  hold exits 2 (`MethodologyNotIndexedError`) before any model call, and
+  `auto` routes only among the held ones.
+- **Removing a methodology.** The next run that writes the namespace records
+  its artifacts gone and its strategies are refused from then on. Nothing is
+  deleted: a [one-off](#run-a-one-off-ingestion-task) run with
+  `UKR__INDEXING__RESET=true` empties the community-reports index and drops
+  the community vertices.
+- **Deleting a summary tree** no methodology reads any more (after a run that
+  wrote the namespace without `raptor`): the tree is one index behind the
+  alias `<summary_nodes_index_prefix>-<suffix>[-<additional_suffix>]`
+  (default `graphrag-summary-nodes-default`), and its record lives in that
+  index's metadata. From inside the VPC, with credentials as in
+  [OpenSearch replicas](#opensearch-replicas) whose IAM policy allows
+  `es:ESHttpDelete` on the domain, read the index the alias names, then
+  delete that index (the alias goes with it):
+
+  ```bash
+  curl "https://<OpenSearch endpoint>/_alias/graphrag-summary-nodes-<suffix>" \
+    --aws-sigv4 "aws:amz:<region>:es" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+    -H "x-amz-security-token: $AWS_SESSION_TOKEN"
+  curl -X DELETE "https://<OpenSearch endpoint>/<index the alias names>" \
+    --aws-sigv4 "aws:amz:<region>:es" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+    -H "x-amz-security-token: $AWS_SESSION_TOKEN"
+  ```
+
+  With `raptor` still selected the next run builds the tree again.
+- **A partial tree.** A summary whose call failed moves its children up a
+  level and the run succeeds; the next run builds it again. The dashboard's
+  "Summary tree (EMF)" widget plots `total_tree_summaries_failed` and, with
+  `indexing.summary_tree.refresh: on_reset`, `total_tree_uncovered_leaves`
+  (text units no summary covers until a reset); no alarm watches them.
 
 ### Caches and prefixes
 
@@ -537,6 +621,29 @@ tasks read it, and the extras the image needs:
 
 A changed file in the image takes effect once the new image is pushed and
 deployed; a changed S3 object, at the next task start.
+
+Query-time settings are read by the query task only, at each `run-rag` or
+`run-eval` start, so they need no redeploy when passed as environment
+overrides of that task (the container overrides of the query example in
+[`iac/README.md`](../iac/README.md#4-query-from-inside-the-vpc)); keep the
+ones every query should get in the image config. The ones that change
+answers or latency:
+
+- `search.abstention.mode` (`off`, or `mark`: declines start with a fixed
+  token and are reported in `metadata.abstained`) and
+  `search.abstention.on_insufficient` (`hedge`, or `abstain` when a strategy
+  such as `iterative` finds its context insufficient), e.g.
+  `UKR__SEARCH__ABSTENTION__MODE=mark`. Both change answers and their scores:
+  [Declined answers](./guides/query.md#declined-answers).
+- `search.auto_routable_strategies`: `auto` may route a multi-hop question to
+  `iterative`, slower for those queries
+  ([Follow-up rounds](./guides/query.md#follow-up-rounds-for-multi-hop-questions)).
+- `search.local_search.text_unit_ranking` (`ppr` by default, or `support`):
+  how `local` and DRIFT's follow-ups order their text units
+  ([Personalized PageRank](./guides/query.md#personalized-pagerank-ppr)).
+
+`indexing.methodologies` is read by both tasks: set it for the deployment
+([Methodology profiles on the CDK stack](#methodology-profiles-on-the-cdk-stack)).
 
 ### Ontology schema in the image
 
@@ -1026,9 +1133,11 @@ run-ingestion: error: Missing endpoint configuration for the indexing stage: aws
 - `run-ingestion` checks both when the `indexing` stage is enabled (not for
   `--verify-metadata`).
 - `run-rag` and `run-eval` check OpenSearch for every strategy and Neptune
-  too for `local`, `drift`, `mix` and `hybrid`; `auto` checks every strategy
-  it may route to (`search.auto_routable_strategies`, without `global` and
-  `drift` when `graph.community_detection.enabled` is false).
+  too for `local`, `drift`, `mix`, `hybrid`, `iterative` and `ppr` (`global`,
+  `simple`, `naive` and `tree` read OpenSearch only); `auto` checks every
+  strategy it may route to: those of `search.auto_routable_strategies` whose
+  methodology the configured `indexing.methodologies` builds (without
+  `graphrag`'s when `graph.community_detection.enabled` is false).
 
 A set but wrong or unreachable endpoint fails at the first connection with
 an error, not empty results.
@@ -1094,7 +1203,7 @@ These fire between runs too, so degradation shows before a run breaks on it:
 
 | Alarm | Fires when | What to do |
 |---|---|---|
-| `QueryLatencyHigh` | The p90 latency of `run-rag --metrics-sink cloudwatch` queries is above `query_latency_alarm_seconds` (default 60) in 2 of 3 5-minute periods | The dashboard's per-strategy widget shows which strategy is slow; check Bedrock latency and throttles and OpenSearch search latency. `global` and `drift` make many model calls per query by design |
+| `QueryLatencyHigh` | The p90 latency of `run-rag --metrics-sink cloudwatch` queries is above `query_latency_alarm_seconds` (default 60) in 2 of 3 5-minute periods | The dashboard's per-strategy widget shows which strategy is slow; check Bedrock latency and throttles and OpenSearch search latency. `global` and `drift` make many model calls per query by design. The metric's `Strategy` is the requested one, so `auto` covers the queries it routes to `iterative` (a controller call and up to `max_rounds` more searches: [Follow-up rounds](./guides/query.md#follow-up-rounds-for-multi-hop-questions); leave it out of `search.auto_routable_strategies` to opt out). `local`, and each DRIFT follow-up, rank text units by PageRank by default, which adds a text-unit search, a relationship kNN search, a Neptune edge read and a query embedding to each ([Local PPR ranking](./concepts/defaults-and-evidence.md#local-ppr-ranking); `search.local_search.text_unit_ranking: support` drops them) |
 
 `run-rag` publishes `query_latency_ms` only with `--metrics-sink cloudwatch`
 (`--mode rag` queries, failed ones included: a query that ran past
@@ -1108,10 +1217,12 @@ The dashboard also plots stage durations, task memory, CPU and disk, the
 run's LLM tokens and calls by stage and its response-cache hits, Bedrock
 calls, throttles and latency by model, query latency, the document outcomes
 of each run (failed, skipped, excluded, deleted, retrying, without claims),
-and the incremental degradations no alarm watches
+the incremental degradations no alarm watches
 (`total_documents_deferred`, `community_rebuild_recommended`,
 `community_growth_ratio`, `runs_since_clustering`,
-`total_records_not_stored`, `underived_items`).
+`total_records_not_stored`, `underived_items`), and a partial RAPTOR summary
+tree (`total_tree_summaries_failed`, `total_tree_uncovered_leaves`; emitted
+as the `summary_tree` stage finishes).
 
 Corpus coverage metrics, one value per run (Sum):
 

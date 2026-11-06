@@ -23,6 +23,7 @@ from iac.stacks.observability_stack import (
     NOT_INDEXED_METRICS,
     QUERY_LATENCY_METRIC,
     QUERY_NAMESPACE,
+    SUMMARY_TREE_METRICS,
     ObservabilityStack,
 )
 from iac.stacks.orchestration_stack import OrchestrationStack
@@ -512,3 +513,29 @@ def test_the_runbook_lists_the_incremental_health_widget_exactly() -> None:
         if item != EMF_NAMESPACE
     }
     assert documented and plotted == documented
+
+
+def test_the_dashboard_plots_a_partial_summary_tree() -> None:
+    # Old behaviour: a tree whose summaries failed (or an on_reset tree that
+    # covers less and less) degraded tree retrieval with no metric to show it.
+    (dashboard,) = _template().find_resources("AWS::CloudWatch::Dashboard").values()
+    _, parts = dashboard["Properties"]["DashboardBody"]["Fn::Join"]
+    body = json.loads("".join(p if isinstance(p, str) else "TOKEN" for p in parts))
+    (widget,) = [
+        w
+        for w in body["widgets"]
+        if w["properties"].get("title") == "Summary tree (EMF)"
+    ]
+    plotted = {
+        metric[1]
+        for metric in widget["properties"]["metrics"]
+        if metric[0] == EMF_NAMESPACE
+    }
+    assert plotted == set(SUMMARY_TREE_METRICS)
+    assert plotted <= _pipeline_metric_fields()
+    metrics_source = (
+        _PACKAGE / "application" / "ingestion" / "pipeline_metrics.py"
+    ).read_text(encoding="utf-8")
+    for name in SUMMARY_TREE_METRICS:
+        # Emitted as the summary_tree stage finishes.
+        assert f'"{name}": frozenset({{"summary_tree"}})' in metrics_source

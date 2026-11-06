@@ -546,6 +546,47 @@ def test_create_pipeline_metrics_surfaces_unstored_records_and_underived_items()
     assert metrics.underived_items == 4
 
 
+def test_a_partial_summary_tree_reaches_the_emf_metrics() -> None:
+    # Old behaviour: failed summaries and the text units an on_reset tree
+    # leaves uncovered were stage metrics only, so a partial tree showed on
+    # no dashboard.
+    from unified_kg_rag.domain.models.cache import CacheStats
+
+    pipe = object.__new__(DataIngestionPipeline)
+    pipe.cache_manager = SimpleNamespace(get_cache_stats=lambda pid: CacheStats())
+    ctx = _ctx_with_results(
+        [
+            _result("indexing", metrics={"total_indexed": 3}),
+            _result(
+                "summary_tree",
+                metrics={"summaries_failed": 2, "tree_uncovered_leaves": 7},
+            ),
+        ]
+    )
+    ctx.duration_seconds = 1.0
+    metrics = DataIngestionPipeline._create_pipeline_metrics(pipe, ctx)
+    assert metrics.total_tree_summaries_failed == 2
+    assert metrics.total_tree_uncovered_leaves == 7
+
+    emitted: dict[str | None, dict] = {}
+
+    class Sink:
+        def emit(self, namespace, metrics, dimensions=None) -> None:
+            emitted[stage] = dict(metrics)
+
+    pipe.metrics_sink = Sink()
+    pipe.stages = [SimpleNamespace(name=n) for n in ("indexing", "summary_tree")]
+    for stage in ("indexing", "summary_tree", None):
+        DataIngestionPipeline._emit_metrics(pipe, metrics, "pid", stage)
+    # Emitted once, as the summary_tree stage finishes.
+    tree = ("total_tree_summaries_failed", "total_tree_uncovered_leaves")
+    assert {name: emitted["summary_tree"][name] for name in tree} == {
+        "total_tree_summaries_failed": 2,
+        "total_tree_uncovered_leaves": 7,
+    }
+    assert not set(tree) & (set(emitted["indexing"]) | set(emitted[None]))
+
+
 def test_create_pipeline_metrics_surfaces_corpus_coverage() -> None:
     # Old behaviour: none of these reached the EMF metrics, so a run that
     # skipped, failed or deleted documents looked like a clean one.

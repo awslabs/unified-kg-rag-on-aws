@@ -6,9 +6,10 @@
 # UKR__AWS__NEPTUNE__ENDPOINT, UKR__AWS__OPENSEARCH__ENDPOINT, UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS (1 on a
 # multi-node domain), UKR__AWS__S3__BUCKET_NAME, UKR__AWS__DYNAMODB__TABLE_NAME,
 # UKR__AWS__DYNAMODB__CREATE_TABLE_IF_MISSING, UKR__LOGGING__LOG_FORMAT and, when a guardrail is
-# deployed, UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER / UKR__AWS__BEDROCK__GUARDRAIL__VERSION). The source
-# directory and pipeline id arrive per run via UKR_SOURCE_DIRECTORY /
-# UKR_PIPELINE_ID.
+# deployed, UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER / UKR__AWS__BEDROCK__GUARDRAIL__VERSION; with the
+# `methodologies` context key, UKR__INDEXING__METHODOLOGIES, which overrides an
+# indexing.methodologies set here). The source directory and pipeline id
+# arrive per run via UKR_SOURCE_DIRECTORY / UKR_PIPELINE_ID.
 #
 # Every key not listed here uses the default documented in
 # docs/reference/configuration.md. Only settings where the deployed stack
