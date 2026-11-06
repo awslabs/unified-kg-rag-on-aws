@@ -198,11 +198,12 @@ class IndexingManager:
         # By suffix, the summaries this run made before indexing (see
         # offer_summaries): reused as the stored ones are.
         self._offered_summaries: dict[str, list[Entity]] = {}
-        # By suffix, the ids of the items this run's removals summarized: the
-        # summary was made from what the strip left, so the commit
-        # summarizes such an item from its records rather than extending
-        # that summary (see _merge_suffix). Not a summary a removal reused
-        # (community detection's, made for the report the run stores).
+        # By suffix, the ids of the items this run's removals summarized or
+        # wrote unsummarized (left to the commit, or another spelling folded
+        # in): the stored summary, if any, is not of what the strip left, so
+        # the commit summarizes such an item from its records rather than
+        # extending that summary (see _merge_suffix). Not a summary a removal
+        # reused (community detection's, made for the report the run stores).
         self._stripped_ids: dict[str, set[str]] = {}
         # By suffix, the ids of the run's delta items (see expect_delta): a
         # removal that derives one again leaves its summary to the commit.

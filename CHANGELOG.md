@@ -358,8 +358,8 @@ From a `main` checkout (formats and keys no release had):
   the re-clustered reports), or entities stored apart stay apart.
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
-- Incremental runs may have stored a summary of a summary for an entity or relationship an edited document shared
-  (#564): reset once to summarize from the lines (one call per such item over the threshold), or leave it.
+- Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
+  (#564, #PR): reset once to summarize from the lines (one call per such item over the threshold), or leave it.
 - #565 changed the translation, description summary and gleaning prompts (gleaning re-keys every gleaned record,
   claims too): a reset translates, extracts and gleans every unit again, the cost of a first build; incremental runs
   use the new prompts for new and changed documents only. A reset also types untyped merges and re-cuts one-line
@@ -564,9 +564,10 @@ From a `main` checkout (formats and keys no release had):
 - `indexing.reset` rebuilds without taking the suffix offline (new indices and an alias swap) and a failed reset
   keeps the previous graph and records (#331).
 - An incremental run finds what a changed or deleted document contributed by the text units every item cites, strips
-  shared items and re-derives them (summarizing from lines as a full build does), moves an item to the id a full
-  build gives it, and deletes extraction records nothing names (#325, #327, #564). With fuzzy resolution on, it
-  folds a delta entity into its one best stored match and never joins two stored ones until a reset (#564).
+  shared items and re-derives them (summarizing from lines as a full build does, also when several edited documents
+  share an item or spell it otherwise), moves an item to the id a full build gives it, and deletes extraction records
+  nothing names (#325, #327, #564, #PR). With fuzzy resolution on, it folds a delta entity into its one best stored
+  match and never joins two stored ones until a reset (#564).
 - Re-runs reuse what is unchanged: vectors carry a digest of their text and model, so indexing embeds only changed
   texts; the `intelligent` chunker's boundary answers and community report answers live in the extraction store; a
   full build keeps a stored summary of the same lines and settings; a no-op incremental run writes only its lease.

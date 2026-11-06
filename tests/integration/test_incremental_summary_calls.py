@@ -12,6 +12,7 @@ summarizes the lines).
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -90,3 +91,44 @@ def test_an_edited_document_summarizes_a_shared_entity_from_its_lines(
     # "Buyer" is not in the edited document: the removal summarizes it.
     assert [lines for name, lines in calls if name == "Buyer"] == [8, 7]
     assert incremental["entities"] == full["entities"]
+
+
+def _digesting(system: str, human: str) -> str:
+    """A model that answers as ``_respond`` and summarizes a description
+    into a digest of its lines: a summary of a summary, or one keeping a
+    removed line, differs from the summary of the lines. Not of the name: a
+    delta's own spelling summarized before it folds into the stored one
+    (graph resolution's summary, reused) has the lines of a full build."""
+    if "knowledge-graph editor" not in system:
+        return _respond(system, human)
+    match = re.search(r"<descriptions>\n(.*?)\n</descriptions>", human, re.S)
+    assert match
+    lines = "\n".join(sorted(match.group(1).split("\n")))
+    return f"Summary {hashlib.sha256(lines.encode()).hexdigest()[:8]}."
+
+
+@pytest.mark.parametrize("spelling", ["Acme", "Acme Inc", "Acme GmbH"])
+@pytest.mark.parametrize("edits", [4, 6])
+def test_editing_several_documents_of_a_shared_entity_matches_a_full_build(
+    tmp_path: Path, spelling: str, edits: int
+) -> None:
+    # Eight documents mention "Acme"; editing several strips their lines
+    # from its summary. The removal left the summary to the commit (or
+    # another spelling folded in), and the commit extended the stored
+    # copy: six edits kept two removed lines before the summary, four
+    # summarized the delta's summary again (a summary of a summary).
+    hub = {f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(8)}
+    edited = {
+        **hub,
+        **{
+            f"h{i}.txt": f"{spelling} and Depot trade goods {i + 20}."
+            for i in range(edits)
+        },
+    }
+
+    incremental = _state(
+        tmp_path / "inc", [hub, edited], respond=_digesting, summarize=True
+    )
+    full = _state(tmp_path / "full", [edited], respond=_digesting, summarize=True)
+
+    assert incremental == full
