@@ -35,9 +35,7 @@ from unified_kg_rag.shared.exceptions import SchemaSourceError
 if TYPE_CHECKING:
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
 
-# The chain's logger: the records keep the name they had before this module
-# was split out of it.
-logger = get_logger("unified_kg_rag.application.retrieval.rag_chain")
+logger = get_logger(__name__)
 
 
 def check_filter_keys(

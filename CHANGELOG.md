@@ -600,6 +600,12 @@ From a `main` checkout (formats and keys no release had):
   keeps maintenance and backups in set windows (#519); `OpenSearchJvmPressure` follows AWS's recommendation,
   `NeptuneHighCpu` needs 3 periods, `NeptuneLowFreeableMemory` is 1/32 of the class memory, `PipelineFailures`
   treats no executions as no failure, and `cdk.json` pins strong cross-stack references (#298, #566).
+- Log records of resume planning, run metrics, query processing, filter checks, the indexing collaborators and the
+  Leiden clustering carry their own module's logger name (`unified_kg_rag.application.ingestion.resume`,
+  `...ingestion.pipeline_metrics`, `...retrieval.query_processing`, `...retrieval.filter_validation`,
+  `...storage.cross_run_merge`/`removal`/`reannotation`/`stored_items`,
+  `unified_kg_rag.domain.ingestion.community_clustering`), not the pipeline's, chain's or indexing manager's; filter
+  on the subpackage prefix (`unified_kg_rag.application.ingestion`, ...) (#586, #587).
 - Dependencies: pydantic 2.14, langchain-core 1.7.3, `langchain-aws>=1.8.1`, langchain-openai 1.7, langsmith 0.14,
   datasets 5.1, tiktoken 0.14, tenacity 9.2, boto3 1.43.122; aws-cdk-lib 2.275 in the CDK lock (#241, #251, #265,
   #438, #465, #489).

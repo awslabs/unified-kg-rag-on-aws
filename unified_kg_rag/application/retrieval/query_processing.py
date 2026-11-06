@@ -47,9 +47,7 @@ if TYPE_CHECKING:
         _ExtractionCache,
     )
 
-# The chain's logger: the records keep the name they had before this module
-# was split out of it.
-logger = get_logger("unified_kg_rag.application.retrieval.rag_chain")
+logger = get_logger(__name__)
 
 # Openings of a model refusal or meta-reply rather than the requested text
 # (a rewritten question, a translation). Matched case-insensitively.

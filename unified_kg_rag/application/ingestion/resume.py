@@ -39,9 +39,7 @@ from unified_kg_rag.shared import (
 if TYPE_CHECKING:
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 
-# The pipeline's logger: the records keep the name they had before this
-# module was split out of it.
-logger = get_logger("unified_kg_rag.application.ingestion.pipeline")
+logger = get_logger(__name__)
 
 _STALE_DELTA = (
     "the doc-status registry changed since this pipeline computed its "
