@@ -44,7 +44,7 @@ registry rather than by editing dispatch code
 
 ## Pipeline
 
-Ingestion is a resumable pipeline of 12 checkpointed stages; a re-run
+Ingestion is a resumable pipeline of 13 checkpointed stages; a re-run
 resumes after the last valid one:
 
 1. Parse the documents (PDF, TXT, CSV, JSON; Markdown and HTML with the
@@ -58,10 +58,13 @@ resumes after the last valid one:
 6. Index: entities, relationships, text units, claims and reports into
    OpenSearch (BM25 and vectors), the graph into Neptune, and each
    document's state into the registry.
+7. For the opt-in `raptor` methodology, build a summary tree over the stored
+   text units (RAPTOR): clustered, summarized level by level, searched by
+   `tree`.
 
 With the doc-status registry on, a run re-indexes only new and changed
 documents and removes deleted ones. Stage list and flags:
-[Ingestion](../guides/ingest.md#the-12-pipeline-stages); internals:
+[Ingestion](../guides/ingest.md#the-13-pipeline-stages); internals:
 [Design Doc §4](../design.md#4-ingestion-pipeline) and
 [§5](../design.md#5-incremental-indexing).
 
@@ -95,6 +98,7 @@ what its strategies read:
 | `[graphrag, lightrag]` (default) | Text units, entities, relationships and their vectors, the graph, communities and their reports | Every strategy | Chunk boundaries, extraction and gleaning per text unit, description summaries, one report per community |
 | `[lightrag]` | The same without communities and reports | `mix`, `hybrid`, `naive`, `auto` | The same without the Leiden pass and the report calls |
 | `[graphrag]` | The default's | `local`, `global`, `drift`, `simple`, `auto` | The default's; also set `indexing.opensearch.build_relationship_vector_index: false` to skip the relationship embeddings, at the cost of `local`'s relationship section |
+| `[raptor]` (opt-in, unmeasured) | Text units and a summary tree over them (RAPTOR) | `tree`, `auto` | Chunk boundaries and about one summary per five or six text units: no graph extraction ([summary tree](../guides/ingest.md#a-raptor-summary-tree-opt-in)) |
 
 `hipporag` names what `lightrag` builds, for the strategies that read it,
 and `iterative` reads what its base (`local` or `mix`) reads.
@@ -104,7 +108,8 @@ holds and how to add the methodology, and `auto` routes only among the held
 ones. Adding a methodology later builds only what it adds: an incremental
 namespace is rebuilt once from its stored chunk boundaries, extractions,
 summaries and vectors, so the new model calls are the added methodology's
-(the community reports for `graphrag`). Removing one stops maintaining its
+(the community reports for `graphrag`; for `raptor`, the tree alone, built
+from the stored text units without a rebuild). Removing one stops maintaining its
 artifacts; nothing is deleted until a reset
 ([Ingestion](../guides/ingest.md#methodology-profiles),
 [Design §4.6](../design.md#46-methodology-profiles)).

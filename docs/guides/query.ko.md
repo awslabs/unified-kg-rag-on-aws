@@ -203,6 +203,42 @@ models:
 동작 방식과 IRCoT·KAG와의 비교는
 [설계 문서](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in)(영문)에 있습니다.
 
+## 요약 트리 검색(선택 사항)
+
+`--search-strategy tree`는 `raptor` 방법론으로 만든 네임스페이스를
+([수집](./ingest.ko.md#raptor-요약-트리선택-사항)) 검색합니다. 구절과 요약 트리의 모든 레벨을
+한 번에, 각각 BM25 + kNN으로 검색하고 융합해 함께 재순위화하며, 남은 요약마다 가장 잘 맞는
+구절을 함께 가져옵니다. 선택 사항이며 아직 측정하지 않았습니다. `auto`는 `raptor`만 가진
+네임스페이스에서만 이 전략을 고르고, 트리가 없는 네임스페이스는 모델을 호출하기 전에 이
+전략을 거절합니다.
+
+```yaml
+search:
+  tree_search:
+    summary_top_k: 10        # 검색해 남길 요약 수
+    text_top_k: 20           # 검색해 남길 구절 수
+    max_nodes_per_level: 3   # 레벨마다 남길 요약 수의 상한
+    expand_children: 2       # 요약마다 가져올 구절 수(0: 가져오지 않음)
+    graph_signal: auto       # 또는 off: 엔티티로 찾는 버킷
+  token_manager:
+    type_budgets:
+      summary: 0.5           # text의 0.5와 함께 쓰는 요약의 몫
+```
+
+- **출처.** 요약은 `level`, `n_leaves`, `child_ids`, `text_unit_ids`(요약한 구절)와 함께
+  보고되고, 함께 가져온 구절은 `expanded_from`(요약의 id)을 가집니다. `run-eval`의 검색
+  평가기는 요약을 그 구절로 파일에 귀속합니다(`by_source_type`의 `summary` 행).
+- **그래프 신호.** 네임스페이스에 엔티티 인덱스도 있으면(`graphrag`나 `lightrag`를 고른
+  경우) 원 질의로 찾은 엔티티를 인용하는 요약과 구절을 더합니다(모델 호출 없음,
+  `metadata["graph_signal"]`이 실행 여부를 알려 줌).
+- **필터.** 요약은 모든 문서가 같은 값을 가진 문서 필터 키만 가지므로, 필터를 걸면 모든
+  문서가 통과하는 요약만 남고, 함께 가져오는 구절도 같은 필터로 찾습니다.
+- **비용.** `naive` 질의에 검색 몇 번과 더 넓은 재순위화가 더해지며, 답변 전에 모델을
+  호출하지 않습니다.
+
+동작 방식과 RAPTOR 원 코드와의 차이는 [설계](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)(영문)에
+있습니다.
+
 ## 대화형 모드와 대화 메모리
 
 ```bash

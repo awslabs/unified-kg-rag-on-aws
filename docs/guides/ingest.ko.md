@@ -3,7 +3,7 @@
 > 🇬🇧 English version: [ingest.md](./ingest.md)
 
 수집은 문서 디렉터리를 그래프 저장소와 벡터 저장소의 지식 그래프로 바꿉니다.
-`run-ingestion --source-directory <dir>`이 12개 단계([설계 §4](../design.md#4-ingestion-pipeline)(영문)에
+`run-ingestion --source-directory <dir>`이 13개 단계([설계 §4](../design.md#4-ingestion-pipeline)(영문)에
 그림이 있음)를 실행하며 단계마다 체크포인트를 남기고, 같은 `--pipeline-id`로 다시
 실행하면 마지막으로 유효한 단계 다음부터 재개합니다. 문서 상태 레지스트리를 켜면
 증분으로 동작합니다([증분 인덱싱](./incremental.ko.md)).
@@ -13,7 +13,7 @@
 정해집니다([범위와 네임스페이스](../concepts/scopes-and-namespaces.ko.md)). 한국어나 여러 언어가
 섞인 코퍼스는 [다국어 코퍼스](./multilingual.ko.md)를 참고하세요.
 
-## 파이프라인 단계 12개
+## 파이프라인 단계 13개
 
 실행 순서대로이며, `--enabled-stages` / `--resume-from-stage`에는 단계 **이름**(대소문자
 무관)을 씁니다.
@@ -35,6 +35,9 @@
 11. **`community_detection`**: Leiden 군집화와 LLM 커뮤니티 리포트(`indexing.methodologies`에
     `graphrag`가 있을 때만).
 12. **`indexing`**: OpenSearch와 Neptune에 씀(켜져 있으면 레지스트리에도).
+13. **`summary_tree`**(`indexing.methodologies`에 `raptor`가 있을 때만): 저장된 텍스트
+    유닛 위에 RAPTOR 요약 트리를 만들며, `tree` 전략이 이를 검색함
+    ([아래](#raptor-요약-트리선택-사항)).
 
 실행에는 [방법론 프로필](#방법론-프로필)에 필요한 단계가 들어갑니다. `--enabled-stages`로 단계를
 직접 나열하면 그 목록이 우선합니다. 나열한 단계는 실행하고 나열하지 않은 단계는 실행하지 않으며,
@@ -163,6 +166,47 @@ indexing:
   남습니다. 아무것도 지우지 않습니다. 지우려면 남길 방법론으로 `indexing.reset: true`를 한 번
   실행하세요. 재구축이 커뮤니티 리포트 인덱스를 빈 인덱스로 바꾸고 그래프의 커뮤니티 정점을
   지웁니다.
+
+## RAPTOR 요약 트리(선택 사항)
+
+`raptor`(기본값 아님)는 인덱싱 뒤에 요약 트리를 만듭니다. 저장된 텍스트 유닛을 벡터로
+군집화하고 군집마다 요약(`models.roles.summary_tree`, default 티어)한 뒤, 요약을 다시
+군집화하고 요약하는 일을 `indexing.summary_tree.max_levels`(5) 레벨까지 반복해 `tree`
+전략이 쓰는 별도 인덱스에 씁니다([검색](../concepts/retrieval.ko.md#검색-전략-선택)).
+선택 사항이며 아직 측정하지 않았습니다. `naive`보다 답이 나은지는 실험으로 정합니다.
+
+```yaml
+indexing:
+  methodologies: [raptor]                     # 텍스트 유닛과 트리만
+  # methodologies: [graphrag, lightrag, raptor]  # 그래프와 함께 트리도
+  summary_tree:
+    algorithm: kmeans          # 또는 gmm(RAPTOR의 가우스 혼합, 더 느림)
+    partition_by: [category]   # 선택: 필터 값마다 트리 하나
+```
+
+- **`raptor`만 고르면 실행되는 단계.** 파싱, 로딩, 청킹, 번역(켠 경우), 인덱싱과 트리뿐이며
+  그래프 추출, 글리닝, 병합, 주장, 커뮤니티는 실행하지 않습니다. 그래서 `raptor`만 가진
+  네임스페이스는 코퍼스 토큰 100만 개당 약 $1-8(요약 비용, 텍스트 유닛 5-6개에 호출 한 번
+  정도)이 들며, 기본 그래프 수집의 약 $1,000과 대비됩니다. 이 네임스페이스는 `tree`만
+  서비스하며 `auto`도 `tree`로 갑니다.
+- **나중에 `raptor` 추가.** 다음 실행에서(코퍼스가 그대로여도) 또는 `run-ingestion
+  --enabled-stages summary_tree`로, 저장된 텍스트 유닛에서 트리만 만듭니다. 다시 추출하거나
+  네임스페이스를 재구축하지 않습니다.
+- **증분 실행.** 저장된 텍스트 유닛으로 트리를 다시 만들어 교체합니다. 자식이 그대로인 군집은
+  저장된 요약을 그대로 쓰고(모델 호출 없음), 군집화는 작은 델타로는 거의 바뀌지 않는 노드 id
+  표본에서 시작하므로 대부분의 군집이 살아남습니다. 삭제된 문서의 요약과 그 위의 모든 요약은
+  트리를 다시 만들기 전에 텍스트 유닛과 함께 지우므로, 실행이 중간에 멈춰도 삭제된 내용을
+  요약한 노드가 제공되지 않습니다. `refresh: on_reset`이면 재설정할 때까지 트리를 그대로
+  둡니다(삭제 시 요약 삭제는 그대로 함).
+- **필터.** 요약은 모든 문서가 같은 값을 가진 문서 필터 키만 가지므로, 필터를 걸면 모든
+  문서가 통과하는 요약만 남습니다. `partition_by`를 쓰면 그 키로 트리를 나눠 각 트리가
+  그 키에 대해 섞이지 않게 합니다.
+- **언어.** 요약은 인덱스 언어(번역을 켜면 대상 언어, 끄면 원문 언어)로 쓰고, 그 언어의
+  분석기로 색인합니다.
+- **한도.** 트리 하나에는 텍스트 유닛을 최대 `max_leaves_in_memory`(200,000)개까지 담습니다
+  (벡터를 메모리에서 군집화하기 때문). 더 큰 코퍼스는 `partition_by`나 `scope: document`
+  (문서마다 트리 하나, RAPTOR 원래 설정이며 텍스트 유닛이 3개 미만인 문서는 트리가 없음)로
+  나눕니다.
 
 ## 비용 조절 수단
 

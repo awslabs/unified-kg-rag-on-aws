@@ -65,6 +65,12 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 |---|---|---|
 | `iterative` | 마지막 홉이 질문에 이름이 나오지 않는 엔티티에 관한 다중 홉 질문 | `search.iterative_search.base`(기본 `mix`, 또는 `local`)를 실행한 뒤 fast 모델 컨트롤러(`models.roles.query_controller`)가 묶은 컨텍스트를 읽습니다. 컨텍스트로 답할 수 없으면 컨트롤러가 지목한 연결(bridge) 엔티티로 기본 검색을 다시 시작하고 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(2)번 반복합니다. 라운드마다 찾은 후보를 융합·재순위화하고 답변 모델은 한 번만 답합니다. `decompose: true`이면 대신 질문을 단계로 나눕니다. 질의마다 기본 전략보다 fast 모델 호출이 1-3번 많습니다. MuSiQue 질문 200개에서 `mix` 기반으로 실행했을 때 `mix`보다 `answer_contains`가 12.5%p, token F1이 5.2%p 높았고 p95 지연 시간은 11초에서 27초로 늘었습니다([근거](./defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 다중 홉 질문을 이 전략으로 보낼 수 있으며, 기본값으로 선택되지는 않습니다([설계](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in), 영문). |
 
+**RAPTOR 요약 트리(선택 사항, 측정 전, `raptor` 방법론):**
+
+| 전략 | 사용 시점 | 동작 방식 |
+|---|---|---|
+| `tree` | 관련된 여러 구절에 걸친 답이 필요하거나, 구절 하나와 그 주변의 요지가 함께 필요한 질문 | `indexing.methodologies`에 `raptor`를 넣어 만든 네임스페이스가 필요합니다. 인덱싱 뒤에 텍스트 유닛을 벡터로 군집화하고 군집마다 요약(`models.roles.summary_tree`)하는 일을 레벨마다 반복하며, 요약은 인덱스 언어로 씁니다. 질의는 텍스트 유닛의 BM25 + kNN 검색, 모든 레벨 요약의 검색(RAPTOR의 collapsed tree), 그리고 네임스페이스에 엔티티 인덱스가 있으면 원 질의로 찾은 엔티티를 인용하는 요약과 구절(모델 호출 없음)을 RRF로 융합합니다. 교차 인코더가 구절과 요약을 함께 재순위화하고, 레벨마다 요약은 최대 `max_nodes_per_level`(3)개만 남기며, 남은 요약마다 자기 계보의 구절 `expand_children`(2)개를 함께 가져와 답변이 원문을 인용하게 합니다. 요약은 계보(`text_unit_ids`, `child_ids`)와 함께 출처로 보고됩니다. 비용은 `naive`와 비슷하고 검색이 몇 번 더 듭니다. 명시적으로 고를 때만 실행되며, 측정하기 전까지 `auto`는 이 전략으로 분기하지 않습니다. 다만 `raptor`만 가진 네임스페이스에서는 남은 유일한 전략이므로 `auto`가 고릅니다([설계](../design.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). |
+
 ## 하이브리드 점수와 재순위화
 
 모든 전략은 출처별 결과(BM25, 벡터, 그래프)를 RRF(reciprocal rank fusion)나 가중치로

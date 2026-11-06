@@ -35,7 +35,7 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 
 ## 파이프라인
 
-수집은 체크포인트를 남기는 12단계 파이프라인이며, 다시 실행하면 마지막으로 유효한 단계
+수집은 체크포인트를 남기는 13단계 파이프라인이며, 다시 실행하면 마지막으로 유효한 단계
 다음부터 이어 갑니다.
 
 1. 문서를 파싱하고(PDF, TXT, CSV, JSON. Markdown과 HTML은 `unstructured` 추가 패키지 필요)
@@ -47,9 +47,11 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 5. 그래프를 만들고, Leiden 커뮤니티 계층을 찾아 커뮤니티마다 구조화된 리포트를 씁니다.
 6. 인덱싱합니다. 엔티티, 관계, 텍스트 단위, 주장, 리포트는 OpenSearch(BM25와 벡터)에,
    그래프는 Neptune에, 문서별 상태는 레지스트리에 씁니다.
+7. 선택 사항인 `raptor` 방법론이면 저장된 텍스트 단위 위에 요약 트리(RAPTOR)를 만듭니다.
+   군집화하고 레벨마다 요약하며, `tree` 전략이 검색합니다.
 
 문서 상태 레지스트리를 켜면 새 문서와 바뀐 문서만 다시 인덱싱하고 지운 문서는 제거합니다.
-단계 목록과 플래그는 [수집](../guides/ingest.ko.md#파이프라인-단계-12개), 내부 구조는
+단계 목록과 플래그는 [수집](../guides/ingest.ko.md#파이프라인-단계-13개), 내부 구조는
 [설계 문서 §4](../design.md#4-ingestion-pipeline)와 [§5](../design.md#5-incremental-indexing)(영문)에
 있습니다.
 
@@ -79,6 +81,7 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 | `[graphrag, lightrag]`(기본값) | 텍스트 단위, 엔티티, 관계와 그 벡터, 그래프, 커뮤니티와 리포트 | 모든 전략 | 청크 경계, 텍스트 단위마다 추출과 글리닝, 설명 요약, 커뮤니티마다 리포트 하나 |
 | `[lightrag]` | 커뮤니티와 리포트를 뺀 나머지 | `mix`, `hybrid`, `naive`, `auto` | Leiden 단계와 리포트 호출을 뺀 나머지 |
 | `[graphrag]` | 기본값과 같음 | `local`, `global`, `drift`, `simple`, `auto` | 기본값과 같음. 관계 임베딩까지 아끼려면 `indexing.opensearch.build_relationship_vector_index: false`도 설정(대신 `local`의 관계 섹션이 빠짐) |
+| `[raptor]`(선택 사항, 측정 전) | 텍스트 단위와 그 위의 요약 트리(RAPTOR) | `tree`, `auto` | 청크 경계와 텍스트 단위 5-6개마다 요약 하나 정도. 그래프 추출 없음([요약 트리](../guides/ingest.ko.md#raptor-요약-트리선택-사항)) |
 
 `hipporag`는 `lightrag`가 만드는 것과 같은 것을 가리키며, 그것을 읽는 전략에 씁니다.
 `iterative`는 기반 전략(`local`이나 `mix`)이 읽는 것을 읽습니다.
@@ -87,7 +90,7 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 알려 줍니다. `auto`는 가진 방법론의 전략 중에서만 고릅니다. 나중에 방법론을 추가하면 그
 방법론이 더하는 것만 새로 만듭니다. 증분 네임스페이스는 저장된 청크 경계, 추출 결과, 요약,
 벡터로 한 번 다시 구축되므로 새 모델 호출은 추가한 방법론의 것뿐입니다(`graphrag`라면 커뮤니티
-리포트). 방법론을 빼면 그 산출물은 더 이상 갱신되지 않으며, 재설정(reset) 전에는 아무것도 지우지
+리포트, `raptor`라면 재구축 없이 저장된 텍스트 단위로 만드는 트리만). 방법론을 빼면 그 산출물은 더 이상 갱신되지 않으며, 재설정(reset) 전에는 아무것도 지우지
 않습니다([수집](../guides/ingest.ko.md#방법론-프로필),
 [설계 문서 §4.6](../design.md#46-methodology-profiles), 영문).
 

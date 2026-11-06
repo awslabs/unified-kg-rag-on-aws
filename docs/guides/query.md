@@ -225,6 +225,46 @@ models:
 How it works and how it compares with IRCoT and KAG:
 [design](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in).
 
+## Summary-tree search (opt-in)
+
+`--search-strategy tree` searches a namespace built with the `raptor`
+methodology ([ingestion](./ingest.md#a-raptor-summary-tree-opt-in)): the
+passages and every level of the summary tree at once, BM25 + kNN each,
+fused and reranked together; each summary kept brings its best passages.
+It is opt-in and unmeasured: `auto` routes to it only on a `raptor`-only
+namespace, and a namespace without a tree refuses it before any model call.
+
+```yaml
+search:
+  tree_search:
+    summary_top_k: 10        # summaries searched for and kept
+    text_top_k: 20           # passages searched for and kept
+    max_nodes_per_level: 3   # summaries of one level at most
+    expand_children: 2       # passages each summary brings (0: none)
+    graph_signal: auto       # or off: the entity-led buckets
+  token_manager:
+    type_budgets:
+      summary: 0.5           # the summaries' share beside text's 0.5
+```
+
+- **Sources.** A summary is reported with `level`, `n_leaves`, `child_ids`
+  and `text_unit_ids` (its passages), and its expanded passages with
+  `expanded_from` (the summary's id); `run-eval`'s retrieval evaluator
+  attributes a summary through its passages (a `summary` row in
+  `by_source_type`).
+- **Graph signal.** Where the namespace also holds the entities index
+  (`graphrag` or `lightrag` selected), the entities a search with the raw
+  query finds add the summaries and passages that cite them (no model call;
+  `metadata["graph_signal"]` says whether it ran).
+- **Filters.** A summary keeps a document filter key only when all its
+  documents share the value: under a filter it is kept only when all its
+  documents pass, and its passages are fetched under the same filters.
+- **Cost.** A `naive` query plus a few searches and a wider rerank; no
+  model call before the answer.
+
+How it works and how it differs from RAPTOR's own code:
+[design](../design.md#65-raptor-summary-tree-raptor-tree-opt-in).
+
 ## Interactive mode & conversation memory
 
 ```bash

@@ -72,7 +72,7 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 | `--use-memory` | off | Enable conversation memory, kept in this process only (auto-enabled in interactive mode; a single --query starts with no history). |
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
 | `--enable-thinking` | off | (deprecated) Enable thinking mode for language model reasoning. No-op for models that always reason (Claude 4.7+ / 5.x, the defaults, and OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
-| `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`, `iterative`, `ppr`. |
+| `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`, `iterative`, `ppr`, `tree`. |
 | `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
 | `--top-k` | `10` | Set the maximum number of search results. |
 | `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
