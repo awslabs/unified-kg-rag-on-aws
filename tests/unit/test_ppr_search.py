@@ -12,6 +12,10 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
+from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
+from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import (
+    SQLiteGraphRetriever,
+)
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
@@ -475,6 +479,33 @@ async def test_local_ppr_ranks_the_text_units_by_pagerank() -> None:
     assert (facts.top_k, facts.search_type) == (5, SearchType.VECTOR)
 
 
+async def test_local_ppr_fetches_only_the_units_its_passage_hits_lack() -> None:
+    config = _config(local_search__text_unit_ranking="ppr")
+    documents, graph = _bridge_stores(config)
+    documents.searches["entities"] = [_hit("entity", "ann", 0.9, name="Ann")]
+    strategy, buckets = _local(config, documents, graph)
+    await strategy.asearch(SearchQuery(query="q", entity_focus=["Ann"]))
+    units = {r.source for r in buckets["text_units"]}
+    assert {"u-hub", "u-ann"} <= units
+    fetched = {
+        unit
+        for q in documents.by("text_units")
+        if not q.query
+        for unit in (q.filters or {}).get("id") or []
+    }
+    # The passage hits came with their text: not fetched again.
+    assert fetched and not fetched & {"u-hub", "u-ann"}
+
+
+def test_an_entity_s_repeated_text_unit_counts_once() -> None:
+    # As the ppr strategy counts it (document_unit_ids): the seed weight
+    # and the frequency threshold read the same count.
+    local = get_strategy_spec(SearchStrategy.LOCAL).strategy_class
+    node = _hit("entity", "ann", 0.5, text_unit_ids=["u-1", "u-1", "u-2"])
+    assert local._text_unit_count(node) == 2
+    assert local._filter_entities([node], frequency_threshold=2) == [node]
+
+
 async def test_local_ppr_seeds_relationship_hits_and_reads_their_endpoints() -> None:
     config = _config(
         local_search__text_unit_ranking="ppr", local_search__ppr_seed_relationships=2
@@ -525,6 +556,37 @@ async def test_document_filters_read_the_edges_from_the_relationships_index() ->
         "target_id": ["a", "b", "c"],
         "source_id": ["a", "b", "c"],
     }
+
+
+async def test_a_graph_scanning_incident_edges_reads_them_from_the_index() -> None:
+    # Neptune walks every incident edge of a hub; the relationships index
+    # answers the same question with both endpoints in one terms query.
+    config = _config()
+    documents = _Documents(
+        config,
+        stored={
+            "relationships": [
+                _hit("relationship", "r1", 0.0, source_id="a", target_id="b"),
+                _hit("relationship", "r3", 0.0, source_id="a", target_id="z"),
+            ]
+        },
+    )
+    graph = _Graph({}, [("a", "b")])
+    graph.scans_incident_edges = True  # type: ignore[attr-defined]
+    strategy = _strategy(SearchStrategy.PPR, config, documents, graph)
+    edges = await strategy._neighbourhood_edges(
+        SearchQuery(query="q"), ["a", "b"], per_vertex=5
+    )
+    assert [e.id for e in edges] == ["r1"]
+    assert graph.edge_calls == []
+    # Without the relationship index the graph is read.
+    config.indexing.opensearch.build_relationship_vector_index = False
+    edges = await strategy._neighbourhood_edges(
+        SearchQuery(query="q"), ["a", "b"], per_vertex=5
+    )
+    assert [e.id for e in edges] == ["r-a-b"] and len(graph.edge_calls) == 1
+    assert NeptuneRetriever.scans_incident_edges
+    assert not SQLiteGraphRetriever.scans_incident_edges
 
 
 async def test_a_graph_that_cannot_tell_falls_back_to_the_index() -> None:

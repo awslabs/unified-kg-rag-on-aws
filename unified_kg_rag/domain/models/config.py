@@ -3930,8 +3930,9 @@ class LocalSearchConfig(BaseModel):
     text_unit_ranking: Literal["support", "ppr"] = Field(
         default="ppr",
         description=(
-            "How local search (and each DRIFT follow-up) orders the text units "
-            "of its expanded entities before the text quota cuts them. 'ppr' "
+            "How local search orders the text units of its expanded entities "
+            "before the text quota cuts them (DRIFT's follow-up local searches: "
+            "search.drift_search.text_unit_ranking). 'ppr' "
             "(the default): HippoRAG 2's Personalized PageRank over the "
             "expanded entities, their relationships and their text units, "
             "seeded by the seed entities (hit score over the text units "
@@ -4019,6 +4020,18 @@ class DriftSearchConfig(BaseModel):
         ge=128,
         description="Token budget for the ranked intermediate answers handed to "
         "the answer model; the best-scored answers are taken first.",
+    )
+    text_unit_ranking: Literal["support", "ppr"] = Field(
+        default="support",
+        description=(
+            "How each follow-up local search orders its text units "
+            "(search.local_search.text_unit_ranking's values). support (the "
+            "default): what DRIFT was measured with. ppr was measured for "
+            "local alone and costs each follow-up a text-unit search, a "
+            "relationship search, an edge read and a query embedding (up to "
+            "k_followups * n_depth = 20 of each a query, near the query "
+            "deadline), so DRIFT keeps support until a run measures it."
+        ),
     )
 
 
@@ -4316,8 +4329,11 @@ class PPRSearchConfig(BaseModel):
     settings also serve search.local_search.text_unit_ranking: ppr).
 
     Opt-in: the defaults are HippoRAG 2's (damping 0.5, passage node weight
-    0.05, 5 linked facts), the ones local's measured ranking uses; the ppr
-    strategy's answers are not measured yet. See docs/design.md §6.4.
+    0.05, link_top_k 5). local's measured ranking uses the PageRank ones
+    (damping, passage node weight, passage seeds, iterations, edges per
+    entity) but seeds by its own search.local_search.ppr_seed_relationships
+    with no link_top_k cut; the ppr strategy's answers are not measured
+    yet. See docs/design.md §6.4.
     """
 
     fact_top_k: int = Field(

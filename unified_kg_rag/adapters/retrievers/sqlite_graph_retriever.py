@@ -26,7 +26,6 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 )
 from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
 from unified_kg_rag.domain.models import Config, GraphEdge, SearchQuery
-from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import safe_float_parse
 
@@ -178,6 +177,5 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
             )
             for edge_id, source, target, props in rows
         ]
-        return cap_edges_per_vertex(
-            (edge for edge in edges if edge_kinds_pass(edge, kinds)), ids, per_vertex
-        )
+        # aneighbourhood_edges keeps each vertex's first per_vertex.
+        return [edge for edge in edges if edge_kinds_pass(edge, kinds)]

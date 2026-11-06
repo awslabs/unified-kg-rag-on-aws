@@ -1372,8 +1372,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # Never ask the LLM to answer from an empty/placeholder context: retrieval
         # produced nothing, so generating anyway invites a confident hallucination
         # with no supporting sources. Short-circuit to an explicit "cannot answer".
-        context = str(state.get("context") or "").strip()
-        if not context or context == EMPTY_CONTEXT_PLACEHOLDER:
+        if self._context_is_empty(state):
             return RunnableLambda(lambda _: NO_CONTEXT_ANSWER)
 
         enable_thinking = state.get("enable_thinking", False)
@@ -1472,9 +1471,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     def _grounding_context(self, state: dict[str, Any]) -> GroundingContext | None:
         """The question and context the answer model was given, or ``None``
         when it was given no context (the fixed no-context answer)."""
-        context = str(state.get("context") or "")
-        if not context.strip() or context.strip() == EMPTY_CONTEXT_PLACEHOLDER:
+        if self._context_is_empty(state):
             return None
+        context = str(state.get("context") or "")
         optimized: OptimizedContext | None = state.get("optimized_context")
         return GroundingContext(
             query=self._question(state),
@@ -1512,14 +1511,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # map-reduce summary) are LLM output the model may read, not retrieved
         # evidence, so they are never reported as sources on either path.
         optimized: OptimizedContext | None = state.get("optimized_context")
-        context = str(state.get("context") or "").strip()
         if optimized is None:
             sources = [
                 GraphRAGChain._source_entry(r, r.content, truncated=False)
                 for r in sr.results
                 if not GraphRAGChain._is_synthesized(r.metadata)
             ]
-        elif not context or context == EMPTY_CONTEXT_PLACEHOLDER:
+        elif GraphRAGChain._context_is_empty(state):
             # The answer step short-circuited: the model saw no context at all.
             sources = []
         else:
@@ -1534,7 +1532,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             **sr.metadata,
         }
         reason = state.get("abstention_reason")
-        if reason is None and (not context or context == EMPTY_CONTEXT_PLACEHOLDER):
+        if reason is None and GraphRAGChain._context_is_empty(state):
             # The answer step returned the fixed NO_CONTEXT_ANSWER.
             reason = REASON_NO_CONTEXT
         if reason is not None:

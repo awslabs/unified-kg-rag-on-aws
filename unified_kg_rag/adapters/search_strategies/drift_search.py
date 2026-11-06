@@ -134,6 +134,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self.local_search.hybrid_scorer = self.hybrid_scorer
         self.local_search.token_manager = self.token_manager
         self.local_search.rerank_types = frozenset()
+        # Its own text-unit ranking (support by default: local's ppr default
+        # is unmeasured under DRIFT).
+        self.local_search.text_unit_ranking = self.drift_config.text_unit_ranking
 
     def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
         # The primer's reports and the follow-ups' local searches.

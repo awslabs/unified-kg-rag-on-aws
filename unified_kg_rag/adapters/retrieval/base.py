@@ -249,6 +249,12 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
     ``GraphRAGChain(retriever_builders=...)``.
     """
 
+    # Whether ``aneighbourhood_edges`` reads every incident edge of each
+    # vertex to find those within the set (a Gremlin ``bothE()``), so a hub
+    # costs its degree: the strategies then read the edges from the
+    # relationships index when it is built (``_neighbourhood_edges``).
+    scans_incident_edges: ClassVar[bool] = False
+
     def __init__(self, config: Config, **kwargs: Any) -> None:
         BaseRetriever.__init__(self, **kwargs)
         self._config = config
@@ -1263,9 +1269,12 @@ class BaseSearchStrategy(ABC):
 
         Under a document filter the graph cannot tell which edges a passing
         document states, so they are read from the relationships index, as
-        the filtered walk reads them (``_indexed_neighbourhood_edges``);
-        otherwise from the graph, and from the index when the graph
-        retriever cannot tell (``None``). The caller's ``id``/
+        the filtered walk reads them (``_indexed_neighbourhood_edges``); so
+        they are too from a graph that scans every incident edge of a vertex
+        (``scans_incident_edges``: Neptune, where a hub of 20k edges took
+        0.4 s), where both endpoints in one terms query cost the index no
+        such scan; otherwise from the graph, and from the index when the
+        graph retriever cannot tell (``None``). The caller's ``id``/
         ``source_id``/``target_id`` filters are not applied to the edges
         (they applied to the vertices already). A failure that is not fatal
         degrades to no edges (logged); a fatal one raises.
@@ -1287,11 +1296,14 @@ class BaseSearchStrategy(ABC):
             self.document_retriever is not None
             and self.config.indexing.opensearch.build_relationship_vector_index
         )
-        if indexed and document_filters(query.filters):
+        graph = self.graph_retriever
+        if indexed and (
+            document_filters(query.filters)
+            or bool(getattr(graph, "scans_incident_edges", False))
+        ):
             edges = await self._indexed_neighbourhood_edges(through, ids, per_vertex)
             if edges is not None:
                 return edges
-        graph = self.graph_retriever
         if graph is not None:
             with observability.span(
                 "kg_rag.retrieve",

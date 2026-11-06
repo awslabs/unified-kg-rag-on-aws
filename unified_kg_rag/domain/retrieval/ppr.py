@@ -33,7 +33,6 @@ from unified_kg_rag.domain.models import GraphEdge
 
 # The defaults HippoRAG 2 runs with (its ``BaseConfig``).
 DEFAULT_DAMPING = 0.5
-DEFAULT_PASSAGE_NODE_WEIGHT = 0.05
 DEFAULT_LINK_TOP_K = 5
 
 
@@ -252,10 +251,6 @@ class PassageGraph:
     @property
     def node_count(self) -> int:
         return len(self._nodes)
-
-    @property
-    def edge_count(self) -> int:
-        return len(self._edges)
 
     @property
     def passages(self) -> frozenset[str]:

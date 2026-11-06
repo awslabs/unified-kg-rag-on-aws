@@ -254,6 +254,20 @@ def test_follow_up_searches_do_not_rerank_and_use_the_search_concurrency() -> No
     assert LocalSearchStrategy(config, {}).rerank_types == {"text"}
 
 
+def test_follow_ups_rank_text_units_by_drift_s_own_setting() -> None:
+    # Local ranks by PPR by default; DRIFT's follow-ups keep support (what
+    # DRIFT was measured with) unless search.drift_search says otherwise.
+    config = Config()
+    assert config.search.local_search.text_unit_ranking == "ppr"
+    strat = DriftSearchStrategy(config, {})
+    assert not strat.local_search._ranks_by_ppr()
+    assert LocalSearchStrategy(config, {})._ranks_by_ppr()
+    config.search.drift_search.text_unit_ranking = "ppr"
+    assert DriftSearchStrategy(config, {}).local_search._ranks_by_ppr()
+    config.search.local_search.text_unit_ranking = "support"
+    assert DriftSearchStrategy(config, {}).local_search._ranks_by_ppr()
+
+
 def test_folds_are_contiguous_and_never_empty() -> None:
     items = [_result(str(i)) for i in range(5)]
     parts = DriftSearchStrategy._folds(items, 3)

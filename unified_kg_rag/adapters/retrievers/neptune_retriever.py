@@ -69,6 +69,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
     """
 
     _store_name: ClassVar[str] = "Neptune"
+    # _edges_within walks bothE() of each vertex (base: scans_incident_edges).
+    scans_incident_edges: ClassVar[bool] = True
 
     def __init__(
         self,

@@ -233,9 +233,8 @@ async def test_unfiltered_query_sends_no_filters(config: Config) -> None:
     os_cfg = config.indexing.opensearch
     for call in os_r.calls:
         if call.index_prefixes == [os_cfg.text_units_index_prefix] and not call.query:
-            assert call.filters == {
-                "id": [f"{os_cfg.text_units_index_prefix}-1", "chunk-1"]
-            }
+            # The PageRank's passage hit came with its text: not fetched.
+            assert call.filters == {"id": ["chunk-1"]}
         elif call.filters and set(call.filters) == {"id"}:
             # A fetch by id (the PageRank's endpoint entities): ids only.
             assert call.index_prefixes == [os_cfg.entities_index_prefix]
@@ -263,7 +262,8 @@ async def test_no_entity_focus_falls_back_to_raw_query(config: Config) -> None:
     assert entity_calls[0].query == "who founded acme"
     assert entity_calls[0].top_k == 7
     assert len(neptune_r.calls) == 1  # graph expansion is seeded
-    assert result.metadata["text_unit_count"] == 1
+    # The linked chunk and the PageRank's passage hit.
+    assert result.metadata["text_unit_count"] == 2
 
 
 class GatedRetriever(LineageRetriever):
@@ -326,7 +326,7 @@ async def test_independent_sections_run_concurrently_with_entity_chain(
 
     sources = {r.source for r in result.results}
     assert {f"{p}-1" for p in side_prefixes} <= sources
-    assert result.metadata["text_unit_count"] == 1
+    assert result.metadata["text_unit_count"] == 2
 
 
 class _GraphWithLineage(FakeRetriever):
@@ -439,7 +439,9 @@ async def test_text_unit_fetch_is_capped_at_the_text_quota(config: Config) -> No
     quota = strategy._per_type_quota(query.top_k)["text"]
     (fetch,) = [q for q in os_r.calls if q.filters and "id" in q.filters]
     assert fetch.filters is not None
-    assert len(fetch.filters["id"]) == quota < 500
+    # The quota's units, but the PageRank's passage hit, which came with
+    # its text.
+    assert len(fetch.filters["id"]) == quota - 1 < 500
 
 
 async def test_failed_side_section_is_retrieved_when_the_entity_chain_fails(
