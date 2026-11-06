@@ -406,6 +406,72 @@ class TestFingerprintScope:
         # The translation model is only the (skipped) translator's.
         assert fingerprint({"translation": "amazon.nova-pro"}) == fingerprint()
 
+    @pytest.mark.parametrize(
+        ("enabled", "source", "target", "keyed"),
+        [
+            (False, "en", "en", False),
+            (True, "ko", "en", False),
+            (False, "ko", "ko", False),
+            (False, "zh", "zh", False),
+            (True, "en", "ko", False),
+            # Indexed in the source language since #605, in the target
+            # language before: the index language keys them.
+            (False, "ja", "zh", True),
+            (False, "ko", "en", True),
+        ],
+    )
+    def test_the_index_language_keys_only_what_its_settings_do_not_say(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        enabled: bool,
+        source: str,
+        target: str,
+        keyed: bool,
+    ) -> None:
+        from unified_kg_rag.domain.ingestion.cache_keys import (
+            changed_settings,
+            extraction_fingerprint,
+            extraction_settings,
+        )
+
+        config = Config.model_validate(
+            {
+                "processing": {
+                    "translation": {
+                        "enabled": enabled,
+                        "source_language": source,
+                        "target_language": target,
+                    }
+                }
+            }
+        )
+
+        def keys() -> list[str]:
+            return [
+                extraction_fingerprint(config),
+                *(
+                    stage_input_fingerprint(config, stage)
+                    for stage in PipelineStageType
+                ),
+            ]
+
+        settings = extraction_settings(config)
+        current = keys()
+        with monkeypatch.context() as earlier:
+            earlier.setattr(cache_keys, "_language_input", lambda _config: {})
+            before = keys()
+            recorded = extraction_settings(config)
+        # The stages before translation never read the language.
+        assert current[1:4] == before[1:4]
+        if keyed:
+            assert current[0] != before[0] and current[4:] != before[4:]
+            assert all(a != b for a, b in zip(current[4:], before[4:], strict=True))
+            # A namespace recorded the earlier way re-extracts.
+            assert changed_settings(recorded, settings) == ["index_language"]
+        else:
+            assert current == before
+            assert changed_settings(recorded, settings) == []
+
     def test_report_entity_cap_shapes_communities_with_reports_off(self) -> None:
         def fingerprint(**reports: object) -> str:
             config = Config.model_validate(

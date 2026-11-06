@@ -2817,7 +2817,12 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   `BaseSearchStrategy.query_language`, falling back to the index language.
   The extraction-record and answer fingerprints key the index language
   under their earlier `target_language` field, so a translated index keeps
-  its records. Claims carry no language slot: the claim prompt reads the
+  its records. Where the translation settings do not say it (translation
+  off, `source_language` other than `target_language`: extracted in the
+  target language before), the extraction settings and the stage caches
+  from translation on key it too (`cache_keys._language_input`), so such a
+  namespace re-extracts instead of mixing languages; every other config
+  keeps its keys. Claims carry no language slot: the claim prompt reads the
   unit's text in the index language and states facts as written.
 - **Language-aware parsing.** Query entities split at `,`, `，`, `、`,
   `;`, `；` and line breaks (`domain/retrieval/query_entities.py`). Global

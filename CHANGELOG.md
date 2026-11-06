@@ -419,10 +419,13 @@ From a `main` checkout (formats and keys no release had):
   on the embedded stores), and without the relationship vector index the PageRank is seeded by the entities and
   passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
 - #605 one index language: a namespace ingested with `processing.translation.enabled: false` and a
-  `source_language` other than `target_language` was extracted, summarized and reported in `target_language`; its
-  incremental runs now stop before any model call (exit 2, `was built for other language settings`, the graph
-  indexes' analyzers follow `source_language`) until one `indexing.reset: true` run, which costs a first build
-  (every unit extracted and gleaned again, every summary, report and vector made again). Any other configuration
+  `source_language` other than `target_language` was extracted, summarized and reported in `target_language`. Its
+  extraction settings and stage caches now record the index language (#PR), so its next incremental run stops before
+  any model call where the analyzers differ (exit 2, `was built for other language settings`, the graph indexes'
+  analyzers follow `source_language`) and otherwise extracts every document again (a WARNING names
+  `index_language`); a re-run of a `--pipeline-id` does not resume from its stage caches either. Run one
+  `indexing.reset: true`, which costs a first build (every unit extracted and gleaned again, every summary, report
+  and vector made again). Any other configuration
   keeps its extraction records and indices; the community report prompt now names its language, so the next full
   build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
   date written as `2024年3月` is found under it, so nothing else re-runs.
