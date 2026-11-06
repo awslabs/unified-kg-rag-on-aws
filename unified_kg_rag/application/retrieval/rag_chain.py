@@ -924,20 +924,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
 
     @staticmethod
-    def _needs_query_entities(
-        state: dict[str, Any], config: Config | None = None
-    ) -> bool:
-        """``query_processing.needs_query_entities``."""
-        return query_processing.needs_query_entities(state, config)
-
-    @staticmethod
-    def _needs_dual_keywords(
-        state: dict[str, Any], config: Config | None = None
-    ) -> bool:
-        """``query_processing.needs_dual_keywords``."""
-        return query_processing.needs_dual_keywords(state, config)
-
-    @staticmethod
     def _looks_like_translation_refusal(candidate: str, original: str) -> bool:
         """``query_processing.looks_like_translation_refusal``."""
         return query_processing.looks_like_translation_refusal(candidate, original)
@@ -1046,7 +1032,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # standalone rewrite, which names what a follow-up refers to.
         entity_focus = (
             list(dict.fromkeys(processed.entities))
-            if self._needs_query_entities(state, self.config)
+            if query_processing.needs_query_entities(state, self.config)
             else []
         )
 

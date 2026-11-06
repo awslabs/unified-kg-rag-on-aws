@@ -634,15 +634,14 @@ def _bounded_clusters(
     over it is clustered again (at least in two) until it fits, and packed
     in id order when clustering cannot split it."""
     vectors = np.stack([entry.vector for entry in entries])
-    pending: list[tuple[list[Entry], bool]] = [
-        ([entries[i] for i in members], False)
+    pending: list[list[Entry]] = [
+        [entries[i] for i in members]
         for members in partition(vectors, False, [entry.id for entry in entries])
     ]
     done: list[list[Entry]] = []
     seen: set[tuple[str, ...]] = set()
     while pending:
-        members, _ = pending.pop(0)
-        members = sorted(members, key=lambda entry: entry.id)
+        members = sorted(pending.pop(0), key=lambda entry: entry.id)
         key = tuple(entry.id for entry in members)
         if key in seen:
             continue
@@ -658,10 +657,9 @@ def _bounded_clusters(
         )
         parts = [[members[i] for i in group] for group in sub if group]
         if len(parts) < 2 or any(len(part) == len(members) for part in parts):
-            for group in _pack_by_tokens(members, settings.max_cluster_tokens):
-                pending.append((group, True))
+            pending.extend(_pack_by_tokens(members, settings.max_cluster_tokens))
             continue
-        pending.extend((part, True) for part in parts)
+        pending.extend(parts)
     return done
 
 
