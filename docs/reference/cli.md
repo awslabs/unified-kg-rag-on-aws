@@ -106,6 +106,8 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 | `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
 | `--repeats` | `1` | Answer and score the dataset this many times per strategy; the comparison averages each query over the repeats and reports the run-to-run spread (default 1). |
 | `--pairwise-judge` | off | With two or more strategies, also judge each strategy's answers against the first's with an LLM (comprehensiveness, diversity, empowerment, directness; both orders) using models.roles.evaluation. |
+| `--pairwise-mode` | — | How --pairwise-judge reads the two answers (default: evaluation.pairwise_mode, 'standard'). 'differential' first splits them into shared and unique statements with models.roles.pairwise_overlap (fast tier, one call per pair) and judges the unique statements only, so shared content and the length it adds earn neither answer credit. Both modes report win rates per answer-length bucket. |
+| `--closed-book` | off | Also answer every question with the answer model alone, no retrieval (the 'closed_book' arm, compared with the first strategy like another strategy and judged by --pairwise-judge): its scores bound what the model knows without the corpus. One answer call per question and repeat; its retrieval and context metrics score an empty source list, and --fail-if skips it. |
 | `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed, or the fraction of attempted values of any metric that failed, exceeds this value (0.0-1.0). Skipped metrics do not count. Default 1.0 = fail only when all queries, or all attempts of a metric, failed. |
 | `--verbose`, `-v` | off | Enable detailed logging output for debugging. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
@@ -146,13 +148,13 @@ Guide: [Domain adaptation](../guides/domain-adaptation.md#prompt-tuning-run-prom
 
 ## `prepare-benchmark`
 
-Prepare a public benchmark (MuSiQue) as a corpus directory and a run-eval dataset
+Prepare a public benchmark (MuSiQue) as a corpus directory and a run-eval dataset, or generate questions and assertions from your corpus (assertions)
 
-Guide: [Benchmarks](../guides/benchmarks.md).
+Guide: [Benchmarks](../guides/benchmarks.md). Also takes the [provider flags](#provider-flags).
 
 | Flag | Default | Description |
 |---|---|---|
-| `benchmark` | required | Benchmark to prepare. One of `musique`. |
+| `benchmark` | required | Benchmark to prepare: musique, or assertions (questions and assertions generated from --source-directory). |
 | `--output-directory` | required | Directory for corpus/ and eval_data.json (corpus/ must be new or empty). |
 | `--data-path` | — | Local official JSONL (e.g. musique_ans_v1.0_dev.jsonl from the official download; a musique_full_v1.0_*.jsonl for --unanswerable); default: download the answerable dev split, or the full one with --unanswerable. |
 | `--limit` | — | Number of answerable questions to sample (default: all 2,417 of dev). |
@@ -160,10 +162,21 @@ Guide: [Benchmarks](../guides/benchmarks.md).
 | `--hops` `HOPS` | — | Hop counts to sample from: a list (3,4) filters both answerable and unanswerable questions; quotas (2=50,3=50,4=100) draw exactly that many answerable questions per hop count, instead of --limit (default: every hop count, sampled as one pool). |
 | `--seed` | `0` | Sampling seed (default 0). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--source-directory` | — | assertions: directory of .txt/.md files to generate from (the corpus you ingest); required for assertions. |
+| `--questions-per-class` | `10` | assertions: questions to keep per class (default 10). |
+| `--classes` | `data_local`, `data_global`, `data_linked`, `activity_local`, `activity_global` | assertions: comma-separated question classes (default all: data_local,data_global,data_linked,activity_local,activity_global); only the data_* classes get assertions. |
+| `--clusters` | `20` | assertions: k-means clusters of the text units (default 20). |
+| `--units-per-cluster` | `8` | assertions: text units in each cluster's sample (default 8). |
+| `--unit-tokens` | `600` | assertions: estimated tokens per text unit (default 600). |
+| `--max-units` | `3000` | assertions: text units sampled (with --seed) and embedded (default 3000). |
+| `--max-assertions` | `10` | assertions: assertions kept per question (default 10). |
+| `--language` | — | assertions: language of the questions and assertions (default: processing.translation.source_language). One of `de`, `en`, `es`, `fr`, `it`, `ja`, `ko`, `pt`, `ru`, `zh`. |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 
 ## Provider flags
 
-Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`, `run-prompt-tuning`. Override the config's provider selection (see docs/guides/local-mode.md).
+Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`, `run-prompt-tuning`, `prepare-benchmark`. Override the config's provider selection (see docs/guides/local-mode.md).
 
 | Flag | Default | Description |
 |---|---|---|

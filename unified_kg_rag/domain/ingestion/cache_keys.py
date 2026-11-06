@@ -212,6 +212,7 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "models.roles.query_controller": Unkeyed(_QUERY),
     "models.roles.evaluation": Unkeyed("read by run-eval only"),
     "models.roles.answer_span": Unkeyed("read by run-eval only"),
+    "models.roles.pairwise_overlap": Unkeyed("read by run-eval only"),
     "models.embedding": Unkeyed(_AT_INDEXING),
     "models.rerank": Unkeyed(_QUERY),
     # --- the corpus, its identity and the registry it is diffed against ----
@@ -397,6 +398,29 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "custom_prompts.pairwise_comparison_human": Unkeyed("read by run-eval only"),
     "custom_prompts.answer_span_extraction_system": Unkeyed("read by run-eval only"),
     "custom_prompts.answer_span_extraction_human": Unkeyed("read by run-eval only"),
+    **{
+        f"custom_prompts.{key}_{part}": Unkeyed("read by run-eval only")
+        for key in (
+            "pairwise_overlap",
+            "pairwise_differential",
+            "assertion_judgement",
+            "closed_book_answer",
+        )
+        for part in ("system", "human")
+    },
+    **{
+        f"custom_prompts.{key}_{part}": _neutral(
+            "read by prepare-benchmark assertions only"
+        )
+        for key in (
+            "benchmark_activity_context",
+            "benchmark_questions",
+            "benchmark_claims",
+            "benchmark_assertions",
+            "benchmark_validation",
+        )
+        for part in ("system", "human")
+    },
 }
 
 # Keyed settings naming where a run reads or writes: they key the stage

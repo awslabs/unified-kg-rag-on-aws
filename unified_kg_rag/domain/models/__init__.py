@@ -40,6 +40,7 @@ from .document import (
 )
 from .entity import Entity
 from .evaluation import (
+    EvaluationAssertion,
     EvaluationGroundTruth,
     EvaluationMetric,
     EvaluationMetricType,
@@ -111,6 +112,7 @@ __all__ = [
     "DocumentLineage",
     "EmbeddingModelId",
     "Entity",
+    "EvaluationAssertion",
     "EvaluationGroundTruth",
     "EvaluationMetric",
     "EvaluationMetricType",

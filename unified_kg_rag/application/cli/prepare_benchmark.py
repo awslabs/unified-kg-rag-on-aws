@@ -7,7 +7,9 @@ Writes ``<output-directory>/corpus/`` (ingest it with ``run-ingestion``) and
 benchmark data is read from a local copy (``--data-path``) or downloaded at
 run time; it is not part of this package. ``--unanswerable N`` adds N
 unanswerable questions (``metadata.answerable: false``) from the full split,
-filtered so the pooled corpus does not answer them.
+filtered so the pooled corpus does not answer them. ``prepare-benchmark
+assertions`` instead generates questions and assertions from your own corpus
+(``--source-directory``; ``application.cli.assertion_benchmark``).
 """
 
 from __future__ import annotations
@@ -16,6 +18,10 @@ import argparse
 import sys
 from pathlib import Path
 
+from unified_kg_rag.application.cli.assertion_benchmark import (
+    add_assertion_arguments,
+    run_assertion_benchmark,
+)
 from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
@@ -45,7 +51,8 @@ def _parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
         description=(
             "Prepare a public benchmark (MuSiQue) as a corpus directory and a "
-            "run-eval dataset"
+            "run-eval dataset, or generate questions and assertions from your "
+            "corpus (assertions)"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(
@@ -53,7 +60,14 @@ def _parser() -> argparse.ArgumentParser:
             "prepare-benchmark musique --output-directory bench/musique --limit 100",
         ),
     )
-    parser.add_argument("benchmark", choices=["musique"], help="Benchmark to prepare")
+    parser.add_argument(
+        "benchmark",
+        choices=["musique", "assertions"],
+        help=(
+            "Benchmark to prepare: musique, or assertions (questions and "
+            "assertions generated from --source-directory)"
+        ),
+    )
     parser.add_argument(
         "--output-directory",
         type=Path,
@@ -99,6 +113,7 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--seed", type=int, default=0, help="Sampling seed (default 0)")
+    add_assertion_arguments(parser)
     add_output_format_argument(parser)
     return parser
 
@@ -107,6 +122,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     as_json = json_output(args)
+    if args.benchmark == "assertions":
+        _assertions(args, as_json)
+        return
     if args.data_path is not None and not args.data_path.is_file():
         usage_error(f"benchmark data not found: '{args.data_path}'")
     if args.hops and None not in args.hops.values() and args.limit is not None:
@@ -158,6 +176,19 @@ def main(argv: list[str] | None = None) -> None:
         )
     if as_json:
         print_json({"output_directory": str(args.output_directory), **counts})
+
+
+def _assertions(args: argparse.Namespace, as_json: bool) -> None:
+    try:
+        report = run_assertion_benchmark(args)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Benchmark generation interrupted by user.[/yellow]")
+        sys.exit(EXIT_INTERRUPTED)
+    except (EvaluationException, OSError) as e:
+        console.print(f"[red]Error: {markup_safe(e)}[/red]")
+        sys.exit(EXIT_FAILURE)
+    if as_json:
+        print_json({"output_directory": str(args.output_directory), **report})
 
 
 if __name__ == "__main__":

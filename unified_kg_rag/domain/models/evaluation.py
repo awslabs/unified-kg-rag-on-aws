@@ -47,6 +47,13 @@ class EvaluationMetricType(str, Enum):
     TOKEN_F1 = "token_f1"
     # 1.0 if the normalized answer contains the gold answer or an alias.
     ANSWER_CONTAINS = "answer_contains"
+    # Assertion scoring (EvaluationGroundTruth.assertions, LLM-judged): the
+    # share of positive assertions the answer supports, the share of them it
+    # contradicts, and the share of negative assertions it states. The two
+    # rates are lower-is-better.
+    ASSERTION_RECALL = "assertion_recall"
+    ASSERTION_CONTRADICTION_RATE = "assertion_contradiction_rate"
+    NEGATIVE_ASSERTION_VIOLATION_RATE = "negative_assertion_violation_rate"
 
 
 class EvaluatorType(str, Enum):
@@ -55,6 +62,7 @@ class EvaluatorType(str, Enum):
     GRAPH_AWARE = "graph_aware"
     RETRIEVAL = "retrieval"
     ANSWER_MATCH = "answer_match"
+    ASSERTION = "assertion"
 
 
 class EvaluationQuery(BaseModel):
@@ -70,6 +78,42 @@ class EvaluationQuery(BaseModel):
         default_factory=dict,
         description="Additional metadata and custom attributes for the query.",
     )
+
+
+class EvaluationAssertion(BaseModel):
+    """One statement the ``assertion`` evaluator checks an answer against."""
+
+    text: str = Field(
+        min_length=1,
+        description=(
+            "The statement, in the language the answers are written in: a fact "
+            "a good answer supports (positive) or a claim it must not make "
+            "(negative)."
+        ),
+    )
+    kind: Literal["positive", "negative"] = Field(
+        default="positive",
+        description=(
+            "'positive': a good answer supports it (assertion_recall). "
+            "'negative': a good answer does not state it, e.g. a known "
+            "hallucination (negative_assertion_violation_rate)."
+        ),
+    )
+    source: str | list[str] | None = Field(
+        default=None,
+        description=(
+            "Where the statement comes from, for a reviewer: a file name, or "
+            "the text-unit ids prepare-benchmark assertions cites. Not read by "
+            "the judge."
+        ),
+    )
+
+    @field_validator("text")
+    @classmethod
+    def _non_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("assertion text must not be blank")
+        return value.strip()
 
 
 class EvaluationGroundTruth(BaseModel):
@@ -90,6 +134,13 @@ class EvaluationGroundTruth(BaseModel):
             '{"source": A, "target": B} pair or an "A -> B" string (counted when '
             "both endpoints are mentioned), or any other string (counted when the "
             "phrase appears verbatim)."
+        ),
+    )
+    assertions: list[EvaluationAssertion] = Field(
+        default_factory=list,
+        description=(
+            "Statements the assertion evaluator checks the answer against "
+            "(positive: supported; negative: not stated)."
         ),
     )
     metadata: dict[str, Any] = Field(

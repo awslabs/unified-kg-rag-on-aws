@@ -1,16 +1,30 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 from .base import BasePrompt, ResolvedPrompt
+from .benchmark import (
+    QUESTION_CLASS_GUIDANCE,
+    BenchmarkActivityContextPrompt,
+    BenchmarkAssertionsPrompt,
+    BenchmarkClaimsPrompt,
+    BenchmarkQuestionsPrompt,
+    BenchmarkValidationPrompt,
+)
 from .data_processing import (
     DescriptionSummarizationPrompt,
     TextChunkingPrompt,
     TextTranslationPrompt,
 )
 from .evaluation import (
+    ASSERTION_VERDICTS,
     NO_ANSWER_SPAN,
     AnswerSpanExtractionPrompt,
+    AssertionJudgementPrompt,
+    ClosedBookAnswerPrompt,
     PairwiseComparisonOverallPrompt,
     PairwiseComparisonPrompt,
+    PairwiseDifferentialOverallPrompt,
+    PairwiseDifferentialPrompt,
+    PairwiseOverlapPrompt,
 )
 from .graph_extraction import (
     ClaimExtractionPrompt,
@@ -38,11 +52,20 @@ from .retrieval import (
 from .tuning import CorpusProfilePrompt
 
 __all__ = [
+    "ASSERTION_VERDICTS",
     "NO_ANSWER_SPAN",
+    "QUESTION_CLASS_GUIDANCE",
     "AnswerGenerationPrompt",
     "AnswerSpanExtractionPrompt",
+    "AssertionJudgementPrompt",
     "BasePrompt",
+    "BenchmarkActivityContextPrompt",
+    "BenchmarkAssertionsPrompt",
+    "BenchmarkClaimsPrompt",
+    "BenchmarkQuestionsPrompt",
+    "BenchmarkValidationPrompt",
     "ClaimExtractionPrompt",
+    "ClosedBookAnswerPrompt",
     "CommunityRelevancePrompt",
     "CommunityReportPrompt",
     "ComprehensiveAnswerPrompt",
@@ -60,6 +83,9 @@ __all__ = [
     "KeywordsExtractionPrompt",
     "PairwiseComparisonOverallPrompt",
     "PairwiseComparisonPrompt",
+    "PairwiseDifferentialOverallPrompt",
+    "PairwiseDifferentialPrompt",
+    "PairwiseOverlapPrompt",
     "QueryDecompositionPrompt",
     "QueryRewritePrompt",
     "ResolvedPrompt",

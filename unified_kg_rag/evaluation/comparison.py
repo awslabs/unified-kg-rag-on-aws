@@ -17,7 +17,8 @@ A query whose answer generation failed has no reports, and dropping it
 would let a strategy that crashes on the queries it would lose look as good
 as one that answers them. So a failed answer scores 0 on every metric
 another run scored that query on (``answer_length``, a diagnostic rather than
-a score, excepted) and that its own strategy scores on some query: a metric
+a score, and the lower-is-better assertion rates, on which 0 is the best
+score, excepted) and that its own strategy scores on some query: a metric
 the strategy never produces (``global`` reports no entities, so no
 ``retrieved_entity_coverage``) is not one it lost, and filling it would invent
 a delta. A strategy that scored nothing at all is filled on every metric.
@@ -85,6 +86,14 @@ _DIAGNOSTICS = frozenset(
 )
 
 
+# Lower-is-better rates: a failed answer filled with 0 on them would score a
+# crash as perfect, so it stays unpaired there instead.
+_UNFILLED = _DIAGNOSTICS | {
+    EvaluationMetricType.ASSERTION_CONTRADICTION_RATE.value,
+    EvaluationMetricType.NEGATIVE_ASSERTION_VIOLATION_RATE.value,
+}
+
+
 def _strategy_failed_scores(
     runs: Mapping[str, Sequence[Run]], scored: Mapping[str, set[str]]
 ) -> dict[str, dict[str, set[str]]]:
@@ -111,7 +120,7 @@ def _scored_metrics(runs: Mapping[str, Sequence[Run]]) -> dict[str, set[str]]:
         for reports, _ in strategy_runs:
             for report in reports:
                 for metric in report.metrics:
-                    if metric.metric_type.value not in _DIAGNOSTICS:
+                    if metric.metric_type.value not in _UNFILLED:
                         scored[report.query_id].add(
                             f"{report.evaluator_type.value}/{metric.metric_type.value}"
                         )

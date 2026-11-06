@@ -22,6 +22,10 @@ answers (``cost.strategies.<s>.failed_answers``): a failed answer counts
 with what it spent before failing, so the delta compares the failures too
 (a fast failure looks cheap, a timeout slow).
 
+The closed-book arm of ``run-eval --closed-book``
+(``closed_book_arms``) is not gated: it answers without retrieval, so it
+bounds the answer model's prior knowledge and is expected to score lower.
+
 A metric gate fails when an evaluator could not score the metric on
 different numbers of the strategy's and its baseline's answers
 (``strategies.<s>.failed_metrics``, a judge call that failed or returned
@@ -167,8 +171,13 @@ def gate_breaches(comparison: Mapping[str, Any], gates: list[Gate]) -> list[str]
     gate passes."""
     deltas = comparison.get("deltas_vs_baseline") or {}
     cost = (comparison.get("cost") or {}).get("deltas_vs_baseline") or {}
+    # A closed-book arm (run-eval --closed-book) bounds the answer model's
+    # prior knowledge; it is expected to score lower and is not gated.
+    ungated = set(comparison.get("closed_book_arms") or ())
     breaches = []
     for strategy in deltas:
+        if strategy in ungated:
+            continue
         for gate in gates:
             if unmeasured := _unmeasured(comparison, strategy, gate.measure):
                 listed = ", ".join(f"{s} {n}" for s, n in unmeasured.items())
