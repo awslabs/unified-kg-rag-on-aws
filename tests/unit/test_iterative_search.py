@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from tests.fixtures.fakes.tokens import WordTokenCounter
 from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
@@ -168,15 +169,6 @@ class _RerankFactory:
         return None
 
 
-class _Tokens:
-    def count_tokens(self, text: str) -> int:
-        return len(text.split())
-
-    def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
-        words = text.split()[:max_tokens]
-        return " ".join(words), len(words)
-
-
 class _Script:
     """The scripted model: each prompt kind answers from its own queue (the
     last answer repeats); an exception in a queue is raised."""
@@ -239,7 +231,7 @@ def _strategy(
         llm_factory=ScriptedLLMFactory(script),
         embedding_factory=MagicMock(),
         rerank_factory=reranks,
-        token_counter_factory=lambda *_, **__: _Tokens(),
+        token_counter_factory=lambda *_, **__: WordTokenCounter(),
     )
     documents = documents or _Documents({FOLLOW_UP: [HARBOR]})
     strategy = IterativeSearchStrategy(

@@ -18,6 +18,7 @@ from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
 from tests.fixtures.fakes.retrievers import FakeRetriever
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.fixtures.fakes.tokens import WordTokenCounter
 from tests.unit.test_query_guardrail import _RecordingGuard
 from unified_kg_rag.adapters.aws.bedrock import (
     BedrockEmbeddingModelFactory,
@@ -108,6 +109,7 @@ PAIRS = [
     (BedrockLanguageModelFactory, ModelFactoryPort),
     (BedrockEmbeddingModelFactory, ModelFactoryPort),
     (BedrockRerankModelFactory, ModelFactoryPort),
+    (WordTokenCounter, TokenCounterPort),
     (LocalTokenCounter, TokenCounterPort),
     (BedrockTokenCounter, TokenCounterPort),
     (OpenSearchClient, SearchEngineClient),
