@@ -579,6 +579,26 @@ async def test_naive_and_simple_are_served_where_their_indexes_are_held() -> Non
     assert serves(SearchStrategy.SIMPLE, [L], Config())
 
 
+async def test_the_refusal_says_what_adding_the_methodology_costs() -> None:
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    tree_only = _Records(_record(A.TEXT_UNITS, A.SUMMARY_TREE).model_dump(mode="json"))
+    light = _Records(_record(*LIGHT).model_dump(mode="json"))
+    # raptor: the tree is built from the stored text units, no rebuild.
+    with pytest.raises(MethodologyNotIndexedError) as refused:
+        await _chain(Config(), light).acheck_methodology(SearchStrategy.TREE)
+    assert "--enabled-stages summary_tree" in str(refused.value)
+    assert "rebuilt" not in str(refused.value)
+    # A graph methodology on a raptor-only namespace extracts every unit.
+    with pytest.raises(MethodologyNotIndexedError) as refused:
+        await _chain(Config(), tree_only).acheck_methodology(SearchStrategy.LOCAL)
+    assert "every text unit is extracted" in str(refused.value)
+    # Beside stored extractions, only the added model calls are new.
+    with pytest.raises(MethodologyNotIndexedError) as refused:
+        await _chain(Config(), light).acheck_methodology(SearchStrategy.GLOBAL)
+    assert "rebuilt once from its stored extractions" in str(refused.value)
+
+
 async def test_iterative_is_refused_where_its_base_is_not_held() -> None:
     from unified_kg_rag.shared import MethodologyNotIndexedError
 
