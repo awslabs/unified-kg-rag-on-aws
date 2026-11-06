@@ -75,6 +75,7 @@ ships no price table, because one would go stale.
 | `search.fusion.diversity_lambda` | 0.5 | 0.7 and 1.0 n.s. on `mix` ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.local_search.report_selection` | `similarity` | `membership` (MS GraphRAG local's membership, over leaf communities rather than upstream's `community_level` cut) scored EM -4.0 and token F1 -4.1 points, both significant ([Local report selection](#local-report-selection)) |
 | `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant, +3.08 s per answer ([Retrieval switches](#retrieval-switches)) |
+| `search.auto_routable_strategies` | `local`, `mix`, `global`, `iterative` | `iterative` over `mix` against `mix` on multi-hop questions: `answer_contains` +12.5 points [+7.5, +18.0], token F1 +5.2 [+0.2, +10.1], last hop in the context +21.5; p95 11.1 s to 27.4 s, +$0.002 a query. `decompose` was no better than the loop, so it stays off ([Iterative follow-up rounds](#iterative-follow-up-rounds)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
 
 ## Answer style
@@ -213,6 +214,49 @@ each, measured membership against similarity: exact match -4.0 points
 [-7.75, -0.25], token F1 -4.1 [-7.7, -0.6], both significant, for about 0.5%
 fewer tokens. Similarity stays the default
 ([Design §6.1](../design.md#61-graphrag-methodology-adapterssearch_strategies)).
+
+## Iterative follow-up rounds
+
+`iterative` (§6.3 of the [Design Doc](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in))
+reruns its base strategy for the bridge entities a fast-model controller
+says the answer still depends on. A run on 2026-11-06 (package at commit
+`d0615b8f`) measured it on the same 200 MuSiQue questions, embedded stores
+and default models (the controller on the fast tier), one repeat, every arm
+paired with its base on the same questions. "Last hop in the context" is the share of questions whose
+last-hop supporting paragraph reached the answer context.
+
+| Arm against its base | Answers | Retrieval | Latency and cost |
+|---|---|---|---|
+| `iterative` over `mix` (the default base, controller loop) against `mix` | `answer_contains` +12.5 points [+7.5, +18.0] (27 wins, 2 losses), token F1 +5.2 [+0.2, +10.1], EM +4.0 [-0.5, +8.5] n.s. | recall@5 +13.9 points, supporting paragraphs in the context +13.3, last hop in the context +21.5 (43 wins, 0 losses) | p50 6.8 s to 16.1 s, p95 11.1 s to 27.4 s; $0.0553 to $0.0571 a query (+$0.002) |
+| `iterative` over `local` against `local` | `answer_contains` +10.0 [+5.5, +15.0], token F1 +5.7 [+0.4, +10.7], EM +7.5 [+2.0, +13.5] | recall@5 +14.0, last hop in the context +23.0 | p95 13.5 s to 32.1 s; $0.0392 to $0.0400 a query |
+| `decompose: true` over `mix` against the controller loop | token F1 -0.6 n.s., `answer_contains` -2.5 n.s. | recall@5 +2.7 n.s. | +$0.0009 a query, latency the same |
+
+The gain comes from the questions whose base context lacked a supporting
+paragraph (89 of 200: token F1 +13.6, `answer_contains` +29.2); where the
+base context already held every one, the follow-up did not hurt (token F1
+-1.5, n.s.). The controller stopped after round 0 on 57 questions, after
+one follow-up round on 48 and after two on 95, at 2.19 controller calls a
+question; the answers were no longer.
+
+So `auto` may route to `iterative` (`search.auto_routable_strategies`),
+whose router entry keeps it to questions that chain facts through an
+entity they do not name, but no default selects it: it adds about 10 s to
+the median query. `decompose` stays off, costing more for no gain over
+the loop.
+
+Not measured: MuSiQue is the only question set, all multi-hop, so whether
+the router leaves single-hop and sensemaking questions to the other
+strategies, and what a misroute costs there, is untested; route a sample
+of your own questions with `run-eval --search-strategy auto` before
+relying on it. In 62 of the 238 controller rounds over `mix` the verdict
+named no new bridge entity and mix reran without keywords; such a round
+now runs only its text searches (Design §6.3), which this run predates.
+To keep `auto` off it, list the strategies without `iterative`:
+
+```yaml
+search:
+  auto_routable_strategies: [local, mix, global]
+```
 
 ## Query deadlines and model timeouts
 

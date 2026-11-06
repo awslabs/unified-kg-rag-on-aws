@@ -79,8 +79,8 @@ differs.
 Every strategy goes through the same hybrid scorer: BM25, vector search and
 (except `simple` and `naive`) graph traversal, fused by Reciprocal Rank
 Fusion, reranked and diversified.
-`auto`, the default, lets an LLM router pick `local`, `mix` or `global` per
-query. When to use which:
+`auto`, the default, lets an LLM router pick `local`, `mix`, `global` or
+`iterative` (for multi-hop questions) per query. When to use which:
 [Retrieval](./retrieval.md#search-strategies--when-to-use-which); how
 each one retrieves: [Design Doc §6](../design.md#6-retrieval-two-methodologies).
 

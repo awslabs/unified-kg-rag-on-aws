@@ -4038,7 +4038,8 @@ class LightRAGSearchConfig(BaseModel):
 
 
 class IterativeSearchConfig(BaseModel):
-    """Iterative bridge follow-up search (``iterative``, opt-in, unmeasured).
+    """Iterative bridge follow-up search (``iterative``; ``auto`` routes
+    multi-hop questions to it, no default selects it).
 
     Round 0 is the ``base`` strategy's search. A fast-model controller
     (``models.roles.query_controller``) reads the question and the packed
@@ -4261,12 +4262,6 @@ class PPRSearchConfig(BaseModel):
 def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrategy]:
     if SearchStrategy.AUTO in strategies:
         raise ValueError("auto_routable_strategies cannot include 'auto'")
-    if SearchStrategy.ITERATIVE in strategies:
-        raise ValueError(
-            "auto_routable_strategies cannot include 'iterative': it is "
-            "opt-in and unmeasured, so the router does not pick it; select "
-            "it explicitly"
-        )
     if SearchStrategy.PPR in strategies:
         raise ValueError(
             "auto_routable_strategies cannot include 'ppr' until a "
@@ -4399,21 +4394,26 @@ class SearchConfig(BaseModel):
             SearchStrategy.LOCAL,
             SearchStrategy.MIX,
             SearchStrategy.GLOBAL,
+            SearchStrategy.ITERATIVE,
         ],
         min_length=1,
         description=(
             "Strategies the auto router may pick; its prompt describes exactly"
             " these, in this order (under filters, only those applying every "
-            "filter key; none applying them refuses the filters). simple is left out by default because the "
+            "filter key; none applying them refuses the filters). simple is left "
+            "out by default because the "
             "graph strategies cover its direct lookups with graph context, and"
             " drift because it costs up to 27 LLM calls a query (local: 2), a "
             "price one misrouted question should not pay; add it to route to "
-            "it. Only the strategies of the methodologies the queried index "
+            "it. iterative, for questions that chain facts through an entity "
+            "they do not name, adds about 10 s to the median query it is "
+            "routed to; leave it out to keep auto off it. Only the strategies "
+            "of the methodologies the queried index "
             "namespace holds are offered (on a LightRAG-only namespace none "
             "of local, global, drift and simple), and local or mix is used "
             "when nothing is left; with one strategy left no router call is "
-            "made. auto itself is rejected, and so are iterative and ppr "
-            "until a measurement shows where they win; every strategy stays "
+            "made. auto itself is rejected, and so is ppr until a "
+            "measurement shows where it wins; every strategy stays "
             "selectable explicitly, and one of a methodology the namespace "
             "does not hold is refused."
         ),

@@ -659,14 +659,16 @@ STRATEGY_ROUTING_GUIDE: dict[SearchStrategy, str] = {
    - Purpose: Questions a single passage answers directly
    - Optimal for: Verbatim lookups, single-passage facts
    - Examples: "What does the warranty clause say", "When was the policy published\"""",
-    # Not routable yet (search.auto_routable_strategies refuses it until it is
-    # measured); the entry is what the router would read.
+    # Measured on multi-hop questions only (docs/concepts/defaults-and-
+    # evidence.md#iterative-follow-up-rounds): the entry keeps it to them.
     SearchStrategy.ITERATIVE: """ITERATIVE SEARCH
-   - Method: A local or mix search, then up to a few follow-up searches on the entities a first look at the
+   - Method: A local or mix search, then up to a few follow-up searches for the entities a first look at the
      context says the answer still depends on
-   - Purpose: Multi-hop questions whose last hop is about an entity the question does not name
-   - Optimal for: Chains of three or more facts ("the X of the Y of the Z"), questions a first search answers only
-     part of
+   - Purpose: Questions that chain facts across documents through a bridge entity the question does not name: one
+     fact identifies the entity, another one about it answers the question
+   - Optimal for: Chains of two or more facts ("the X of the Y of the Z", "where was the founder of X born"); prefer
+     it to the strategies that search once for such chains. Not for single facts, definitions or broad themes,
+     where the first search answers and a follow-up only adds latency
    - Examples: "Where was the founder of the company that acquired the startup born", "Which port serves the
      warehouse of the carrier the supplier hired\"""",
     SearchStrategy.PPR: """PPR SEARCH

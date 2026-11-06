@@ -670,6 +670,9 @@ def _strategy_chain(config: Config) -> GraphRAGChain:
     from unified_kg_rag.adapters.search_strategies.global_search import (
         GlobalSearchStrategy,
     )
+    from unified_kg_rag.adapters.search_strategies.iterative_search import (
+        IterativeSearchStrategy,
+    )
     from unified_kg_rag.adapters.search_strategies.lightrag_search import (
         LightRAGSearchStrategy,
     )
@@ -714,6 +717,11 @@ def _strategy_chain(config: Config) -> GraphRAGChain:
         SearchStrategy.NAIVE: lightrag(document),
         SearchStrategy.SIMPLE: built(SimpleSearchStrategy, document),
     }
+    # iterative checks a filter as its base (search.iterative_search.base).
+    base = SearchStrategy(config.search.iterative_search.base)
+    strategies[SearchStrategy.ITERATIVE] = built(
+        IterativeSearchStrategy, both, base=strategies[base], base_strategy=base
+    )
     chain = object.__new__(GraphRAGChain)
     chain.config = config
     chain._get_strategy_instance = strategies.__getitem__  # type: ignore[method-assign]
@@ -885,7 +893,7 @@ async def test_auto_routes_the_documented_filter_example(config: Config) -> None
     state = await chain._resolve_strategy(
         {"search_strategy": SearchStrategy.AUTO, "filters": filters, "query": "q"}
     )
-    assert router.offered == ["local, mix"]
+    assert router.offered == ["local, mix, iterative"]
     # The router's off-list "global" falls back among the candidates.
     assert state["resolved_strategy"] is SearchStrategy.LOCAL
 
@@ -945,7 +953,8 @@ def test_auto_logs_the_strategies_the_filters_leave_out(config: Config, mocker) 
     info = mocker.spy(filter_validation.logger, "info")
     chain.check_filter_keys({"type": "person"}, SearchStrategy.AUTO)
     assert any(
-        call.args[1:] == ("local, mix", "global") for call in info.call_args_list
+        call.args[1:] == ("local, mix, iterative", "global")
+        for call in info.call_args_list
     )
 
 

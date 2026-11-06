@@ -129,8 +129,9 @@ indexing:
       zh: "cjk"
 
 search:
-  # The strategies the "auto" router chooses from.
-  auto_routable_strategies: ["local", "mix", "global"]
+  # The strategies the "auto" router chooses from (drop "iterative" to keep
+  # multi-hop questions on one search, about 10 s faster at the median).
+  auto_routable_strategies: ["local", "mix", "global", "iterative"]
   # Reranking runs with providers.rerank.kind (bedrock by default; none turns
   # it off).
   reranking:

@@ -27,6 +27,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
     query_inputs,
+    routable_strategies,
     wrapped_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
@@ -42,6 +43,7 @@ from unified_kg_rag.adapters.search_strategies.local_search import (
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Config,
+    Methodology,
     RetrievalResult,
     SearchQuery,
     SearchResult,
@@ -853,8 +855,75 @@ async def test_a_mix_round_never_runs_without_keywords(
     assert all(c.filters == FILTERS for c in documents.calls)
 
 
-def test_auto_never_routes_to_iterative() -> None:
-    with pytest.raises(ValueError, match="iterative"):
-        Config.model_validate(
-            {"search": {"auto_routable_strategies": ["local", "iterative"]}}
-        )
+# --- auto routing ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("base", "held", "routable"),
+    [
+        # Over mix it reads lightrag: offered while the namespace holds it.
+        ("mix", {"graphrag", "lightrag"}, ["local", "mix", "global", "iterative"]),
+        ("mix", {"lightrag"}, ["mix", "iterative"]),
+        ("mix", {"graphrag"}, ["local", "global"]),
+        # Over local it reads graphrag.
+        ("local", {"graphrag"}, ["local", "global", "iterative"]),
+        ("local", {"lightrag"}, ["mix"]),
+    ],
+)
+def test_auto_routes_to_iterative_where_its_base_is_held(
+    base: str, held: set[str], routable: list[str]
+) -> None:
+    config = Config()
+    config.search.iterative_search.base = base  # type: ignore[assignment]
+
+    offered = routable_strategies(config, [Methodology(m) for m in held])
+
+    assert [s.value for s in offered] == routable
+
+
+def test_an_operator_keeps_auto_off_iterative() -> None:
+    config = Config.model_validate(
+        {"search": {"auto_routable_strategies": ["local", "mix", "global"]}}
+    )
+
+    assert SearchStrategy.ITERATIVE not in routable_strategies(config)
+    # It stays selectable explicitly.
+    assert query_inputs(SearchStrategy.ITERATIVE, config) == frozenset(
+        {QueryInput.DUAL_KEYWORDS}
+    )
+
+
+async def test_auto_offers_iterative_and_prefetches_what_its_base_reads() -> None:
+    # Routed among global and iterative over mix: the router reads
+    # iterative's guide entry, and the keyword extraction mix reads starts
+    # alongside the router call (iterative declares no input of its own).
+    config = Config()
+    config.search.auto_routable_strategies = [
+        SearchStrategy.GLOBAL,
+        SearchStrategy.ITERATIVE,
+    ]
+    chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain.config = config
+    chain.ignore_errors = False
+    offered: dict[str, Any] = {}
+    started: dict[str, bool] = {}
+
+    class _Router:
+        async def ainvoke(self, inputs: dict[str, Any], _config: Any = None) -> str:
+            offered.update(inputs)
+            return "iterative"
+
+    def _start(_state: Any, *, entities: bool, keywords: bool, **_: Any) -> dict:
+        started.update(entities=entities, keywords=keywords)
+        return {}
+
+    chain._get_chain_for_prompt = lambda *_a, **_k: _Router()  # type: ignore[method-assign]
+    chain._start_query_inputs = _start  # type: ignore[method-assign,assignment]
+    state = await chain._resolve_strategy(
+        {"search_strategy": SearchStrategy.AUTO, "query": QUESTION}, prefetch={}
+    )
+
+    assert state["resolved_strategy"] is SearchStrategy.ITERATIVE
+    assert offered["strategies"] == "global, iterative"
+    assert "2. ITERATIVE SEARCH" in offered["strategy_descriptions"]
+    assert started == {"entities": False, "keywords": True}

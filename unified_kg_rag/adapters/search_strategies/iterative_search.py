@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Iterative bridge follow-up search (``iterative``; opt-in, unmeasured).
+"""Iterative bridge follow-up search (``iterative``; ``auto`` routes multi-hop
+questions to it, no default selects it).
 
 A multi-hop question often fails on its last hop: round 0 finds the passage
 that names the bridge entity, but not the passage about it. This strategy
