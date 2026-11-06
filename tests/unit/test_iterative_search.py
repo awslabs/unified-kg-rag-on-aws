@@ -865,10 +865,10 @@ def test_iterative_reads_what_its_base_reads(
     )
     spec = get_strategy_spec(wrapped_strategy(SearchStrategy.ITERATIVE, config))
     assert spec.strategy_class.spare_context_budget_first == spare
-    # It needs no artifact the base does not: the same stores, no reports.
+    # It needs no artifact the base does not: the same stores and methodology.
     own = get_strategy_spec(SearchStrategy.ITERATIVE)
     assert own.required_roles == spec.required_roles
-    assert not own.needs_community_reports
+    assert own.methodology is None and own.required_artifacts is None
 
     strategy, *_ = _strategy(_Script(controller=[SUFFICIENT]), base=base)
     assert isinstance(strategy.base, cls) and isinstance(strategy.follow_up, cls)

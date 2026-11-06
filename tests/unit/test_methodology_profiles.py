@@ -476,7 +476,7 @@ class _Records:
         return self.record
 
 
-def _chain(config: Config, records: _Records, instances: dict | None = None):
+def _chain(config: Config, records: _Records):
     import threading
 
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
@@ -487,17 +487,9 @@ def _chain(config: Config, records: _Records, instances: dict | None = None):
     chain._held_methodologies = {}
     chain._get_retriever = lambda role: records  # type: ignore[method-assign]
 
-    def instance(strategy: SearchStrategy):
-        if instances is not None and strategy in instances:
-            found = instances[strategy]
-            if isinstance(found, Exception):
-                raise found
-            return found
-        return get_strategy_spec(strategy).strategy_class.__new__(
-            get_strategy_spec(strategy).strategy_class
-        )
-
-    chain._get_strategy_instance = instance  # type: ignore[method-assign]
+    # The check reads the registry: it never builds a strategy.
+    chain.built = []  # type: ignore[attr-defined]
+    chain._get_strategy_instance = chain.built.append  # type: ignore[attr-defined]
     return chain
 
 
@@ -529,8 +521,6 @@ async def test_a_query_reads_what_the_namespace_holds_before_refusing() -> None:
 
 
 async def test_without_a_readable_record_the_config_stands_in() -> None:
-    from types import SimpleNamespace
-
     from unified_kg_rag.shared import MethodologyNotIndexedError
 
     # A store error, or no record: what a run of the config builds.
@@ -545,16 +535,18 @@ async def test_without_a_readable_record_the_config_stands_in() -> None:
     chain = _chain(_config(L), _Records(None))
     with pytest.raises(MethodologyNotIndexedError):
         await chain.acheck_methodology(SearchStrategy.LOCAL)
-    # A wrapper's instance declares the wrapped strategy's methodology; one
-    # that cannot be built is judged by its class.
+    # A wrapper reads the wrapped strategy's methodology from the registry,
+    # without building a strategy: iterative
+    # over mix is served by a LightRAG namespace, over local refused.
     light = _Records(_record(*LIGHT).model_dump(mode="json"))
-    wrapped = {SearchStrategy.LOCAL: SimpleNamespace(methodology=L)}
-    assert await _chain(Config(), light, wrapped).acheck_methodology(
-        SearchStrategy.LOCAL
-    )
-    broken = {SearchStrategy.GLOBAL: RuntimeError("no store")}
+    config = Config()
+    config.search.iterative_search.base = "mix"  # type: ignore[assignment]
+    assert await _chain(config, light).acheck_methodology(SearchStrategy.ITERATIVE)
+    config.search.iterative_search.base = "local"  # type: ignore[assignment]
+    chain = _chain(config, light)
     with pytest.raises(MethodologyNotIndexedError):
-        await _chain(Config(), light, broken).acheck_methodology(SearchStrategy.GLOBAL)
+        await chain.acheck_methodology(SearchStrategy.ITERATIVE)
+    assert chain.built == []
 
 
 async def test_naive_and_simple_are_served_where_their_indexes_are_held() -> None:

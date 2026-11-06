@@ -19,9 +19,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     get_strategy_spec,
     serves,
     strategy_artifacts,
-)
-from unified_kg_rag.adapters.retrieval.strategy_registry import (
-    strategy_methodology as registered_methodology,
+    strategy_methodology,
 )
 from unified_kg_rag.domain.ingestion.methodologies import held_artifacts
 from unified_kg_rag.domain.models import (
@@ -90,23 +88,6 @@ async def namespace_methodologies(
     )
 
 
-def strategy_methodology(
-    chain: GraphRAGChain, strategy: SearchStrategy
-) -> Methodology | None:
-    """The methodology ``strategy`` reads: its instance's, which a wrapper
-    sets from the strategy it wraps (``None``: it declares none). When the
-    instance cannot be built (its stores fail), its class's: the query meets
-    that failure itself, under ``processing.ignore_errors`` too."""
-    if strategy is SearchStrategy.AUTO:
-        return None
-    try:
-        methodology = chain._get_strategy_instance(strategy).methodology
-    except Exception as e:  # noqa: BLE001 - the query reports it
-        logger.debug("Building the %s strategy failed: %s", strategy.value, e)
-        methodology = None
-    return methodology or registered_methodology(strategy, chain.config)
-
-
 async def check_strategy_methodology(
     chain: GraphRAGChain, strategy: SearchStrategy, suffix: str | None
 ) -> tuple[Methodology, ...]:
@@ -133,7 +114,7 @@ async def check_strategy_methodology(
             f"index namespace '{namespace}', which it does not hold; run "
             "ingestion with indexing.methodologies naming any methodology."
         )
-    methodology = strategy_methodology(chain, strategy)
+    methodology = strategy_methodology(strategy, chain.config)
     assert methodology is not None  # _served serves a strategy without one
     raise MethodologyNotIndexedError(
         not_indexed_message(strategy, methodology, held, namespace, chain.config)
@@ -151,7 +132,7 @@ def _served(
     needed = strategy_artifacts(strategy, chain.config)
     if needed is not None:
         return needed <= artifacts
-    methodology = strategy_methodology(chain, strategy)
+    methodology = strategy_methodology(strategy, chain.config)
     return methodology is None or methodology in held
 
 
@@ -207,5 +188,5 @@ def _reads(
         return False
     if strategy_artifacts(strategy, config) is not None:
         return serves(strategy, held, config)
-    methodology = registered_methodology(strategy, config)
+    methodology = strategy_methodology(strategy, config)
     return methodology is not None and methodology in held
