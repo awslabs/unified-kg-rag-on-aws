@@ -41,9 +41,9 @@ records the span mode (``answer_span``) and the text scored
 - ``token_f1``: harmonic mean of token precision/recall (multiset overlap).
   Under ``default`` the tokens are script-aware
   (``text_matching.script_tokens``): whitespace words, but a Han, Hangul or
-  Kana letter is a token of its own (character F1, as CMRC 2018 and KorQuAD
-  score Chinese and Korean), after a Korean particle attached to a reference
-  word is stripped. Under ``official_squad`` and ``hotpotqa`` they are
+  Kana letter is a token of its own (character F1, as the CMRC 2018 and
+  KorQuAD 1.0 scripts score Chinese and Korean), after a run of Korean
+  particles (their closed class) attached to a reference word is stripped. Under ``official_squad`` and ``hotpotqa`` they are
   whitespace words, as in those scripts, so for Chinese and Japanese token
   F1 degrades to exact match there. Under ``hotpotqa`` a span or reference
   that is "yes", "no" or "noanswer" scores 0 unless the two are equal.
@@ -57,7 +57,7 @@ under ``search.abstention``) is a wrong answer: every metric scores 0, with
 compares whole normalized strings, so it under-counts an answer that adds
 a Korean particle ("서울은" for "서울") or a Chinese or Japanese copula.
 Each report records the token-F1 tokenization (``token_f1_tokens``:
-``script_aware`` or ``whitespace``), as does the run manifest's
+``script_aware_v2`` or ``whitespace``), as does the run manifest's
 ``answer_scoring``.
 """
 
@@ -111,6 +111,12 @@ logger = get_logger(__name__)
 # answer was a decline (scored 0).
 ANSWER_SPAN_KEY = "answer_span"
 TOKENS_KEY = "token_f1_tokens"
+# The token-F1 tokenization of the default normalization: by script, a
+# closed class of Korean particles dropped (``text_matching.script_tokens``).
+# Renamed from ``script_aware``, which dropped any one to three Hangul
+# syllables after a reference word, so a run scored that way is refused
+# against one of now (``saved_results.check_answer_scoring``).
+SCRIPT_AWARE_TOKENS = "script_aware_v2"
 SCORED_SPAN_KEY = "scored_span"
 SPAN_FALLBACK_KEY = "answer_span_fallback"
 ABSTAINED_KEY = "abstained"
@@ -248,7 +254,8 @@ def token_f1(
     reference that normalizes to "yes", "no" or "noanswer" scores 0 unless
     the two normalize equal. ``script_aware`` (default: with the default
     ``normalize_answer``) tokenizes by script (``text_matching.script_tokens``:
-    a Han, Hangul or Kana letter per token, Korean particles stripped);
+    a Han, Hangul or Kana letter per token, Korean particles of their
+    closed class stripped);
     otherwise tokens are whitespace words, as in the official scripts."""
     if script_aware is None:
         script_aware = normalize is normalize_answer
@@ -279,9 +286,9 @@ def token_f1(
 
 def token_f1_tokens(normalization: str) -> str:
     """The token-F1 tokenization of an ``evaluation.answer_normalization``:
-    ``script_aware`` under ``default``, ``whitespace`` under the official
-    scripts' normalizations."""
-    return "script_aware" if normalization == "default" else "whitespace"
+    ``script_aware_v2`` (``SCRIPT_AWARE_TOKENS``) under ``default``,
+    ``whitespace`` under the official scripts' normalizations."""
+    return SCRIPT_AWARE_TOKENS if normalization == "default" else "whitespace"
 
 
 def answer_scoring(evaluation: Any) -> dict[str, Any]:
@@ -460,7 +467,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             normalize_answer if normalization == "default" else normalize_answer_squad
         )
         yes_no_exact = normalization == "hotpotqa"
-        script_aware = token_f1_tokens(normalization) == "script_aware"
+        script_aware = token_f1_tokens(normalization) == SCRIPT_AWARE_TOKENS
         em = max(exact_match(span, ref, normalize) for ref in references)
         f1 = max(
             token_f1(

@@ -739,6 +739,31 @@ class TestWarmUp:
         assert inputs["use_memory"] is False
         assert "warm-up query failed" in caplog.text
 
+    def test_the_manifest_records_dense_script_and_the_usage_schema(
+        self, config: Config
+    ) -> None:
+        from unified_kg_rag.domain.models import EvaluationGroundTruth
+
+        manager = EvaluationManager(config, rag_chain=object())
+        english = [EvaluationQuery(query_id="q1", question="Who ships?")]
+        truths = [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")]
+        manifest = manager.build_run_manifest(queries=english, ground_truths=truths)
+        assert manifest["dataset"]["dense_script"] is False
+        assert manifest["usage_schema"] == 2
+        for question, answer, aliases in (
+            ("누가 배송하나?", "Vendor", None),
+            ("Who ships?", "운송사", None),
+            ("Who ships?", "Vendor", ["運送会社"]),
+        ):
+            query = EvaluationQuery(
+                query_id="q1",
+                question=question,
+                metadata={"answer_aliases": aliases} if aliases else {},
+            )
+            truth = EvaluationGroundTruth(query_id="q1", ground_truth=answer)
+            built = manager.build_run_manifest(queries=[query], ground_truths=[truth])
+            assert built["dataset"]["dense_script"] is True, (question, answer)
+
 
 class TestErroredQueries:
     async def test_failed_query_is_called_once(self, config: Config) -> None:
@@ -1121,7 +1146,7 @@ class TestComparability:
         assert manifest["answer_scoring"] == {
             "answer_span": "first_line",
             "answer_normalization": "default",
-            "token_f1_tokens": "script_aware",
+            "token_f1_tokens": "script_aware_v2",
         }
         assert manifest["models"]["answer_span"] is None
         manager.config.evaluation.answer_span = "extracted"

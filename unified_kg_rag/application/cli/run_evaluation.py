@@ -68,6 +68,7 @@ from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
+    EvaluationQuery,
     EvaluationSummary,
     EvaluatorType,
     ModelRole,
@@ -103,6 +104,7 @@ from unified_kg_rag.evaluation.saved_results import (
     group_runs,
     load_saved_runs,
     pooling_warnings,
+    rerank_unmetered,
     summary_warnings,
 )
 from unified_kg_rag.shared import (
@@ -897,19 +899,39 @@ class EvaluationRunner:
         if not self._baseline_results:
             return None
         try:
-            saved = load_saved_runs(self._baseline_results)
-            grouped = group_runs(saved)
-            if self._from_results is None:
-                # Refused now rather than after paying for the answers.
-                check_answer_scoring(
-                    [
-                        *(("baseline", run.manifest) for run in saved),
-                        ("this run", {"answer_scoring": self._answer_scoring()}),
-                    ]
-                )
+            grouped = group_runs(load_saved_runs(self._baseline_results))
         except EvaluationException as e:
             raise InvalidDatasetError(f"--baseline-results: {e}") from e
         return {f"baseline:{strategy}": runs for strategy, runs in grouped.items()}
+
+    def _check_baseline_scoring(
+        self,
+        baseline: dict[str, list[SavedRun]] | None,
+        queries: list[EvaluationQuery],
+        ground_truths: list[EvaluationGroundTruth],
+    ) -> None:
+        """Refuse a ``--baseline-results`` run scored unlike this one once
+        the dataset is read (whether it holds Han, Hangul or Kana text
+        decides if token F1's tokenizations differ), before any answer is
+        generated."""
+        if not baseline:
+            return
+        try:
+            check_answer_scoring(
+                [
+                    *(
+                        ("baseline", run.manifest)
+                        for runs in baseline.values()
+                        for run in runs
+                    ),
+                    ("this run", {"answer_scoring": self._answer_scoring()}),
+                ],
+                dense_script=EvaluationManager.holds_dense_script(
+                    queries, ground_truths
+                ),
+            )
+        except EvaluationException as e:
+            raise InvalidDatasetError(f"--baseline-results: {e}") from e
 
     def _answer_scoring(self) -> dict[str, Any] | None:
         """The answer_scoring this run's manifests will record."""
@@ -1043,6 +1065,7 @@ class EvaluationRunner:
                 EvaluationGroundTruth(query_id=q.query_id, ground_truth="")
                 for q in queries
             ]
+        self._check_baseline_scoring(baseline, queries, ground_truths)
 
         runs: dict[str, list[Run]] = {}
         summaries: list[dict[str, Any]] = []
@@ -1219,6 +1242,8 @@ class EvaluationRunner:
                 f"{', '.join(runs) or 'none'}"
             )
         prices = self.config.evaluation.prices
+        # Runs saved before their usage counted rerank requests.
+        unmetered = rerank_unmetered(manifests)
         names = list(runs)
         if pairs:
             comparison = baseline_comparison(
@@ -1227,6 +1252,7 @@ class EvaluationRunner:
                 pairs,
                 categories=measured.categories,
                 prices=prices,
+                unmetered_rerank=unmetered,
             )
             rows = [
                 row
@@ -1239,7 +1265,10 @@ class EvaluationRunner:
             ]
         else:
             comparison = paired_comparison(
-                runs, categories=measured.categories, prices=prices
+                runs,
+                categories=measured.categories,
+                prices=prices,
+                unmetered_rerank=unmetered,
             )
             rows = per_query_rows(runs, measured.categories, prices)
             pairs = dict.fromkeys(names[1:], names[0])

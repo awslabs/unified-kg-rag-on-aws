@@ -60,7 +60,7 @@ alone, so ``run-eval --from-results`` rebuilds it without a model call.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -299,12 +299,15 @@ def paired_comparison(
     seed: int = 0,
     categories: Mapping[str, str] | None = None,
     prices: Mapping[str, ModelPrice] | None = None,
+    unmetered_rerank: Collection[str] = (),
 ) -> dict[str, Any]:
     """Compare strategies run over the same queries (the first is the baseline).
 
     ``runs`` maps each strategy, in the order given, to its repeats;
     ``categories`` (query id to category) adds ``deltas_by_category``;
-    ``prices`` (model id to price) adds a USD estimate to ``cost``.
+    ``prices`` (model id to price) adds a USD estimate to ``cost``, with no
+    USD delta between a strategy of ``unmetered_rerank`` (whose usage
+    records count no rerank request) and one whose records count them.
     """
     comparison = _paired_comparison(
         runs,
@@ -313,6 +316,7 @@ def paired_comparison(
         seed=seed,
         categories=categories,
         prices=prices,
+        unmetered_rerank=unmetered_rerank,
     )
     for warning in comparison["warnings"]:
         logger.warning("%s", warning)
@@ -329,6 +333,7 @@ def baseline_comparison(
     seed: int = 0,
     categories: Mapping[str, str] | None = None,
     prices: Mapping[str, ModelPrice] | None = None,
+    unmetered_rerank: Collection[str] = (),
 ) -> dict[str, Any]:
     """Compare each strategy of ``runs`` with its own baseline.
 
@@ -346,6 +351,7 @@ def baseline_comparison(
             seed=seed,
             categories=categories,
             prices=prices,
+            unmetered_rerank=unmetered_rerank,
         )
         for strategy, strategy_runs in runs.items()
     }
@@ -392,6 +398,7 @@ def _paired_comparison(
     seed: int,
     categories: Mapping[str, str] | None,
     prices: Mapping[str, ModelPrice] | None,
+    unmetered_rerank: Collection[str] = (),
 ) -> dict[str, Any]:
     """``paired_comparison`` without logging its warnings."""
     strategies = list(runs)
@@ -499,7 +506,9 @@ def _paired_comparison(
             if precision_delta is not None:
                 by_metric[ABSTENTION_PRECISION] = precision_delta
         deltas[strategy] = by_metric
-    cost = cost_comparison(runs, prices=prices, **stats)
+    cost = cost_comparison(
+        runs, prices=prices, unmetered_rerank=unmetered_rerank, **stats
+    )
     warnings = [
         *_failure_warnings(summary),
         *_span_warnings(runs),
@@ -686,6 +695,11 @@ _USAGE_MEASURES: dict[str, str] = {
 }
 LATENCY_MEASURE = "latency/response_time_seconds"
 USD_MEASURE = "usage/cost_usd"
+# What a run's usage records count (the run manifest's ``usage_schema``):
+# 1, the model calls and tokens (a run saved before it was recorded); 2, the
+# rerank requests too (``rerank_calls``, ``rerank_search_units``), which a
+# USD estimate prices.
+USAGE_SCHEMA = 2
 
 
 def answer_cost_usd(
@@ -780,6 +794,7 @@ def cost_comparison(
     runs: Mapping[str, Sequence[Run]],
     *,
     prices: Mapping[str, ModelPrice] | None = None,
+    unmetered_rerank: Collection[str] = (),
     resamples: int = 2000,
     confidence: float = 0.95,
     seed: int = 0,
@@ -792,7 +807,10 @@ def cost_comparison(
     ``paired_comparison``): strategies without usage records next to some
     with them or with some answers unmeasured, failed answers in the
     measures, repeat counts or cache hits per answer that differ from the
-    baseline's, unpriced models.
+    baseline's, unpriced models, and strategies whose usage records do not
+    meter the rerank requests (``unmetered_rerank``: saved before
+    ``USAGE_SCHEMA`` 2) next to some that do: the USD delta between two
+    such is left out, since one side's estimate prices no rerank.
 
     A failed answer counts with the usage and time it spent before it failed
     (``failed_answers``; ``EvaluationManager`` records both per answer). An
@@ -872,15 +890,27 @@ def cost_comparison(
             "totals": totals,
         }
     names = list(runs)
+    unmetered = [s for s in names if s in unmetered_rerank]
     deltas: dict[str, Any] = {}
     for strategy in names[1:]:
         by_measure: dict[str, Any] = {}
+        # The rerank requests priced on one side only.
+        mixed = (strategy in unmetered) != (names[0] in unmetered)
         for key, base in per_query[names[0]].items():
+            if mixed and key == USD_MEASURE:
+                continue
             delta = _delta_stats(base, per_query[strategy].get(key, {}), **stats)
             if delta is not None:
                 by_measure[key] = delta
         deltas[strategy] = by_measure
     warnings = []
+    if prices and unmetered and len(unmetered) < len(names):
+        warnings.append(
+            f"The usage records of {', '.join(unmetered)} do not count rerank "
+            "requests (saved before usage_schema 2): their USD estimate leaves "
+            "the rerank out, and no USD delta is given against a strategy "
+            "whose records count them. Run them again to compare USD."
+        )
     # Some strategies with usage and some without: their usage is not
     # paired (none with it at all is no warning, only no usage measures).
     if without_usage and len(without_usage) < len(names):

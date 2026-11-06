@@ -430,17 +430,20 @@ From a `main` checkout (formats and keys no release had):
   build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
   date written as `2024年3月` (or `2024. 3. 15.`, #612) is found under it, so nothing else re-runs.
 - #606 evaluation results: `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by
-  whitespace, so a default-normalization run is refused against them (exit 2) until one side is scored again (an
-  `official_squad` or `hotpotqa` run still compares). Their `abstention_statistics` left failed answers out (rate
-  and recall over the completed answers), and pairwise length buckets are renamed (`<=0.67x`, `0.67-0.91x`,
-  `0.91-1.1x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path` now also downloads the
+  whitespace, so on a dataset with Han, Hangul or Kana text a default-normalization run is refused against them
+  (exit 2) until one side is scored again (an `official_squad` or `hotpotqa` run, or any run on a dataset without
+  such text, still compares). Results saved from #606 until #PR record `script_aware`: their Korean token F1
+  dropped any one to three Hangul syllables after a gold word, so they are refused the same way. Their
+  `abstention_statistics` left failed answers out (rate and recall over the completed answers), and pairwise length
+  buckets are renamed (`<=0.67x`, `0.67-0.91x`, `0.91-1.1x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path` now also downloads the
   answerable split and draws the answerable questions from it (labelled `musique`); prepare again for that sample.
   Nothing else re-runs.
 - #607 rerank metering: a query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the
   `rerank` role and the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the
   rerank model has a price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets
-  both token prices or the rerank price; one with neither, or one token price alone, is refused at load. Nothing is
-  re-run.
+  both token prices or the rerank price; one with neither, or one token price alone, is refused at load. Results
+  saved before #PR record no `usage_schema`: a comparison against them gives no USD delta (a warning names them)
+  until they are run again. Nothing is re-run.
 - #608 stored translations: translations are stored from the first run after upgrading: that run still asks the
   model for every unit it translates, with the new translation prompt, so a reset of a translated namespace
   translates and re-extracts every unit once more (the cost of a first build; an incremental run only its new and
@@ -645,7 +648,8 @@ From a `main` checkout (formats and keys no release had):
   call counts from its start, so cancelled and background calls are billed at an estimated input; a response that
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
   #563, #589). Rerank requests count apart (`rerank_calls`, `rerank_search_units`, one per 100 documents), priced by
-  `evaluation.prices.<rerank model>.per_thousand_rerank_search_units` (#607).
+  `evaluation.prices.<rerank model>.per_thousand_rerank_search_units` (#607); the run manifest records
+  `usage_schema: 2`, and a comparison gives no USD delta against a run saved before it (#PR).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
   `total_files_skipped`, `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and
   `total_documents_without_claims`; a run with failed units ends with a WARNING naming them per stage (#518, #532).
@@ -657,8 +661,8 @@ From a `main` checkout (formats and keys no release had):
 - Answer scoring: `evaluation.answer_span` (`first_line` default, `full`, or `extracted` by a fast model, cached,
   falling back to the first line), `evaluation.answer_normalization` (`official_squad`, `hotpotqa`), recorded in the
   manifest's `answer_scoring` with the token-F1 tokenization; under `default`, token F1 counts a Han, Hangul or Kana
-  letter as a token and drops a Korean particle on a gold word, so Chinese, Japanese and Korean answers get partial
-  credit (#324, #516, #606).
+  letter as a token and drops a run of Korean particles (their closed class) on a gold word, so Chinese, Japanese and
+  Korean answers get partial credit (#324, #516, #606, #PR).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See

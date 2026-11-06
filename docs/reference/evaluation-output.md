@@ -100,8 +100,11 @@ The console prints the same summary.
 `run_manifest` records what was measured, so two runs can be compared:
 
 - the CLI arguments (URLs without credentials), versions, `git_sha` /
-  `git_dirty`, the dataset (path, hashes, query count), a UTC timestamp and
-  `dropped_evaluators`;
+  `git_dirty`, the dataset (path, hashes, query count, and `dense_script`:
+  whether a question, gold answer or alias holds Han, Hangul or Kana
+  text), a UTC timestamp, `dropped_evaluators` and `usage_schema` (`2`:
+  the usage records count the rerank requests; a run saved without it
+  counted none);
 - the model ids and `judge_is_answer_model` (a judge that is the answer
   model inflates judge scores; the default Bedrock judge, Opus 5.5, is not
   the default answer model, and falls back to another when the answer
@@ -113,7 +116,7 @@ The console prints the same summary.
   `trials`;
 - `answer_scoring`: the `answer_span` and `answer_normalization` exact
   match and token F1 used and the token-F1 tokenization they imply
-  (`token_f1_tokens`: `script_aware` or `whitespace`) (with
+  (`token_f1_tokens`: `script_aware_v2` or `whitespace`) (with
   `answer_match`), and `models.answer_span`
   the extracting model; runs scored differently are not comparable on
   those two metrics;
@@ -260,7 +263,10 @@ strategies, or `--repeats`) saves every run's files and adds
   baseline like the metrics (`usage/llm_calls`, `usage/input_tokens`,
   `usage/output_tokens`, `usage/total_tokens`, `usage/cost_usd`,
   `latency/response_time_seconds`, each query's mean over its repeats, with
-  the bootstrap interval). A failed or timed-out answer counts with what it
+  the bootstrap interval). No `usage/cost_usd` delta pairs a strategy whose
+  usage records count the rerank requests with one saved before they did
+  (no `usage_schema` 2 in its manifest; a warning says so): the older
+  side's estimate prices no rerank. A failed or timed-out answer counts with what it
   spent before failing: each answer runs in its own usage scope and timer,
   so its result keeps the calls and tokens of its attempts and the time from
   its first attempt's start to its last one's end (`failed_answers` counts
@@ -329,9 +335,13 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   match and token F1 read the answer differently (`answer_scoring` in the
   run manifest: `evaluation.answer_span`, `answer_normalization`,
   `token_f1_tokens`; a run saved before `token_f1_tokens` was recorded
-  tokenized by whitespace) are
-  refused (exit 2), checked before any answer is generated; runs of different
-  datasets are warned about (only their shared query ids pair).
+  tokenized by whitespace, and one that records `script_aware` dropped any
+  one to three Hangul syllables as a particle) are
+  refused (exit 2), checked once the dataset is read and before any answer
+  is generated. The tokenizations differ only on Han, Hangul and Kana text,
+  so `token_f1_tokens` alone is not compared when the dataset holds none
+  (this run's dataset, or the manifests' `dataset.dense_script`); runs of
+  different datasets are warned about (only their shared query ids pair).
 - `--fail-if <measure>:<stat><op><value>` (repeatable) exits 1 when a
   compared strategy's paired delta meets the condition: `<measure>` is a key
   of `deltas_vs_baseline` (`<evaluator>/<metric>`) or of
@@ -542,11 +552,16 @@ list, top level or under `metadata`, which wins), taking the maximum.
   the official script (MuSiQue's evaluation uses it too) and `hotpotqa` adds
   HotpotQA's rule that a `yes`/`no`/`noanswer` span or gold earns token F1
   only when the two are equal. Under `default` token F1 tokenizes by script
-  (`token_f1_tokens: script_aware` in each report): a Han, Hangul or Kana
-  letter is a token of its own, as CMRC 2018 and KorQuAD score Chinese and
-  Korean by character, and a Korean particle attached to a gold word
-  (`서울은` for `서울`) is dropped first, so `東京都です` scores 0.75
-  against `東京都`. Under `official_squad` and `hotpotqa` tokens are
+  (`token_f1_tokens: script_aware_v2` in each report): a Han, Hangul or Kana
+  letter is a token of its own, as the CMRC 2018 and KorQuAD 1.0 scripts
+  score Chinese and Korean by character (they split Latin words and
+  numbers too; these stay whole), and a run of Korean particles or copula
+  endings from their closed class attached to a gold word (`서울은`,
+  `서울에서는`, `서울입니다` for `서울`) is dropped first, which KorQuAD
+  does not do: so `東京都です` scores 0.75 against `東京都` and
+  `서울대학교` 0.57 against `서울` (other Hangul after a gold word is
+  another word). `answer_contains` keeps the wider rule (any one to three
+  Hangul syllables after a gold word). Under `official_squad` and `hotpotqa` tokens are
   whitespace words, as in those scripts (`whitespace`), so for Chinese and
   Japanese token F1 degrades to exact match there. Exact match compares
   whole strings, so a Korean particle or a CJK copula still makes it
