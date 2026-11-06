@@ -1235,6 +1235,10 @@ def tree_summary_fingerprint(config: Config) -> str:
             ),
             "model": to_jsonable_python(config.model_id(ModelRole.SUMMARY_TREE)),
             "max_summary_tokens": config.indexing.summary_tree.max_summary_tokens,
+            # 2: the length hint follows the token counter and an over-long
+            # summary is cut at a sentence end (summaries of 1 were mostly
+            # cut mid-sentence).
+            "length": 2,
             "language": index_language(config),
             "prompt": compute_hash(
                 fill_slots(

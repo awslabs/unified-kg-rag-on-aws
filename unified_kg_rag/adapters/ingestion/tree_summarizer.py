@@ -6,8 +6,17 @@ One call per cluster (``TreeSummaryPrompt``, ``models.roles.summary_tree``),
 fanned out through ``BatchProcessor`` with the run's LLM response cache, as
 the other ingestion model calls are. A cluster whose input key (its
 children's texts, the language and the summary settings) is a live node's
-takes that node's summary and makes no call. A summary over
-``max_summary_tokens`` is cut to it by the token counter.
+takes that node's summary and makes no call.
+
+The prompt's length hint comes from the token counter that bounds the
+summary: the counter's tokens per word (per character for Japanese, Chinese
+and Korean) over the cluster's own texts turn ``max_summary_tokens`` into a
+word or character count, so a model that writes what it is asked for stays
+within the budget whatever the counter (a script-aware estimate scaled for
+the model's tokenizer, or tiktoken) and the language. A summary still over
+the budget is cut at its last sentence end within it
+(``shared.utils.sentences``), at a character only when its first sentence
+is longer than the budget.
 """
 
 from __future__ import annotations
@@ -37,12 +46,18 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import TreeSummaryPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
+from unified_kg_rag.shared.utils.sentences import sentence_ends
 
 logger = get_logger(__name__)
 
-# Languages written without spaces between words: their length hint is in
-# characters (about one a token), the others' in words (about 0.75 a token).
+# Languages whose length hint counts characters (Japanese and Chinese write
+# no spaces between words, a Korean word is several tokens); the others'
+# counts words.
 _CHARACTER_LANGUAGES = frozenset({LanguageCode.JA, LanguageCode.ZH, LanguageCode.KO})
+
+# The share of max_summary_tokens the length hint asks for: a model's length
+# is approximate, and what is over the budget is cut.
+_HINT_FILL = 0.9
 
 
 @dataclass(frozen=True)
@@ -88,12 +103,21 @@ class TreeSummarizer:
     def count_tokens(self, text: str) -> int:
         return self.token_counter.count_tokens(text) if text else 0
 
-    def length_hint(self) -> str:
-        """How long a summary may be, as the prompt says it."""
-        tokens = self.tree_config.max_summary_tokens
+    def length_hint(self, texts: Sequence[str]) -> str:
+        """How long a summary of ``texts`` (a cluster's children, in the
+        index language) may be, as the prompt says it: the words or
+        characters that ``max_summary_tokens`` (times ``_HINT_FILL``) holds
+        at the token counter's rate over ``texts``."""
+        unit, count = "words", lambda text: len(text.split())
         if LanguageCode(self.language_code) in _CHARACTER_LANGUAGES:
-            return f"about {tokens} characters"
-        return f"about {max(1, int(tokens * 0.75))} words"
+            unit, count = "characters", lambda text: len("".join(text.split()))
+        sample = "\n\n".join(texts)
+        units = count(sample)
+        budget = self.tree_config.max_summary_tokens * _HINT_FILL
+        if not units:
+            return f"{max(1, int(budget))} {unit}"
+        tokens_per_unit = max(self.count_tokens(sample), 1) / units
+        return f"{max(1, int(budget / tokens_per_unit))} {unit}"
 
     def input_key(self, cluster: Cluster) -> str:
         return summary_input_key(self.fingerprint, self.language, cluster.child_texts)
@@ -133,6 +157,7 @@ class TreeSummarizer:
             task_name="Summary tree",
             show_progress=False,
         )
+        cut = 0
         for index, answer in zip(pending, answers, strict=True):
             text = answer.strip() if isinstance(answer, str) else ""
             if not text:
@@ -143,8 +168,17 @@ class TreeSummarizer:
                     clusters[index].level,
                 )
                 continue
-            text = self._within_budget(text)
-            results[index] = Summary(text, self.count_tokens(text), keys[index])
+            within = self._within_budget(text)
+            cut += within != text
+            results[index] = Summary(within, self.count_tokens(within), keys[index])
+        if cut:
+            logger.info(
+                "%d of %d summaries were over max_summary_tokens (%d) and were "
+                "cut at a sentence end",
+                cut,
+                len(pending),
+                self.tree_config.max_summary_tokens,
+            )
         return results
 
     def _chain_input(self, cluster: Cluster) -> dict[str, str]:
@@ -155,12 +189,27 @@ class TreeSummarizer:
         return {
             "passages": passages,
             "target_language": self.language,
-            "length_hint": self.length_hint(),
+            "length_hint": self.length_hint(cluster.child_texts),
         }
 
     def _within_budget(self, text: str) -> str:
-        """``text`` cut (at a character) to ``max_summary_tokens``."""
+        """``text``, or its longest prefix of whole sentences within
+        ``max_summary_tokens``; cut at a character when not even its first
+        sentence fits."""
         budget = self.tree_config.max_summary_tokens
+        if self.count_tokens(text) <= budget:
+            return text
+        # The longest fitting prefix (counts grow with the prefix).
+        ends = sentence_ends(text)
+        low, high = 0, len(ends)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if self.count_tokens(text[: ends[middle - 1]].rstrip()) <= budget:
+                low = middle
+            else:
+                high = middle - 1
+        if low:
+            return text[: ends[low - 1]].rstrip()
         for _ in range(8):
             tokens = self.count_tokens(text)
             if tokens <= budget:
