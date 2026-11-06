@@ -1639,9 +1639,12 @@ budget and answer. `RAGInput.search_strategy` picks the methodology.
   before any LLM call, so a filter never fails by route); the prompt
   describes exactly these candidates, and unrecognized output falls back to
   `local` (else the first candidate). The default set is `local`, `mix`,
-  `global` (`drift` costs up to 27 LLM calls); with one candidate no router
+  `global`, `iterative` (`drift` costs up to 27 LLM calls; `iterative`'s
+  guide entry keeps it to questions that chain facts through an unnamed
+  bridge entity, §6.3); with one candidate no router
   call is made. The query processing the candidates may read (entities for
-  `local`, keywords for `mix`/`hybrid`, the translation) starts alongside
+  `local`, keywords for `mix`/`hybrid` and a wrapper what it wraps reads,
+  the translation) starts alongside
   the router (`search.auto_speculative_extraction`), so `auto`'s critical
   path is the router or the extraction, whichever is slower, then the
   strategy: two model round trips before retrieval became one. A routed
@@ -1770,9 +1773,16 @@ traversal, hence graph expansion is opt-in.
 
 ### 6.3 Iterative bridge follow-up (`iterative_search.py`, opt-in)
 
-`iterative` is opt-in and unmeasured: no default selects it, `auto` never
-routes to it (`search.auto_routable_strategies` refuses it), and whether it
-helps is for a measured experiment to decide, not assumed. It targets one
+No default selects `iterative`; `auto` may route a multi-hop question to
+it (it is in `search.auto_routable_strategies` by default, and its router
+guide entry describes questions that chain facts through a bridge entity
+the question does not name), and an operator who leaves it out of that
+list keeps `auto` off it. A real-model run on 200 MuSiQue questions decided
+both (`iterative` over `mix` against `mix`: `answer_contains` +12.5 points,
+token F1 +5.2, both significant, for +9.6 s a query; [Defaults and
+evidence](concepts/defaults-and-evidence.md#iterative-follow-up-rounds)).
+Whether the router picks it for single-hop or sensemaking questions it
+should leave alone was not measured. It targets one
 failure: on 200 MuSiQue questions (v15 benchmark index) about 53 of `mix`'s
 96 failures lacked a supporting passage, and the missing one was a later
 hop's far more often than the first's (the last hop's 14-16% against the
@@ -1798,8 +1808,16 @@ through the strategy registry, so there is no dispatch on the base:
    the graph walk; mix's `ll_keywords`; the first follow-up query is the
    search text) without its own rerank, and each new follow-up query
    searches the text units (`round_top_k`, 5) under the request's
-   `search_type`. A query already searched (case-folded) or a bridge already
-   followed (`compact_name_key`, so `동부 창고` and `동부창고` are one) is
+   `search_type`. A round whose verdict names no new bridge entity (only
+   new queries) reruns `local`, which then looks its entities up by the
+   search text, but not `mix`: mix seeds its entity and relationship
+   searches from keywords alone, and without a bridge those would be the
+   question's, which round 0 already searched, so the round is its text
+   searches. (Rerunning mix with empty keywords, as the first version did,
+   made it fall back to the search text as a keyword, or search no entity
+   when the text passed `raw_query_fallback_max_len`: 62 of 238 controller
+   rounds in the measured run.) A query already searched (case-folded) or
+   a bridge already followed (`compact_name_key`, so `동부 창고` and `동부창고` are one) is
    not searched again, and the controller is shown the searched list: the
    redundant searches ReaRAG (arXiv 2503.21729) reports for open-ended
    search agents, which run on until their iteration limit, are what the
@@ -1824,7 +1842,9 @@ through the strategy registry, so there is no dispatch on the base:
 steps in MuSiQue's notation (`#1` is step 1's answer); each step, with its
 references replaced by the earlier answers (an unanswered one by its
 question), runs one follow-up round (the step's answers are its bridge
-entities) and is answered from those candidates by one call
+entities; a step without one, step 1 always, keeps the question's own
+keywords on `mix`, since the step's answer reads only its own round) and is
+answered from those candidates by one call
 (`DecompositionStepPrompt`, an empty answer when they state none). The steps'
 candidates are fused with round 0's once, as in 4. The step answers are not
 passed to the answer model: it reads retrieved evidence only.
@@ -1905,10 +1925,14 @@ results added over round 0, and the rounds' own model calls and tokens
 round. At the 2026-11 list prices (Haiku 5.5 $0.10 / $0.50 per million
 tokens, Cohere Rerank 3.5 $2 per 1,000 search units), a controller call
 reading 8,000 context tokens costs about $0.001 and a rerank $0.002, so
-the worst case adds about $0.007 a query to `mix`'s (most queries stop
-after round 0 or 1, KAG reports 84-98% after its first round); latency adds
-one fast-model call per round plus a base search and a rerank, an estimated
-3-12 s for two rounds (unmeasured). The answer is generated once.
+the worst case adds about $0.007 a query to `mix`'s; latency adds one
+fast-model call per round plus a base search and a rerank. Measured on 200
+MuSiQue questions over `mix` (KAG reports 84-98% stopping after its first
+round): 57 queries stopped after round 0, 48 after one follow-up round and
+95 after two, at 2.19 controller calls a query; +$0.0018 a query on
+average ($0.0553 to $0.0571, the larger answer context included), and the
+median query from 6.8 s to 16.1 s, p95 from 11.1 s to 27.4 s. The answer is
+generated once.
 
 **Fidelity: what the papers do and what we changed.** Neither IRCoT nor
 KAG is ported as a library (there is nothing to diff against algorithm by

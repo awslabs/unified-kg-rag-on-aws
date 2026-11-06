@@ -172,7 +172,7 @@ search:
   How declines are scored:
   [Evaluation: unanswerable questions](./evaluate.md#unanswerable-questions-and-declines).
 
-## Follow-up rounds for multi-hop questions (opt-in)
+## Follow-up rounds for multi-hop questions
 
 `--search-strategy iterative` runs `search.iterative_search.base` (`mix` by
 default, or `local`) and lets a fast model (`models.roles.query_controller`)
@@ -181,8 +181,14 @@ question, the base search reruns from the bridge entities the controller
 names (the entity the missing hop is about, such as the depot in "where is
 the depot of the carrier the vendor hired?") and its follow-up queries search
 the passages, for at most `max_rounds` (default 2) rounds. The answer model
-answers once, from the fused candidates. It is opt-in and unmeasured: `auto`
-never routes to it, and nothing else changes when it is not selected.
+answers once, from the fused candidates. No default selects it, but `auto`
+may route a question that chains facts through an entity it does not name to
+it (`search.auto_routable_strategies`). On 200 MuSiQue questions it raised
+`mix`'s `answer_contains` by 12.5 points and token F1 by 5.2, and the median
+query took 16 s instead of 7
+([evidence](../concepts/defaults-and-evidence.md#iterative-follow-up-rounds)).
+To keep `auto` off it, list the routable strategies without it:
+`search.auto_routable_strategies: [local, mix, global]`.
 
 ```yaml
 search:

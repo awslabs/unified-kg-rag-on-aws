@@ -78,6 +78,7 @@ def test_default_routable_set_and_fast_router_model() -> None:
         SearchStrategy.LOCAL,
         SearchStrategy.MIX,
         SearchStrategy.GLOBAL,
+        SearchStrategy.ITERATIVE,
     ]
     assert (
         config.model_id(ModelRole.STRATEGY_SELECTION)
@@ -134,7 +135,7 @@ async def test_one_routable_strategy_needs_no_router_call() -> None:
 async def test_auto_never_routes_to_report_strategies_without_communities() -> None:
     # global and drift answer from community reports; with community detection
     # off there are none (the index holds lightrag only), so the router is
-    # not offered GraphRAG's strategies: mix is left, with no router call.
+    # not offered GraphRAG's strategies: mix and iterative (over mix) are left.
     from unified_kg_rag.domain.models import Config
 
     config = Config()
@@ -153,7 +154,8 @@ async def test_auto_never_routes_to_report_strategies_without_communities() -> N
     state = await chain._resolve_strategy(
         {"search_strategy": SearchStrategy.AUTO, "query": "q"}
     )
-    assert offered == {}
+    assert offered["strategies"] == "mix, iterative"
+    # "global" is not offered: the fallback is the first candidate.
     assert state["resolved_strategy"] == SearchStrategy.MIX
 
 
@@ -203,7 +205,7 @@ def test_routable_set_follows_what_the_pipeline_builds() -> None:
     config = Config()
     assert routable_strategies(config) == tuple(config.search.auto_routable_strategies)
     config.graph.community_detection.enabled = False
-    assert routable_strategies(config) == (SearchStrategy.MIX,)
+    assert routable_strategies(config) == (SearchStrategy.MIX, SearchStrategy.ITERATIVE)
     # Nothing configured is servable: LightRAG's general-purpose strategy.
     config.search.auto_routable_strategies = [SearchStrategy.GLOBAL]
     assert routable_strategies(config) == (SearchStrategy.MIX,)

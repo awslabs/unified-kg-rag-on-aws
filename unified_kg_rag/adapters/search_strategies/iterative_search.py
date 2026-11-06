@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Iterative bridge follow-up search (``iterative``; opt-in, unmeasured).
+"""Iterative bridge follow-up search (``iterative``; ``auto`` routes multi-hop
+questions to it, no default selects it).
 
 A multi-hop question often fails on its last hop: round 0 finds the passage
 that names the bridge entity, but not the passage about it. This strategy
@@ -370,8 +371,16 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                         run.insufficient = True
                         return current
                     round_no = run.rounds + 1
+                    # Without a new bridge a mix rerun would read the
+                    # question's keywords again, which round 0 searched.
                     streams = await self._round_search(
-                        query, base_query, round_no, queries, bridges, config
+                        query,
+                        base_query,
+                        round_no,
+                        queries,
+                        bridges,
+                        config,
+                        rerun_base=bool(bridges) or not self._keyword_seeded(),
                     )
                     pool.update(streams)
                     run.rounds = round_no
@@ -609,17 +618,25 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         queries: list[str],
         bridges: list[str],
         config: RunnableConfig | None,
+        *,
+        rerun_base: bool = True,
     ) -> dict[str, list[RetrievalResult]]:
         """Round ``round_no``'s candidates: the base search seeded with
         ``bridges`` (local's query entities, mix's low-level keywords; the
         first query is its text) and a text-unit search per query, all
-        under the caller's filters and the request's ``search_type``."""
+        under the caller's filters and the request's ``search_type``.
+
+        Without ``bridges`` mix keeps the question's own keywords (with
+        none it would fall back to the search text as a keyword, or search
+        no entity at all), and local looks its entities up by the search
+        text. ``rerun_base`` false runs the text searches alone."""
+        seeds: dict[str, Any] = {"entity_focus": bridges}
+        if bridges:
+            seeds |= {"ll_keywords": bridges, "hl_keywords": []}
         seeded = base_query.model_copy(
             update={
                 "query": queries[0] if queries else " ".join(bridges),
-                "entity_focus": bridges,
-                "ll_keywords": bridges,
-                "hl_keywords": [],
+                **seeds,
                 "optional_keywords": [],
                 "seed_weights": None,
             }
@@ -629,15 +646,23 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             round=round_no,
             queries=len(queries),
             bridge_entities=len(bridges),
+            base_rerun=rerun_base,
         ) as span:
-            base_task = asyncio.ensure_future(self.follow_up.asearch(seeded, config))
+            base_task = (
+                asyncio.ensure_future(self.follow_up.asearch(seeded, config))
+                if rerun_base
+                else None
+            )
             text_tasks = [
                 asyncio.ensure_future(self._text_search(query, text))
                 for text in queries
             ]
-            tasks: list[asyncio.Future[Any]] = [base_task, *text_tasks]
-            await gather_or_cancel(tasks)
-            streams = {ROUND_BUCKET.format(round_no): base_task.result().results}
+            await gather_or_cancel(
+                task for task in (base_task, *text_tasks) if task is not None
+            )
+            streams: dict[str, list[RetrievalResult]] = {}
+            if base_task is not None:
+                streams[ROUND_BUCKET.format(round_no)] = base_task.result().results
             if text_tasks:
                 streams[ROUND_TEXT_BUCKET.format(round_no)] = _interleave(
                     task.result() for task in text_tasks
@@ -700,6 +725,11 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             per_type_quota=per_type,
             rerank_only_types=set(self._rerank_types()),
         )
+
+    def _keyword_seeded(self) -> bool:
+        """Whether the base reads its graph seeds from the query's keywords
+        (mix) rather than looking entities up by the search text (local)."""
+        return isinstance(self.follow_up, LightRAGSearchStrategy)
 
     def _rerank_types(self) -> frozenset[str]:
         if isinstance(self.base, LocalSearchStrategy | LightRAGSearchStrategy):

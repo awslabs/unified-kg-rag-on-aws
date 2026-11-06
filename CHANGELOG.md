@@ -165,7 +165,7 @@ stored is read again: follow *Upgrading* in order.
 | `search.token_manager.max_context_tokens` | 200000 | 30000; 22000 under `backend: local` with a non-Bedrock LLM (#125, #224, #226) |
 | `search.fusion.fusion_weights` | 10 entries of 1.0 | `{}`, every bucket 1.0 (#258) |
 | `search.global_search.relevance_threshold` / `use_dynamic_selection` | 0.5 / `true` | 0.2 / `false` (#318) |
-| `search.auto_routable_strategies` | fixed: `simple`, `local`, `global`, `drift` | `local`, `mix`, `global` (#347) |
+| `search.auto_routable_strategies` | fixed: `simple`, `local`, `global`, `drift` | `local`, `mix`, `global`, `iterative` (#347, #598) |
 | `search.query_timeout_seconds` | no deadline | 180 s; `null` turns it off (#522) |
 | `search.model_timeout_seconds` / `model_max_attempts` | the ingestion client's 300 s, 6 requests | 90 s / 2 for query-time calls (#522) |
 | `search.auto_speculative_extraction` | extraction after the router | `true`: alongside the router call (#525) |
@@ -387,6 +387,10 @@ From a `main` checkout (formats and keys no release had):
   record written earlier names no artifacts: queries read the configured `indexing.methodologies` until the next
   run that writes the namespace records them, and that run rebuilds nothing. Default configurations run the same
   stages under the same stage-cache keys.
+- (#598) `auto` may now route a multi-hop question to `iterative` (`search.auto_routable_strategies` adds it): about
+  10 s more at the median and +$0.002 for the queries it takes, and a LightRAG-only namespace now makes a router
+  call (between `mix` and `iterative`) where it made none. To keep the earlier routing, set
+  `search.auto_routable_strategies: [local, mix, global]`; nothing is re-run.
 
 ### Added
 - Methodology profiles (#596): `indexing.methodologies` (default `[graphrag, lightrag]`, today's union) selects what
@@ -498,15 +502,20 @@ From a `main` checkout (formats and keys no release had):
   expanded entities' communities, falling back to similar reports) (#521, #525, #530, #533, #535, #541). `drift`
   stays concise: with `{drift: comprehensive}` raise `search.query_timeout_seconds` (300 s). See
   [query](docs/guides/query.md).
-- `iterative` search strategy (opt-in, unmeasured; `auto` never routes to it): `search.iterative_search.base`
-  (`mix` or `local`) runs first, then a fast-model controller (`models.roles.query_controller`) judges the packed
-  context and, when it does not answer the question, names the bridge entities and follow-up queries that seed up to
-  `max_rounds` (2) more base searches and text-unit searches under the same filters; the rounds are fused (buckets
-  `iterative_round_<n>`, `iterative_round_<n>_text`) and reranked, and the answer is generated once.
+- `iterative` search strategy (no default selects it; `auto` may route multi-hop questions to it, see *Changed*):
+  `search.iterative_search.base` (`mix` or `local`) runs first, then a fast-model controller
+  (`models.roles.query_controller`) judges the packed context and, when it does not answer the question, names the
+  bridge entities and follow-up queries that seed up to `max_rounds` (2) more base searches and text-unit searches
+  under the same filters; the rounds are fused (buckets `iterative_round_<n>`, `iterative_round_<n>_text`) and
+  reranked, and the answer is generated once. A `mix` round that names no new bridge entity runs its text searches
+  alone, and a decomposition step without one keeps the question's keywords, where `mix` reran with no keyword
+  (falling back to the search text, or no entity search past `raw_query_fallback_max_len`) (#598). On 200 MuSiQue
+  questions over `mix`: `answer_contains` +12.5 points, token F1 +5.2, p95 11.1 s to 27.4 s
+  ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)).
   `decompose: true` splits the question into steps instead (KAG-style). `metadata["context_insufficient"]` reports a
   final insufficient verdict, `metadata["iterative"]` the rounds and their model usage; new
   `custom_prompts.iterative_controller_*`, `query_decomposition_*` and `decomposition_step_*` (#594). See
-  [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions-opt-in).
+  [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
@@ -612,6 +621,9 @@ From a `main` checkout (formats and keys no release had):
   comparison arms pay the extraction once; short-answer calls ask for `search.output_ceilings` (and
   `evaluation.answer_span_output_ceiling`) tokens, never below the thinking budget plus 1024 (#125, #132, #212,
   #224, #347, #525, #530).
+- `auto` may route a question that chains facts through an entity it does not name to `iterative` (over `mix`),
+  about 10 s slower at the median for those; it starts the extractions a wrapper's base reads alongside the router.
+  Leave `iterative` out of `search.auto_routable_strategies` to opt out (#598).
 - `mix`/`hybrid` retrievals, DRIFT steps and keyword extraction run concurrently; Neptune expansion is opt-in for
   LightRAG (#125, #132, #212, #224, #347).
 - Fusion reranks before MMR and the per-type cut; hybrid search normalizes lexical and kNN hits in the retriever

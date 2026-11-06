@@ -156,15 +156,20 @@ search:
   때까지 선택 기능이며, `mark` 실행은 별도 비교군으로 다루세요. 거절을 채점하는 방법:
   [평가: 답할 수 없는 질문과 거절](./evaluate.ko.md#답할-수-없는-질문과-거절).
 
-## 다중 홉 질문의 후속 라운드(선택 사항)
+## 다중 홉 질문의 후속 라운드
 
 `--search-strategy iterative`는 `search.iterative_search.base`(기본 `mix`, 또는 `local`)를
 실행한 뒤 답변 전에 fast 모델(`models.roles.query_controller`)이 컨텍스트를 판단하게 합니다.
 컨텍스트로 질문에 답할 수 없으면 컨트롤러가 지목한 연결(bridge) 엔티티(빠진 홉이 다루는
 엔티티. 예를 들어 "공급사가 맡긴 운송사의 창고는 어디에 있나?"의 창고)에서 기본 검색을 다시
 시작하고, 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(기본 2)번 반복합니다.
-답변 모델은 융합한 후보로 한 번만 답합니다. 선택 사항이며 아직 측정하지 않았습니다. `auto`는
-이 전략으로 분기하지 않고, 고르지 않으면 아무것도 바뀌지 않습니다.
+답변 모델은 융합한 후보로 한 번만 답합니다. 기본값으로 선택되지는 않지만, 질문에 이름이 나오지
+않는 엔티티를 거쳐 사실을 이어야 하는 질문은 `auto`가 이 전략으로 보낼 수 있습니다
+(`search.auto_routable_strategies`). MuSiQue 질문 200개에서 `mix`보다 `answer_contains`가
+12.5%p, token F1이 5.2%p 높았고, 질의 시간 중앙값은 7초에서 16초로 늘었습니다
+([근거](../concepts/defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 이
+전략을 고르지 않게 하려면 이 전략을 뺀 목록을 지정합니다:
+`search.auto_routable_strategies: [local, mix, global]`.
 
 ```yaml
 search:

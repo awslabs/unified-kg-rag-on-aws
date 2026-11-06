@@ -65,7 +65,7 @@ Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 그 그래프
 
 모든 전략은 같은 하이브리드 점수 계산기를 거칩니다. BM25, 벡터 검색, 그래프 순회(`simple`과
 `naive`는 제외)를 RRF(Reciprocal Rank Fusion)로 합치고, 재순위화하고, 다양성을 맞춥니다.
-기본값인 `auto`는 LLM 라우터가 질의마다 `local`, `mix`, `global` 중 하나를 고릅니다. 언제 어떤
+기본값인 `auto`는 LLM 라우터가 질의마다 `local`, `mix`, `global`, `iterative`(다중 홉 질문) 중 하나를 고릅니다. 언제 어떤
 전략을 쓸지는 [검색](./retrieval.ko.md#검색-전략-선택), 전략별 검색 방식은
 [설계 문서 §6](../design.md#6-retrieval-two-methodologies)(영문)에 있습니다.
 

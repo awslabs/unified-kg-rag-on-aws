@@ -52,6 +52,7 @@ from unified_kg_rag.adapters.retrieval.memory_manager import (
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
+    query_inputs,
     wrapped_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import (
@@ -674,12 +675,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             prefetch.update(
                 self._start_query_inputs(
                     state,
+                    # A wrapper reads what it wraps (iterative: its base).
                     entities=any(
-                        QueryInput.ENTITIES in get_strategy_spec(s).query_inputs
+                        QueryInput.ENTITIES in query_inputs(s, self.config)
                         for s in routable
                     ),
                     keywords=any(
-                        QueryInput.DUAL_KEYWORDS in get_strategy_spec(s).query_inputs
+                        QueryInput.DUAL_KEYWORDS in query_inputs(s, self.config)
                         for s in routable
                     ),
                     config=config,
