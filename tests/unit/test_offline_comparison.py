@@ -206,6 +206,27 @@ class TestCostBlock:
         # A reranker without a price leaves the answer unpriced, as a model.
         assert answer_cost_usd(used, {"m-a": llm_price}) == (None, {"reranker"})
 
+    def test_a_price_entry_must_name_what_it_prices(self) -> None:
+        from pydantic import ValidationError
+
+        # A missing token price never costs $0: it is refused at load.
+        for entry in (
+            {},
+            {"input_per_million_tokens": 1.0},
+            {"cache_read_per_million_tokens": 0.1},
+        ):
+            with pytest.raises(ValidationError, match="model price sets"):
+                ModelPrice(**entry)
+        assert ModelPrice(input_per_million_tokens=1.0, output_per_million_tokens=2.0)
+        assert ModelPrice(per_thousand_rerank_search_units=2.0)
+        # A rerank-only entry does not price a language model's calls.
+        from unified_kg_rag.domain.models import LLMUsage
+
+        llm = {"llm_calls": 1, "input_tokens": 10, "output_tokens": 1}
+        used = LLMUsage(**llm, by_model={"m-a": llm})
+        rerank_only = {"m-a": ModelPrice(per_thousand_rerank_search_units=2.0)}
+        assert answer_cost_usd(used, rerank_only) == (None, {"m-a"})
+
     def test_results_saved_before_usage_have_latency_only(self) -> None:
         comparison = paired_comparison(
             {

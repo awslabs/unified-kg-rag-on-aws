@@ -5579,19 +5579,30 @@ class ModelPrice(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    input_per_million_tokens: float = Field(
-        default=0.0, ge=0, description="USD per million input tokens."
+    input_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "USD per million input tokens (a language model's; set with "
+            "output_per_million_tokens)."
+        ),
     )
-    output_per_million_tokens: float = Field(
-        default=0.0, ge=0, description="USD per million output tokens."
+    output_per_million_tokens: float | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "USD per million output tokens (a language model's; set with "
+            "input_per_million_tokens)."
+        ),
     )
-    per_thousand_rerank_search_units: float = Field(
-        default=0.0,
+    per_thousand_rerank_search_units: float | None = Field(
+        default=None,
         ge=0,
         description=(
             "A rerank model's USD per thousand search units (usage "
             "rerank_search_units: one per rerank request of up to 100 "
-            "documents; Amazon Bedrock's price per 1,000 queries)."
+            "documents; Amazon Bedrock's price per 1,000 queries). An entry "
+            "sets this, the two token prices, or both."
         ),
     )
     cache_read_per_million_tokens: float | None = Field(
@@ -5612,6 +5623,22 @@ class ModelPrice(BaseModel):
             "input price for the 5-minute cache). null = the input price."
         ),
     )
+
+    @model_validator(mode="after")
+    def _priced(self) -> "ModelPrice":
+        tokens = (self.input_per_million_tokens, self.output_per_million_tokens)
+        if (tokens[0] is None) != (tokens[1] is None):
+            raise ValueError(
+                "a model price sets both input_per_million_tokens and "
+                "output_per_million_tokens, or neither (a rerank model's)"
+            )
+        if tokens[0] is None and self.per_thousand_rerank_search_units is None:
+            raise ValueError(
+                "a model price sets input_per_million_tokens and "
+                "output_per_million_tokens (a language model), or "
+                "per_thousand_rerank_search_units (a rerank model)"
+            )
+        return self
 
 
 class EvaluationConfig(BaseModel):

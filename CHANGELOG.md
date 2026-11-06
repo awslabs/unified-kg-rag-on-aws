@@ -429,7 +429,8 @@ From a `main` checkout (formats and keys no release had):
   passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
 - (#PR) A query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the `rerank` role and
   the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the rerank model has a
-  price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). Nothing is re-run.
+  price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets both token prices or
+  the rerank price; one with neither, or one token price alone, is refused at load. Nothing is re-run.
 - (#PR) `naive` and `simple` are served by every namespace that holds the text units (a `raptor`-only or
   `lightrag`-only one, where they were refused), and `simple` sweeps only the indexes the namespace holds.
 
