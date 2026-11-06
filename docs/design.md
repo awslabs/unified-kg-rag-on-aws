@@ -2710,6 +2710,29 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   (`RAGInput.target_language`). Its entities and keywords are extracted in
   the language the index was built in: `source_language` when the stage is
   disabled, `target_language` otherwise.
+- **One index language.** `cache_keys.index_language(config)` is the one
+  rule: `target_language` when translation runs, else `source_language`.
+  Extraction, gleaning, description summaries, community reports (the
+  report prompt names it) and the summary tree write in it, the text units
+  are embedded in it, and the graph indexes' text fields are analyzed for it
+  (`OpenSearchIndexer.language`). The chain records the query's language in
+  `SearchQuery.metadata["query_language"]` (the requested one, else the
+  index language); a strategy's own prompts (DRIFT's HyDE, primer and
+  actions, global's map points, iterative's controller) read it through
+  `BaseSearchStrategy.query_language`, falling back to the index language.
+  The extraction-record and answer fingerprints key the index language
+  under their earlier `target_language` field, so a translated index keeps
+  its records. Claims carry no language slot: the claim prompt reads the
+  unit's text in the index language and states facts as written.
+- **Language-aware parsing.** Query entities split at `,`, `，`, `、`,
+  `;`, `；` and line breaks (`domain/retrieval/query_entities.py`). Global
+  search's relevance rating skips a scale written in Korean, Japanese or
+  Chinese as in English; LightRAG's raw-query fallback gate counts a
+  dense-script character as `LATIN_CHARS_PER_TOKEN` characters (upstream
+  counts characters); claim dates read `2024年3月15日`, `2024년 3월` and
+  CJK quarters, and corpus-language placeholders (`不明`, `미상`) as unknown.
+  The follow-up rewrite's refusal check knows English, Korean, Japanese and
+  Chinese openings; a refusal in another language passes as a rewrite.
 - **Encoding.** A text, CSV or JSON file is first read with the locale's
   preferred encoding, as `open()` reads (UTF-8 in the container image; it
   can be another on a host whose locale is not UTF-8). Only when that read

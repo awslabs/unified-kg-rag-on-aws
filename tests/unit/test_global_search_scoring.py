@@ -68,6 +68,16 @@ async def test_rating_is_normalized_into_the_unit_interval(
         ("On a scale of 1-10, I would rate this 8", 0.8),
         ("On a scale of 1 to 10: 7", 0.7),
         ("On a scale of 0\u201310, 6", 0.6),
+        # The scale mentioned in Korean, Japanese or Chinese (each was read
+        # as 10, or as 1).
+        ("10점 만점에 7점", 0.7),
+        ("7점 (10점 만점)", 0.7),
+        ("1에서 10 사이에서 4점", 0.4),
+        ("10点満点中6点", 0.6),
+        ("1から10で3", 0.3),
+        ("满分10分，我给5分", 0.5),
+        ("1到10分之间：9", 0.9),
+        ("10分制：2分", 0.2),
         # Clamped to the prompt's 1-10 scale.
         ("85", 1.0),
         ("0", 0.1),

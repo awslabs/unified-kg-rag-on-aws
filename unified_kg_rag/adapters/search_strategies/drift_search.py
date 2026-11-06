@@ -44,7 +44,6 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
-    language_name,
 )
 from unified_kg_rag.domain.prompts import (
     DriftActionPrompt,
@@ -100,11 +99,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
         self.drift_config = self.config.search.drift_search
         self.ignore_errors = config.processing.ignore_errors
         self.max_concurrency = config.search.max_concurrency
-        # Follow-up queries are written in the corpus language so they hit the
-        # language-analyzed index.
-        self.target_language = language_name(
-            config.processing.translation.target_language
-        )
 
         factory = self.providers.llm_factory
         parser = StrOutputParser()
@@ -328,7 +322,12 @@ class DriftSearchStrategy(BaseSearchStrategy):
         try:
             stats["drift_llm_calls"] += 1
             hypothetical = await self.hyde.ainvoke(
-                {"query": query.query, "template": template[0].content}, config
+                {
+                    "query": query.query,
+                    "template": template[0].content,
+                    "target_language": self.query_language(query),
+                },
+                config,
             )
             expanded = str(hypothetical).strip() or query.query
         except Exception as e:
@@ -366,7 +365,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                             "query": query.query,
                             "community_reports": "\n\n".join(r.content for r in fold),
                             "num_follow_ups": _FOLLOW_UPS_PER_ANSWER,
-                            "target_language": self.target_language,
+                            "target_language": self.query_language(query),
                         },
                         config,
                     )
@@ -459,7 +458,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                         "global_query": query.query,
                         "context": context,
                         "num_follow_ups": _FOLLOW_UPS_PER_ANSWER,
-                        "target_language": self.target_language,
+                        "target_language": self.query_language(query),
                     },
                     config,
                 )

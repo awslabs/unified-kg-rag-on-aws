@@ -26,6 +26,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 )
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
 from unified_kg_rag.domain.ingestion.community_hierarchy import max_cut_depth
 from unified_kg_rag.domain.ingestion.contributions import (
@@ -420,8 +421,11 @@ class OpenSearchIndexer(VectorIndexer):
             dimensions=self._embedding_dimension,
             model_purpose=ModelPurpose.INGESTION,
         )
-        self.target_language = self.config.processing.translation.target_language.value
-        self.analyzer = self._analyzer_for(self.target_language)
+        # The language the corpus is indexed in (``index_language``): the
+        # graph indexes' text fields hold text written in it, so they are
+        # analyzed for it, and a text unit is embedded in it.
+        self.language = index_language(self.config)
+        self.analyzer = self._analyzer_for(self.language)
 
     def _resolve_vector_storage(self) -> dict[str, str]:
         """The ``mode`` / ``compression_level`` keys of the knn_vector
@@ -1172,7 +1176,7 @@ class OpenSearchIndexer(VectorIndexer):
 
     def _text_unit_embedding_text(self, unit: TextUnit) -> str:
         if hasattr(unit, "translated_texts") and unit.translated_texts:
-            return unit.translated_texts.get(self.target_language) or unit.text
+            return unit.translated_texts.get(self.language) or unit.text
         return unit.text
 
     def _prepare_text_unit_doc(
@@ -2692,18 +2696,6 @@ class OpenSearchIndexer(VectorIndexer):
 
     # --- the summary tree (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in) -----------------------------
 
-    def _index_language(self) -> str:
-        """The language the text units are indexed and embedded in: the
-        target language when translation runs, the source language
-        otherwise (``query_processing``'s index language)."""
-        translation = self.config.processing.translation
-        language = (
-            translation.target_language
-            if translation.enabled
-            else translation.source_language
-        )
-        return language.value
-
     def _scan(
         self,
         alias_prefix: str,
@@ -3038,7 +3030,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "id": {"type": "keyword"},
                 "text": {
                     "type": "text",
-                    "analyzer": self._analyzer_for(self._index_language()),
+                    "analyzer": self.analyzer,
                 },
                 "text_embedding": self._get_knn_vector_mapping(),
                 "level": {"type": "integer"},

@@ -46,7 +46,10 @@ def _install_fakes(chain: GraphRAGChain, *, translation, entities) -> None:
         if prompt_class is TranslationPrompt:
             return _FakeChain(translation)
         if prompt_class is EntityExtractionPrompt:
-            return _FakeChain(entities)
+            # The model's text answer, split by split_entity_list.
+            return _FakeChain(
+                ", ".join(entities) if isinstance(entities, list) else entities
+            )
         return _FakeChain("")
 
     chain._get_chain_for_prompt = fake_get_chain  # type: ignore[assignment]

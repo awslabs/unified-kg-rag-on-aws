@@ -22,7 +22,10 @@ from typing import TYPE_CHECKING, Any
 from unified_kg_rag.adapters.ingestion.tree_summarizer import TreeSummarizer
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.ingestion.pipeline_stages import _RegistryStage
-from unified_kg_rag.domain.ingestion.cache_keys import summary_tree_fingerprint
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    index_language,
+    summary_tree_fingerprint,
+)
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.ingestion.summary_tree import (
     Cluster,
@@ -331,8 +334,7 @@ class SummaryTreeStage(_RegistryStage):
         (``None``) for the corpus, one per ``partition_by`` value tuple, or
         one per document (its stored file path)."""
         tree = self.config.indexing.summary_tree
-        target = self.config.processing.translation.target_language.value
-        translated = f"translated_text_{target}"
+        translated = f"translated_text_{index_language(self.config)}"
         rows = (
             indexer.scan_text_units(
                 suffix,

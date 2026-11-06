@@ -101,6 +101,7 @@ def test_report_prompt_keeps_a_claims_text_inside_claim_data() -> None:
                 "relationships": [],
                 "claims": [claim],
                 "content_length": "short",
+                "target_language": "English",
             }
         ]
     )

@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any, TypeVar
 
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.schema_conformance import SchemaConformance
 from unified_kg_rag.domain.models import (
     Config,
@@ -254,8 +255,9 @@ class BaseProcessor:
 
     def get_text_for_processing(self, text_unit: TextUnit) -> str:
         if text_unit.translated_texts:
-            target_language = self.config.processing.translation.target_language.value
-            return text_unit.translated_texts.get(target_language, text_unit.text)
+            return text_unit.translated_texts.get(
+                index_language(self.config), text_unit.text
+            )
         return text_unit.text
 
     def parse_entity_data(self, entity_data: Any, text_unit: TextUnit) -> Entity | None:

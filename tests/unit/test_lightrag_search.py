@@ -240,7 +240,32 @@ async def test_long_empty_keyword_query_does_not_fall_back(
     assert os_r.calls == []
     assert neptune_r.calls == []
     # ... and says so, as upstream does, instead of abstaining silently.
-    assert "too long (60 characters, limit 50)" in caplog.text
+    assert "too long (60 characters, limit 50" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("query", "falls_back"),
+    [
+        # 13 dense characters count 52: over the limit of 50, as a Latin
+        # question carrying as much (upstream counted 13).
+        ("창고는 누구의 부품을 보관하나요", False),
+        ("倉庫は誰の部品を保管していますか", False),
+        ("仓库为谁保管零件呢请告诉我", False),
+        # Short ones still fall back, and Latin text counts as upstream.
+        ("창고", True),
+        ("仓库", True),
+        ("x" * 49, True),
+        ("x" * 50, False),
+    ],
+)
+async def test_the_fallback_gate_counts_dense_scripts_as_tokens(
+    config: Config, query: str, falls_back: bool
+) -> None:
+    strategy, os_r, _ = _make_strategy(config)
+    fallback = strategy._apply_keyword_fallback(
+        SearchQuery(query=query, metadata={"search_strategy": "hybrid"})
+    )
+    assert (fallback.ll_keywords == [query]) is falls_back
 
 
 def test_relationship_endpoint_ids_collects_both_endpoints() -> None:

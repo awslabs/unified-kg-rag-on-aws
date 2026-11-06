@@ -95,7 +95,7 @@ class _Factory:
     def __init__(self, route: str = "local") -> None:
         self.outputs: dict[type, Any] = {
             StrategySelectionPrompt: route,
-            EntityExtractionPrompt: ["Vendor", "Buyer"],
+            EntityExtractionPrompt: "Vendor, Buyer",
             KeywordsExtractionPrompt: _KEYWORDS,
             TranslationPrompt: "translated",
         }

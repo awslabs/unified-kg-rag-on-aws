@@ -103,6 +103,23 @@ class TestPrompt:
         (inputs,) = DescriptionSummarizer(config)._build_inputs(["Acme"], ["d"])
         assert (inputs["language"], inputs["target_language"]) == ("Korean", "Korean")
 
+    def test_untranslated_summaries_are_written_in_the_source_language(
+        self, config: Config, mocker
+    ) -> None:
+        from unified_kg_rag.domain.models import LanguageCode
+
+        translation = config.processing.translation
+        translation.enabled = False
+        translation.source_language = LanguageCode.ZH
+        translation.target_language = LanguageCode.EN
+        factory = mocker.patch.object(bedrock_module, "BedrockLanguageModelFactory")
+        factory.return_value.get_model_info.return_value = LanguageModelInfo(
+            context_window_size=200_000, max_output_tokens=8_192
+        )
+        mocker.patch.object(ds_module, "setup_chain")
+        (inputs,) = DescriptionSummarizer(config)._build_inputs(["仓库"], ["d"])
+        assert inputs["target_language"] == "Chinese"
+
     def test_custom_override_respected(self) -> None:
         from unified_kg_rag.domain.models.config import CustomPromptConfig
 

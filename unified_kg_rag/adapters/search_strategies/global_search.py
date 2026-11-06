@@ -43,7 +43,6 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
-    language_name,
 )
 from unified_kg_rag.domain.prompts import CommunityRelevancePrompt, GlobalMapPrompt
 from unified_kg_rag.shared import (
@@ -89,11 +88,16 @@ class _MapPoint:
 
 
 # A rating's number: the first one in the answer that is not part of a
-# mention of the scale ("1-10", "1 to 10", "out of 10", "/10").
+# mention of the scale, in English ("1-10", "1 to 10", "out of 10", "/10")
+# or in the corpus language the model may answer in: a range ("1~10",
+# "1から10", "1到10", "1에서 10") or the maximum ("10점 만점에", "10点満点中",
+# "满分10分", "10段階", "10分制").
 _FIRST_NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _SCALE_MENTION = re.compile(
-    r"(?<![\d.])[01]\s*(?:-|\u2013|to)\s*10{1,2}(?![\d.])"
-    r"|(?:\bout\s+of|/)\s*10{1,2}(?![\d.])",
+    r"(?<![\d.])[01]\s*(?:-|\u2013|~|\uff5e|\u301c|to|から|到|至|에서|부터)\s*"
+    r"10{1,2}(?![\d.])"
+    r"|(?:\bout\s+of|/|满分|滿分)\s*10{1,2}(?![\d.])"
+    r"|(?<![\d.])10{1,2}\s*(?:점\s*(?:만점|중|척도)|点\s*満点|段階|分制|分满分|分滿分)",
     re.IGNORECASE,
 )
 
@@ -121,9 +125,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         self.global_search_config = config.search.global_search
         self.ignore_errors = config.processing.ignore_errors
         self.max_concurrency = config.search.max_concurrency
-        self.target_language = language_name(
-            config.processing.translation.target_language
-        )
 
         factory = self.providers.llm_factory
 
@@ -896,7 +897,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                         {
                             "query": query.query,
                             "reports": self._format_reports(batch),
-                            "target_language": self.target_language,
+                            "target_language": self.query_language(query),
                         },
                         config,
                     )

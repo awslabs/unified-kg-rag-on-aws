@@ -24,7 +24,10 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     coerce_llm_text,
     merge_attributes,
 )
-from unified_kg_rag.domain.ingestion.cache_keys import community_report_fingerprint
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    community_report_fingerprint,
+    index_language,
+)
 from unified_kg_rag.domain.ingestion.community_clustering import (
     build_hierarchy,
     entity_subgraph,
@@ -49,6 +52,7 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     ModelRole,
     TextUnit,
+    language_name,
     model_id_value,
 )
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
@@ -918,6 +922,9 @@ class CommunityDetector:
             "claims": claims,
             "sub_community_reports": sub_reports,
             "content_length": report_config.content_length,
+            # The report is written in the language the corpus is indexed in:
+            # it is searched and read beside the graph's descriptions.
+            "target_language": language_name(index_language(self.config)),
         }
 
     def _report_entity(self, eid: Any) -> dict[str, Any]:
@@ -1026,6 +1033,7 @@ class CommunityDetector:
                 "claims": cls._claims_section(r.get("claims", [])),
                 "sub_community_reports": r.get("sub_community_reports", ""),
                 "content_length": r["content_length"],
+                "target_language": r["target_language"],
             }
             for r in report_inputs
         ]

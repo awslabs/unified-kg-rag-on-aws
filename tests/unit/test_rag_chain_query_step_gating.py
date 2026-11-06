@@ -62,7 +62,7 @@ class _FakeFactory:
         self.calls: list[tuple[type, dict[str, Any]]] = []
         self.chains: list[_CountingChain] = []
         self.outputs: dict[type, Any] = {
-            EntityExtractionPrompt: ["Vendor", "Buyer"],
+            EntityExtractionPrompt: "Vendor, Buyer",
             KeywordsExtractionPrompt: _KEYWORDS_JSON,
             StrategySelectionPrompt: route,
             TranslationPrompt: translation,

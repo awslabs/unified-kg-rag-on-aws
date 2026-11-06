@@ -36,6 +36,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 )
 from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_key
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
@@ -1517,8 +1518,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     def _extract_content(self, source: dict[str, Any]) -> str:
         content_parts = []
-        target_language = self._config.processing.translation.target_language.value
-        translated_key = f"translated_text_{target_language}"
+        translated_key = f"translated_text_{index_language(self._config)}"
 
         if translated_text := source.get(translated_key):
             content_parts.append(translated_text)

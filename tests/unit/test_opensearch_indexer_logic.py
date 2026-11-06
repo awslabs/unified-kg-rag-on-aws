@@ -40,7 +40,7 @@ def indexer(config: Config) -> OpenSearchIndexer:
     inst.config = config
     inst.opensearch_config = config.indexing.opensearch
     inst.analyzer = "standard"
-    inst.target_language = config.processing.translation.target_language.value
+    inst.language = config.processing.translation.target_language.value
     inst._embedding_dimension = 1024
     inst._index_limits = {}
     return inst
@@ -135,7 +135,7 @@ def test_prepare_text_unit_doc_includes_community_ids(indexer) -> None:
 
 
 def test_prepare_text_unit_doc_adds_translation_key(indexer) -> None:
-    lang = indexer.target_language
+    lang = indexer.language
     unit = TextUnit(id="t1", text="hola", translated_texts={lang: "hello"})
     doc = indexer._prepare_text_unit_doc(unit, ([0.0],))
     assert doc[f"translated_text_{lang}"] == "hello"
@@ -164,7 +164,7 @@ def test_additional_target_languages_are_indexed(indexer) -> None:
 
 
 def test_text_unit_embedding_text_prefers_translation(indexer) -> None:
-    lang = indexer.target_language
+    lang = indexer.language
     unit = TextUnit(id="t1", text="hola", translated_texts={lang: "hello"})
     assert indexer._text_unit_embedding_text(unit) == "hello"
 
@@ -414,7 +414,7 @@ def test_entities_mapping(indexer) -> None:
 
 
 def test_text_units_mapping(indexer) -> None:
-    lang = indexer.target_language
+    lang = indexer.language
     props = _props(indexer._get_text_units_mapping())
     assert props["text"]["type"] == "text"
     assert props["text_embedding"]["type"] == "knn_vector"

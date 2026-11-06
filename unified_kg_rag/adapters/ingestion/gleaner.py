@@ -29,6 +29,7 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     format_entities_with_limit_task,
     union_document_filters,
 )
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.contributions import unit_entities
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.entity_grounding import (
@@ -406,7 +407,7 @@ class GraphGleaner(BaseProcessor):
             "max_relationships_per_prompt": self.max_relationships_per_prompt,
             # The entity and relationship type blocks, as extraction's.
             **GraphRefinementPrompt.config_variables(self.config),
-            "target_language": self.config.processing.translation.target_language.value,
+            "target_language": index_language(self.config),
         }
         unit_to_input: dict[str, Any] = {}
         for unit in text_units:

@@ -191,7 +191,6 @@ def _strategy(
     strat.drift_config = drift
     strat.ignore_errors = ignore_errors
     strat.max_concurrency = 4
-    strat.target_language = "English"
     strat.retrievers = {"document": reports or _Reports()}
     strat.hybrid_scorer = HybridScorer(config)
     strat.token_manager = _Tokens()  # type: ignore[assignment]
@@ -670,3 +669,35 @@ def test_rank_within_type_keeps_each_store_in_its_slots() -> None:
     ]
     ranked = DriftSearchStrategy._rank_within_type(results)
     assert [r.content for r in ranked] == ["g-seed", "os-a", "g-hop", "os-b"]
+
+
+# --------------------------------------------------------------------------- #
+# Languages
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("metadata", "translation", "language"),
+    [
+        ({"query_language": "Korean"}, {}, "Korean"),
+        # Untranslated, the index is in its source language, not the target.
+        (
+            {},
+            {"enabled": False, "source_language": "ja", "target_language": "en"},
+            "Japanese",
+        ),
+        ({}, {"enabled": True, "target_language": "zh"}, "Chinese"),
+    ],
+    ids=["from-the-chain", "index-as-written", "translated-index"],
+)
+async def test_every_drift_prompt_writes_in_the_query_language(
+    metadata: dict[str, Any], translation: dict[str, Any], language: str
+) -> None:
+    strat = _strategy(n_depth=1)
+    for name, value in translation.items():
+        setattr(strat.config.processing.translation, name, value)
+    await strat.asearch(SearchQuery(query="question", metadata=metadata))
+
+    calls = [*strat.hyde.calls, *strat.primer.calls, *strat.action.calls]
+    assert strat.hyde.calls and strat.primer.calls and strat.action.calls
+    assert {call["target_language"] for call in calls} == {language}

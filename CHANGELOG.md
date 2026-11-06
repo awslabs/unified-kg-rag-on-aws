@@ -407,6 +407,14 @@ From a `main` checkout (formats and keys no release had):
   query adds a text-unit search, a relationship kNN search, an edge read and one query embedding (about 0.1 s on
   the embedded stores), and without the relationship vector index the PageRank is seeded by the entities and
   passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
+- (#PR) One index language: a namespace ingested with `processing.translation.enabled: false` and a
+  `source_language` other than `target_language` was extracted, summarized and reported in `target_language`; its
+  incremental runs now stop before any model call (exit 2, `was built for other language settings`, the graph
+  indexes' analyzers follow `source_language`) until one `indexing.reset: true` run, which costs a first build
+  (every unit extracted and gleaned again, every summary, report and vector made again). Any other configuration
+  keeps its extraction records and indices; the community report prompt now names its language, so the next full
+  build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
+  date written as `2024年3月` is found under it, so nothing else re-runs.
 
 ### Added
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
@@ -773,6 +781,13 @@ Queries and retrieval.
   Hangul and Kana words by character bigrams (#567).
 - A query is translated, and its entities and keywords extracted in `target_language`, only when ingestion
   translates or the caller asks (`RAGInput.target_language`) (#567, #583).
+- DRIFT (HyDE expansion, primer, actions) and global search's map points write in the query's language, the index
+  language when none is requested (`source_language` with translation disabled), not always `target_language`;
+  query entities a model separates with `、`, `，` or `；` (or one per line) are split into entities, not read as
+  one; global search reads a relevance rating past a scale written as `10점 만점에`, `10点満点中` or `满分10分`;
+  LightRAG's raw-query fallback counts a CJK or Hangul character as 4 against
+  `raw_query_fallback_max_len` (a Korean question four times as long as an English one fell back); a Korean,
+  Japanese or Chinese refusal is no longer used as the follow-up rewrite (#PR).
 - Store failures fail the query instead of answering from no context (unreachable, denied, rejected or overloaded
   stores, a failing embedding call) (#249, #258, #261, #266); queries no longer hang on a silent store
   (`search.store_timeout_seconds`, a Neptune traversal timeout) (#258, #264); a stalled Bedrock call no longer holds
@@ -815,6 +830,12 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- One index language (`index_language`: `target_language` when translation runs, else `source_language`) for every
+  component: with translation disabled, extraction, gleaning, description summaries and community reports were
+  written in `target_language` and the graph indexes analyzed for it while the text units, the summary tree and the
+  queries used `source_language`, so the graph held a second language. The community report prompt names its
+  output language. Claim dates written as `2024年3月15日`, `2024년 3월 15일` or `2022年第3四半期` read as calendar
+  dates and placeholders such as `不明` or `미상` as unknown (#PR).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed
   occurrence; `parse_llm_json` the last object that parses, preferring the caller's keys); a single cut-off answer
   is still flagged, and nameless entities in complete sections are retried as malformed (#532, #536, #541, #560).
