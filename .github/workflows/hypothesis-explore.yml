@@ -43,7 +43,7 @@ jobs:
           mapfile -t modules < <(git grep -l -E '^(from|import) hypothesis' -- \
             'tests/unit/test_*.py' 'tests/integration/test_*.py' 'tests/property/test_*.py')
           [ "${#modules[@]}" -gt 0 ] || { echo "no Hypothesis test modules found"; exit 1; }
-          uv run --frozen pytest -m "not aws and not perf and not weekly" -n logical "${modules[@]}"
+          uv run --frozen pytest -n logical "${modules[@]}"
 
       - name: Timing checks
         # The `perf` tests assert how run time grows with input size. Shared

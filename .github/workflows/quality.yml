@@ -96,7 +96,8 @@ jobs:
         run: uv run pre-commit run --all-files --show-diff-on-failure
 
       - name: pytest + coverage
-        # The `aws` marker gates tests needing real AWS services; excluded in CI.
+        # The `aws` marker gates tests needing real AWS services; the pyproject
+        # addopts selector (not aws, perf or weekly) excludes them here.
         # This one run also covers the property and integration suites. Keep
         # the coverage floor just under the measured level so new untested
         # code cannot silently regress it; ratchet it up as coverage grows.
@@ -108,7 +109,7 @@ jobs:
           # measures no branches) at a fraction of the C tracer's cost.
           COVERAGE_CORE: sysmon
         run: >-
-          uv run pytest -m "not aws and not perf and not weekly" -n logical
+          uv run pytest -n logical
           --cov=unified_kg_rag --cov-report=term-missing
           --cov-report=xml:coverage.xml --junitxml=report.xml
           --cov-fail-under=95
@@ -306,7 +307,7 @@ jobs:
         run: uv sync --python 3.11 --frozen --extra otel --extra eval --extra viz --extra ontology
 
       - name: pytest
-        run: uv run --python 3.11 --frozen pytest -m "not aws and not perf and not weekly" -q -n logical
+        run: uv run --python 3.11 --frozen pytest -q -n logical
 
   python-3-13:
     # Early warning for the next interpreter, not a support claim:
@@ -336,7 +337,7 @@ jobs:
         run: uv sync --python 3.13 --frozen --extra otel --extra eval --extra viz --extra ontology
 
       - name: pytest
-        run: uv run --python 3.13 --frozen pytest -m "not aws and not perf and not weekly" -q -n logical
+        run: uv run --python 3.13 --frozen pytest -q -n logical
 
   iac:
     # Synthesize the CDK app with cdk-nag enabled so the Well-Architected
