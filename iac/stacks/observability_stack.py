@@ -109,6 +109,7 @@ PIPELINE_STAGES: tuple[str, ...] = (
     "graph_analysis",
     "community_detection",
     "indexing",
+    "summary_tree",
 )
 
 # The stages that may call a model: each emits llm_calls_<stage>,
