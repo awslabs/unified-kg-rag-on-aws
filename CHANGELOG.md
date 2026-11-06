@@ -397,7 +397,9 @@ From a `main` checkout (formats and keys no release had):
   --enabled-stages summary_tree`, from the stored text units: no re-extraction, about one summary call per five or
   six text units on the default tier (the MuSiQue benchmark store's 3,318 text units: about 580 calls, $2-8 with
   Sonnet 5.5, $0.1-0.4 with `models.roles.summary_tree: fast`). A completed pipeline id re-run resumes at
-  `indexing` as before.
+  `indexing` as before. A tree built from a `main` checkout before (#PR) is summarized again by its next build
+  (the summaries' length changed): as many calls as building it. `tree` retrieval scores saved before (#PR) rank a
+  summary's lineage files above the passages; evaluate again to compare.
 
 ### Added
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
@@ -405,16 +407,20 @@ From a `main` checkout (formats and keys no release had):
   mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index
   language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps the rebuilt tree into its own
   index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children are unchanged reuses its
-  summary. `raptor` alone runs no graph stage. The `tree` strategy (`auto` routes to it only on a `raptor`-only
-  namespace) fuses BM25 + kNN searches of the text units and of every level of summaries, plus the summaries and
-  passages citing the entities a raw-query search finds where the namespace has an entities index (buckets
-  `tree_text_units`, `tree_summaries`, `tree_graph_summaries`, `tree_graph_text_units`), reranks them together,
-  keeps `max_nodes_per_level` summaries of a level and expands each to `expand_children` of its passages; a summary
-  is reported with its lineage, keeps a document filter only when all its documents share it, and goes, with every
-  summary above it, when one of its text units is removed. Settings: `indexing.summary_tree`,
-  `search.tree_search`, `search.token_manager.type_budgets.summary`; the `VectorIndexer` port gains the summary-tree
-  methods (each with a "cannot" default). Differential tests against the original code ship with recorded fixtures.
-  See [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
+  summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
+  (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, and one still over the budget
+  keeps its whole sentences within it (#PR). `run-ingestion --enabled-stages summary_tree` builds the tree under the
+  pipeline id that built the namespace even after an upgrade changed the earlier stages' cache keys, running none of
+  them and probing only the indices the namespace lacks (#PR). `raptor` alone runs no graph stage. The `tree`
+  strategy (`auto` routes to it only on a `raptor`-only namespace) fuses BM25 + kNN searches of the text units and
+  of every level of summaries, plus the summaries and passages citing the entities a raw-query search finds where
+  the namespace has an entities index (buckets `tree_text_units`, `tree_summaries`, `tree_graph_summaries`,
+  `tree_graph_text_units`), reranks them together, keeps `max_nodes_per_level` summaries of a level and expands each
+  to `expand_children` of its passages; a summary is reported with its lineage, keeps a document filter only when
+  all its documents share it, and goes, with every summary above it, when one of its text units is removed.
+  Settings: `indexing.summary_tree`, `search.tree_search`, `search.token_manager.type_budgets.summary`; the
+  `VectorIndexer` port gains the summary-tree methods (each with a "cannot" default). Differential tests against the
+  original code ship with recorded fixtures. See [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
   [Design §6.5](docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
 - Methodology profiles (#596): `indexing.methodologies` (default `[graphrag, lightrag]`, today's union) selects what
   ingestion builds, so a LightRAG-only corpus (`[lightrag]`) runs no community detection and makes no report call.
@@ -548,10 +554,11 @@ From a `main` checkout (formats and keys no release had):
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
   `total_files_skipped`, `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and
   `total_documents_without_claims`; a run with failed units ends with a WARNING naming them per stage (#518, #532).
-- Evaluation: `retrieval` (hit@k, recall@k, MRR) and `answer_match` (exact match, token F1) evaluators, grouped
-  statistics, the run manifest and index build record, `s3://` dataset and output paths, guardrail block counts
-  (#113, #121, #206, #315, #321, #345, #355, #579). See [evaluate](docs/guides/evaluate.md) and [evaluation
-  output](docs/reference/evaluation-output.md).
+- Evaluation: `retrieval` (hit@k, recall@k, MRR; the passages' files ranked before the lineage files of summaries,
+  reports, entities, relationships and claims, so one high-ranked summary or report cannot fill the top k) and
+  `answer_match` (exact match, token F1) evaluators, grouped statistics, the run manifest and index build record,
+  `s3://` dataset and output paths, guardrail block counts (#113, #121, #206, #315, #321, #345, #355, #579, #PR).
+  See [evaluate](docs/guides/evaluate.md) and [evaluation output](docs/reference/evaluation-output.md).
 - Answer scoring: `evaluation.answer_span` (`first_line` default, `full`, or `extracted` by a fast model, cached,
   falling back to the first line), `evaluation.answer_normalization` (`official_squad`, `hotpotqa`), recorded in the
   manifest's `answer_scoring` (#324, #516).
