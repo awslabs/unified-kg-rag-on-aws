@@ -437,6 +437,50 @@ def test_a_strip_note_that_cannot_be_written_stops_the_strip(mocker) -> None:
         manager._removal._note_pending_strip("default", ["e"], [])
 
 
+@pytest.mark.parametrize("writes", [True, False], ids=["noted", "note-fails"])
+def test_a_strip_notes_the_summaries_its_commit_must_not_extend(
+    mocker, writes: bool
+) -> None:
+    # The items a strip writes are noted before it writes them, so a commit
+    # of a run that died in between does not extend their stored summary;
+    # a note that cannot be written stops the strip (its removal is
+    # retried) rather than leave them unnoted.
+    from unified_kg_rag.domain.ingestion.derivation import Derived
+    from unified_kg_rag.ports.indexer import IndexingStats
+
+    manager, graph, vector = _manager()
+    stored = Entity(id="e1", name="Acme", text_unit_ids=["t1", "t2"])
+    graph.upsert_entities([stored])
+    vector.upsert_entities([stored])
+    mocker.patch.object(
+        manager,
+        "derive",
+        return_value=Derived(
+            entities=[Entity(id="e1", name="Acme", text_unit_ids=["t1"])]
+        ),
+    )
+    if not writes:
+        failed = IndexingStats(total_items=1)
+        failed.add_error("store down", count=1)
+        mocker.patch.object(vector, "write_extraction_records", return_value=failed)
+
+    results = manager.remove_text_units_from_shared(
+        "default", entity_ids=["e1"], relationship_ids=[], text_unit_ids=["t2"]
+    )
+
+    failures = sum(s.failed_items for s in results.values() if s)
+    kept = graph.read_entities(["e1"])[0].text_unit_ids
+    if writes:
+        assert failures == 0
+        assert kept == ["t1"]
+        assert vector.read_extraction_records(
+            ["stripped-summaries"], suffix="default"
+        ) == {"stripped-summaries": {"ids": ["e1"]}}
+    else:
+        assert failures
+        assert kept == ["t1", "t2"]
+
+
 def test_a_strip_note_left_behind_only_logs(mocker, caplog) -> None:
     # Deleting the note is best-effort: one left makes a retry strip the
     # noted items again, which changes nothing.
@@ -750,7 +794,7 @@ def test_a_removal_clears_a_note_whose_items_are_gone(mocker) -> None:
     manager.remove_text_units("default", ["t1"])
 
     # Every removal reads the note, a first one as well as a retry.
-    assert any(call.args[0] == ["pending-strip"] for call in read.call_args_list)
+    assert any("pending-strip" in call.args[0] for call in read.call_args_list)
     assert vector.read_extraction_records(["pending-strip"], suffix="default") == {}
     assert "e-x" not in graph.ids("entities")
 

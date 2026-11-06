@@ -352,6 +352,8 @@ def test_text_unit_removal_updates_vectors_in_place(manager) -> None:
     }[kind]
     vector_indexer.update_entity_lineage.return_value = IndexingStats()
     vector_indexer.update_relationship_lineage.return_value = IndexingStats()
+    vector_indexer.read_extraction_records.return_value = {}
+    vector_indexer.write_extraction_records.return_value = IndexingStats()
 
     mgr.remove_text_units_from_shared(
         "default", entity_ids=["e1"], relationship_ids=["r1"], text_unit_ids=["t2"]

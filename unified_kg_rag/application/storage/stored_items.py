@@ -50,6 +50,13 @@ _PENDING_STRIP = "pending-strip"
 _PENDING_COMMIT = "pending-commit"
 
 
+# Extraction-store key of a suffix's summary note: the items a removal's
+# strip summarized or wrote unsummarized, whose stored summary the run's
+# commit must not extend; written before the strip's writes and deleted
+# once a commit's writes succeed (see note_stripped_summaries).
+_STRIPPED_SUMMARIES = "stripped-summaries"
+
+
 def _note_ids(note: Mapping[str, Any] | None, field: str) -> set[str]:
     """The ids a strip or commit note (``None``: none stored) lists under
     ``field``."""

@@ -16,6 +16,7 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
 )
 from unified_kg_rag.application.storage.stored_items import (
     _PENDING_COMMIT,
+    _STRIPPED_SUMMARIES,
     _IncidentEdges,
     _is_summary,
     _note_ids,
@@ -1394,9 +1395,13 @@ class CrossRunMerge:
         :meth:`note_pending_commit`), recorded so their claims follow. A
         failed read raises (see merge_with_existing_graph)."""
         m = self._m
-        note = m.vector_indexer.read_extraction_records(
-            [_PENDING_COMMIT], suffix=suffix
-        ).get(_PENDING_COMMIT)
+        notes = m.vector_indexer.read_extraction_records(
+            [_PENDING_COMMIT, _STRIPPED_SUMMARIES], suffix=suffix
+        )
+        note = notes.get(_PENDING_COMMIT)
+        # The items an earlier run's removal stripped and whose commit did
+        # not run: their stored summaries are not extended either.
+        m.read_stripped_summaries(suffix, notes)
         ids = _note_ids(note, "entity_ids")
         if note is not None:
             m._commit_note_suffixes.add(suffix)

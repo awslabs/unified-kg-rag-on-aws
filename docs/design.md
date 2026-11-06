@@ -986,6 +986,12 @@ unless noted.
    it, so a resumed one strips them again. The claims about the other stored
    spellings of a re-keyed, renamed or split entity's name are derived again
    too: one may resolve to it now.
+   Before writing them, a strip also notes the items it summarized or wrote
+   unsummarized (`stripped-summaries`, with those of a note a resumed run
+   reads), whose stored summary the commit summarizes again from the lines
+   rather than extending it; the note is deleted once a commit's writes
+   succeed, so a run that dies between its removal and its commit still
+   converges with a full build.
    A community or report goes once none of its text units is stored. A failed
    removal keeps the deleted documents' records for a retry and fails the
    stage (before the commit when the delta has changed documents).

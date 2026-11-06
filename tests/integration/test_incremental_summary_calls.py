@@ -7,19 +7,25 @@ A run's summaries are each made once and used: a summary graph resolution
 made of the delta's lines is not made again by the indexing, and a summary a
 removal makes of what an edited document's shared entity has left is not
 summarized again by the commit (a summary of a summary where a full build
-summarizes the lines).
+summarizes the lines), even when the run dies between the removal and the
+commit.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_name_variant_convergence import _respond, _state
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.application.storage.indexing_manager import IndexingManager
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 
@@ -132,3 +138,113 @@ def test_editing_several_documents_of_a_shared_entity_matches_a_full_build(
     full = _state(tmp_path / "full", [edited], respond=_digesting, summarize=True)
 
     assert incremental == full
+
+
+NOTE = "stripped-summaries"
+
+
+@pytest.fixture
+def notes() -> Iterator[list[tuple[str, Any]]]:
+    """The writes and deletes of the summary note, in order: ("write", its
+    ids) or ("delete", None)."""
+    events: list[tuple[str, Any]] = []
+    write = OpenSearchIndexer.write_extraction_records
+    delete = OpenSearchIndexer.delete_extraction_records
+
+    def writing(self: Any, records: Any, *args: Any, **kwargs: Any) -> Any:
+        if NOTE in records:
+            events.append(("write", records[NOTE]["ids"]))
+        return write(self, records, *args, **kwargs)
+
+    def deleting(self: Any, keys: Any, *args: Any, **kwargs: Any) -> Any:
+        if NOTE in keys:
+            events.append(("delete", None))
+        return delete(self, keys, *args, **kwargs)
+
+    with (
+        patch.object(OpenSearchIndexer, "write_extraction_records", writing),
+        patch.object(OpenSearchIndexer, "delete_extraction_records", deleting),
+    ):
+        yield events
+
+
+@pytest.mark.parametrize("dies", [True, False], ids=["dies", "finishes"])
+@pytest.mark.parametrize("spelling", ["Acme", "Acme Inc", "Acme GmbH"])
+@pytest.mark.parametrize("edits", [1, 4, 6])
+def test_a_run_that_dies_between_the_strip_and_the_commit_matches_a_full_build(
+    tmp_path: Path,
+    notes: list[tuple[str, Any]],
+    spelling: str,
+    edits: int,
+    dies: bool,
+) -> None:
+    # The run dies once its removal finished (the strip written, the retired
+    # ids deleted) and before its commit: the resumed run's removal finds
+    # nothing left citing the removed units, and its commit extended the
+    # stripped copies (a summary of a summary, or kept removed lines). The
+    # strip notes them before its writes; the commit deletes the note.
+    hub = {f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(8)}
+    edited = {
+        **hub,
+        **{
+            f"h{i}.txt": f"{spelling} and Depot trade goods {i + 20}."
+            for i in range(edits)
+        },
+    }
+
+    incremental = _state(
+        tmp_path / "inc",
+        [hub, edited],
+        respond=_digesting,
+        summarize=True,
+        die_in=1 if dies else None,
+        die_at=("merge_with_existing_graph", 1, False, IndexingManager),
+    )
+    full = _state(tmp_path / "full", [edited], respond=_digesting, summarize=True)
+
+    assert incremental == full
+    assert notes and notes[0][0] == "write"
+    assert notes[-1] == ("delete", None)
+    if dies:
+        # Not deleted by the run that died.
+        assert [op for op, _ in notes].count("delete") == 1
+
+
+def test_a_run_that_only_deletes_documents_deletes_its_summary_note(
+    tmp_path: Path, notes: list[tuple[str, Any]]
+) -> None:
+    # Its removal strips "Acme" and notes it; its commit has no delta and
+    # finishes all the same: a later run may extend the stored summary.
+    hub = {f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(8)}
+    kept = {k: v for k, v in hub.items() if k not in ("h0.txt", "h1.txt")}
+
+    _state(tmp_path, [hub, kept], respond=_digesting, summarize=True)
+
+    assert [op for op, _ in notes] == ["write", "delete"]
+
+
+def test_a_summary_note_left_behind_is_deleted_by_the_next_commit(
+    tmp_path: Path, notes: list[tuple[str, Any]]
+) -> None:
+    # The edit's commit cannot delete the note (best-effort); the next run
+    # only adds a document, so no removal reads it: its commit reads it
+    # (summarizing the noted items from their records, as a full build,
+    # rather than extending them) and deletes it, so it does not outlive
+    # the next commit of the suffix.
+    hub = {f"h{i}.txt": f"Acme and Buyer trade goods {i}." for i in range(8)}
+    edited = {**hub, "h0.txt": "Acme Inc and Depot trade goods 9."}
+    grown = {**edited, "n0.txt": "Acme and Carrier trade goods 10."}
+    delete = OpenSearchIndexer.delete_extraction_records
+    failed = {"n": 0}
+
+    def failing_once(self: Any, keys: Any, *args: Any, **kwargs: Any) -> Any:
+        if NOTE in keys and not failed["n"]:
+            failed["n"] += 1
+            raise ConnectionError("store down")
+        return delete(self, keys, *args, **kwargs)
+
+    with patch.object(OpenSearchIndexer, "delete_extraction_records", failing_once):
+        _state(tmp_path, [hub, edited, grown], respond=_digesting, summarize=True)
+
+    assert failed["n"] == 1
+    assert [op for op, _ in notes] == ["write", "delete"]

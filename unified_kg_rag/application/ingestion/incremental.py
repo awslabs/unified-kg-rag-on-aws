@@ -618,6 +618,9 @@ class IncrementalIndexer:
             if any(stats.failed_items for stats in results.values() if stats):
                 self.indexing_manager.discard_retired_ids()
             else:
+                # The stripped items are written summarized as a full build:
+                # a later commit may extend them.
+                self.indexing_manager.clear_stripped_summaries()
                 # Cleanup, not the delta: a failure leaves an old copy beside the
                 # new one (the next run that touches it re-keys it again).
                 retired = self.indexing_manager.delete_retired_ids()
