@@ -67,6 +67,9 @@ class SearchStrategy(str, Enum):
     MIX = "mix"
     HYBRID = "hybrid"
     NAIVE = "naive"
+    # Wraps local or mix (search.iterative_search.base): bounded follow-up
+    # rounds on the bridge entities a fast-model controller names.
+    ITERATIVE = "iterative"
 
 
 class SearchType(str, Enum):

@@ -62,6 +62,14 @@ def retry_deadline(deadline: float | None) -> Iterator[None]:
         _RETRY_DEADLINE.reset(token)
 
 
+def current_deadline() -> float | None:
+    """The ``time.monotonic()`` deadline of the query in progress
+    (``retry_deadline``), or ``None`` outside one or without a deadline:
+    a strategy with optional rounds (``iterative``) starts none it cannot
+    finish."""
+    return _RETRY_DEADLINE.get()
+
+
 TransientErrorPredicate = Callable[[BaseException], bool]
 ItemErrorPredicate = Callable[[BaseException], bool]
 

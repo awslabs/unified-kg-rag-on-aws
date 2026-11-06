@@ -145,7 +145,7 @@ search:
   none. The output guardrail screens the answer without the token.
 - **`on_insufficient`** applies only when the strategy flagged its own context
   insufficient (`search_results.metadata.context_sufficient: false`, with an
-  optional `insufficiency_reason`); no shipped strategy sets the flag yet.
+  optional `insufficiency_reason`); `iterative` is the shipped strategy that sets it.
   `hedge` asks the model to answer what the context supports and say what it
   does not; `abstain` tells it not to answer and to write the decline in the
   query's language, and reports the output abstained
@@ -154,6 +154,53 @@ search:
   opt-in until a measured run decides; compare `mark` runs as their own arm.
   How declines are scored:
   [Evaluation: unanswerable questions](./evaluate.md#unanswerable-questions-and-declines).
+
+## Follow-up rounds for multi-hop questions (opt-in)
+
+`--search-strategy iterative` runs `search.iterative_search.base` (`mix` by
+default, or `local`) and lets a fast model (`models.roles.query_controller`)
+judge the context before the answer: when the context does not answer the
+question, the base search reruns from the bridge entities the controller
+names (the entity the missing hop is about, such as the depot in "where is
+the depot of the carrier the vendor hired?") and its follow-up queries search
+the passages, for at most `max_rounds` (default 2) rounds. The answer model
+answers once, from the fused candidates. It is opt-in and unmeasured: `auto`
+never routes to it, and nothing else changes when it is not selected.
+
+```yaml
+search:
+  iterative_search:
+    base: local          # or mix (default)
+    max_rounds: 2        # follow-up rounds after the first search
+    max_next_queries: 2  # follow-up queries per round
+    round_top_k: 5       # passages each follow-up query retrieves
+    decompose: false     # true: split the question into steps instead
+models:
+  roles:
+    query_controller: fast   # the controller's model (default: the fast tier)
+```
+
+- **Cost.** At most `max_rounds + 1` controller calls on the fast tier
+  (`max_rounds + 2` with `decompose`), a base search and a rerank per round;
+  the answer is generated once. `metadata["iterative"]` reports the rounds,
+  why they stopped (`stop_reason`: `sufficient`, `max_rounds`,
+  `no_follow_up`, `deadline`, or a degraded step), each verdict, the
+  follow-up queries and the rounds' own model usage.
+- **Deadline.** A round starts only while `search.query_timeout_seconds`
+  leaves `search.model_timeout_seconds` for the answer; a round past that is
+  cancelled and the answer reads what the earlier rounds found.
+- **Languages.** The follow-up queries and bridge names are written in the
+  query's language (the index's when translation is off).
+- **Filters** apply in every round. **Sources** are the passages and graph
+  items the answer model read, with the same provenance as the base's.
+- **Insufficient context.** When the controller still finds the context
+  insufficient after the last round, `metadata["context_sufficient"]` is
+  `false` (the stop reason in `insufficiency_reason`), and
+  `search.abstention.on_insufficient` decides whether the answer hedges or
+  declines ([Declined answers](#declined-answers)).
+
+How it works and how it compares with IRCoT and KAG:
+[design](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in).
 
 ## Interactive mode & conversation memory
 

@@ -49,6 +49,12 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 `search.fusion.diversity_lambda`도 0.5를 유지합니다. 다른 값은 측정에서 유의한 차이가
 없었습니다([근거](./defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity), 영문).
 
+**후속 라운드(선택 사항, 측정 전):**
+
+| 전략 | 사용 시점 | 동작 방식 |
+|---|---|---|
+| `iterative` | 마지막 홉이 질문에 이름이 나오지 않는 엔티티에 관한 다중 홉 질문 | `search.iterative_search.base`(기본 `mix`, 또는 `local`)를 실행한 뒤 fast 모델 컨트롤러(`models.roles.query_controller`)가 묶은 컨텍스트를 읽습니다. 컨텍스트로 답할 수 없으면 컨트롤러가 지목한 연결(bridge) 엔티티로 기본 검색을 다시 시작하고 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(2)번 반복합니다. 라운드마다 찾은 후보를 융합·재순위화하고 답변 모델은 한 번만 답합니다. `decompose: true`이면 대신 질문을 단계로 나눕니다. 질의마다 기본 전략보다 fast 모델 호출이 1-3번 많습니다. 명시적으로 고를 때만 실행되며, 측정하기 전까지 `auto`는 이 전략으로 분기하지 않습니다([설계](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in), 영문). |
+
 ## 하이브리드 점수와 재순위화
 
 모든 전략은 출처별 결과(BM25, 벡터, 그래프)를 RRF(reciprocal rank fusion)나 가중치로

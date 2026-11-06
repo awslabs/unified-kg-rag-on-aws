@@ -323,7 +323,12 @@ class TestSearchStepThreading:
             "processed_query": ProcessedQuery(original_query="q", final_query="q"),
         }
         await chain._search_step(state)
-        assert captured["query"].metadata == {"search_strategy": "local"}
+        # The mode, and the language a strategy writes its own searches in
+        # (the index's: translation is off by default).
+        assert captured["query"].metadata == {
+            "search_strategy": "local",
+            "query_language": "English",
+        }
 
 
 class TestLightragModeFromQuery:

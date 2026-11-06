@@ -52,6 +52,7 @@ from unified_kg_rag.adapters.retrieval.memory_manager import (
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
+    wrapped_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
@@ -66,6 +67,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
 from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
     DriftSearchStrategy,
     GlobalSearchStrategy,
+    IterativeSearchStrategy,
     LightRAGSearchStrategy,
     LocalSearchStrategy,
     SimpleSearchStrategy,
@@ -844,14 +846,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             )
 
     @staticmethod
-    def _needs_query_entities(state: dict[str, Any]) -> bool:
+    def _needs_query_entities(
+        state: dict[str, Any], config: Config | None = None
+    ) -> bool:
         """``query_processing.needs_query_entities``."""
-        return query_processing.needs_query_entities(state)
+        return query_processing.needs_query_entities(state, config)
 
     @staticmethod
-    def _needs_dual_keywords(state: dict[str, Any]) -> bool:
+    def _needs_dual_keywords(
+        state: dict[str, Any], config: Config | None = None
+    ) -> bool:
         """``query_processing.needs_dual_keywords``."""
-        return query_processing.needs_dual_keywords(state)
+        return query_processing.needs_dual_keywords(state, config)
 
     @staticmethod
     def _looks_like_translation_refusal(candidate: str, original: str) -> bool:
@@ -962,7 +968,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # standalone rewrite, which names what a follow-up refers to.
         entity_focus = (
             list(dict.fromkeys(processed.entities))
-            if self._needs_query_entities(state)
+            if self._needs_query_entities(state, self.config)
             else []
         )
 
@@ -979,8 +985,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             ll_keywords=processed.ll_keywords,
             filters=state.get("filters"),
             # One strategy class may serve several modes (LightRAG mix/hybrid/
-            # naive), so it reads the resolved mode from here.
-            metadata={"search_strategy": resolved_strategy.value},
+            # naive), so it reads the resolved mode from here, and the
+            # language its own searches are written in (iterative's).
+            metadata={
+                "search_strategy": resolved_strategy.value,
+                "query_language": query_processing.query_language(self, state),
+            },
         )
         with observability.span(
             "kg_rag.strategy",
@@ -1230,7 +1240,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             query=query.final_query,
             max_tokens=state.get("max_tokens"),
             spare_budget_first=(
-                get_strategy_spec(strategy).strategy_class.spare_context_budget_first
+                get_strategy_spec(
+                    wrapped_strategy(strategy, self.config)
+                ).strategy_class.spare_context_budget_first
                 if strategy is not None
                 else ()
             ),
