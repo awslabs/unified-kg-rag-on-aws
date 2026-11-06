@@ -152,8 +152,14 @@ search:
   컨텍스트가 뒷받침하는 부분만 답하고 다루지 못한 부분을 밝히게 하고, `abstain`은 답하지
   말고 질의 언어로 거절 문장을 쓰게 한 뒤 출력을 거절로 표시합니다
   (`abstention_reason: insufficient_context`). 어느 쪽도 모델 호출을 늘리지 않습니다.
-- `mark`는 답변 프롬프트를 바꾸므로 답변과 EM / F1이 달라질 수 있습니다. 측정으로 결정할
-  때까지 선택 기능이며, `mark` 실행은 별도 비교군으로 다루세요. 거절을 채점하는 방법:
+  `iterative`로 측정했을 때 `abstain`은 답할 수 있는 질문 100개 중 45개를 거절했고 token
+  F1이 13.8점 떨어졌으므로 기본값은 `hedge`로 유지합니다
+  ([근거](../concepts/defaults-and-evidence.md#declines-and-abstention), 영문).
+- `mark`는 답변 프롬프트를 바꾸므로 답변과 EM / F1이 달라집니다. 다중 홉 질문에서 측정한
+  결과, 단서를 달아 맞힌 답변까지 거절로 바뀌어 EM이 10~12점 떨어졌습니다. 기계가 읽을 수
+  있는 거절 표시가 필요할 때만 쓰는 선택 기능으로 유지합니다
+  ([근거](../concepts/defaults-and-evidence.md#declines-and-abstention), 영문). `mark` 실행은
+  별도 비교군으로 다루세요. 거절을 채점하는 방법:
   [평가: 답할 수 없는 질문과 거절](./evaluate.ko.md#답할-수-없는-질문과-거절).
 
 ## 다중 홉 질문의 후속 라운드

@@ -2842,8 +2842,8 @@ does not), `abstain` appends `DECLINE_INSTRUCTIONS` (do not answer; give the
 token and the missing part in the query's language) and marks the output
 abstained with reason `insufficient_context` whatever the model writes.
 Both are LLM-written so the wording follows the query language; neither
-costs an extra call. Strategies that never set the flag are unaffected; no
-shipped strategy sets it yet.
+costs an extra call. Strategies that never set the flag are unaffected;
+`iterative` (§6.3) is the shipped strategy that sets it.
 
 **Scoring** (`EvaluationManager._calculate_abstention_statistics`). An
 abstention on an answerable item is a wrong answer: `answer_match` scores it
@@ -2863,9 +2863,10 @@ Failure modes: a model that ignores the marker instruction looks like
 before a real answer is scored as a decline (precision on answerable items
 shows it). The marker instruction changes the answer prompt, so `mark`
 runs are a separate arm, not comparable EM-for-EM with `off` runs; the
-manifest's config hash differs. Whether `mark` should become the default
-waits on a measured run (`unanswerable` 100-200 + matched answerable,
-`local` and `mix`, `off` vs `mark`).
+manifest's config hash differs. A measured run (100 unanswerable + 100
+answerable MuSiQue questions, `local` and `mix`, `off` vs `mark`, and
+`iterative` `hedge` vs `abstain`) kept `mark` opt-in and `hedge` the
+default ([Defaults and evidence](concepts/defaults-and-evidence.md#declines-and-abstention)).
 
 ### 9.3 Length-controlled judging, assertions and the closed-book arm
 

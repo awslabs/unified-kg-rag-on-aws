@@ -73,6 +73,8 @@ ships no price table, because one would go stale.
 | `processing.gleaning.max_rounds` | 3 | Within one ingestion, round 1 adds +6.0 points of bridge relationships and rounds 2-3 +2.0; decomposition answers found as graph entities +1.3 points [+0.4, +2.3] over extraction alone, +0.4 [0.0, +1.0] from rounds 2-3. Gleaning is 47% of the ingestion cost ([Gleaning rounds](#gleaning-rounds)) |
 | `search.lightrag_search.kg_chunk_pick_method` | `weight` | `vector` n.s. on `mix` and `hybrid`, +1.5 s latency ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.fusion.diversity_lambda` | 0.5 | 0.7 and 1.0 n.s. on `mix` ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
+| `search.abstention.mode` | `off` | `mark` against `off` on 100 answerable and 100 unanswerable multi-hop questions: EM -12 points [-20, -5] on `local`, -10 [-18, -3] on `mix`, for decline recall +8 [+3, +13] over the declines the model already writes in prose. Machine-readable declines, so opt-in ([Declines and abstention](#declines-and-abstention)) |
+| `search.abstention.on_insufficient` | `hedge` | `abstain` with `iterative`: decline precision -9.0 points, token F1 -13.8 [-21.7, -6.0]; the controller flagged 45% of the answerable questions insufficient ([Declines and abstention](#declines-and-abstention)) |
 | `search.local_search.report_selection` | `similarity` | `membership` (MS GraphRAG local's membership, over leaf communities rather than upstream's `community_level` cut) scored EM -4.0 and token F1 -4.1 points, both significant ([Local report selection](#local-report-selection)) |
 | `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant, +3.08 s per answer ([Retrieval switches](#retrieval-switches)) |
 | `search.auto_routable_strategies` | `local`, `mix`, `global`, `iterative` | `iterative` over `mix` against `mix` on multi-hop questions: `answer_contains` +12.5 points [+7.5, +18.0], token F1 +5.2 [+0.2, +10.1], last hop in the context +21.5; p95 11.1 s to 27.4 s, +$0.002 a query. `decompose` was no better than the loop, so it stays off ([Iterative follow-up rounds](#iterative-follow-up-rounds)) |
@@ -279,6 +281,71 @@ of 50 comprehensive DRIFT answers past it. So DRIFT keeps the concise
 answer by default, and the runbook's advice for routing DRIFT, serving it
 under load or giving it the comprehensive answer is a 300 s deadline
 ([Query deadlines and model timeouts](../operations.md#query-deadlines-and-model-timeouts)).
+
+## Declines and abstention
+
+`search.abstention.mode: mark` asks the answer model to start a declined
+answer with `[NO_ANSWER]`, so a decline is machine-readable;
+`on_insufficient: abstain` declines whenever the strategy flagged its own
+context insufficient, which `iterative` does
+([Querying: declined answers](../guides/query.md#declined-answers)). A run
+on 2026-11-06 (package at commit `d0615b8f`, embedded stores, default
+models, one repeat) measured both on a dedicated index:
+
+- **Benchmark.** `prepare-benchmark musique --unanswerable 100 --hops
+  2=20,3=40,4=40 --seed 0`: 100 answerable questions (20 two-hop, 40
+  three-hop, 40 four-hop) and 100 MuSiQue-Full unanswerable ones over 3,312
+  paragraphs. Of 188 unanswerable candidates examined, 82 (44%) were left
+  out because the text of the removed supporting paragraph was still in the
+  pooled corpus, and 6 because their answerable twin was sampled. The
+  filter left the unanswerable half 85 two-hop, 13 three-hop and 2
+  four-hop, so the two halves differ in hop count.
+- **Index.** One ingestion with the defaults, no failed text unit: $361.53
+  at billed prompt-cache prices ($427.76 counting cache reads and writes as
+  input). The whole experiment cost about $427 billed ($496 upper bound).
+- **Declines in the model's own words.** With `mode: off` only the
+  empty-context reply is detected, so `off`'s detected decline recall is 0.
+  To compare like with like, an English pattern over each answer's first
+  line ("the context does not...", "I cannot...", in the analysis script,
+  not the package) estimated the declines the model writes in prose.
+  "Coverage" is the share of answerable questions not declined.
+
+| Arm against its base | Answers on the answerable half | Declines | Cost and latency |
+|---|---|---|---|
+| `mark` against `off`, `local` | EM -12 points [-20, -5], token F1 -7.7 [-14.8, -1.1], coverage -34 [-43, -25]; token F1 over the answered ones +18.0 [+10.3, +26.4] | recall 0.90, precision 0.73; recall +8 [+3, +13] over `off`'s own-word estimate (0.83) | -$0.0011 a query, -0.6 s |
+| `mark` against `off`, `mix` | EM -10 [-18, -3], token F1 -11.3 [-18.9, -4.2], coverage -33 [-42, -24]; token F1 over the answered ones +10.2 [+1.2, +19.3] | recall 0.90, precision 0.73; +3 [-2, +8] n.s. over `off`'s own-word estimate (0.87) | -$0.0014 a query |
+| `iterative` over `mix` (`mark`), `on_insufficient: abstain` against `hedge` | EM -12 [-20, -4], token F1 -13.8 [-21.7, -6.0], coverage -18 [-26, -10] | recall +6 [+1, +12], precision -9.0 [-14.0, -4.3] | -$0.0007 a query, -0.9 s |
+
+Why `mark` costs answers: Sonnet 5.5 already declines in prose with `mode:
+off` (an estimated 83-87% of the unanswerable questions), so the marker
+adds little recall. What it changes is the hedged answer that gives the
+right entity and says what the context does not cover: under `mark` the
+model starts such an answer with the token, and it counts as a decline. On
+`local`, `mark` declined 34 answerable questions; 9 of them had been exact
+matches under `off`. Token F1 over
+the answered questions rises by up to 18 points because the declined ones
+are the hard ones, so it is a selection effect, not a better answer. So
+`mark` stays opt-in: turn it on when a caller needs to tell a decline from
+an answer without reading it, and accept the lower coverage.
+
+Why `hedge` stays the default: the `iterative` controller still found the
+context insufficient when it stopped on 92-93 of the 100 unanswerable
+questions, but also on 45-46 of the 100 answerable ones, so `abstain`
+declined many questions the fused context did answer (coverage 0.55).
+`hedge` answers them with a caveat instead.
+
+The same run confirmed `iterative` on a second index: `iterative` over
+`mix` (`mark`, `hedge`) against `mix` (`mark`) scored EM +11 [+5, +18] and
+token F1 +9.2 [+2.5, +16.6], for +$0.0047 a query and +8.4 s
+([Iterative follow-up rounds](#iterative-follow-up-rounds)).
+
+Not settled by this run: one repeat; English questions only (the own-word
+pattern is English, the marker is not); and noisy unanswerable labels: in
+about 19 of the 100 unanswerable questions the answer named the removed
+twin's answer, inferred from other paragraphs, so part of those
+"unanswerable" questions are answerable from the corpus and decline
+precision and recall carry that noise. The different hop mix of the two
+halves also lets a model separate them by question shape.
 
 ## Reset cost after incremental runs
 
