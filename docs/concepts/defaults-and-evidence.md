@@ -76,6 +76,7 @@ ships no price table, because one would go stale.
 | `search.abstention.mode` | `off` | `mark` against `off` on 100 answerable and 100 unanswerable multi-hop questions: EM -12 points [-20, -5] on `local`, -10 [-18, -3] on `mix`, for decline recall +8 [+3, +13] over the declines the model already writes in prose. Machine-readable declines, so opt-in ([Declines and abstention](#declines-and-abstention)) |
 | `search.abstention.on_insufficient` | `hedge` | `abstain` with `iterative`: decline precision -9.0 points, token F1 -13.8 [-21.7, -6.0]; the controller flagged 45% of the answerable questions insufficient ([Declines and abstention](#declines-and-abstention)) |
 | `search.local_search.report_selection` | `similarity` | `membership` (MS GraphRAG local's membership, over leaf communities rather than upstream's `community_level` cut) scored EM -4.0 and token F1 -4.1 points, both significant ([Local report selection](#local-report-selection)) |
+| `search.local_search.text_unit_ranking` | `ppr` | Against `support` on 200 MuSiQue questions, two repeats: `answer_contains` +3.5 points [+0.5, +6.75], recall@5 +6.1 [+2.9, +9.4], EM and token F1 n.s.; +0.10 s retrieval a query ([Local PPR ranking](#local-ppr-ranking)) |
 | `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant, +3.08 s per answer ([Retrieval switches](#retrieval-switches)) |
 | `search.auto_routable_strategies` | `local`, `mix`, `global`, `iterative` | `iterative` over `mix` against `mix` on multi-hop questions: `answer_contains` +12.5 points [+7.5, +18.0], token F1 +5.2 [+0.2, +10.1], last hop in the context +21.5; p95 11.1 s to 27.4 s, +$0.002 a query. `decompose` was no better than the loop, so it stays off ([Iterative follow-up rounds](#iterative-follow-up-rounds)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
@@ -216,6 +217,76 @@ each, measured membership against similarity: exact match -4.0 points
 [-7.75, -0.25], token F1 -4.1 [-7.7, -0.6], both significant, for about 0.5%
 fewer tokens. Similarity stays the default
 ([Design §6.1](../design.md#61-graphrag-methodology-adapterssearch_strategies)).
+
+## Local PPR ranking
+
+`search.local_search.text_unit_ranking` orders the text units of `local`'s
+expanded entities (and of each DRIFT follow-up's) before the text quota cuts
+them. `ppr`, the default, ranks them by HippoRAG 2's Personalized PageRank
+over the expanded entities, their relationships and the passages they cite,
+seeded by local's entities, the question's passage hits and the endpoints of
+its relationship hits ([Design §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking));
+`support`, the earlier default, by how many expanded entities cite a unit.
+Two runs on 2026-11-06 (package at commits `e4cd96e5` and `85d7e6ec`)
+measured `ppr` against `support` on the same index, models and 200 MuSiQue
+questions, one repeat each, the rerank on, both arms reading the same query
+extractions:
+
+| Measure | `ppr` against `support` |
+|---|---|
+| Answers (both runs, averaged per question) | `answer_contains` +3.5 points [+0.5, +6.75] (13 wins, 7 losses); EM +2.25 and token F1 +2.5, both n.s. |
+| Retrieval | recall@5 +6.1 [+2.9, +9.4]; supporting paragraphs in the context +13.1 and +12.3 [+9.4, +15.5], last hop in the context +16.5 and +15.5 [+10.0, +21.0] (first and second run) |
+| Where it gains | The 95 questions whose `support` context lacked a supporting paragraph: token F1 +12.7 and `answer_contains` +8.4 points, both significant. The 105 whose context held them all: token F1 -4.0 [-8.5, +0.6], n.s. (first run) |
+| Latency | Retrieval +0.10 s [+0.05, +0.18] a query, paired one query at a time on the embedded stores (rerank off); the answer's latency n.s. |
+| Cost | No model call more, one query embedding more. The runs' -$0.0023 a query is not the ranking's: the `ppr` arm read the query extractions the `support` arm had saved, one model call a query fewer |
+
+With a significant `answer_contains` gain over two repeats and no answer
+metric significantly worse, `ppr` became the default; `support` keeps the
+earlier order:
+
+```yaml
+search:
+  local_search:
+    text_unit_ranking: support
+```
+
+Limits. The gain is small and comes from the questions whose `support`
+context missed a paragraph; MuSiQue is English multi-hop text, and DRIFT's
+follow-ups, which use the same ranking, were not measured. Under 40
+concurrent queries in one `run-eval` process the retrieval step took 1.1 to
+1.7 s more instead of 0.10 s: the extra searches' Python work waited behind
+the other queries' for the interpreter lock, and numpy started a BLAS
+thread per core for every kNN product. This release cut that shared work
+(*Changed* in the CHANGELOG): on the same index with the model calls faked,
+40 concurrent queries on a host loaded by other work, the mean retrieval
+time of `support` fell from 19-20 s to 9-10 s and of `ppr` from 23-25 s to
+11 s, but `ppr` still adds 1.6 to 2.2 s there, the Python work of its two
+extra searches queued behind the other queries'. A deployment serving many
+concurrent queries from one process should measure its own latency. Without the
+relationship vector index (`indexing.opensearch.build_relationship_vector_index:
+false`) the PageRank is seeded by the entities and passages alone, which was
+not measured.
+
+## The ppr strategy
+
+The `ppr` strategy answers from HippoRAG 2's PageRank alone: no query
+extraction, one model call (the answer). The first run above measured it
+on the same 200 questions, one repeat, against `local` and against a `mix`
+run on the same index:
+
+| Against | Answers | Retrieval | Latency and cost |
+|---|---|---|---|
+| `local` | `answer_contains` -2.0 [-7.5, +3.5], token F1 -2.1 [-7.0, +3.4], EM -3.5: all n.s. | supporting paragraphs in the context +10.3 [+6.6, +14.1], recall@5 +4.4 [+0.7, +8.2] | p50 10.8 s to 5.1 s; $0.0391 to $0.0164 a query (2.4x cheaper) |
+| `mix` | `answer_contains` -2.0 [-7.5, +3.0], token F1 -2.9 [-7.1, +1.4]: n.s.; 4-hop questions token F1 -15.7 [-28.5, -5.2] | supporting paragraphs +5.9 [+3.2, +8.6] | p50 6.8 s to 5.1 s; $0.0553 to $0.0164 (3.4x cheaper) |
+
+So `ppr` is the cheap, fast option: answers as good within the noise for
+a third to half of the cost and a lower median latency, weaker on the
+longest chains. `auto` does not route to it (`search.auto_routable_strategies`
+refuses it): select it explicitly. A variant closer to HippoRAG 2's
+release (rerank off, passage-seed weight 0) scored EM +5.5 and token F1
++5.9 against the default `ppr` with `answer_contains` and the supporting
+paragraphs unchanged and MRR -9.2, which reads as answer phrasing rather
+than retrieval; it needs a repeat before any default changes.
 
 ## Iterative follow-up rounds
 

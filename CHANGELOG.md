@@ -172,6 +172,7 @@ stored is read again: follow *Upgrading* in order.
 | `search.output_ceilings` | the model's maximum output | 4096 for routing, query extraction and relevance ratings (#525) |
 | `search.answer_prompt_style` | every strategy concise | `{global: comprehensive}`, merged under your map (#533) |
 | `search.global_search.evidence_tokens` | every cited report the budget holds | 4000; `null` removes the cap (#533) |
+| `search.local_search.text_unit_ranking` (local's and DRIFT follow-ups' text-unit order) | by how many expanded entities cite a unit (no setting) | `ppr`, HippoRAG 2's PageRank; `support` is the earlier order (#597, #PR) |
 | `evaluation.enabled_evaluators` | `langchain`, `ragas` | `ragas`, `answer_match`, `retrieval`, `graph_aware`; `langchain` is opt-in (#121, #576) |
 | `evaluation.max_context_tokens` | 8192 | `null`, the answer budget (#315) |
 | `run-eval` warm-up | none | one unscored, untimed query per strategy and run, not configurable (#529, #577) |
@@ -401,6 +402,11 @@ From a `main` checkout (formats and keys no release had):
   `indexing` as before. A tree built from a `main` checkout before (#601) is summarized again by its next build
   (the summaries' length changed): as many calls as building it. `tree` retrieval scores saved before (#601) rank a
   summary's lineage files above the passages; evaluate again to compare.
+- (#PR) `local` (and each DRIFT follow-up) orders its text units by HippoRAG 2's PageRank by default
+  (`search.local_search.text_unit_ranking: ppr`): answers can change. Nothing is re-indexed or re-run; each local
+  query adds a text-unit search, a relationship kNN search, an edge read and one query embedding (about 0.1 s on
+  the embedded stores), and without the relationship vector index the PageRank is seeded by the entities and
+  passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
 
 ### Added
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
@@ -635,22 +641,16 @@ From a `main` checkout (formats and keys no release had):
   ranked passages, the passage hits and the facts (fusion buckets `ppr_passages`, `ppr_seed_text_units`,
   `ppr_facts`) with the optional rerank; no query-time LLM call besides the answer. It reads methodology `hipporag`
   (a `[hipporag]` or `[lightrag]` namespace serves it; one without the relationship vector index refuses it).
-  `search.local_search.text_unit_ranking: ppr` (default `support`) orders local's (and DRIFT's follow-ups') text
-  units by the same PageRank, seeded by local's entities, the question's passage hits and the endpoints of its
-  `ppr_seed_relationships` (5) relationship hits: on 200 MuSiQue questions it put 11.0 points more supporting
-  passages in the context (95% CI +8.4 to +13.8) and raised recall@5 after the rerank by 4.1 (+1.0 to +7.1), for
-  about 0.4 s a query; answers are not measured yet. Graph retrievers gain
+  `search.local_search.text_unit_ranking: ppr` (the default, see *Defaults*) orders local's (and DRIFT's
+  follow-ups') text units by the same PageRank, seeded by local's entities, the question's passage hits and the
+  endpoints of its `ppr_seed_relationships` (5) relationship hits: on 200 MuSiQue questions, two repeats, against
+  `support` it raised `answer_contains` by 3.5 points (95% CI +0.5 to +6.75) and recall@5 by 6.1 (+2.9 to +9.4),
+  EM and token F1 n.s., for about 0.1 s more retrieval a query
+  ([evidence](docs/concepts/defaults-and-evidence.md#local-ppr-ranking)) (#PR). Graph retrievers gain
   `aneighbourhood_edges` (Neptune, Gremlin Server, SQLite; the relationships index under a document filter), and
   `SearchQuery.max_hops` overrides the expansion depth (#597).
 
 ### Changed
-- Global search maps every report of one cut of the community hierarchy (packed by tokens, on the fast model), steps
-  down to a shallower cut over `max_reports_per_level`, credits key points only to their reports, and dynamic
-  selection descends to the leaves; it makes no separate reduce call: the answer model reads the ranked key points
-  (0.2.3 reduced them on `map_reduce_model_id`, Claude Haiku 4.5, into a `synthesized_summary` result) (#318, #347,
-  #354).
-- DRIFT is MS GraphRAG's DRIFT (HyDE primer, follow-up local searches, reduce), with one rerank per query and at
-  most about 27 LLM calls at the defaults; each primer fold's reports are its answer's evidence, and its metadata
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
@@ -660,6 +660,13 @@ From a `main` checkout (formats and keys no release had):
   CPU. Results are unchanged; on 200 MuSiQue questions on the embedded stores, 40 at once with the model calls faked,
   a local query's retrieval took about half as long (`support` 19-20 s to 9-10 s, `ppr` 23-25 s to 11 s on a loaded
   host) for a tenth of the process CPU (#PR).
+- Global search maps every report of one cut of the community hierarchy (packed by tokens, on the fast model), steps
+  down to a shallower cut over `max_reports_per_level`, credits key points only to their reports, and dynamic
+  selection descends to the leaves; it makes no separate reduce call: the answer model reads the ranked key points
+  (0.2.3 reduced them on `map_reduce_model_id`, Claude Haiku 4.5, into a `synthesized_summary` result) (#318, #347,
+  #354).
+- DRIFT is MS GraphRAG's DRIFT (HyDE primer, follow-up local searches, reduce), with one rerank per query and at
+  most about 27 LLM calls at the defaults; each primer fold's reports are its answer's evidence, and its metadata
   counts follow-ups by `report_selection` (#323, #347, #541, #567).
 - `auto` routes with the fast model, falls back to the first routable strategy, and starts the extractions its
   strategies read alongside the router call (one round trip fewer; the unread one still runs and is billed); query

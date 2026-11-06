@@ -26,7 +26,7 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
 | `simple` | 빠른 사실 조회 | 그래프 순회 없이 OpenSearch 벡터·키워드로 검색하며, 주장이 켜져 있으면 주장 인덱스도 포함합니다. 가장 빠릅니다. |
-| `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. 질의 엔티티는 이름으로 순회를 시작하고, 이름이 같은 엔티티가 없으면 최상위 결과가 가장 좋은 결과 점수의 `search.local_search.seed_score_ratio`배 이상일 때 시작점이 됩니다([레퍼런스](../reference/configuration.md#searchlocal_search), 영문). 커뮤니티 보고서는 기본값으로 질의 엔티티와 가장 비슷한 것을 넣습니다([membership을 기본값으로 쓰지 않는 이유](./defaults-and-evidence.md#local-report-selection), 영문). |
+| `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. 질의 엔티티는 이름으로 순회를 시작하고, 이름이 같은 엔티티가 없으면 최상위 결과가 가장 좋은 결과 점수의 `search.local_search.seed_score_ratio`배 이상일 때 시작점이 됩니다([레퍼런스](../reference/configuration.md#searchlocal_search), 영문). 커뮤니티 보고서는 기본값으로 질의 엔티티와 가장 비슷한 것을 넣습니다([membership을 기본값으로 쓰지 않는 이유](./defaults-and-evidence.md#local-report-selection), 영문). 텍스트 단위는 HippoRAG 2의 PageRank로 순서를 정합니다(`search.local_search.text_unit_ranking: ppr`가 기본값이고, `support`는 각 단위를 인용하는 엔티티 수로 정합니다. [근거](./defaults-and-evidence.md#local-ppr-ranking), 영문). |
 | `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 그보다 얕은 단면 중 한도 안에 드는 가장 깊은 단면으로 대신하고, 리포트 키 필터가 있으면 가장 비슷한 리포트를 고름)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. |
 | `drift` | 큰 그림과 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | 가상 답변(HyDE)과 비슷한 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복한 뒤 답변 모델이 종합합니다. LLM 호출이 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
 | `auto` | 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 `search.auto_routable_strategies`(기본 local, mix, global, iterative. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만) 중에서 고릅니다. 질문에 이름이 나오지 않는 엔티티를 거쳐 사실을 이어야 하는 질문은 `iterative`로 보내며, 이때 중앙값 기준 약 10초 더 걸립니다. `auto`가 `iterative`를 고르지 않게 하려면 목록에서 빼면 됩니다. 후보 전략이 읽는 추출을 라우터와 동시에 실행하므로 `auto`는 고른 전략을 직접 실행할 때와 걸리는 시간이 같고, 분기한 전략이 읽지 않는 추출도 과금됩니다(질의마다 fast 모델 호출 약 1회, [`search.auto_speculative_extraction`](../reference/configuration.md#search), 영문). |
@@ -39,11 +39,11 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 | `hybrid` | 키워드 중심의 그래프 질문 | naive 청크 결과를 섞지 않는 `mix`입니다. |
 | `naive` | 빠른 기준선, 비교 평가 | 청크 검색만 합니다(`search.lightrag_search.chunk_stream_top_k`, 기본 20개). 기본값 `--search-type hybrid`는 BM25를 더하며, `--search-type vector`는 upstream LightRAG의 순수 벡터 기준선과 MS GraphRAG의 `basic` 검색에 가깝습니다. |
 
-**HippoRAG 2(개인화 PageRank, 선택 사항):**
+**HippoRAG 2(개인화 PageRank):**
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `ppr` | 사실이 몇 개의 엔티티를 거쳐 이어지는 다중 홉 질문, 커뮤니티 보고서 없이 `hipporag`나 `lightrag`만으로 만든 네임스페이스(방법론 `hipporag`) | 질문의 관계 검색 결과(사실, kNN)와 텍스트 단위 검색 결과(BM25 + 벡터)를 시작점으로, 사실의 엔티티 주변 그래프와 그 엔티티가 인용하는 문단에 개인화 PageRank(Personalized PageRank)를 실행합니다(HippoRAG 2, 감쇠 계수 0.5). 순위를 매긴 문단, 문단 검색 결과, 사실을 다른 전략처럼 융합하고 재순위화합니다. 질의마다 LLM 호출은 답변 1회입니다. 답변 품질을 아직 측정하지 않았으므로 `auto`는 이 전략으로 보내지 않으며, 직접 지정해야 합니다([`search.ppr_search`](../reference/configuration.md#searchppr_search), [설계](../design.md#64-hipporag-2-personalized-pagerank-opt-in-ppr-local-ranking), 영문). `search.local_search.text_unit_ranking: ppr`는 같은 PageRank로 `local`의 텍스트 단위 순서를 정합니다(MuSiQue 200문항에서 컨텍스트에 든 근거 문단이 11포인트 늘었고, 답변은 아직 측정하지 않았습니다). |
+| `ppr` | 사실이 몇 개의 엔티티를 거쳐 이어지는 다중 홉 질문, 커뮤니티 보고서 없이 `hipporag`나 `lightrag`만으로 만든 네임스페이스(방법론 `hipporag`) | 질문의 관계 검색 결과(사실, kNN)와 텍스트 단위 검색 결과(BM25 + 벡터)를 시작점으로, 사실의 엔티티 주변 그래프와 그 엔티티가 인용하는 문단에 개인화 PageRank(Personalized PageRank)를 실행합니다(HippoRAG 2, 감쇠 계수 0.5). 순위를 매긴 문단, 문단 검색 결과, 사실을 다른 전략처럼 융합하고 재순위화합니다. 질의마다 LLM 호출은 답변 1회입니다. 비용과 지연 시간이 적은 선택지입니다. MuSiQue 질문 200개에서 답변은 `local`, `mix`와 유의한 차이가 없었고(`answer_contains`가 각각 2.0%p 낮음) 비용은 2.4-3.4분의 1(질의당 $0.016), 중앙값 지연 시간은 약 5초였지만, 4홉 질문에서는 약했습니다(`mix`보다 token F1 15.7%p 낮음)([근거](./defaults-and-evidence.md#the-ppr-strategy), 영문). `auto`는 이 전략으로 보내지 않으므로 직접 지정해야 합니다([`search.ppr_search`](../reference/configuration.md#searchppr_search), [설계](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking), 영문). `local`은 기본값으로 같은 PageRank로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking`). |
 
 `mix`와 `hybrid`는 수집이 만드는 관계 인덱스를 읽습니다. 키워드가 나오지 않는 짧은
 질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`

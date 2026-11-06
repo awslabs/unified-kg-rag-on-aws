@@ -3919,27 +3919,27 @@ class LocalSearchConfig(BaseModel):
         ),
     )
     text_unit_ranking: Literal["support", "ppr"] = Field(
-        default="support",
+        default="ppr",
         description=(
             "How local search (and each DRIFT follow-up) orders the text units "
-            "of its expanded entities before the text quota cuts them. "
-            "'support': by how many expanded entities cite a unit, then the "
-            "best citing entity's score (the default). 'ppr' (opt-in): "
-            "HippoRAG 2's Personalized PageRank over the expanded entities, "
-            "their relationships and their text units, seeded by the seed "
-            "entities (hit score over the text units cited), the endpoints of "
-            "the question's ppr_seed_relationships relationship hits (kNN) and "
-            "its search.ppr_search.passage_seed_top_k text-unit hits (BM25 + "
+            "of its expanded entities before the text quota cuts them. 'ppr' "
+            "(the default): HippoRAG 2's Personalized PageRank over the "
+            "expanded entities, their relationships and their text units, "
+            "seeded by the seed entities (hit score over the text units "
+            "cited), the endpoints of the question's ppr_seed_relationships "
+            "relationship hits (kNN) and its "
+            "search.ppr_search.passage_seed_top_k text-unit hits (BM25 + "
             "vector, weighted by passage_node_weight), which it ranks too; the "
-            "PageRank settings are search.ppr_search's. On 200 MuSiQue "
-            "questions (retrieval only) it raised the supporting passages in "
-            "the context by 11.0 points (95% CI +8.4 to +13.8) and recall@5 "
-            "after the rerank by 4.1 (+1.0 to +7.1), against 6.4 for fusing "
-            "the same passage hits without the PageRank, for about 0.4 s more "
-            "a query on the embedded stores; answers are not measured yet, so "
-            "support stays the default. Costs a text-unit search, a "
-            "relationship search and an edge read a query. See "
-            "docs/design.md §6.4."
+            "PageRank settings are search.ppr_search's. 'support': by how many "
+            "expanded entities cite a unit, then the best citing entity's "
+            "score (the earlier default). On 200 MuSiQue questions (two "
+            "repeats) ppr raised answer_contains by 3.5 points (95% CI +0.5 to "
+            "+6.75) and recall@5 by 6.1 (+2.9 to +9.4) against support, exact "
+            "match and token F1 not significantly, for about 0.1 s more "
+            "retrieval a query on the embedded stores. Costs a text-unit "
+            "search, a relationship search, an edge read and a query "
+            "embedding a query. See docs/concepts/defaults-and-evidence.md#local-ppr-ranking "
+            "and docs/design.md §6.4."
         ),
     )
     ppr_seed_relationships: int = Field(

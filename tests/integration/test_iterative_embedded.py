@@ -167,6 +167,10 @@ def _build(
     config.processing.translation.target_language = chain.language
     # One hop from the first company reaches the carrier, not the depot.
     config.indexing.neptune.max_hops = 1
+    # The base round must miss the last hop: the support order keeps to the
+    # entities one hop reached (the PageRank's passage search of the
+    # question finds the depot's passage on this tiny corpus).
+    config.search.local_search.text_unit_ranking = "support"
     config.search.iterative_search.base = base  # type: ignore[assignment]
     server = FakeOllama(_responder(chain, seen), e2e.ANSWER, e2e.DIM)
     providers = e2e._providers(

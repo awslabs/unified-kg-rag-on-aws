@@ -210,13 +210,17 @@ async def test_caller_filters_reach_every_sub_query(config: Config) -> None:
     for call in [*os_r.calls, *neptune_r.calls]:
         assert call.filters is not None
         assert call.filters["doc_type"] == "contract"
-    # The chunk fetch-by-id keeps its id scope alongside the caller filters.
+    # The chunk fetch-by-id (no query text, unlike the PageRank's passage
+    # search) keeps its id scope alongside the caller filters.
     chunk_calls = [
-        q for q in os_r.calls if q.index_prefixes == [os_cfg.text_units_index_prefix]
+        q
+        for q in os_r.calls
+        if q.index_prefixes == [os_cfg.text_units_index_prefix] and not q.query
     ]
+    # (The PageRank ranks the passage hit beside the entity's unit.)
     assert chunk_calls and chunk_calls[0].filters == {
         "doc_type": "contract",
-        "id": ["chunk-1"],
+        "id": [f"{os_cfg.text_units_index_prefix}-1", "chunk-1"],
     }
     assert query.filters == filters  # caller's dict not mutated
 
@@ -228,8 +232,13 @@ async def test_unfiltered_query_sends_no_filters(config: Config) -> None:
 
     os_cfg = config.indexing.opensearch
     for call in os_r.calls:
-        if call.index_prefixes == [os_cfg.text_units_index_prefix]:
-            assert call.filters == {"id": ["chunk-1"]}
+        if call.index_prefixes == [os_cfg.text_units_index_prefix] and not call.query:
+            assert call.filters == {
+                "id": [f"{os_cfg.text_units_index_prefix}-1", "chunk-1"]
+            }
+        elif call.filters and set(call.filters) == {"id"}:
+            # A fetch by id (the PageRank's endpoint entities): ids only.
+            assert call.index_prefixes == [os_cfg.entities_index_prefix]
         elif call.filters and {"source_id", "target_id"} & set(call.filters):
             # Bridge-edge fetch: scoped to the expanded entities only.
             assert len(call.filters) == 1
@@ -349,6 +358,8 @@ async def test_generic_entities_are_dropped_from_the_context(config: Config) -> 
     # units is too generic. It was kept out of the text-unit fan-out but still
     # reached the context; it is now dropped from both.
     config.search.local_search.entity_frequency_threshold = 3
+    # The support ranking's fetch: the units of the entities kept.
+    config.search.local_search.text_unit_ranking = "support"
     strategy, os_r, _ = _make_strategy(config)
     strategy.retrievers[RetrieverRole.GRAPH.value] = _GraphWithLineage(5, 2)
 
@@ -398,6 +409,8 @@ async def test_frequency_filter_keeps_the_seeds(
     config: Config, units: dict[str, int], expected: list[str]
 ) -> None:
     config.search.local_search.entity_frequency_threshold = 3
+    # The support ranking's fetch: the units of the entities kept.
+    config.search.local_search.text_unit_ranking = "support"
     strategy, os_r, _ = _make_strategy(config)
     seed_id = f"{config.indexing.opensearch.entities_index_prefix}-1"
     units = {seed_id if k == "SEED" else k: v for k, v in units.items()}

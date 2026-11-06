@@ -65,10 +65,14 @@ which ranks the passages (no query entity extraction, one LLM call). It
 needs the relationship vector index and the graph, not community reports.
 Its settings are `search.ppr_search`, and its fusion buckets
 (`ppr_passages`, `ppr_seed_text_units`, `ppr_facts`) take
-`search.fusion.fusion_weights`; `search.local_search.text_unit_ranking: ppr`
-orders `local`'s text units the same way. Both are opt-in until measured:
-see [Retrieval](../concepts/retrieval.md) and
-[Design §6.4](../design.md#64-hipporag-2-personalized-pagerank-opt-in-ppr-local-ranking).
+`search.fusion.fusion_weights`. It is the cheap, fast option: answers
+within the noise of `local` and `mix` on multi-hop questions for a third to
+half of their cost, so `auto` never picks it
+([evidence](../concepts/defaults-and-evidence.md#the-ppr-strategy)).
+`local` orders its text units the same way by default
+(`search.local_search.text_unit_ranking: ppr`; `support` restores the
+earlier order). See [Retrieval](../concepts/retrieval.md) and
+[Design §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking).
 
 ## Rerank status
 
