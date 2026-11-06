@@ -25,6 +25,8 @@ with Gremlin::
 The seeds themselves come back as rows with a path of length 1.
 """
 
+import itertools
+import json
 import time
 from abc import abstractmethod
 from collections.abc import Callable
@@ -39,13 +41,25 @@ from unified_kg_rag.adapters.retrieval.base import (
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
     NEPTUNE_ENTITY_FILTER_FIELDS,
+    SOURCE_KINDS,
     SOURCE_KINDS_FIELD,
     FilterFields,
     check_filter_values,
+    source_kinds_values,
     typed_filter_values,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
-from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    DOCUMENT_SOURCE_KIND,
+    encoded_source_kinds,
+)
+from unified_kg_rag.domain.models import (
+    Config,
+    GraphEdge,
+    RetrievalResult,
+    SearchQuery,
+)
+from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.shared import StoreConnectionError, get_logger
 from unified_kg_rag.shared.utils import safe_float_parse, text_digest
 
@@ -55,6 +69,49 @@ logger = get_logger(__name__)
 # value_map's one-element list is otherwise read as its value (an entity in
 # one text unit read as a str, and every consumer had to re-wrap it).
 _LIST_PROPERTIES = frozenset({"text_unit_ids", "community_ids", SOURCE_KINDS_FIELD})
+
+
+def edge_source_kinds(stored: Any) -> list[str] | None:
+    """An edge's stored ``source_kinds`` (one JSON list string, the graph
+    codec's encoding) as a list; ``None`` when absent or unreadable."""
+    if isinstance(stored, list):
+        stored = stored[0] if len(stored) == 1 else None
+    if not isinstance(stored, str) or not stored:
+        return None
+    try:
+        decoded = json.loads(stored)
+    except ValueError:
+        return None
+    return [str(k) for k in decoded] if isinstance(decoded, list) else None
+
+
+def edge_kinds_filter(filters: dict[str, Any] | None) -> tuple[list[str], bool] | None:
+    """How a ``source_kinds`` filter keeps an edge: the stored encodings
+    that name one of its kinds, and whether an edge without the property
+    (documents only) passes (the filter names ``document``). ``None``
+    without such a filter. Every encoding is a sorted JSON list of a
+    non-empty set of ``SOURCE_KINDS`` (``encoded_source_kinds``)."""
+    value = (typed_filter_values(filters) or {}).get(SOURCE_KINDS_FIELD)
+    if value is None or not isinstance(value, str | list) or not value:
+        return None
+    kinds = {str(kind) for kind in source_kinds_values(value)}
+    encodings = [
+        encoded_source_kinds(subset)
+        for size in range(1, len(SOURCE_KINDS) + 1)
+        for subset in itertools.combinations(sorted(SOURCE_KINDS), size)
+        if kinds.intersection(subset)
+    ]
+    return encodings, DOCUMENT_SOURCE_KIND in kinds
+
+
+def edge_kinds_pass(edge: GraphEdge, rule: tuple[list[str], bool] | None) -> bool:
+    """Whether ``edge`` passes an ``edge_kinds_filter`` rule."""
+    if rule is None:
+        return True
+    encodings, without = rule
+    if not edge.source_kinds:
+        return without
+    return encoded_source_kinds(edge.source_kinds) in encodings
 
 
 class GraphExpansionRetriever(BaseGraphRAGRetriever):
@@ -147,6 +204,55 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
     def _request_error(self, exc: Exception) -> Exception:
         """``exc`` typed by the backend's error policy (identity by default)."""
         return exc
+
+    async def aneighbourhood_edges(
+        self, vertex_ids: list[str], query: SearchQuery, *, per_vertex: int
+    ) -> list[GraphEdge] | None:
+        """The relationships between two of ``vertex_ids`` (the base's
+        contract), read by the backend (``_edges_within``) under
+        ``query.suffix``'s entity label. Of the caller's filters only
+        ``source_kinds`` applies to an edge (the vertices passed the rest
+        already): an edge stated only by excluded kinds takes no slot. The
+        error policy is :meth:`aretrieve`'s: a request the store failed
+        degrades to no edges, a fatal one raises."""
+        check_filter_values(query.filters, allow_empty_lists=True)
+        ids = list(dict.fromkeys(str(v) for v in vertex_ids if v))
+        if len(ids) < 2 or per_vertex < 1:
+            return []
+        label = self._get_label(self._neptune_config.entity_label_prefix, query.suffix)
+        try:
+            edges = await self._edges_within(
+                ids, label, per_vertex, edge_kinds_filter(query.filters)
+            )
+        except Exception as e:
+            error = self._request_error(e)
+            if not is_fatal_retrieval_error(error):
+                logger.error(
+                    "%s neighbourhood edges failed (transient, degrading to "
+                    "none): %s",
+                    self._store_name,
+                    e,
+                )
+                return []
+            if error is e:
+                raise
+            raise error from e
+        if edges is None:
+            return None
+        return cap_edges_per_vertex(edges, ids, per_vertex)
+
+    async def _edges_within(
+        self,
+        ids: list[str],
+        label: str,
+        per_vertex: int,
+        kinds: tuple[list[str], bool] | None,
+    ) -> list[GraphEdge] | None:
+        """The edges between two of ``ids`` under ``label`` that pass the
+        ``edge_kinds_filter`` rule ``kinds``, each vertex's first
+        ``per_vertex`` by relationship id. ``None`` (the default): the
+        backend cannot tell."""
+        return None
 
     @staticmethod
     def _seed_ids(query: SearchQuery) -> list[Any]:

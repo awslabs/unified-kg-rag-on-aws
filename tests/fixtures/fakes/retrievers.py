@@ -20,7 +20,12 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     opensearch_filter_fields,
     union_filter_fields,
 )
-from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
+from unified_kg_rag.domain.models import (
+    Config,
+    GraphEdge,
+    RetrievalResult,
+    SearchQuery,
+)
 
 
 class FakeRetriever:
@@ -47,6 +52,12 @@ class FakeRetriever:
 
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """No index metadata (the ``BaseGraphRAGRetriever`` default)."""
+        return None
+
+    async def aneighbourhood_edges(
+        self, vertex_ids: list[str], query: SearchQuery, *, per_vertex: int
+    ) -> list[GraphEdge] | None:
+        """Cannot tell (the ``BaseGraphRAGRetriever`` default)."""
         return None
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:

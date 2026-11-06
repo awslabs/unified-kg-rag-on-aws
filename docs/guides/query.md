@@ -24,6 +24,10 @@ run-rag --query "How does entity X relate to Y?" \
 # Retrieval only, JSON output
 run-rag --query "..." --mode search --output-format json --config-path config.yaml
 
+# HippoRAG 2 PageRank (opt-in; auto never routes to it)
+run-rag --query "Where was the founder of the company that acquired X born?" \
+  --search-strategy ppr --config-path config.yaml
+
 # Verbose (entities, top sources, metrics) with attribute filters
 run-rag --query "..." --verbose --filters attr_category:research type:person \
   --config-path config.yaml
@@ -52,6 +56,19 @@ Every filterable field per store, value typing, dates, which strategy
 applies which key and how graph expansion is filtered:
 [Filters reference](../reference/filters.md). Filters are not an access
 control: [Not an access-control boundary](../concepts/scopes-and-namespaces.md#not-an-access-control-boundary).
+
+## Personalized PageRank (`ppr`)
+
+`--search-strategy ppr` answers with HippoRAG 2's retrieval: the question's
+relationship and passage hits seed a PageRank over the graph around them,
+which ranks the passages (no query entity extraction, one LLM call). It
+needs the relationship vector index and the graph, not community reports.
+Its settings are `search.ppr_search`, and its fusion buckets
+(`ppr_passages`, `ppr_seed_text_units`, `ppr_facts`) take
+`search.fusion.fusion_weights`; `search.local_search.text_unit_ranking: ppr`
+orders `local`'s text units the same way. Both are opt-in until measured:
+see [Retrieval](../concepts/retrieval.md) and
+[Design §6.4](../design.md#64-hipporag-2-personalized-pagerank-opt-in-ppr-local-ranking).
 
 ## Rerank status
 

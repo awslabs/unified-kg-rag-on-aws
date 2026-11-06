@@ -14,15 +14,21 @@ from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphStore, VertexFilter
 from unified_kg_rag.adapters.retrieval.base import seed_shares
-from unified_kg_rag.adapters.retrievers.graph_expansion import GraphExpansionRetriever
+from unified_kg_rag.adapters.retrievers.graph_expansion import (
+    GraphExpansionRetriever,
+    edge_kinds_pass,
+    edge_source_kinds,
+)
 from unified_kg_rag.adapters.storage.filter_schema import (
     ATTRIBUTE_KEY_PREFIX,
     SOURCE_KINDS_FIELD,
     source_kinds_values,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
-from unified_kg_rag.domain.models import Config, SearchQuery
+from unified_kg_rag.domain.models import Config, GraphEdge, SearchQuery
+from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import safe_float_parse
 
 logger = get_logger(__name__)
 
@@ -133,22 +139,45 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
         entity_label = self._get_label(
             self._neptune_config.entity_label_prefix, query.suffix
         )
+        hops = query.max_hops or self._max_hops
         logger.info(
             "Traversing from entities with label: '%s', seed_count: %s, max_hops: %s",
             entity_label,
             len(seed_ids),
-            self._max_hops,
+            hops,
         )
         filters = self._scope_filters_to_label(entity_label, query.filters)
         return await asyncio.to_thread(
             self._store.traverse,
             entity_label,
             [str(seed) for seed in seed_ids],
-            max_hops=self._max_hops,
+            max_hops=hops,
             max_results_per_hop=self._max_results_per_hop,
             per_seed_limit=seed_shares(
                 query, self._neptune_config.traversal_fetch_multiplier, seed_ids
             ),
             keep=vertex_filter(filters),
             with_degree=self._neptune_config.entity_importance_source == "degree",
+        )
+
+    async def _edges_within(
+        self,
+        ids: list[str],
+        label: str,
+        per_vertex: int,
+        kinds: tuple[list[str], bool] | None,
+    ) -> list[GraphEdge]:
+        rows = await asyncio.to_thread(self._store.edges_within, label, ids)
+        edges = [
+            GraphEdge(
+                id=str(props.get("id") or edge_id),
+                source_id=source,
+                target_id=target,
+                weight=safe_float_parse(props.get("weight")) or 1.0,
+                source_kinds=edge_source_kinds(props.get(SOURCE_KINDS_FIELD)),
+            )
+            for edge_id, source, target, props in rows
+        ]
+        return cap_edges_per_vertex(
+            (edge for edge in edges if edge_kinds_pass(edge, kinds)), ids, per_vertex
         )

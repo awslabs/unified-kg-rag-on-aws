@@ -146,7 +146,8 @@ unified_kg_rag/
 │  │  │                 #   document_identity, seed_graph, visualization_data (+ layout helpers),
 │  │  │                 #   community_clustering (Leiden hierarchy, content-named communities)
 │  │  └─ merge/         #   cross-run merger
-│  ├─ retrieval/        #   store_names, index_prefixes, hybrid_normalization
+│  ├─ retrieval/        #   store_names, index_prefixes, hybrid_normalization,
+│  │                    #   ppr (HippoRAG 2 Personalized PageRank, §6.4)
 │  └─ prompts/          #   version-controlled prompt templates
 ├─ ports/               # interfaces the application wires, adapters implement (DocStatusPort,
 │                       #   BaseIndexer/GraphIndexer/VectorIndexer, ModelFactoryPort,
@@ -161,9 +162,9 @@ unified_kg_rag/
 │  ├─ retrievers/       #   Neptune/OpenSearch/SQLite-graph retrievers
 │  ├─ doc_status/       #   DynamoDB/SQLite document-status registries (DocStatusPort)
 │  ├─ guardrail/        #   Bedrock ApplyGuardrail (ContentGuardPort)
-│  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive)
+│  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive) + ppr
 │  ├─ retrieval/        #   abstract retriever/strategy bases, strategy_registry, hybrid scorer,
-│  │                    #   token/memory managers
+│  │                    #   token/memory managers, ppr_ranking (PageRank over the stores)
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
 │  │                    #   translator, gleaner, community_detector, document_converter
 │  ├─ renderers/        #   graph visualization renderers
@@ -1943,6 +1944,230 @@ about +11 points of answer F1 if every missing last-hop passage were
 recovered, realistically +3 to +5, below the 6-8 point minimum effect 200
 questions detect: hence the measured experiment before any default.
 
+### 6.4 HippoRAG 2 Personalized PageRank (opt-in: `ppr`, `local` ranking)
+
+A port of HippoRAG 2's retrieval (Gutiérrez, Shu, Qi, Zhou, Su, *From RAG to
+Memory: Non-Parametric Continual Learning for Large Language Models*, ICML
+2025, [arXiv 2502.14802](https://arxiv.org/abs/2502.14802); code
+[OSU-NLP-Group/HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG), MIT),
+reimplemented on the graph and indexes ingestion already builds: the
+algorithm is re-written here, none of its code is vendored or depended on.
+HippoRAG 2 seeds a Personalized PageRank (PPR) over a graph of entities and
+passages from the facts (triples) most similar to the question and from a
+dense passage search, and ranks the passages by their PPR score; the paper
+reports it above its dense-retrieval baselines on the multi-hop sets
+(MuSiQue among them). Both uses here are opt-in: the defaults change only
+on a measured answer-level result (§9.1).
+
+- **`ppr` strategy** (`adapters/search_strategies/ppr_search.py`,
+  `methodology = Methodology.HIPPORAG`, config `search.ppr_search`): the
+  HippoRAG 2 retrieval as a strategy of its own. No query-time LLM call
+  besides the answer (no entity or keyword extraction). It reads the
+  entities, relationships and their vector index, text units and the graph
+  (the `hipporag` profile of §4.6, what `lightrag` builds); no community
+  report, so it serves a namespace built with `indexing.methodologies:
+  [hipporag]` or `[lightrag]`, and a namespace without the relationship
+  vector index (`[graphrag]` with `build_relationship_vector_index: false`)
+  refuses it before any model call (`MethodologyNotIndexedError`). The
+  `local` ranking below stays a `graphrag` strategy. `auto` never routes to it
+  (`search.auto_routable_strategies` refuses it) until a measurement says
+  where it wins.
+- **`local` ranking** (`search.local_search.text_unit_ranking: ppr`,
+  default `support`): the same PPR replaces the order of local search's text
+  units (`_rank_text_unit_ids`) over local's own expansion; everything else
+  of local (seeds, sections, quotas, rerank) is unchanged. DRIFT's follow-up
+  local searches follow the setting. A retrieval-only screen on 200 MuSiQue
+  questions (one repeat, real models) measured it, as configured by default,
+  against `support`: the supporting passages in the context +11.0 points
+  (95% CI +8.4 to +13.8), recall@5 after the rerank +4.1 (+1.0 to +7.1);
+  fusing the same passage hits into `support`'s order without the PageRank
+  gained +6.4, so the PageRank adds 4.7 (+2.5 to +6.8) beyond the passage
+  hits; seeding from the entities alone gained only +3.9. It cost about
+  0.4 s a query on the embedded stores (the PageRank itself about 50 ms).
+  The answers are not measured yet, so `support` stays the default.
+
+**Data flow of `ppr`.**
+
+1. *Seeds*, concurrently, each under the caller's filters and suffix: the
+   `fact_top_k` (5, HippoRAG's `linking_top_k`) relationships-index hits of
+   the question (*facts*) by kNN against the relationship descriptions
+   (`fact_search_type`: HippoRAG's query-to-fact similarity; null for the
+   request's search), and the `passage_seed_top_k` (20) text-units hits
+   (*passage seeds*) under the request's `search_type` (BM25 + kNN fused by
+   default), so vector, lexical and graph signals all seed. With
+   `entity_seed_top_k` (default 0) the entities-index hits of the question
+   seed too; should the relationship vector index be off at query time on a
+   namespace that holds it, they take the facts' place (`fact_top_k` of
+   them), so the strategy still seeds the graph.
+2. *Neighbourhood*: graph expansion (§6, the graph walk or, under a document
+   filter, the walk over the relationships index) from the facts' endpoints
+   and the entity hits, `max_hops` (2) deep, at most
+   `max_neighbourhood_entities` (100) entities besides the seeds, each seed's
+   share of the budget in proportion to its fact score.
+3. *Edges*: the relationships between two entities of the neighbourhood
+   (`BaseSearchStrategy._neighbourhood_edges`, below), at most
+   `max_edges_per_vertex` (50) per entity.
+4. *Graph* (`domain/retrieval/ppr.py`, `PassageGraph`): one node per entity
+   and per passage; one undirected edge of weight 1 per relationship (parallel
+   relationships add up; HippoRAG counts the triples between two phrases),
+   and one of weight 1 from each entity to each document text unit it cites
+   (`text_unit_ids`; HippoRAG's passage-to-phrase *context* edges). An entity
+   citing more than `entity_frequency_threshold` (20) document units adds
+   no passage edges, a seed neither (it still passes its mass on through its
+   relationships), which bounds the graph a hub would blow up. The passage
+   seeds are passage nodes too; one no reached entity cites is a node
+   without edges.
+5. *Reset vector* (HippoRAG 2's seeding, `seed_weights`): the facts' scores
+   are read relative to the best fact (HippoRAG min-max normalizes them; a
+   BM25 score would otherwise outweigh the passage weight tenfold), the
+   entity hits' alike. An entity of the graph scores the mean, over the
+   facts that name it (each end counted, as HippoRAG counts a self-loop's
+   two), of the fact's score divided by the number of document units the
+   entity cites (at least 1), and only the `link_top_k` (5) best entities of
+   the graph keep their score (an endpoint the stores did not return takes
+   no slot); an entity hit is scored the same way. A passage seed scores
+   `passage_node_weight` (0.05) times its hit score min-max normalized over
+   the passage seeds (all 1 when they tie). Normalized to sum 1.
+6. *PPR* (`personalized_pagerank`): power iteration of
+   `p = (1 - d) r + d (p P + (p · dangling) r)`, damping `d` = `damping`
+   (0.5, the probability of following an edge), at most `max_iterations`
+   (30) steps or until the L1 change is below `tolerance` (1e-6); the mass of
+   a node without edges returns to the reset vector, as in igraph's
+   (PRPACK) personalized PageRank HippoRAG calls. Nodes are ordered by id, so
+   a run is deterministic; ties rank by id.
+7. *Fusion buckets* (`search.fusion.fusion_weights` keys):
+   `ppr_passages` (text: the passages by PPR score, the first text quota
+   `max(2 * top_k, 20)` of them that pass the caller's filters, fetched by
+   id), `ppr_seed_text_units` (text: the hybrid passage hits, in their
+   order) and `ppr_facts` (relationship: the facts, in their order). RRF
+   fuses them through `HybridScorer` (a passage both rank adds both terms),
+   the reranker reorders the text candidates when `rerank` is on (the
+   default; off records rerank `skipped`), each type keeps its quota, and
+   the token budget packs the context as for every strategy.
+8. *Answer*: the standard concise answer prompt
+   (`search.answer_prompt_style`); the sources are the sections the model
+   saw, with the provenance every strategy reports (§6: document ids,
+   chunk ids, `text_unit_ids`, seed-graph provenance, `iri`,
+   `source_kinds`), so `run-eval`'s retrieval evaluator scores it as any
+   other.
+
+**`local` ranking** is the variant the screen above measured
+(`tests/unit/test_ppr_search.py` pins its ranking to the screen's prototype
+on a fixture). It builds the same graph from local's expanded entities
+(after its frequency filter, which keeps the seeds as nodes; past
+`search.local_search.entity_frequency_threshold` a seed links no passage
+either) and their text units, plus the endpoints of the question's
+`search.local_search.ppr_seed_relationships` (5) relationships-index hits
+(kNN, `fact_search_type`; an endpoint outside the neighbourhood is read from
+the entities index and joins the graph with its relationships). Its reset
+vector (`summed_seed_weights`): an entity's seed hit score plus the mean
+score of the relationship hits naming it, both as the searches return them,
+divided by its document units (no `link_top_k` cut), plus the passage seeds
+(`search.ppr_search.passage_seed_top_k` (20) text-unit hits of the question
+under the request's search, weighted by `passage_node_weight`). The PPR
+order over every passage node, passage seeds included, replaces
+`_rank_text_unit_ids`: the passage hits enter local as seeds and candidates
+of that ranking, not as a fusion bucket of their own (as measured). The
+damping, iterations, tolerance and edges per entity are
+`search.ppr_search`'s. The search metadata records `text_unit_ranking` and
+the run's counts (`ppr`: `entities`, `relationships`, `linked_entities`,
+`passages`, `entity_seeds`, `passage_seeds`, `fact_seeds`, `iterations`,
+`converged`).
+
+**Neighbourhood edges, one contract per backend.**
+`BaseGraphRAGRetriever.aneighbourhood_edges(vertex_ids, query,
+per_vertex=n)` returns the relationships whose two endpoints are both in
+`vertex_ids`, each vertex contributing at most its first `n` such edges by
+relationship id (the edges of either endpoint's first `n` are kept), as
+`GraphEdge` (id, endpoints, stored weight, source kinds), sorted by
+`(source_id, target_id, id)`. `None` (the base's default) means the backend
+cannot tell; the strategy then reads the relationships index.
+
+- Neptune / Gremlin Server (`NeptuneRetriever`):
+  `local(bothE().where(otherV().<in the set>).order().by("id").limit(n))`
+  from the set's vertices, in one request (custom vertex ids: `g.V(ids)` and
+  `hasId`; property ids: `has("id", within(...))`, also while a full build
+  switches the label). `indexing.neptune.deterministic_order: false` takes
+  the store's first `n`, as the walk does.
+- SQLite (`SQLiteGraphRetriever`): one indexed `IN` read of the edges
+  leaving each batch of 400 vertices (an edge within the set leaves one of
+  them), the target kept when in the set, the first `n` per vertex by id in
+  Python.
+- Under a document filter the graph cannot tell which edges a passing
+  document states, so the edges come from the relationships index
+  (`_incident_relationships`, as the filtered walk reads them: one request per
+  batch of source ids with the target pinned to the set, a page of at most
+  `max_query_size` edges best first; under two or more document keys an
+  edge also needs one passing document by its text units), cut per vertex
+  alike. A `source_kinds` filter applies to the edges of every path; there
+  the index also applies the caller's relationship keys (`predicate_iri`,
+  `in_schema`, `weight`), which the graph path does not apply to edges, as
+  the graph walk crosses every edge.
+
+`tests/integration/test_retrieval_conformance.py` pins one result for
+SQLite, Gremlin Server (both vertex-id modes, `LOCAL_STORES=1`) and Neptune
+(`-m aws`).
+
+**Why a truncated neighbourhood can be enough.** PPR is the distribution of
+where a walk that starts on the reset vector stops, continuing each step
+with probability `d`. A node more than `h` hops from every reset node needs
+at least `h + 1` steps, so it holds at most `d^(h+1)` of the mass: 12.5% past
+2 hops, 6.25% (0.5^4) past 3 at `d = 0.5`. Restricting the graph to the
+`h`-hop ball around the reset nodes changes only walks that step off its
+boundary, which also take at least `h + 1` steps, so the scores move by at
+most `2 d^(h+1)` in L1 (`tests/property/test_ppr_properties.py` checks the
+bound on random graphs). The graph built here is not that ball, so the
+bound does not cover it: the expansion's budget and per-vertex caps cut the
+entity side, and a passage seed links only to the reached entities that
+cite it, never to the other entities that do (an index of which entities
+cite a passage would be one more read a query), so one no reached entity
+cites holds its own reset mass. How much these cuts cost is part of the
+measurement.
+
+**Cost.** No LLM call at index time: the graph, the relationships' vectors
+and the text units are what ingestion builds anyway. A `ppr` query costs the
+question's embedding, three searches (facts, passages, optional entities),
+one graph expansion, one edge read, one passage fetch, a PPR off the event
+loop (`numpy`: a median of 2 ms for 50 entities and 200 passages, 8 ms for
+150 and 600, 31 ms for 300 and 2,000), the rerank and the answer call: one LLM call,
+where `local` makes two (entity extraction and answer). The `local` ranking
+adds a passage search, a relationship search (`ppr_seed_relationships`)
+and an edge read to a local query.
+
+**Failure modes.** No seed at all (nothing matched): no results, so the
+answer is "cannot answer" without a model call. A failed seed search,
+expansion or edge read that is not fatal degrades that part only (logged;
+fatal store errors fail the query, §8.1): without edges the PPR runs over the
+entity-passage links, without an expansion over the seeds read from the
+entities index; a reset vector without mass leaves the passage hits in their
+own order. The `local` ranking falls back to `support` when the PPR has no
+passage to rank. Without the relationships index, the edges under a document
+filter come from the graph, unchecked against the filter, as the graph walk's
+are (§6): an edge only excluded documents state can still carry mass, never
+content.
+
+**Fidelity to HippoRAG 2.** `tests/unit/test_ppr_hipporag_parity.py` runs the
+original's PPR (python-igraph `personalized_pagerank`, PRPACK, as
+`HippoRAG.run_ppr` calls it) and its seeding
+(`graph_search_with_fact_entities`, executed from a checkout named by
+`HIPPORAG_SRC`) on the same graphs, reset vectors and damping, and compares
+the scores and passage order; it is skipped unless both are available (the
+original is never a dependency). The deliberate differences:
+
+| HippoRAG 2 | Here | Why |
+|---|---|---|
+| PPR over the whole graph | over a bounded neighbourhood of the seeds (`max_hops`, the expansion budget, `max_edges_per_vertex`) | a query reads a few store requests, not the corpus; the mass past `h` hops is at most `d^(h+1)` |
+| Recognition memory: an LLM filters the top facts | no filter | no query-time LLM call; the facts are fused hybrid hits |
+| Facts by dense similarity to triple embeddings, min-max over all facts | the top relationships-index hits by kNN (`fact_search_type`, lexical or hybrid on request), scores relative to the best | the relationship descriptions are the facts this index holds; the top `fact_top_k` alone are searched |
+| Passage weights from a dense score of every passage | the top `passage_seed_top_k` hybrid hits, min-max over them | a bounded search; hybrid like every strategy here |
+| PPR order alone ranks the passages | the PPR order and the passage hits are two fusion buckets, then the optional rerank | the hybrid fusion every strategy shares; `fusion_weights: {ppr_seed_text_units: 0}` and `rerank: false` come closest to the original |
+| Synonymy edges between similar phrases | none | entity resolution merges duplicates at index time (§4.2) |
+| Fact edge weight: the triples between two phrases | 1 per stored relationship (merged over its text units) | one relationship per pair and type after merging |
+| Every phrase links to its passages | not past `entity_frequency_threshold` units, seeds included | bounds the graph a hub entity would fill |
+| A passage links to every phrase it contains | to the reached entities citing it; a passage hit none cites has no edge | the neighbourhood is read from the seeds outward, not passage by passage |
+| (the `local` ranking) | its own seeding, `summed_seed_weights`, on raw search scores | the variant the retrieval screen measured |
+| Self-loops kept | dropped | they only hold mass on their node |
+
 ---
 
 ## 7. Hybrid Scoring and Token Management
@@ -3198,7 +3423,9 @@ the vector store (`adapters/local/search_engine/`) implements the OpenSearch
 client calls (`SearchEngineClient`), so the unchanged OpenSearch indexer and
 retriever run on it; Gremlin cannot be emulated that way, so the graph store
 is its own `GraphIndexer` (`SQLiteGraphIndexer`) plus a
-`GraphExpansionRetriever` subclass implementing only the traversal.
+`GraphExpansionRetriever` subclass implementing only the traversal and,
+for the PageRank of §6.4, `_edges_within` (optional: without it the
+strategies read the edges from the relationships index).
 
 ### Deliberate Design Boundaries
 

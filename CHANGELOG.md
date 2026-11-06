@@ -582,6 +582,20 @@ From a `main` checkout (formats and keys no release had):
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release (nothing on PyPI yet): the tag must be on `main`, and the notes'
   repo-relative links point at the tagged tree (#572, #588).
+- HippoRAG 2 retrieval, opt-in (docs/design.md §6.4): the `ppr` search strategy (`search.ppr_search`; `auto` never
+  routes to it, and `search.auto_routable_strategies` refuses it until a measurement shows where it wins) seeds a
+  Personalized PageRank with the question's relationship hits (kNN, `fact_search_type`) and text-unit hits (BM25 +
+  vector), runs it over the graph neighbourhood of the facts' entities and the passages they cite, and fuses the
+  ranked passages, the passage hits and the facts (fusion buckets `ppr_passages`, `ppr_seed_text_units`,
+  `ppr_facts`) with the optional rerank; no query-time LLM call besides the answer. It reads methodology `hipporag`
+  (a `[hipporag]` or `[lightrag]` namespace serves it; one without the relationship vector index refuses it).
+  `search.local_search.text_unit_ranking: ppr` (default `support`) orders local's (and DRIFT's follow-ups') text
+  units by the same PageRank, seeded by local's entities, the question's passage hits and the endpoints of its
+  `ppr_seed_relationships` (5) relationship hits: on 200 MuSiQue questions it put 11.0 points more supporting
+  passages in the context (95% CI +8.4 to +13.8) and raised recall@5 after the rerank by 4.1 (+1.0 to +7.1), for
+  about 0.4 s a query; answers are not measured yet. Graph retrievers gain
+  `aneighbourhood_edges` (Neptune, Gremlin Server, SQLite; the relationships index under a document filter), and
+  `SearchQuery.max_hops` overrides the expansion depth (#597).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy (packed by tokens, on the fast model), steps

@@ -41,3 +41,11 @@ def test_prompt_names_no_strategy_of_its_own() -> None:
 def test_auto_is_not_routable() -> None:
     with pytest.raises(ValidationError, match="cannot include 'auto'"):
         SearchConfig(auto_routable_strategies=[SearchStrategy.AUTO])
+
+
+def test_ppr_is_not_routable_until_measured() -> None:
+    # It stays selectable explicitly; auto may not pick it.
+    with pytest.raises(ValidationError, match="cannot include 'ppr'"):
+        SearchConfig(
+            auto_routable_strategies=[SearchStrategy.LOCAL, SearchStrategy.PPR]
+        )

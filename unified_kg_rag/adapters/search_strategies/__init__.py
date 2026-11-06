@@ -5,6 +5,7 @@ from .global_search import GlobalSearchStrategy
 from .iterative_search import IterativeSearchStrategy
 from .lightrag_search import LightRAGSearchStrategy
 from .local_search import LocalSearchStrategy
+from .ppr_search import PPRSearchStrategy
 from .simple_search import SimpleSearchStrategy
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "IterativeSearchStrategy",
     "LightRAGSearchStrategy",
     "LocalSearchStrategy",
+    "PPRSearchStrategy",
     "SimpleSearchStrategy",
 ]

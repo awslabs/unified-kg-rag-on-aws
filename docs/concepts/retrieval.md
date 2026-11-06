@@ -44,6 +44,12 @@ methodologies the namespace holds.
 | `hybrid` | Keyword-driven graph questions | `mix` without the naive chunk blend. |
 | `naive` | Fast baseline, comparison eval | Chunk retrieval only (`search.lightrag_search.chunk_stream_top_k`, default 20). The default `--search-type hybrid` adds BM25; `--search-type vector` approximates upstream LightRAG's pure-vector baseline, and MS GraphRAG's `basic` search. |
 
+**HippoRAG 2 (Personalized PageRank, opt-in):**
+
+| Strategy | Use when | How it works |
+|---|---|---|
+| `ppr` | Multi-hop questions whose facts chain through a few entities; a namespace built for `hipporag` or `lightrag` alone, without community reports (methodology `hipporag`) | The question's relationship hits (the facts, by kNN) and text-unit hits (BM25 + vector) seed a Personalized PageRank over the graph neighbourhood of the facts' entities and the passages they cite (HippoRAG 2, damping 0.5); the ranked passages, the passage hits and the facts are fused and reranked as for every strategy. One LLM call a query: the answer. Not measured on answers yet, so `auto` does not route to it; select it explicitly ([`search.ppr_search`](../reference/configuration.md#searchppr_search), [design](../design.md#64-hipporag-2-personalized-pagerank-opt-in-ppr-local-ranking)). `search.local_search.text_unit_ranking: ppr` uses the same PageRank to order `local`'s text units (on 200 MuSiQue questions it put 11 points more supporting passages in the context; answers not measured yet). |
+
 `mix` and `hybrid` read the relationships index ingestion builds; a short
 query that yields no keywords is used as a low-level keyword itself (up to
 `search.lightrag_search.raw_query_fallback_max_len`).

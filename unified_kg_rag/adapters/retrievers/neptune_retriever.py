@@ -26,7 +26,10 @@ from unified_kg_rag.adapters.aws.neptune import (
     vertex_ids,
 )
 from unified_kg_rag.adapters.retrieval.base import seed_shares
-from unified_kg_rag.adapters.retrievers.graph_expansion import GraphExpansionRetriever
+from unified_kg_rag.adapters.retrievers.graph_expansion import (
+    GraphExpansionRetriever,
+    edge_source_kinds,
+)
 from unified_kg_rag.adapters.storage.filter_schema import (
     ATTRIBUTE_KEY_PREFIX,
     SOURCE_KINDS_FIELD,
@@ -34,9 +37,10 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
-from unified_kg_rag.domain.models import Config, SearchQuery
+from unified_kg_rag.domain.models import Config, GraphEdge, SearchQuery
 from unified_kg_rag.shared import StoreConnectionError, get_logger
 from unified_kg_rag.shared.logging import warn_once
+from unified_kg_rag.shared.utils import safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
@@ -205,8 +209,9 @@ class NeptuneRetriever(GraphExpansionRetriever):
         self, seed_ids: list[Any], query: SearchQuery
     ) -> list[dict[str, Any]]:
         # Every seed the caller chose; a fixed cap here dropped seeds silently.
-        # max_hops is validated (>= 1) by NeptuneIndexingConfig.
-        hops = self._max_hops
+        # max_hops is validated (>= 1) by NeptuneIndexingConfig (and a
+        # query's own by SearchQuery).
+        hops = query.max_hops or self._max_hops
         entity_label = self._get_label(
             self._neptune_config.entity_label_prefix, query.suffix
         )
@@ -328,6 +333,64 @@ class NeptuneRetriever(GraphExpansionRetriever):
         if switching is not None:
             return self._mark_old_copies(rows, entity_label, switching)
         return rows
+
+    async def _edges_within(
+        self,
+        ids: list[str],
+        label: str,
+        per_vertex: int,
+        kinds: tuple[list[str], bool] | None,
+    ) -> list[GraphEdge]:
+        """One request: from each vertex of ``ids``, its first ``per_vertex``
+        edges (by relationship id under ``deterministic_order``, else the
+        store's first) whose other end is in ``ids`` too and, under a
+        ``source_kinds`` filter, that name one of its kinds. Custom vertex
+        ids look the vertices up by vertex id; property ids (also while a
+        full build switches the label: both copies are read, and their
+        edges deduplicated by relationship id) by the ``id`` property."""
+        custom_ids, _ = await self._vertex_lookup(label)
+        deterministic = self._neptune_config.deterministic_order
+
+        def build(g: GraphTraversalSource) -> Traversal:
+            if custom_ids:
+                members = vertex_ids(label, ids)
+                start = g.V(*members)
+                other = __.otherV().hasId(P.within(members))
+            else:
+                start = g.V().hasLabel(label).has("id", P.within(ids))
+                other = __.otherV().hasLabel(label).has("id", P.within(ids))
+            incident = __.bothE().where(other)
+            if kinds is not None:
+                encodings, without = kinds
+                named = __.has(SOURCE_KINDS_FIELD, P.within(encodings))
+                incident = incident.where(
+                    __.or_(named, __.hasNot(SOURCE_KINDS_FIELD)) if without else named
+                )
+            if deterministic:
+                incident = incident.order().by("id")
+            return (
+                start.local(incident.limit(per_vertex))
+                .dedup()
+                .project("id", "source_id", "target_id", "weight", SOURCE_KINDS_FIELD)
+                .by(__.coalesce(__.values("id"), __.id_()))
+                .by(__.outV().values("id"))
+                .by(__.inV().values("id"))
+                .by(__.coalesce(__.values("weight"), __.constant(1.0)))
+                .by(__.coalesce(__.values(SOURCE_KINDS_FIELD), __.constant("")))
+            )
+
+        rows = await self._execute_traversal(build)
+        return [
+            GraphEdge(
+                id=str(row["id"]),
+                source_id=str(row["source_id"]),
+                target_id=str(row["target_id"]),
+                weight=safe_float_parse(row.get("weight")) or 1.0,
+                source_kinds=edge_source_kinds(row.get(SOURCE_KINDS_FIELD)),
+            )
+            for row in rows
+            if isinstance(row, dict)
+        ]
 
     def _settled(self, label: str) -> bool:
         """Whether ``label`` was found settled in the configured mode (and

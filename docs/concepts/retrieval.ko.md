@@ -39,6 +39,12 @@ GraphRAG 전략은 코퍼스 전체를 *요약하고 주제별로 종합*하는 
 | `hybrid` | 키워드 중심의 그래프 질문 | naive 청크 결과를 섞지 않는 `mix`입니다. |
 | `naive` | 빠른 기준선, 비교 평가 | 청크 검색만 합니다(`search.lightrag_search.chunk_stream_top_k`, 기본 20개). 기본값 `--search-type hybrid`는 BM25를 더하며, `--search-type vector`는 upstream LightRAG의 순수 벡터 기준선과 MS GraphRAG의 `basic` 검색에 가깝습니다. |
 
+**HippoRAG 2(개인화 PageRank, 선택 사항):**
+
+| 전략 | 사용 시점 | 동작 방식 |
+|---|---|---|
+| `ppr` | 사실이 몇 개의 엔티티를 거쳐 이어지는 다중 홉 질문, 커뮤니티 보고서 없이 `hipporag`나 `lightrag`만으로 만든 네임스페이스(방법론 `hipporag`) | 질문의 관계 검색 결과(사실, kNN)와 텍스트 단위 검색 결과(BM25 + 벡터)를 시작점으로, 사실의 엔티티 주변 그래프와 그 엔티티가 인용하는 문단에 개인화 PageRank(Personalized PageRank)를 실행합니다(HippoRAG 2, 감쇠 계수 0.5). 순위를 매긴 문단, 문단 검색 결과, 사실을 다른 전략처럼 융합하고 재순위화합니다. 질의마다 LLM 호출은 답변 1회입니다. 답변 품질을 아직 측정하지 않았으므로 `auto`는 이 전략으로 보내지 않으며, 직접 지정해야 합니다([`search.ppr_search`](../reference/configuration.md#searchppr_search), [설계](../design.md#64-hipporag-2-personalized-pagerank-opt-in-ppr-local-ranking), 영문). `search.local_search.text_unit_ranking: ppr`는 같은 PageRank로 `local`의 텍스트 단위 순서를 정합니다(MuSiQue 200문항에서 컨텍스트에 든 근거 문단이 11포인트 늘었고, 답변은 아직 측정하지 않았습니다). |
+
 `mix`와 `hybrid`는 수집이 만드는 관계 인덱스를 읽습니다. 키워드가 나오지 않는 짧은
 질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`
 이하).

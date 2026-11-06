@@ -10,6 +10,7 @@ expansion over the SQLite graph, Gremlin Server and Neptune; see
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from tests.fixtures.store_backends import (
     backends,
     open_harness,
 )
+from unified_kg_rag.adapters.search_strategies import LocalSearchStrategy
 from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,
@@ -1738,3 +1740,172 @@ def test_graph_expansion_does_not_depend_on_the_edge_write_order(
     # caller's first), not the first by content.
     (x,) = [content for source, _, content in shared if source == "x"]
     assert x.endswith("Path: S2 -> X"), x
+
+
+# --- neighbourhood edges (the PageRank graph, docs/design.md §6.4) -----------
+
+
+def _edges_within(
+    h: StoreHarness, ids: list[str], per_vertex: int = 50, **fields: Any
+) -> list[tuple[str, str, str, float, list[str] | None]]:
+    """``aneighbourhood_edges`` on a fresh graph retriever."""
+
+    async def run() -> Any:
+        assert h.graph_retriever is not None
+        retriever = h.graph_retriever()
+        try:
+            return await retriever.aneighbourhood_edges(
+                ids,
+                SearchQuery(query="", suffix=_SUFFIX, **fields),
+                per_vertex=per_vertex,
+            )
+        finally:
+            await retriever.aclose()
+
+    edges = asyncio.run(run())
+    assert edges is not None
+    return [(e.id, e.source_id, e.target_id, e.weight, e.source_kinds) for e in edges]
+
+
+def _connect(h: StoreHarness, edges: list[tuple[str, str, str]], **fields: Any) -> None:
+    ids = sorted({end for _, a, b in edges for end in (a, b)})
+    entities = [Entity(id=i, name=i.upper(), type="ORG", rank=1) for i in ids]
+    relationships = [
+        Relationship(id=rel, source_id=a, target_id=b, description=f"{a} {b}", **fields)
+        for rel, a, b in edges
+    ]
+    assert h.graph_indexer.index_entities(entities).failed_items == 0
+    assert h.graph_indexer.index_relationships(relationships).failed_items == 0
+
+
+def test_neighbourhood_edges_are_the_relationships_within_the_set(
+    graph_harness: StoreHarness,
+) -> None:
+    h = graph_harness
+    _connect(
+        h,
+        [
+            ("r-ab", "a", "b"),
+            ("r-bc", "b", "c"),
+            ("r-cd", "c", "d"),  # d is outside the set
+            ("r-ca1", "c", "a"),  # two typed relationships of one pair
+            ("r-ca2", "c", "a"),
+        ],
+        weight=2.0,
+    )
+    assert _edges_within(h, ["a", "b", "c"]) == [
+        ("r-ab", "a", "b", 2.0, None),
+        ("r-bc", "b", "c", 2.0, None),
+        ("r-ca1", "c", "a", 2.0, None),
+        ("r-ca2", "c", "a", 2.0, None),
+    ]
+    # A vertex alone, or one the store does not hold, has no edges within.
+    assert _edges_within(h, ["a"]) == []
+    assert _edges_within(h, ["a", "missing"]) == []
+
+
+def test_neighbourhood_edges_keep_each_vertex_first_edges_by_id(
+    graph_harness: StoreHarness,
+) -> None:
+    # Two hubs share five leaves; with one edge a vertex, each leaf keeps its
+    # first by id (to h1) and each hub its own first: the same set on every
+    # backend, whatever order the edges were written in.
+    h = graph_harness
+    leaves = [f"n{i}" for i in range(5)]
+    edges = [(f"r-{hub}-{n}", hub, n) for n in leaves for hub in ("h2", "h1")]
+    _connect(h, edges[::-1])
+    kept = _edges_within(h, ["h1", "h2", *leaves], per_vertex=1)
+    assert [edge_id for edge_id, *_ in kept] == [
+        *(f"r-h1-{n}" for n in leaves),
+        "r-h2-n0",
+    ]
+
+
+def test_neighbourhood_edges_follow_a_source_kinds_filter(
+    graph_harness: StoreHarness,
+) -> None:
+    h = graph_harness
+    entities = [Entity(id=i, name=i.upper(), type="ORG", rank=1) for i in "abcd"]
+    relationships = [
+        Relationship(id="r-doc", source_id="a", target_id="b", description="ab"),
+        Relationship(
+            id="r-seed",
+            source_id="a",
+            target_id="c",
+            description="ac",
+            source_kinds=["seed_graph"],
+        ),
+        Relationship(
+            id="r-both",
+            source_id="a",
+            target_id="d",
+            description="ad",
+            source_kinds=["document", "seed_graph"],
+        ),
+    ]
+    assert h.graph_indexer.index_entities(entities).failed_items == 0
+    assert h.graph_indexer.index_relationships(relationships).failed_items == 0
+
+    def ids(**filters: Any) -> list[str]:
+        return [e[0] for e in _edges_within(h, list("abcd"), filters=filters or None)]
+
+    assert sorted(ids()) == ["r-both", "r-doc", "r-seed"]
+    assert sorted(ids(source_kinds="document")) == ["r-both", "r-doc"]
+    assert sorted(ids(source_kinds="Seed_Graph")) == ["r-both", "r-seed"]
+    assert sorted(ids(source_kinds=["document", "seed_graph"])) == [
+        "r-both",
+        "r-doc",
+        "r-seed",
+    ]
+    kinds = {e[0]: e[4] for e in _edges_within(h, list("abcd"))}
+    assert kinds["r-doc"] is None
+    assert kinds["r-seed"] == ["seed_graph"]
+    assert kinds["r-both"] == ["document", "seed_graph"]
+
+
+def test_the_relationships_index_gives_the_graphs_neighbourhood_edges(
+    graph_harness: StoreHarness,
+) -> None:
+    # Under a document filter the strategy reads the edges from the
+    # relationships index: the same edges as the graph for a filter every
+    # document passes, none of an excluded document's.
+    h = graph_harness
+    h.initialize()
+    edges = [("r-ab", "a", "b"), ("r-bc", "b", "c"), ("r-cx", "c", "x")]
+    _connect(h, edges)
+    relationships = [
+        Relationship(
+            id=rel,
+            source_id=a,
+            target_id=b,
+            description=f"{a} {b}",
+            attributes={"filters": {"category": "kept" if rel != "r-bc" else "other"}},
+        )
+        for rel, a, b in edges
+    ]
+    assert h.vector_indexer.index_relationships(relationships).failed_items == 0
+    assert h.vector_retriever is not None and h.graph_retriever is not None
+
+    async def run(filters: dict[str, Any] | None) -> list[str]:
+        assert h.vector_retriever is not None and h.graph_retriever is not None
+        documents, graph = h.vector_retriever(), h.graph_retriever()
+        config = h.config.model_copy(deep=True)
+        config.providers.rerank.kind = "none"  # no model is built
+        strategy = LocalSearchStrategy(
+            config,
+            {RetrieverRole.DOCUMENT.value: documents, RetrieverRole.GRAPH.value: graph},
+        )
+        try:
+            found = await strategy._neighbourhood_edges(
+                SearchQuery(query="", suffix=_SUFFIX, filters=filters),
+                ["a", "b", "c"],
+                50,
+            )
+        finally:
+            await documents.aclose()
+            await graph.aclose()
+        return [e.id for e in found]
+
+    assert asyncio.run(run(None)) == ["r-ab", "r-bc"]
+    assert asyncio.run(run({"attr_category": ["kept", "other"]})) == ["r-ab", "r-bc"]
+    assert asyncio.run(run({"attr_category": "kept"})) == ["r-ab"]
