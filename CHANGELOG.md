@@ -62,9 +62,9 @@ stored is read again: follow *Upgrading* in order.
   Ingestion renders nothing: see *Configuration*.
 
 #### Configuration
-- Unknown keys, in the file or as `UKR__` variables, fail the load; `--allow-unknown-keys` (every CLI) or
-  `allow_unknown_keys=True` (`get_config`, `ConfigLoader`) warns instead (#335). A moved key fails naming its
-  replacement, a removed key loads with a WARNING and is ignored: the generated [Moved
+- Unknown keys, in the file or as `UKR__` variables, fail the load; `--allow-unknown-keys` (every CLI but
+  `prepare-benchmark`) or `allow_unknown_keys=True` (`get_config`, `ConfigLoader`) warns instead (#335). A moved key
+  fails naming its replacement, a removed key loads with a WARNING and is ignored: the generated [Moved
   keys](docs/reference/configuration.md#moved-keys) and [Removed keys](docs/reference/configuration.md#removed-keys)
   tables list them (#334, #344, #467, #468, #470, #577). [`config-template.yaml`](config-template.yaml) is a short
   starting file; every key is in the [configuration reference](docs/reference/configuration.md) (#468).
@@ -108,8 +108,7 @@ stored is read again: follow *Upgrading* in order.
 - Removed settings that change behaviour where you had set them (each loads with a WARNING):
   `search.reranking.enabled: false` no longer turns reranking off (set `providers.rerank.kind: none`);
   `search.fusion.method: weighted` fuses by RRF (weighted fusion is gone); `fixing.enabled: false` no longer stops
-  output fixing; `indexing.cross_run_merge: false` no longer overwrites (an incremental run always merges);
-  `search.local_search.type_quota` is the constant `BaseSearchStrategy.TYPE_QUOTA` (the mix is
+  output fixing; `search.local_search.type_quota` is the constant `BaseSearchStrategy.TYPE_QUOTA` (the mix is
   `search.token_manager.type_budgets`); `cache.chunking` (an entry over 1,000 items or 50 MB is always chunked);
   `indexing.opensearch.persist_embedding_cache` (the S3 embedding cache is gone: an incremental run embeds only its
   delta) (#344, #468, #577).
@@ -121,17 +120,18 @@ stored is read again: follow *Upgrading* in order.
   for lists and mappings); the 0.2.3 names are no longer read (#335). `NEPTUNE_ENDPOINT` is
   `UKR__AWS__NEPTUNE__ENDPOINT`; `OPENSEARCH_ENDPOINT` / `_USERNAME` / `_PASSWORD` are
   `UKR__AWS__OPENSEARCH__ENDPOINT` / `__USERNAME` / `__PASSWORD`; `BEDROCK_REGION` is
-  `UKR__AWS__BEDROCK__REGION_NAME`; `BEDROCK_GUARDRAIL_IDENTIFIER` / `_VERSION` are
-  `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER` / `__VERSION`; `S3_BUCKET_NAME` is `UKR__AWS__S3__BUCKET_NAME`;
-  `LOG_LEVEL` / `LOG_FORMAT` / `LOG_TO_FILE` / `LOG_FILE_PATH` are `UKR__LOGGING__LEVEL` / `__LOG_FORMAT` /
-  `__LOG_TO_FILE` / `__LOG_FILE_PATH`; `OPENSEARCH_NUMBER_OF_REPLICAS` is
+  `UKR__AWS__BEDROCK__REGION_NAME`; `BEDROCK_GUARDRAIL_IDENTIFIER` is `UKR__AWS__BEDROCK__GUARDRAIL__IDENTIFIER`;
+  `S3_BUCKET_NAME` is `UKR__AWS__S3__BUCKET_NAME`; `LOG_LEVEL` / `LOG_FORMAT` / `LOG_TO_FILE` / `LOG_FILE_PATH` are
+  `UKR__LOGGING__LEVEL` / `__LOG_FORMAT` / `__LOG_TO_FILE` / `__LOG_FILE_PATH`; the container's
+  `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID` are `UKR_SOURCE_DIRECTORY` / `UKR_PIPELINE_ID`. Names 0.2.3
+  never read (only development builds after it did) are gone as well: `BEDROCK_GUARDRAIL_VERSION` is
+  `UKR__AWS__BEDROCK__GUARDRAIL__VERSION`; `OPENSEARCH_NUMBER_OF_REPLICAS` is
   `UKR__INDEXING__OPENSEARCH__INDEX_SETTINGS__NUMBER_OF_REPLICAS`; `OPENSEARCH_KOREAN_ANALYZER` is
-  `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`; `GRAPHRAG_DOC_STATUS_TABLE` / `_CREATE_TABLE` are
-  `UKR__AWS__DYNAMODB__TABLE_NAME` / `__CREATE_TABLE_IF_MISSING`; `GRAPHRAG_SOURCE_SCOPE` is
-  `UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`; `GRAPHRAG_OBSERVABILITY_ENABLED` / `_BACKEND` are
-  `UKR__OBSERVABILITY__ENABLED` / `__BACKEND`; `GRAPHRAG_SOURCE_DIRECTORY` / `GRAPHRAG_PIPELINE_ID` /
-  `GRAPHRAG_METRICS_ENVIRONMENT` are `UKR_SOURCE_DIRECTORY` / `UKR_PIPELINE_ID` / `UKR_METRICS_ENVIRONMENT`. The CDK
-  stacks and the container entrypoint set the new names.
+  `UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`; `GRAPHRAG_DOC_STATUS_TABLE` (which the 0.2.3 CDK stack set
+  but the library ignored) / `_CREATE_TABLE` are `UKR__AWS__DYNAMODB__TABLE_NAME` / `__CREATE_TABLE_IF_MISSING`;
+  `GRAPHRAG_SOURCE_SCOPE` is `UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE`; `GRAPHRAG_OBSERVABILITY_ENABLED` /
+  `_BACKEND` are `UKR__OBSERVABILITY__ENABLED` / `__BACKEND`; `GRAPHRAG_METRICS_ENVIRONMENT` is
+  `UKR_METRICS_ENVIRONMENT`. The CDK stacks and the container entrypoint set the new names.
 - `AWS_REGION` and `AWS_PROFILE` fill `aws.region_name` / `aws.profile_name` only when the file leaves them unset
   (`UKR__AWS__REGION_NAME` overrides the file); switching `--backend` or a provider flag keeps a value you set even
   when it equals the old preset's (#335).
@@ -157,6 +157,7 @@ stored is read again: follow *Upgrading* in order.
 | `processing.max_concurrency` | 20 | 40, 20 under `backend: local` (#310) |
 | `processing.similarity_threshold` | 0.6 | 0.85; similarity matching is opt-in (`processing.fuzzy_entity_resolution`) (#214) |
 | `indexing.neptune.property_max_length` | 1000 | 4000 (#132) |
+| `indexing.cross_run_merge` | `false`: an incremental run overwrote the stored entities and relationships with its delta's | removed (loads with a WARNING): an incremental run always merges its delta into the stored graph (#344) |
 | `indexing.max_deletion_share` | no guard | 0.5: an incremental run deleting more of its scope asks first (#518) |
 | `indexing.opensearch.language_analyzers` | `en: english`, `ko: nori`, others `standard` | also `de`, `es`, `fr`, `it`, `pt`, `ru` stemmers and `ja`/`zh: cjk` bigrams (#574) |
 | `graph.community_detection.auto_resolution` | `true` | `false` (#141) |
@@ -536,7 +537,9 @@ From a `main` checkout (formats and keys no release had):
 ### Changed
 - Global search maps every report of one cut of the community hierarchy (packed by tokens, on the fast model), steps
   down to a shallower cut over `max_reports_per_level`, credits key points only to their reports, and dynamic
-  selection descends to the leaves (#318, #347, #354).
+  selection descends to the leaves; it makes no separate reduce call: the answer model reads the ranked key points
+  (0.2.3 reduced them on `map_reduce_model_id`, Claude Haiku 4.5, into a `synthesized_summary` result) (#318, #347,
+  #354).
 - DRIFT is MS GraphRAG's DRIFT (HyDE primer, follow-up local searches, reduce), with one rerank per query and at
   most about 27 LLM calls at the defaults; each primer fold's reports are its answer's evidence, and its metadata
   counts follow-ups by `report_selection` (#323, #347, #541, #567).

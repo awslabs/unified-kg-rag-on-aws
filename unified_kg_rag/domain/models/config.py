@@ -639,7 +639,8 @@ REMOVED_KEYS: dict[str, str] = {
     ),
     "indexing.cross_run_merge": (
         "an incremental run always merges its delta into the stored graph; "
-        "turning that off overwrote entities other documents still cite"
+        "without the merge (false, 0.2.3's default) a run overwrote entities "
+        "other documents still cite"
     ),
     **{
         f"graph.visualization.{key}": (
@@ -683,7 +684,8 @@ REMOVED_KEYS: dict[str, str] = {
             "models.roles.global_reduce",
         ),
         "global search runs no reduce call: the ranked key points go to the "
-        "answer model as one context section (the default before)",
+        "answer model as one context section (0.2.3 reduced them with "
+        "map_reduce_model_id by default)",
     ),
     "search.fusion.method": (
         "results are always fused by reciprocal rank fusion (rrf, the default "
