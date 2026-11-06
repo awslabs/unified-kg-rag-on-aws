@@ -60,7 +60,8 @@ attempt count includes the first attempt; `1` disables the retry.
 | `processing.translation.target_language` | `"en"` | Another corpus or answer language ([Multilingual](./multilingual.md)) |
 | `processing.claim_extraction.enabled` | `false` | Claims in `local` search (one more LLM call per text unit) |
 | `processing.document_parsing.index_value` | `null` (`default`) | Separate corpora or tenants ([Index suffix](../concepts/scopes-and-namespaces.md#index-suffix)) |
-| `graph.community_detection.enabled` | `true` | LightRAG-only, lighter ingestion (`global` and `drift` need it) |
+| `indexing.methodologies` | `[graphrag, lightrag]` | Build only what one methodology reads: `[lightrag]` makes no community report call ([Methodology profiles](./ingest.md#methodology-profiles)) |
+| `graph.community_detection.enabled` | `true` | `false` builds no communities, as `indexing.methodologies: [lightrag]` does (GraphRAG's strategies need them) |
 | `providers.rerank.kind` | `bedrock` | `none`: no rerank model in the region, or no reranking wanted |
 | `search.token_manager.max_context_tokens` | `30000` | More (or cheaper, less) context ([Context budget](../concepts/retrieval.md#context-budget)) |
 | `indexing.reset` | `false` | One run that rebuilds the stores from the whole corpus (quarantined documents skipped) |

@@ -54,7 +54,8 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 | `processing.translation.target_language` | `"en"` | 코퍼스나 답변 언어가 다를 때([다국어 코퍼스](./multilingual.ko.md)) |
 | `processing.claim_extraction.enabled` | `false` | `local` 검색에 주장을 넣을 때(텍스트 단위마다 LLM 호출 1회 추가) |
 | `processing.document_parsing.index_value` | `null`(`default`) | 코퍼스나 테넌트 분리([인덱스 접미사](../concepts/scopes-and-namespaces.ko.md#인덱스-접미사)) |
-| `graph.community_detection.enabled` | `true` | LightRAG만 쓰고 수집을 가볍게 할 때(`global`, `drift`에는 필요) |
+| `indexing.methodologies` | `[graphrag, lightrag]` | 한 방법론이 읽는 것만 만들 때. `[lightrag]`는 커뮤니티 리포트를 호출하지 않음([방법론 프로필](./ingest.ko.md#방법론-프로필)) |
+| `graph.community_detection.enabled` | `true` | `false`면 `indexing.methodologies: [lightrag]`처럼 커뮤니티를 만들지 않음(GraphRAG 전략에는 필요) |
 | `providers.rerank.kind` | `bedrock` | `none`: 리전에 재순위화 모델이 없거나 재순위화를 쓰지 않을 때 |
 | `search.token_manager.max_context_tokens` | `30000` | 컨텍스트를 늘리거나 비용을 줄이려고 줄일 때([컨텍스트 예산](../concepts/retrieval.ko.md#컨텍스트-예산)) |
 | `indexing.reset` | `false` | 코퍼스 전체로 저장소를 다시 만드는 한 번의 실행(격리된 문서는 건너뜀) |

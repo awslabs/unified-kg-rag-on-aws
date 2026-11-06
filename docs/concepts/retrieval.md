@@ -20,6 +20,12 @@ corpus; LightRAG strategies are faster and lean on *dual-level keyword*
 retrieval, good for keyword-driven lookups and as a low-cost baseline. Both
 share the hybrid scorer (BM25, vector, graph, RRF, rerank).
 
+Each strategy reads its methodology's index artifacts: on an index namespace
+that does not hold that methodology
+([methodology profiles](./overview.md#methodology-profiles)) it is refused
+before any model call, and `auto` routes only among the strategies of the
+methodologies the namespace holds.
+
 **GraphRAG (community-summary):**
 
 | Strategy | Use when | How it works |

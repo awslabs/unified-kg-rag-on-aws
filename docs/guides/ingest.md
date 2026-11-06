@@ -32,9 +32,15 @@ In run order; `--enabled-stages` / `--resume-from-stage` take the **names**
 8. **`claim_extraction`** (optional, off by default): factual claims.
 9. **`claim_resolution`** (optional): dedupes the claims.
 10. **`graph_analysis`**: builds the graph, logs `graph.analysis.statistics`.
-11. **`community_detection`**: Leiden clustering and LLM community reports.
+11. **`community_detection`**: Leiden clustering and LLM community reports
+    (only when `indexing.methodologies` selects `graphrag`).
 12. **`indexing`**: writes to OpenSearch and Neptune (and the registry when
     enabled).
+
+A run includes the stages its [methodology profile](#methodology-profiles)
+needs. An explicit `--enabled-stages` list wins: a listed stage runs and an
+unlisted one does not, and a WARNING names each selected methodology that an
+unlisted stage leaves out of the index.
 
 ## Examples
 
@@ -143,11 +149,51 @@ tokens, temperature and reasoning.
 - **Heterogeneous domains:** tune `entity_types` to the union of the domains,
   or give each its own [index suffix](../concepts/scopes-and-namespaces.md#index-suffix).
 
+## Methodology profiles
+
+`indexing.methodologies` (default `[graphrag, lightrag]`) selects what a run
+builds ([profiles](../concepts/overview.md#methodology-profiles)):
+
+```yaml
+indexing:
+  methodologies: [lightrag]   # mix, hybrid, naive: no communities, no reports
+```
+
+- **What it skips.** Without `graphrag` no run does the Leiden pass or a
+  report call; everything else (extraction, gleaning, summaries, the
+  relationship vectors) is what LightRAG reads. A config from before this
+  setting with `graph.community_detection.enabled: false` builds the same
+  profile; one with `indexing.opensearch.build_relationship_vector_index:
+  false` builds `graphrag` alone. An unknown name fails the load naming the
+  valid ones, and so does a selection those switches leave nothing of.
+- **What the namespace holds.** Each run records it in the build record
+  (`artifacts`, `methodologies`). A query whose strategy reads a methodology
+  the namespace does not hold is refused before any model call
+  (`MethodologyNotIndexedError`; `run-rag` exits 2), naming what it holds.
+- **Adding one later**, say `graphrag` after a `[lightrag]` build, builds
+  only what it adds. With the doc-status registry the next run finds the
+  namespace without communities and rebuilds it once (`indexing.reset`, a
+  WARNING says so), reusing the stored chunk boundaries, extractions,
+  description summaries and vectors: its new model calls are the community
+  reports. A namespace that also holds another source scope's documents is
+  refused instead (exit 2): the rebuild from one corpus would delete them.
+  Without the registry every run is a full build and reuses the
+  same; a re-run of the same `--pipeline-id` runs only `community_detection`
+  and `indexing` from its stage cache.
+- **Removing one** stops the runs from maintaining its artifacts: the next
+  run that writes the namespace records them gone and its strategies are
+  refused from then on; until then (an unchanged corpus) they stay current.
+  Nothing is deleted. To delete them, run once with `indexing.reset: true`
+  and the remaining methodologies: the rebuild replaces the community-reports
+  index with an empty one and drops the graph's community vertices.
+
 ## Cost levers
 
 LLM calls dominate cost: extraction (one or more calls per chunk), gleaning
 (up to `max_rounds` per chunk), community reports, claims (one call per text
-unit, off by default) and one answer per query. Levers: Haiku-class models for
+unit, off by default) and one answer per query. Levers: a
+[methodology profile](#methodology-profiles) without `graphrag` (no
+community reports), Haiku-class models for
 the mechanical roles (the default for chunking, translation, map-reduce and
 summarization), fewer gleaning rounds, claims off, the caches and incremental
 indexing.

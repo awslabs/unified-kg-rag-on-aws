@@ -121,6 +121,15 @@ A reset re-clusters the whole graph, which replaces the communities the
 incremental runs appended, and gives the stored communities and reports the
 current ids of their entities ([Cross-run merge](#cross-run-merge)).
 
+A run that adds a methodology the namespace does not hold (`graphrag` to a
+`[lightrag]` namespace: communities and reports; `lightrag` where the
+relationship vector index was off) is a reset by itself, for that run only:
+a delta would build them for its own documents only. It logs a WARNING and
+reuses what a reset reuses, so its new model calls are the added
+methodology's. When the namespace also holds another source scope's
+documents, which the rebuild would delete, the run is refused before any
+model call instead ([Methodology profiles](./ingest.md#methodology-profiles)).
+
 ## Rebuild signals
 
 An incremental run clusters only its delta and appends its communities, and

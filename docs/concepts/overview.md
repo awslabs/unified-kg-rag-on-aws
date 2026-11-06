@@ -6,9 +6,10 @@
 knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers
 questions over it with Amazon Bedrock. It implements two graph RAG
 methodologies, Microsoft GraphRAG (community summaries) and
-LightRAG (dual-level keywords), on one shared stack, so you choose the
-methodology per query rather than per deployment. Every answer returns the
-sources that were actually in the model's context.
+LightRAG (dual-level keywords), on one shared stack: one ingestion builds
+both and you choose the methodology per query, or it builds only the
+methodologies you select and skips the cost of the others. Every answer
+returns the sources that were actually in the model's context.
 
 This page explains the parts and how they fit. To run it, start from the
 [README](../../README.md#quickstart) or the [documentation hub](../index.md).
@@ -83,6 +84,31 @@ query. When to use which:
 [Retrieval](./retrieval.md#search-strategies--when-to-use-which); how
 each one retrieves: [Design Doc §6](../design.md#6-retrieval-two-methodologies).
 
+### Methodology profiles
+
+`indexing.methodologies` selects what ingestion builds. The default,
+`[graphrag, lightrag]`, builds both on one index; select one to pay only for
+what its strategies read:
+
+| Profile | Builds | Strategies | Ingestion model calls |
+|---|---|---|---|
+| `[graphrag, lightrag]` (default) | Text units, entities, relationships and their vectors, the graph, communities and their reports | Every strategy | Chunk boundaries, extraction and gleaning per text unit, description summaries, one report per community |
+| `[lightrag]` | The same without communities and reports | `mix`, `hybrid`, `naive`, `auto` | The same without the Leiden pass and the report calls |
+| `[graphrag]` | The default's | `local`, `global`, `drift`, `simple`, `auto` | The default's; also set `indexing.opensearch.build_relationship_vector_index: false` to skip the relationship embeddings, at the cost of `local`'s relationship section |
+
+`hipporag` names what `lightrag` builds, for the strategies that read it,
+and `iterative` reads what its base (`local` or `mix`) reads.
+The index namespace records what it holds: a query whose strategy reads a
+methodology it does not hold fails before any model call, naming what it
+holds and how to add the methodology, and `auto` routes only among the held
+ones. Adding a methodology later builds only what it adds: an incremental
+namespace is rebuilt once from its stored chunk boundaries, extractions,
+summaries and vectors, so the new model calls are the added methodology's
+(the community reports for `graphrag`). Removing one stops maintaining its
+artifacts; nothing is deleted until a reset
+([Ingestion](../guides/ingest.md#methodology-profiles),
+[Design §4.6](../design.md#46-methodology-profiles)).
+
 ## Beyond the papers
 
 The framework keeps each methodology's retrieval algorithm and adds what a
@@ -96,7 +122,7 @@ the repository root (`docs/`, `reproduce/`).
 | Area | GraphRAG | LightRAG | This framework | Where documented |
 |---|---|---|---|---|
 | Triple-hybrid retrieval | Vector search over entity descriptions, text units and report content (`config/embeddings.py`), with graph context read from the indexed tables; no lexical search or reranker in the query code | Vector search over entity, relationship and chunk indexes plus the graph storage, merged round-robin, with an optional rerank model (`operate.py`, `rerank.py`) | BM25 (OpenSearch), vector search (Bedrock embeddings) and Neptune graph traversal fused by RRF, reranked by a Bedrock rerank model and diversified by MMR; one scorer for every strategy of both methodologies (`simple` and `naive` skip the graph) | [Design §7](../design.md#7-hybrid-scoring-and-token-management) |
-| Both methodologies on one index | Community reports; no relationship vector index (`config/embeddings.py`) and no keyword-level retrieval | Dual-level keywords over entity and relationship indexes; no community detection or reports | One ingestion builds the union of what both need; the methodology is chosen per query, or by the `auto` router | [Design §6](../design.md#6-retrieval-two-methodologies) |
+| Both methodologies on one index | Community reports; no relationship vector index (`config/embeddings.py`) and no keyword-level retrieval | Dual-level keywords over entity and relationship indexes; no community detection or reports | One ingestion builds the union of what the selected methodologies need (both by default); the methodology is chosen per query, or by the `auto` router, and a namespace refuses one it does not hold | [Methodology profiles](#methodology-profiles), [Design §6](../design.md#6-retrieval-two-methodologies) |
 | Incremental indexing with deletion lineage | `graphrag update` indexes the documents whose title is new; the delta it computes lists deleted documents, but only the new ones reach the update workflows (`index/update/incremental_index.py`, `index/workflows/load_update_documents.py`) | A doc-status store skips an insert whose file name or content hash is already registered (`pipeline.py`); `adelete_by_doc_id` removes a document and rebuilds the entities and relationships other documents still support from cached extractions (`lightrag.py`) | A registry (DynamoDB, or SQLite locally) diffs the corpus by content hash, re-indexes new and changed documents, and removes a deleted one by the text units every item cites, so only what no surviving text unit states goes; write-ahead crash recovery and one writing run per namespace; property tests check that incremental rounds converge with a full build | [Incremental indexing](../guides/incremental.md), [Design §5](../design.md#5-incremental-indexing) |
 | Multilingual | `graphrag prompt-tune --language` sets the language of the tuned prompts (`cli/main.py`) | `SUMMARY_LANGUAGE` sets the output language of extraction and summaries (`addon_params.py`) | An optional translation stage at indexing and query time (with extra target languages), per-language OpenSearch analyzers (`nori` for Korean), multilingual keyword extraction and Korean- and CJK-aware answer matching, for both methodologies | [Multilingual corpora](../guides/multilingual.md), [Design §8.3](../design.md#83-multilingual-processing) |
 | Bring-your-own ontology and seed graphs | Bring Your Own Graph: supply entity and relationship tables in place of extraction, then run the community workflows (`docs/index/byog.md`) | `insert_custom_kg` inserts given chunks, entities and relationships (`lightrag.py`) | An extraction schema declared or imported from an OWL/RDFS ontology (types, patterns, IRIs); seed graphs (JSONL, CSV, RDF) merged into the extracted graph as virtual documents of the corpus, so incremental runs and removal treat them like files and the documents stay canonical | [Extraction schema](../guides/extraction-schema.md), [ontology](../guides/ontology.md), [seed graphs](../guides/seed-graphs.md) |
@@ -176,9 +202,10 @@ purpose:
 - **Reranking is regional** ([Required models](../getting-started/aws.md#required-models)); without it
   results keep the fusion order, as `metadata.rerank` shows
   ([Rerank status](../guides/query.md#rerank-status)).
-- **A lighter ingestion limits the strategies.** Without community detection
-  (`graph.community_detection.enabled: false`) `global` and `drift` have no
-  reports; without the relationship vector index
+- **A lighter ingestion limits the strategies.** A namespace without
+  communities (`indexing.methodologies: [lightrag]`, or
+  `graph.community_detection.enabled: false`) holds no `graphrag`: `local`,
+  `global`, `drift` and `simple` are refused there; without the relationship vector index
   (`indexing.opensearch.build_relationship_vector_index: false`) `mix` and
   `hybrid` lose high-level keywords, `local` its relationship section, and
   graph expansion under a document filter keeps entities on the
