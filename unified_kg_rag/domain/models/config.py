@@ -360,6 +360,7 @@ class ModelRole(str, Enum):
     QUERY_CONTROLLER = "query_controller"
     EVALUATION = "evaluation"
     ANSWER_SPAN = "answer_span"
+    PAIRWISE_OVERLAP = "pairwise_overlap"
 
 
 _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
@@ -399,6 +400,11 @@ _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
         "fast",
         "extracts the short answer span run-eval scores exact match and token "
         "F1 on (evaluation.answer_span: extracted)",
+    ),
+    ModelRole.PAIRWISE_OVERLAP: (
+        "fast",
+        "splits two answers into shared and unique statements for run-eval "
+        "--pairwise-mode differential",
     ),
 }
 # The tier each role runs on unless models.roles says otherwise.
@@ -464,6 +470,7 @@ class RoleModelsConfig(BaseModel):
     query_controller: str | None = _role_field(ModelRole.QUERY_CONTROLLER)
     evaluation: str | None = _EVALUATION_ROLE_FIELD
     answer_span: str | None = _role_field(ModelRole.ANSWER_SPAN)
+    pairwise_overlap: str | None = _role_field(ModelRole.PAIRWISE_OVERLAP)
 
     @field_validator("*", mode="before")
     @classmethod
@@ -4677,6 +4684,120 @@ class CustomPromptConfig(BaseModel):
             "(evaluation.answer_span: extracted)"
         ),
     )
+    pairwise_overlap_system: str | None = Field(
+        default=None,
+        description=(
+            "Custom system prompt for the shared/unique statement split of "
+            "run-eval --pairwise-mode differential"
+        ),
+    )
+    pairwise_overlap_human: str | None = Field(
+        default=None,
+        description=(
+            "Custom human prompt for the shared/unique statement split of "
+            "run-eval --pairwise-mode differential"
+        ),
+    )
+    pairwise_differential_system: str | None = Field(
+        default=None,
+        description=(
+            "Custom system prompt for the run-eval --pairwise-mode differential "
+            "judge (judges the unique statements)"
+        ),
+    )
+    pairwise_differential_human: str | None = Field(
+        default=None,
+        description=(
+            "Custom human prompt for the run-eval --pairwise-mode differential "
+            "judge (judges the unique statements)"
+        ),
+    )
+    assertion_judgement_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for the assertion evaluator's judge",
+    )
+    assertion_judgement_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for the assertion evaluator's judge",
+    )
+    closed_book_answer_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for the run-eval --closed-book answers",
+    )
+    closed_book_answer_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for the run-eval --closed-book answers",
+    )
+    benchmark_activity_context_system: str | None = Field(
+        default=None,
+        description=(
+            "Custom system prompt for the personas and tasks of "
+            "prepare-benchmark assertions"
+        ),
+    )
+    benchmark_activity_context_human: str | None = Field(
+        default=None,
+        description=(
+            "Custom human prompt for the personas and tasks of "
+            "prepare-benchmark assertions"
+        ),
+    )
+    benchmark_questions_system: str | None = Field(
+        default=None,
+        description=(
+            "Custom system prompt for the question generation of "
+            "prepare-benchmark assertions"
+        ),
+    )
+    benchmark_questions_human: str | None = Field(
+        default=None,
+        description=(
+            "Custom human prompt for the question generation of "
+            "prepare-benchmark assertions"
+        ),
+    )
+    benchmark_claims_system: str | None = Field(
+        default=None,
+        description=(
+            "Custom system prompt for the claim extraction (map step) of "
+            "prepare-benchmark assertions"
+        ),
+    )
+    benchmark_claims_human: str | None = Field(
+        default=None,
+        description=(
+            "Custom human prompt for the claim extraction (map step) of "
+            "prepare-benchmark assertions"
+        ),
+    )
+    benchmark_assertions_system: str | None = Field(
+        default=None,
+        description=(
+            "Custom system prompt for the assertion synthesis (reduce step) of "
+            "prepare-benchmark assertions"
+        ),
+    )
+    benchmark_assertions_human: str | None = Field(
+        default=None,
+        description=(
+            "Custom human prompt for the assertion synthesis (reduce step) of "
+            "prepare-benchmark assertions"
+        ),
+    )
+    benchmark_validation_system: str | None = Field(
+        default=None,
+        description=(
+            "Custom system prompt for the assertion validation of "
+            "prepare-benchmark assertions"
+        ),
+    )
+    benchmark_validation_human: str | None = Field(
+        default=None,
+        description=(
+            "Custom human prompt for the assertion validation of "
+            "prepare-benchmark assertions"
+        ),
+    )
     drift_hyde_system: str | None = Field(
         default=None,
         description="Custom system prompt for the DRIFT query expansion (HyDE)",
@@ -4822,6 +4943,13 @@ class CustomPromptConfig(BaseModel):
 _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "answer_generation": frozenset({"query", "context"}),
     "answer_span_extraction": frozenset({"question", "answer"}),
+    "assertion_judgement": frozenset({"question", "answer", "assertions"}),
+    "benchmark_activity_context": frozenset({"context"}),
+    "benchmark_assertions": frozenset({"question", "claims"}),
+    "benchmark_claims": frozenset({"question", "text_units"}),
+    "benchmark_questions": frozenset({"context"}),
+    "benchmark_validation": frozenset({"question", "assertions", "sources"}),
+    "closed_book_answer": frozenset({"query"}),
     "comprehensive_answer": frozenset({"query", "context"}),
     "claim_extraction": frozenset({"input_text"}),
     "community_report": frozenset({"entities", "relationships"}),
@@ -4838,6 +4966,8 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "iterative_controller": frozenset({"query", "context"}),
     "keywords_extraction": frozenset({"query"}),
     "pairwise_comparison": frozenset({"query", "answer1", "answer2"}),
+    "pairwise_differential": frozenset({"query", "shared", "unique1", "unique2"}),
+    "pairwise_overlap": frozenset({"query", "answer1", "answer2"}),
     "query_decomposition": frozenset({"query"}),
     "query_rewrite": frozenset({"query", "conversation_history"}),
     "strategy_selection": frozenset({"query", "strategies"}),
@@ -5075,6 +5205,33 @@ class EvaluationConfig(BaseModel):
             "too, as LightRAG's evaluation prompt does, reported as a fifth "
             "criterion. A custom_prompts.pairwise_comparison_* override must "
             "then return an 'overall' verdict as well."
+        ),
+    )
+    pairwise_mode: Literal["standard", "differential"] = Field(
+        default="standard",
+        description=(
+            "How the run-eval --pairwise-judge judge reads two answers "
+            "(run-eval --pairwise-mode overrides it). 'standard' (default) "
+            "judges the whole answers. 'differential' first asks the "
+            "models.roles.pairwise_overlap model (fast tier) for the "
+            "statements both answers make and those only one makes, then "
+            "judges each criterion on the unique statements only, so content "
+            "both share, and the length it adds, earns neither side credit; "
+            "a pair with no unique statement is a tie without a judge call. "
+            "One more fast call per pair. Opt-in until a measured experiment "
+            "decides: LLM judges prefer longer answers (Zeng et al. 2025). "
+            "Both modes report win rates per answer-length bucket."
+        ),
+    )
+    assertion_trials: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Judge calls per answer of the assertion evaluator: each labels "
+            "every assertion of the item supported, contradicted or absent "
+            "(assertions shuffled per trial), and the metrics average the "
+            "trials that succeeded. A query whose trials all failed records "
+            "its metrics as failed, never as 0."
         ),
     )
     retrieval_k: int = Field(

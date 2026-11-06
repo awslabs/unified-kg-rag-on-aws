@@ -64,6 +64,7 @@ from unified_kg_rag.shared.exceptions import InvalidFilterError
 from unified_kg_rag.shared.usage import merge_usage, usage_scope
 
 from .answer_match_evaluator import SPAN_FALLBACK_KEY, AnswerMatchEvaluator
+from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
@@ -219,6 +220,8 @@ class EvaluationManager:
             return RetrievalEvaluator
         if evaluator_type is EvaluatorType.ANSWER_MATCH:
             return AnswerMatchEvaluator
+        if evaluator_type is EvaluatorType.ASSERTION:
+            return AssertionEvaluator
         # Defensive: a future EvaluatorType with no mapping resolves to None and
         # is skipped by the caller. mypy sees the enum as exhaustive today, hence
         # the ignore — the branch is real once a new member is added.
@@ -437,6 +440,10 @@ class EvaluationManager:
             raise EvaluationException(
                 f"{where}: 'answer_aliases' must be a string or a list of strings."
             )
+        try:
+            assertions = assertions_of({ASSERTIONS_KEY: item.get("assertions")})
+        except EvaluationException as e:
+            raise EvaluationException(f"{where}: 'assertions': {e}") from e
         rag_fields = {
             k: v for k, v in final_metadata.items() if k in RAGInput.model_fields
         }
@@ -469,6 +476,7 @@ class EvaluationManager:
                 or expected_entities
                 or expected_relationships
                 or reference_sources
+                or assertions
             ):
                 gt = EvaluationGroundTruth(
                     query_id=query_id,
@@ -476,6 +484,7 @@ class EvaluationManager:
                     reference_sources=reference_sources,
                     expected_entities=expected_entities,
                     expected_relationships=expected_relationships,
+                    assertions=assertions,
                 )
         except (ValidationError, InvalidFilterError) as e:
             raise EvaluationException(f"{where}: {e}") from e
@@ -953,6 +962,10 @@ class EvaluationManager:
                     for rel in gt.expected_relationships
                 ]
                 result.metadata["reference_sources"] = list(gt.reference_sources)
+                if gt.assertions:
+                    result.metadata[ASSERTIONS_KEY] = [
+                        a.model_dump(mode="json") for a in gt.assertions
+                    ]
 
         # A failed answer generation (RAG error fallback text or an empty
         # sentinel) is not an answer: scoring it would let LLM judges grade the
@@ -1185,7 +1198,8 @@ class EvaluationManager:
             or bool(args.get("baseline_results"))
         )
         uses_judge = pairwise_judge or bool(
-            enabled & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS}
+            enabled
+            & {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS, EvaluatorType.ASSERTION}
         )
         evaluation = self.config.evaluation
         answer_model = self.config.model_id(ModelRole.ANSWER_GENERATION)
@@ -1265,7 +1279,22 @@ class EvaluationManager:
                 else None
             ),
             "pairwise_judge": (
-                {"overall": evaluation.pairwise_overall} if pairwise_judge else None
+                {
+                    "overall": evaluation.pairwise_overall,
+                    "mode": evaluation.pairwise_mode,
+                    "overlap_model": (
+                        model_id_value(self.config.model_id(ModelRole.PAIRWISE_OVERLAP))
+                        if evaluation.pairwise_mode == "differential"
+                        else None
+                    ),
+                }
+                if pairwise_judge
+                else None
+            ),
+            "assertion_scoring": (
+                {"trials": evaluation.assertion_trials}
+                if EvaluatorType.ASSERTION in enabled
+                else None
             ),
             "enabled_evaluators": sorted(e.value for e in enabled),
             "dropped_evaluators": dict(self.dropped_evaluators),

@@ -77,7 +77,10 @@ The console prints the same summary.
   the default answer model, and falls back to another when the answer
   model is Opus 5.5; a configured `models.roles.evaluation` that is the
   answer model, `default` say, is kept and warned about). The `--pairwise-judge` of a
-  comparison counts as a judge, and `pairwise_judge` records its settings;
+  comparison counts as a judge, and `pairwise_judge` records its settings
+  (`overall`, `mode`, and in the differential mode the `overlap_model`); so
+  does the `assertion` evaluator, and `assertion_scoring` records its
+  `trials`;
 - `answer_scoring`: the `answer_span` and `answer_normalization` exact
   match and token F1 used (with `answer_match`), and `models.answer_span`
   the extracting model; runs scored differently are not comparable on
@@ -125,8 +128,10 @@ strategies, or `--repeats`) saves every run's files and adds
   the queries both scored: `mean_delta`, a 95% paired bootstrap interval
   (`ci_low`/`ci_high`; 2,000 resamples, seed 0), `wins`/`ties`/`losses`, the
   per-query deltas and `unpaired`. A query whose answer generation failed
-  scores 0 on every metric the other run scored (`answer_length` excepted)
-  that its own strategy scores on some query, so failing cannot help a
+  scores 0 on every metric the other run scored (`answer_length` and the
+  lower-is-better `assertion_contradiction_rate` and
+  `negative_assertion_violation_rate`, where 0 is the best score, excepted:
+  there it is unpaired) that its own strategy scores on some query, so failing cannot help a
   strategy, and a metric it never produces (`global` reports no entities,
   so no `retrieved_entity_coverage`) is not invented as a loss; a strategy
   that scored nothing is filled on every metric. A score the evaluator
@@ -169,7 +174,38 @@ strategies, or `--repeats`) saves every run's files and adds
   (`unanswerable_skipped`). `failed` counts pairs the judge could not decide
   (a failed call, or a verdict other than `1`, `2` or `tie`), and
   `--max-failure-rate` applies to them. A judge that is the answer model is
-  warned about.
+  warned about. `mode` is `standard` or `differential`
+  (`evaluation.pairwise_mode`, `--pairwise-mode`).
+  - `length` (both modes; judged pairs only): each pair's
+    `baseline_tokens` / `candidate_tokens` (the script-aware estimate, about
+    one token per Hangul, kana or Han character, so not whitespace words),
+    `ratio` (candidate over baseline), `relative_difference` ((candidate -
+    baseline) over the longer, -1 to 1) and `bucket` under `per_query`;
+    `buckets.<ratio>` (`<0.67x`, `0.67-0.9x`, `0.9-1.1x`, `1.1-1.5x`,
+    `>1.5x`) with the pairs and, per criterion, the wins, ties and
+    `candidate_win_rate` in that bucket; `score_correlation.<criterion>`,
+    the Pearson correlation of `relative_difference` with the pair's score
+    (null under 3 pairs or without variation). A win rate rising with the
+    ratio, or a strong positive correlation, is the judge's length
+    preference.
+  - Differential mode: per pair, the `models.roles.pairwise_overlap` model
+    (fast tier; prompt `custom_prompts.pairwise_overlap_*`) lists the
+    statements both answers make (`shared`) and those only the `baseline`
+    or the `candidate` makes, copied in the answers' language
+    (`differential.per_query`); the judge (prompt
+    `custom_prompts.pairwise_differential_*`) decides each criterion on the
+    unique statements, both orders, with the shared ones as common ground.
+    `length.per_query` adds `shared_tokens`, `baseline_unique_tokens` and
+    `candidate_unique_tokens`. A pair with no unique statement is a tie for
+    every criterion without a judge call (`identical_pairs`; it counts in
+    `judged` but not in `position_consistency`). A failed or malformed split
+    (a missing key, a value that is not a list of strings) fails the pair.
+- `closed_book_arms` (with `--closed-book`): the arms answered by the
+  answer model alone, without retrieval (`closed_book`; an earlier run's
+  `baseline:closed_book`). They compare like a strategy (their results carry
+  `metadata.retrieval: "none"` and no source, so their retrieval and
+  context metrics score an empty list; read their answer metrics), are
+  judged by `--pairwise-judge`, and are skipped by `--fail-if`.
 - `cost.strategies.<s>`: the answers' model use per query, as `mean` /
   `p50` / `p95` over every answer of every repeat: `llm_calls_per_query`,
   `input_tokens_per_query`, `output_tokens_per_query`,
@@ -210,8 +246,9 @@ strategies, or `--repeats`) saves every run's files and adds
 The comparison is also written as `evaluation_comparison_<timestamp>.csv`
 (one row per non-baseline strategy, measure and query: `baseline`,
 `baseline_value`, `value`, `delta`, `category`) and `.md` (the metric and
-cost tables, the pairwise judge's win rates, the gates and the warnings, for
-a pull request or a CI job summary).
+cost tables, the pairwise judge's win rates with the per-length-bucket
+table, the gates and the warnings, for a pull request or a CI job summary;
+a closed-book arm is marked "(no retrieval)").
 
 ## Rebuilding and gating rules
 
@@ -341,6 +378,55 @@ Did the sources the answer model saw include the gold documents?
   `AC/DC` is compared whole.
 - **Skips.** Skipped when a query has no `reference_sources` or none of its
   sources is attributable; a query that retrieved no sources scores 0.
+
+### `assertion`
+
+Checks each answer against the item's `assertions` (`[{text, kind:
+positive|negative, source?}]`, or bare strings, which are positive).
+
+- **Calls.** Per answer, `evaluation.assertion_trials` (default 3) calls to
+  `models.roles.evaluation` (prompt `custom_prompts.assertion_judgement_*`),
+  each labelling every assertion `supported`, `contradicted` or `absent`
+  from the answer alone. Each trial shows the assertions in a shuffled order
+  seeded by the query id and trial. The labels are fixed tokens in a JSON
+  reply, so the parse does not depend on the language.
+- **Scores.** An assertion takes a label when more than half of the
+  successful trials gave it (BenchmarkQED's pass rule). Per query:
+  `assertion_recall` = positive assertions supported / positive assertions;
+  `assertion_contradiction_rate` = positive ones contradicted / positive
+  ones; `negative_assertion_violation_rate` = negative ones supported /
+  negative ones. The summary's means are over queries. Each report records
+  `assertion_labels` (per assertion, the share of trials per label),
+  `trials` and `failed_trials`.
+- **Failures and skips.** A trial whose call fails, or whose reply misses an
+  assertion, labels one twice or uses another label, fails; the scores read
+  the others. A query with no successful trial records its metrics in
+  `failed_metrics` (counted against `--max-failure-rate`), never as 0. A
+  query without assertions skips all three metrics (`no_assertions`), one
+  without negative or positive ones the metrics of that kind.
+
+### Generated assertion sets
+
+`prepare-benchmark assertions --source-directory <dir> --output-directory
+<out>` writes three files (and refuses an `<out>` that holds any of them):
+
+- `eval_data.json`: the run-eval dataset. `query_id` is
+  `autoq-<class>-<n>`, `category` the class (`data_local`, `data_global`,
+  `data_linked`, `activity_local`, `activity_global`). Data questions carry
+  `assertions` (positive, `source`: the text-unit ids they rest on) and
+  `reference_sources` (the files of those units, for `retrieval`);
+  `metadata` holds `benchmark: autoq`, `question_class`, `topic`,
+  `entities`, `clusters`, `source_text_units`, `assertion_importance` and,
+  for activity questions, the `persona` and `task`.
+- `text_units.jsonl`: one line per cited unit: `id` (`<file>#<n>`), `file`
+  (relative to the corpus directory), `start` / `end` character offsets and
+  `text`.
+- `generation_report.json`: `seed`, `settings`, `language`, the
+  `models` used, corpus counts, `questions` per class, the number of
+  `assertions`, `dropped` (per reason: failed calls, candidates without
+  claims or assertions, assertions that failed validation, duplicates) and
+  `usage` per step (`questions`, `claims`, `assertions`, `validation`,
+  `activity_context`).
 
 ### `answer_match`
 

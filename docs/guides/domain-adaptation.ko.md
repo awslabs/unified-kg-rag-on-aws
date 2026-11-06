@@ -108,8 +108,12 @@ custom_prompts:
 `query_decomposition`, `decomposition_step`, `strategy_selection`,
 `keywords_extraction`, `global_map`, `pairwise_comparison`(`--pairwise-judge` 판정
 모델. JSON 판정 형식은 유지하고, `evaluation.pairwise_overall`이면 `overall` 판정도 포함),
-`answer_span_extraction`(`evaluation.answer_span: extracted`의 구간 추출기), 그리고 프롬프트
-튜닝의 `corpus_profile`. 모든 키와 기본값은
+`answer_span_extraction`(`evaluation.answer_span: extracted`의 구간 추출기),
+`--pairwise-mode differential`의 단계인 `pairwise_overlap`과 `pairwise_differential`,
+`assertion_judgement`(`assertion` 평가기), `closed_book_answer`(`run-eval --closed-book`),
+`prepare-benchmark assertions`의 단계인 `benchmark_activity_context`, `benchmark_questions`,
+`benchmark_claims`, `benchmark_assertions`, `benchmark_validation`(JSON 형식은 유지), 그리고
+프롬프트 튜닝의 `corpus_profile`. 모든 키와 기본값은
 [설정 레퍼런스](../reference/configuration.md#custom_prompts)(영문)에 있습니다.
 
 ### 읽을 때 하는 검사

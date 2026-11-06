@@ -3,7 +3,7 @@
 > 🇬🇧 English version: [evaluate.md](./evaluate.md)
 
 `run-eval --data-path <dataset.json>`은 데이터셋의 모든 질문에 답한 뒤 답변과 출처를
-채점합니다. 평가기 셋은 LLM 없이 비용 없이 동작하고, 둘은 LLM 심사 모델을 씁니다.
+채점합니다. 평가기 셋은 LLM 없이 비용 없이 동작하고, 셋은 LLM 심사 모델을 씁니다.
 전략을 여럿 주거나 `--repeats`를 주면 짝지은 비교가 됩니다.
 
 모든 플래그와 기본값은 [CLI 레퍼런스](../reference/cli.md#run-eval)(영문)에 있습니다.
@@ -28,8 +28,12 @@ retrieval, graph_aware]`.
 | `graph_aware` | 없음 | `expected_entities` / `expected_relationships` | 답변과 검색된 출처에서의 엔티티·관계 커버리지(재현율) |
 | `langchain` | 심사 | `answer` | `correctness`, `partial_correctness` |
 | `ragas` | 심사 | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
+| `assertion` | 심사 | `assertions` | `assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`(선택 사항) |
 
-심사 평가기 둘은 `eval` extra가 필요합니다(`uv sync --extra eval`, [설치](../getting-started/aws.ko.md#설치)). extra가
+`assertion`도 선택 사항입니다(`enabled_evaluators`에 추가). 답변마다 항목의 단언문(assertion)을
+확인하며, 답변당 심사 호출을 `evaluation.assertion_trials`번(기본값 3) 하고 extra는 필요 없습니다.
+자세한 내용은 [단언문, 길이 통제, 클로즈드북 기준선](#단언문-길이-통제-클로즈드북-기준선)에 있습니다.
+`langchain`·`ragas` 심사 평가기는 `eval` extra가 필요합니다(`uv sync --extra eval`, [설치](../getting-started/aws.ko.md#설치)). extra가
 없으면 `run-eval`은 첫 질의 전에 extra 이름을 알려 주고 종료 코드 `2`로 종료하며,
 `processing.ignore_errors: true`여도 같습니다. 위의 심사 모델 없는 실행에는 extra가
 필요 없습니다. 그 밖에 켜 둔 평가기를 만들 수 없거나(예: 심사 모델의 Bedrock 접근 권한
@@ -63,7 +67,11 @@ retrieval, graph_aware]`.
       { "source": "AI", "target": "machine learning" },
       "machine learning -> data processing"
     ],
-    "metadata": { "search_strategy": "global", "answer_aliases": ["AI and ML"] }
+    "metadata": { "search_strategy": "global", "answer_aliases": ["AI and ML"] },
+    "assertions": [
+      "The documents discuss machine learning.",
+      { "text": "The documents describe quantum hardware.", "kind": "negative" }
+    ]
   },
   {
     "id": "q2",
@@ -72,6 +80,9 @@ retrieval, graph_aware]`.
 ]
 ```
 
+- `assertions`(`assertion` 평가기용): 좋은 답변이 뒷받침해야 하는 문장(문자열 또는
+  `{"text", "kind": "positive"}`)이나 말하면 안 되는 문장(`"kind": "negative"`, 예: 이미 알려진
+  환각)이며, 검토자를 위한 `source`를 붙일 수 있습니다. 답변과 같은 언어로 쓰세요.
 - 항목별 `metadata`(예: `search_strategy`)는 그 질문에 한해 CLI 기본값보다 우선합니다.
   `id`는 `query_id`로 써도 됩니다.
 - 코퍼스로 답할 수 없는 질문에는 `"metadata": {"answerable": false}`를 지정하세요. 어떤
@@ -159,7 +170,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   탐색적으로 읽으세요.
 - **맞비교 판정.** `--pairwise-judge`는 GraphRAG / LightRAG 논문의 맞비교 LLM 판정(포괄성,
   다양성, 이해 도움, 직접성)을 더하며, 쌍마다 순서를 바꿔 두 번 판정합니다.
-  `candidate_win_rate`는 `position_consistency`와 함께 읽으세요.
+  `candidate_win_rate`는 `position_consistency`, 그리고 답변 길이 구간별 승률(`length`)과 함께
+  읽으세요. LLM 판정 모델은 긴 답변을 선호하므로, 길이 비율이 커질수록 승률이 오르면 품질이
+  아니라 길이의 효과입니다. `--pairwise-mode differential`은 두 답변이 다른 부분만 판정합니다(아래).
 - **비용과 지연 시간.** `cost.strategies.<s>`와 `cost.deltas_vs_baseline`은 답변의 질의당
   호출, 토큰, 지연 시간을 지표처럼 짝지어 보여 줍니다. 실패한 답변은 실패하기 전까지 쓴
   만큼 셉니다.
@@ -190,6 +203,51 @@ evaluation:
 호출(`failed_calls`), 예열 질의는 가격에 들어가지 않으므로 CloudWatch 호출 수와 청구액이 조금
 더 많을 수 있습니다(측정 결과:
 [Usage records against the bill](../concepts/defaults-and-evidence.md#usage-records-against-the-bill), 영문).
+
+## 단언문, 길이 통제, 클로즈드북 기준선
+
+열린(전역) 질문에는 정답이 없고, 맞비교 판정 모델은 긴 답변을 선호합니다. 이를 보완하는
+선택 기능 세 가지가 있으며, 측정 실험으로 결정하기 전까지 어느 것도 기본값을 바꾸지
+않습니다([Design: §9.3](../design.md#93-length-controlled-judging-assertions-and-the-closed-book-arm), 영문).
+
+1. Microsoft BenchmarkQED 방식으로 사용자의 코퍼스에서 질문과 단언문을 만듭니다(코드는 MIT
+   라이선스이며 BenchmarkQED의 데이터는 쓰지 않음).
+
+   ```bash
+   prepare-benchmark assertions --source-directory corpus/ \
+     --output-directory bench/assertions --questions-per-class 10 \
+     --config-path config.yaml
+   ```
+
+   다섯 유형(`category`: `data_local`, `data_global`, `data_linked`, `activity_local`,
+   `activity_global`)의 질문과 데이터 유형 셋의 단언문을 담은 `eval_data.json`,
+   `text_units.jsonl`(단언문마다 인용한 텍스트와 파일, 오프셋. 세트를 믿기 전에 이것으로
+   단언문을 검토하세요), `generation_report.json`(시드, 모델, 버린 항목, 사용량)을 씁니다.
+   평가 모델(`models.roles.evaluation`)을 데이터 질문마다 3~4번, 그리고 클러스터와 활동
+   질문마다 한 번 부르고, 텍스트 단위를 최대 `--max-units`개 임베딩하며, 쓴 호출과 토큰을
+   출력합니다(`evaluation.prices`가 있으면 USD 추정치도). 질문과 단언문은 `--language`
+   (기본값 `processing.translation.source_language`)로 씁니다. 같은 시드와 같은 모델 응답이면
+   같은 파일이 나옵니다.
+2. 답변을 단언문으로 채점하고 길이 편향 없이 맞비교합니다.
+
+   ```bash
+   run-eval --data-path bench/assertions/eval_data.json \
+     --search-strategy global,mix --pairwise-judge --pairwise-mode differential \
+     --closed-book --config-path config.yaml   # enabled_evaluators: [assertion, ...]
+   ```
+
+   - `assertion_recall`은 항목의 긍정 단언문 가운데 답변이 뒷받침하는 비율(시도의 절반 넘게
+     그렇다고 판정한 단언문만 셈), `assertion_contradiction_rate`는 답변이 반박하는 비율,
+     `negative_assertion_violation_rate`는 부정 단언문을 답변이 말한 비율입니다. 판정 모델이
+     실패하면 지표는 0이 아니라 실패로 남습니다. 다른 지표처럼 게이트를 걸 수 있습니다:
+     `--fail-if "assertion/assertion_recall:ci_high<-0.02"`.
+   - `--pairwise-mode differential`은 빠른 계층 모델(`models.roles.pairwise_overlap`)에게 두
+     답변이 함께 말하는 문장과 한쪽만 말하는 문장을 나누게 한 뒤, 한쪽만 말하는 문장만
+     판정합니다. 쌍마다 빠른 모델 호출이 한 번 더 듭니다.
+   - `--closed-book`은 `closed_book` 비교군을 더합니다. 답변 모델이 검색 없이 모든 질문에
+     답하므로, 이를 이기지 못하는 전략은 모델이 이미 아는 것을 재고 있는 셈입니다. 비교
+     결과에는 "(no retrieval)"로 표시하고 게이트에서는 제외하며, 검색·컨텍스트 지표는 빈
+     출처 목록으로 채점됩니다.
 
 ## 저장한 결과로 비교 다시 만들기, 다시 판정하기, 게이트
 

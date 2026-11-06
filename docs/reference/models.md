@@ -167,7 +167,7 @@ switches the pipeline; a `models.roles` entry (a model id, or `default` /
 | Tier | Roles |
 | --- | --- |
 | `default` | `fixing`, `graph_extraction`, `gleaning`, `claim_extraction`, `community_report`, `entity_extraction`, `answer_generation`, `evaluation` (with a provider other than Bedrock; see below) |
-| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `drift_primer`, `drift_action`, `query_controller`, `answer_span` |
+| `fast` | `chunking`, `translation`, `description_summary`, `query_translation`, `strategy_selection`, `query_rewrite`, `community_relevance`, `global_map`, `drift_primer`, `drift_action`, `query_controller`, `answer_span`, `pairwise_overlap` (`run-eval --pairwise-mode differential`) |
 
 ```yaml
 models:

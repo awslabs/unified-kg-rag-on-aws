@@ -524,6 +524,15 @@ From a `main` checkout (formats and keys no release had):
   no-context reply included) 0 without a span call, and `abstention_statistics` adds decline precision, recall and F1
   and per `answer_match` metric coverage, accuracy, selective and overall accuracy (#593). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
+- Evaluation of open-ended answers, all opt-in (defaults unchanged until a measured experiment decides): the
+  pairwise judge reports win rates per answer-length bucket in estimated tokens and their correlation with length;
+  `evaluation.pairwise_mode: differential` (`run-eval --pairwise-mode differential`, model role
+  `models.roles.pairwise_overlap`) judges only the statements unique to each answer; the `assertion` evaluator
+  (`assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`;
+  `evaluation.assertion_trials`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions
+  in five classes and source-cited assertions from your corpus, after Microsoft BenchmarkQED (MIT; no BenchmarkQED
+  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval (#595). See
+  [evaluation](docs/guides/evaluate.md#assertions-length-control-and-a-closed-book-bound).
 - Comparison cost: per strategy calls, tokens and latency per query (mean, p50, p95) with paired deltas, a USD
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and
   Markdown; a failed answer counts with what it spent (#526, #529, #533).

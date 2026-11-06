@@ -1096,15 +1096,23 @@ class TestComparability:
         )
         # One strategy against --baseline-results is judged too.
         against = {**one, "baseline_results": ["ci/previous"]}
-        assert manager.build_run_manifest(cli_args=against)["pairwise_judge"] == {
-            "overall": False
-        }
+        standard = {"overall": False, "mode": "standard", "overlap_model": None}
+        assert (
+            manager.build_run_manifest(cli_args=against)["pairwise_judge"] == standard
+        )
         manifest = manager.build_run_manifest(cli_args=two)
         assert manifest["models"]["judge_is_answer_model"] is True
         assert manifest["models"]["evaluation_judge"] == config.model_id(
             ModelRole.EVALUATION
         )
-        assert manifest["pairwise_judge"] == {"overall": False}
+        assert manifest["pairwise_judge"] == standard
+        # The differential mode records its overlap model too.
+        config.evaluation.pairwise_mode = "differential"
+        assert manager.build_run_manifest(cli_args=two)["pairwise_judge"] == {
+            "overall": False,
+            "mode": "differential",
+            "overlap_model": config.model_id(ModelRole.PAIRWISE_OVERLAP),
+        }
 
     def test_run_manifest_records_the_answer_span(self, config: Config) -> None:
         config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]

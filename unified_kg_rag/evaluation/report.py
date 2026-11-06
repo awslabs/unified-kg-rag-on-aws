@@ -5,8 +5,10 @@
 ``run-eval`` writes both next to ``evaluation_comparison_<stamp>.json``:
 the CSV has one row per non-baseline strategy, measure and query
 (``comparison.per_query_rows``), for a spreadsheet or a notebook; the
-Markdown has the metric, cost and pairwise-judge tables, the gates and the
-warnings, for a pull request or a CI job summary.
+Markdown has the metric, cost and pairwise-judge tables (with the win rates
+per answer-length bucket), the gates and the warnings, for a pull request or
+a CI job summary. A closed-book arm (``run-eval --closed-book``) is marked
+"(no retrieval)".
 """
 
 from __future__ import annotations
@@ -125,6 +127,15 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
         else "vs each strategy's baseline"
     )
     lines = [f"# Paired comparison {title}", ""]
+    closed = set(comparison.get("closed_book_arms") or ())
+    if closed:
+        lines += [
+            f"{', '.join(f'`{a}`' for a in sorted(closed))} answered without "
+            "retrieval (the answer model alone): a bound on what the model knows "
+            "without the corpus, not a strategy; its retrieval and context "
+            "metrics score no sources, and gates skip it.",
+            "",
+        ]
     rows = []
     for key in baseline_metric_keys(comparison):
         row: list[Any] = [f"`{key}`"]
@@ -136,7 +147,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
         rows.append(row)
     header = [
         "Metric",
-        *strategies,
+        *(f"{s} (no retrieval)" if s in closed else s for s in strategies),
         *(f"{s} - {pairs[s]} [{confidence:.0%} CI]" for s in others),
     ]
     lines += _table(header, rows)
@@ -197,9 +208,11 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
         criteria = list(
             dict.fromkeys(c for judged in pairwise.values() for c in judged["criteria"])
         )
+        modes = sorted({str(j.get("mode") or "standard") for j in pairwise.values()})
         lines += [
             "",
-            "## Pairwise judge (candidate win rate, ties 0.5)",
+            f"## Pairwise judge ({', '.join(modes)} mode; candidate win rate, "
+            "ties 0.5)",
             "",
         ]
         lines += _table(
@@ -225,6 +238,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
                 for strategy, judged in pairwise.items()
             ],
         )
+        lines += _length_lines(pairwise, pairs, baseline, criteria)
 
     gates = comparison.get("gates") or {}
     if gates.get("conditions"):
@@ -237,3 +251,65 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
         lines += ["", "## Warnings", ""]
         lines += [f"- {_cell(w)}" for w in comparison["warnings"]]
     return "\n".join(lines) + "\n"
+
+
+def _length_lines(
+    pairwise: Mapping[str, Any],
+    pairs: Mapping[str, str],
+    baseline: str,
+    criteria: Sequence[str],
+) -> list[str]:
+    """The pairwise win rates per answer-length bucket, and the correlation
+    of the relative length difference with the pair's score."""
+    rows: list[list[Any]] = []
+    for strategy, judged in pairwise.items():
+        length = judged.get("length") or {}
+        for bucket, stats in (length.get("buckets") or {}).items():
+            per_criterion = stats.get("criteria") or {}
+            rows.append(
+                [
+                    f"{strategy} vs {pairs.get(strategy, baseline)}",
+                    bucket,
+                    stats.get("pairs", 0),
+                    *(
+                        (
+                            f"{rate:.2f}"
+                            if (
+                                rate := (per_criterion.get(c) or {}).get(
+                                    "candidate_win_rate"
+                                )
+                            )
+                            is not None
+                            else "-"
+                        )
+                        for c in criteria
+                    ),
+                ]
+            )
+        correlation = length.get("score_correlation") or {}
+        if correlation:
+            rows.append(
+                [
+                    f"{strategy} vs {pairs.get(strategy, baseline)}",
+                    "correlation",
+                    length.get("pairs", 0),
+                    *(
+                        (
+                            f"{value:+.2f}"
+                            if (value := correlation.get(c)) is not None
+                            else "-"
+                        )
+                        for c in criteria
+                    ),
+                ]
+            )
+    if not rows:
+        return []
+    return [
+        "",
+        "Win rate by answer length (candidate / baseline, estimated tokens); "
+        "a rate that rises with the ratio is a length effect. The correlation "
+        "row is that of the relative length difference with the pair's score.",
+        "",
+        *_table(["Strategy", "Length ratio", "Pairs", *criteria], rows),
+    ]

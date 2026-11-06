@@ -75,6 +75,11 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.evaluation import EvaluationManager
+from unified_kg_rag.evaluation.closed_book import (
+    CLOSED_BOOK_ARM,
+    closed_book_arms,
+    closed_book_chain,
+)
 from unified_kg_rag.evaluation.comparison import (
     Run,
     baseline_comparison,
@@ -153,6 +158,20 @@ def with_judge_model(config: Config, model_id: str | None) -> Config:
     return config.model_copy(
         update={"models": models.model_copy(update={"roles": roles})}
     )
+
+
+def with_pairwise_mode(config: Config, mode: str | None) -> Config:
+    """``config`` with ``evaluation.pairwise_mode`` set to ``mode``."""
+    if not mode:
+        return config
+    evaluation = config.evaluation.model_copy(update={"pairwise_mode": mode})
+    return config.model_copy(update={"evaluation": evaluation})
+
+
+# The evaluators that call the LLM judge (models.roles.evaluation).
+_JUDGE_EVALUATORS = frozenset(
+    {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS, EvaluatorType.ASSERTION}
+)
 
 
 def failure_budget_breaches(
@@ -348,6 +367,31 @@ class CommandLineInterface:
             ),
         )
         parser.add_argument(
+            "--pairwise-mode",
+            choices=["standard", "differential"],
+            help=(
+                "How --pairwise-judge reads the two answers (default: "
+                "evaluation.pairwise_mode, 'standard'). 'differential' first "
+                "splits them into shared and unique statements with "
+                "models.roles.pairwise_overlap (fast tier, one call per pair) "
+                "and judges the unique statements only, so shared content and "
+                "the length it adds earn neither answer credit. Both modes "
+                "report win rates per answer-length bucket"
+            ),
+        )
+        parser.add_argument(
+            "--closed-book",
+            action="store_true",
+            help=(
+                "Also answer every question with the answer model alone, no "
+                "retrieval (the 'closed_book' arm, compared with the first "
+                "strategy like another strategy and judged by --pairwise-judge): "
+                "its scores bound what the model knows without the corpus. One "
+                "answer call per question and repeat; its retrieval and context "
+                "metrics score an empty source list, and --fail-if skips it"
+            ),
+        )
+        parser.add_argument(
             "--max-failure-rate",
             type=_failure_rate,
             default=1.0,
@@ -387,7 +431,10 @@ class EvaluationRunner:
         ``--from-results`` (nothing is answered); ``providers`` builds the
         pairwise judge then (default: from ``config``)."""
         self.args = args
-        self.config = with_judge_model(config, getattr(args, "judge_model", None))
+        self.config = with_pairwise_mode(
+            with_judge_model(config, getattr(args, "judge_model", None)),
+            getattr(args, "pairwise_mode", None),
+        )
         self.rag_chain = rag_chain
         self.providers = providers
         self.json_output = json_output(args)
@@ -424,15 +471,14 @@ class EvaluationRunner:
             self.args, "pairwise_judge", False
         ):
             return []
-        judges = {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS}
-        if self._from_results is None and judges & set(
+        if self._from_results is None and _JUDGE_EVALUATORS & set(
             self.config.evaluation.enabled_evaluators
         ):
             return []
         return [
             "--judge-model is given without --pairwise-judge and no LLM-judge "
-            "evaluator (langchain, ragas) scores this run, so it judges "
-            "nothing."
+            "evaluator (langchain, ragas, assertion) scores this run, so it "
+            "judges nothing."
         ]
 
     def _output_is_baseline(self) -> bool:
@@ -452,9 +498,8 @@ class EvaluationRunner:
         langchain/ragas evaluator scoring answers it generates."""
         if getattr(self.args, "pairwise_judge", False):
             return True
-        judges = {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS}
         return self._from_results is None and bool(
-            judges & set(self.config.evaluation.enabled_evaluators)
+            _JUDGE_EVALUATORS & set(self.config.evaluation.enabled_evaluators)
         )
 
     def _judge_choice(self) -> tuple[str, str]:
@@ -502,6 +547,12 @@ class EvaluationRunner:
             judge, reason = self._judge_choice()
             logger.info("LLM judge: %s (%s)", judge, reason)
         if self._from_results is not None:
+            if getattr(self.args, "closed_book", False):
+                usage_error(
+                    "--closed-book answers the questions, --from-results answers "
+                    "none (the saved runs' closed_book arm is compared when "
+                    "they hold one)"
+                )
             if self.args.repeats != 1:
                 usage_error(
                     "--repeats does not apply to --from-results (the saved runs "
@@ -649,8 +700,10 @@ class EvaluationRunner:
             header_style="bold magenta",
         )
         table.add_column("Metric")
+        closed = set(comparison.get("closed_book_arms") or ())
         for strategy in strategies:
-            table.add_column(strategy, style="green")
+            marked = f"{strategy} (no retrieval)" if strategy in closed else strategy
+            table.add_column(markup_safe(marked), style="green")
         for strategy, label in pairs.items():
             table.add_column(f"{strategy} - {label} [CI]", style="cyan")
         for key in baseline_metric_keys(comparison):
@@ -687,7 +740,8 @@ class EvaluationRunner:
                 f", orders agreed {consistency:.0%}" if consistency is not None else ""
             )
             console.print(
-                f"[cyan]Pairwise judge, {strategy} win rate vs "
+                f"[cyan]Pairwise judge ({judged.get('mode', 'standard')} mode), "
+                f"{strategy} win rate vs "
                 f"{pairs.get(strategy, baseline)} "
                 f"({judged['judged']} judged, {errors} decided by a failed "
                 f"answer, {judged['failed']} judge failures{agreed}): "
@@ -869,10 +923,14 @@ class EvaluationRunner:
         """The comparison input rebuilt from ``--from-results``."""
         try:
             saved = load_saved_runs(self._from_results or [])
-            grouped = group_runs(
-                saved,
-                list(self.args.search_strategy) if self._strategies_given() else None,
-            )
+            order = None
+            if self._strategies_given():
+                # The closed-book arm is no --search-strategy: compared last.
+                order = [
+                    *self.args.search_strategy,
+                    *closed_book_arms(dict.fromkeys(run.strategy for run in saved)),
+                ]
+            grouped = group_runs(saved, order)
         except EvaluationException as e:
             raise InvalidDatasetError(f"--from-results: {e}") from e
         warnings = [
@@ -944,7 +1002,13 @@ class EvaluationRunner:
         )
 
         strategies: list[str] = list(self.args.search_strategy)
-        comparing = len(strategies) > 1 or self.args.repeats > 1 or bool(baseline)
+        closed_book = bool(getattr(self.args, "closed_book", False))
+        comparing = (
+            len(strategies) > 1
+            or self.args.repeats > 1
+            or bool(baseline)
+            or closed_book
+        )
         try:
             queries, ground_truths = self.evaluation_manager.load_data(
                 eval_data_path=eval_data_path,
@@ -986,24 +1050,37 @@ class EvaluationRunner:
         breaches: list[str] = []
         manifest: dict[str, Any] | None = None
         manifests: list[tuple[str, dict[str, Any] | None]] = []
-        for strategy in strategies:
+        managers = dict.fromkeys(strategies, self.evaluation_manager)
+        if closed_book:
+            # No retrieval: the answer model alone, scored by the same
+            # evaluators (sharing the strategies' providers).
+            providers = self.evaluation_manager.providers
+            managers[CLOSED_BOOK_ARM] = EvaluationManager(
+                config=self.config,
+                rag_chain=closed_book_chain(self.config, providers),
+                providers=providers,
+            )
+        for strategy, manager in managers.items():
             for repeat in range(1, self.args.repeats + 1):
                 # The run's strategy overrides a per-item one: every run of a
                 # comparison must answer the same queries the same way.
+                arm = (
+                    {"search_strategy": strategy, "retrieval": "none"}
+                    if strategy == CLOSED_BOOK_ARM
+                    else {"search_strategy": strategy}
+                )
                 run_queries = (
                     [
-                        q.model_copy(
-                            update={
-                                "metadata": {**q.metadata, "search_strategy": strategy}
-                            }
-                        )
+                        q.model_copy(update={"metadata": {**q.metadata, **arm}})
                         for q in queries
                     ]
                     if comparing
                     else queries
                 )
                 label = (
-                    f" ({strategy}, repeat {repeat}/{self.args.repeats})"
+                    f" ({strategy}"
+                    f"{', no retrieval' if strategy == CLOSED_BOOK_ARM else ''}, "
+                    f"repeat {repeat}/{self.args.repeats})"
                     if comparing
                     else ""
                 )
@@ -1011,31 +1088,29 @@ class EvaluationRunner:
                     f"[bold]Running Evaluation on {len(queries)} Queries{label}[/bold]",
                     style="blue",
                 )
-                if repeat == 1 and queries:
+                if repeat == 1 and queries and strategy != CLOSED_BOOK_ARM:
                     # Untimed: the first strategy must not pay for warming
                     # the connections and models the others then reuse.
-                    await self.evaluation_manager.warm_up(run_queries[0])
+                    await manager.warm_up(run_queries[0])
                 run_start = time.time()
                 # On the run's root spans (kg_rag.batch, kg_rag.evaluate), so
                 # the runs of a comparison tell apart.
                 with observability.bind_attributes(
                     **{"eval.strategy": strategy, "eval.repeat": repeat}
                 ):
-                    results, reports, summary = (
-                        await self.evaluation_manager.evaluate_dataset(
-                            queries=run_queries,
-                            ground_truths=ground_truths,
-                            show_progress=True,
-                            dataset_path=eval_data_path,
-                            cli_args=vars(self.args),
-                        )
+                    results, reports, summary = await manager.evaluate_dataset(
+                        queries=run_queries,
+                        ground_truths=ground_truths,
+                        show_progress=True,
+                        dataset_path=eval_data_path,
+                        cli_args=vars(self.args),
                     )
                 if is_s3_uri(eval_data_uri) and summary.run_manifest:
                     # Record where the dataset came from, not the temporary copy.
                     summary.run_manifest.get("dataset", {})["path"] = eval_data_uri
                 # The directory --output-directory chose, not the config default.
                 summary.configuration["outputs_directory"] = outputs_target
-                self.evaluation_manager.save_results(
+                manager.save_results(
                     results=results,
                     reports=reports,
                     summary=summary,
@@ -1206,6 +1281,9 @@ class EvaluationRunner:
                     self.args.max_failure_rate,
                 )
             )
+        if arms := closed_book_arms(names):
+            # No retrieval: a bound on prior knowledge, not a strategy to gate.
+            comparison["closed_book_arms"] = arms
         comparison["run_manifest"] = measured.manifest
         if self._from_results is not None or baseline is not None:
             comparison["sources"] = {

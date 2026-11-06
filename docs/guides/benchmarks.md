@@ -6,6 +6,9 @@ Trivedi et al., TACL 2022) into a corpus and a `run-eval` dataset, optionally
 with [unanswerable questions](#unanswerable-questions).
 Every flag with its default: [CLI Reference](../reference/cli.md#prepare-benchmark).
 Running and reading the evaluation itself: [Evaluation](./evaluate.md).
+Questions and source-cited assertions generated from your own corpus
+(`prepare-benchmark assertions`): [Evaluation: Assertions, length control and a
+closed-book bound](./evaluate.md#assertions-length-control-and-a-closed-book-bound).
 The package's own measured runs on MuSiQue, and the commands that reproduce
 them: [Defaults and evidence](../concepts/defaults-and-evidence.md#how-the-measurements-were-run).
 
