@@ -429,12 +429,12 @@ From a `main` checkout (formats and keys no release had):
   `VectorIndexer` port gains the summary-tree methods (each with a "cannot" default). Differential tests against the
   original code ship with recorded fixtures. Failed summaries and, with `refresh: on_reset`, the text units no
   summary covers are EMF metrics (`total_tree_summaries_failed`, `total_tree_uncovered_leaves`) on the CDK
-  dashboard's "Summary tree (EMF)" widget (#PR). See [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in)
+  dashboard's "Summary tree (EMF)" widget (#603). See [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in)
   and [Design §6.5](docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
 - Methodology profiles (#596): `indexing.methodologies` (default `[graphrag, lightrag]`, today's union) selects what
   ingestion builds, so a LightRAG-only corpus (`[lightrag]`) runs no community detection and makes no report call.
   On the CDK stack the `methodologies` context key sets it on both task definitions, so every state-machine run
-  builds the profile (#PR).
+  builds the profile (#603).
   The build record names the artifacts and methodologies a namespace holds; a query whose strategy reads another
   methodology fails before any model call naming what the namespace holds and how to add it, and `auto` routes only
   among the held ones. Adding a methodology to an incremental namespace rebuilds it once from its stored
