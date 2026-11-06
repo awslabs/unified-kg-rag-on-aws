@@ -295,6 +295,15 @@ class IndexingManager:
             self._retain_extraction_records(
                 text_units or [], suffixes, community_reports or []
             )
+            # The summaries of text the rebuild no longer holds go: a summary
+            # tree, if any, is written again by the summary_tree stage.
+            units = self._group_by_suffix(text_units or [])
+            for suffix in sorted(suffixes):
+                summaries = self.vector_indexer.delete_summary_nodes_outside(
+                    [unit.id for unit in units.get(suffix, [])], suffix
+                )
+                if summaries.total_items or summaries.failed_items:
+                    results[f"vector_summary_nodes_{suffix}"] = summaries
         return results
 
     def _retain_extraction_records(

@@ -97,6 +97,12 @@ class TextUnitRemoval:
             else set()
         )
         results = m.delete_documents({suffix: doomed}, {suffix: vector_only})
+        # A summary of the tree paraphrases what it covers: one citing a
+        # removed text unit goes, and every summary above it (fail-closed:
+        # the next summary_tree build writes the tree again).
+        summaries = m.vector_indexer.delete_summary_nodes_citing(text_unit_ids, suffix)
+        if summaries.total_items or summaries.failed_items:
+            results[f"vector_summary_nodes_{suffix}"] = summaries
         if any(stats.failed_items for stats in results.values() if stats):
             # Strip nothing until the removed text units are gone: a retry
             # tells a removal that got further by their missing copies.

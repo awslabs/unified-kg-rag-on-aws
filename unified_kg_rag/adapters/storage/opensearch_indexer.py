@@ -35,6 +35,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
+    SUMMARY_TREE_META,
     Claim,
     CommunityReport,
     Config,
@@ -44,6 +45,7 @@ from unified_kg_rag.domain.models import (
     IndexBuildRecord,
     ModelPurpose,
     Relationship,
+    SummaryNode,
     TextUnit,
     model_id_value,
 )
@@ -409,6 +411,8 @@ class OpenSearchIndexer(VectorIndexer):
         )
         # The limits in force on each live index read (see _limits).
         self._index_limits: dict[str, IndexLimits] = {}
+        # Per live summary index, its nodes' text digests (_summary_digests).
+        self._summary_digest_cache: dict[str, dict[str, str]] = {}
         self.embedding_factory = embedding_factory
         self._embedding_dimension = self._resolve_embedding_dimension()
         self.embedding_model = self.embedding_factory.get_model(
@@ -779,7 +783,11 @@ class OpenSearchIndexer(VectorIndexer):
         """
         expected = self._embedding_meta()
         mapping_funcs = self._mapping_funcs()
+        # Not the summary tree's: its stage writes a new index every build.
+        summary = self.opensearch_config.summary_nodes_index_prefix
         for prefix in self._index_prefixes():
+            if prefix == summary:
+                continue
             index_name = self._live_index(self._get_name(prefix, suffix))
             if not index_name:
                 continue
@@ -1065,6 +1073,14 @@ class OpenSearchIndexer(VectorIndexer):
                 [self._claim_description_text],
                 self._prepare_claim_doc,
                 ("description_embedding",),
+            ),
+            _ItemSpec(
+                "summary nodes",
+                config.summary_nodes_index_prefix,
+                self._get_summary_nodes_mapping,
+                [lambda node: node.text],
+                self._prepare_summary_node_doc,
+                ("text_embedding",),
             ),
         )
 
@@ -1883,6 +1899,10 @@ class OpenSearchIndexer(VectorIndexer):
         config = self.opensearch_config
         builds = {
             config.relationships_index_prefix: config.build_relationship_vector_index,
+            # Built by the summary_tree stage, for the raptor methodology.
+            config.summary_nodes_index_prefix: (
+                IndexArtifact.SUMMARY_TREE in artifacts_to_build(self.config)
+            ),
         }
         if not rebuild:
             # An incremental run upserts only the types it extracted.
@@ -2669,6 +2689,370 @@ class OpenSearchIndexer(VectorIndexer):
 
         stats.processing_time = time.time() - start_time
         return stats
+
+    # --- the summary tree (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in) -----------------------------
+
+    def _index_language(self) -> str:
+        """The language the text units are indexed and embedded in: the
+        target language when translation runs, the source language
+        otherwise (``query_processing``'s index language)."""
+        translation = self.config.processing.translation
+        language = (
+            translation.target_language
+            if translation.enabled
+            else translation.source_language
+        )
+        return language.value
+
+    def _scan(
+        self,
+        alias_prefix: str,
+        suffix: str | None,
+        fields: list[str],
+        *,
+        page_size: int | None = None,
+        exclude: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Every document of ``suffix``'s live ``alias_prefix`` index (only
+        ``fields``), in id order, a page at a time (at most ``page_size``,
+        the index's window otherwise); without the documents ``exclude``
+        (a ``must_not`` clause) matches. ``[]`` without a live index."""
+        alias_name = self._get_name(alias_prefix, suffix)
+        index_name = self._live_index(alias_name)
+        if not index_name:
+            return []
+        window = self._limits(index_name).max_result_window
+        size = min(window, page_size) if page_size else window
+        found: list[dict[str, Any]] = []
+        after: str | None = None
+        while True:
+            clauses: dict[str, Any] = {}
+            if after is not None:
+                clauses["filter"] = [{"range": {"id": {"gt": after}}}]
+            if exclude is not None:
+                clauses["must_not"] = [exclude]
+            response = self.opensearch_client.search(
+                index=alias_name,
+                body={
+                    "size": size,
+                    "query": {"bool": clauses} if clauses else {"match_all": {}},
+                    "sort": [{"id": {"order": "asc"}}],
+                    "_source": {"includes": ["id", *fields]},
+                    "track_total_hits": False,
+                },
+            )
+            page = list(response.get("hits", {}).get("hits", []))
+            for hit in page:
+                found.append({**(hit.get("_source") or {}), "id": str(hit["_id"])})
+            if len(page) < size:
+                return found
+            after = str((page[-1].get("_source") or {}).get("id") or page[-1]["_id"])
+
+    def scan_text_units(
+        self,
+        suffix: str | None,
+        *,
+        fields: list[str],
+        page_size: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Every stored text unit of ``suffix`` but the seed graphs' (see
+        the port), in id order."""
+        return self._scan(
+            self.opensearch_config.text_units_index_prefix,
+            suffix,
+            fields,
+            page_size=page_size,
+            exclude={"exists": {"field": "source_kind"}},
+        )
+
+    def read_summary_nodes(
+        self, suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]]:
+        """Every node of ``suffix``'s live summary tree (see the port)."""
+        return self._scan(
+            self.opensearch_config.summary_nodes_index_prefix, suffix, fields
+        )
+
+    def read_summary_tree_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """The record ``write_summary_tree`` wrote with ``suffix``'s live
+        tree (see the port)."""
+        alias = self._get_name(
+            self.opensearch_config.summary_nodes_index_prefix, suffix
+        )
+        index_name = self._live_index(alias)
+        if not index_name:
+            return None
+        record = (self._index_mappings(index_name).get("_meta") or {}).get(
+            SUMMARY_TREE_META
+        )
+        return record if isinstance(record, dict) else None
+
+    def embed_summary_texts(
+        self, texts: list[str], suffix: str | None
+    ) -> list[list[float] | None]:
+        """The vectors of ``texts`` (see the port): a text whose digest a
+        node of the live summary tree holds takes that node's vector, the
+        others are embedded."""
+        prefix = self.opensearch_config.summary_nodes_index_prefix
+        wanted = {self._embedding_digest(text) for text in texts if text.strip()}
+        stored: dict[str, list[float]] = {}
+        if self._reuse_embeddings and wanted:
+            try:
+                held = self._summary_digests(suffix)
+                matching = sorted({held[d] for d in wanted if d in held})
+                for start in range(0, len(matching), _VECTOR_READ_BATCH_SIZE):
+                    for source in self._read_sources(
+                        prefix,
+                        matching[start : start + _VECTOR_READ_BATCH_SIZE],
+                        suffix,
+                        fields=["text_embedding", _DIGESTS_FIELD],
+                    ):
+                        vector = source.get("text_embedding")
+                        digest = (source.get(_DIGESTS_FIELD) or {}).get(
+                            "text_embedding"
+                        )
+                        if (
+                            isinstance(digest, str)
+                            and isinstance(vector, list)
+                            and len(vector) == self._embedding_dimension
+                        ):
+                            stored[digest] = vector
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - every text is embedded instead
+                logger.warning(
+                    "Reading the stored summary vectors failed; embedding every "
+                    "summary: %s",
+                    e,
+                )
+                stored = {}
+        vectors: list[list[float] | None] = [None] * len(texts)
+        pending: list[int] = []
+        for i, text in enumerate(texts):
+            vector = stored.get(self._embedding_digest(text)) if text.strip() else None
+            if vector is None:
+                pending.append(i)
+            vectors[i] = vector
+        if pending:
+            embedded = self._batch_embed([texts[i] for i in pending])
+            for i, vector in zip(pending, embedded, strict=True):
+                vectors[i] = vector
+        return vectors
+
+    def _summary_digests(self, suffix: str | None) -> dict[str, str]:
+        """``{text digest: node id}`` of ``suffix``'s live summary tree, read
+        once per live index (a build embeds level by level, partition by
+        partition, against the same tree)."""
+        prefix = self.opensearch_config.summary_nodes_index_prefix
+        index_name = self._live_index(self._get_name(prefix, suffix))
+        if not index_name:
+            return {}
+        cached = self._summary_digest_cache.get(index_name)
+        if cached is None:
+            cached = {
+                digest: str(node["id"])
+                for node in self._scan(prefix, suffix, [_DIGESTS_FIELD])
+                if isinstance(
+                    digest := (node.get(_DIGESTS_FIELD) or {}).get("text_embedding"),
+                    str,
+                )
+            }
+            self._summary_digest_cache[index_name] = cached
+        return cached
+
+    def write_summary_tree(
+        self,
+        nodes: list[SummaryNode],
+        vectors: Mapping[str, list[float]],
+        suffix: str | None,
+        record: dict[str, Any],
+    ) -> IndexingStats:
+        """Write ``nodes`` (with their ``vectors``) as ``suffix``'s whole
+        summary tree, ``record`` in the index's ``_meta``, into a new index,
+        then swap the alias onto it and delete the old one (see the port).
+        Any failed write keeps the old tree and drops the new index."""
+        spec = self._spec("summary nodes")
+        suffix_name = suffix or Constants.DEFAULT_SUFFIX.value
+        alias_name = self._get_name(spec.alias_prefix, suffix_name)
+        stats = IndexingStats()
+        index_name = ""
+        try:
+            index_name = self._new_index_name(
+                alias_name, spec.alias_prefix, suffix_name
+            )
+            mapping = spec.mapping()
+            meta = mapping["mappings"].setdefault("_meta", {})
+            # The tree is rebuilt from the stores every run: the registry
+            # describes no document of it.
+            meta.pop(_META_DOC_STATUS, None)
+            meta[SUMMARY_TREE_META] = record
+            self.opensearch_client.create_index(index_name, mapping, exist_ok=False)
+            for start in range(0, len(nodes), _WRITE_SLICE_SIZE):
+                chunk = nodes[start : start + _WRITE_SLICE_SIZE]
+                docs = [
+                    {
+                        **self._prepare_summary_node_doc(node, (vectors[node.id],)),
+                        _DIGESTS_FIELD: {
+                            "text_embedding": self._embedding_digest(node.text)
+                        },
+                    }
+                    for node in chunk
+                ]
+                last = start + _WRITE_SLICE_SIZE >= len(nodes)
+                stats.merge(self._perform_indexing(index_name, docs, refresh=last))
+            if stats.failed_items:
+                self._drop_unswapped_index(alias_name, index_name)
+                return stats
+            check_write_fence()
+            self._update_alias(alias_name, index_name, remove_pattern=f"{alias_name}-*")
+            check_write_fence()
+            self._reap_stale_indices(alias_name, index_name)
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            logger.error("Failed to write the summary tree of '%s': %s", alias_name, e)
+            stats.add_error(str(e), max(1, len(nodes)), ids=[n.id for n in nodes])
+            if index_name:
+                self._drop_unswapped_index(alias_name, index_name)
+        return stats
+
+    def _summary_ancestors(self, ids: Collection[str], suffix: str) -> set[str]:
+        """``ids`` and every node of the live tree above one of them (by
+        ``child_ids``)."""
+        prefix = self.opensearch_config.summary_nodes_index_prefix
+        found = set(ids)
+        frontier = sorted(found)
+        while frontier:
+            parents = set(
+                self.find_documents(prefix, "child_ids", frontier, suffix) or {}
+            )
+            frontier = sorted(parents - found)
+            found |= parents
+        return found
+
+    def _delete_summary_nodes(self, ids: Collection[str], suffix: str) -> IndexingStats:
+        prefix = self.opensearch_config.summary_nodes_index_prefix
+        doomed = sorted(self._summary_ancestors(ids, suffix)) if ids else []
+        if doomed:
+            logger.info(
+                "Deleting %d summary nodes of '%s' that summarize removed text",
+                len(doomed),
+                suffix,
+            )
+        return self.delete_by_id(doomed, prefix, suffix)
+
+    def delete_summary_nodes_citing(
+        self, text_unit_ids: list[str], suffix: str
+    ) -> IndexingStats:
+        """Delete the summary nodes citing any of ``text_unit_ids`` and every
+        node above them (see the port)."""
+        prefix = self.opensearch_config.summary_nodes_index_prefix
+        if not text_unit_ids or not self._live_index(self._get_name(prefix, suffix)):
+            return IndexingStats()
+        try:
+            citing = self.find_documents(prefix, "text_unit_ids", text_unit_ids, suffix)
+            return self._delete_summary_nodes(set(citing or {}), suffix)
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            stats = IndexingStats(total_items=1)
+            stats.add_error(f"Deleting stale summary nodes failed: {e}", 1)
+            return stats
+
+    def delete_summary_nodes_outside(
+        self, text_unit_ids: Collection[str], suffix: str
+    ) -> IndexingStats:
+        """Delete the summary nodes citing a text unit outside
+        ``text_unit_ids`` (what a full build wrote) and every node above
+        them (see the port)."""
+        prefix = self.opensearch_config.summary_nodes_index_prefix
+        if not self._live_index(self._get_name(prefix, suffix)):
+            return IndexingStats()
+        kept = set(text_unit_ids)
+        try:
+            stale = {
+                str(node["id"])
+                for node in self._scan(prefix, suffix, ["text_unit_ids"])
+                if not set(node.get("text_unit_ids") or []) <= kept
+            }
+            return self._delete_summary_nodes(stale, suffix)
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            stats = IndexingStats(total_items=1)
+            stats.add_error(f"Deleting stale summary nodes failed: {e}", 1)
+            return stats
+
+    def add_build_artifacts(
+        self, artifacts: Collection[IndexArtifact], suffix: str | None
+    ) -> bool:
+        """Name ``artifacts`` in the build record of each live index of
+        ``suffix`` too (see the port). A record that names no artifacts
+        (written before methodology profiles) is left as it is."""
+        changed = False
+        for prefix in self._index_prefixes():
+            alias = self._get_name(prefix, suffix)
+            index_name = self._live_index(alias)
+            if not index_name:
+                continue
+            meta = self._index_mappings(index_name).get("_meta") or {}
+            stored = meta.get(META_BUILD)
+            if not isinstance(stored, dict) or not isinstance(
+                stored.get("artifacts"), list
+            ):
+                continue
+            record = IndexBuildRecord.model_validate(stored)
+            held = set(record.artifacts or [])
+            if set(artifacts) <= held:
+                continue
+            updated = record.with_artifacts(held | set(artifacts))
+            self._put_index_meta(
+                index_name, {**meta, META_BUILD: updated.model_dump(mode="json")}
+            )
+            changed = True
+        return changed
+
+    def _prepare_summary_node_doc(
+        self, node: SummaryNode, embeddings: tuple[list[float], ...]
+    ) -> dict[str, Any]:
+        return {
+            **self._prepare_common_doc_properties(node),
+            "text": node.text,
+            "text_embedding": embeddings[0],
+            "level": node.level,
+            "child_ids": list(node.child_ids),
+            "text_unit_ids": list(node.text_unit_ids),
+            "lineage_complete": node.lineage_complete,
+            "n_leaves": node.n_leaves,
+            "n_tokens": node.n_tokens,
+            "language": node.language,
+            "input_key": node.input_key,
+            **_present(partition=node.partition),
+        }
+
+    def _get_summary_nodes_mapping(self) -> dict[str, Any]:
+        # The summaries are written in the index language, so its text is
+        # analyzed with that language's analyzer.
+        return self._get_base_mapping(
+            {
+                "id": {"type": "keyword"},
+                "text": {
+                    "type": "text",
+                    "analyzer": self._analyzer_for(self._index_language()),
+                },
+                "text_embedding": self._get_knn_vector_mapping(),
+                "level": {"type": "integer"},
+                "child_ids": {"type": "keyword"},
+                "text_unit_ids": {"type": "keyword"},
+                "lineage_complete": {"type": "boolean"},
+                "n_leaves": {"type": "integer"},
+                "n_tokens": {"type": "integer"},
+                "partition": {"type": "keyword"},
+                "language": {"type": "keyword"},
+                "input_key": {"type": "keyword"},
+                "attributes": {"type": "object", "dynamic": True},
+            }
+        )
 
     def _get_base_mapping(self, properties: dict[str, Any]) -> dict[str, Any]:
         # Every index_settings key reaches the index (written without the

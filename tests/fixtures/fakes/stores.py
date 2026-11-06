@@ -488,6 +488,62 @@ class FakeVectorStore(_Recorder):
         )
         return self.builds[key]
 
+    # No summary tree: the summary_tree stage skips on this store.
+    def scan_text_units(
+        self,
+        suffix: str | None,
+        *,
+        fields: list[str],
+        page_size: int | None = None,
+    ) -> list[dict[str, Any]] | None:
+        return None
+
+    def read_summary_nodes(
+        self, suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]] | None:
+        return None
+
+    def read_summary_tree_record(self, suffix: str | None) -> dict[str, Any] | None:
+        return None
+
+    def embed_summary_texts(
+        self, texts: list[str], suffix: str | None
+    ) -> list[list[float] | None] | None:
+        return None
+
+    def write_summary_tree(
+        self,
+        nodes: list[Any],
+        vectors: Mapping[str, list[float]],
+        suffix: str | None,
+        record: dict[str, Any],
+    ) -> IndexingStats:
+        stats = IndexingStats(total_items=len(nodes))
+        stats.add_error("FakeVectorStore keeps no summary tree", max(1, len(nodes)))
+        return stats
+
+    def delete_summary_nodes_citing(
+        self, text_unit_ids: list[str], suffix: str
+    ) -> IndexingStats:
+        return IndexingStats()
+
+    def delete_summary_nodes_outside(
+        self, text_unit_ids: Collection[str], suffix: str
+    ) -> IndexingStats:
+        return IndexingStats()
+
+    def add_build_artifacts(
+        self, artifacts: Collection[Any], suffix: str | None
+    ) -> bool:
+        key = suffix or Constants.DEFAULT_SUFFIX.value
+        record = self.builds.get(key)
+        if record is None or record.artifacts is None:
+            return False
+        if set(artifacts) <= set(record.artifacts):
+            return False
+        self.builds[key] = record.with_artifacts({*record.artifacts, *artifacts})
+        return True
+
     def read_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         record = self.builds.get(suffix or Constants.DEFAULT_SUFFIX.value)
         return record.model_dump(mode="json") if record is not None else None

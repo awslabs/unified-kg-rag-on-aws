@@ -97,6 +97,12 @@ def _record(unit: TextUnit) -> TextUnitExtraction:
     )
 
 
+def _created_specs(indexer: Any) -> list[Any]:
+    """The index types a run of the default methodologies creates: all but
+    the summary tree's, which only the raptor methodology builds."""
+    return [spec for spec in indexer._specs() if spec.name != "summary nodes"]
+
+
 class TestPayload:
     def test_a_record_is_stored_without_its_unit_and_restamped(self) -> None:
         payload = record_payload(_record(_unit("t1", "tenant-a", "north")))
@@ -609,7 +615,7 @@ class TestOpenSearchExtractionRecords:
         created.clear()
         indexer.check_index_creation("x")
         probes = [name for name in created if "settings-probe" in name]
-        assert len(probes) == len(indexer._specs())
+        assert len(probes) == len(_created_specs(indexer))
         assert not engine.get_aliases_by_index("*settings-probe*")
 
     def test_the_probe_holds_every_field_an_engine_may_refuse(self, tmp_path) -> None:
@@ -635,7 +641,7 @@ class TestOpenSearchExtractionRecords:
         # Each index's own mapping (one merged mapping kept only one
         # definition of a field several indices map), the records' too.
         assert bodies == [
-            *(spec.mapping() for spec in indexer._specs()),
+            *(spec.mapping() for spec in _created_specs(indexer)),
             indexer._get_extraction_records_mapping(),
         ]
         assert {"text", "translated_text_en"} <= set(
@@ -677,12 +683,12 @@ class TestOpenSearchExtractionRecords:
         # Incremental: only the vector indices without a live one, together.
         missing = [
             spec
-            for spec in indexer._specs()
+            for spec in _created_specs(indexer)
             if not engine.get_index_name_by_alias(
                 indexer._get_name(spec.alias_prefix, "x")
             )
         ]
-        assert 1 < len(missing) < len(indexer._specs())
+        assert 1 < len(missing) < len(_created_specs(indexer))
         room["indices"] = live() + len(missing) - 1
         with pytest.raises(StoreRequestRejectedError, match="max_shards_per_node"):
             indexer.check_index_creation("x", rebuild=False)
@@ -710,7 +716,7 @@ class TestOpenSearchExtractionRecords:
         assert created == []
 
         # A full build or reset needs room for all its new indices at once.
-        room["indices"] = live() + len(indexer._specs()) - 1
+        room["indices"] = live() + len(_created_specs(indexer)) - 1
         with pytest.raises(StoreRequestRejectedError, match="max_shards_per_node"):
             indexer.check_index_creation("x")
         room["indices"] += 1
@@ -788,7 +794,7 @@ class TestOpenSearchExtractionRecords:
         engine.delete_indices = lost  # type: ignore[method-assign]
         indexer.check_index_creation("x")  # the run goes on
         assert len(engine.get_aliases_by_index("*settings-probe*")) == (
-            len(indexer._specs()) + 1
+            len(_created_specs(indexer)) + 1
         )
 
         engine.delete_indices = delete  # type: ignore[method-assign]
@@ -1005,7 +1011,7 @@ class TestRunIndexCreationCheck:
         engine.get_aliases_by_index = unreachable  # type: ignore[method-assign]
         indexer = _probing_indexer(Config(), engine)
         indexer.check_index_creation("x")
-        assert len(created) == len(indexer._specs()) + 1
+        assert len(created) == len(_created_specs(indexer)) + 1
 
     def test_a_refusal_keeps_the_engines_reason(self, tmp_path) -> None:
         from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
