@@ -193,7 +193,7 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   #420).
 - `run-eval --search-strategy` takes a list (`["auto"]` by default); with several strategies or `--repeats` it
   overrides an item's `search_strategy`; `abstention_statistics.unanswerable` has the overall block's shape
-  (`completed`, `abstained`, `answered`, `abstention_rate`) (#292, #324, #PR).
+  (`completed`, `abstained`, `answered`, `abstention_rate`) (#292, #324, #600).
 - The `indexing_results` stage metrics in `pipeline_metadata.json` (and the index types an `Indexing failed` error
   names) start `vector_` / `graph_` instead of `opensearch_` / `neptune_` (`vector_text_units`, `graph_entities`,
   ...); the EMF metrics are unchanged (#584).
@@ -572,7 +572,7 @@ From a `main` checkout (formats and keys no release had):
   `answered` (not declined, as in coverage) and adds decline precision, recall and F1 and per `answer_match` metric
   coverage, accuracy, selective and overall accuracy. Each saved result keeps `abstention_reason`,
   `context_sufficient`, `insufficiency_reason` and the `iterative` run record. Measured on 100 + 100 MuSiQue
-  questions, `mark` stays opt-in and `hedge` the default (#593, #PR). See
+  questions, `mark` stays opt-in and `hedge` the default (#593, #600). See
   [evaluate](docs/guides/evaluate.md#unanswerable-questions-and-declines).
 - Evaluation of open-ended answers, all opt-in (defaults unchanged until a measured experiment decides): the
   pairwise judge reports win rates per answer-length bucket in estimated tokens and their correlation with length;
