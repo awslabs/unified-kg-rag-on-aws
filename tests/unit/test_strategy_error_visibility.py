@@ -204,4 +204,5 @@ async def test_local_graph_expansion_degrades_to_the_seed_entities(
     result = await strategy.asearch(SearchQuery(query="q", entity_focus=["Vendor"]))
     assert result.metadata["expanded_entity_count"] == 1
     assert result.metadata["text_unit_count"] == 1
-    assert any((q.filters or {}).get("id") == ["chunk-1"] for q in document.calls)
+    # The seed's unit is fetched (beside the PageRank's passage hit).
+    assert any("chunk-1" in (q.filters or {}).get("id", ()) for q in document.calls)

@@ -69,15 +69,22 @@ DENSE_SCRIPT_LETTERS = "".join(
 )
 
 
+# One compiled class: the per-character range scan these tests replaced held
+# the GIL for about a third of a local search's CPU (MMR's redundancy terms
+# test every word of every candidate), which concurrent queries in one
+# process wait on.
+_DENSE_SCRIPT_LETTER = re.compile(f"[{DENSE_SCRIPT_LETTERS}]")
+
+
 def is_dense_script_char(ch: str) -> bool:
     """True if ``ch`` is a Han, Hangul or Kana letter."""
-    cp = ord(ch)
-    return any(lo <= cp <= hi for lo, hi in _DENSE_SCRIPT_LETTER_RANGES)
+    ord(ch)  # one character, as before: TypeError otherwise
+    return _DENSE_SCRIPT_LETTER.match(ch) is not None
 
 
 def has_dense_script(text: str) -> bool:
     """True if ``text`` contains at least one Han, Hangul or Kana letter."""
-    return any(is_dense_script_char(ch) for ch in text)
+    return _DENSE_SCRIPT_LETTER.search(text) is not None
 
 
 def is_hangul_syllable(ch: str) -> bool:

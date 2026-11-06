@@ -325,6 +325,46 @@ def test_bool_must_with_filter_scores_the_must_clause(engine) -> None:
     assert filtered == {k: plain[k] for k in ("a", "b")}
 
 
+def test_bool_must_match_all_scores_one_as_a_clause(engine) -> None:
+    # match_all in must: every document at 1, intersected with the other
+    # required clauses, plus their scores (what OpenSearch answers).
+    lexical = {"multi_match": {"query": "widgets vendor", "fields": ["description"]}}
+    plain = _hits(engine, lexical)
+    every = _hits(engine, {"match_all": {}})
+    match_all = {"match_all": {}}
+    assert _hits(engine, {"bool": {"must": [match_all]}}) == every
+    assert _hits(
+        engine,
+        {"bool": {"must": [match_all], "filter": [{"terms": {"id": ["a", "c", "x"]}}]}},
+    ) == {"a": 1.0, "c": 1.0}
+    assert _hits(engine, {"bool": {"must": [match_all, lexical]}}) == {
+        k: 1.0 + v for k, v in plain.items()
+    }
+    assert _hits(
+        engine,
+        {"bool": {"must": [match_all], "must_not": [{"term": {"type": "ORG"}}]}},
+    ) == {k: 1.0 for k in every if k not in {"a", "b"}}
+    with pytest.raises(StoreRequestRejectedError):
+        _hits(engine, {"bool": {"must": [{"match_all": {"boost": 2}}]}})
+
+
+def test_bool_must_match_all_beside_a_filter_lists_no_document(
+    engine, monkeypatch
+) -> None:
+    # The retriever's id fetch (``{"must": [match_all], "filter": [ids]}``)
+    # listed every document of the index (31k entities on a 200-question
+    # corpus) under the GIL, which concurrent queries waited on.
+    monkeypatch.setitem(
+        query_module._CLAUSES,
+        "match_all",
+        lambda index, body: pytest.fail("match_all listed the index"),
+    )
+    assert _hits(
+        engine,
+        {"bool": {"must": [{"match_all": {}}], "filter": [{"terms": {"id": ["b"]}}]}},
+    ) == {"b": 1.0}
+
+
 def test_bool_should_is_optional_next_to_must_and_adds_its_score(engine) -> None:
     must = {"multi_match": {"query": "widgets", "fields": ["description"]}}
     should = {"multi_match": {"query": "depot", "fields": ["description"]}}
@@ -569,6 +609,61 @@ def test_knn_filtered_to_most_rows_scores_the_stored_matrix_in_place(
     }
     hits = evaluate(index, {"knn": {"vec": body}})
     assert list(hits) == ["d000", "d004"]
+
+
+@pytest.mark.parametrize("space_type", ["cosinesimil", "l2", "innerproduct"])
+def test_knn_under_an_exclusion_only_filter_answers_as_any_filter(
+    space_type: str,
+) -> None:
+    # The same exclusion as a must_not-only bool (listed by what it
+    # excludes) and wrapped in a filter clause (every allowed document
+    # listed): one answer, ties included.
+    rng = np.random.default_rng(11)
+    distinct = rng.integers(-2, 3, size=(5, 4)).astype(np.float32)
+    distinct[np.all(distinct == 0, axis=1)] = 1.0
+    index = _vector_index(space_type, distinct[rng.integers(0, 5, size=90)])
+    for excluded in (
+        [{"term": {"group": "1"}}],
+        [{"term": {"bucket": "3"}}, {"terms": {"bucket": ["5", "9"]}}],
+        [{"term": {"group": "none"}}],
+        [{"terms": {"group": ["0", "1", "2"]}}],
+    ):
+        for k in (1, 3, 17, 89, 500):
+            for vector in ([1.0, 0.0, -1.0, 2.0], distinct[0].tolist()):
+                only_not = {"bool": {"must_not": excluded}}
+                wrapped = {"bool": {"filter": [only_not]}}
+                assert evaluate(
+                    index,
+                    {"knn": {"vec": {"vector": vector, "k": k, "filter": only_not}}},
+                ) == evaluate(
+                    index,
+                    {"knn": {"vec": {"vector": vector, "k": k, "filter": wrapped}}},
+                ), (
+                    excluded,
+                    k,
+                )
+
+
+def test_knn_under_an_exclusion_only_filter_reads_only_the_excluded_rows() -> None:
+    # The text units' seed-graph exclusion listed every other passage (and
+    # read its row) under the GIL on each passage search.
+    class CountingRows(dict):
+        reads = 0
+
+        def get(self, key, default=None):
+            CountingRows.reads += 1
+            return super().get(key, default)
+
+    index = _vector_index("cosinesimil", np.eye(4, dtype=np.float32)[[0, 1, 2, 3] * 20])
+    stored = index.vectors["vec"]
+    stored.rows = CountingRows(stored.rows)
+    body = {
+        "vector": [1.0, 0.0, 0.0, 0.0],
+        "k": 3,
+        "filter": {"bool": {"must_not": [{"term": {"bucket": "0"}}]}},
+    }
+    assert list(evaluate(index, {"knn": {"vec": body}})) == ["d004", "d008", "d012"]
+    assert CountingRows.reads == 2  # d000 and d040, the excluded
 
 
 def test_bool_should_over_knn_clauses_sums_them(engine) -> None:

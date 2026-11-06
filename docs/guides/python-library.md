@@ -88,6 +88,9 @@ What a message means and what to do about it:
 Use `await chain.ainvoke(...)` and `await chain.aclose()`, and size the
 loop's executor once at startup:
 `configure_event_loop(asyncio.get_running_loop(), config.processing.io_workers)`.
+A process serving concurrent queries on the embedded stores should also run
+with `OPENBLAS_NUM_THREADS=1` in its environment, as `run-eval` and `run-rag`
+do ([local mode](./local-mode.md#differences-from-aws-mode)).
 
 ## Closing
 

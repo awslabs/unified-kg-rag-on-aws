@@ -673,6 +673,7 @@ def test_each_launcher_entry_runs_its_own_cli(
 
     from unified_kg_rag.application.cli import launch
 
+    monkeypatch.delenv("OPENBLAS_NUM_THREADS", raising=False)
     loaded: list[str] = []
 
     def load(name: str) -> SimpleNamespace:
@@ -687,6 +688,39 @@ def test_each_launcher_entry_runs_its_own_cli(
         signal.signal(signal.SIGTERM, previous[0])
         signal.signal(signal.SIGINT, previous[1])
     assert loaded == [f"unified_kg_rag.application.cli.{module}"]
+
+
+@pytest.mark.parametrize(
+    ("entry", "one_thread"),
+    [("run_eval", True), ("run_rag", True), ("run_ingestion", False)],
+)
+def test_query_launchers_default_blas_to_one_thread_before_any_import(
+    monkeypatch: pytest.MonkeyPatch, entry: str, one_thread: bool
+) -> None:
+    # Concurrent queries each started a BLAS thread per core for the
+    # embedded store's kNN products; numpy reads the count when it loads.
+    from types import SimpleNamespace
+
+    from unified_kg_rag.application.cli import launch
+
+    monkeypatch.delenv("OPENBLAS_NUM_THREADS", raising=False)
+    seen: list[str | None] = []
+
+    def load(name: str) -> SimpleNamespace:
+        seen.append(os.environ.get("OPENBLAS_NUM_THREADS"))
+        return SimpleNamespace(main=lambda: "ran")
+
+    monkeypatch.setattr(launch.importlib, "import_module", load)
+    previous = signal.getsignal(signal.SIGTERM), signal.getsignal(signal.SIGINT)
+    try:
+        getattr(launch, entry)()
+        # A value in the environment is kept.
+        monkeypatch.setenv("OPENBLAS_NUM_THREADS", "4")
+        getattr(launch, entry)()
+    finally:
+        signal.signal(signal.SIGTERM, previous[0])
+        signal.signal(signal.SIGINT, previous[1])
+    assert seen == (["1", "4"] if one_thread else [None, "4"])
 
 
 def test_every_console_script_starts_through_the_launcher() -> None:

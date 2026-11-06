@@ -395,7 +395,13 @@ def _clauses(clause: str, body: Any) -> list[Any]:
 @_clause("bool")
 def _bool(index: LoadedIndex, body: Any) -> Scores:
     body = _require_keys("bool", body, {"must", "should", "filter", "must_not"})
-    must = [evaluate(index, q) for q in _clauses("must", body.get("must"))]
+    # A match_all must clause (None here) matches every document at score 1:
+    # it is not listed, so an id lookup beside it (``{"must": [match_all],
+    # "filter": [ids]}``) costs the ids, not the whole index, under the GIL.
+    must = [
+        None if _is_match_all(q) else evaluate(index, q)
+        for q in _clauses("must", body.get("must"))
+    ]
     should = [evaluate(index, q) for q in _clauses("should", body.get("should"))]
     filters = [evaluate(index, q) for q in _clauses("filter", body.get("filter"))]
     excluded = {
@@ -403,13 +409,15 @@ def _bool(index: LoadedIndex, body: Any) -> Scores:
         for q in _clauses("must_not", body.get("must_not"))
         for doc_id in evaluate(index, q)
     }
-    required = [*must, *filters]
+    required = [*(s for s in must if s is not None), *filters]
     candidates: set[str]
     if required:
         smallest: Scores = min(required, key=len)
         candidates = set(smallest)
         for matched in required:
             candidates.intersection_update(matched)
+    elif must:
+        candidates = set(index.sources)
     elif should:
         candidates = {doc_id for scores in should for doc_id in scores}
     elif "must_not" in body:
@@ -422,10 +430,18 @@ def _bool(index: LoadedIndex, body: Any) -> Scores:
     if not must and not should:
         return dict.fromkeys(candidates, 0.0)
     return {
-        doc_id: sum(s.get(doc_id, 0.0) for s in must)
+        doc_id: sum(1.0 if s is None else s.get(doc_id, 0.0) for s in must)
         + sum(s.get(doc_id, 0.0) for s in should)
         for doc_id in candidates
     }
+
+
+def _is_match_all(query: Any) -> bool:
+    """Whether ``query`` is a (valid) ``match_all`` clause."""
+    if not isinstance(query, dict) or set(query) != {"match_all"}:
+        return False
+    _require_keys("match_all", query["match_all"], set())
+    return True
 
 
 @_clause("multi_match")
@@ -509,26 +525,69 @@ def _knn(index: LoadedIndex, body: Any) -> Scores:
     query = np.asarray(vector, dtype=np.float32)
     if spec.space_type == "cosinesimil" and not np.any(query):
         raise rejected("zero vector is not supported when space type is [cosinesimil]")
-    allowed = evaluate(index, params["filter"]) if "filter" in params else None
+    # A filter that only excludes (the seed-graph predicate on text units)
+    # lists what it excludes, not every other document.
+    excluding = _exclusions(params["filter"]) if "filter" in params else None
+    allowed = (
+        evaluate(index, params["filter"])
+        if "filter" in params and excluding is None
+        else None
+    )
+    excluded = (
+        None
+        if excluding is None
+        else {doc_id for q in excluding for doc_id in evaluate(index, q)}
+    )
     stored = index.vectors.get(path)
     if stored is None:
         return {}
-    if allowed is None:
+    if allowed is None and excluded is None:
         return _top_k(stored.ids, vector_scores(stored, query), k)
-    rows = np.sort(
-        np.fromiter(
-            (row for i in allowed if (row := stored.rows.get(i)) is not None),
-            dtype=np.int64,
+    if excluded is not None:
+        keep = np.ones(len(stored.ids), dtype=bool)
+        keep[[row for i in excluded if (row := stored.rows.get(i)) is not None]] = False
+        rows = np.flatnonzero(keep)
+    else:
+        rows = np.sort(
+            np.fromiter(
+                (row for i in allowed or () if (row := stored.rows.get(i)) is not None),
+                dtype=np.int64,
+            )
         )
-    )
     if not rows.size:
         return {}
-    ids = [stored.ids[row] for row in rows.tolist()]
     kept = rows.size / len(stored.ids)
     if stored.space_type != "l2" and kept > _SCORE_IN_PLACE_FRACTION:
         # Copying many rows out costs more than one product over all of them.
-        return _top_k(ids, vector_scores(stored, query)[rows], k)
+        return _top_k_rows(stored.ids, vector_scores(stored, query), rows, k)
+    ids = [stored.ids[row] for row in rows.tolist()]
     return _top_k(ids, vector_scores(stored, query, rows), k)
+
+
+def _exclusions(query: Any) -> list[Any] | None:
+    """The ``must_not`` clauses of a ``{"bool": {"must_not": ...}}`` query
+    (nothing else), else ``None``."""
+    if not isinstance(query, dict) or set(query) != {"bool"}:
+        return None
+    body = query["bool"]
+    if not isinstance(body, dict) or set(body) != {"must_not"}:
+        return None
+    return _clauses("must_not", body["must_not"])
+
+
+def _top_k_rows(ids: list[str], scores: np.ndarray, rows: np.ndarray, k: int) -> Scores:
+    """``_top_k`` of the ``rows`` (sorted) of ``ids`` and ``scores``: only
+    the rows it ranks have their ids read."""
+    kept = scores[rows]
+    if len(rows) > k and not np.isnan(kept).any():
+        kth = np.partition(kept, len(kept) - k)[len(kept) - k]
+        candidates = rows[np.flatnonzero(kept >= kth)].tolist()
+    else:
+        candidates = rows.tolist()
+    ranked = sorted(
+        ((ids[i], float(scores[i])) for i in candidates), key=lambda p: (-p[1], p[0])
+    )
+    return dict(ranked[:k])
 
 
 Hit = tuple[LoadedIndex, str, float]

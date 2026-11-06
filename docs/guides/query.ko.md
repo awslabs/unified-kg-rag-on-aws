@@ -60,10 +60,12 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 추출 없이 LLM 호출 1회). 관계 벡터 인덱스와 그래프가 필요하고 커뮤니티 보고서는 필요하지
 않습니다. 설정은 `search.ppr_search`이고, 융합 버킷(`ppr_passages`,
 `ppr_seed_text_units`, `ppr_facts`)에는 `search.fusion.fusion_weights`를 쓸 수 있습니다.
-`search.local_search.text_unit_ranking: ppr`는 같은 방식으로 `local`의 텍스트 단위
-순서를 정합니다. 둘 다 측정 전까지는 선택 사항입니다.
-[검색](../concepts/retrieval.ko.md)과
-[설계 §6.4](../design.md#64-hipporag-2-personalized-pagerank-opt-in-ppr-local-ranking)(영문)을
+비용과 지연 시간이 적은 선택지입니다. 다중 홉 질문에서 답변은 `local`, `mix`와 오차 범위
+안에서 같았고 비용은 그 3분의 1에서 절반이었으므로 `auto`는 이 전략을 고르지 않습니다
+([근거](../concepts/defaults-and-evidence.md#the-ppr-strategy), 영문). `local`은 기본값으로
+같은 방식으로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking: ppr`,
+`support`로 바꾸면 이전 순서). [검색](../concepts/retrieval.ko.md)과
+[설계 §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking)(영문)을
 참고하세요.
 
 ## 재순위화 상태

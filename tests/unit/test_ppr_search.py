@@ -415,8 +415,14 @@ def strategy_support_first(config: Config, nodes: list[RetrievalResult]) -> str:
     return local._rank_text_unit_ids(nodes)[0]
 
 
-async def test_local_support_ranking_is_unchanged_by_default() -> None:
-    config = _config()
+def test_local_ranks_by_pagerank_by_default() -> None:
+    # Measured against support on 200 MuSiQue questions, two repeats
+    # (docs/concepts/defaults-and-evidence.md#local-ppr-ranking).
+    assert Config().search.local_search.text_unit_ranking == "ppr"
+
+
+async def test_local_support_ranking_reads_no_passage_seeds() -> None:
+    config = _config(local_search__text_unit_ranking="support")
     documents, graph = _bridge_stores(config)
     documents.searches["entities"] = [_hit("entity", "ann", 0.9, name="Ann")]
     strategy, buckets = _local(config, documents, graph)

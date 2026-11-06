@@ -993,8 +993,11 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   `GraphRAGChain` reads the namespace's build record through the document
   retriever (`aread_build_record`, cached per suffix for
   `methodology_check.HELD_TTL_SECONDS`, read again before a refusal) and derives what it
-  holds (`held_methodologies`; the configured effective methodologies when
-  there is no record or it predates profiles). An explicit strategy whose
+  holds (`held_methodologies`; when there is no record or it predates
+  profiles, every methodology whose required artifacts a run of the config
+  builds, `artifacts_to_build`: a store the default run built before records
+  holds `hipporag` too, as it holds the relationship vectors `ppr` reads).
+  An explicit strategy whose
   methodology is not held raises `MethodologyNotIndexedError` (a
   `ConfigurationError`; `run-rag` exits 2) before any model call, naming
   what the namespace holds, the strategies that serve it and how to add the
@@ -1970,7 +1973,7 @@ about +11 points of answer F1 if every missing last-hop passage were
 recovered, realistically +3 to +5, below the 6-8 point minimum effect 200
 questions detect: hence the measured experiment before any default.
 
-### 6.4 HippoRAG 2 Personalized PageRank (opt-in: `ppr`, `local` ranking)
+### 6.4 HippoRAG 2 Personalized PageRank (`ppr`, `local` ranking)
 
 A port of HippoRAG 2's retrieval (Gutiérrez, Shu, Qi, Zhou, Su, *From RAG to
 Memory: Non-Parametric Continual Learning for Large Language Models*, ICML
@@ -1996,10 +1999,13 @@ on a measured answer-level result (§9.1).
   vector index (`[graphrag]` with `build_relationship_vector_index: false`)
   refuses it before any model call (`MethodologyNotIndexedError`). The
   `local` ranking below stays a `graphrag` strategy. `auto` never routes to it
-  (`search.auto_routable_strategies` refuses it) until a measurement says
-  where it wins.
-- **`local` ranking** (`search.local_search.text_unit_ranking: ppr`,
-  default `support`): the same PPR replaces the order of local search's text
+  (`search.auto_routable_strategies` refuses it): on 200 MuSiQue questions
+  its answers were not significantly different from `mix` or `local` at a
+  third to half of their cost, and weaker on 4-hop questions, so
+  it is the cheap, fast option a caller selects
+  ([evidence](concepts/defaults-and-evidence.md#the-ppr-strategy)).
+- **`local` ranking** (`search.local_search.text_unit_ranking: ppr`, the
+  default; `support` is the earlier order): the same PPR replaces the order of local search's text
   units (`_rank_text_unit_ids`) over local's own expansion; everything else
   of local (seeds, sections, quotas, rerank) is unchanged. DRIFT's follow-up
   local searches follow the setting. A retrieval-only screen on 200 MuSiQue
@@ -2010,7 +2016,14 @@ on a measured answer-level result (§9.1).
   gained +6.4, so the PageRank adds 4.7 (+2.5 to +6.8) beyond the passage
   hits; seeding from the entities alone gained only +3.9. It cost about
   0.4 s a query on the embedded stores (the PageRank itself about 50 ms).
-  The answers are not measured yet, so `support` stays the default.
+  Two answer runs then measured it against `support` (`answer_contains`
+  +3.5 points, recall@5 +6.1, EM and token F1 n.s., retrieval +0.10 s a
+  query), so it became the default
+  ([evidence](concepts/defaults-and-evidence.md#local-ppr-ranking)). Its
+  extra searches add CPU work in the querying process; with many concurrent
+  queries in one process that work waits on the interpreter lock, which
+  the embedded engine's id and exclusion lookups, the dense-script test and
+  the query CLIs' one BLAS thread (`launch.one_blas_thread`) keep small.
 
 **Data flow of `ppr`.**
 
@@ -2667,6 +2680,15 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   one set of clients. Blocking calls run in `asyncio.to_thread`, on a default
   executor sized to `processing.io_workers` (which bounds concurrent Bedrock
   calls; `configure_event_loop` for async hosts).
+- Concurrent queries in one process share one interpreter lock: their
+  Python work (fusion, MMR, the embedded engine's scoring) runs one at a
+  time, so a query's latency under N concurrent ones grows with N times its
+  CPU. The hot paths stay vectorized or compiled (the dense-script test is
+  one regex; the embedded engine lists only what an id lookup or an
+  exclusion names), and the query CLIs start with one BLAS thread
+  (`launch.one_blas_thread`, `OPENBLAS_NUM_THREADS=1` unless set): with a
+  thread per core per kNN product, 40 concurrent local queries spent about
+  8 times the CPU for the same scores.
 
 ### 8.3 Multilingual Processing
 

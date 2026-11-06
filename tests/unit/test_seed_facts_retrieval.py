@@ -369,7 +369,10 @@ async def test_local_search_fetches_no_seed_unit(config: Config) -> None:
     entities = {r.source for r in result.results if r.retriever_type == "entity"}
     assert "Harbor Port" in entities
     (fetch,) = [q for q in document.calls if q.filters and "id" in q.filters]
-    assert fetch.filters is not None and fetch.filters["id"] == ["u1"]
+    assert fetch.filters is not None and "u1" in fetch.filters["id"]
+    assert SEED not in fetch.filters["id"]
+    # The PageRank's passage hit is a document unit; the seed unit is none.
+    assert set(fetch.filters["id"]) <= {"u1", "graphrag-text-units-1"}
 
 
 def _mix(config: Config) -> Any:

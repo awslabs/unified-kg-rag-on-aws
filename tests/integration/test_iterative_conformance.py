@@ -184,8 +184,14 @@ def _texts(result: SearchResult) -> list[str]:
 def test_the_seeded_round_finds_the_last_hop_on_every_backend(
     harness: StoreHarness, filters: dict[str, Any] | None
 ) -> None:
-    # One hop from the first company reaches the carrier, not the depot.
-    h = harness.derive(lambda c: setattr(c.indexing.neptune, "max_hops", 1))
+    # One hop from the first company reaches the carrier, not the depot; the
+    # support order keeps round 0 to it (the PageRank's passage search of the
+    # question finds the depot's passage on this tiny corpus).
+    def one_hop(config: Any) -> None:
+        config.indexing.neptune.max_hops = 1
+        config.search.local_search.text_unit_ranking = "support"
+
+    h = harness.derive(one_hop)
     _ingest(h)
 
     result = _search(h, filters)

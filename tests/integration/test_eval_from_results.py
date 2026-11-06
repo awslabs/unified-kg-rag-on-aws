@@ -88,6 +88,9 @@ def test_an_interrupted_comparison_completed_and_rebuilt_has_the_same_deltas(
     # usage is lower, as recorded cache hits. The quality deltas never
     # depend on it; the usage deltas match exactly with the cache off.
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    # On three passages the PageRank's passage search gives local what mix
+    # and naive find; the support order keeps the strategies apart.
+    config.search.local_search.text_unit_ranking = "support"
     if not extraction_cache:
         config.search.query_extraction_cache_size = 0
     server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
