@@ -32,8 +32,13 @@
 8. **`claim_extraction`**(선택, 기본은 꺼짐): 사실 주장 추출.
 9. **`claim_resolution`**(선택): 주장 중복 제거.
 10. **`graph_analysis`**: 그래프를 만들고 `graph.analysis.statistics`를 기록.
-11. **`community_detection`**: Leiden 군집화와 LLM 커뮤니티 리포트.
+11. **`community_detection`**: Leiden 군집화와 LLM 커뮤니티 리포트(`indexing.methodologies`에
+    `graphrag`가 있을 때만).
 12. **`indexing`**: OpenSearch와 Neptune에 씀(켜져 있으면 레지스트리에도).
+
+실행에는 [방법론 프로필](#방법론-프로필)에 필요한 단계가 들어갑니다. `--enabled-stages`로 단계를
+직접 나열하면 그 목록이 우선합니다. 나열한 단계는 실행하고 나열하지 않은 단계는 실행하지 않으며,
+나열하지 않은 단계 때문에 인덱스에서 빠지는 방법론이 있으면 WARNING으로 알려 줍니다.
 
 ## 예시
 
@@ -127,12 +132,45 @@ temperature, 추론 설정입니다.
 - **이질적인 도메인:** `entity_types`를 여러 도메인의 합집합으로 맞추거나, 도메인마다
   [인덱스 접미사](../concepts/scopes-and-namespaces.ko.md#인덱스-접미사)를 따로 두세요.
 
+## 방법론 프로필
+
+`indexing.methodologies`(기본값 `[graphrag, lightrag]`)가 실행에서 만들 것을 정합니다
+([프로필](../concepts/overview.ko.md#방법론-프로필)).
+
+```yaml
+indexing:
+  methodologies: [lightrag]   # mix, hybrid, naive: 커뮤니티도 리포트도 만들지 않음
+```
+
+- **건너뛰는 것.** `graphrag`가 없으면 Leiden 단계와 리포트 호출을 하지 않습니다. 나머지
+  (추출, 글리닝, 요약, 관계 벡터)는 LightRAG가 읽는 것입니다. 이 설정이 생기기 전의 설정에서
+  `graph.community_detection.enabled: false`이면 같은 프로필을 만들고,
+  `indexing.opensearch.build_relationship_vector_index: false`이면 `graphrag`만 만듭니다.
+  모르는 이름은 올바른 이름을 알려 주며 설정 로드에 실패하고, 이 스위치들 때문에 남는 방법론이
+  없는 선택도 마찬가지입니다.
+- **네임스페이스가 가진 것.** 실행마다 빌드 기록(`artifacts`, `methodologies`)에 남깁니다.
+  질의한 전략이 네임스페이스에 없는 방법론을 읽으면 모델을 호출하기 전에 거절하고
+  (`MethodologyNotIndexedError`, `run-rag`는 종료 코드 2), 네임스페이스가 가진 것을 알려 줍니다.
+- **나중에 추가하면**(예: `[lightrag]`로 만든 뒤 `graphrag`) 그 방법론이 더하는 것만 만듭니다.
+  문서 상태 레지스트리를 켰다면 다음 실행이 커뮤니티 없는 네임스페이스를 보고 한 번 다시
+  구축하며(`indexing.reset`, WARNING으로 알림), 저장된 청크 경계, 추출 결과, 설명 요약, 벡터를
+  재사용하므로 새 모델 호출은 커뮤니티 리포트뿐입니다. 네임스페이스에 다른 소스 범위의 문서도
+  있으면 대신 거절합니다(종료 코드 2). 한 코퍼스로 다시 구축하면 그 문서들이 지워지기 때문입니다.
+  레지스트리가 없으면 모든 실행이 전체 구축이고 같은 것을 재사용합니다. 같은 `--pipeline-id`로
+  다시 실행하면 단계 캐시에서 `community_detection`과 `indexing`만 실행합니다.
+- **빼면** 그 산출물은 더 이상 갱신되지 않습니다. 네임스페이스에 쓰는 다음 실행이 빠졌다고
+  기록하고, 그 뒤로는 해당 전략이 거절됩니다. 그 전까지(코퍼스가 바뀌지 않는 동안)는 최신 상태로
+  남습니다. 아무것도 지우지 않습니다. 지우려면 남길 방법론으로 `indexing.reset: true`를 한 번
+  실행하세요. 재구축이 커뮤니티 리포트 인덱스를 빈 인덱스로 바꾸고 그래프의 커뮤니티 정점을
+  지웁니다.
+
 ## 비용 조절 수단
 
 비용은 대부분 LLM 호출에서 나옵니다. 추출(청크당 1회 이상), 글리닝(청크당 최대
 `max_rounds`회), 커뮤니티 리포트, 주장(텍스트 단위당 1회, 기본은 꺼짐), 질의마다의 답변
-생성입니다. 기계적인 역할에 Haiku급 모델 쓰기(청킹, 번역, map-reduce, 요약의 기본값),
-글리닝 횟수 줄이기, 주장 끄기, 캐시와 증분 인덱싱으로 줄일 수 있습니다.
+생성입니다. `graphrag`를 뺀 [방법론 프로필](#방법론-프로필)(커뮤니티 리포트 없음), 기계적인
+역할에 Haiku급 모델 쓰기(청킹, 번역, map-reduce, 요약의 기본값), 글리닝 횟수 줄이기, 주장 끄기,
+캐시와 증분 인덱싱으로 줄일 수 있습니다.
 
 이 중 가장 큰 것은 글리닝입니다(측정한 수집 비용의 47%). `processing.gleaning.max_rounds`는
 3이며, 글리닝이 더하는 관계는 대부분 1회차에서 나오고 2~3회차는 조금만 더합니다

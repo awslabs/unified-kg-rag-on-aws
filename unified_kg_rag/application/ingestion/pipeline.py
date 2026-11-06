@@ -33,6 +33,7 @@ from unified_kg_rag.application.ingestion.cache_manager import (
 from unified_kg_rag.application.ingestion.incremental import (
     close_attempts,
     open_attempts,
+    other_source_scopes,
     record_item_failures,
     retired_scope_readings,
 )
@@ -74,6 +75,11 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
 )
 from unified_kg_rag.domain.ingestion.delta_detector import retired_scope_groups
 from unified_kg_rag.domain.ingestion.document_identity import config_registry_namespace
+from unified_kg_rag.domain.ingestion.methodologies import (
+    missing_artifacts,
+    selected_stages,
+    stage_methodologies,
+)
 from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
 from unified_kg_rag.domain.models import (
     CacheStrategy,
@@ -155,8 +161,9 @@ class DataIngestionPipeline:
 
     Runs the stages of ``STAGE_CLASSES`` in order (parse, load, chunk,
     translate, extract, glean, resolve, claims, analyze, communities, index),
-    skipping those ``pipeline_config.stages_enabled`` or a config section
-    (``CONFIG_ENABLED``) turns off. Each stage's output is cached under the
+    skipping those ``pipeline_config.stages_enabled``, a config section
+    (``CONFIG_ENABLED``) or the selected ``indexing.methodologies`` turn off
+    (``_stage_enabled``). Each stage's output is cached under the
     run's pipeline id in ``pipeline_config.local_directory`` (and, with
     ``s3_sync_enabled``, uploaded to S3 after every stage), so a re-run with
     the same pipeline id resumes after the last stage whose cached output is
@@ -195,10 +202,10 @@ class DataIngestionPipeline:
             if name in cls._ORDER and cls._ORDER.index(name) < position
         ]
 
-    # Stages switched off by a config section besides stages_enabled. Claim
-    # extraction and resolution go together; community detection is optional
-    # for a LightRAG-only (mix/hybrid/naive) ingestion, which needs no
-    # communities (GraphRAG global/drift require it).
+    # Stages switched off by a config section besides stages_enabled and the
+    # selected methodologies (_stage_enabled). Claim extraction and
+    # resolution go together; community detection builds what graphrag
+    # alone reads.
     CONFIG_ENABLED: dict[PipelineStageType, Callable[[Config], bool]] = {
         PipelineStageType.GLEANING: lambda c: c.processing.gleaning.enabled,
         PipelineStageType.CLAIM_EXTRACTION: (
@@ -278,6 +285,9 @@ class DataIngestionPipeline:
     # Where the response cache keeps its segments, in the run's cache directory.
     LLM_CACHE_DIRECTORY = "llm-cache"
     _checkpoint_id: str | None = None
+    # The run rebuilds the namespace to add an artifact it lacks
+    # (_rebuild_for_added_artifacts): indexing.reset is set for it alone.
+    _reset_for_run: bool = False
     _checkpointing: bool = False
     _stop_signal: int | None = None
 
@@ -495,11 +505,7 @@ class DataIngestionPipeline:
         name_to_type_map: dict[str, PipelineStageType] = {}
         disabled_stages = []
         for stage_type, stage_class in self.STAGE_CLASSES.items():
-            config_enabled = self.CONFIG_ENABLED.get(stage_type, lambda _: True)
-            if not (
-                self.pipeline_config.stages_enabled.get(stage_type, True)
-                and config_enabled(self.config)
-            ):
+            if not self._stage_enabled(stage_type):
                 disabled_stages.append(stage_type.value)
                 continue
             stage = stage_class(
@@ -514,6 +520,44 @@ class DataIngestionPipeline:
             logger.info("Disabled stages: %s", disabled_stages)
 
         return stages, name_to_type_map
+
+    def _stage_enabled(self, stage_type: PipelineStageType) -> bool:
+        """Whether the run includes ``stage_type``: its config section
+        (``CONFIG_ENABLED``) allows it, and an explicit ``stages_enabled``
+        list (one that leaves a stage out) names it, or without one the
+        selected methodologies need it (``methodologies.selected_stages``:
+        every stage for the default ones). An explicit list wins either way
+        (docs/design.md#46-methodology-profiles)."""
+        if not self.CONFIG_ENABLED.get(stage_type, lambda _: True)(self.config):
+            return False
+        listed = self.pipeline_config.stages_enabled
+        needed = selected_stages(self.config)
+        if all(listed.get(stage, True) for stage in PipelineStageType):
+            return stage_type in needed
+        if not listed.get(stage_type, True):
+            # Only a run that writes the index can leave a methodology out
+            # of it (a phase before indexing writes none).
+            methodologies = stage_methodologies(self.config, stage_type)
+            if methodologies and listed.get(PipelineStageType.INDEXING, True):
+                names = ", ".join(m.value for m in methodologies)
+                logger.warning(
+                    "Stage '%s' is not in the run's enabled stages, but %s "
+                    "needs it: the index this run writes holds no %s unless "
+                    "an earlier run of this pipeline id completed the stage",
+                    stage_type.value,
+                    names,
+                    names,
+                )
+            return False
+        if stage_type not in needed:
+            logger.warning(
+                "Stage '%s' is in the run's enabled stages, but no selected "
+                "methodology (indexing.methodologies: %s) needs it: it runs, "
+                "and the index records nothing it builds",
+                stage_type.value,
+                ", ".join(m.value for m in self.config.effective_methodologies),
+            )
+        return True
 
     def close(self) -> None:
         """Release backend clients owned by the pipeline's stages.
@@ -698,6 +742,10 @@ class DataIngestionPipeline:
             logger.exception("Pipeline execution failed: %s", e)
             raise PipelineExecutionError(f"Failed to run pipeline: {e}") from e
         finally:
+            if self._reset_for_run:
+                # Set for the run that needed it, not for a later one.
+                self.config.indexing.reset = False
+                self._reset_for_run = False
             if self.llm_response_cache is not None:
                 self.llm_response_cache.close()
             self._checkpoint_id = None
@@ -723,6 +771,8 @@ class DataIngestionPipeline:
                 self._sync_cache_with_s3(pipeline_id, "download")
                 self._checkpoint_id = pipeline_id
 
+            # Before any cache key is computed: a rebuild is keyed so.
+            self._rebuild_for_added_artifacts(source_path)
             # Part of every stage cache key, so it must be set before the
             # resume decision reads the cache.
             self._set_corpus_fingerprint(source_path)
@@ -791,6 +841,59 @@ class DataIngestionPipeline:
             raise PipelineInterrupted(self._stop_signal) from e
         self._close_attempts(context, lease)
         return context
+
+    def _rebuild_for_added_artifacts(self, source_path: Path) -> None:
+        """Rebuild the namespace (``indexing.reset`` for this run) when the
+        run builds a corpus-wide artifact its build record does not name: a
+        methodology added since (``graphrag``'s communities and reports after
+        a ``lightrag``-only build). A delta would build it for the delta's
+        documents only; the rebuild reuses the stored chunk boundaries,
+        extraction records, summaries and vectors, so only the added
+        artifacts' model calls are new. Only with the registry on (without
+        it every run is a full build), and never on a record from before
+        methodology profiles (``methodologies.missing_artifacts``).
+
+        Raises:
+            ConfigurationError: The namespace also holds other source
+                scopes' documents, which a rebuild from this corpus would
+                delete.
+            DocStatusRegistryError: The namespace cannot be read.
+        """
+        if self._doc_status is None or self.config.indexing.reset:
+            return
+        indexer = self.providers.build_vector_indexer()
+        try:
+            record = indexer.read_build_record(
+                self.config.processing.document_parsing.index_value
+            )
+        finally:
+            indexer.close()
+        missing = missing_artifacts(record, self.config)
+        if not missing:
+            return
+        added = ", ".join(sorted(a.value for a in missing))
+        if others := other_source_scopes(self._doc_status, self.config, source_path):
+            raise ConfigurationError(
+                f"indexing.methodologies reads {added}, which the index "
+                "namespace does not hold: building it needs a rebuild of the "
+                "namespace, and the namespace also holds documents of source "
+                f"scope(s) {', '.join(others)}, which a rebuild from this "
+                "corpus would delete. Keep the methodologies the namespace "
+                "was built with, give each corpus its own namespace "
+                "(processing.document_parsing.index_value), or rebuild it "
+                "from this corpus with indexing.reset: true, deleting them."
+            )
+        logger.warning(
+            "The index namespace holds no %s, which indexing.methodologies "
+            "(%s) reads: this run rebuilds it from the whole corpus "
+            "(indexing.reset), reusing the stored chunk boundaries, "
+            "extractions, summaries and vectors, so only the model calls "
+            "that build what it adds are new",
+            added,
+            ", ".join(m.value for m in self.config.effective_methodologies),
+        )
+        self.config.indexing.reset = True
+        self._reset_for_run = True
 
     def _incremental_delta(self, context: PipelineContext | None) -> bool:
         """Whether ``context`` holds an incremental delta the registry tracks

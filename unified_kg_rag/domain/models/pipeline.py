@@ -16,6 +16,7 @@ from .covariate import Claim
 from .document import Document, DocumentDelta, ExtractionSettings
 from .entity import Entity
 from .extraction import TextUnitExtraction
+from .methodology import IndexArtifact, Methodology, methodologies_holding
 from .relationship import Relationship
 from .text_unit import TextUnit
 
@@ -136,6 +137,23 @@ class IndexBuildRecord(BaseModel):
             "version starts them at the next full build)."
         ),
     )
+    artifacts: list[IndexArtifact] | None = Field(
+        default=None,
+        description=(
+            "The index artifacts the suffix holds and its runs maintain "
+            "(docs/design.md#46-methodology-profiles): a full build's are "
+            "those it built, an incremental record keeps those both it and "
+            "the stored record name. None in a record from before "
+            "methodology profiles."
+        ),
+    )
+    methodologies: list[Methodology] | None = Field(
+        default=None,
+        description=(
+            "The methodologies whose required artifacts the suffix holds "
+            "(derived from artifacts when the record is written)."
+        ),
+    )
     community_change: CommunityChange | None = Field(
         default=None,
         exclude=True,
@@ -169,7 +187,10 @@ class IndexBuildRecord(BaseModel):
             return self.model_copy(
                 update={"communities": self._counted(stored.communities)}
             )
-        update: dict[str, Any] = {"communities": self._counted(stored.communities)}
+        update: dict[str, Any] = {
+            "communities": self._counted(stored.communities),
+            **self._kept_artifacts(stored.artifacts),
+        }
         base = stored if stored.mode == "full" else stored.full_build
         if base is not None:
             update["full_build"] = base.model_copy(
@@ -180,6 +201,25 @@ class IndexBuildRecord(BaseModel):
                 }
             )
         return self.model_copy(update=update)
+
+    def with_artifacts(self, artifacts: Iterable[IndexArtifact]) -> "IndexBuildRecord":
+        """This record naming ``artifacts`` and the methodologies they hold."""
+        ordered = [a for a in IndexArtifact if a in set(artifacts)]
+        return self.model_copy(
+            update={
+                "artifacts": ordered,
+                "methodologies": list(methodologies_holding(ordered)),
+            }
+        )
+
+    def _kept_artifacts(self, stored: list[IndexArtifact] | None) -> dict[str, Any]:
+        """An incremental record's artifacts over the ``stored`` ones: those
+        both name (one this run did not maintain is stale for its delta).
+        Nothing to change when either names none."""
+        if self.artifacts is None or stored is None:
+            return {}
+        kept = self.with_artifacts(set(self.artifacts) & set(stored))
+        return {"artifacts": kept.artifacts, "methodologies": kept.methodologies}
 
     def _counted(self, counters: CommunityCounters | None) -> CommunityCounters | None:
         """``counters`` with this commit's change added, once per commit."""

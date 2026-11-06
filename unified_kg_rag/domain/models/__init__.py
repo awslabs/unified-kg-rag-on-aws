@@ -51,6 +51,7 @@ from .evaluation import (
     EvaluatorType,
 )
 from .extraction import RejectionReason, TextUnitExtraction
+from .methodology import IndexArtifact, Methodology
 from .pipeline import (
     CommunityChange,
     CommunityCounters,
@@ -139,6 +140,8 @@ __all__ = [
     "PipelineConfig",
     "ExtractionSettings",
     "IndexBuildRecord",
+    "IndexArtifact",
+    "Methodology",
     "CommunityChange",
     "CommunityCounters",
     "PipelineContext",

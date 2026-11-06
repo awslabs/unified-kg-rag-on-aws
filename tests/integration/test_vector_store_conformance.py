@@ -10,6 +10,7 @@ container (``LOCAL_STORES=1``) and OpenSearch Service (``-m aws``); see
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -31,6 +32,9 @@ from unified_kg_rag.domain.models import (
     CommunityReport,
     Config,
     Entity,
+    IndexArtifact,
+    IndexBuildRecord,
+    Methodology,
     Relationship,
     TextUnit,
 )
@@ -1958,3 +1962,55 @@ def test_an_emptied_index_holds_nothing(harness: StoreHarness, kind: str) -> Non
     assert harness.stored_ids(kind, tenant) == set()
     assert indexer.holds_any_text_unit(suffix=tenant) is False
     assert indexer.holds_any_item(suffix=tenant) is False
+
+
+def test_a_build_record_reads_back_what_the_namespace_holds(
+    harness: StoreHarness,
+) -> None:
+    # Ingestion reads the record before a run (an artifact it lacks makes an
+    # incremental run rebuild) and the chain before a query (a strategy whose
+    # methodology it does not hold is refused): both read what record_build
+    # wrote, on every backend (docs/design.md#46-methodology-profiles).
+    light = (
+        IndexArtifact.TEXT_UNITS,
+        IndexArtifact.ENTITIES,
+        IndexArtifact.RELATIONSHIPS,
+        IndexArtifact.RELATIONSHIP_VECTORS,
+        IndexArtifact.GRAPH,
+    )
+    full = (*light, IndexArtifact.COMMUNITIES, IndexArtifact.COMMUNITY_REPORTS)
+    indexer = harness.vector_indexer
+    assert indexer.read_build_record("default") is None
+    _write(harness, "text_units", "index", _text_units())
+
+    def record(mode: str, artifacts: tuple[IndexArtifact, ...]) -> IndexBuildRecord:
+        return IndexBuildRecord(
+            pipeline_id=f"run-{mode}",
+            mode=mode,
+            built_at=datetime.now(UTC),
+            documents=2,
+            extraction_fingerprint="fp",
+        ).with_artifacts(artifacts)
+
+    written = indexer.record_build(record("full", full), "default")
+    assert written is not None and written.methodologies == list(Methodology)[:3]
+    stored = indexer.read_build_record("default")
+    assert stored is not None
+    assert stored["methodologies"] == ["graphrag", "lightrag", "hipporag"]
+    # An incremental run that stopped building communities keeps what both
+    # name: graphrag leaves the record.
+    indexer.record_build(record("incremental", light), "default")
+    stored = indexer.read_build_record("default")
+    assert stored is not None
+    assert stored["artifacts"] == [a.value for a in light]
+    assert stored["methodologies"] == ["lightrag", "hipporag"]
+    if harness.vector_retriever is not None:
+        retriever = harness.vector_retriever()
+
+        async def read() -> dict[str, Any] | None:
+            try:
+                return await retriever.aread_build_record("default")
+            finally:
+                await retriever.aclose()
+
+        assert asyncio.run(read()) == stored

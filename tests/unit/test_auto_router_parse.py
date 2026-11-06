@@ -133,7 +133,8 @@ async def test_one_routable_strategy_needs_no_router_call() -> None:
 
 async def test_auto_never_routes_to_report_strategies_without_communities() -> None:
     # global and drift answer from community reports; with community detection
-    # off there are none, so the router must not be offered them.
+    # off there are none (the index holds lightrag only), so the router is
+    # not offered GraphRAG's strategies: mix is left, with no router call.
     from unified_kg_rag.domain.models import Config
 
     config = Config()
@@ -152,9 +153,43 @@ async def test_auto_never_routes_to_report_strategies_without_communities() -> N
     state = await chain._resolve_strategy(
         {"search_strategy": SearchStrategy.AUTO, "query": "q"}
     )
-    assert offered["strategies"] == "local, mix"
-    # "global" is not routable here, so the answer falls back to local.
-    assert state["resolved_strategy"] == SearchStrategy.LOCAL
+    assert offered == {}
+    assert state["resolved_strategy"] == SearchStrategy.MIX
+
+
+async def test_auto_routes_among_the_namespace_methodologies() -> None:
+    # The held methodologies the query read (a lightrag-only namespace) leave
+    # mix and hybrid of the configured strategies; global is never offered.
+    from unified_kg_rag.domain.models import Config, Methodology
+
+    config = Config()
+    config.search.auto_routable_strategies = [
+        SearchStrategy.LOCAL,
+        SearchStrategy.MIX,
+        SearchStrategy.GLOBAL,
+        SearchStrategy.HYBRID,
+    ]
+    chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain.config = config
+    chain.ignore_errors = False
+    offered: dict[str, object] = {}
+
+    class _Router:
+        async def ainvoke(self, inputs: dict, _config: object = None) -> str:
+            offered.update(inputs)
+            return "global"
+
+    chain._get_chain_for_prompt = lambda *_a, **_k: _Router()  # type: ignore[method-assign]
+    state = await chain._resolve_strategy(
+        {
+            "search_strategy": SearchStrategy.AUTO,
+            "query": "q",
+            "held_methodologies": (Methodology.LIGHTRAG,),
+        }
+    )
+    assert offered["strategies"] == "mix, hybrid"
+    # "global" is not routable here: the fallback is the first routable one.
+    assert state["resolved_strategy"] == SearchStrategy.MIX
 
 
 def test_routable_set_follows_what_the_pipeline_builds() -> None:
@@ -162,11 +197,22 @@ def test_routable_set_follows_what_the_pipeline_builds() -> None:
     from unified_kg_rag.adapters.retrieval.strategy_registry import (
         routable_strategies,
     )
-    from unified_kg_rag.domain.models import Config
+    from unified_kg_rag.domain.models import Config, Methodology
+    from unified_kg_rag.shared import MethodologyNotIndexedError
 
     config = Config()
     assert routable_strategies(config) == tuple(config.search.auto_routable_strategies)
     config.graph.community_detection.enabled = False
-    assert routable_strategies(config) == (SearchStrategy.LOCAL, SearchStrategy.MIX)
+    assert routable_strategies(config) == (SearchStrategy.MIX,)
+    # Nothing configured is servable: LightRAG's general-purpose strategy.
     config.search.auto_routable_strategies = [SearchStrategy.GLOBAL]
-    assert routable_strategies(config) == (SearchStrategy.LOCAL,)
+    assert routable_strategies(config) == (SearchStrategy.MIX,)
+    # GraphRAG's on a namespace holding graphrag alone.
+    config.graph.community_detection.enabled = True
+    config.search.auto_routable_strategies = [SearchStrategy.MIX]
+    assert routable_strategies(config, [Methodology.GRAPHRAG]) == (
+        SearchStrategy.LOCAL,
+    )
+    # A namespace holding nothing a strategy reads.
+    with pytest.raises(MethodologyNotIndexedError, match="holds \\(nothing\\)"):
+        routable_strategies(config, [])

@@ -44,6 +44,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     Config,
+    Methodology,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -169,6 +170,8 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
     Backends are accessed only through the abstract GRAPH / DOCUMENT retriever
     roles (``self.graph_retriever`` / ``self.document_retriever``).
     """
+
+    methodology = Methodology.LIGHTRAG
 
     # Upstream gives chunks what the KG sections leave unused
     # (operate.py: available_chunk_tokens = max_total_tokens - KG tokens).

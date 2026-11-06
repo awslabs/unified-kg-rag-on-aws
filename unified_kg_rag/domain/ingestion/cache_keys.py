@@ -322,6 +322,13 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     ),
     "graph.visualization": _neutral("renders the finished graph"),
     # --- indexing, stores and query time -----------------------------------
+    # Which stages run and what the build record names, never what a stage
+    # that runs produces (its switch keys a stage it turns off, which then
+    # caches nothing): a methodology added to a pipeline id resumes from
+    # its cached stages. Shapes answers (which strategies a query may use).
+    "indexing.methodologies": Unkeyed(
+        "selects the stages a run includes, not what one produces"
+    ),
     "indexing.community_drift_threshold": Unkeyed(_AT_INDEXING),
     "indexing.community_compaction": _neutral(
         "only logs a recommendation after the commit, never changes what a "
@@ -447,6 +454,8 @@ _UNCLASSIFIED = _EVERY_CALL
 # field out when its default stops matching the earlier behaviour.
 _KEYED_ONCE_SET = frozenset(
     {
+        # Unkeyed, but in the evaluation manifest once set otherwise.
+        "indexing.methodologies",
         "processing.graph_extraction.relationship_types",
         "processing.graph_extraction.relationship_patterns",
         "processing.graph_extraction.schema_mode",

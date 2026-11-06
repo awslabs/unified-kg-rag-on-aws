@@ -93,6 +93,13 @@ class InvalidFilterError(GraphRAGException, ValueError):
     """A caller search filter names a key no target index or label declares."""
 
 
+class MethodologyNotIndexedError(ConfigurationError):
+    """A query's search strategy reads a methodology (``graphrag``,
+    ``lightrag``, ...) the queried index namespace does not hold: it was not
+    in ``indexing.methodologies`` when the namespace was last written. Raised
+    before any model call; ``run-rag`` exits 2."""
+
+
 class LanguageModelError(ModelError):
     pass
 

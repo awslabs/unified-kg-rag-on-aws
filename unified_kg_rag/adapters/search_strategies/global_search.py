@@ -35,6 +35,7 @@ from unified_kg_rag.adapters.store_errors import (
 from unified_kg_rag.domain.ingestion.community_hierarchy import cut_filter
 from unified_kg_rag.domain.models import (
     Config,
+    Methodology,
     ModelRole,
     RetrievalResult,
     RetrieverRole,
@@ -108,6 +109,8 @@ def _record(degraded: list[str] | None, error: Exception) -> None:
     needs_community_reports=True,
 )
 class GlobalSearchStrategy(BaseSearchStrategy):
+    methodology = Methodology.GRAPHRAG
+
     def __init__(
         self,
         config: Config,

@@ -17,6 +17,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     META_DIMENSION,
     META_MODEL,
     resolve_embedding_dimension,
+    stored_build_record,
     stored_embedding_settings,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
@@ -31,6 +32,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     RECORD_KINDS,
 )
+from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     Claim,
@@ -38,6 +40,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Constants,
     Entity,
+    IndexArtifact,
     IndexBuildRecord,
     ModelPurpose,
     Relationship,
@@ -968,6 +971,22 @@ class OpenSearchIndexer(VectorIndexer):
                 )
         return written
 
+    def read_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """The build record in the ``_meta`` of ``suffix``'s live text-units
+        index (``record_build`` writes the same one on every index), or
+        ``None`` when it has none or the read fails (logged)."""
+        alias = self._get_name(self.opensearch_config.text_units_index_prefix, suffix)
+        try:
+            index_name = self._live_index(alias)
+            if not index_name:
+                return None
+            return stored_build_record(self._index_mappings(index_name))
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - the record is optional
+            logger.warning("Could not read the build record of %s: %s", alias, e)
+            return None
+
     def clear(self, suffixes: list[str]) -> None:
         if not suffixes:
             return
@@ -1871,7 +1890,7 @@ class OpenSearchIndexer(VectorIndexer):
                 self.config.processing.claim_extraction.enabled
             )
             builds[config.community_reports_index_prefix] = (
-                self.config.graph.community_detection.enabled
+                IndexArtifact.COMMUNITY_REPORTS in artifacts_to_build(self.config)
             )
         mappings = [
             (alias, spec.mapping())

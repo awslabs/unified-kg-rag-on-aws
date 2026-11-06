@@ -82,7 +82,11 @@ from unified_kg_rag.application.bootstrap import (
     build_query_guard,
 )
 from unified_kg_rag.application.observability import configure_observability
-from unified_kg_rag.application.retrieval import filter_validation, query_processing
+from unified_kg_rag.application.retrieval import (
+    filter_validation,
+    methodology_check,
+    query_processing,
+)
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_FILTER_KEY,
@@ -92,6 +96,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
+    Methodology,
     ModelRole,
     RetrievalResult,
     RetrieverRole,
@@ -503,6 +508,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             BaseSearchStrategy,
         ] = {}
         self._cache_lock = threading.RLock()
+        # What each queried suffix's index namespace holds, with when it was
+        # read (methodology_check; guarded by the cache lock).
+        self._held_methodologies: dict[str, tuple[float, tuple[Methodology, ...]]] = {}
         # The schema annotation fields the configured extraction schema
         # writes (filter_validation._schema_annotation_fields), loaded on the
         # first filter on one of them; None until then, and for good once a
@@ -655,7 +663,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # Before routing, as an interactive session does: the router picks
         # only among the strategies that apply every filter key, so whether
         # a key is refused never depends on the route a question takes.
-        routable = filter_validation.auto_candidates(self, state.get("filters"))
+        routable = filter_validation.auto_candidates(
+            self, state.get("filters"), state.get("held_methodologies")
+        )
         if len(routable) == 1:
             # Nothing to choose between: no router call.
             state["resolved_strategy"] = routable[0]
@@ -1036,6 +1046,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         line); raises ``InvalidFilterError`` on a string the field's type
         cannot take."""
         return typed_filter_values(filters)
+
+    async def acheck_methodology(
+        self, strategy: SearchStrategy, suffix: str | None = None
+    ) -> tuple[Methodology, ...]:
+        """The methodologies the index namespace of ``suffix`` holds (its
+        build record, else the configured ``indexing.methodologies``), as
+        every query reads them before any model call. Raises
+        ``MethodologyNotIndexedError`` if ``strategy`` reads another one
+        (``auto`` routes only among the held ones). For callers that check a
+        strategy once before many queries (an interactive session)."""
+        return await methodology_check.check_strategy_methodology(
+            self, strategy, suffix
+        )
 
     def check_filter_keys(
         self, filters: dict[str, Any] | None, strategy: SearchStrategy
@@ -1633,6 +1656,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> RAGOutput | SearchOutput:
         rag_input, input_dict = self._prepare_invoke(input)
         filter_validation.check_requested_filter_keys(self, rag_input)
+        input_dict["held_methodologies"] = await self.acheck_methodology(
+            rag_input.search_strategy, rag_input.suffix
+        )
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
         with (
@@ -2048,6 +2074,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         the route did not read go to ``leftovers``."""
         rag_input, input_dict = self._prepare_invoke(input)
         filter_validation.check_requested_filter_keys(self, rag_input)
+        input_dict["held_methodologies"] = await self.acheck_methodology(
+            rag_input.search_strategy, rag_input.suffix
+        )
         search_config = self.config.search
         deadline = _QueryDeadline(
             search_config.query_timeout_seconds,

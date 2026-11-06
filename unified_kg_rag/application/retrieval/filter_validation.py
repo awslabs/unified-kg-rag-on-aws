@@ -13,6 +13,7 @@ the strategy instances (``_get_strategy_instance``), and it keeps
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.adapters.retrieval.base import (
@@ -28,7 +29,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 )
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
-from unified_kg_rag.domain.models import SearchStrategy
+from unified_kg_rag.domain.models import Methodology, SearchStrategy
 from unified_kg_rag.shared import InvalidFilterError, get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
 
@@ -87,15 +88,18 @@ def check_strategy_filter_keys(
 
 
 def auto_candidates(
-    chain: GraphRAGChain, filters: dict[str, Any] | None
+    chain: GraphRAGChain,
+    filters: dict[str, Any] | None,
+    held: Collection[Methodology] | None = None,
 ) -> tuple[SearchStrategy, ...]:
     """The routable strategies that apply every key of ``filters``.
 
     ``auto`` routes only among these, so a filter that one of them
-    applies never fails by route. Raises ``InvalidFilterError`` when
-    none applies them all.
+    applies never fails by route; and only among the strategies of the
+    ``held`` methodologies (the queried namespace's; the configured ones
+    by default). Raises ``InvalidFilterError`` when none applies them all.
     """
-    routable = routable_strategies(chain.config)
+    routable = routable_strategies(chain.config, held)
     if not filters:
         return routable
     # Once, not per candidate: every strategy would refuse it alike.

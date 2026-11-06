@@ -585,6 +585,13 @@ class VectorIndexer(BaseIndexer):
         """
         return None
 
+    def read_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """The build record ``record_build`` last wrote on ``suffix``'s
+        indices (an ``IndexBuildRecord`` dump), read before a run to tell
+        what the namespace holds. ``None`` when there is none or it cannot
+        be read (logged). Default: ``None`` (no index metadata)."""
+        return None
+
     def prune_text_unit_communities(
         self, community_ids: list[str], suffix: str | None = None
     ) -> IndexingStats:

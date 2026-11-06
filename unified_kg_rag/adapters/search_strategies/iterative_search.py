@@ -190,6 +190,8 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         self.settings = config.search.iterative_search
         self.base_strategy = _base_strategy(config)
         base_class = get_strategy_spec(self.base_strategy).strategy_class
+        # It reads what its base reads (docs/design.md#46-methodology-profiles).
+        self.methodology = base_class.methodology
         # Round 0 is the base search as it runs on its own; the follow-up
         # rounds rerun it without its rerank, since their union is reranked
         # once against the question and the follow-up queries. Both share

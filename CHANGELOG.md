@@ -381,8 +381,23 @@ From a `main` checkout (formats and keys no release had):
 - #577: `search.global_search.reduce_with_llm: true` no longer makes a reduce call and `evaluation.warm_up_query:
   false` no longer skips the warm-up (both warn); a run resumed across it finds no stage-cache entry
   (`fixing.enabled` keyed every stage), but the LLM response cache serves its model calls.
+- (#596) A namespace ingested with `graph.community_detection.enabled: false` holds `lightrag` only: `local` and
+  `simple` are now refused there (`MethodologyNotIndexedError`, `run-rag` exits 2) where they answered without the
+  report section, and `auto` routes among `mix`/`hybrid`/`naive`; ingest with `graphrag` to use them. A build
+  record written earlier names no artifacts: queries read the configured `indexing.methodologies` until the next
+  run that writes the namespace records them, and that run rebuilds nothing. Default configurations run the same
+  stages under the same stage-cache keys.
 
 ### Added
+- Methodology profiles (#596): `indexing.methodologies` (default `[graphrag, lightrag]`, today's union) selects what
+  ingestion builds, so a LightRAG-only corpus (`[lightrag]`) runs no community detection and makes no report call.
+  The build record names the artifacts and methodologies a namespace holds; a query whose strategy reads another
+  methodology fails before any model call naming what the namespace holds and how to add it, and `auto` routes only
+  among the held ones. Adding a methodology to an incremental namespace rebuilds it once from its stored
+  extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
+  them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's); `hipporag`
+  holds what `lightrag` builds and `raptor` is reserved. See [methodology
+  profiles](docs/concepts/overview.md#methodology-profiles) and [Design §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the
   `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). See [local
