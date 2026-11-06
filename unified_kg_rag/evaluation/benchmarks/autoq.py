@@ -61,6 +61,7 @@ import numpy as np
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, ConfigDict, Field
 
+from unified_kg_rag.adapters.evaluators.base import error_digest
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.langchain import LLMJsonOutputParser
 from unified_kg_rag.adapters.llm.token_estimate import (
@@ -585,7 +586,13 @@ class AssertionBenchmarkGenerator:
                     {**inputs, "language": self.language}
                 )
         except Exception as e:  # noqa: BLE001 - a failed call drops its item
-            logger.warning("prepare-benchmark assertions: %s call failed: %s", step, e)
+            # The error may quote the model's reply: a digest at WARNING.
+            logger.warning(
+                "prepare-benchmark assertions: %s call failed: %s",
+                step,
+                error_digest(e),
+            )
+            logger.debug("prepare-benchmark assertions: %s call error: %s", step, e)
             self.dropped[f"{step}_call_failed"] += 1
             return None
         return output if isinstance(output, dict) else {}

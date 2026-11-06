@@ -55,7 +55,7 @@ from typing import Any
 
 import numpy as np
 
-from unified_kg_rag.adapters.evaluators.base import judge_model_kwargs
+from unified_kg_rag.adapters.evaluators.base import error_digest, judge_model_kwargs
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.langchain import LLMJsonOutputParser
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
@@ -474,7 +474,13 @@ class PairwiseJudge:
             )
             return outcome, consistent, None
         except Exception as e:  # noqa: BLE001 - a failed pair is counted, not fatal
-            logger.warning("Pairwise judge failed for '%s': %s", candidate.query_id, e)
+            # The error may quote the judge's reply: a digest at WARNING.
+            logger.warning(
+                "Pairwise judge failed for '%s': %s",
+                candidate.query_id,
+                error_digest(e),
+            )
+            logger.debug("Pairwise judge error for '%s': %s", candidate.query_id, e)
             return None
 
 

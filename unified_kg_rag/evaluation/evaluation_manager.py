@@ -22,6 +22,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
+    error_digest,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.observability.endpoints import safe_url
@@ -640,12 +641,14 @@ class EvaluationManager:
                     )
                 )
             except Exception as e:  # noqa: BLE001 - isolate one query's failure
+                # The error may quote the answer: a digest at ERROR, the
+                # traceback at DEBUG.
                 logger.error(
                     "Failed to process result for query '%s': %s",
                     query.query_id,
-                    e,
-                    exc_info=True,
+                    error_digest(e),
                 )
+                logger.debug("Result processing error", exc_info=True)
                 results.append(
                     EvaluationResult(
                         query_id=query.query_id,
@@ -1042,12 +1045,14 @@ class EvaluationManager:
                     )
                 all_reports.extend(reports)
             except Exception as e:  # noqa: BLE001 - recorded per query below
+                # The error may quote a judge's reply: a digest at ERROR, the
+                # traceback at DEBUG.
                 logger.error(
                     "Failed to run '%s' evaluation: %s",
                     evaluator_type.value,
-                    e,
-                    exc_info=True,
+                    error_digest(e),
                 )
+                logger.debug("Evaluation run error", exc_info=True)
                 # Every answer is already generated: record the crash per query
                 # (as the per-query path in BaseGraphRAGEvaluator does) so the results
                 # are still saved and the summary counts the metrics as failed;

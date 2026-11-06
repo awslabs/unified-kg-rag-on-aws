@@ -963,8 +963,9 @@ Deployment (CDK).
   and `GetInferenceProfile` actions are dropped, and private-mode endpoint policies admit only the account (#204,
   #211, #319, #345).
 - Logs carry no query text, entity names or model output at INFO, no local variables in tracebacks, no ANSI codes
-  when piped, and no relationship endpoints or output previews from gleaning; a unit test fails on a new INFO+ log
-  call that passes them (#156, #173, #245, #255).
+  when piped, and no relationship endpoints or output previews from gleaning; an evaluator or judge error is logged
+  as its type and a digest, its text at DEBUG; a unit test fails on a new INFO+ log call that passes them (#156,
+  #173, #245, #255, #PR).
 - CLI output escapes the data it prints, and `run-rag` strips terminal control characters (#173, #408).
 - Prompts delimit corpus and retrieved text as data that cannot close its tags, the community report's claim lines
   included (#179, #182, #565); the LLM XML parser never resolves DOCTYPE entities (#578).

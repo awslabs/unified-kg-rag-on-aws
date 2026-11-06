@@ -28,6 +28,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIP_REASON_NO_CONTEXTS,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
+    error_digest,
     judge_model_kwargs,
 )
 from unified_kg_rag.adapters.providers import Providers
@@ -415,7 +416,10 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
                     )
                 )
             except Exception as e:  # noqa: BLE001 - one batch fails only its metrics
-                logger.error("Ragas evaluation failed for batch: %s", e, exc_info=True)
+                # The error may quote judge replies: a digest at ERROR, the
+                # traceback at DEBUG.
+                logger.error("Ragas evaluation failed for batch: %s", error_digest(e))
+                logger.debug("Ragas batch error", exc_info=True)
                 failed_runs.update(
                     dict.fromkeys(m_types, f"Ragas batch evaluation failed: {e}")
                 )

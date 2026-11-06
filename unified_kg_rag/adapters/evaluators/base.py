@@ -16,6 +16,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
 )
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils import text_digest
 from unified_kg_rag.shared.utils.concurrency import cancel_on_exit
 
 logger = get_logger(__name__)
@@ -33,6 +34,13 @@ SKIP_REASON_EMPTY_REFERENCE = "empty_reference"
 SKIP_REASON_GUARDRAIL_BLOCKED = "guardrail_blocked"
 # The answer had no context (the chain abstained): nothing to be faithful to.
 SKIP_REASON_NO_CONTEXTS = "no_contexts"
+
+
+def error_digest(error: BaseException) -> str:
+    """Log-safe stand-in for an evaluator error at INFO and above: its type
+    and ``text_digest`` of its message, which may quote a judge's reply, an
+    answer or a reference. Log the error itself at DEBUG."""
+    return f"{type(error).__name__} ({text_digest(str(error))})"
 
 
 def judge_model_kwargs(config: Config) -> dict[str, Any]:
@@ -147,7 +155,12 @@ class BaseGraphRAGEvaluator:
                     # error here is recorded as failed metrics (and counted
                     # against --max-failure-rate) instead of discarding the
                     # run.
-                    logger.error("Failed to evaluate query '%s': %s", query_id, error)
+                    logger.error(
+                        "Failed to evaluate query '%s': %s",
+                        query_id,
+                        error_digest(error),
+                    )
+                    logger.debug("Evaluation error for '%s': %s", query_id, error)
                     final_reports[original_index] = self._create_empty_report(
                         query_id, reason=f"Evaluation failed: {error}"
                     )

@@ -48,6 +48,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
+    error_digest,
     judge_model_kwargs,
 )
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
@@ -268,12 +269,12 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
             return_exceptions=True,
         )
         trials: list[list[str]] = []
-        errors: list[str] = []
+        errors: list[Exception] = []
         for outcome in outcomes:
             if isinstance(outcome, BaseException):
                 if not isinstance(outcome, Exception):
                     raise outcome  # a cancellation is not a failed trial
-                errors.append(str(outcome) or type(outcome).__name__)
+                errors.append(outcome)
             else:
                 trials.append(outcome)
         attempted = [m for m in self.metric_types() if m.value not in skipped]
@@ -287,13 +288,20 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
         }
         if skipped:
             metadata[SKIPPED_METRICS_KEY] = skipped
+        # The error may quote the judge's reply: a digest at WARNING, the
+        # text at DEBUG.
         if not trials:
             logger.warning(
                 "Assertion judge failed every trial for '%s': %s",
                 query.query_id,
-                errors[-1] if errors else "no trial ran",
+                error_digest(errors[-1]) if errors else "no trial ran",
             )
-            reason = f"Assertion judge failed: {errors[-1] if errors else 'no trial'}"
+            if errors:
+                logger.debug(
+                    "Assertion judge error for '%s': %s", query.query_id, errors[-1]
+                )
+            last = (str(errors[-1]) or type(errors[-1]).__name__) if errors else ""
+            reason = f"Assertion judge failed: {last or 'no trial'}"
             metadata[FAILED_METRICS_KEY] = {m.value: reason for m in attempted}
             return self._report(query, result, [], metadata)
         if errors:
@@ -303,7 +311,10 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
                 len(errors),
                 self.trials,
                 query.query_id,
-                errors[-1],
+                error_digest(errors[-1]),
+            )
+            logger.debug(
+                "Assertion judge error for '%s': %s", query.query_id, errors[-1]
             )
         aggregate = aggregate_trials(kinds, trials)
         metadata["assertion_labels"] = [

@@ -71,6 +71,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIP_REASON_EMPTY_REFERENCE,
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
+    error_digest,
     judge_model_kwargs,
 )
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
@@ -325,12 +326,14 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         try:
             span = await self._extracted_span(result.question, answer)
         except Exception as e:  # noqa: BLE001 - scored on the first line instead
+            # The error may quote the model's span: a digest at WARNING.
             logger.warning(
                 "Answer-span extraction failed for '%s' (scoring its first "
                 "line): %s",
                 query.query_id,
-                e,
+                error_digest(e),
             )
+            logger.debug("Answer-span extraction error for '%s': %s", query.query_id, e)
             return self._score(
                 query,
                 result,
