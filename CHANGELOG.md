@@ -248,7 +248,8 @@ See [`iac/README.md`](iac/README.md).
 - `GraphRAGChain`: retrieval-only queries are `search()` / `asearch()`, returning a `SearchOutput`; `ChainMode` and
   `mode=` are gone (`GraphRAGChain(cfg).asearch(q)`, read `out.search_results.results`) (#333). It rejects unknown
   keyword arguments, and only `Providers` / `build_providers` take `boto_session` (`providers=Providers(config,
-  boto_session=...)`, for `DataIngestionPipeline` too) (#218, #577).
+  boto_session=...)`, for `DataIngestionPipeline` too) (#218, #577). `DataIngestionPipeline` takes every argument
+  after `target_directory` by keyword, so a session passed fifth fails instead of binding to `metrics_sink` (#PR).
 - One injection path: `doc_status=`, `vector_indexer=`, `graph_indexer=`, `model_factory=` and `retriever_builders=`
   cannot be combined with `providers=`; a subclass that overrode `_build_graph_retriever` /
   `_build_document_retriever` injects `retriever_builders` (#212, #216, #221).

@@ -144,6 +144,27 @@ def test_pipeline_without_providers_builds_one_default_bundle(
     assert all(stage.providers is pipeline.providers for stage in pipeline.stages)
 
 
+def test_pipeline_takes_the_metrics_sink_by_keyword(tmp_path: Path, mocker) -> None:
+    # A session passed fifth, where boto_session was, bound to metrics_sink
+    # and failed only at the first metric the run emitted.
+    mocker.patch.object(
+        bedrock_module, "BedrockLanguageModelFactory", return_value=_FakeLLMFactory()
+    )
+    mocker.patch.object(
+        bedrock_module,
+        "BedrockEmbeddingModelFactory",
+        return_value=_FakeEmbeddingFactory(),
+    )
+    with pytest.raises(TypeError, match="positional"):
+        DataIngestionPipeline(  # type: ignore[misc]
+            Config(),
+            PipelineConfig(local_directory=str(tmp_path)),
+            tmp_path / "source",
+            tmp_path / "parsed",
+            MagicMock(),
+        )
+
+
 @requires_eval
 def test_evaluation_manager_hands_the_chain_bundle_to_evaluators(
     no_bedrock, mocker
