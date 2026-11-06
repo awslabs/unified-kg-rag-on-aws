@@ -361,7 +361,7 @@ From a `main` checkout (formats and keys no release had):
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
 - Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
-  (#564, #589), also a run resumed after dying between its removal and its commit (#PR): reset once to summarize
+  (#564, #589), also a run resumed after dying between its removal and its commit (#592): reset once to summarize
   from the lines (one call per such item over the threshold), or leave it.
 - #565 changed the translation, description summary and gleaning prompts (gleaning re-keys every gleaned record,
   claims too): a reset translates, extracts and gleans every unit again, the cost of a first build; incremental runs
@@ -571,7 +571,7 @@ From a `main` checkout (formats and keys no release had):
   shared items and re-derives them (summarizing from lines as a full build does, also when several edited documents
   share an item or spell it otherwise, and when the run dies between the removal and the commit and is resumed: the
   removal notes the items it stripped in the extraction store until a commit's writes succeed), moves an item to the
-  id a full build gives it, and deletes extraction records nothing names (#325, #327, #564, #589, #PR). With fuzzy
+  id a full build gives it, and deletes extraction records nothing names (#325, #327, #564, #589, #592). With fuzzy
   resolution on, it folds a delta entity into its one best stored match and never joins two stored ones until a reset
   (#564).
 - Re-runs reuse what is unchanged: vectors carry a digest of their text and model, so indexing embeds only changed
