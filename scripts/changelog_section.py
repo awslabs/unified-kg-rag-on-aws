@@ -8,7 +8,11 @@ bottom of the file. ``--check-package`` also fails unless the version (a tag
 such as ``v0.3.0`` or a bare ``0.3.0``) equals ``unified_kg_rag.__version__``,
 read from the source file without importing the package.
 ``--fallback-unreleased`` prints the ``[Unreleased]`` section when the
-version has none (the release workflow's dry run on a dev version). Notes
+version has none (the release workflow's dry run on a dev version); an empty
+``[Unreleased]`` (right after a release) then prints a one-line placeholder.
+``--link-base`` resolves repo-relative link targets against a URL such as
+``https://github.com/<owner>/<repo>/blob/<tag>/``, the way GitHub resolves them
+when it renders CHANGELOG.md (a release body resolves none of them). Notes
 longer than a GitHub release body allows (125,000 characters, less a margin)
 are cut at a line break and end with a link to the full section
 (``--full-notes-url``). ``.github/workflows/release.yml`` runs it;
@@ -16,7 +20,8 @@ are cut at a line break and end with a link to the full section
 
 Usage:
     uv run python scripts/changelog_section.py --print-package-version
-    uv run python scripts/changelog_section.py v0.3.0 --check-package
+    uv run python scripts/changelog_section.py v0.3.0 --check-package \
+        --link-base https://github.com/awslabs/unified-kg-rag-on-aws/blob/v0.3.0/
     uv run python scripts/changelog_section.py 0.3.0.dev0 --fallback-unreleased
 """
 
@@ -26,6 +31,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urljoin
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
@@ -38,6 +44,18 @@ GITHUB_RELEASE_BODY_LIMIT = 120_000
 _VERSION_LINE = re.compile(r'^__version__ = "([^"]+)"$', re.MULTILINE)
 # A link reference definition at the bottom: ``[0.3.0]: https://...``.
 _LINK_REFERENCE = re.compile(r"^\[[^\]]+\]:\s")
+# An inline link or image target, ``](target`` / ``![alt](target``, and a link
+# reference definition's target, ``[label]: target``.
+_INLINE_TARGET = re.compile(
+    r"(?P<head>(?P<bang>!?)\[[^\[\]]*\]\()(?P<target><[^>]*>|[^)\s]+)"
+)
+_REFERENCE_TARGET = re.compile(
+    r"^(?P<head> {0,3}\[[^\]]+\]:[ \t]*)(?P<target>\S+)", re.MULTILINE
+)
+# A scheme (``https:``, ``mailto:``), a protocol-relative ``//host`` or a
+# fragment-only ``#x`` target is left as it is.
+_NOT_REPO_RELATIVE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//|#)")
+NO_UNRELEASED_CHANGES = "No unreleased changes.\n"
 
 
 class ChangelogError(Exception):
@@ -62,8 +80,13 @@ def package_version(init_text: str) -> str:
     return str(matches[0])
 
 
-def extract_section(changelog_text: str, version: str) -> str:
-    """The body of the ``## [version]`` section, stripped; never empty."""
+def extract_section(
+    changelog_text: str, version: str, *, allow_empty: bool = False
+) -> str:
+    """The body of the ``## [version]`` section, stripped.
+
+    An empty section fails unless ``allow_empty`` (then it is ``""``).
+    """
     heading = re.compile(rf"^## \[{re.escape(version)}\](?:\s+-\s+\S.*)?\s*$")
     lines = changelog_text.splitlines()
     start = next((i for i, line in enumerate(lines) if heading.match(line)), None)
@@ -76,8 +99,39 @@ def extract_section(changelog_text: str, version: str) -> str:
         body.append(line)
     text = "\n".join(body).strip()
     if not text:
+        if allow_empty:
+            return ""
         raise ChangelogError(f"the `## [{version}]` section of CHANGELOG.md is empty")
     return text + "\n"
+
+
+def absolutize_links(notes: str, base: str) -> str:
+    """Resolve repo-relative link and image targets in ``notes`` against ``base``.
+
+    ``base`` is the URL of the directory CHANGELOG.md sits in, such as
+    ``https://github.com/<owner>/<repo>/blob/<tag>/``; images resolve against
+    the matching ``/raw/`` URL so they load as files. Absolute URLs, ``mailto:``
+    and fragment-only targets are unchanged.
+    """
+    base = base if base.endswith("/") else base + "/"
+    image_base = base.replace("/blob/", "/raw/", 1)
+
+    def resolve(target: str, root: str) -> str:
+        bracketed = target.startswith("<") and target.endswith(">")
+        inner = target[1:-1] if bracketed else target
+        if not inner or _NOT_REPO_RELATIVE.match(inner):
+            return target
+        resolved = urljoin(root, inner)
+        return f"<{resolved}>" if bracketed else resolved
+
+    def inline(match: re.Match[str]) -> str:
+        root = image_base if match["bang"] else base
+        return match["head"] + resolve(match["target"], root)
+
+    def reference(match: re.Match[str]) -> str:
+        return match["head"] + resolve(match["target"], base)
+
+    return _REFERENCE_TARGET.sub(reference, _INLINE_TARGET.sub(inline, notes))
 
 
 def fit_release_body(
@@ -115,7 +169,9 @@ def release_notes(
     except ChangelogError:
         if not fallback_unreleased:
             raise
-        return extract_section(changelog_text, UNRELEASED)
+        # Right after a release [Unreleased] is empty; the dry run still builds.
+        notes = extract_section(changelog_text, UNRELEASED, allow_empty=True)
+        return notes or NO_UNRELEASED_CHANGES
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -140,6 +196,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--changelog", type=Path, default=CHANGELOG)
     parser.add_argument(
+        "--link-base",
+        help=(
+            "resolve repo-relative link targets against this URL, e.g. "
+            "https://github.com/<owner>/<repo>/blob/<tag>/"
+        ),
+    )
+    parser.add_argument(
         "--full-notes-url",
         default="CHANGELOG.md",
         help="where truncated notes point to for the full section",
@@ -158,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
             init_text=init_text if args.check_package else None,
             fallback_unreleased=args.fallback_unreleased,
         )
+        if args.link_base:
+            notes = absolutize_links(notes, args.link_base)
         notes = fit_release_body(notes, args.full_notes_url)
     except ChangelogError as exc:
         print(f"error: {exc}", file=sys.stderr)

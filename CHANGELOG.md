@@ -528,7 +528,8 @@ From a `main` checkout (formats and keys no release had):
   rejections, a yellow multi-node cluster, an unusable KMS key, ephemeral storage, `DocumentsNotIndexed`, and
   `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528).
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
-  workflow that publishes a GitHub release (nothing on PyPI yet) (#572).
+  workflow that publishes a GitHub release (nothing on PyPI yet): the tag must be on `main`, and the notes'
+  repo-relative links point at the tagged tree (#572, #PR).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy (packed by tokens, on the fast model), steps
