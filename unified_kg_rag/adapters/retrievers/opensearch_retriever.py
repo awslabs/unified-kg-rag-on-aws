@@ -270,6 +270,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                     "full_content_embedding",
                 ],
             },
+            # The summary tree (tree strategy): reached only through an
+            # explicit index_prefixes, never by the default sweep.
+            self._opensearch_config.summary_nodes_index_prefix: {
+                "lexical": ["text"],
+                "vector": ["text_embedding"],
+            },
         }
 
     def _initialize_index_filter_fields(self) -> dict[str, FilterFields]:
@@ -284,10 +290,18 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             o.relationships_index_prefix: by_kind["relationships"],
             o.claims_index_prefix: by_kind["claims"],
             o.community_reports_index_prefix: by_kind["community_reports"],
+            o.summary_nodes_index_prefix: by_kind["summary_nodes"],
         }
 
     def filter_fields(self) -> FilterFields:
-        return union_filter_fields(self._index_filter_fields.values())
+        # The summary tree's index is searched by the tree strategy alone,
+        # which names it (filter_fields_for).
+        summary = self._opensearch_config.summary_nodes_index_prefix
+        return union_filter_fields(
+            fields
+            for prefix, fields in self._index_filter_fields.items()
+            if prefix != summary
+        )
 
     def filter_fields_for(self, prefixes: Collection[str]) -> FilterFields:
         return union_filter_fields(
@@ -1586,5 +1600,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             return SectionType.CLAIM
         if index_name.startswith(opensearch_config.community_reports_index_prefix):
             return SectionType.COMMUNITY
+        if index_name.startswith(opensearch_config.summary_nodes_index_prefix):
+            return SectionType.SUMMARY
 
         return SectionType.GENERAL

@@ -47,6 +47,7 @@ from unified_kg_rag.domain.models import (
     Relationship,
     SearchQuery,
     SearchType,
+    SummaryNode,
     TextUnit,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
@@ -1323,6 +1324,23 @@ def _index_everything(indexer: OpenSearchIndexer) -> None:
         indexer.index_community_reports(artifacts["community_reports"]),
     ):
         assert stats.failed_items == 0, stats.errors
+    # The summary tree (the tree strategy's index), every request shape too.
+    node = SummaryNode(
+        id="sn1",
+        level=1,
+        text="Vendor supplies widgets that the Depot stores.",
+        child_ids=["t1", "t2"],
+        text_unit_ids=["t1", "t2"],
+        n_leaves=2,
+        n_tokens=9,
+        language="English",
+        input_key="k1",
+        attributes={"filters": {"category": "contract"}},
+    )
+    (vector,) = indexer.embed_summary_texts([node.text], None) or [None]
+    assert vector is not None
+    stats = indexer.write_summary_tree([node], {node.id: vector}, None, {})
+    assert stats.failed_items == 0, stats.errors
 
 
 @pytest.fixture(scope="module")

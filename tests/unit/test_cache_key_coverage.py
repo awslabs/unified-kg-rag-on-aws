@@ -83,6 +83,7 @@ _KEYED_ONCE_SET = frozenset(
         "models.roles.summary_tree",
         "custom_prompts.tree_summary_system",
         "custom_prompts.tree_summary_human",
+        "search.token_manager.type_budgets.summary",
         *(
             f"indexing.summary_tree.{name}"
             for name in (
@@ -103,6 +104,17 @@ _KEYED_ONCE_SET = frozenset(
                 "refresh",
                 "random_state",
                 "max_leaves_in_memory",
+            )
+        ),
+        *(
+            f"search.tree_search.{name}"
+            for name in (
+                "graph_signal",
+                "graph_seed_entities",
+                "text_top_k",
+                "summary_top_k",
+                "max_nodes_per_level",
+                "expand_children",
             )
         ),
     }

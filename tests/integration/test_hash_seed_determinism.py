@@ -161,7 +161,11 @@ def run(work: Path, source_scope: str | None = None) -> dict[str, Any]:
     from tests.integration import test_embedded_e2e as e2e
     from tests.integration import test_ingestion_stages as stages
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain, RAGInput
-    from unified_kg_rag.domain.models import PipelineStageStatus, SearchStrategy
+    from unified_kg_rag.domain.models import (
+        Methodology,
+        PipelineStageStatus,
+        SearchStrategy,
+    )
 
     prompts: list[list[str]] = []
 
@@ -180,6 +184,8 @@ def run(work: Path, source_scope: str | None = None) -> dict[str, Any]:
     for name, text in CORPUS.items():
         (source / name).write_text(text, encoding="utf-8")
     config = e2e._config(stores, viz)
+    # Every strategy is asked: raptor's tree too.
+    config.indexing.methodologies = [*config.indexing.methodologies, Methodology.RAPTOR]
     processing = config.processing
     processing.document_parsing.source_scope = source_scope
     processing.gleaning.enabled = True

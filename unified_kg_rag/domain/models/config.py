@@ -4069,6 +4069,13 @@ class ContextTypeBudgetConfig(BaseModel):
         description="Relative share for untyped sections — global search's "
         "map-reduce synthesis lands here.",
     )
+    summary: float = Field(
+        default=0.50,
+        ge=0.0,
+        description="Relative share for summary-tree sections (the tree "
+        "strategy only, beside text's 0.50: at most half the context, and "
+        "the text units take what the summaries leave)",
+    )
 
     @model_validator(mode="after")
     def validate_at_least_one_positive_share(self) -> "ContextTypeBudgetConfig":
@@ -4426,6 +4433,64 @@ class PPRSearchConfig(BaseModel):
     )
 
 
+class TreeSearchConfig(BaseModel):
+    """RAPTOR summary-tree search (``tree``, opt-in, unmeasured; the
+    ``raptor`` methodology).
+
+    Fuses, by RRF, a hybrid search of the text units, one of every level of
+    the summary tree (RAPTOR's collapsed tree) and, where the namespace has
+    an entities index, the summaries and text units that cite the entities a
+    hybrid search with the raw query finds; reranks the leaves and the
+    summaries together; keeps at most ``max_nodes_per_level`` summaries of a
+    level and expands each to ``expand_children`` of its own passages, so
+    the answer cites the original text.
+    """
+
+    graph_signal: Literal["auto", "off"] = Field(
+        default="auto",
+        description="auto: add the graph buckets (tree_graph_summaries, "
+        "tree_graph_text_units) where the namespace's methodologies build the "
+        "entities index (graphrag or lightrag besides raptor); off: never. "
+        "No model call either way.",
+    )
+    graph_seed_entities: int = Field(
+        default=8,
+        ge=1,
+        le=50,
+        description="Entities the raw-query entity search takes as graph seeds.",
+    )
+    text_top_k: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description="Text units each text bucket searches for, and the most "
+        "the fused result keeps (expanded passages aside).",
+    )
+    summary_top_k: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Summaries the summary buckets search for, and the most "
+        "the fused result keeps (RAPTOR's collapsed tree takes top_k 10).",
+    )
+    max_nodes_per_level: int = Field(
+        default=3,
+        ge=1,
+        le=50,
+        description="Summaries of one tree level the context keeps at most, so "
+        "neither the roots nor the first level take every summary slot.",
+    )
+    expand_children: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        description="Passages of its own lineage each kept summary brings "
+        "(the best by the query, under the caller's filters), so the answer "
+        "cites original text. 0 keeps the summaries alone (RAPTOR's "
+        "collapsed tree).",
+    )
+
+
 def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrategy]:
     if SearchStrategy.AUTO in strategies:
         raise ValueError("auto_routable_strategies cannot include 'auto'")
@@ -4434,6 +4499,11 @@ def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrate
             "auto_routable_strategies cannot include 'ppr' until a "
             "measurement shows where it wins (docs/design.md §6.4); select "
             "it explicitly"
+        )
+    if SearchStrategy.TREE in strategies:
+        raise ValueError(
+            "auto_routable_strategies cannot include 'tree': it is opt-in and "
+            "unmeasured, so the router does not pick it; select it explicitly"
         )
     return strategies
 
@@ -4614,6 +4684,10 @@ class SearchConfig(BaseModel):
     ppr_search: PPRSearchConfig = Field(
         default_factory=PPRSearchConfig,
         description="HippoRAG 2 Personalized PageRank search configuration",
+    )
+    tree_search: TreeSearchConfig = Field(
+        default_factory=TreeSearchConfig,
+        description="RAPTOR summary-tree search configuration (opt-in)",
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"

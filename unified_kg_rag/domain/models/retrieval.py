@@ -73,6 +73,9 @@ class SearchStrategy(str, Enum):
     # HippoRAG 2 Personalized PageRank over entities and passages (opt-in;
     # not routable by auto until measured).
     PPR = "ppr"
+    # RAPTOR's summary tree (the raptor methodology): text units and every
+    # level of summaries, fused (search.tree_search).
+    TREE = "tree"
 
 
 class SearchType(str, Enum):

@@ -319,3 +319,196 @@ def test_a_full_build_sweeps_the_summaries_of_text_it_no_longer_holds(
     assert "vector_summary_nodes_" + other not in manager.index_all_data(
         text_units=_units(2, other)
     )
+
+
+def test_the_tree_strategy_holds_the_collapsed_trees_top_five(
+    harness: StoreHarness,
+) -> None:
+    # RAPTOR's collapsed tree (cosine over every node, top_k 10) is a special
+    # case of tree's hybrid search: with vector search alone, no rerank, no
+    # graph signal and no expansion, tree's top 10 holds the reference's
+    # top 5 (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in).
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+    from unified_kg_rag.adapters.providers import Providers
+    from unified_kg_rag.adapters.search_strategies.tree_search import (
+        TreeSearchStrategy,
+    )
+    from unified_kg_rag.domain.ingestion.summary_tree import (
+        collapsed_tree_reference,
+    )
+    from unified_kg_rag.domain.models import Methodology, SearchQuery, SearchType
+
+    topics = ["widgets", "gadgets", "steel", "money", "containers", "fire"]
+    units = [
+        TextUnit(
+            id=f"u{i:03d}",
+            text=f"Depot {i} stores {topics[i % 6]} for Vendor {i % 4}",
+            n_tokens=7,
+            attributes={"file_name": f"doc{i}.txt"},
+        )
+        for i in range(24)
+    ]
+    indexer = harness.vector_indexer
+    assert indexer.index_text_units(units).failed_items == 0
+    nodes = [
+        _node(
+            f"n{t}",
+            1,
+            [u.id for u in units if topics[int(u.id[1:]) % 6] == topic],
+            [u.id for u in units if topics[int(u.id[1:]) % 6] == topic],
+            text=f"Depots store {topic} for the vendors",
+        )
+        for t, topic in enumerate(topics)
+    ]
+    _tree(harness, nodes)
+    config = harness.config.model_copy(deep=True)
+    config.indexing.methodologies = [Methodology.RAPTOR]
+    config.providers.rerank.kind = "none"
+    config.search.tree_search.expand_children = 0
+    config.search.tree_search.graph_signal = "off"
+    question = "Which depot stores steel for the vendors?"
+
+    class _Words:
+        def count_tokens(self, text: str) -> int:
+            return len(text.split())
+
+    providers = Providers(
+        config,
+        boto_session=MagicMock(),
+        llm_factory=ScriptedLLMFactory(lambda system, human: ""),
+        embedding_factory=harness.embedding_factory,
+        token_counter_factory=lambda *_, **__: _Words(),
+    )
+
+    async def search() -> list[str]:
+        retriever = harness.vector_retriever()
+        try:
+            strategy = TreeSearchStrategy(
+                config, {"document": retriever}, providers=providers
+            )
+            result = await strategy.asearch(
+                SearchQuery(query=question, search_type=SearchType.VECTOR, top_k=10)
+            )
+            return [str(r.source) for r in result.results][:10]
+        finally:
+            await retriever.aclose()
+
+    ours = asyncio.run(search())
+    model = harness.embedding_factory.get_model("m")
+    query = model.embed_query(question)
+    candidates = [(u.id, model.embed_query(u.text), u.n_tokens or 0) for u in units] + [
+        (n.id, model.embed_query(n.text), n.n_tokens) for n in nodes
+    ]
+    reference = collapsed_tree_reference(query, candidates, top_k=10)
+    assert set(reference[:5]) <= set(ours), (reference, ours)
+
+
+@pytest.mark.parametrize(
+    ("language", "analyzer", "text", "query"),
+    [
+        ("ko", "nori", "창고는 벤더를 위해 위젯을 보관한다", "창고"),
+        ("ja", "cjk", "倉庫はベンダーのためにウィジェットを保管する", "倉庫"),
+    ],
+)
+def test_a_summary_is_analyzed_in_the_index_language(
+    harness: StoreHarness, language: str, analyzer: str, text: str, query: str
+) -> None:
+    from unified_kg_rag.domain.models import RetrieverRole, SearchQuery, SearchType
+    from unified_kg_rag.domain.models.config import LanguageCode
+
+    def untranslated(config: Any) -> None:
+        config.processing.translation.enabled = False
+        config.processing.translation.source_language = LanguageCode(language)
+        config.processing.translation.target_language = LanguageCode(language)
+
+    local = harness.derive(untranslated)
+    indexer = local.vector_indexer
+    mapping = indexer._get_summary_nodes_mapping()["mappings"]["properties"]
+    assert mapping["text"]["analyzer"] == analyzer
+    _tree(local, [_node("n1", 1, ["u000", "u001"], ["u000", "u001"], text=text)])
+
+    (hits,) = local.retrieve(
+        RetrieverRole.DOCUMENT,
+        SearchQuery(
+            query=query,
+            search_type=SearchType.LEXICAL,
+            index_prefixes=[
+                local.config.indexing.opensearch.summary_nodes_index_prefix
+            ],
+        ),
+    )
+    assert [h.source for h in hits] == ["n1"]
+    assert hits[0].retriever_type == "summary"
+
+
+def test_expanded_passages_keep_the_callers_filters(harness: StoreHarness) -> None:
+    # The summary passes the caller's filter; of its passages only those
+    # that pass it too are brought, even where others match the query
+    # better.
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+    from unified_kg_rag.adapters.providers import Providers
+    from unified_kg_rag.adapters.search_strategies.tree_search import (
+        TreeSearchStrategy,
+    )
+    from unified_kg_rag.domain.models import Methodology, SearchQuery
+
+    units = [
+        TextUnit(
+            id=f"u{i:03d}",
+            text=(
+                "Depot stores widgets for Vendor every week"
+                if i % 2
+                else f"Ledger entry {i}"
+            ),
+            n_tokens=50 if i % 2 else 5,
+        )
+        for i in range(12)
+    ]
+    indexer = harness.vector_indexer
+    assert indexer.index_text_units(units).failed_items == 0
+    ids = [u.id for u in units]
+    _tree(harness, [_node("n1", 1, ids, ids, text="Depot stores widgets")])
+    config = harness.config.model_copy(deep=True)
+    config.indexing.methodologies = [Methodology.RAPTOR]
+    config.providers.rerank.kind = "none"
+    config.search.tree_search.graph_signal = "off"
+    config.search.tree_search.text_top_k = 1
+    config.search.tree_search.expand_children = 3
+
+    class _Words:
+        def count_tokens(self, text: str) -> int:
+            return len(text.split())
+
+    providers = Providers(
+        config,
+        boto_session=MagicMock(),
+        llm_factory=ScriptedLLMFactory(lambda system, human: ""),
+        embedding_factory=harness.embedding_factory,
+        token_counter_factory=lambda *_, **__: _Words(),
+    )
+
+    async def search() -> Any:
+        retriever = harness.vector_retriever()
+        try:
+            strategy = TreeSearchStrategy(
+                config, {"document": retriever}, providers=providers
+            )
+            return await strategy.asearch(
+                SearchQuery(
+                    query="Which depot stores widgets for Vendor?",
+                    filters={"n_tokens": {"lte": 10}},
+                )
+            )
+        finally:
+            await retriever.aclose()
+
+    result = asyncio.run(search())
+    expanded = [r for r in result.results if (r.metadata or {}).get("expanded_from")]
+    assert expanded
+    assert all(r.metadata["n_tokens"] == 5 for r in expanded)

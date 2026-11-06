@@ -341,3 +341,289 @@ def test_a_removal_leaves_no_summary_of_removed_text(
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert record(providers)["methodologies"] == ["raptor"]
     assert not any(set(n["text_unit_ids"]) & gone for n in tree_nodes(providers))
+
+
+# --- the tree strategy ------------------------------------------------------
+
+
+QUESTION = "Who stores the widgets for Vendor?"
+
+
+def ask(chain: Any, query: str = QUESTION, **kwargs: Any) -> Any:
+    from unified_kg_rag.application.retrieval.rag_chain import RAGInput, RAGOutput
+    from unified_kg_rag.domain.models import SearchStrategy
+
+    kwargs.setdefault("search_strategy", SearchStrategy.TREE)
+    out = chain.invoke(RAGInput(query=query, **kwargs))
+    assert isinstance(out, RAGOutput)
+    return out
+
+
+def by_type(out: Any, section: str) -> list[dict[str, Any]]:
+    return [s for s in out.sources if s["metadata"]["section_type"] == section]
+
+
+def test_tree_answers_from_summaries_and_their_passages(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+    from unified_kg_rag.domain.models import SearchStrategy
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    config, providers, server, _ = setup(tmp_path)
+    # Fewer text units than the corpus holds, so the summaries' passages
+    # are new ones (a passage already in the context is not repeated).
+    config.search.tree_search.text_top_k = 2
+    source = corpus(tmp_path)
+    context = ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    stored = {n["id"]: n for n in tree_nodes(providers)}
+
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        out = ask(chain)
+        assert out.answer == e2e.ANSWER
+        meta = out.search_results.metadata
+        assert meta["graph_signal"] == "unavailable"
+        assert meta["sources"]["tree_summaries"] > 0
+        assert meta["sources"]["tree_text_units"] > 0
+        summaries = by_type(out, "summary")
+        assert summaries, out.sources
+        for source_entry in summaries:
+            m = source_entry["metadata"]
+            node = stored[m["source_id"]]
+            # Full provenance: the lineage down to the text units.
+            assert m["text_unit_ids"] == node["text_unit_ids"]
+            assert m["child_ids"] == node["child_ids"]
+            assert m["level"] >= 1 and m["n_leaves"] >= 2
+            assert not m.get("synthesized")
+            assert source_entry["content"].startswith(f"Summary (level {m['level']}")
+        # Each summary brought passages of its own lineage.
+        texts = by_type(out, "text")
+        expanded = [t for t in texts if t["metadata"].get("expanded_from")]
+        assert expanded
+        for passage in expanded:
+            node = stored[passage["metadata"]["expanded_from"]]
+            assert passage["metadata"]["chunk_id"] in node["text_unit_ids"]
+            assert passage["metadata"]["attributes"]["file_name"].endswith(".txt")
+        # Sources are deduplicated.
+        ids = [s["metadata"]["source_id"] for s in out.sources]
+        assert len(ids) == len(set(ids))
+
+        # Expansion off: RAPTOR's collapsed tree, summaries and leaves only.
+        flat = config.model_copy(deep=True)
+        flat.search.tree_search.expand_children = 0
+        flat_chain = GraphRAGChain(flat, providers=providers)
+        try:
+            plain = ask(flat_chain)
+            assert plain.search_results.metadata["expanded_passages"] == 0
+        finally:
+            flat_chain.close()
+
+        # The namespace holds raptor only: GraphRAG's and LightRAG's
+        # strategies are refused before any model call; auto falls back to
+        # tree, the one strategy reading what it holds.
+        for strategy in (SearchStrategy.LOCAL, SearchStrategy.MIX):
+            before = len(server.chat_models)
+            with pytest.raises(MethodologyNotIndexedError, match="holds raptor"):
+                ask(chain, search_strategy=strategy)
+            assert len(server.chat_models) == before
+        assert (
+            ask(chain, search_strategy=SearchStrategy.AUTO).metadata["search_strategy"]
+            == "tree"
+        )
+    finally:
+        chain.close()
+
+
+def test_tree_is_refused_where_no_tree_was_built(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    config, providers, server, _ = setup(
+        tmp_path, [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    )
+    context = ingest(config, providers, corpus(tmp_path), tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        before = len(server.chat_models)
+        with pytest.raises(MethodologyNotIndexedError, match="reads the raptor"):
+            ask(chain)
+        assert len(server.chat_models) == before
+    finally:
+        chain.close()
+
+
+def test_tree_adds_the_graph_signal_where_entities_are_indexed(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+
+    config, providers, _, _ = setup(
+        tmp_path, [Methodology.GRAPHRAG, Methodology.LIGHTRAG, Methodology.RAPTOR]
+    )
+    context = ingest(config, providers, corpus(tmp_path), tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        out = ask(chain)
+        meta = out.search_results.metadata
+        assert meta["graph_signal"] == "on" and meta["graph_seeds"] > 0
+        assert meta["sources"]["tree_graph_text_units"] > 0
+        assert meta["sources"]["tree_graph_summaries"] > 0
+        off = config.model_copy(deep=True)
+        off.search.tree_search.graph_signal = "off"
+        off_chain = GraphRAGChain(off, providers=providers)
+        try:
+            meta = ask(off_chain).search_results.metadata
+            assert meta["graph_signal"] == "off"
+            assert "tree_graph_summaries" not in meta["sources"]
+        finally:
+            off_chain.close()
+    finally:
+        chain.close()
+
+
+def test_a_summary_passes_a_filter_only_when_all_its_documents_do(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    import json
+
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+
+    config, providers, _, _ = setup(tmp_path)
+    source = corpus(tmp_path)
+    # Half the documents are of category "north", half "south", as
+    # pre-parsed documents carrying their filters.
+    parsed = tmp_path / "parsed"
+    parsed.mkdir()
+    for index, path in enumerate(sorted(source.glob("*.txt"))):
+        (parsed / f"{path.stem}.json").write_text(
+            json.dumps(
+                {
+                    "content": path.read_text(),
+                    "file_name": path.name,
+                    "file_path": str(path),
+                    "metadata": {
+                        "filters": {"category": "north" if index % 2 else "south"}
+                    },
+                }
+            )
+        )
+        path.unlink()
+    context = ingest(config, providers, parsed, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    nodes = tree_nodes(providers)
+    mixed = [
+        n for n in nodes if "category" not in (n["attributes"].get("filters") or {})
+    ]
+    pure = [n for n in nodes if (n["attributes"].get("filters") or {}).get("category")]
+    assert nodes and (mixed or pure)
+
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        out = ask(chain, filters={"attr_category": "north"})
+        for entry in out.sources:
+            if entry["metadata"]["section_type"] == "summary":
+                filters = entry["metadata"]["attributes"]["filters"]
+                assert filters["category"] == "north"
+            else:
+                assert entry["metadata"]["attributes"]["filters"] == {
+                    "category": "north"
+                }
+    finally:
+        chain.close()
+
+
+def test_a_korean_corpus_is_summarized_in_korean_with_cjk_counts(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+    from unified_kg_rag.domain.models.config import LanguageCode
+
+    config, providers, _, calls = setup(tmp_path)
+    config.processing.translation.source_language = LanguageCode.KO
+    config.processing.translation.target_language = LanguageCode.KO
+    topics = [
+        ("창고", "벤더를 위해 위젯을 보관한다"),
+        ("운송사", "창고를 위해 가젯을 옮긴다"),
+        ("구매자", "벤더에게 위젯을 주문한다"),
+        ("은행", "구매자에게 돈을 빌려준다"),
+        ("보험사", "창고의 화재를 보장한다"),
+        ("감사인", "벤더의 장부를 점검한다"),
+        ("항구", "운송사를 위해 컨테이너를 싣는다"),
+        ("제철소", "벤더를 위해 강철을 만든다"),
+    ]
+    source = tmp_path / "corpus"
+    source.mkdir()
+    for index, (name, fact) in enumerate(topics):
+        (source / f"doc{index}.txt").write_text(
+            f"{name}는 {fact}.\n\n{name}는 북쪽에 있다."
+        )
+    context = ingest(config, providers, source, tmp_path / "run-1")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    nodes = tree_nodes(providers)
+    assert nodes and all(n["language"] == "Korean" for n in nodes)
+    # The prompt asks for Korean, its length in characters.
+    assert calls.tree_prompts
+    assert all(
+        "in Korean" in p and "characters at most" in p for p in calls.tree_prompts
+    )
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        out = ask(chain, query="누가 벤더를 위해 위젯을 보관하나?")
+        assert by_type(out, "summary")
+        assert any("창고" in s["content"] for s in out.sources)
+    finally:
+        chain.close()
+
+
+def test_the_retrieval_evaluator_scores_tree_with_a_summary_row(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    import asyncio
+
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+    from unified_kg_rag.domain.models import (
+        EvaluationGroundTruth,
+        EvaluationQuery,
+        EvaluatorType,
+    )
+    from unified_kg_rag.evaluation import EvaluationManager
+
+    config, providers, _, _ = setup(tmp_path)
+    context = ingest(config, providers, corpus(tmp_path), tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    config.evaluation.enabled_evaluators = [EvaluatorType.RETRIEVAL]
+    config.evaluation.outputs_directory = str(tmp_path / "eval")
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        manager = EvaluationManager(config, rag_chain=chain)
+        results, _, summary = asyncio.run(
+            manager.evaluate_dataset(
+                [
+                    EvaluationQuery(
+                        query_id="q1",
+                        question=QUESTION,
+                        metadata={"search_strategy": "tree"},
+                    )
+                ],
+                [
+                    EvaluationGroundTruth(
+                        query_id="q1",
+                        ground_truth=e2e.ANSWER,
+                        reference_sources=["depot.txt"],
+                    )
+                ],
+                show_progress=False,
+            )
+        )
+    finally:
+        chain.close()
+    assert "summary" in results[0].retrieved_source_types
+    assert summary.metric_statistics["hit_at_k"]["mean"] == 1.0
+    assert "summary" in summary.grouped_statistics["source_type"]

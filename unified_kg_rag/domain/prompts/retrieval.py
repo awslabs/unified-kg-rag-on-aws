@@ -679,6 +679,14 @@ STRATEGY_ROUTING_GUIDE: dict[SearchStrategy, str] = {
      exactly
    - Examples: "Where was the founder of the company that acquired the startup born", "Which city hosts the
      plant of the supplier the buyer chose\"""",
+    # Not routable either (refused by search.auto_routable_strategies until
+    # measured); auto falls back to it on a raptor-only namespace.
+    SearchStrategy.TREE: """TREE SEARCH
+   - Method: Passage search together with a search of summaries written over groups of related passages, at every
+     level of a summary tree, each summary brought with its best passages (RAPTOR)
+   - Purpose: Questions whose answer spans several related passages, or needs a passage and the gist around it
+   - Optimal for: Questions about a document's or a topic's main points, facts spread over several passages
+   - Examples: "What does the agreement say about deliveries overall", "Summarize the warehouse incidents\"""",
 }
 
 

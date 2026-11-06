@@ -71,7 +71,7 @@ from unified_kg_rag.domain.models import (
     ModelRole,
     PipelineStageType,
 )
-from unified_kg_rag.domain.models.config import SummaryTreeConfig
+from unified_kg_rag.domain.models.config import SummaryTreeConfig, TreeSearchConfig
 from unified_kg_rag.domain.models.provider_config import BEDROCK
 from unified_kg_rag.domain.models.schema import (
     EntityTypeItem,
@@ -482,6 +482,8 @@ _KEYED_ONCE_SET = frozenset(
         "custom_prompts.tree_summary_system",
         "custom_prompts.tree_summary_human",
         *(f"indexing.summary_tree.{name}" for name in SummaryTreeConfig.model_fields),
+        *(f"search.tree_search.{name}" for name in TreeSearchConfig.model_fields),
+        "search.token_manager.type_budgets.summary",
     }
 )
 
