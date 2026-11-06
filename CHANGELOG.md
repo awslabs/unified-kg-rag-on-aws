@@ -141,7 +141,7 @@ stored is read again: follow *Upgrading* in order.
 - Fusion buckets: a simple search's is `vector_all` (an `opensearch_all` weight applies to it with a WARNING); a weight
   on `opensearch_community_reports`, or on 0.2.3's `opensearch_candidate_community_reports` and
   `opensearch_expanded_community_reports` (in its template), is dropped with a WARNING, as no strategy emits them
-  (#584, #PR). A `lightrag_linked_chunks` weight weighs only the chunks the matched entities cite; the
+  (#584, #588). A `lightrag_linked_chunks` weight weighs only the chunks the matched entities cite; the
   relationships' chunks are their own `lightrag_relation_chunks` stream, 1.0 unless set (#521, #530).
 - Defaults (set the 0.2.3 value to keep its behaviour; the measured ones are explained in [defaults and
   evidence](docs/concepts/defaults-and-evidence.md)):
@@ -305,7 +305,7 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
 4. A custom `fusion_weights.lightrag_linked_chunks` weight: set `lightrag_relation_chunks` too (usually the same
    value) to keep weighting every LightRAG graph chunk; mix and hybrid recall are sensitive to it (#521, #530).
    Rename an `opensearch_all` weight to `vector_all` and drop `opensearch_community_reports`,
-   `opensearch_candidate_community_reports` and `opensearch_expanded_community_reports` (#584, #PR).
+   `opensearch_candidate_community_reports` and `opensearch_expanded_community_reports` (#584, #588).
 5. A role with a custom IAM policy needs `dynamodb:BatchGetItem`, `BatchWriteItem`, `Query` and `DescribeTable` on
    the registry table (`UpdateTimeToLive` where the library creates it), `bedrock:ApplyGuardrail` on the guardrail,
    and `bedrock:CountTokens` with `InvokeModel`. With `bedrock_model_arns`, list the reranking model too: the Rerank
@@ -532,7 +532,7 @@ From a `main` checkout (formats and keys no release had):
   `QueryLatencyHigh` on `run-rag --metrics-sink cloudwatch`'s `query_latency_ms` (#330, #519, #528).
 - The package ships a `py.typed` marker (#568). `main` reports `0.3.0.dev0`, and a `v<version>` tag runs a release
   workflow that publishes a GitHub release (nothing on PyPI yet): the tag must be on `main`, and the notes'
-  repo-relative links point at the tagged tree (#572, #PR).
+  repo-relative links point at the tagged tree (#572, #588).
 
 ### Changed
 - Global search maps every report of one cut of the community hierarchy (packed by tokens, on the fast model), steps
