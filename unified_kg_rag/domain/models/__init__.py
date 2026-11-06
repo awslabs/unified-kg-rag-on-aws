@@ -85,6 +85,7 @@ from .schema import (
     SchemaMode,
     schema_key,
 )
+from .summary_node import SUMMARY_TREE_META, SummaryNode, SummaryTreeRecord
 from .text_unit import TextUnit
 from .usage import LLMUsage, LLMUsageCounts
 
@@ -166,6 +167,9 @@ __all__ = [
     "SearchResult",
     "SearchStrategy",
     "SearchType",
+    "SUMMARY_TREE_META",
+    "SummaryNode",
+    "SummaryTreeRecord",
     "TextUnit",
     "EntityTypeSpec",
     "ExtractionSchema",
