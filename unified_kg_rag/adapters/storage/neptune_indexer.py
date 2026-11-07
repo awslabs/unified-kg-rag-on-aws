@@ -17,6 +17,7 @@ from gremlin_python.process.graph_traversal import (
     __,
 )
 from gremlin_python.process.traversal import Cardinality, P, T, TextP, Traversal
+from gremlin_python.statics import long
 
 from unified_kg_rag.adapters.aws.neptune import (
     CUSTOM_VERTEX_IDS,
@@ -894,9 +895,16 @@ class NeptuneIndexer(GraphIndexer):
         return self._write_relationships(relationships)
 
     def _build_add_edge_traversal(
-        self, g: GraphTraversalSource, rel: Relationship, entity_label: str
+        self,
+        g: GraphTraversalSource,
+        rel: Relationship,
+        entity_label: str,
+        source_vertex: Any,
+        target_vertex: Any,
     ) -> GraphTraversal:
-        """Build the one traversal that rewrites one relationship's edge.
+        """Build the one traversal that rewrites one relationship's edge
+        between the vertices ``source_vertex`` and ``target_vertex`` (vertex
+        ids, :meth:`_endpoint_vertex_ids`).
 
         It drops the edge's stored copies (edges with its id whose source
         vertex carries ``entity_label``: relationship ids are
@@ -916,6 +924,14 @@ class NeptuneIndexer(GraphIndexer):
         cluster), so a real corpus's tens of thousands of edges effectively
         never finished. Each edge as its own traversal keeps the cost linear.
 
+        The endpoints are looked up by vertex id, never by a filter after
+        the stored-edge lookup: ``fold()`` there is not a step Neptune runs
+        natively, so every step after it runs in the TinkerPop engine, where
+        ``V().hasLabel(...).has('id', ...)`` scans every vertex of the
+        cluster (every tenant's): 1.5 s per edge with 21k vertices, against
+        2.4 ms for the same lookup as a start step. Property-mode vertex
+        ids come from one start-step read per batch of edges instead.
+
         Edge properties take no cardinality (Neptune rejects it) and hold one
         value each, so ``relationship_properties`` serializes lists to JSON.
 
@@ -924,31 +940,19 @@ class NeptuneIndexer(GraphIndexer):
         (the only sign of an edge not written).
         """
 
-        stored = (
+        # Both endpoints first, each looked up once by vertex id: without
+        # them nothing is dropped either.
+        ends = (
             g.E()
             .has("id", rel.id)
             .where(__.outV().hasLabel(entity_label))
             .fold()
             .as_("stored")
+            .V(source_vertex)
+            .as_("source")
+            .V(target_vertex)
+            .as_("target")
         )
-        # Both endpoints first, each looked up once: without them nothing is
-        # dropped either.
-        if self._custom_ids:
-            ends = (
-                stored.V(vertex_id(entity_label, rel.source_id))
-                .as_("source")
-                .V(vertex_id(entity_label, rel.target_id))
-                .as_("target")
-            )
-        else:
-            source = self._rewritten(
-                stored.V().hasLabel(entity_label).has("id", rel.source_id),
-                entity_label,
-            ).as_("source")
-            ends = self._rewritten(
-                source.V().hasLabel(entity_label).has("id", rel.target_id),
-                entity_label,
-            ).as_("target")
         edge = (
             ends.sideEffect(__.select("stored").unfold().drop())
             .addE(relationship_label(rel))
@@ -962,13 +966,64 @@ class NeptuneIndexer(GraphIndexer):
         self._tagged(edge)
         return cast(GraphTraversal, edge.id_())
 
+    def _endpoint_vertex_ids(
+        self, rels: list[Relationship], entity_label: str
+    ) -> dict[str, Any]:
+        """The vertex id of each endpoint of ``rels`` stored under
+        ``entity_label``, by item id (a missing endpoint is left out).
+
+        Custom mode derives them; property mode reads them, one start-step
+        request per batch of item ids (index-served on Neptune, unlike the
+        same lookup inside the edge's traversal, see
+        :meth:`_build_add_edge_traversal`), kept to the vertices this build
+        wrote while it switches the label (:meth:`_rewritten`). Of two
+        vertices with one id (a duplicate an older writer left), the edge
+        goes to one, the first by vertex id, rather than to each.
+
+        Raises:
+            AWSServiceError: A read failed.
+        """
+        item_ids = sorted({i for rel in rels for i in (rel.source_id, rel.target_id)})
+        if self._custom_ids:
+            return {i: vertex_id(entity_label, i) for i in item_ids}
+        try:
+            rows = self._read_batches(
+                item_ids,
+                lambda g, batch: self._rewritten(
+                    g.V().hasLabel(entity_label).has("id", P.within(batch)),
+                    entity_label,
+                )
+                .project("id", "vertex")
+                .by(__.values("id"))
+                .by(__.id_()),
+                "Reading edge endpoints",
+            )
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:
+            raise AWSServiceError(
+                f"Neptune read of the relationship endpoints failed: {e}"
+            ) from e
+        found: dict[str, Any] = {}
+        for row in sorted(rows, key=lambda r: str(r["vertex"])):
+            vid = row["vertex"]
+            # Neptune's vertex ids are strings; a Gremlin Server's are Longs,
+            # which come back as Python ints and would go out as Integers,
+            # an id no vertex has.
+            if isinstance(vid, int) and not isinstance(vid, bool):
+                vid = long(vid)
+            found.setdefault(str(row["id"]), vid)
+        return found
+
     def _write_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Write relationship edges one small traversal per edge (idempotent).
 
-        For each suffix group: rewrite each edge as its own traversal
-        (``_build_add_edge_traversal``: both endpoints looked up, the old copy
-        dropped and the new one added in one request), ``index_concurrency``
-        at a time. An edge whose endpoint is not stored, and a failed write,
+        For each suffix group: read the endpoints' vertex ids
+        (``_endpoint_vertex_ids``, batched), then rewrite each edge as its
+        own traversal (``_build_add_edge_traversal``: both endpoints looked
+        up by vertex id, the old copy dropped and the new one added in one
+        request), ``index_concurrency`` at a time; a failed endpoint read
+        fails the group's edges. An edge whose endpoint is not stored, and a failed write,
         count as failed and leave the stored edge as it was; neither aborts
         the others. Emits a progress log every
         ``_PROGRESS_LOG_EVERY`` edges so a large run is distinguishable from
@@ -989,25 +1044,50 @@ class NeptuneIndexer(GraphIndexer):
                 "Indexing %s relationships for '%s'...", len(rels), entity_label
             )
 
+            try:
+                vertices = self._endpoint_vertex_ids(rels, entity_label)
+            except NamespaceLeaseError:
+                raise
+            except AWSServiceError as e:
+                stats.add_error(str(e), len(rels), ids=[rel.id for rel in rels])
+                logger.warning(
+                    "%s relationships of '%s' not written: %s",
+                    len(rels),
+                    entity_label,
+                    e,
+                )
+                stats.processing_time = time.time() - start_time
+                total_stats.merge(stats)
+                continue
+
             # An edge whose endpoint vertex is missing is not written (the
             # traversal finds both before it drops anything): its stored copy
             # (the edge an unchanged document states, before a re-key
             # re-pointed it) stays.
             def write(
-                rel: Relationship, entity_label: str = entity_label
+                rel: Relationship,
+                entity_label: str = entity_label,
+                vertices: dict[str, Any] = vertices,
             ) -> str | None:
                 """Write one edge; the error, or None once it is written."""
+                missing = (
+                    f"source entity '{rel.source_id}' or target entity "
+                    f"'{rel.target_id}' not found"
+                )
+                source = vertices.get(rel.source_id)
+                target = vertices.get(rel.target_id)
+                if source is None or target is None:
+                    return missing
                 try:
                     if self._execute_with_retries(
-                        lambda g: self._build_add_edge_traversal(g, rel, entity_label),
+                        lambda g: self._build_add_edge_traversal(
+                            g, rel, entity_label, source, target
+                        ),
                         "Relationship indexing",
                         results=True,
                     ):
                         return None
-                    return (
-                        f"source entity '{rel.source_id}' or target entity "
-                        f"'{rel.target_id}' not found"
-                    )
+                    return missing
                 except NamespaceLeaseError:
                     raise
                 except Exception as e:  # noqa: BLE001 - reported as a failed write

@@ -291,9 +291,17 @@ def test_an_edge_rewrite_replaces_its_stored_copy_once(graph_indexer) -> None:
     supplies = _relationships()[0]
 
     def rewrite(rel: Relationship) -> list:
+        ends = graph_indexer._endpoint_vertex_ids([rel], label)
         return run_traversal(
             graph_indexer.neptune_client,
-            lambda g: graph_indexer._build_add_edge_traversal(g, rel, label),
+            lambda g: graph_indexer._build_add_edge_traversal(
+                g,
+                rel,
+                label,
+                ends.get(rel.source_id),
+                # A vertex id no vertex has, for the endpoint gone.
+                ends.get(rel.target_id, "no-such-vertex"),
+            ),
             results=True,
         )
 

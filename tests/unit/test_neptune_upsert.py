@@ -20,10 +20,15 @@ from unified_kg_rag.domain.models import Config, Relationship
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]
 
 
-def _stored_ends(op: str, rels: list[Relationship]) -> list[str] | None:
-    """The endpoint read before the writes: every endpoint is stored."""
+def _stored_ends(op: str, rels: list[Relationship]) -> list[dict] | None:
+    """The endpoint read before the writes: every endpoint is stored (its
+    vertex id ``v-<id>``)."""
     if op == "Reading edge endpoints":
-        return [end for rel in rels for end in (rel.source_id, rel.target_id)]
+        return [
+            {"id": end, "vertex": f"v-{end}"}
+            for rel in rels
+            for end in (rel.source_id, rel.target_id)
+        ]
     return None
 
 
@@ -49,7 +54,7 @@ def test_write_relationships_isolates_a_failing_edge(indexer, mocker) -> None:
         Relationship(id="r3", source_id="e3", target_id="e4"),
     ]
 
-    def flaky_execute(traversal, op, *, results=False):
+    def flaky_execute(traversal, op, *, results=False, fenced=True):
         if op != "Relationship indexing":  # the reads and drops before
             return _stored_ends(op, rels) or []
         calls["n"] += 1
@@ -85,7 +90,7 @@ def test_write_relationships_counts_an_edge_without_source_as_failed(
     mocker.patch.object(
         indexer,
         "_execute_with_retries",
-        side_effect=lambda traversal, op, *, results=False: (
+        side_effect=lambda traversal, op, *, results=False, fenced=True: (
             written[next(order)]
             if op == "Relationship indexing"
             else _stored_ends(op, rels) or []
@@ -113,7 +118,7 @@ def test_edges_are_written_index_concurrency_at_a_time(indexer, mocker) -> None:
         Relationship(id=f"r{i}", source_id=f"e{i}", target_id="e9") for i in range(8)
     ]
 
-    def execute(traversal, op, *, results=False):
+    def execute(traversal, op, *, results=False, fenced=True):
         if op != "Relationship indexing":  # the reads and drops before
             return _stored_ends(op, rels) or []
         threads.add(threading.get_ident())
@@ -134,6 +139,8 @@ def test_add_edge_traversal_returns_the_edge_id(indexer) -> None:
         RecordingTraversal(calls),
         Relationship(id="r1", source_id="e1", target_id="e2"),
         "Entity-default",
+        "v-e1",
+        "v-e2",
     )
     assert calls[-1] == "id_"
 
@@ -150,28 +157,26 @@ def test_the_edge_rewrite_drops_and_adds_in_one_traversal(indexer) -> None:
         traversal().withGraph(Graph()),
         Relationship(id="r1", source_id="e1", target_id="e2"),
         "Entity-default",
+        "v-e1",
+        "v-e2",
     )
     steps = written.bytecode.step_instructions
     names = [step[0] for step in steps]
-    assert names[:14] == [
+    assert names[:10] == [
         "E",
         "has",
         "where",
         "fold",
         "as",
         "V",
-        "hasLabel",
-        "has",
         "as",
         "V",
-        "hasLabel",
-        "has",
         "as",
         "sideEffect",
     ]
     assert steps[1][1:] == ["id", "r1"]
-    assert steps[7][1:] == ["id", "e1"] and steps[11][1:] == ["id", "e2"]
-    drop = steps[13][1]
+    assert steps[5][1:] == ["v-e1"] and steps[7][1:] == ["v-e2"]
+    drop = steps[9][1]
     assert [step[0] for step in drop.step_instructions] == ["select", "unfold", "drop"]
     assert names.index("addE") > names.index("sideEffect")
     # Each endpoint is looked up once: the edge goes between the two found.
@@ -192,7 +197,7 @@ def _edge_property_steps(indexer, rel: Relationship) -> list[list]:
     from gremlin_python.structure.graph import Graph
 
     g = traversal().withGraph(Graph())
-    written = indexer._build_add_edge_traversal(g, rel, "Entity-default")
+    written = indexer._build_add_edge_traversal(g, rel, "Entity-default", "v1", "v2")
     steps = written.bytecode.step_instructions
     add_e = next(i for i, step in enumerate(steps) if step[0] == "addE")
     return [step for step in steps[add_e + 1 :] if step[0] == "property"]
@@ -287,6 +292,8 @@ def test_relationship_pre_drop_is_scoped_to_the_suffix(indexer) -> None:
         traversal().withGraph(Graph()),
         Relationship(id="r1", source_id="e1", target_id="e2"),
         "Entity-tenant-a",
+        "v-e1",
+        "v-e2",
     )
     steps = written.bytecode.step_instructions
     where = next(step for step in steps if step[0] == "where")

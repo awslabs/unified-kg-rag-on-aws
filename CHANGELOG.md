@@ -1123,7 +1123,9 @@ Ingestion and incremental indexing.
 - Two corpora in one namespace holding the same file no longer share text units, and store sets with other index
   prefixes no longer share a registry namespace (#283, #327).
 - Neptune no longer loses edges when interrupted, a vertex write replaces its stored properties, and OpenSearch no
-  longer stores a description cut at the Neptune cap (#252, #294, #377).
+  longer stores a description cut at the Neptune cap (#252, #294, #377); an edge write looks its endpoints up by
+  vertex id (property-mode ids read in one request per batch), so its cost no longer grows with the vertex count of
+  every tenant on the cluster (1.5 s an edge at 21k vertices) (#PR).
 - A store error while preparing or clearing fails the stage, a lost create or delete response no longer fails a
   build, a failed delete batch counts every id, bulk errors name their cause, and indexing memory no longer grows
   with the corpus (#252, #265, #294, #431, #432, #440).
