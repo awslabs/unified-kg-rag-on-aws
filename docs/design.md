@@ -1032,9 +1032,12 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   (a listed stage runs, an unlisted one does not); a run that writes the
   index (lists `indexing`) and leaves out a stage a selected methodology
   needs logs a WARNING naming both (not for `OPTIONAL_STAGES`: parsing,
-  translation, gleaning). A listed stage no selected methodology needs is
-  refused when the pipeline is built (`ConfigurationError`, before any model
-  call): it would pay for an artifact the build record does not list.
+  translation, gleaning). A stage `--enabled-stages` names that no selected
+  methodology needs (and its config section allows) is refused by
+  `run-ingestion` before any model call (exit 2,
+  `DataIngestionPipeline.unneeded_stage_error`): it would pay for an artifact
+  the build record does not list. A library `stages_enabled` map, where
+  switching one stage off leaves every other listed, runs it with a WARNING.
 - **Build record.** `IndexBuildRecord` gains `artifacts` (what the namespace
   holds and the runs maintain) and `methodologies` (those whose required
   artifacts it holds, for manifests and readers). A run's artifacts

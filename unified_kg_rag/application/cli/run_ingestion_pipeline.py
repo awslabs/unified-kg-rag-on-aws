@@ -521,6 +521,12 @@ class IngestionPipelineRunner:
                     f"{', '.join(sorted(invalid_stages))} (available: "
                     f"{', '.join(all_stages.keys())})"
                 )
+            # Before any model call: a listed stage no selected methodology
+            # needs would pay for what no query reads.
+            if error := DataIngestionPipeline.unneeded_stage_error(
+                self.config, [all_stages[name] for name in sorted(enabled_stages_set)]
+            ):
+                usage_error(error, error_type=ConfigurationError.__name__)
         else:
             stages = dict.fromkeys(PipelineStageType, True)
 

@@ -584,13 +584,36 @@ class DataIngestionPipeline:
                 )
             return False
         if stage_type not in needed:
-            # It would run (and pay its model calls) for an artifact the
-            # build record does not list, so no strategy could read it.
-            selected = [m.value for m in self.config.effective_methodologies]
+            logger.warning(
+                "Stage '%s' is in the run's enabled stages, but no selected "
+                "methodology (indexing.methodologies: %s) needs it: it runs, "
+                "and the index records nothing it builds",
+                stage_type.value,
+                ", ".join(m.value for m in self.config.effective_methodologies),
+            )
+        return True
+
+    @classmethod
+    def unneeded_stage_error(
+        cls, config: Config, stages: Iterable[PipelineStageType]
+    ) -> str | None:
+        """Why a run of ``config`` refuses ``stages``, the ones a caller named
+        (``run-ingestion --enabled-stages``), or ``None``: a named stage that
+        would run (its config section allows it) though no selected
+        methodology needs it pays for an artifact the build record does not
+        list, so no strategy could read it. The message names the
+        methodology that reads it (``summary_tree``: ``raptor``)."""
+        needed = selected_stages(config)
+        for stage in stages:
+            if stage in needed or not cls.CONFIG_ENABLED.get(stage, lambda _: True)(
+                config
+            ):
+                continue
+            selected = [m.value for m in config.effective_methodologies]
             readers = [
                 m.value
                 for m in Methodology
-                if stage_type in stages_for(METHODOLOGY_PROFILES[m].required)
+                if stage in stages_for(METHODOLOGY_PROFILES[m].required)
             ]
             how = "leave the stage out of --enabled-stages"
             if readers:
@@ -599,12 +622,12 @@ class DataIngestionPipeline:
                     f"add {' or '.join(readers)} to indexing.methodologies "
                     f"(run-ingestion --methodologies {flag}), or {how}"
                 )
-            raise ConfigurationError(
-                f"Stage '{stage_type.value}' is in the run's enabled stages, but "
-                "no selected methodology needs it (indexing.methodologies: "
+            return (
+                f"Stage '{stage.value}' is in --enabled-stages, but no selected "
+                "methodology needs it (indexing.methodologies: "
                 f"{', '.join(selected)}), so nothing it builds would be read: {how}."
             )
-        return True
+        return None
 
     def close(self) -> None:
         """Release backend clients owned by the pipeline's stages.

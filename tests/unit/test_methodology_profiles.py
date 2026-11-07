@@ -45,7 +45,6 @@ from unified_kg_rag.domain.models.methodology import (
     methodologies_holding,
 )
 from unified_kg_rag.domain.retrieval import index_prefixes
-from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
 
@@ -241,30 +240,40 @@ def test_an_explicit_stage_list_wins_and_warns(caplog) -> None:
 def test_a_listed_stage_no_selected_methodology_needs_is_refused() -> None:
     # It would pay for what no query reads (community reports for a
     # lightrag-only namespace, a tree the build record does not list):
-    # refused when the pipeline is built, before any model call.
-    pipe = _pipeline_for_init(_config(L))
-    pipe.pipeline_config.stages_enabled = dict.fromkeys(S, True) | {
-        S.DOCUMENT_PARSING: False
-    }
-    with pytest.raises(ConfigurationError) as refused:
-        pipe._initialize_stages()
-    message = str(refused.value)
+    # run-ingestion refuses the stages it names before any model call.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    refused = DataIngestionPipeline.unneeded_stage_error
+    message = refused(_config(L), [S.GRAPH_EXTRACTION, S.COMMUNITY_DETECTION])
+    assert message is not None
     assert "Stage 'community_detection'" in message
     assert "indexing.methodologies: lightrag" in message
     assert "add graphrag to indexing.methodologies" in message
     assert "--methodologies lightrag,graphrag" in message
 
-    pipe = _pipeline_for_init(Config())
-    pipe.pipeline_config.stages_enabled = {s: s is S.SUMMARY_TREE for s in S}
-    with pytest.raises(ConfigurationError) as refused:
-        pipe._initialize_stages()
-    assert "Stage 'summary_tree'" in str(refused.value)
-    assert "--methodologies graphrag,lightrag,raptor" in str(refused.value)
-    # With raptor selected the same list runs.
-    pipe = _pipeline_for_init(_config(G, L, R))
-    pipe.pipeline_config.stages_enabled = {s: s is S.SUMMARY_TREE for s in S}
-    stages, _ = pipe._initialize_stages()
-    assert [s.name for s in stages] == ["summary_tree"]
+    message = refused(Config(), [S.SUMMARY_TREE])
+    assert message is not None and "Stage 'summary_tree'" in message
+    assert "--methodologies graphrag,lightrag,raptor" in message
+    # With raptor selected the same list runs; so does a stage the config
+    # switches off (the run skips it) and every stage the selection needs.
+    assert refused(_config(G, L, R), [S.SUMMARY_TREE]) is None
+    assert refused(Config(), [S.CLAIM_EXTRACTION, S.CLAIM_RESOLUTION]) is None
+    assert refused(Config(), mp.selected_stages(Config())) is None
+
+
+def test_a_library_stage_list_with_an_unneeded_stage_runs_it_with_a_warning(
+    caplog,
+) -> None:
+    # A PipelineConfig that switches one stage off leaves every other stage
+    # listed: the pipeline runs the listed ones and warns.
+    pipe = _pipeline_for_init(_config(L))
+    pipe.pipeline_config.stages_enabled = dict.fromkeys(S, True) | {
+        S.DOCUMENT_PARSING: False
+    }
+    with caplog.at_level(logging.WARNING):
+        stages, _ = pipe._initialize_stages()
+    assert "community_detection" in {s.name for s in stages}
+    assert "no selected methodology" in caplog.text
 
 
 # --- config ----------------------------------------------------------------

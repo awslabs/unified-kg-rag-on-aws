@@ -92,6 +92,30 @@ def test_ingestion_namespace_flag_errors_are_usage_errors(
     assert message in capsys.readouterr().err
 
 
+def test_ingestion_refuses_a_listed_stage_no_methodology_needs(
+    mocker, tmp_path, capsys
+) -> None:
+    runner = _ingestion_runner(
+        mocker, tmp_path, Config(), "--enabled-stages", "summary_tree"
+    )
+    with pytest.raises(SystemExit) as exited:
+        runner._create_pipeline_config()
+    assert exited.value.code == 2
+    assert "--methodologies graphrag,lightrag,raptor" in capsys.readouterr().err
+    # Selected, the same list runs.
+    runner = _ingestion_runner(
+        mocker,
+        tmp_path,
+        Config(),
+        "--enabled-stages",
+        "summary_tree",
+        "--methodologies",
+        "graphrag,lightrag,raptor",
+    )
+    stages = runner._create_pipeline_config().stages_enabled
+    assert [s.value for s, on in stages.items() if on] == ["summary_tree"]
+
+
 def test_ingestion_banner_names_the_namespace_as_run_rag_does(mocker, tmp_path) -> None:
     config = Config(indexing={"additional_suffix": "v2"})
     runner = _ingestion_runner(mocker, tmp_path, config, "--suffix", "tenant-a")
