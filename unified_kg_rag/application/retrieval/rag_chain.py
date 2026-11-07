@@ -339,6 +339,14 @@ def _replace_model_texts(
     return out
 
 
+# How an ``auto`` query chose its strategy, in the output metadata:
+# ``decided_by`` is ``router`` (the router's reply named it),
+# ``only_candidate`` (one strategy applies the query's filters on the
+# indexes held: no router call) or ``fallback`` (the router failed or named
+# none; ``_fallback_strategy``), and ``candidates`` the strategies it chose
+# among. Absent for a query that named its strategy.
+ROUTING_KEY = "routing"
+
 DEFAULT_ERROR_MESSAGE: str = (
     "I apologize, but an error occurred while processing your request. Please try again in a moment."
 )
@@ -514,6 +522,8 @@ class RAGOutput(BaseModel):
     units it rests on and whether the answer cites it; a number the answer
     uses that the context did not show is listed in
     ``metadata["unknown_citation_markers"]``. A blocked answer has none.
+    An ``auto`` query's ``metadata["routing"]`` says how its strategy was
+    chosen (``ROUTING_KEY``).
     """
 
     answer: str = Field(description="The generated answer to the user's query")
@@ -845,9 +855,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             ),
             state.get("suffix"),
         )
+        candidates = [s.value for s in routable]
         if len(routable) == 1:
             # Nothing to choose between: no router call.
             state["resolved_strategy"] = routable[0]
+            state[ROUTING_KEY] = {
+                "decided_by": "only_candidate",
+                "candidates": candidates,
+            }
             return state
         if prefetch is not None:
             prefetch.update(
@@ -881,10 +896,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 config,
             )
             strategy = self._parse_routed_strategy(selected_strategy_str, routable)
+            decided_by = (
+                "router"
+                if self._names_strategy(selected_strategy_str, strategy)
+                else "fallback"
+            )
         except Exception as e:
             if not self.ignore_errors:
                 raise
             strategy = self._fallback_strategy(routable)
+            decided_by = "fallback"
             logger.warning(
                 "Strategy auto-selection failed, using '%s' as fallback: %s",
                 strategy.value,
@@ -893,6 +914,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             logger.debug("Strategy auto-selection error: %s", e)
 
         state["resolved_strategy"] = strategy
+        state[ROUTING_KEY] = {"decided_by": decided_by, "candidates": candidates}
         return state
 
     def _check_allowed(self, strategy: SearchStrategy) -> None:
@@ -930,6 +952,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             f"could route to {_names(routable)}); pick one it serves, or "
             "ingest the methodology an allowed strategy reads."
         )
+
+    @staticmethod
+    def _names_strategy(raw: str, strategy: SearchStrategy) -> bool:
+        """Whether the router's reply ``raw`` named ``strategy`` (rather than
+        ``_parse_routed_strategy`` falling back to it)."""
+        return strategy.value in re.findall(r"[a-z]+", (raw or "").lower())
 
     @staticmethod
     def _parse_routed_strategy(
@@ -1552,12 +1580,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         # The answer reads the standalone question: the conversation history
         # reaches it only through that rewrite.
-        return (
+        answer: Runnable[Any, Any] = (
             RunnableLambda(
                 lambda s: {"query": self._question(s), "context": s.get("context")}
             )
             | answer_chain
         )
+        sink = _ANSWER_CHUNKS.get()
+        if sink is None or self._screen_outputs or self._reads_marker(state):
+            # Nothing is shown before the output guardrail screened the
+            # answer, nor before the [NO_ANSWER] token is ruled in or out.
+            return answer
+        return _streamed_to(answer, sink)
 
     @staticmethod
     def _context_insufficient(state: dict[str, Any]) -> bool:
@@ -1801,6 +1835,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             "processing_time": time.time() - state["start_time"],
             "total_results": len(sr.results),
             **sr.metadata,
+            **({ROUTING_KEY: state[ROUTING_KEY]} if ROUTING_KEY in state else {}),
         }
         reason = state.get("abstention_reason")
         if reason is None and GraphRAGChain._context_is_empty(state):
@@ -1944,6 +1979,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             "processing_time": time.time() - state["start_time"],
             "total_results": len(sr.results),
             **sr.metadata,
+            **({ROUTING_KEY: state[ROUTING_KEY]} if ROUTING_KEY in state else {}),
         }
 
         return SearchOutput(
@@ -1973,6 +2009,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         self,
         input: RAGInput,
         config: RunnableConfig | None = None,
+        *,
+        on_answer_chunk: Callable[[str], None] | None = None,
         **kwargs: Any,
     ) -> RAGOutput:
         """Answer one query.
@@ -1981,6 +2019,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             input: A :class:`RAGInput` or a dict of its fields.
             config: LangChain run config; its callbacks, tags and metadata
                 reach every nested LLM call.
+            on_answer_chunk: Called with each text chunk of the answer as
+                the answer model streams it, for a client that shows the
+                answer as it is written. A preview: the returned
+                ``answer`` is authoritative (a decline or a failure
+                replaces what was streamed). Nothing is streamed when the
+                output guardrail screens answers or the answer is read for
+                the ``[NO_ANSWER]`` token (``search.abstention``), nor for
+                the fixed reply to an empty context.
 
         Returns:
             A :class:`RAGOutput`: the answer, its sources and the search
@@ -1991,7 +2037,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 is set, in which case a degraded result with
                 ``metadata["error"] = True`` is returned instead.
         """
-        result = await self._query(input, config, search=False)
+        token = _ANSWER_CHUNKS.set(on_answer_chunk)
+        try:
+            result = await self._query(input, config, search=False)
+        finally:
+            _ANSWER_CHUNKS.reset(token)
         assert isinstance(result, RAGOutput)
         return result
 
@@ -2950,6 +3000,30 @@ _LEFTOVER_EXTRACTIONS: contextvars.ContextVar[list[asyncio.Future[Any]] | None] 
 _GROUNDING_CAPTURE: contextvars.ContextVar[list[GroundingContext | None] | None] = (
     contextvars.ContextVar("kg_rag_grounding_capture", default=None)
 )
+
+# The ``on_answer_chunk`` callback of the ``ainvoke`` call running in this
+# context (``None`` outside one): the answer step streams to it.
+_ANSWER_CHUNKS: contextvars.ContextVar[Callable[[str], None] | None] = (
+    contextvars.ContextVar("kg_rag_answer_chunks", default=None)
+)
+
+
+def _streamed_to(
+    answer: Runnable[Any, Any], sink: Callable[[str], None]
+) -> Runnable[Any, Any]:
+    """``answer`` run as a stream whose text chunks go to ``sink`` as they
+    arrive; returns the whole text, as the unstreamed chain would."""
+
+    async def run(state: dict[str, Any], config: RunnableConfig) -> str:
+        parts: list[str] = []
+        async for chunk in answer.astream(state, config):
+            text = str(chunk)
+            if text:
+                parts.append(text)
+                sink(text)
+        return "".join(parts)
+
+    return RunnableLambda(run)
 
 
 def _conversation_key(
