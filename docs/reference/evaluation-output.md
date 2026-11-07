@@ -154,7 +154,8 @@ Per-query reports list each evaluator's `metrics` (no overall score: an
 average of unrelated metrics means nothing) and record, per reported source in
 rank order, `retrieved_source_ids` (the files it is attributed to, `[]` when
 unattributable), `retrieved_source_types`, `retrieved_entities` and
-`retrieved_relationships`.
+`retrieved_relationships`, and per citation the answer uses
+`cited_source_ids` (its files; `null` with citations off).
 
 ## Comparison
 
@@ -510,6 +511,16 @@ Did the sources the answer model saw include the gold documents?
   `AC/DC` is compared whole.
 - **Skips.** Skipped when a query has no `reference_sources` or none of its
   sources is attributable; a query that retrieved no sources scores 0.
+- **Citations.** `citation_precision` (cited citations naming a reference
+  file / cited citations naming a file) and `citation_recall` (references a
+  cited citation names / references) score what the answer *cites*
+  (`RAGOutput.citations` its `[n]` markers use; a graph citation stands for
+  the files of its resolved lineage), kept per result as
+  `cited_source_ids`. Skipped without `reference_sources`
+  (`no_reference_sources`), with `search.citations.enabled: false`
+  (`citations_disabled`) or for results saved before citations
+  (`no_citation_data`); precision is also skipped for an answer that cites
+  no file (`no_citations`), where recall is 0.
 
 ### `assertion`
 
