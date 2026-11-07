@@ -147,6 +147,18 @@ that support it by their markers, written exactly as in the context (square brac
 [1][3]) in every language. Cite only markers that appear in the context and never make one up; do not cite an item
 that does not support the statement. Do not add a list of references at the end."""
 
+# Appended after CITATION_INSTRUCTIONS when global or DRIFT search wrote
+# the context (key points, intermediate answers). Read as "cite every
+# statement", the citation rule made the answer leave out points it could
+# not tie to a marker (a synthesized item without one, or a point merged
+# from several), so cited answers covered less. MS GraphRAG's reduce asks
+# the same: "Points supported by data should list their data references";
+# what the answer may state stays the grounding rules' to decide.
+SYNTHESIS_CITATION_INSTRUCTIONS = """
+Cite where possible: the markers show what supports a statement, they do not decide what the answer covers. Keep
+every relevant point of the context in the answer; a point drawn from an item without a marker, or merged from
+several items, is still stated, citing the items that support it where there are any."""
+
 # Appended when the strategy flagged its context insufficient
 # (SearchResult.metadata["context_sufficient"] is False) under
 # search.abstention.on_insufficient: hedge.

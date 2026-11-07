@@ -1018,3 +1018,146 @@ async def test_the_map_points_are_written_in_the_query_language(
     )
     (batch,) = strat.map_rater.batch_inputs
     assert batch["target_language"] == language
+
+
+class _RecordStore:
+    """A document retriever over stored records, by index prefix: a fetch
+    by id returns the stored ones it names (and records the request)."""
+
+    def __init__(self, records: dict[str, dict[str, dict[str, Any]]]) -> None:
+        self.records = records
+        self.calls: list[SearchQuery] = []
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> Any:
+        from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+
+        return IndexLimits()
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        stored = self.records.get((query.index_prefixes or [""])[0], {})
+        return [
+            RetrievalResult(
+                content="",
+                score=1.0,
+                source=record_id,
+                retriever_type="document",
+                metadata={"id": record_id, **stored[record_id]},
+            )
+            for record_id in (query.filters or {}).get("id") or []
+            if record_id in stored
+        ]
+
+
+def _findings(*cited: tuple[list[str], list[str]]) -> list[dict[str, Any]]:
+    return [
+        {"summary": "s", "explanation": "e", "entity_ids": e, "relationship_ids": r}
+        for e, r in cited
+    ]
+
+
+def _report_store(config: Config) -> _RecordStore:
+    o = config.indexing.opensearch
+    return _RecordStore(
+        {
+            o.entities_index_prefix: {
+                "e-ko": {
+                    "text_unit_ids": ["tu-ko-1", "tu-ko-2"],
+                    "document_ids": ["ko"],
+                },
+                "e-ja": {"text_unit_ids": ["tu-ja"], "document_ids": ["ja"]},
+            },
+            o.relationships_index_prefix: {
+                "r-en": {"text_unit_ids": ["tu-en"], "document_ids": ["en"]},
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "description",
+    ["Vendor ships widgets", "공급사가 부품을 출하한다", "供給者が部品を出荷する"],
+    ids=["en", "ko", "ja"],
+)
+async def test_a_point_cites_what_its_reports_findings_cite(description: str) -> None:
+    # Regression (rv5 M1): a key point's lineage was its reports' community
+    # membership, so every point of a corpus-spanning community named the
+    # same documents. It is the text units of the records the credited
+    # reports' findings cite (a finding's relationships before its
+    # entities), read by id; a report stored without findings keeps its
+    # membership.
+    payload = json.dumps(
+        {
+            "points": [
+                {"description": description, "score": 80, "report_ids": ["1"]},
+                {"description": description, "score": 70, "report_ids": ["2"]},
+                {"description": description, "score": 60, "report_ids": ["3"]},
+            ]
+        },
+        ensure_ascii=False,
+    )
+    strat = _strategy(map_batch_size=3, map_outputs=[payload], evidence_tokens=0)
+    store = _report_store(strat.config)
+    strat.retrievers = {"document": store}
+    cited, gone, legacy = (_cited_community(i) for i in range(3))
+    cited.metadata["findings"] = _findings((["e-ko"], ["r-en"]), (["e-ja"], []))
+    gone.metadata["findings"] = _findings((["e-deleted"], ["r-deleted"]))
+    out = await strat._apply_map_reduce(
+        [cited, gone, legacy], SearchQuery(query="q", suffix="ns")
+    )
+
+    first, second, third = out
+    assert first.metadata["text_unit_ids"] == ["tu-en", "tu-ko-1", "tu-ko-2", "tu-ja"]
+    assert first.metadata["document_ids"] == ["en", "ko", "ja"]
+    assert first.metadata["citable"] is True
+    # Every cited record removed: the membership stands, as without findings.
+    assert second.metadata["text_unit_ids"] == ["tu-1a", "tu-1b", "tu-shared"]
+    assert third.metadata["text_unit_ids"] == ["tu-2a", "tu-2b", "tu-shared"]
+    o = strat.config.indexing.opensearch
+    # One fetch per index, of every cited id at once, in the namespace.
+    assert sorted(
+        (c.index_prefixes[0], tuple(c.filters["id"])) for c in store.calls
+    ) == [
+        (o.entities_index_prefix, ("e-ko", "e-ja", "e-deleted")),
+        (o.relationships_index_prefix, ("r-en", "r-deleted")),
+    ]
+    assert {c.suffix for c in store.calls} == {"ns"}
+
+
+async def test_findings_lineage_reads_no_relationships_index_the_namespace_lacks() -> (
+    None
+):
+    from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
+
+    strat = _strategy(
+        map_batch_size=1, map_outputs=[_map_payload(("p", 70))], evidence_tokens=0
+    )
+    store = _report_store(strat.config)
+    strat.retrievers = {"document": store}
+    report = _cited_community(0)
+    report.metadata["findings"] = _findings((["e-ja"], ["r-en"]))
+    held = ["text_units", "entities", "relationships", "graph", "communities"]
+    out = await strat._apply_map_reduce(
+        [report],
+        SearchQuery(
+            query="q", metadata={HELD_ARTIFACTS_KEY: [*held, "community_reports"]}
+        ),
+    )
+    assert out[0].metadata["text_unit_ids"] == ["tu-ja"]
+    o = strat.config.indexing.opensearch
+    assert [c.index_prefixes for c in store.calls] == [[o.entities_index_prefix]]
+
+
+async def test_a_failed_findings_read_keeps_the_membership_lineage() -> None:
+    class _Failing(_RecordStore):
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            raise RuntimeError("one request failed")
+
+    strat = _strategy(
+        map_batch_size=1, map_outputs=[_map_payload(("p", 70))], evidence_tokens=0
+    )
+    strat.retrievers = {"document": _Failing({})}
+    report = _cited_community(0)
+    report.metadata["findings"] = _findings((["e-ja"], []))
+    out = await strat._apply_map_reduce([report], SearchQuery(query="q"))
+    assert out[0].metadata["text_unit_ids"] == ["tu-0a", "tu-0b", "tu-shared"]

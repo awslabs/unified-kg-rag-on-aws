@@ -98,6 +98,7 @@ from unified_kg_rag.application.retrieval import (
     query_processing,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
+from unified_kg_rag.domain.ingestion.report_references import REPORT_FINDINGS_FIELD
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_FILTER_KEY,
@@ -132,6 +133,7 @@ from unified_kg_rag.domain.prompts.retrieval import (
     DECLINE_INSTRUCTIONS,
     HEDGE_INSTRUCTIONS,
     QUERY_RESULT_INSTRUCTIONS,
+    SYNTHESIS_CITATION_INSTRUCTIONS,
     describe_routable_strategies,
 )
 from unified_kg_rag.domain.retrieval.abstention import (
@@ -243,6 +245,13 @@ def seed_provenance(metadata: dict[str, Any]) -> dict[str, Any] | None:
 # answer. Also the answer of a declined answer that was only the [NO_ANSWER]
 # token (search.abstention.strip_marker).
 NO_CONTEXT_ANSWER = NO_CONTEXT_ANSWERS[LanguageCode.EN]
+
+# The strategies whose context is model-written synthesis (key points,
+# intermediate answers): their answer cites where possible.
+_SYNTHESIZING_STRATEGIES = frozenset({SearchStrategy.GLOBAL, SearchStrategy.DRIFT})
+
+# What a reported source keeps of each of a report's findings.
+_FINDING_IDS = ("entity_ids", "relationship_ids")
 
 # The search metadata of iterative search and its model-written text: the
 # follow-up queries searched (``searched``), and each verdict's bridge
@@ -1628,16 +1637,19 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     def _answer_instructions(self, state: dict[str, Any]) -> str:
         """The text appended to the answer's system prompt: the citation
-        instructions of a numbered context (``search.citations``), the graph
-        query result's instruction when the context holds one (the
-        structured strategy), then the ``search.abstention`` text ("" with
-        all off)."""
+        instructions of a numbered context (``search.citations``; global
+        and DRIFT search's ask to cite where possible, so no relevant point
+        is left out for want of a marker), the graph query result's
+        instruction when the context holds one (the structured strategy),
+        then the ``search.abstention`` text ("" with all off)."""
         parts = []
         optimized: OptimizedContext | None = state.get("optimized_context")
         if optimized is not None and any(
             s.marker is not None for s in optimized.sections
         ):
             parts.append(CITATION_INSTRUCTIONS)
+            if state.get("resolved_strategy") in _SYNTHESIZING_STRATEGIES:
+                parts.append(SYNTHESIS_CITATION_INSTRUCTIONS)
         if self._declines_insufficient(state):
             return "".join([*parts, DECLINE_INSTRUCTIONS])
         if self._holds_query_result(state):
@@ -1925,6 +1937,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         evidence gets no ``provenance`` key.
         """
         metadata = strip_embedding_fields(result.metadata or {})
+        findings = metadata.get(REPORT_FINDINGS_FIELD)
+        if isinstance(findings, list):
+            # A report's findings: their text is its content already; the
+            # source keeps the records each cites.
+            metadata[REPORT_FINDINGS_FIELD] = [
+                {key: finding[key] for key in _FINDING_IDS if key in finding}
+                for finding in findings
+                if isinstance(finding, dict)
+            ]
         attributes = metadata.get("attributes")
         # A text unit stores its document id in its attributes.
         raw_doc_ids = (

@@ -81,6 +81,32 @@ def test_the_fake_models_answer_every_prompt_kind() -> None:
     assert fake.respond("unknown system prompt", "x") == ("", False)
 
 
+def test_the_fake_reports_and_key_points_cite_their_evidence() -> None:
+    # The demo shows citations as a model writes them: each report finding
+    # cites its numbered relationship, each map point the report it is from.
+    fake = load("fake_models")
+    report = fake.community_report(
+        "<entity_data>\n- [1] Acme Robotics: robots\n</entity_data>\n"
+        "<relationship_data>\n- [1] Acme Robotics -> lidar unit (BUYS): Acme "
+        "Robotics buys every lidar unit.\n- [2] 애크미 로보틱스 -> 글로벡스 센서스 "
+        "(CONTRACTS_WITH): 애크미 로보틱스는 계약을 맺었다.\n</relationship_data>"
+    )
+    assert "buys every lidar unit. [Data: Relationships (1)]" in report
+    assert "계약을 맺었다. [Data: Relationships (2)]" in report
+    human = (
+        'User Question: "Who buys the lidar unit?"\n<community_reports>\n'
+        "--- Report (id: 1) ---\nGlobex Sensors makes sensors.\n\n"
+        "--- Report (id: 2) ---\nAcme Robotics buys every lidar unit.\n"
+        "</community_reports>"
+    )
+    reply, _ = fake.respond("Extract the KEY POINTS from the reports", human)
+    assert json.loads(reply)["points"][0] == {
+        "description": "Acme Robotics buys every lidar unit.",
+        "score": 80,
+        "report_ids": ["2"],
+    }
+
+
 def test_a_restart_keeps_the_config_settings_saved(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

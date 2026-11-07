@@ -20,6 +20,7 @@ from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.ingestion.report_references import (
     REPORT_FINDINGS_FIELD,
     report_cited_ids,
+    report_cited_records,
     split_data_references,
 )
 from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
@@ -187,3 +188,24 @@ def test_a_report_stored_without_findings_cites_nothing(
     metadata: dict[str, Any],
 ) -> None:
     assert report_cited_ids(metadata) == ([], [])
+    assert report_cited_records(metadata) == []
+
+
+def test_a_reports_cited_records_come_finding_by_finding() -> None:
+    # Global search and DRIFT cite a report by these records' text units:
+    # each finding's relationships (the narrower evidence) before its
+    # entities, findings in order, each record once.
+    metadata = {
+        REPORT_FINDINGS_FIELD: [
+            {"entity_ids": ["e1", "e2"], "relationship_ids": ["r1"]},
+            "not a finding",
+            {"entity_ids": ["e2", "e3", ""], "relationship_ids": ["r2", "r1", 7]},
+        ]
+    }
+    assert report_cited_records(metadata) == [
+        ("relationships", "r1"),
+        ("entities", "e1"),
+        ("entities", "e2"),
+        ("relationships", "r2"),
+        ("entities", "e3"),
+    ]

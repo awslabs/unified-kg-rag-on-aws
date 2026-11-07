@@ -14,7 +14,9 @@ which are read the same.
 A stored report keeps its findings, cited ids included, in an unindexed
 field (:data:`REPORT_FINDINGS_FIELD`), so a retrieved report (its
 metadata, a reported source's) names the records each finding rests on:
-:func:`report_cited_ids` reads them.
+:func:`report_cited_ids` reads them. Global search and DRIFT cite a
+report by the text units of those records (:func:`report_cited_records`),
+not by its community's membership.
 """
 
 import re
@@ -26,6 +28,7 @@ __all__ = [
     "DATASET_RELATIONSHIPS",
     "REPORT_FINDINGS_FIELD",
     "report_cited_ids",
+    "report_cited_records",
     "split_data_references",
 ]
 
@@ -95,3 +98,25 @@ def report_cited_ids(metadata: Mapping[str, Any]) -> tuple[list[str], list[str]]
                 if isinstance(cited_id, str) and cited_id:
                     ids.setdefault(cited_id)
     return list(entity_ids), list(relationship_ids)
+
+
+def report_cited_records(metadata: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """The records the findings of a stored community report cite, as
+    ``(dataset, id)`` pairs finding by finding (a finding's relationships,
+    the narrower evidence, before its entities), each once. A report stored
+    before its findings were kept, or one whose findings cite nothing,
+    cites none."""
+    records: dict[tuple[str, str], None] = {}
+    findings = metadata.get(REPORT_FINDINGS_FIELD)
+    for finding in findings if isinstance(findings, list) else []:
+        if not isinstance(finding, Mapping):
+            continue
+        for key, dataset in (
+            ("relationship_ids", DATASET_RELATIONSHIPS),
+            ("entity_ids", DATASET_ENTITIES),
+        ):
+            cited = finding.get(key)
+            for cited_id in cited if isinstance(cited, list) else []:
+                if isinstance(cited_id, str) and cited_id:
+                    records.setdefault((dataset, cited_id))
+    return list(records)

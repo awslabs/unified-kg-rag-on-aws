@@ -1159,9 +1159,10 @@ From a `main` checkout (formats and keys no release had):
   value" or "actionable intelligence" asks), numbers the entities and relationships it packs and asks each finding
   for `[Data: Entities (...); Relationships (...)]` references, kept as the cited record ids on the finding
   (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618). The report stores
-  them (an unindexed `findings` field): a retrieved report, and its source's metadata, name the records each finding
-  cites (`report_cited_ids`), pointed at the ids an incremental merge kept; a report stored before cites none until
-  it is regenerated.
+  them (an unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its
+  text), name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept; a
+  removal leaves a removed record's id, which a query reading the records skips; a report stored before cites none
+  until it is regenerated.
 - Claims resolve only against the entities of their own text units, and ties of names, types and statuses break
   deterministically, so builds do not depend on document order (#398, #402, #404, #442).
 - `indexing.reset` rebuilds without taking the suffix offline (new indices and an alias swap) and a failed reset

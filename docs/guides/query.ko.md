@@ -151,7 +151,10 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 언어와 관계없이 ASCII로 씁니다. 전역 검색의 핵심 요점과 DRIFT의 중간 답변에도 하나씩 번호가
 붙습니다. 각 항목은 MS GraphRAG의 `[Data: Reports (...)]`처럼 그 글의 바탕이 된 보고서(또는
 로컬 컨텍스트)의 문서를 밝히며, 근거 예산 때문에 보고서가 컨텍스트에서 빠져도 마찬가지입니다.
-모델이 쓴 글이므로 출처로는 나열하지 않습니다. 표식의 숫자는 세 자리까지이므로 `[2020]` 같은
+보고서는 커뮤니티 전체가 아니라 발견 사항(finding)이 인용한 엔터티와 관계의 문서를 밝힙니다(발견
+사항을 저장하기 전에 색인한 보고서는 커뮤니티의 문서를 씁니다). 모델이 쓴 글이므로 출처로는
+나열하지 않으며, 이 전략의 답변은 표식이 없는 요점도 빠뜨리지 않고 인용할 수 있는 곳에서
+인용합니다. 표식의 숫자는 세 자리까지이므로 `[2020]` 같은
 괄호 속 연도는 본문으로 남습니다.
 
 ```text
@@ -162,9 +165,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 `section_type`, `title`, 대표 문서의 `document_id` / `file_name` / `file_path`(코퍼스
 루트 기준 상대 경로) / `page`와 `page_end`, `chunk_id`(본문 조각), `text_unit_ids`, 모든
 문서를 담은 `documents`, 시드 그래프 `provenance`와 `iri`가 들어 있습니다. 그래프 항목은
-텍스트 단위 중 최대 `search.citations.lineage_units`개의 문서를 밝힙니다. 이 정보는 질의마다
-한 번 묶어서 읽고, 질의의 필터와 접미사를 그대로 적용하므로 필터가 제외한 문서는 드러나지
-않습니다. 컨텍스트에 없던 번호를 답변이 쓰면 인용이 아니라
+텍스트 단위 중 질의의 필터와 접미사를 통과한 최대 `search.citations.lineage_units`개의 문서를
+밝힙니다. 이 정보는 묶어서 읽으며, 필터가 제외한 문서는 드러나지 않고 그 자리는 다음 텍스트
+단위로 채웁니다. 컨텍스트에 없던 번호를 답변이 쓰면 인용이 아니라
 `metadata.unknown_citation_markers`에 남습니다. 저장소 읽기는 답변 호출과 동시에 진행합니다.
 후속 질문을 다시 쓸 때는 이전 답변의 표식을 빼고 읽습니다.
 

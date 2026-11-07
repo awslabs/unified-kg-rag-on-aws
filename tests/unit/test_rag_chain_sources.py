@@ -154,6 +154,37 @@ def test_sources_keep_provenance_and_drop_embeddings(config: Config) -> None:
     assert {"content", "source", "score", "metadata"} <= set(source)
 
 
+def test_a_report_source_keeps_its_findings_ids_not_their_text() -> None:
+    # Regression (rv5): a report's reported source carried each finding's
+    # summary and explanation beside the report text that already renders
+    # them; it keeps what each finding cites.
+    report = RetrievalResult(
+        content="# 공급망 보고서\n\n공급사가 부품을 출하한다.",
+        score=0.8,
+        source="report-1",
+        retriever_type="community",
+        metadata={
+            "id": "report-1",
+            "findings": [
+                {
+                    "summary": "공급사가 부품을 출하한다.",
+                    "explanation": "供給者が部品を出荷する。",
+                    "entity_ids": ["e-1"],
+                    "relationship_ids": ["r-1"],
+                },
+                {"summary": "no references"},
+            ],
+        },
+    )
+    entry = GraphRAGChain._source_entry(report, report.content, truncated=False)
+    assert entry["metadata"]["findings"] == [
+        {"entity_ids": ["e-1"], "relationship_ids": ["r-1"]},
+        {},
+    ]
+    # The retrieved result keeps them whole.
+    assert report.metadata["findings"][0]["summary"] == "공급사가 부품을 출하한다."
+
+
 def test_sources_follow_retrieval_rank_not_section_type_order(
     config: Config,
 ) -> None:
