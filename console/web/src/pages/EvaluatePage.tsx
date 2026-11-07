@@ -82,7 +82,8 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
           <div className="stack">
             <label className="field">
               <span className="field-label">{t("evaluate.dataset")}</span>
-              <select className="select" value={datasetRef} onChange={(e) => setDataset(e.target.value)}>
+              <select className="select" value={datasetRef} disabled={!datasets.data} onChange={(e) => setDataset(e.target.value)}>
+                {!datasets.data ? <option value="">{t("common.loading")}</option> : null}
                 {(datasets.data?.datasets ?? []).map((d) => (
                   <option key={d.ref} value={d.ref}>
                     {d.ref.replace(/^workspace:/, "")} ({t("evaluate.items", { count: d.items })})
@@ -172,7 +173,9 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
             )}
           </Sheet>
           <Sheet title={t("evaluate.saved")} aside={<button className="button button-small" onClick={() => void runs.reload()}>{t("common.refresh")}</button>}>
-            {runs.data?.runs.length ? (
+            {!runs.data ? (
+              runs.error ? <ErrorText error={runs.error} /> : <Loading />
+            ) : runs.data.runs.length ? (
               <div className="table-wrap">
                 <table className="table">
                   <thead>

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from "react";
 import { JobPanel } from "../components/JobPanel";
-import { Empty, ErrorText, formatBytes, JobStatusBadge, Notice, PageHead, Sheet } from "../components/ui";
+import { Empty, ErrorText, formatBytes, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { ApiError, get, send, upload } from "../lib/api";
 import type { Corpus, JobRecord, Status } from "../lib/types";
@@ -233,7 +233,9 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
             )}
           </Sheet>
           <Sheet title={t("ingest.history")}>
-            {ingestJobs.length ? (
+            {!jobs.data ? (
+              <Loading />
+            ) : ingestJobs.length ? (
               <div className="table-wrap">
                 <table className="table">
                   <thead>

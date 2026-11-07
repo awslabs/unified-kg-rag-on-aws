@@ -116,7 +116,11 @@ def _names_in(text: str) -> list[str]:
 
 
 def _sentences(text: str) -> list[str]:
-    return [s.strip() for s in _SENTENCE.split(text) if len(s.strip()) > 2]
+    """``text``'s sentences, without the context's "Description:" labels."""
+    parts = (
+        s.strip().removeprefix("Description:").strip() for s in _SENTENCE.split(text)
+    )
+    return [s for s in parts if len(s) > 2]
 
 
 def _xml(text: str) -> str:
