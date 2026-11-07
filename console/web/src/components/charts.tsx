@@ -30,7 +30,7 @@ export function DeltaPlot({ deltas, confidence = 0.95 }: { deltas: [string, Delt
   const width = 220;
   const pad = 10;
   return (
-    <div className="table-wrap">
+    <div className="table-wrap" tabIndex={0}>
       <table className="table">
         <caption className="visually-hidden">{t("chart.deltaCaption", { confidence: percent(confidence) })}</caption>
         <thead>

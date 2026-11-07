@@ -110,7 +110,7 @@ export function DashboardPage() {
             </Sheet>
           </div>
           <Sheet title={t("dashboard.byStrategy")} pad={false}>
-            <div className="table-wrap">
+            <div className="table-wrap" tabIndex={0}>
               <table className="table">
                 <thead>
                   <tr>
@@ -147,7 +147,7 @@ export function DashboardPage() {
           </div>
           <Sheet title={t("dashboard.jobs")} pad={false}>
             {d.jobs.length ? (
-              <div className="table-wrap">
+              <div className="table-wrap" tabIndex={0}>
                 <table className="table">
                   <thead>
                     <tr>
@@ -217,7 +217,7 @@ function UsageTable({ title, rows, showCost = false }: { title: string; rows: ({
   const { t, number, usd } = useI18n();
   return (
     <Sheet title={title} pad={false}>
-      <div className="table-wrap">
+      <div className="table-wrap" tabIndex={0}>
         <table className="table">
           <thead>
             <tr>

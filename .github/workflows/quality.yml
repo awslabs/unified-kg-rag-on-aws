@@ -382,33 +382,53 @@ jobs:
 
   console-smoke:
     # One browser pass through the console on the demo workspace with the
-    # fake models (no AWS, no model): pushes to main only, as it installs a
-    # browser.
-    if: github.event_name == 'push'
+    # fake models (no AWS, no model): on pushes to main, and on pull
+    # requests that touch the console (it installs a browser).
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      UKR_CONSOLE_TOKEN: ci-smoke-token-0123456789
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Does the change touch the console?
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "console=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -qE '^(console/|unified_kg_rag/application/cli/(console/|run_console\.py))'; then
+            echo "console=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "console=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install uv
+        if: steps.changes.outputs.console == 'true'
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.12.23"
           python-version: "3.12"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.changes.outputs.console == 'true'
         with:
           node-version: "24"
       - name: Install
+        if: steps.changes.outputs.console == 'true'
         run: |
           uv sync --locked --extra console
           cd console/web && npm ci --no-audit --no-fund && npm run build
           npx playwright install --with-deps chromium
       - name: Start the demo console
+        if: steps.changes.outputs.console == 'true'
         run: |
           uv run --frozen python console/demo/demo.py --models fake --workspace "$RUNNER_TEMP/demo" --port 8501 > "$RUNNER_TEMP/demo.log" 2>&1 &
-          for _ in $(seq 120); do curl -fs http://127.0.0.1:8501/api/status > /dev/null && break; sleep 1; done
-          curl -fs http://127.0.0.1:8501/api/status
+          for _ in $(seq 120); do curl -fs -H "X-Console-Token: $UKR_CONSOLE_TOKEN" http://127.0.0.1:8501/api/status > /dev/null && break; sleep 1; done
+          curl -fs -H "X-Console-Token: $UKR_CONSOLE_TOKEN" http://127.0.0.1:8501/api/status
       - name: Smoke test
+        if: steps.changes.outputs.console == 'true'
         working-directory: console/web
+        env:
+          CONSOLE_URL: http://127.0.0.1:8501/?token=${{ env.UKR_CONSOLE_TOKEN }}
         run: npm run test:smoke
       - name: Demo log
         if: failure()

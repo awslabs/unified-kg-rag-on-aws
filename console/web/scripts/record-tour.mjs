@@ -5,7 +5,7 @@
  * its answer, its sources open on the provenance trace, the trail leads
  * into the graph, an evaluation comparison, the dashboard.
  *
- *   node scripts/record-tour.mjs --base-url http://127.0.0.1:8501 --out tour \
+ *   node scripts/record-tour.mjs --base-url "http://127.0.0.1:8501/?token=..." --out tour \
  *     [--question "..."] [--width 1200] [--fps 12] [--locale en] [--max-seconds 25]
  *
  * Every step waits for the state it shows (the answer's result, its
@@ -33,7 +33,11 @@ function option(name, fallback) {
   return index > 0 ? process.argv[index + 1] : fallback;
 }
 
-const base = option("base-url", "http://127.0.0.1:8501").replace(/\/$/, "");
+// The address run-console printed: its ?token= (or CONSOLE_TOKEN) is the
+// access token, sent as a header to the API and set as the page's cookie.
+const address = new URL(option("base-url", "http://127.0.0.1:8501"));
+const token = address.searchParams.get("token") ?? process.env.CONSOLE_TOKEN ?? null;
+const base = address.origin;
 const out = option("out", "tour");
 const question = option("question", "Who carries the lidar units to Kestrel Depot, and how fast?");
 const width = Number(option("width", "1200"));
@@ -47,7 +51,10 @@ const PAGE_TIMEOUT = 30_000;
 async function api(path, body) {
   const response = await fetch(`${base}/api/${path}`, {
     method: body ? "POST" : "GET",
-    headers: body ? { "Content-Type": "application/json", "X-Console-Request": "1" } : {},
+    headers: {
+      ...(body ? { "Content-Type": "application/json", "X-Console-Request": "1" } : {}),
+      ...(token ? { "X-Console-Token": token } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!response.ok) throw new Error(`${path}: ${response.status} ${await response.text()}`);
@@ -127,7 +134,7 @@ const visible = (selector, timeout = PAGE_TIMEOUT) => page.locator(selector).fir
 
 // Ask: the strategies loaded, the question typed.
 await idle("ask-page", async () => {
-  await page.goto(`${base}/ask`);
+  await page.goto(token ? `${base}/ask?token=${encodeURIComponent(token)}` : `${base}/ask`);
   await visible(".chip");
 });
 await pause(700);

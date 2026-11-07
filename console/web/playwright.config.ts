@@ -10,7 +10,7 @@ export default defineConfig({
   retries: 0,
   reporter: [["list"]],
   use: {
-    baseURL: process.env.CONSOLE_URL ?? "http://127.0.0.1:8501",
+    baseURL: new URL(process.env.CONSOLE_URL ?? "http://127.0.0.1:8501").origin,
     reducedMotion: "reduce",
     launchOptions: process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {},
   },

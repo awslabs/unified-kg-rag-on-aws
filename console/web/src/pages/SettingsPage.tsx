@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { LocalePicker } from "../components/LocalePicker";
 import { ErrorText, Loading, Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
-import { ApiError, get, send } from "../lib/api";
+import { errorMessage, get, send } from "../lib/api";
 import { fieldsOf, flatten, parseValue, valueAt, type JsonSchema, type SchemaField } from "../lib/schema";
 import { useApi } from "../lib/useApi";
 
@@ -32,6 +32,7 @@ interface Preview {
   errors: string[];
   warnings: string[];
   unknown_keys: string[];
+  endpoint_changes: { path: string; from: unknown; to: unknown }[];
 }
 
 interface Change {
@@ -53,6 +54,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [endpointsConfirmed, setEndpointsConfirmed] = useState(false);
   const fields = useMemo(() => (schema.data ? fieldsOf(schema.data) : []), [schema.data]);
 
   const setChange = (change: Change | null, path: string) =>
@@ -67,13 +69,14 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
     setPreviewing(true);
     setError(null);
     setSaved(false);
+    setEndpointsConfirmed(false);
     try {
       setPreview(
         await send<Preview>("config/preview", useText ? { text: yaml ?? view.data?.text ?? "" } : { changes: Object.values(changes) }),
       );
     } catch (e) {
       setPreview(null);
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(t, e));
     } finally {
       setPreviewing(false);
     }
@@ -83,7 +86,11 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
     if (!preview || !view.data) return;
     setError(null);
     try {
-      await send("config/save", { text: preview.text, base_sha: view.data.sha });
+      await send("config/save", {
+        text: preview.text,
+        base_sha: view.data.sha,
+        confirm_endpoints: endpointsConfirmed ? (preview.endpoint_changes ?? []).map((c) => c.path) : [],
+      });
       setSaved(true);
       setChanges({});
       setYaml(null);
@@ -91,12 +98,17 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
       await view.reload();
       onSaved();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      setError(errorMessage(t, e));
     }
   }
 
-  if (view.error) return <ErrorText error={view.error} />;
-  if (!view.data || !schema.data) return <Loading />;
+  if (view.error || !view.data || !schema.data)
+    return (
+      <>
+        <PageHead title={t("settings.title")} />
+        {view.error ? <ErrorText error={view.error} /> : <Loading />}
+      </>
+    );
   const data = view.data;
   const pending = Object.keys(changes).length;
 
@@ -210,9 +222,28 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
                   </Notice>
                 ) : null}
                 {preview.comments_dropped ? <Notice tone="warn">{t("settings.commentsDropped")}</Notice> : null}
+                {(preview.endpoint_changes ?? []).length ? (
+                  <Notice tone="warn" title={t("settings.endpointsTitle")}>
+                    <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>
+                      {(preview.endpoint_changes ?? []).map((c) => (
+                        <li key={c.path} className="mono">
+                          {c.path}: {JSON.stringify(c.from ?? null)} → {JSON.stringify(c.to ?? null)}
+                        </li>
+                      ))}
+                    </ul>
+                    <label className="check">
+                      <input type="checkbox" checked={endpointsConfirmed} onChange={(e) => setEndpointsConfirmed(e.target.checked)} />
+                      <span>{t("settings.endpointsConfirm")}</span>
+                    </label>
+                  </Notice>
+                ) : null}
                 <Diff text={preview.diff} />
                 <div className="row">
-                  <button className="button button-primary" disabled={!preview.valid || !preview.changed} onClick={() => void save()}>
+                  <button
+                    className="button button-primary"
+                    disabled={!preview.valid || !preview.changed || ((preview.endpoint_changes ?? []).length > 0 && !endpointsConfirmed)}
+                    onClick={() => void save()}
+                  >
                     {t("settings.save", { file: data.path?.split("/").pop() ?? "config" })}
                   </button>
                   <button className="button" onClick={() => setPreview(null)}>
@@ -268,7 +299,7 @@ function FieldsEditor({
         <span className="field-label">{t("settings.find")}</span>
         <input className="input" type="search" value={query} placeholder="search.top_k, rerank, language…" onChange={(e) => setQuery(e.target.value)} />
       </label>
-      <div className="config-tree">
+      <div className="config-tree" tabIndex={0} aria-label={t("settings.tab.fields")}>
         {q ? (
           matches.length ? (
             matches.map((f) => <FieldEditor key={f.path} field={f} data={data} change={changes[f.path]} setChange={setChange} showPath />)

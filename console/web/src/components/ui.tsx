@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ReactNode } from "react";
 import { useI18n } from "../i18n/i18n";
+import { errorMessage } from "../lib/api";
 
 export function PageHead({ title, lede, aside }: { title: string; lede?: ReactNode; aside?: ReactNode }) {
   return (
@@ -71,12 +72,12 @@ export function Loading() {
   );
 }
 
-export function ErrorText({ error }: { error: string | null }) {
+export function ErrorText({ error }: { error: unknown }) {
   const { t } = useI18n();
   if (!error) return null;
   return (
     <Notice tone="bad" title={t("common.requestFailed")}>
-      {error}
+      {errorMessage(t, error)}
     </Notice>
   );
 }

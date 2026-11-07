@@ -5,7 +5,7 @@ import { EvidenceTrace } from "../components/EvidenceTrace";
 import { StrategyPicker } from "../components/StrategyPicker";
 import { Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
-import { get, stream } from "../lib/api";
+import { errorMessage, get, stream } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
 import type { AskEvent, AskResult, Source, Status, StrategyInfo } from "../lib/types";
@@ -87,8 +87,11 @@ export function AskPage({ status }: { status: Status | null }) {
       }
     } catch (e) {
       if (controller.signal.aborted) update(id, (turn) => ({ ...turn, status: "stopped" }));
-      else update(id, (turn) => ({ ...turn, status: "error", error: { kind: "failure", message: e instanceof Error ? e.message : String(e) } }));
+      else update(id, (turn) => ({ ...turn, status: "error", error: { kind: "failure", message: errorMessage(t, e) } }));
     } finally {
+      // A stream that ended with neither its result nor an error (the
+      // server stopped) leaves no turn waiting.
+      update(id, (turn) => (turn.status === "streaming" ? { ...turn, status: "error", error: { kind: "incomplete", message: t("ask.incomplete") } } : turn));
       abort.current = null;
     }
   }
@@ -157,7 +160,7 @@ export function AskPage({ status }: { status: Status | null }) {
                 <StrategyPicker strategies={strategies.data.strategies} value={[strategy]} onChange={(v) => setStrategy(v[0] ?? "auto")} />
               ) : strategies.error ? (
                 <Notice tone="bad" title={t("ask.strategiesFailed")}>
-                  {strategies.error}
+                  {errorMessage(t, strategies.error)}
                 </Notice>
               ) : null}
               <details>
@@ -223,7 +226,7 @@ export function AskPage({ status }: { status: Status | null }) {
         <div className="sticky">
         <Sheet title={t("ask.evidence")} aside={current?.result ? <span className="muted">{t("ask.evidenceFor", { question: truncate(current.question, 48) })}</span> : null}>
           {current?.result ? (
-            <div className="evidence-scroll">
+            <div className="evidence-scroll" tabIndex={0} aria-label={t("ask.evidence")}>
               <EvidenceTrace key={current.id} sources={current.result.sources} question={current.question} onOpenInGraph={openInGraph} />
             </div>
           ) : (

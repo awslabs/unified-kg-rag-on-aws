@@ -20,7 +20,9 @@ test("ask, follow the trail into the graph, visit every page", async ({ page, ba
   page.on("pageerror", (error) => errors.push(String(error)));
   await page.addInitScript(() => window.localStorage.setItem("ukr-console-locale", "en"));
 
-  await page.goto("/ask");
+  // The address run-console printed carries the access token.
+  const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+  await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
   await expect(page.getByRole("heading", { level: 1, name: "Ask" })).toBeVisible();
   await page.getByLabel("Question").fill("Who carries the lidar units to Kestrel Depot?");
   await page.getByRole("button", { name: "Ask", exact: true }).click();

@@ -251,6 +251,7 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
             ))}
           </div>
           <div className="sheet-body" role="tabpanel" id={`panel-${panel}`} aria-labelledby={`tab-${panel}`}>
+            <h2 className="visually-hidden">{t(`graph.panel.${panel}`)}</h2>
             {panel === "entity" ? (
               node ? (
                 <div className="stack" style={{ gap: 12 }}>
@@ -436,7 +437,7 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
       <Sheet title={t("graph.nodeTable")} pad={false}>
         <details>
           <summary style={{ padding: "12px 20px" }}>{t("graph.nodeTableShow", { count: data.nodes.length })}</summary>
-          <div className="table-wrap" style={{ maxHeight: 360 }}>
+          <div className="table-wrap" tabIndex={0} style={{ maxHeight: 360 }}>
             <table className="table">
               <thead>
                 <tr>

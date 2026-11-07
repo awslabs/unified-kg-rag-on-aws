@@ -3,7 +3,7 @@
 /**
  * Screenshot every console page against a running console.
  *
- *   node scripts/screenshots.mjs --base-url http://127.0.0.1:8501 --out shots \
+ *   node scripts/screenshots.mjs --base-url "http://127.0.0.1:8501/?token=..." --out shots \
  *     [--locales en,ko] [--widths 1440,390]
  *
  * It asks the first sample question (so the console must have a corpus
@@ -21,7 +21,10 @@ function option(name, fallback) {
   return index > 0 ? process.argv[index + 1] : fallback;
 }
 
-const base = option("base-url", "http://127.0.0.1:8501").replace(/\/$/, "");
+// The address run-console printed (its ?token=, or CONSOLE_TOKEN).
+const address = new URL(option("base-url", "http://127.0.0.1:8501"));
+const token = address.searchParams.get("token") ?? process.env.CONSOLE_TOKEN ?? null;
+const base = address.origin;
 const out = option("out", "shots");
 const locales = option("locales", "en").split(",");
 const widths = option("widths", "1440,390").split(",").map(Number);
@@ -42,7 +45,7 @@ for (const locale of locales) {
       await page.waitForTimeout(300);
       await page.screenshot({ path: join(out, `${name}-${locale}-${width}.png`), fullPage: true });
     };
-    await page.goto(`${base}/ask`);
+    await page.goto(token ? `${base}/ask?token=${encodeURIComponent(token)}` : `${base}/ask`);
     await page.locator(".sample").first().click();
     await page.locator(".answer-meta").first().waitFor({ timeout: 60000 });
     await page.locator('.source[data-kind="entity"] > button').first().click();

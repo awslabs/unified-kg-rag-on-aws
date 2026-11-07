@@ -153,3 +153,14 @@ describe("helpers", () => {
     expect(parseValue(topK, "1.5").error).toBe("settings.errors.integer");
   });
 });
+
+describe("upload batches", () => {
+  it("stay under the file and size limits", async () => {
+    const { batches } = await import("../pages/IngestPage");
+    const files = Array.from({ length: 1201 }, () => ({ size: 1 }));
+    expect(batches(files).map((b) => b.length)).toEqual([500, 500, 201]);
+    const big = [{ size: 80 * 2 ** 20 }, { size: 80 * 2 ** 20 }, { size: 1 }];
+    expect(batches(big).map((b) => b.length)).toEqual([1, 2]);
+    expect(batches([])).toEqual([]);
+  });
+});

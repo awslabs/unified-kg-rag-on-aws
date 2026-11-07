@@ -5,7 +5,7 @@ import { useI18n } from "../i18n/i18n";
 import { get, send } from "../lib/api";
 import type { JobRecord, StageProgress } from "../lib/types";
 import { useApi } from "../lib/useApi";
-import { JobStatusBadge, Notice } from "./ui";
+import { ErrorText, JobStatusBadge, Notice } from "./ui";
 
 const ACTIVE = new Set(["running", "stopping"]);
 
@@ -27,7 +27,7 @@ export function JobPanel({ jobId, onEnded, children }: { jobId: string; onEnded?
     { intervalMs: 1500, poll: !ended },
   );
   const data = job.data;
-  if (!data) return job.error ? <Notice tone="bad">{job.error}</Notice> : <p className="muted">{t("common.loading")}</p>;
+  if (!data) return job.error ? <ErrorText error={job.error} /> : <p className="muted">{t("common.loading")}</p>;
   const progress = data.progress;
   const running = ACTIVE.has(data.status);
   const elapsed = data.started && data.ended ? data.ended - data.started : null;

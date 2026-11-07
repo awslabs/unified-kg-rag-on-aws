@@ -940,7 +940,7 @@ details > summary {
 .source:hover {
   border-color: var(--hairline-strong);
 }
-.source[aria-expanded="true"] {
+.source.open {
   border-color: var(--trace);
   box-shadow: 0 0 0 1px var(--trace);
 }
@@ -949,7 +949,7 @@ details > summary {
   background: var(--trace-wash);
 }
 .source.linked .station,
-.source[aria-expanded="true"] .station {
+.source.open .station {
   background: var(--trace);
 }
 .source .station {
@@ -986,7 +986,7 @@ details > summary {
   overflow: hidden;
   white-space: pre-line;
 }
-.source[aria-expanded="true"] .source-excerpt {
+.source.open .source-excerpt {
   -webkit-line-clamp: unset;
 }
 .source-trail {

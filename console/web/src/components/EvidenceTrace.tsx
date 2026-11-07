@@ -171,7 +171,7 @@ function SourceCard({
   const title = source.title ?? source.file_name ?? source.id ?? t("ask.trace.untitled");
   const seeded = source.provenance;
   return (
-    <div className={`source${linked ? " linked" : ""}`} data-rank={source.rank} data-kind={source.kind} aria-expanded={open}>
+    <div className={`source${linked ? " linked" : ""}${open ? " open" : ""}`} data-rank={source.rank} data-kind={source.kind}>
       <span className="station" aria-hidden="true" />
       <button
         className="link-button"

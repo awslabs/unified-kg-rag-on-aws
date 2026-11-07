@@ -4,7 +4,7 @@ import { useState } from "react";
 import { JobPanel } from "../components/JobPanel";
 import { Empty, ErrorText, formatBytes, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
-import { ApiError, get, send, upload } from "../lib/api";
+import { errorMessage, get, send, upload } from "../lib/api";
 import type { Corpus, JobRecord, Status } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
@@ -24,6 +24,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const [forceRebuild, setForceRebuild] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmDeletions, setConfirmDeletions] = useState(false);
+  const [confirmIntegrity, setConfirmIntegrity] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadName, setUploadName] = useState("");
@@ -36,23 +37,30 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const active = ingestJobs.find((j) => j.status === "running" || j.status === "stopping");
   const shownJob = jobId ?? active?.id ?? null;
 
-  async function start() {
-    if (!corpus) return;
+  async function start(answer?: { job: JobRecord; question: string }) {
+    if (!corpus && !answer) return;
     setError(null);
+    // Answering a run's question starts it again as it was, with that
+    // question's flag added.
+    const params = answer?.job.params as Record<string, unknown> | undefined;
+    const body = params
+      ? { ...params, [`confirm_${answer?.question}`]: true }
+      : {
+          corpus,
+          methodologies: chosen,
+          index_value: indexValue.trim() || null,
+          force_rebuild: forceRebuild,
+          confirm_reset: confirmReset,
+          confirm_deletions: confirmDeletions,
+          confirm_integrity: confirmIntegrity,
+        };
     try {
-      const job = await send<JobRecord>("jobs/ingest", {
-        corpus,
-        methodologies: chosen,
-        index_value: indexValue.trim() || null,
-        force_rebuild: forceRebuild,
-        confirm_reset: confirmReset,
-        confirm_deletions: confirmDeletions,
-      });
+      const job = await send<JobRecord>("jobs/ingest", body);
       setJobId(job.id);
       onJobsChanged();
       void jobs.reload();
     } catch (e) {
-      setError(e instanceof ApiError && e.status === 409 ? t("ingest.busy", { message: e.message }) : e instanceof Error ? e.message : String(e));
+      setError(errorMessage(t, e));
     }
   }
 
@@ -61,18 +69,22 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
     setUploading(true);
     setError(null);
     try {
-      const form = new FormData();
-      form.append("name", uploadName.trim());
-      for (const file of files) {
-        const path = file.webkitRelativePath ? file.webkitRelativePath.split("/").slice(1).join("/") || file.name : file.name;
-        form.append("files", file, path);
+      // In batches, so no request is over the server's file or size limit.
+      let result = { corpus: "" };
+      for (const batch of batches(files)) {
+        const form = new FormData();
+        form.append("name", uploadName.trim());
+        for (const file of batch) {
+          const path = file.webkitRelativePath ? file.webkitRelativePath.split("/").slice(1).join("/") || file.name : file.name;
+          form.append("files", file, path);
+        }
+        result = await upload<{ corpus: string }>("uploads", form);
       }
-      const result = await upload<{ corpus: string }>("uploads", form);
       setFiles([]);
       await corpora.reload();
       setCorpus(result.corpus);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(t, e));
     } finally {
       setUploading(false);
     }
@@ -201,6 +213,12 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                       {t("ingest.confirmDeletions")} <span className="field-help">{t("ingest.confirmDeletionsHelp")}</span>
                     </span>
                   </label>
+                  <label className="check">
+                    <input type="checkbox" checked={confirmIntegrity} onChange={(e) => setConfirmIntegrity(e.target.checked)} />
+                    <span>
+                      {t("ingest.confirmIntegrity")} <span className="field-help">{t("ingest.confirmIntegrityHelp")}</span>
+                    </span>
+                  </label>
                 </div>
               </details>
               {!chosen.length ? <Notice tone="warn">{t("ingest.noMethodology")}</Notice> : null}
@@ -226,7 +244,19 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                   void jobs.reload();
                 }}
               >
-                {(job) => <IngestResult job={job} />}
+                {(job) => (
+                  <>
+                    {job.confirmation && job.status === "failed" ? (
+                      <Notice tone="warn" title={t(`ingest.question.${job.confirmation}`)}>
+                        <p style={{ margin: "0 0 8px" }}>{t(`ingest.question.${job.confirmation}Help`)}</p>
+                        <button className="button button-primary button-small" disabled={!!active} onClick={() => void start({ job, question: job.confirmation as string })}>
+                          {t(`ingest.answer.${job.confirmation}`)}
+                        </button>
+                      </Notice>
+                    ) : null}
+                    <IngestResult job={job} />
+                  </>
+                )}
               </JobPanel>
             ) : (
               <Empty title={t("ingest.noRunTitle")}>{t("ingest.noRun")}</Empty>
@@ -236,7 +266,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
             {!jobs.data ? (
               <Loading />
             ) : ingestJobs.length ? (
-              <div className="table-wrap">
+              <div className="table-wrap" tabIndex={0}>
                 <table className="table">
                   <thead>
                     <tr>
@@ -295,4 +325,26 @@ function IngestResult({ job }: { job: JobRecord }) {
       </dd>
     </dl>
   );
+}
+
+// What one upload request carries at most (under the server's limits).
+const BATCH_FILES = 500;
+const BATCH_BYTES = 100 * 1024 * 1024;
+
+/** ``files`` in batches of at most BATCH_FILES files and BATCH_BYTES. */
+export function batches<T extends { size: number }>(files: T[]): T[][] {
+  const out: T[][] = [];
+  let current: T[] = [];
+  let bytes = 0;
+  for (const file of files) {
+    if (current.length && (current.length >= BATCH_FILES || bytes + file.size > BATCH_BYTES)) {
+      out.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(file);
+    bytes += file.size;
+  }
+  if (current.length) out.push(current);
+  return out;
 }

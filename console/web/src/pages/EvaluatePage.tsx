@@ -6,7 +6,7 @@ import { JobPanel } from "../components/JobPanel";
 import { StrategyPicker } from "../components/StrategyPicker";
 import { Empty, ErrorText, Loading, Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
-import { get, send } from "../lib/api";
+import { errorMessage, get, send } from "../lib/api";
 import type { Comparison, JobRecord, SavedRun, Status, StrategyInfo } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
@@ -70,7 +70,7 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
       onJobsChanged();
       void jobs.reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(t, e));
     }
   }
 
@@ -176,7 +176,7 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
             {!runs.data ? (
               runs.error ? <ErrorText error={runs.error} /> : <Loading />
             ) : runs.data.runs.length ? (
-              <div className="table-wrap">
+              <div className="table-wrap" tabIndex={0}>
                 <table className="table">
                   <thead>
                     <tr>
@@ -270,7 +270,7 @@ function RunView({ refName }: { refName: string }) {
         {t("evaluate.runTitle", { name: run.data.label })}
       </h2>
       <Sheet title={t("evaluate.results")} pad={false}>
-        <div className="table-wrap">
+        <div className="table-wrap" tabIndex={0}>
           <table className="table">
             <thead>
               <tr>
@@ -333,7 +333,7 @@ function RunView({ refName }: { refName: string }) {
       <div className="grid-wide">
         {comparison?.cost ? (
           <Sheet title={t("evaluate.cost")} pad={false}>
-            <div className="table-wrap">
+            <div className="table-wrap" tabIndex={0}>
               <table className="table">
                 <thead>
                   <tr>
@@ -365,7 +365,7 @@ function RunView({ refName }: { refName: string }) {
           </Sheet>
         ) : null}
         <Sheet title={t("evaluate.abstention")} pad={false}>
-          <div className="table-wrap">
+          <div className="table-wrap" tabIndex={0}>
             <table className="table">
               <thead>
                 <tr>
@@ -398,7 +398,7 @@ function RunView({ refName }: { refName: string }) {
         </Sheet>
         <Sheet title={t("evaluate.lengths")} pad={!lengths}>
           {lengths ? (
-            <div className="table-wrap">
+            <div className="table-wrap" tabIndex={0}>
               <table className="table">
                 <thead>
                   <tr>
