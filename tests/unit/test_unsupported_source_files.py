@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from unified_kg_rag.adapters.ingestion import parser
+from unified_kg_rag.adapters.ingestion.file_loaders import DOCX_INSTALL_HINT
 from unified_kg_rag.application.ingestion.pipeline_stages import DocumentParsingStage
 from unified_kg_rag.domain.ingestion.cache_keys import corpus_manifest_fingerprint
 from unified_kg_rag.domain.models import (
@@ -21,12 +23,17 @@ from unified_kg_rag.shared import PipelineStageError
 
 pytestmark = pytest.mark.unit
 
-_OPTIONAL = {".md", ".markdown", ".htm", ".html"}
+_OPTIONAL = {".docx"}
+
+
+@pytest.fixture(autouse=True)
+def _without_the_docx_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Behave as if the optional 'docx' extra is not installed.
+    monkeypatch.setitem(parser.MISSING_EXTRA_FORMATS, ".docx", DOCX_INSTALL_HINT)
 
 
 def _stage(source: Path) -> DocumentParsingStage:
     stage = DocumentParsingStage(Config(), source_directory=source)
-    # Behave as if the optional 'unstructured' extra is not installed.
     stage.supported_extensions = [
         e for e in stage.supported_extensions if e not in _OPTIONAL
     ]
@@ -40,36 +47,31 @@ def _skip_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
 def test_skipped_files_are_warned_once_with_counts_and_remedies(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    for name in ("a.md", "b.md", "page.html", "notes.docx", "keep.txt", ".hidden"):
+    for name in ("a.docx", "b.docx", "page.xyz", "notes.md", "keep.txt", ".hidden"):
         (tmp_path / name).write_text("Vendor ships goods to Buyer.")
 
     with caplog.at_level(logging.WARNING):
         files, skipped = _stage(tmp_path)._discover_source_files()
 
-    assert [f.name for f in files] == ["keep.txt"]
+    # Markdown needs no extra.
+    assert sorted(f.name for f in files) == ["keep.txt", "notes.md"]
     # Hidden files are neither read nor reported.
-    assert sorted(Path(p).name for p in skipped) == [
-        "a.md",
-        "b.md",
-        "notes.docx",
-        "page.html",
-    ]
+    assert sorted(Path(p).name for p in skipped) == ["a.docx", "b.docx", "page.xyz"]
     (warning,) = _skip_warnings(caplog)
-    assert f"Skipping 4 file(s) in '{tmp_path}'" in warning
-    assert "2 '.md'" in warning and "1 '.html'" in warning and "1 '.docx'" in warning
-    assert "for .html, .md, install the optional 'unstructured' extra" in warning
-    assert "uv sync --extra unstructured" in warning
-    # An image needs the build argument, which also bakes in the spaCy model.
-    assert '--build-arg UV_EXTRAS="--extra unstructured"' in warning
-    assert "spaCy model" in warning
-    assert "for .docx, convert them" in warning
+    assert f"Skipping 3 file(s) in '{tmp_path}'" in warning
+    assert "2 '.docx'" in warning and "1 '.xyz'" in warning
+    assert "for .docx, install the optional 'docx' extra" in warning
+    assert "uv sync --extra docx" in warning
+    # An image needs the build argument.
+    assert '--build-arg UV_EXTRAS="--extra docx"' in warning
+    assert "for .xyz, convert them" in warning
     assert "keeps what they indexed before" in warning
 
 
 def test_the_stage_reports_skipped_files_apart_from_failed_ones(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "a.md").write_text("Vendor ships goods to Buyer.")
+    (tmp_path / "a.docx").write_text("Vendor ships goods to Buyer.")
     (tmp_path / "keep.txt").write_text("Vendor ships goods to Buyer.")
     context = PipelineContext(
         pipeline_id="p",
@@ -81,7 +83,7 @@ def test_the_stage_reports_skipped_files_apart_from_failed_ones(
 
     _, _, metrics = _stage(tmp_path)._execute_core(context)
 
-    assert context.skipped_source_files == [str(tmp_path / "a.md")]
+    assert context.skipped_source_files == [str(tmp_path / "a.docx")]
     assert context.failed_source_files == []
     assert metrics is not None
     assert (metrics["files_skipped"], metrics["files_failed"]) == (1, 0)
@@ -115,7 +117,7 @@ def test_hidden_corpus_root_is_not_excluded(tmp_path: Path) -> None:
 def test_first_stage_with_no_parseable_files_names_the_source_directory(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "a.md").write_text("Vendor ships goods to Buyer.")
+    (tmp_path / "a.docx").write_text("Vendor ships goods to Buyer.")
     stage = _stage(tmp_path)
 
     result = stage.execute(
