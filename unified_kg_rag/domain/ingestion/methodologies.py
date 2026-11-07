@@ -14,7 +14,6 @@ from unified_kg_rag.domain.models import Config, PipelineStageType
 from unified_kg_rag.domain.models.methodology import (
     ARTIFACT_SWITCHES,
     METHODOLOGY_PROFILES,
-    UNBUILT_ARTIFACTS,
     IndexArtifact,
     Methodology,
     artifacts_of,
@@ -103,12 +102,7 @@ GRAPH_STORE_ARTIFACTS: frozenset[IndexArtifact] = frozenset({_A.GRAPH, _A.COMMUN
 
 def stages_for(artifacts: Iterable[IndexArtifact]) -> frozenset[PipelineStageType]:
     """The stages that build ``artifacts``, with every stage they read."""
-    pending = [
-        stage
-        for artifact in artifacts
-        if artifact not in UNBUILT_ARTIFACTS
-        for stage in ARTIFACT_STAGES[artifact]
-    ]
+    pending = [stage for artifact in artifacts for stage in ARTIFACT_STAGES[artifact]]
     stages: set[PipelineStageType] = set()
     while pending:
         stage = pending.pop()
@@ -124,11 +118,7 @@ def _switchable_stages() -> dict[PipelineStageType, frozenset[IndexArtifact]]:
     community detection (communities and reports)."""
     switchable = frozenset().union(*(s.artifacts for s in ARTIFACT_SWITCHES))
     needs = {
-        stage: frozenset(
-            a
-            for a in ARTIFACT_STAGES
-            if a not in UNBUILT_ARTIFACTS and stage in stages_for([a])
-        )
+        stage: frozenset(a for a in ARTIFACT_STAGES if stage in stages_for([a]))
         for stage in PipelineStageType
     }
     return {stage: a for stage, a in needs.items() if a and a <= switchable}

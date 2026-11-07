@@ -94,7 +94,6 @@ _KEYED_ONCE_SET = frozenset(
                 "target_children",
                 "soft_threshold",
                 "reduction_dims",
-                "bic_grid",
                 "max_levels",
                 "min_nodes_to_cluster",
                 "min_level_shrink",

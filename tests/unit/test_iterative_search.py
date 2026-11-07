@@ -54,7 +54,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
-from unified_kg_rag.domain.models.methodology import required_artifacts_of
+from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -834,7 +834,9 @@ def test_auto_routes_to_iterative_where_its_base_is_held(
     config.search.iterative_search.base = base  # type: ignore[assignment]
 
     # What a default run of each held methodology builds.
-    built = required_artifacts_of(Methodology(m) for m in held)
+    built = frozenset().union(
+        *(METHODOLOGY_PROFILES[Methodology(m)].required for m in held)
+    )
     if "graphrag" in held:
         built |= {IndexArtifact.COMMUNITY_REPORTS}
     offered = routable_strategies(config, built)

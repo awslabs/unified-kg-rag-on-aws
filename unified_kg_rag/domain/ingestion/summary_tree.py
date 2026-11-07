@@ -66,7 +66,6 @@ class TreeSettings:
     target_children: int = _default("target_children")
     soft_threshold: float = _default("soft_threshold")
     reduction_dims: int = _default("reduction_dims")
-    bic_grid: str = _default("bic_grid")
     max_levels: int = _default("max_levels")
     min_nodes_to_cluster: int = _default("min_nodes_to_cluster")
     min_level_shrink: float = _default("min_level_shrink")
@@ -76,6 +75,10 @@ class TreeSettings:
     # RAPTOR summarizes a cluster of one node; this promotes it instead.
     # True only to compare with the original (tests/fidelity).
     summarize_single: bool = False
+    # gmm only: the cluster counts BIC compares. "bounded": at most
+    # _BOUNDED_GRID values around n / target_children; "upstream": 1 to 49,
+    # as RAPTOR's code (slow on large levels), only to compare with it.
+    bic_grid: str = "bounded"
 
     @classmethod
     def from_config(cls, config: SummaryTreeConfig) -> TreeSettings:

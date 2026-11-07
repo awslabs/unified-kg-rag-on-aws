@@ -94,34 +94,12 @@ DEFAULT_METHODOLOGIES: tuple[Methodology, ...] = (
     Methodology.LIGHTRAG,
 )
 
-# Artifacts no ingestion stage of this version builds: a methodology that
-# requires one cannot be selected yet. None: the summary_tree stage builds
-# raptor's tree.
-UNBUILT_ARTIFACTS: frozenset[IndexArtifact] = frozenset()
-
-
-def available_methodologies() -> tuple[Methodology, ...]:
-    """The methodologies this version can build, in declaration order."""
-    return tuple(
-        m
-        for m in Methodology
-        if not METHODOLOGY_PROFILES[m].required & UNBUILT_ARTIFACTS
-    )
-
 
 def artifacts_of(methodologies: Iterable[Methodology]) -> frozenset[IndexArtifact]:
     """Every artifact (required or optional) the methodologies read."""
     return frozenset().union(
         *(METHODOLOGY_PROFILES[m].artifacts for m in methodologies)
     )
-
-
-def required_artifacts_of(
-    methodologies: Iterable[Methodology],
-) -> frozenset[IndexArtifact]:
-    """Every artifact the methodologies require: what a namespace holding
-    them holds at least."""
-    return frozenset().union(*(METHODOLOGY_PROFILES[m].required for m in methodologies))
 
 
 def methodologies_holding(

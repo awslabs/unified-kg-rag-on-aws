@@ -33,12 +33,10 @@ from .evaluation import EvaluationMetricType, EvaluatorType
 from .methodology import (
     DEFAULT_METHODOLOGIES,
     METHODOLOGY_PROFILES,
-    UNBUILT_ARTIFACTS,
     IndexArtifact,
     Methodology,
     artifact_switches,
     artifacts_of,
-    available_methodologies,
     buildable,
     switched_off_artifacts,
 )
@@ -3296,12 +3294,6 @@ class SummaryTreeConfig(BaseModel):
         description="PCA dimensions the vectors are reduced to before "
         "clustering (RAPTOR's reduction_dimension; PCA replaces its UMAP).",
     )
-    bic_grid: Literal["bounded", "upstream"] = Field(
-        default="bounded",
-        description="gmm only: the cluster counts BIC compares. bounded: at "
-        "most 8 values around n / target_children; upstream: 1 to 49, as "
-        "RAPTOR's code (slow on large levels).",
-    )
     max_levels: int = Field(
         default=5,
         ge=1,
@@ -3562,27 +3554,13 @@ class IndexingConfig(BaseModel):
         if not isinstance(value, list | tuple):
             return value
         known = {m.value: m for m in Methodology}
-        available = available_methodologies()
-        names = ", ".join(m.value for m in available)
+        names = ", ".join(known)
         selected: list[Methodology] = []
         for item in value:
             name = item.value if isinstance(item, Methodology) else item
             methodology = known.get(str(name).strip().lower())
             if methodology is None:
                 raise ValueError(f"unknown methodology {name!r}; valid: {names}")
-            if methodology not in available:
-                raise ValueError(
-                    f"methodology {methodology.value!r} is not available in this "
-                    "version (no ingestion stage builds its "
-                    + ", ".join(
-                        sorted(
-                            a.value
-                            for a in METHODOLOGY_PROFILES[methodology].required
-                            & UNBUILT_ARTIFACTS
-                        )
-                    )
-                    + f"); valid: {names}"
-                )
             if methodology not in selected:
                 selected.append(methodology)
         return selected

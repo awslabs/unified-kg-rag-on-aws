@@ -594,7 +594,6 @@ RAPTOR's summary tree over the stored text units, which the tree strategy search
 | `target_children` | integer (≥ 2, ≤ 50) | `6` | Children per summary node aimed at (kmeans' k, and the centre of gmm's bounded BIC grid). RAPTOR's trees average 6.7. |
 | `soft_threshold` | number (> 0.0, < 1.0) | `0.1` | gmm only: a node joins every cluster whose posterior exceeds this (RAPTOR's threshold), its likeliest one when none does. |
 | `reduction_dims` | integer (≥ 2, ≤ 100) | `10` | PCA dimensions the vectors are reduced to before clustering (RAPTOR's reduction_dimension; PCA replaces its UMAP). |
-| `bic_grid` | `"bounded"` \| `"upstream"` | `"bounded"` | gmm only: the cluster counts BIC compares. bounded: at most 8 values around n / target_children; upstream: 1 to 49, as RAPTOR's code (slow on large levels). |
 | `max_levels` | integer (≥ 1, ≤ 10) | `5` | Summary levels above the text units at most (RAPTOR's num_layers). |
 | `min_nodes_to_cluster` | integer (≥ 2) | `11` | A level of at most this many nodes is not clustered again: its nodes are the roots (RAPTOR's reduction_dimension + 1). |
 | `min_level_shrink` | number (≥ 0.0, < 1.0) | `0.2` | Stop when the next level would hold more than (1 - this) of the current one's nodes: no structure is left to summarize. 0 never stops for it (RAPTOR's behaviour). |
