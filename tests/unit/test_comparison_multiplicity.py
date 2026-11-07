@@ -5,7 +5,7 @@ and the gates that read them.
 
 A comparison reads many deltas, and each unadjusted 95% interval excludes 0
 on noise in 5% of runs, so over ten metrics a clean change looks
-"supported" somewhere about 40% of the time. The null simulations below
+"supported" somewhere in 30-40% of runs. The null simulations below
 check that the p-value holds its level and that Holm holds the family-wise
 rate, on the comparison's own code path. Deterministic (seeded), LLM-free.
 """

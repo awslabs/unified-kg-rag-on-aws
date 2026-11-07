@@ -3199,7 +3199,7 @@ choices:
   primary metric (`evaluation.primary_metric`, default `answer_contains`)
   over the compared strategies only, every other metric, and the cost
   measures, with Bonferroni-level intervals; ten unadjusted metrics would
-  show a "supported" difference on noise in about 40% of A/A runs. Gates
+  show a "supported" difference on noise in 30-40% of A/A runs. Gates
   can read the adjusted statistics. The pairwise judge reads the first
   repeat by default (`evaluation.pairwise_repeats: all` judges every
   repeat, clustered by query: the repeats of a query are averaged first and

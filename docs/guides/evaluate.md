@@ -208,7 +208,7 @@ How to read it:
   many deltas read, and the tables print it as `Holm p`; read `ci_low` /
   `ci_high` (unadjusted) or `adjusted_ci_low` / `adjusted_ci_high`
   (simultaneous over the family) for its size. Ten metrics read unadjusted
-  show a difference on noise in about 40% of comparisons of one
+  show a difference on noise in 30-40% of comparisons of one
   configuration with itself. On a paired binary metric only the queries
   where the two strategies disagree carry information, so power depends on
   how often they do: in a simulation of this interval, a 10-point difference

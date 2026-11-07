@@ -502,8 +502,8 @@ From a `main` checkout (formats and keys no release had):
   `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in
   advance (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared
   strategies only, every other metric, and the cost measures, each delta with `adjusted_p_value` and a simultaneous
-  `adjusted_ci_low`/`adjusted_ci_high`. Ten unadjusted metrics showed a difference on noise in about 40% of A/A
-  comparisons; on simulated A/A comparisons the adjusted family's rate stays near 5%. `--fail-if` reads the four new
+  `adjusted_ci_low`/`adjusted_ci_high`. On simulated A/A comparisons ten unadjusted metrics showed a difference on noise
+  in 30-40% of them, the Holm-adjusted family in about 5% or fewer. `--fail-if` reads the four new
   statistics, and the tables print `Holm p` (#PR).
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win

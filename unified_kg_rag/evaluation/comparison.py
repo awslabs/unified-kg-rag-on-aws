@@ -1090,7 +1090,7 @@ def adjust_for_multiplicity(
 
     A comparison reads many deltas, and each 95% interval excludes 0 on
     noise alone in 5% of runs: over ten metrics a clean change shows a
-    "supported" difference in about 40% of runs. So the deltas fall into
+    "supported" difference in 30-40% of runs. So the deltas fall into
     families, each adjusted over its tests (every compared strategy but
     ``exclude``, the closed-book arms, times its measures):
 
