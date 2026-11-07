@@ -6356,6 +6356,19 @@ class EvaluationConfig(BaseModel):
             "else no primary metric."
         ),
     )
+    resamples: int = Field(
+        default=2000,
+        ge=100,
+        description=(
+            "Resamples of a run-eval comparison's paired bootstrap intervals "
+            "and Monte Carlo sign-flip p-values (comparison bootstrap."
+            "resamples). The Holm-adjusted families read at least 20 x tests "
+            "/ alpha of them (multiplicity.families.<f>.resamples: 42,000 for "
+            "105 tests at 0.05), so a large family is not held above alpha by "
+            "the p-value's floor 1 / (1 + resamples); raise it for more "
+            "stable unadjusted intervals, at a cost linear in it."
+        ),
+    )
     prices: dict[str, ModelPrice] = Field(
         default_factory=dict,
         description=(

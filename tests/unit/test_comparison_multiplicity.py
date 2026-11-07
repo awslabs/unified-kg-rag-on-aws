@@ -28,6 +28,7 @@ from unified_kg_rag.evaluation.comparison import (
     DEFAULT_PRIMARY_METRIC,
     adjust_for_multiplicity,
     bootstrap_ci,
+    family_resamples,
     holm_adjusted,
     paired_comparison,
     sign_flip_p_value,
@@ -229,9 +230,11 @@ class TestFamilies:
             # Wider than the unadjusted interval, from the same per-query deltas.
             assert delta["adjusted_ci_low"] <= delta["ci_low"]
             assert delta["adjusted_ci_high"] >= delta["ci_high"]
+            # Read from the family's resamples: 20 x 2 tests / 0.05.
+            assert families["primary"]["resamples"] == 800
             low, high = bootstrap_ci(
                 list(delta["per_query"].values()),
-                resamples=500,
+                resamples=800,
                 confidence=0.975,
                 seed=0,
             )
@@ -276,6 +279,74 @@ class TestFamilies:
         ]
         assert latency["family"] == "cost"
         assert comparison["multiplicity"]["families"]["cost"]["tests"] == 1
+
+
+class TestFamilyResamples:
+    """A Monte Carlo sign-flip p-value is never below 1 / (1 + resamples), and
+    Holm multiplies the smallest by the family's size: with 2,000 resamples a
+    family of 100 or more tests could not reject at 0.05 however large the
+    difference. The family reads enough resamples for its size instead."""
+
+    def test_resamples_scale_with_the_family(self) -> None:
+        assert family_resamples(2000, 1, 0.05) == 2000
+        assert family_resamples(2000, 105, 0.05) == 42000
+        assert family_resamples(50_000, 105, 0.05) == 50_000
+
+    def test_a_large_family_still_rejects_a_large_difference(self) -> None:
+        # 15 compared strategies x 7 secondary metrics = 105 tests; every
+        # strategy recalls every query the baseline missed.
+        rng = np.random.default_rng(8)
+        base = (rng.random((40, len(_METRICS))) < 0.3).astype(float)
+        runs = {"s0": [_run(base, "s0")]}
+        for i in range(1, 16):
+            better = base.copy()
+            better[:, 4] = 1.0
+            runs[f"s{i}"] = [_run(better, f"s{i}")]
+        comparison = adjust_for_multiplicity(paired_comparison(runs, resamples=2000))
+        families = comparison["multiplicity"]["families"]
+        assert families["secondary"]["tests"] >= 100
+        assert families["secondary"]["resamples"] >= 20 * 100 / ALPHA
+        recall = comparison["deltas_vs_baseline"]["s1"]["retrieval/recall_at_k"]
+        assert recall["mean_delta"] > 0.5
+        # 1 / 2001 x 105 tests held it at 0.0525, above alpha.
+        assert recall["p_value"] < 1 / 2001
+        assert recall["p_value_resamples"] == families["secondary"]["resamples"]
+        assert recall["adjusted_p_value"] < 0.01
+        assert recall["adjusted_ci_low"] > 0
+
+    @pytest.mark.slow
+    @pytest.mark.timeout(600)
+    def test_a_family_holds_its_level_with_scaled_resamples(self) -> None:
+        # A/A comparisons of 6 strategies (35 secondary tests): an adjusted
+        # p-value below alpha, or a simultaneous interval excluding 0, in
+        # about alpha of the trials (the percentile interval holds its level
+        # from about 100 queries; on 30 it excluded 0 in 15%).
+        rng = np.random.default_rng(9)
+        trials, hits, excluded = 8, 0, 0
+        for _ in range(trials):
+            base = (rng.random((100, len(_METRICS))) < 0.4).astype(float)
+            runs = {
+                f"s{i}": [
+                    _run(
+                        np.where(rng.random(base.shape) < 0.2, 1 - base, base),
+                        f"s{i}",
+                    )
+                ]
+                for i in range(6)
+            }
+            comparison = adjust_for_multiplicity(paired_comparison(runs, resamples=200))
+            secondary = [
+                d
+                for deltas in comparison["deltas_vs_baseline"].values()
+                for d in deltas.values()
+                if d.get("family") == "secondary"
+            ]
+            hits += min(d["adjusted_p_value"] for d in secondary) < ALPHA
+            excluded += any(
+                d["adjusted_ci_low"] > 0 or d["adjusted_ci_high"] < 0 for d in secondary
+            )
+        assert hits <= 2
+        assert excluded <= 2
 
 
 class TestGatesAndReport:

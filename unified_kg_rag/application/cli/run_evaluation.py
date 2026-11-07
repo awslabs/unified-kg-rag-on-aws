@@ -1668,6 +1668,7 @@ class EvaluationRunner:
                 categories=measured.categories,
                 prices=prices,
                 unmetered_rerank=unmetered,
+                resamples=self.config.evaluation.resamples,
             )
             rows = [
                 row
@@ -1684,6 +1685,7 @@ class EvaluationRunner:
                 categories=measured.categories,
                 prices=prices,
                 unmetered_rerank=unmetered,
+                resamples=self.config.evaluation.resamples,
             )
             rows = per_query_rows(runs, measured.categories, prices)
             pairs = dict.fromkeys(names[1:], names[0])
