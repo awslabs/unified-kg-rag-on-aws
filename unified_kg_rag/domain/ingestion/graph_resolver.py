@@ -327,6 +327,7 @@ class EntityResolver(BaseResolver):
                 self.max_workers,
                 initializer=_init_worker_fuzzy_matcher,
                 initargs=(fuzzy_matcher,),
+                preload=(__name__,),
             )
             if self.use_process_pool
             else ContextThreadPoolExecutor(

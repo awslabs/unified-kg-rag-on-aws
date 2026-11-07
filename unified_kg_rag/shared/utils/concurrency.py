@@ -120,11 +120,17 @@ async def settle(tasks: Sequence[asyncio.Future[Any]], within: float | None) -> 
     await discard(tasks)
 
 
+# The modules the forkserver imports when it starts (process_pool's
+# ``preload``), so each worker it forks has them already.
+_FORKSERVER_PRELOAD: list[str] = []
+
+
 def process_pool(
     max_workers: int | None,
     *,
     initializer: Callable[..., object] | None = None,
     initargs: tuple[Any, ...] = (),
+    preload: Sequence[str] = (),
 ) -> ProcessPoolExecutor:
     """A ``ProcessPoolExecutor`` whose workers start from the ``forkserver``
     (``spawn`` where the platform has none, as on Windows), never by
@@ -141,15 +147,26 @@ def process_pool(
     lambdas or closures). A worker imports the main module as
     ``__mp_main__``: a script that runs ingestion must keep its entry
     behind ``if __name__ == "__main__":`` (the console scripts do).
+
+    ``preload`` names the modules the tasks live in: the forkserver imports
+    them once, when it starts (the first pool of the process), and every
+    worker forked from it has them, so a pool does not pay their import per
+    worker (seconds for the ingestion modules).
     """
     method = (
         "forkserver"
         if "forkserver" in multiprocessing.get_all_start_methods()
         else "spawn"
     )
+    context = multiprocessing.get_context(method)
+    if method == "forkserver" and preload:
+        # Read when the server starts; a pool after that finds its modules
+        # there if an earlier one named them, else imports them per worker.
+        _FORKSERVER_PRELOAD.extend(m for m in preload if m not in _FORKSERVER_PRELOAD)
+        context.set_forkserver_preload(list(_FORKSERVER_PRELOAD))
     return ProcessPoolExecutor(
         max_workers=max_workers,
-        mp_context=multiprocessing.get_context(method),
+        mp_context=context,
         initializer=initializer,
         initargs=initargs,
     )

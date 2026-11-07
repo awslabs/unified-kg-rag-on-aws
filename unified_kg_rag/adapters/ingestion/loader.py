@@ -225,7 +225,9 @@ class DirectoryLoader:
             n_grams=DEDUP_N_GRAMS,
         )
 
-        with shut_down_after(process_pool(self.max_workers)) as executor:
+        with shut_down_after(
+            process_pool(self.max_workers, preload=(__name__,))
+        ) as executor:
             tasks = {
                 executor.submit(compute_func, (i, doc.page_content)): i
                 for i, doc in enumerate(documents)
