@@ -37,7 +37,26 @@ measured most of the defaults below:
 - **Repeats and judges.** Every arm answered twice and each query was
   averaged over the repeats before pairing. Pairwise verdicts
   (comprehensiveness, diversity, empowerment, directness) count only when
-  both answer orders agree, judged by Opus 5.5, Sonnet 5.5 and GPT-5.5.
+  both answer orders agree, judged by Opus 5.5, Sonnet 5.5 and GPT-5.5;
+  the pairwise judge read each arm's first repeat only. The repeats and the
+  arms of a comparison reused one query extraction per question
+  (`search.query_extraction_cache_size`), so they differ in the answer call
+  and what follows the extraction, and the spread between repeats
+  understates the run-to-run noise.
+- **Answer scoring.** EM and token F1 scored a short answer span the fast
+  model extracted from each answer (`evaluation.answer_span: extracted`)
+  with SQuAD's official normalization
+  (`evaluation.answer_normalization: official_squad`), not the package
+  defaults (`first_line`, `default`), so the numbers sit closer to the
+  papers'. `answer_contains` always reads the whole answer.
+- **Latency.** The arms of a comparison ran one after the other, all the
+  repeats of one arm before the next, so a latency difference between arms
+  also measures what changed on the host and the endpoints in between.
+  Three runs of one configuration on one index differed by 0.5 to 2.3 s a
+  query on average, every difference "significant" by the paired interval.
+  So a latency difference between arms below about 2.5 s is not evidence,
+  and a larger one is an estimate; only the PPR ranking's retrieval time
+  ([Local PPR ranking](#local-ppr-ranking)) was paired one query at a time.
 - **Cost.** Each run's library-metered tokens times the list prices. The
   meter of that version counted prompt-cache reads and writes as input
   tokens, so every cost below is an upper bound when the cache hit.
@@ -71,13 +90,13 @@ ships no price table, because one would go stale.
 | `search.global_search.evidence_tokens` | 4000 | -41% cost per global query against no cap, no consistent quality difference, sources kept ([Global evidence cap](#global-evidence-cap)) |
 | `models.roles.evaluation` | Opus 5.5 on Bedrock | Against a GPT-5.5 judge, a Sonnet 5.5 judge shifted directness by -0.27 [-0.38, -0.16] when it judged its own answers ([The evaluation judge](#the-evaluation-judge)) |
 | `processing.gleaning.max_rounds` | 3 | Within one ingestion, round 1 adds +6.0 points of bridge relationships and rounds 2-3 +2.0; decomposition answers found as graph entities +1.3 points [+0.4, +2.3] over extraction alone, +0.4 [0.0, +1.0] from rounds 2-3. Gleaning is 47% of the ingestion cost. Answers with round 1 alone against 3 rounds were mixed: `local` `answer_contains` -3.0 [-6.5, 0.0], `mix` EM +5.0 [+1.0, +9.5] ([Gleaning rounds](#gleaning-rounds)) |
-| `search.lightrag_search.kg_chunk_pick_method` | `weight` | `vector` n.s. on `mix` and `hybrid`, +1.5 s latency ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
+| `search.lightrag_search.kg_chunk_pick_method` | `weight` | `vector` n.s. on `mix` and `hybrid`; its +1.5 s latency is within the run-to-run variation ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.fusion.diversity_lambda` | 0.5 | 0.7 and 1.0 n.s. on `mix` ([LightRAG chunk picking and MMR diversity](#lightrag-chunk-picking-and-mmr-diversity)) |
 | `search.abstention.mode` | `off` | `mark` against `off` on 100 answerable and 100 unanswerable multi-hop questions: EM -12 points [-20, -5] on `local`, -10 [-18, -3] on `mix`, for decline recall +8 [+3, +13] over the declines the model already writes in prose. Machine-readable declines, so opt-in ([Declines and abstention](#declines-and-abstention)) |
 | `search.abstention.on_insufficient` | `hedge` | `abstain` with `iterative`: decline precision -9.0 points, token F1 -13.8 [-21.7, -6.0]; the controller flagged 45% of the answerable questions insufficient ([Declines and abstention](#declines-and-abstention)) |
 | `search.local_search.report_selection` | `similarity` | `membership` (MS GraphRAG local's membership, over leaf communities rather than upstream's `community_level` cut) scored EM -4.0 and token F1 -4.1 points, both significant ([Local report selection](#local-report-selection)) |
-| `search.local_search.text_unit_ranking` | `ppr` | Against `support` on 200 MuSiQue questions, two repeats: `answer_contains` +3.5 points [+0.5, +6.75], recall@5 +6.1 [+2.9, +9.4], EM and token F1 n.s.; +0.10 s retrieval a query ([Local PPR ranking](#local-ppr-ranking)) |
-| `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant, +3.08 s per answer ([Retrieval switches](#retrieval-switches)) |
+| `search.local_search.text_unit_ranking` | `ppr` | Against `support` on 200 MuSiQue questions, two repeats: recall@5 +6.1 [+2.9, +9.4] and supporting paragraphs in the context +12 to +13 points; answers no worse (`answer_contains` +3.5 [+0.5, +6.75], borderline after a multiplicity correction; EM and token F1 n.s.); +0.10 s retrieval a query ([Local PPR ranking](#local-ppr-ranking)) |
+| `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant; +3.08 s per answer, run separately (see *Latency* in [How the measurements were run](#how-the-measurements-were-run)) ([Retrieval switches](#retrieval-switches)) |
 | `search.auto_routable_strategies` | `local`, `mix`, `global`, `iterative` | `iterative` over `mix` against `mix` on multi-hop questions: `answer_contains` +12.5 points [+7.5, +18.0], token F1 +5.2 [+0.2, +10.1], last hop in the context +21.5; p95 11.1 s to 27.4 s, +$0.002 a query. `decompose` was no better than the loop, so it stays off ([Iterative follow-up rounds](#iterative-follow-up-rounds)) |
 | `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions: answers n.s. (`answer_contains` +4.0 [-1.0, +10.0]), recall@5 -8.7 [-13.6, -3.8], +5.5 s and +$0.0062 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions ([RAPTOR summary tree](#raptor-summary-tree)) |
 | `aws.bedrock.ingestion_effort` | `null` (`default_effort`, `high`) | `low` on a 109-document slice: ingestion cost -19%, answers n.s. on 30 questions ([Ingestion effort](#ingestion-effort)) |
@@ -130,7 +149,10 @@ reads beside its ranked key points. On the 50 sensemaking questions:
 | `4000` (default) | $0.0597 (-41%) | No criterion consistently different. Position consistency 0.43-0.57: the judges could not tell the answers apart. Only Opus 5.5's empowerment, 0.41 [0.33, 0.48], left 0.5, and Sonnet 5.5 ([0.34, 0.50]) and GPT-5.5 ([0.37, 0.55]) did not replicate it | kept |
 | `0` (key points only) | $0.0514 (-49%) | All criteria n.s. (position consistency 0.44-0.64) | none |
 
-The cap is a cost change, not a quality change: 4000 keeps the sources the
+No quality difference was detected, but the run could only see a large
+one: on 50 questions a win-rate interval spans about 0.08 either side of
+its estimate, so a smaller effect would go unseen, and the questions were written from the level-0 report
+summaries, the text the cap truncates. 4000 keeps the sources the
 `retrieval` evaluator and the user read.
 
 ## The evaluation judge
@@ -163,14 +185,19 @@ index (3 rounds) separates what extraction and each gleaning round added:
 - **Graph recall.** The 522 decomposition answers of the 200 questions
   (bridge and final answers) found as graph entities, by exact entity name:
   83.5% after extraction, 84.5%, 84.7% and 84.9% after rounds 1-3. Gleaning
-  adds +1.3 points [+0.4, +2.3], rounds 2-3 +0.4 [0.0, +1.0]; every gain is
+  adds +1.3 points [+0.4, +2.3], rounds 2-3 +0.4 [0.0, +1.0] (these
+  intervals resample the 522 answers as if independent; they come from 200
+  questions, so the intervals are somewhat too narrow); every gain is
   a last-hop answer (68.5% to 72.0%), none a bridge answer. A looser name
   match raises every level by about 4 points and leaves the deltas unchanged.
 - **Relationships.** On the supporting paragraphs, gleaning adds 3,761
   relationships to extraction's 4,922 (+76%) and corrects 19,936. A bridge
   (the entity linking one hop's paragraph to the next) has an edge in the
   next paragraph for 183 of 298 bridges after extraction, 201 after round 1
-  (+6.0 points) and 207 after round 3 (+2.0 from rounds 2-3).
+  (+6.0 points) and 207 after round 3 (+2.0 from rounds 2-3). Like the
+  graph recall above, these counts come from the first index, before its
+  138 units without an extraction were repaired
+  ([Limits of the evidence](#limits-of-the-evidence)).
 - **Ingestion cost.** Gleaning is $173.6 of the $371.64 build (47%);
   rounds 2-3 are about $111 of it, by call count.
 
@@ -219,8 +246,9 @@ questions from each, one repeat:
   run.
 - **Answers.** n.s. on `local` and `mix` (30 questions: `answer_contains`
   +3.3 [-6.7, +13.3] and 0.0 [-10.0, +10.0], `low` against `high`).
-- **Queries.** Over the smaller graph: -$0.003 and -$0.004 a query, -2.7 s
-  and -1.6 s (`local`, `mix`), all significant.
+- **Queries.** Over the smaller graph: -$0.003 and -$0.004 a query, both
+  significant; -2.7 s and -1.6 s (`local`, `mix`), from arms run one after
+  the other (see *Latency* in [How the measurements were run](#how-the-measurements-were-run)).
 
 So `low` is a cost lever of about a fifth of the ingestion. Thirty
 questions cannot show a small quality loss, so the default is unchanged
@@ -232,7 +260,7 @@ On the 200 MuSiQue questions:
 
 | Change | `mix` | `hybrid` | Latency and cost |
 |---|---|---|---|
-| `kg_chunk_pick_method: vector` (upstream LightRAG's default) instead of `weight` | `answer_contains` -1.5 points [-4.5, +1.25], EM and F1 n.s. | `answer_contains` -1.25 [-4.5, +2.0], MRR +1.5 [-0.01, +3.2], n.s. | +1.5 s per query (significant), cost unchanged |
+| `kg_chunk_pick_method: vector` (upstream LightRAG's default) instead of `weight` | `answer_contains` -1.5 points [-4.5, +1.25], EM and F1 n.s. | `answer_contains` -1.25 [-4.5, +2.0], MRR +1.5 [-0.01, +3.2], n.s. | +1.5 s per query, within the run-to-run variation (see *Latency* in [How the measurements were run](#how-the-measurements-were-run)); cost unchanged |
 | `diversity_lambda: 0.7` instead of 0.5 | n.s. on every metric | — | +0.57 s |
 | `diversity_lambda: 1.0` instead of 0.5 | `answer_contains` -2.25 [-5.25, +0.5] n.s.; MRR +0.9 [+0.05, +2.15], significant but small | — | -$0.0009 per query |
 
@@ -245,7 +273,9 @@ A later run (2026-11-05) on the same index, models and 200 MuSiQue
 questions, two repeats each, compared five retrieval switches against the
 defaults. "Supporting paragraphs" is the share of each question's MuSiQue
 supporting paragraphs among the text chunks of the answer context, and
-latencies are the answer call's alone.
+latencies are the answer call's alone. Each arm ran on its own, so a
+latency below about 2.5 s is within the run-to-run variation (see
+*Latency* in [How the measurements were run](#how-the-measurements-were-run)).
 
 | Change | Answers | Retrieval | Latency and cost |
 |---|---|---|---|
@@ -256,8 +286,8 @@ latencies are the answer call's alone.
 | `search.token_manager.type_budgets.relationship` 0.27 instead of 0.13 | Not measurable: the shares never bound on MuSiQue, so both arms read the same context | — | — |
 
 None was better on the answers, so every default stayed: the frequency cut
-for its retrieval and latency, the others for their latency or re-embedding
-cost. The context shares need a corpus whose contexts fill their budget to
+for its retrieval, the others because they gained nothing on the answers
+(and the re-embedding would cost a pass over every relationship). The context shares need a corpus whose contexts fill their budget to
 be measured.
 
 ## Local report selection
@@ -307,9 +337,15 @@ extractions:
 | Latency | Retrieval +0.10 s [+0.05, +0.18] a query, paired one query at a time on the embedded stores (rerank off); the answer's latency n.s. |
 | Cost | No model call more, one query embedding more. The runs' -$0.0023 a query is not the ranking's: the `ppr` arm read the query extractions the `support` arm had saved, one model call a query fewer |
 
-With a significant `answer_contains` gain over two repeats and no answer
-metric significantly worse, `ppr` became the default; `support` keeps the
-earlier order:
+`ppr` became the default for its retrieval gain (recall@5 +6.1, supporting
+paragraphs in the context +12 to +13 points in each run), with answers no worse.
+The answer gain is weak evidence on its own: the `answer_contains` interval
+over the two repeats averaged excludes zero (permutation p = 0.048), but
+neither repeat alone does (p = 0.12 each), the sign test over its 13 wins
+and 7 losses gives p = 0.26, and a Holm correction over the three answer
+metrics leaves it at 0.15. Three runs of the `support` configuration
+differed from each other by up to 2.5 points of `answer_contains`.
+`support` keeps the earlier order:
 
 ```yaml
 search:
@@ -344,7 +380,7 @@ run on the same index:
 | Against | Answers | Retrieval | Latency and cost |
 |---|---|---|---|
 | `local` | `answer_contains` -2.0 [-7.5, +3.5], token F1 -2.1 [-7.0, +3.4], EM -3.5: all n.s. | supporting paragraphs in the context +10.3 [+6.6, +14.1], recall@5 +4.4 [+0.7, +8.2] | p50 10.8 s to 5.1 s; $0.0391 to $0.0164 a query (2.4x cheaper) |
-| `mix` | `answer_contains` -2.0 [-7.5, +3.0], token F1 -2.9 [-7.1, +1.4]: n.s.; 4-hop questions token F1 -15.7 [-28.5, -5.2] | supporting paragraphs +5.9 [+3.2, +8.6] | p50 6.8 s to 5.1 s; $0.0553 to $0.0164 (3.4x cheaper) |
+| `mix` | `answer_contains` -2.0 [-7.5, +3.0], token F1 -2.9 [-7.1, +1.4]: n.s.; 4-hop questions token F1 -15.7 [-28.5, -5.2] (a subgroup, exploratory: not corrected for the subgroups read) | supporting paragraphs +5.9 [+3.2, +8.6] | p50 6.8 s to 5.1 s; $0.0553 to $0.0164 (3.4x cheaper) |
 
 So `ppr` is the cheap, fast option: answers as good within the noise for
 a third to half of the cost and a lower median latency, weaker on the
@@ -353,7 +389,9 @@ refuses it): select it explicitly. A variant closer to HippoRAG 2's
 release (rerank off, passage-seed weight 0) scored EM +5.5 and token F1
 +5.9 against the default `ppr` with `answer_contains` and the supporting
 paragraphs unchanged and MRR -9.2, which reads as answer phrasing rather
-than retrieval; it needs a repeat before any default changes.
+than retrieval. It changed two settings at once, so it cannot say which one
+moved the scores; it needs a repeat, one setting at a time, before any
+default changes.
 
 ## Iterative follow-up rounds
 
@@ -380,7 +418,7 @@ question; the answers were no longer.
 
 So `auto` may route to `iterative` (`search.auto_routable_strategies`),
 whose router entry keeps it to questions that chain facts through an
-entity they do not name, but no default selects it: it adds about 10 s to
+entity they do not name, but no strategy defaults to it: it adds about 10 s to
 the median query. `decompose` stays off, costing more for no gain over
 the loop.
 
