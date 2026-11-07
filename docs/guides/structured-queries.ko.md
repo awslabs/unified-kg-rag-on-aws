@@ -36,7 +36,7 @@ gremlin`), 내장 SQLite 그래프(`backend: local`) 세 그래프 저장소 모
 |---|---|
 | Norland의 구매처에 공급하는 벤더는 몇 곳인가? | `(v: VENDOR) -[SUPPLIES]-> (b: BUYER, seed.country = "Norland")`, 서로 다른 `v`의 수 |
 | 구매처에 가장 많이 공급하는 벤더는? | 같은 패턴, `v`마다 서로 다른 `b`의 수, 많은 순, 상위 1개 |
-| Acme Retail의 공급사는 어떤 제품을 만드는가? | `(x 이름 "Acme Retail") <-[SUPPLIES]- (s: VENDOR) -[MAKES]-> (p: PRODUCT)`, 서로 다른 `p` |
+| Acme Retail의 공급사는 어떤 제품을 만드는가? | `(x named "Acme Retail") <-[SUPPLIES]- (s: VENDOR) -[MAKES]-> (p: PRODUCT)`, 서로 다른 `p` |
 | Acme Retail은 Globex Parts와 어떻게 연결되는가? | 두 이름 사이의 1~3홉 경로, 짧은 순 |
 | Globex Parts는 Acme Retail에 공급하는가? | 패턴이 일치하는지 여부 |
 | 가장 흔한 엔티티 종류는? | `type`별 엔티티 수 |
