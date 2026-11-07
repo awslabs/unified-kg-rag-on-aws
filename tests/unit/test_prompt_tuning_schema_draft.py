@@ -641,9 +641,9 @@ def test_schema_out_writes_the_same_loadable_draft_each_run(
     assert first.read_text(encoding="utf-8").replace(str(first), "<path>") == (
         second.read_text(encoding="utf-8").replace(str(second), "<path>")
     )
-    # The tuned prompts file holds no draft.
+    # The tuned prompts file holds no draft (and the corpus language).
     prompts = yaml.safe_load((tmp_path / "a" / "prompts.yaml").read_text())
-    assert set(prompts) == {"profile", "custom_prompts"}
+    assert set(prompts) == {"profile", "processing", "custom_prompts"}
 
     schema = _load(first)
     assert schema.mode == "align"
@@ -1133,6 +1133,7 @@ def test_output_path_replaces_an_existing_file_only_with_force(
     assert _curated_main(tmp_path, mocker, monkeypatch, "draft.yaml", "--force") == 0
     assert set(yaml.safe_load(existing.read_text(encoding="utf-8"))) == {
         "profile",
+        "processing",
         "custom_prompts",
     }
 

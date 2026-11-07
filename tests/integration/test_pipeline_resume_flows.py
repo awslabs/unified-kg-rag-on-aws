@@ -98,7 +98,9 @@ class _Harness:
 
         monkeypatch.setattr(pipeline_module, "build_providers", build_providers)
         monkeypatch.setattr(cli, "load_cli_config", lambda _args: self.config)
-        monkeypatch.setattr(cli, "setup_logging", lambda config, stream=None: None)
+        from unified_kg_rag.application.cli import conventions
+
+        monkeypatch.setattr(conventions, "setup_logging", lambda *_a, **_k: None)
         monkeypatch.setattr(
             cli.IngestionPipelineRunner,
             "_build_metrics_sink",

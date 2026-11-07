@@ -336,12 +336,17 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             )
         return kept or None
 
+    @property
+    def _engine(self) -> str:
+        """The engine as messages name it (OpenSearch, or the embedded one)."""
+        return engine_name(getattr(self, "_opensearch_client", None))
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         start_time = time.time()
         query_preview = text_digest(query.query)
         logger.info(
             "%s retrieval started - query: %s ('%s')",
-            engine_name(self._opensearch_client),
+            self._engine,
             query_preview,
             query.search_type.value,
         )
@@ -423,7 +428,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
             logger.info(
                 "%s retrieval completed - retrieved: %s results (%.2fs)",
-                engine_name(self._opensearch_client),
+                self._engine,
                 len(final_results),
                 processing_time,
             )
@@ -437,14 +442,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if is_fatal_retrieval_error(e):
                 logger.error(
                     "%s retrieval failed (fatal): %s",
-                    engine_name(self._opensearch_client),
+                    self._engine,
                     e,
                     exc_info=True,
                 )
                 raise
             logger.error(
                 "%s retrieval failed (transient, degrading to empty results): %s",
-                engine_name(self._opensearch_client),
+                self._engine,
                 e,
                 exc_info=True,
             )
@@ -1001,7 +1006,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         stored = f"model '{stored_model}'" if stored_model else "an unrecorded model"
         shown_dimensions = ", ".join(str(d) for d in sorted(stored_dimensions))
         raise ConfigurationError(
-            f"The {engine_name(self._opensearch_client)} index '{index_name}' holds embeddings of {stored} "
+            f"The {self._engine} index '{index_name}' holds embeddings of {stored} "
             f"(dimension {shown_dimensions or 'unknown'}), but queries embed with "
             f"'{model}' (dimension {dimension}), so its vector search would fail "
             "or rank by unrelated vectors. Query with the embedding model and "

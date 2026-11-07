@@ -1801,22 +1801,25 @@ class DataIngestionPipeline:
                 ``models.embedding.dimension``), or the configured model
                 does not support the configured dimension.
         """
-        incremental = (
-            context.incremental_delta is not None and not self.config.indexing.reset
-        )
-        if incremental and not context.documents:
-            return
-        factory = self.providers.embedding_factory
-        expected = resolve_embedding_dimension(factory, self.config)
         try:
+            incremental = (
+                context.incremental_delta is not None and not self.config.indexing.reset
+            )
+            if incremental and not context.documents:
+                return
+            factory = self.providers.embedding_factory
+            expected = resolve_embedding_dimension(factory, self.config)
             model = factory.get_model(
                 model_id=self.config.embedding_model_id,
                 dimensions=expected,
                 model_purpose=ModelPurpose.INGESTION,
             )
             got = len(model.embed_query(EMBEDDING_PROBE_TEXT))
+        except ConfigurationError:
+            raise
         except Exception as e:  # noqa: BLE001 - the stages report the model
-            logger.warning("Probing the embedding model's dimension failed: %s", e)
+            # A model that cannot answer now fails the stage that embeds.
+            logger.debug("Probing the embedding model's dimension failed: %s", e)
             return
         if got != expected:
             raise ConfigurationError(
