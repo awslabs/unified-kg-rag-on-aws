@@ -23,9 +23,7 @@ wraps a base strategy (``search.iterative_search.base``: ``local`` or
    most ``max_rounds`` follow-up rounds; the controller judges the last one
    too.
 
-With ``decompose`` one call writes the question as a chain of steps instead
-(KAG-style), each answered in order from its own follow-up round. The
-answer model answers once, from the final candidates, which the chain packs
+The answer model answers once, from the final candidates, which the chain packs
 into the usual token budget. A follow-up round starts only while the query
 deadline leaves ``search.model_timeout_seconds`` for the answer, and is
 cancelled when it would not.
@@ -35,8 +33,7 @@ stop reason under ``insufficiency_reason``) when the last
 controller verdict said the context does not answer the question and no
 further round could run (the round cap, nothing new to search, or the
 deadline cancelling the follow-up round that verdict started: the returned
-candidates are the ones it judged), or, with ``decompose``, when the last
-step found no answer. It is never set on a degraded run (a failed or
+candidates are the ones it judged). It is never set on a degraded run (a failed or
 unparsable model call), nor when the deadline ends a run before the
 controller judged what it returns, whose verdict is unknown. ``search.abstention.on_insufficient`` acts on it
 (hedge or abstain); this strategy only reports it.
@@ -45,7 +42,6 @@ controller judged what it returns, whose verdict is unknown. ``search.abstention
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -80,11 +76,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
 )
-from unified_kg_rag.domain.prompts import (
-    DecompositionStepPrompt,
-    IterativeControllerPrompt,
-    QueryDecompositionPrompt,
-)
+from unified_kg_rag.domain.prompts import IterativeControllerPrompt
 from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
@@ -101,12 +93,8 @@ logger = get_logger(__name__)
 ROUND_BUCKET = "iterative_round_{}"
 ROUND_TEXT_BUCKET = "iterative_round_{}_text"
 
-# What the controller's and the decomposition's JSON answers hold.
+# What the controller's JSON answer holds.
 _CONTROLLER_KEYS = ("sufficient", "next_queries", "bridge_entities")
-_DECOMPOSITION_KEYS = ("steps",)
-_STEP_KEYS = ("answer",)
-# A decomposition step's reference to an earlier step's answer: #1, #2, ...
-_STEP_REFERENCE = re.compile(r"#(\d+)")
 
 
 def _base_strategy(config: Config) -> SearchStrategy:
@@ -127,7 +115,6 @@ class _Verdict:
 class _Run:
     """What one query's rounds did (``SearchResult.metadata["iterative"]``)."""
 
-    mode: str
     rounds: int = 0
     llm_calls: int = 0
     stop_reason: str | None = None
@@ -140,7 +127,6 @@ class _Run:
     searched: list[str] = field(default_factory=list)
     bridge_keys: set[str] = field(default_factory=set)
     verdicts: list[dict[str, Any]] = field(default_factory=list)
-    steps: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _strings(value: Any) -> list[str]:
@@ -200,20 +186,6 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             parser=StrOutputParser(),
             custom_prompts=config.custom_prompts,
         )
-        self.decomposer: Runnable[Any, Any] = setup_chain(
-            factory=factory,
-            model_id=model_id,
-            prompt_class=QueryDecompositionPrompt,
-            parser=StrOutputParser(),
-            custom_prompts=config.custom_prompts,
-        )
-        self.step_answerer: Runnable[Any, Any] = setup_chain(
-            factory=factory,
-            model_id=model_id,
-            prompt_class=DecompositionStepPrompt,
-            parser=StrOutputParser(),
-            custom_prompts=config.custom_prompts,
-        )
 
     # The filters a query may carry are the base's, on the indexes it reads
     # (the follow-up text search reads the text units, which both bases do).
@@ -232,11 +204,9 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
         start_time = time.time()
-        mode = "decompose" if self.settings.decompose else "controller"
         logger.info(
-            "Iterative search started - base: '%s', mode: '%s', query: %s",
+            "Iterative search started - base: '%s', query: %s",
             self.base_strategy.value,
-            mode,
             text_digest(query.query),
         )
         base_query = query.model_copy(
@@ -247,10 +217,10 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                 }
             }
         )
-        run = _Run(mode=mode, searched=[query.query])
+        run = _Run(searched=[query.query])
         rerank = self._new_rerank_trace()
-        # The rounds' own model calls (the controller, the decomposition and
-        # its steps): the query's usage counts them too, by model.
+        # The rounds' own model calls (the controller): the query's usage
+        # counts them too, by model.
         with usage_scope() as meter:
             with observability.span(
                 "kg_rag.iterative.round", round=0, base=self.base_strategy.value
@@ -259,14 +229,9 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             pool: dict[str, list[RetrievalResult]] = {
                 ROUND_BUCKET.format(0): first.results
             }
-            if self.settings.decompose:
-                results = await self._decompose(
-                    query, base_query, first, pool, rerank, run, config
-                )
-            else:
-                results = await self._control(
-                    query, base_query, first, pool, rerank, run, config
-                )
+            results = await self._control(
+                query, base_query, first, pool, rerank, run, config
+            )
             usage = meter.snapshot()
 
         processing_time = time.time() - start_time
@@ -289,7 +254,6 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             "iterative": {
                 "round_0_rerank": first.metadata.get("rerank"),
                 "base": self.base_strategy.value,
-                "mode": mode,
                 "rounds": run.rounds,
                 "stop_reason": run.stop_reason,
                 "degraded": run.degraded,
@@ -297,7 +261,6 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                 "usage": usage,
                 "searched": run.searched[1:],
                 "verdicts": run.verdicts,
-                "steps": run.steps,
                 "added_results": self._added(first.results, results),
             },
         }
@@ -465,142 +428,6 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                 names.append(name)
         run.searched.extend(fresh)
         return fresh, names
-
-    # ------------------------------------------------------------------ #
-    # Decomposition
-    # ------------------------------------------------------------------ #
-
-    async def _decompose(
-        self,
-        query: SearchQuery,
-        base_query: SearchQuery,
-        first: SearchResult,
-        pool: dict[str, list[RetrievalResult]],
-        rerank: RerankTrace,
-        run: _Run,
-        config: RunnableConfig | None,
-    ) -> list[RetrievalResult]:
-        """Plan the steps, answer each from its own round, fuse every
-        round's candidates once."""
-        budget = self._time_budget()
-        if budget is not None and budget <= 0:
-            run.stop_reason = "deadline"
-            return first.results
-        scope = asyncio.timeout(budget)
-        answers: list[str] = []
-        try:
-            async with scope:
-                steps = await self._plan(query, run, config)
-                for number, step in enumerate(steps, 1):
-                    text, bridges = self._resolve_step(step, answers, steps)
-                    streams = await self._round_search(
-                        query, base_query, number, [text], bridges, config
-                    )
-                    pool.update(streams)
-                    run.rounds = number
-                    run.searched.append(text)
-                    answer = await self._answer_step(
-                        query, text, list(streams.values()), run, config
-                    )
-                    if answer is None:
-                        break
-                    answers.append(answer)
-                    run.steps.append(
-                        {"step": number, "question": text, "answered": bool(answer)}
-                    )
-                else:
-                    if steps:
-                        run.stop_reason = "steps_done"
-                        run.insufficient = not answers[-1]
-        except TimeoutError:
-            if not scope.expired():
-                raise
-            logger.warning(
-                "Iterative search: the query deadline ended the decomposition "
-                "after %s steps; answering from what they found",
-                len(answers),
-            )
-            run.stop_reason = "deadline"
-        if run.rounds == 0:
-            return first.results
-        return await self._fuse(query, first, pool, rerank, run)
-
-    async def _plan(
-        self, query: SearchQuery, run: _Run, config: RunnableConfig | None
-    ) -> list[str]:
-        """The question as at most ``max_rounds + 1`` steps; none when the
-        call failed or its answer holds none (``run.degraded``)."""
-        run.llm_calls += 1
-        try:
-            raw = await self.decomposer.ainvoke(
-                {
-                    "query": query.query,
-                    "max_steps": self.settings.max_rounds + 1,
-                    "target_language": self.query_language(query),
-                },
-                config,
-            )
-        except Exception as e:  # noqa: BLE001 - classified by _degrade
-            self._degrade(run, "decomposition_failed", e)
-            return []
-        steps = _strings(
-            parse_llm_json(str(raw), answer_keys=_DECOMPOSITION_KEYS).get("steps")
-        )
-        if not steps:
-            logger.warning(
-                "Iterative search: the decomposition holds no steps; "
-                "answering from round 0"
-            )
-            run.degraded = run.stop_reason = "decomposition_unparsed"
-        return steps[: self.settings.max_rounds + 1]
-
-    @staticmethod
-    def _resolve_step(
-        step: str, answers: list[str], steps: list[str]
-    ) -> tuple[str, list[str]]:
-        """``step`` with each ``#n`` replaced by step n's answer, and those
-        answers (the step's bridge entities). A reference to a step without
-        an answer reads that step's question instead."""
-        bridges: list[str] = []
-
-        def replace(match: re.Match[str]) -> str:
-            index = int(match.group(1)) - 1
-            if 0 <= index < len(answers) and answers[index]:
-                bridges.append(answers[index])
-                return answers[index]
-            if 0 <= index < len(steps):
-                return f"({steps[index]})"
-            return match.group(0)
-
-        return _STEP_REFERENCE.sub(replace, step), list(dict.fromkeys(bridges))
-
-    async def _answer_step(
-        self,
-        query: SearchQuery,
-        step: str,
-        streams: list[list[RetrievalResult]],
-        run: _Run,
-        config: RunnableConfig | None,
-    ) -> str | None:
-        """The answer the step's candidates give (``""`` when they state
-        none); ``None`` when the call failed (``run.degraded``)."""
-        context = await self._pack(interleave(streams), step, query)
-        run.llm_calls += 1
-        try:
-            raw = await self.step_answerer.ainvoke(
-                {
-                    "query": step,
-                    "global_query": query.query,
-                    "context": context,
-                    "target_language": self.query_language(query),
-                },
-                config,
-            )
-        except Exception as e:  # noqa: BLE001 - classified by _degrade
-            self._degrade(run, "step_failed", e)
-            return None
-        answer = parse_llm_json(str(raw), answer_keys=_STEP_KEYS).get("answer")
-        return str(answer).strip() if isinstance(answer, str | int | float) else ""
 
     # ------------------------------------------------------------------ #
     # Rounds, fusion and packing

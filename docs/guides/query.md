@@ -248,14 +248,13 @@ search:
     max_rounds: 2        # follow-up rounds after the first search
     max_next_queries: 2  # follow-up queries per round
     round_top_k: 5       # passages each follow-up query retrieves
-    decompose: false     # true: split the question into steps instead
 models:
   roles:
     query_controller: fast   # the controller's model (default: the fast tier)
 ```
 
-- **Cost.** At most `max_rounds + 1` controller calls on the fast tier
-  (`max_rounds + 2` with `decompose`), a base search and a rerank per round;
+- **Cost.** At most `max_rounds + 1` controller calls on the fast tier,
+  a base search and a rerank per round;
   the answer is generated once. `metadata["iterative"]` reports the rounds,
   why they stopped (`stop_reason`: `sufficient`, `max_rounds`,
   `no_follow_up`, `deadline`, or a degraded step), each verdict, the

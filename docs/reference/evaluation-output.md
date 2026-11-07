@@ -38,9 +38,9 @@ sufficiency fields:
   insufficient (`iterative` does), `null` when the strategy did not judge it.
 - `insufficiency_reason`: the strategy's reason for that flag (for
   `iterative`, its stop reason); `null` otherwise.
-- `iterative`: the `iterative` strategy's run record (`base`, `mode`,
+- `iterative`: the `iterative` strategy's run record (`base`,
   `rounds`, `stop_reason`, `degraded`, `llm_calls`, `usage`, `searched`,
-  `verdicts`, `steps`, `added_results`, `round_0_rerank`;
+  `verdicts`, `added_results`, `round_0_rerank`;
   [Querying](../guides/query.md#follow-up-rounds-for-multi-hop-questions)); `null` for the
   other strategies.
 

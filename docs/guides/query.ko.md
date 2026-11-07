@@ -222,14 +222,12 @@ search:
     max_rounds: 2        # 첫 검색 뒤의 후속 라운드 수
     max_next_queries: 2  # 라운드마다 후속 질의 수
     round_top_k: 5       # 후속 질의마다 가져오는 구절 수
-    decompose: false     # true면 대신 질문을 단계로 나눔
 models:
   roles:
     query_controller: fast   # 컨트롤러 모델(기본값: fast 등급)
 ```
 
-- **비용.** fast 등급 컨트롤러 호출이 최대 `max_rounds + 1`번(`decompose`이면
-  `max_rounds + 2`번)이고, 라운드마다 기본 검색과 재순위화가 한 번씩 더 듭니다. 답변은 한 번만
+- **비용.** fast 등급 컨트롤러 호출이 최대 `max_rounds + 1`번이고, 라운드마다 기본 검색과 재순위화가 한 번씩 더 듭니다. 답변은 한 번만
   생성합니다. `metadata["iterative"]`에 라운드 수, 멈춘 이유(`stop_reason`: `sufficient`,
   `max_rounds`, `no_follow_up`, `deadline` 또는 대체 동작으로 넘어간(degraded) 단계), 판정마다의 결과, 후속 질의와
   라운드의 모델 사용량이 기록됩니다.

@@ -64,7 +64,7 @@ RRF, 재순위화)를 쓰며, `simple`과 `naive`는 그래프를 읽지 않습�
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `iterative` | 마지막 홉이 질문에 이름이 나오지 않는 엔티티에 관한 다중 홉 질문 | `search.iterative_search.base`(기본 `mix`, 또는 `local`)를 실행한 뒤 fast 모델 컨트롤러(`models.roles.query_controller`)가 묶은 컨텍스트를 읽습니다. 컨텍스트로 답할 수 없으면 컨트롤러가 지목한 연결(bridge) 엔티티로 기본 검색을 다시 시작하고 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(2)번 반복합니다. 라운드마다 찾은 후보를 융합·재순위화하고 답변 모델은 한 번만 답합니다. `decompose: true`이면 대신 질문을 단계로 나눕니다. 질의마다 기본 전략보다 fast 모델 호출이 1-3번 많습니다. `mix` 기반으로 실행하면 다중 홉 질문에서 `mix`보다 유의하게 잘 답했고 p95 지연 시간은 두 배 넘게 늘었으며, `auto`는 다중 홉 질문을 이 전략으로 보내고 요약형(sensemaking)·단일 홉 질문은 다른 전략에 맡겼습니다([근거](./defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 다중 홉 질문을 이 전략으로 보낼 수 있으며, 기본값으로 선택되지는 않습니다([설계](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in), 영문). |
+| `iterative` | 마지막 홉이 질문에 이름이 나오지 않는 엔티티에 관한 다중 홉 질문 | `search.iterative_search.base`(기본 `mix`, 또는 `local`)를 실행한 뒤 fast 모델 컨트롤러(`models.roles.query_controller`)가 묶은 컨텍스트를 읽습니다. 컨텍스트로 답할 수 없으면 컨트롤러가 지목한 연결(bridge) 엔티티로 기본 검색을 다시 시작하고 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(2)번 반복합니다. 라운드마다 찾은 후보를 융합·재순위화하고 답변 모델은 한 번만 답합니다. 질의마다 기본 전략보다 fast 모델 호출이 1-3번 많습니다. `mix` 기반으로 실행하면 다중 홉 질문에서 `mix`보다 유의하게 잘 답했고 p95 지연 시간은 두 배 넘게 늘었으며, `auto`는 다중 홉 질문을 이 전략으로 보내고 요약형(sensemaking)·단일 홉 질문은 다른 전략에 맡겼습니다([근거](./defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 다중 홉 질문을 이 전략으로 보낼 수 있으며, 기본값으로 선택되지는 않습니다([설계](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in), 영문). |
 
 **RAPTOR 요약 트리(선택 사항, `raptor` 방법론):**
 

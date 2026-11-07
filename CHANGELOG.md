@@ -777,16 +777,15 @@ From a `main` checkout (formats and keys no release had):
   bridge entities and follow-up queries that seed up to `max_rounds` (2) more base searches and text-unit searches
   under the same filters; the rounds are fused (buckets `iterative_round_<n>`, `iterative_round_<n>_text`) and
   reranked, and the answer is generated once. A `mix` round that names no new bridge entity runs its text searches
-  alone, and a decomposition step without one keeps the question's keywords, where `mix` reran with no keyword
-  (falling back to the search text, or no entity search past `raw_query_fallback_max_len`) (#598). Over `mix` it
+  alone, where `mix` reran with no keyword (falling back to the search text, or no entity search past `raw_query_fallback_max_len`) (#598). Over `mix` it
   answered multi-hop questions significantly better than `mix`, at more than twice the p95 latency
-  ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)). `decompose: true` splits the
-  question into steps instead (KAG-style). `metadata["context_sufficient"]: false` reports a final insufficient
-  verdict, `metadata["iterative"]` the rounds and their model usage; new `custom_prompts.iterative_controller_*`,
-  `query_decomposition_*` and `decomposition_step_*` (#594). The controller reads the context packed to the
+  ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)); a KAG-style decomposition into
+  steps measured no better than the loop and is not offered (#(PR)). `metadata["context_sufficient"]: false` reports
+  a final insufficient verdict, `metadata["iterative"]` the rounds and their model usage; new
+  `custom_prompts.iterative_controller_*` (#594). The controller reads the context packed to the
   answer's budget (`controller_context_tokens: null`; a smaller cap left it the first passages of long chunks), a
   round follows at most five bridge entities, a deadline that cancels the round an insufficient verdict started
-  reports it (`insufficiency_reason: deadline`), and the follow-up queries, bridge entities and step questions in
+  reports it (`insufficiency_reason: deadline`), and the follow-up queries and bridge entities in
   `metadata["iterative"]` are screened by the output guardrail with `check_output` (#607). See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and

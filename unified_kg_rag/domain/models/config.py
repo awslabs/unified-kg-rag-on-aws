@@ -415,7 +415,7 @@ _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
     ModelRole.QUERY_CONTROLLER: (
         "fast",
         "judges whether iterative search's context answers the question and "
-        "names the follow-up queries, or decomposes it into steps",
+        "names the follow-up queries",
     ),
     ModelRole.EVALUATION: ("default", "judges answers in run-eval"),
     ModelRole.ANSWER_SPAN: (
@@ -4410,8 +4410,6 @@ class IterativeSearchConfig(BaseModel):
     the new candidates with the earlier rounds' (RRF), reranks them against
     the question and the follow-up queries and repacks them under the same
     token budget. The answer model answers once, from the final context.
-    With ``decompose`` a single call writes the question as a chain of steps
-    instead, each answered in order over its own text-unit search.
     """
 
     base: Literal["local", "mix"] = Field(
@@ -4431,20 +4429,7 @@ class IterativeSearchConfig(BaseModel):
             "Follow-up rounds after round 0 at most. The controller judges the "
             "context after every round, the last one included, so a query "
             "makes at most max_rounds + 1 controller calls and max_rounds + 1 "
-            "base searches; the answer model is called once. With decompose, "
-            "the most steps the question is split into is max_rounds + 1."
-        ),
-    )
-    decompose: bool = Field(
-        default=False,
-        description=(
-            "Instead of the controller loop, one models.roles.query_controller "
-            "call writes the question as a chain of single-hop steps (a later "
-            "step refers to an earlier answer as #1, #2, ...), and each step is "
-            "answered in order by one call over its own text-unit search; the "
-            "steps' passages join round 0's candidates. KAG-style "
-            "decomposition, an alternative to the controller loop with the "
-            "same caps: at most max_rounds + 2 fast-model calls."
+            "base searches; the answer model is called once."
         ),
     )
     round_top_k: int = Field(
@@ -4452,8 +4437,7 @@ class IterativeSearchConfig(BaseModel):
         ge=1,
         le=50,
         description=(
-            "Text units each follow-up query (and each decomposition step) "
-            "retrieves by the request's search_type (BM25 + vector by "
+            "Text units each follow-up query retrieves by the request's search_type (BM25 + vector by "
             "default). The base rerun of a follow-up round keeps the query's "
             "top_k."
         ),
@@ -4484,8 +4468,7 @@ class IterativeSearchConfig(BaseModel):
         default=None,
         ge=256,
         description=(
-            "Token budget of the context each controller call (and each "
-            "decomposition step) reads: the round's candidates packed as the "
+            "Token budget of the context each controller call reads: the round's candidates packed as the "
             "answer's context is, cut to this. null (the default) packs them "
             "to the answer's budget (the request's max_tokens, else "
             "search.token_manager.max_context_tokens), so the controller "
@@ -5613,27 +5596,6 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for iterative search's controller",
     )
-    query_decomposition_system: str | None = Field(
-        default=None,
-        description="Custom system prompt for iterative search's decomposition "
-        "of the question into single-hop steps (search.iterative_search."
-        "decompose)",
-    )
-    query_decomposition_human: str | None = Field(
-        default=None,
-        description="Custom human prompt for iterative search's decomposition "
-        "of the question into single-hop steps",
-    )
-    decomposition_step_system: str | None = Field(
-        default=None,
-        description="Custom system prompt for answering one decomposition step "
-        "from its passages",
-    )
-    decomposition_step_human: str | None = Field(
-        default=None,
-        description="Custom human prompt for answering one decomposition step "
-        "from its passages",
-    )
     drift_action_system: str | None = Field(
         default=None,
         description="Custom system prompt for answering a DRIFT follow-up query "
@@ -5753,7 +5715,6 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "corpus_profile": frozenset({"corpus_sample"}),
     "description_summarization": frozenset({"descriptions"}),
     "tree_summary": frozenset({"passages"}),
-    "decomposition_step": frozenset({"query", "context"}),
     "drift_action": frozenset({"query", "context"}),
     "drift_hyde": frozenset({"query"}),
     "drift_primer": frozenset({"query", "community_reports"}),
@@ -5766,7 +5727,6 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "pairwise_comparison": frozenset({"query", "answer1", "answer2"}),
     "pairwise_differential": frozenset({"query", "shared", "unique1", "unique2"}),
     "pairwise_overlap": frozenset({"query", "answer1", "answer2"}),
-    "query_decomposition": frozenset({"query"}),
     "query_rewrite": frozenset({"query", "conversation_history"}),
     "strategy_selection": frozenset({"query", "strategies"}),
 }

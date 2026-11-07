@@ -2007,18 +2007,6 @@ through the strategy registry, so there is no dispatch on the base:
    budget and the answer model answers once (the chain's answer step,
    output guardrail, grounding check and sources, unchanged).
 
-`decompose: true` replaces 2-4 with one KAG-style pass: one call
-(`QueryDecompositionPrompt`) writes at most `max_rounds + 1` single-hop
-steps in MuSiQue's notation (`#1` is step 1's answer); each step, with its
-references replaced by the earlier answers (an unanswered one by its
-question), runs one follow-up round (the step's answers are its bridge
-entities; a step without one, step 1 always, keeps the question's own
-keywords on `mix`, since the step's answer reads only its own round) and is
-answered from those candidates by one call
-(`DecompositionStepPrompt`, an empty answer when they state none). The steps'
-candidates are fused with round 0's once, as in 4. The step answers are not
-passed to the answer model: it reads retrieved evidence only.
-
 **Layers.** The strategy is an adapter (`adapters/search_strategies/`),
 registered with `@register_strategy(SearchStrategy.ITERATIVE,
 wraps=...)`. `StrategySpec.wraps` names, per config, the strategy a wrapper
@@ -2033,17 +2021,15 @@ strategy should be read through `wrapped_strategy()` too. Its
 filter checks delegate to the base (`filtered_index_prefixes`,
 `filtered_retrievers`, `reserved_filter_keys`). The prompts are in
 `domain/prompts/retrieval.py` (overridable as `custom_prompts.
-iterative_controller_*`, `query_decomposition_*`, `decomposition_step_*`),
-the settings in `search.iterative_search`.
+iterative_controller_*`), the settings in `search.iterative_search`.
 
 **Languages.** The chain passes the query's language in
 `SearchQuery.metadata["query_language"]` (`query_processing.query_language`:
 the index language, which is the source language when translation is off
 and the target language when it is on, whatever language the query
-requested); the controller,
-decomposition and step prompts write their queries and bridge names in it,
-names as the context writes them. Nothing in the strategy parses text but
-JSON and `#n`; dedupe uses case folding and `compact_name_key`, which drops
+requested); the controller prompt writes its queries and bridge names in
+it, names as the context writes them. Nothing in the strategy parses text
+but JSON; dedupe uses case folding and `compact_name_key`, which drops
 spaces next to Han, Hangul and Kana. The text searches go through the
 configured analyzers (the embedded engine's bigrams for dense scripts).
 
@@ -2073,9 +2059,9 @@ bounds it.
 
 | Event | Outcome |
 |---|---|
-| Controller or step call raises a fatal error (no model access) | The query fails, as in every strategy |
+| Controller call raises a fatal error (no model access) | The query fails, as in every strategy |
 | Any other failed call (throttled past its retries) | The rounds stop; the answer reads the earlier rounds' candidates; `degraded` names the step and `degraded_error` the error type |
-| Unreadable controller JSON (no `sufficient`), or a plan with no steps | As above, without `degraded_error` (`controller_unparsed`, `decomposition_unparsed`) |
+| Unreadable controller JSON (no `sufficient`) | As above, without `degraded_error` (`controller_unparsed`) |
 | A store request of a round fails | Degrades that sub-search to nothing (`_safe_aretrieve`), as in the base; fatal store errors fail the query |
 | Deadline reached | The round in flight is cancelled (`deadline`); after an insufficient verdict on what is returned, `context_sufficient = False` |
 | Insufficient after the round cap, or nothing new to search | `SearchResult.metadata["context_sufficient"] = False`, `insufficiency_reason` = the stop reason |
@@ -2083,25 +2069,23 @@ bounds it.
 **Contract: `context_sufficient`** (`domain/retrieval/abstention.py`). Set (to `False`, absent otherwise)
 only on a positive verdict: the controller's last verdict was insufficient
 and no further round could run (`max_rounds` reached, no new lead, or the
-deadline cancelling the round that verdict started), or, with `decompose`,
-the last step found no answer. A degraded run, or one whose deadline came
+deadline cancelling the round that verdict started). A degraded run, or one whose deadline came
 before the controller judged what it returns, never sets it, its verdict
 being unknown. The strategy does not abstain;
 `search.abstention.on_insufficient` (§9.2) reads the flag in the answer
 step. `metadata["iterative"]` records the base,
-mode, rounds, `stop_reason`, round 0's own rerank outcome (`rerank` is the
+rounds, `stop_reason`, round 0's own rerank outcome (`rerank` is the
 last fusion's), the searched queries, each verdict (sufficient,
-bridge entities, queries, the number of known facts), the steps, the
+bridge entities, queries, the number of known facts), the
 results added over round 0, and the rounds' own model calls and tokens
 (`usage`, by model, rerank requests included; the query's
-`metadata["usage"]` counts them too). The follow-up queries, bridge
-entities and step questions there are model-written: with
+`metadata["usage"]` counts them too). The follow-up queries and bridge
+entities there are model-written: with
 `check_output` the chain screens them as it screens synthesized results
 (one check over them all; only when it intervenes each on its own,
 masked or left out).
 
-**Cost.** Per query at most `max_rounds + 1` controller calls (3), or
-`max_rounds + 2` decomposition and step calls (4), on the fast tier;
+**Cost.** Per query at most `max_rounds + 1` controller calls (3) on the fast tier;
 `max_rounds` reruns of the base search without rerank, up to
 `max_rounds * max_next_queries` text searches, and one rerank call per
 round. At the 2026-11 list prices ([Defaults and
@@ -2123,11 +2107,11 @@ algorithm; their published settings are compared instead):
 
 | | IRCoT (Trivedi et al., ACL 2023, arXiv 2212.10509) | KAG (Liang et al., arXiv 2409.13731) | `iterative` |
 |---|---|---|---|
-| Loop | Interleaves one chain-of-thought sentence with one retrieval: the first query is the question, each later one the last generated sentence (code: `query_source="question_or_last_generated_sentence"`) | Logical-form planner splits the question into sub-queries with operators (Retrieval, Sort, Math, Deduce, Output) linked by variables; each answered by graph retrieval, falling back to hybrid chunk and subgraph retrieval below a threshold; a Judge decides answerability, SupplyQuery writes a supplementary question (reflection, adopted from ReSP) | Controller loop: a sufficiency verdict, then follow-up queries and bridge entities; `decompose`: natural-language steps with `#n` references, no operators |
+| Loop | Interleaves one chain-of-thought sentence with one retrieval: the first query is the question, each later one the last generated sentence (code: `query_source="question_or_last_generated_sentence"`) | Logical-form planner splits the question into sub-queries with operators (Retrieval, Sort, Math, Deduce, Output) linked by variables; each answered by graph retrieval, falling back to hybrid chunk and subgraph retrieval below a threshold; a Judge decides answerability, SupplyQuery writes a supplementary question (reflection, adopted from ReSP) | Controller loop: a sufficiency verdict, then follow-up queries and bridge entities; no planner (a KAG-style natural-language decomposition was measured no better than the loop, n.s., and removed) |
 | Query per step | Last CoT sentence | Sub-query or supplementary question | Controller-written queries naming the bridge entities, plus the bridge entities as graph seeds |
 | Retrieval per step | BM25 (Elasticsearch), K paragraphs, K tuned over {2, 4, 6, 8} (configs default 6) | Graph, then hybrid | The full base search (BM25 + kNN + graph walk for local; mix's dual-level streams) plus `round_top_k` (5) text units, fused by RRF and reranked |
 | Collection cap | 15 paragraphs (`global_max_num_paras`) | — | The answer's token budget, each section type at round 0's share |
-| Steps cap | 8 in the paper (footnote 4), 10 in the code default (`max_num_sentences`) | Reflection n = 3 rounds (`ref3`; benchmark configs `max_iteration: 3`) | `max_rounds` 2 follow-up rounds (3 retrieval rounds, as `ref3`); `decompose`: 3 steps |
+| Steps cap | 8 in the paper (footnote 4), 10 in the code default (`max_num_sentences`) | Reflection n = 3 rounds (`ref3`; benchmark configs `max_iteration: 3`) | `max_rounds` 2 follow-up rounds (3 retrieval rounds, as `ref3`) |
 | Stop | The sentence says "answer is", or the cap | Judge says answered, or the cap | Controller says sufficient, nothing new to search, the cap, or the deadline |
 | Final answer | A separate reader always (reading the CoT's own answer scored lower: MuSiQue F1 30.8 vs 24.9, Flan-T5-XXL) | Generator over the sub-answers | The answer model once, from retrieved evidence only |
 | Models | Flan-T5 (base to XXL), GPT-3 code-davinci-002 | DeepSeek-V2 (baselines mixed backbones) | Controller on the fast tier (Haiku 5.5), answer on the default tier |
