@@ -70,6 +70,10 @@ _DENSE = re.compile(r"[぀-ヿ㐀-鿿가-힯]")
 _SENTENCE = re.compile(r"(?<=[.!?。！？])\s+|\n+")
 # The marker that opens a numbered context section ("[3] ...").
 _SECTION = re.compile(r"\[([0-9]{1,4})\] ")
+# A numbered line of a report prompt's input ("- [3] A -> B (TYPE): ...").
+_NUMBERED_LINE = re.compile(r"-\s*\[([0-9]+)\]\s*(.+)")
+# The heading of each report in a global map prompt.
+_MAP_REPORT = re.compile(r"--- Report \(id: ([0-9]+)\) ---")
 _STOP = frozenset(
     "a an and are as at be by did do does for from has have how in is it its "
     "of on or the to was were what when where which who whom why with".split()
@@ -168,17 +172,27 @@ def extraction(passage: str) -> str:
 
 
 def community_report(human: str) -> str:
-    """A report naming the community's entities, from their descriptions."""
+    """A report naming the community's entities, from their descriptions:
+    a finding per numbered relationship (up to three), citing it as the
+    report prompt asks (``[Data: Relationships (n)]``)."""
     data = _between(human, "<entity_data>", "</entity_data>") or human
     names = _names_in(data)[:4] or ["Demo corpus"]
-    sentences = _sentences(
-        _between(human, "<relationship_data>", "</relationship_data>")
-    )
+    numbered = [
+        (int(found.group(1)), found.group(2).strip())
+        for line in _between(
+            human, "<relationship_data>", "</relationship_data>"
+        ).splitlines()
+        if (found := _NUMBERED_LINE.match(line.strip()))
+    ]
+    sentences = [text for _, text in numbered]
     summary = " ".join(sentences[:2]) or f"{', '.join(names)} appear together."
+    cited = [
+        (text, f" [Data: Relationships ({number})]") for number, text in numbered[:3]
+    ]
     findings = "".join(
-        f"<finding><summary>{_xml(s[:80])}</summary>"
-        f"<explanation>{_xml(s)}</explanation></finding>"
-        for s in (sentences[:3] or [summary])
+        f"<finding><summary>{_xml(text[:80])}</summary>"
+        f"<explanation>{_xml(text + reference)}</explanation></finding>"
+        for text, reference in (cited or [(summary, "")])
     )
     return (
         f"<community_name>{_xml(' and '.join(names[:2]))} network</community_name>"
@@ -226,6 +240,15 @@ def best_sentences(
             seen.add(sentence)
             unique.append((sentence, marker))
     return unique
+
+
+def _map_report(human: str, sentence: str) -> list[str]:
+    """The id of the report of a global map prompt that holds
+    ``sentence``, as the map prompt asks a point to name it."""
+    reports = _MAP_REPORT.split(human)
+    return [
+        reports[i] for i in range(1, len(reports) - 1, 2) if sentence in reports[i + 1]
+    ][:1]
 
 
 def _cited(sentence: str, marker: int | None) -> str:
@@ -364,9 +387,14 @@ def respond(system: str, human: str) -> tuple[str, bool]:
         )
     if "KEY POINTS from the reports" in system:
         question = _between(human, 'User Question: "', '"')
+        reports = _between(human, "<community_reports>", "</community_reports>")
         points = [
-            {"description": s, "score": 80 - 10 * i, "report_ids": []}
-            for i, (s, _) in enumerate(best_sentences(question, human, 3))
+            {
+                "description": s,
+                "score": 80 - 10 * i,
+                "report_ids": _map_report(reports, s),
+            }
+            for i, (s, _) in enumerate(best_sentences(question, reports, 3))
         ]
         return json.dumps({"points": points}), False
     if "DRIFT search primer" in system:

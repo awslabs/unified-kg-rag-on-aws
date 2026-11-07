@@ -6,7 +6,7 @@ import math
 import threading
 from abc import ABC, abstractmethod
 from collections import Counter
-from collections.abc import Collection, Iterable, Iterator, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, ClassVar
@@ -35,6 +35,11 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
+from unified_kg_rag.domain.ingestion.report_references import (
+    DATASET_ENTITIES,
+    DATASET_RELATIONSHIPS,
+    report_cited_records,
+)
 from unified_kg_rag.domain.models import (
     Config,
     GraphEdge,
@@ -239,17 +244,32 @@ def _listed(value: Any) -> list[str]:
     return [str(value)] if value not in (None, "") else []
 
 
-def evidence_lineage(results: Iterable[RetrievalResult]) -> dict[str, list[str]]:
+def evidence_lineage(
+    results: Iterable[RetrievalResult],
+    reports: Mapping[str, dict[str, list[str]]] | None = None,
+) -> dict[str, list[str]]:
     """The text units and documents ``results`` rest on, each once in
     order: a passage's own unit, a graph item's or report's
     ``text_unit_ids``, and their ``document_ids``. The lineage of a
     synthesized result (global search's key point, DRIFT's intermediate
     answer) is that of the evidence it was written from, so the answer can
-    cite it as MS GraphRAG's reduce cites ``[Data: Reports (...)]``."""
+    cite it as MS GraphRAG's reduce cites ``[Data: Reports (...)]``.
+    ``reports`` (``BaseSearchStrategy._findings_lineages``) gives a
+    community report, by its ``source``, the lineage of the records its
+    findings cite in place of its community's membership."""
     units: dict[str, None] = {}
     documents: dict[str, None] = {}
     for result in results:
         metadata = result.metadata or {}
+        cited = (
+            reports.get(str(result.source))
+            if reports and result.retriever_type == SectionType.COMMUNITY.value
+            else None
+        )
+        if cited is not None:
+            units.update(dict.fromkeys(cited["text_unit_ids"]))
+            documents.update(dict.fromkeys(cited["document_ids"]))
+            continue
         if result.retriever_type == SectionType.TEXT.value:
             own = result.chunk_id or metadata.get("id") or result.source
             units.update(dict.fromkeys(_listed(own)))
@@ -643,6 +663,81 @@ class BaseSearchStrategy(ABC):
             ),
         )
         return [hit for part in parts for hit in part]
+
+    async def _findings_lineages(
+        self, query: SearchQuery, results: Iterable[RetrievalResult]
+    ) -> dict[str, dict[str, list[str]]]:
+        """The lineage of each community report among ``results`` (by its
+        ``source``) from its findings: the text units and documents of the
+        entities and relationships they cite (``report_cited_records``,
+        finding by finding), read by id in one fetch per index. A report has
+        none (and ``evidence_lineage`` keeps its community's membership)
+        when it was stored without findings, they cite nothing, or none of
+        the records they cite is stored any more (a removed record is
+        skipped: its id may outlive it in a kept report). A relationship is
+        read from the relationships index, so only where the namespace holds
+        it."""
+        cited = {
+            str(r.source): records
+            for r in results
+            if r.retriever_type == SectionType.COMMUNITY.value
+            and r.source is not None
+            and (records := report_cited_records(r.metadata or {}))
+        }
+        retriever = self.document_retriever
+        if not cited or retriever is None:
+            return {}
+        opensearch = self.config.indexing.opensearch
+        prefixes = {DATASET_ENTITIES: opensearch.entities_index_prefix}
+        if self._reads_artifact(query, IndexArtifact.RELATIONSHIP_VECTORS):
+            prefixes[DATASET_RELATIONSHIPS] = opensearch.relationships_index_prefix
+        wanted: dict[str, list[str]] = {dataset: [] for dataset in prefixes}
+        for records in cited.values():
+            for dataset, record_id in records:
+                if dataset in wanted:
+                    wanted[dataset].append(record_id)
+        # The caller's filters but an id scope, which names other records:
+        # the citation's read of the units applies them to the documents.
+        filters = {k: v for k, v in (query.filters or {}).items() if k != "id"}
+        datasets = [d for d, ids in wanted.items() if ids]
+        fetched = await gather_or_cancel(
+            self._fetch_by_ids(
+                retriever,
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=len(wanted[dataset]),
+                    retrieval_multiplier=1,
+                    index_prefixes=[prefixes[dataset]],
+                    suffix=query.suffix,
+                    filters={**filters, "id": list(dict.fromkeys(wanted[dataset]))},
+                    source_fields=["id", "text_unit_ids", "document_ids"],
+                ),
+                "Report findings records",
+            )
+            for dataset in datasets
+        )
+        stored: dict[tuple[str, str], dict[str, Any]] = {}
+        for dataset, hits in zip(datasets, fetched, strict=True):
+            for found in hits:
+                metadata = found.metadata or {}
+                found_id = metadata.get("id") or found.source
+                if found_id is not None:
+                    stored[(dataset, str(found_id))] = metadata
+        lineages: dict[str, dict[str, list[str]]] = {}
+        for report, records in cited.items():
+            units: dict[str, None] = {}
+            documents: dict[str, None] = {}
+            for record in records:
+                metadata = stored.get(record) or {}
+                units.update(dict.fromkeys(_listed(metadata.get("text_unit_ids"))))
+                documents.update(dict.fromkeys(_listed(metadata.get("document_ids"))))
+            if units:
+                lineages[report] = {
+                    "text_unit_ids": list(units),
+                    "document_ids": list(documents),
+                }
+        return lineages
 
     async def _ids_passing(
         self,

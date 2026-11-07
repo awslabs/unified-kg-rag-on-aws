@@ -781,10 +781,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             self._pack_points_within_budget, ranked_points
         )
         evidence = self._evidence(packed_points, batches)
+        # Read before the evidence cap: a point names its reports' sources
+        # even when the cap leaves the reports out of the context.
+        lineages = await self._findings_lineages(query, evidence)
         if self.global_search_config.evidence_tokens is not None:
             evidence = await asyncio.to_thread(self._cap_evidence, evidence)
             stats["global_evidence_reports"] = len(evidence)
-        return self._reduce_from_points(packed_points, evidence, batches)
+        return self._reduce_from_points(packed_points, evidence, batches, lineages)
 
     def _map_batches(
         self, reports: list[RetrievalResult]
@@ -1040,6 +1043,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         points: list[_MapPoint],
         results: list[RetrievalResult],
         batches: list[list[RetrievalResult]] | None = None,
+        lineages: dict[str, dict[str, list[str]]] | None = None,
     ) -> list[RetrievalResult]:
         """The ranked ``points``, one context section each, before
         ``results``.
@@ -1048,16 +1052,18 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         from its context, so a separate reduce call would only add a call and
         a second rewrite that can drop or contradict facts. Each point is a
         section of its own with the lineage of the reports it credits
-        (``_credited``: their text units and documents), so the answer
-        cites it ``[n]`` as MS GraphRAG's reduce cites ``[Data: Reports
-        (...)]``, and the citation names the reports' documents even when
-        the evidence budget left the reports themselves out of the context.
+        (``_credited``): the text units and documents of the records their
+        findings cite (``lineages``, ``_findings_lineages``), or of a
+        report's community where its findings cite none. The answer cites
+        it ``[n]`` as MS GraphRAG's reduce cites ``[Data: Reports (...)]``,
+        and the citation names the reports' documents even when the
+        evidence budget left the reports themselves out of the context.
         """
         batches = batches or []
         out: list[RetrievalResult] = []
         for rank, point in enumerate(points, start=1):
             credited = [batches[point.batch][i] for i in self._credited(point, batches)]
-            lineage = evidence_lineage(credited)
+            lineage = evidence_lineage(credited, lineages)
             cites = bool(lineage["text_unit_ids"] or lineage["document_ids"])
             out.append(
                 RetrievalResult(

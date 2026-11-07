@@ -10,9 +10,10 @@ document and pages. A graph section (entity, relationship, claim, report,
 summary) names its ``text_unit_ids`` lineage and, through
 :func:`aresolve_documents`, the documents of up to
 ``search.citations.lineage_units`` of those units: the ones the context
-holds as passages first, the rest read in one batched fetch by id. A unit
-the fetch does not return (excluded by the caller's filters, or removed) is
-never named. See docs/design.md §7.1.
+holds as passages first, the rest read in batched fetches by id, in pages
+until each citation has that many. A unit the fetch does not return
+(excluded by the caller's filters, or removed) is never named. See
+docs/design.md §7.1.
 """
 
 from __future__ import annotations
@@ -208,14 +209,14 @@ def _attach(citation: Citation, units: Iterable[_Unit]) -> None:
     citation.page_end = main.page_end
 
 
-def _lineage(citation: Citation, known: dict[str, _Unit], limit: int) -> list[str]:
-    """Up to ``limit`` document units of a graph citation's lineage, the
-    ones the context holds first, then in lineage order. Seed units are
-    virtual documents: their provenance is the seed graph's."""
+def _lineage(citation: Citation, known: dict[str, _Unit]) -> list[str]:
+    """The document units of a graph citation's lineage, the ones the
+    context holds first, then in lineage order. Seed units are virtual
+    documents: their provenance is the seed graph's."""
     units = [u for u in citation.text_unit_ids if not u.startswith(SEED_UNIT_PREFIX)]
     held = [u for u in units if u in known]
     rest = [u for u in units if u not in known]
-    return list(dict.fromkeys(held + rest))[:limit]
+    return list(dict.fromkeys(held + rest))
 
 
 async def aresolve_documents(
@@ -223,11 +224,18 @@ async def aresolve_documents(
     fetch: Callable[[list[str]], Awaitable[list[dict[str, Any]]]],
     limit: int,
 ) -> None:
-    """Fill in the documents of the graph citations from their lineage.
+    """Fill in the documents of the graph citations from their lineage: up
+    to ``limit`` units of each that the caller may see.
 
     The passages among ``citations`` say what their units hold; every other
     unit wanted is read once with ``fetch`` (unit ids -> the stored units'
-    metadata, as the caller's filters and suffix allow). Raises what
+    metadata, as the caller's filters and suffix allow). A unit the fetch
+    does not return is never named, so the units are read in pages until
+    each citation has ``limit`` of them or its lineage is read: a filter
+    that excluded the first ``limit`` units of a lineage left it naming no
+    document though later ones pass. A page asks of each citation still
+    short the units it lacks, times two to the number of pages before, so
+    a lineage of ``n`` units takes at most about ``log2(n)`` reads. Raises what
     ``fetch`` raises, leaving the citations as they were."""
     known: dict[str, _Unit] = {}
     for citation in citations:
@@ -241,17 +249,37 @@ async def aresolve_documents(
                 page_end=citation.page_end,
             )
     graph = [c for c in citations if c.section_type != _TEXT and c.text_unit_ids]
-    wanted = {c.marker: _lineage(c, known, limit) for c in graph}
-    missing = list(
-        dict.fromkeys(u for ids in wanted.values() for u in ids if u not in known)
-    )
-    if missing:
+    lineages = {c.marker: _lineage(c, known) for c in graph}
+    absent: set[str] = set()
+
+    def chosen(marker: int) -> list[str]:
+        return [u for u in lineages[marker] if u in known][:limit]
+
+    scale = 1
+    while True:
+        wanted: list[str] = []
+        for citation in graph:
+            short = limit - len(chosen(citation.marker))
+            if short <= 0:
+                continue
+            unread = [
+                u
+                for u in lineages[citation.marker]
+                if u not in known and u not in absent
+            ]
+            wanted.extend(unread[: short * scale])
+        missing = list(dict.fromkeys(wanted))
+        if not missing:
+            break
+        asked = set(missing)
         for metadata in await fetch(missing):
             unit = unit_from_metadata(metadata, None)
-            if unit.unit_id in missing:
+            if unit.unit_id in asked:
                 known[unit.unit_id] = unit
+        absent.update(u for u in missing if u not in known)
+        scale *= 2
     for citation in graph:
-        _attach(citation, [known[u] for u in wanted[citation.marker] if u in known])
+        _attach(citation, [known[u] for u in chosen(citation.marker)])
 
 
 def mark_cited(

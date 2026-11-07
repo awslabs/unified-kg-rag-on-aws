@@ -1292,7 +1292,12 @@ unless noted.
 **Limitation:** shared communities and reports keep what a changed or deleted
 document contributed, and a re-keyed entity's old id, until a full rebuild
 (§5.5); descriptions, names, ids, types, filters, ranks and claims are
-derived again on every run.
+derived again on every run. A kept report's findings keep the ids of the
+records they cite: a removal does not strip them, so they may name records
+no longer stored. They are filtered where they are read: global and DRIFT
+search read the cited records by id (§7.1) and a removed one names no text
+unit, and a reported source of the report lists only each finding's ids,
+not its text, which the report's content renders already.
 
 ### 5.2 Full rebuild (`indexing.reset`)
 
@@ -3249,7 +3254,9 @@ releases and returns no citations):
   order the context string renders them (by section-type block, then by
   rank). The marker replaces the `[id]` prefix of passages, claims and
   reports and is added to entity and relationship lines (about 3 tokens; a
-  section is counted with a `[999]` placeholder so the budget holds). A
+  section is counted with a `[999]` placeholder so the budget holds, and
+  sections past the 999th get none: an answer's marker has at most three
+  digits). A
   synthesized section (global search's key points, DRIFT's intermediate
   answers) is model output, not evidence, and never a source; each point or
   answer is a section of its own carrying the lineage of what it was written
@@ -3259,8 +3266,17 @@ releases and returns no citations):
   citation resolves that lineage like a report's: MS GraphRAG's reduce
   cites `[Data: Reports (...)]` and DRIFT's `[Data: Sources (...)]`, and the
   documents are named even when `evidence_tokens` left the reports out. A
-  synthesized section without lineage gets no marker. Its text is screened
-  by the output guardrail as before. A marker has at most three digits,
+  report's lineage there is that of the records its findings cite
+  (`BaseSearchStrategy._findings_lineages`: `report_cited_records`, each
+  finding's relationships before its entities, read by id from the
+  entities and, where the namespace holds it, the relationships index, one
+  fetch each), not its community's membership, which a corpus-spanning
+  community shares with every point drawn from it; a report stored without
+  findings, whose findings cite nothing, or none of whose cited records is
+  stored any more keeps the membership. A synthesized section without
+  lineage gets no marker. Its text is screened by the output guardrail: one
+  check of all of them, then, only when it intervenes, one per section
+  (`search.max_concurrency` at a time), each masked or dropped as before. A marker has at most three digits,
   read and stripped alike, so a bracketed year (`[2020]`) is text; an
   earlier answer reaches the follow-up rewrite without its markers
   (`history_buffer`). The lineage read runs alongside the answer call
@@ -3270,6 +3286,13 @@ releases and returns no citations):
   override), like the abstention text: cite the supporting items after each
   statement with their markers, written as is (ASCII digits in square
   brackets) in every answer language, and only markers the context shows.
+  Global and DRIFT answers get `SYNTHESIS_CITATION_INSTRUCTIONS` after it:
+  cite where possible, and keep a relevant point with no marker to cite
+  (MS GraphRAG's reduce: "Points supported by data should list their data
+  references"). With citations on, a pairwise judge preferred their uncited
+  answers on comprehensiveness (sensemaking-50, x3 experiment 3), read as
+  the rule leaving out what it could not cite; what may be stated stays the
+  grounding rules' to decide.
 - **Resolution** (`application/retrieval/citations.py`). `RAGOutput.citations`
   lists one `Citation` per numbered section: its marker, section type,
   source id, title (file, entity, `A -> B`, report title), seed-graph
@@ -3279,10 +3302,12 @@ releases and returns no citations):
   document and pages. A graph section (entity, relationship, claim, report,
   summary) resolves through its `text_unit_ids` lineage: up to
   `search.citations.lineage_units` units, those in the context first, are
-  read from the text-units index in one batched fetch by id (in-context
+  read from the text-units index in batched fetches by id (in-context
   units need none) under the query's suffix and the caller's filters that
   index declares, so a document the filters exclude, or another tenant's,
-  is never named; units that do not come back are left out. Its documents
+  is never named; units that do not come back are left out, and the next
+  ones of the lineage are read in pages (what a citation still lacks,
+  doubled each page) until it has the limit or its lineage is read. Its documents
   are ordered by how many of those units each holds; the first is the
   citation's `document_id` / `file_name` / `file_path` / `page`. Seed units
   (`sg-...`) are virtual documents: they are not looked up, and a seed-only
@@ -3521,11 +3546,13 @@ come from, resolved in one fetch by id), `text_unit_ids`, `entities` (each
 for a relationship, and for a chunk the entities of the same response that
 cite it), `provenance` (a seed graph's `kind`, `seed_graphs` and `iri`, as
 in `RAGOutput.sources`) and `synthesized` (model-written, such as global
-search's key points: a `kg_search` record only, since the chain cites a
-key point by its reports' lineage but never reports it as a source). A
-`query_result` record (the structured strategy's table, §6.6) keeps its
-table up to 6000 characters, as the console shows it, names its plan
-description and lists the entities it returned. A text record's
+search's key points). The chain never reports a model-written section as a
+source, so `kg_answer` adds one record for each citation no source is (a
+`key_point` or `intermediate_answer`, before the sources), with its
+screened text and the documents its citation resolved under the caller's
+filters. A `query_result` record (the structured strategy's table, §6.6)
+keeps its table up to 6000 characters, as the console shows it, names its
+plan description and lists the entities it returned, by id and name. A text record's
 `document_id` is read where the text unit stores it
 (`attributes.document_id`), as `RAGOutput.sources` reads it. A
 `kg_answer` record also carries its `citation` (the `[n]` marker of §7.1)

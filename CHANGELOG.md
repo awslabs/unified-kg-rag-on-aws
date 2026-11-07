@@ -598,18 +598,24 @@ From a `main` checkout (formats and keys no release had):
 - Document citations (#627): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages, entities,
   relationships, claims, reports, summaries) in every strategy, and global search's key points and DRIFT's
   intermediate answers one section each, with the text units and documents of the reports (or the local context)
-  each was written from, as MS GraphRAG's reduce cites `[Data: Reports (...)]`: a cited point names those documents
-  even when the evidence budget left its reports out of the context, and stays model-written (screened, never a
-  source). The answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those
-  markers, ASCII in every answer language. `RAGOutput.citations` lists one `Citation` per number: whether the answer
+  each was written from, as MS GraphRAG's reduce cites `[Data: Reports (...)]`: a report's are those of the entities
+  and relationships its findings cite, read by id (its community's membership only for a report stored without
+  findings, or whose cited records are all gone), and a cited point names those documents even when the evidence
+  budget left its reports out of the context; it stays model-written (screened, never a source). The answer prompt
+  (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those markers, ASCII in
+  every answer language; global and DRIFT answers are asked to cite where possible and keep a relevant point with no
+  marker (pairwise judges preferred their uncited answers on comprehensiveness). `RAGOutput.citations` lists one `Citation` per number: whether the answer
   cites it, its documents (`CitedDocument`: document id, file name, path relative to the corpus root, pages), text
   units, chunk id, title, seed-graph provenance and IRI; a graph section names the documents of up to
-  `search.citations.lineage_units` (10) of its text units, read in one batched fetch under the query's suffix and
-  filters, so an excluded or another tenant's document is never named, alongside the answer
-  call. A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation
-  (a marker has at most three digits: a bracketed year such as `[2020]` is text); a blocked answer has none. Earlier
+  `search.citations.lineage_units` (10) of its text units that its query's suffix and filters let through, read
+  in batched fetches (an excluded or another tenant's document is never named; the next units fill its place),
+  alongside the answer call. A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation
+  (a marker has at most three digits: a bracketed year such as `[2020]` is text, and sections past the 999th get no
+  number); a blocked answer has none. Earlier
   answers reach the follow-up rewrite without their markers. `CitationMarkerScanner`
-  reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`. The
+  reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`, and a
+  cited key point or intermediate answer is a record of its own (`key_point`, `intermediate_answer`) with its
+  citation's documents. The
   document converter keeps where each PDF page starts and text units store `page_start` / `page_end`, `relative_path`
   and `document_id` in their attributes (ids and texts unchanged). `run-rag` prints the cited sources and its JSON
   output carries every citation. The retrieval evaluator adds `citation_precision` and `citation_recall` against
@@ -629,7 +635,7 @@ From a `main` checkout (formats and keys no release had):
   by default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
   seed-graph provenance; a text record's document id as its text unit stores it; a structured query's
-  `query_result` with its table up to 6000 characters and the entities it returned). `kg_answer` takes the caller's
+  `query_result` with its table up to 6000 characters and the entities it returned, by id and name). `kg_answer` takes the caller's
   conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the server keeps
   none). The namespace is fixed at start (`--suffix`, else `index_value`) unless
   `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the `mcp.max_*` bounds limit what a call
@@ -879,7 +885,8 @@ From a `main` checkout (formats and keys no release had):
   `SeedSourceOptions`, `SeedGraph`, `SeedNode`, `SeedEdge`, `SeedGraphError` (#498, #500, #510, #513).
 - Guardrail: the opt-in contextual grounding check `aws.bedrock.guardrail.contextual_grounding` (CDK `-c
   guardrail_contextual_grounding=true`; `GroundingCheck.blocked`); with `check_output`, model-written search results
-  (DRIFT's intermediate answers, global key points) are screened too; interventions name word lists
+  (DRIFT's intermediate answers, global key points) are screened too, in one check, then one per result
+  (`search.max_concurrency` at a time) only when it intervenes; interventions name word lists
   (`wordPolicy:customWords`, `wordPolicy:PROFANITY`) (#462, #471, #567, #583). See
   [guardrail](docs/guides/guardrail.md).
 - Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284).
@@ -1159,9 +1166,10 @@ From a `main` checkout (formats and keys no release had):
   value" or "actionable intelligence" asks), numbers the entities and relationships it packs and asks each finding
   for `[Data: Entities (...); Relationships (...)]` references, kept as the cited record ids on the finding
   (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618). The report stores
-  them (an unindexed `findings` field): a retrieved report, and its source's metadata, name the records each finding
-  cites (`report_cited_ids`), pointed at the ids an incremental merge kept; a report stored before cites none until
-  it is regenerated.
+  them (an unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its
+  text), name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept; a
+  removal leaves a removed record's id, which a query reading the records skips; a report stored before cites none
+  until it is regenerated.
 - Claims resolve only against the entities of their own text units, and ties of names, types and statuses break
   deterministically, so builds do not depend on document order (#398, #402, #404, #442).
 - `indexing.reset` rebuilds without taking the suffix offline (new indices and an alias swap) and a failed reset

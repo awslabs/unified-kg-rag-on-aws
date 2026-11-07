@@ -245,7 +245,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if evidence
             else []
         )
-        results = await self._answers_items(answers) + fused
+        results = await self._answers_items(answers, query) + fused
 
         processing_time = time.time() - start_time
         logger.info(
@@ -518,14 +518,18 @@ class DriftSearchStrategy(BaseSearchStrategy):
     # Reduce
     # ------------------------------------------------------------------ #
 
-    async def _answers_items(self, answers: list[_Answer]) -> list[RetrievalResult]:
+    async def _answers_items(
+        self, answers: list[_Answer], query: SearchQuery
+    ) -> list[RetrievalResult]:
         """The intermediate answers, best first, within ``max_answer_tokens``,
         one context section each.
 
         LLM output rather than retrieved evidence: the answer model reads
         them, but they are never reported as sources. Each carries the
         lineage of what it was written from (its fold's reports, or its
-        local context: their text units and documents), so the answer cites
+        local context: their text units and documents; a report's are those
+        of the records its findings cite, ``_findings_lineages``, or its
+        community's where they cite none), so the answer cites
         it ``[n]`` as MS GraphRAG's DRIFT reduce cites ``[Data: Sources
         (...)]``.
         """
@@ -546,9 +550,13 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 break
             packed.append((answer, entry))
             used += cost
+        # A report an answer read names the records its findings cite.
+        lineages = await self._findings_lineages(
+            query, (r for answer, _ in packed for r in answer.read)
+        )
         items: list[RetrievalResult] = []
         for rank, (answer, entry) in enumerate(packed, start=1):
-            lineage = evidence_lineage(answer.read)
+            lineage = evidence_lineage(answer.read, lineages)
             items.append(
                 RetrievalResult(
                     content=entry,

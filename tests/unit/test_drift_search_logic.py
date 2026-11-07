@@ -666,6 +666,58 @@ async def test_each_intermediate_answer_cites_what_it_was_written_from(
     )
 
 
+@pytest.mark.parametrize(
+    "question",
+    ["Who ships?", "누가 출하하나요?", "誰が出荷しますか？"],
+    ids=["en", "ko", "ja"],
+)
+async def test_a_primer_answer_cites_what_its_reports_findings_cite(
+    question: str,
+) -> None:
+    # Regression (rv5 M1): a primer answer's lineage was its fold's reports'
+    # community membership. A report whose findings cite records names
+    # those records' text units (read by id from the entities index); one
+    # stored without findings keeps its membership.
+    entities = Config().indexing.opensearch.entities_index_prefix
+
+    class _WithEntities(_Reports):
+        async def aindex_limits(self, prefix: str, suffix: str | None) -> Any:
+            from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+
+            return IndexLimits()
+
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            if query.index_prefixes != [entities]:
+                return await super().aretrieve(query)
+            self.queries.append(query)
+            stored = {"e-ko": ["tu-ko"], "e-ja": ["tu-ja"]}
+            return [
+                _result("", source=i, metadata={"id": i, "text_unit_ids": stored[i]})
+                for i in query.filters["id"]
+                if i in stored
+            ]
+
+    reports = _WithEntities(count=2)
+    for i, report in enumerate(reports.reports):
+        report.metadata.update(text_unit_ids=[f"tu-r{i}"], document_ids=[f"doc-r{i}"])
+    reports.reports[0].metadata["findings"] = [
+        {"entity_ids": ["e-ko", "e-ja"], "relationship_ids": []}
+    ]
+    strat = _strategy(reports=reports, n_depth=1, primer_folds=2)
+    result = await strat.asearch(SearchQuery(query=question))
+
+    answers = {
+        r.content.split("\n", 1)[1]: r.metadata
+        for r in result.results
+        if r.metadata.get("synthesized")
+    }
+    assert answers["draft from report 0"]["text_unit_ids"] == ["tu-ko", "tu-ja"]
+    assert answers["draft from report 0"]["document_ids"] == []
+    assert answers["draft from report 1"]["text_unit_ids"] == ["tu-r1"]
+    fetches = [q for q in reports.queries if q.index_prefixes == [entities]]
+    assert [q.filters["id"] for q in fetches] == [["e-ko", "e-ja"]]
+
+
 async def test_evidence_is_fused_with_the_local_quota(mocker) -> None:
     strat = _strategy()
     spy = mocker.spy(strat, "_fuse_and_rerank")

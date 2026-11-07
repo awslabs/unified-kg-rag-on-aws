@@ -872,6 +872,11 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         ]
         provenance = self._provenance(entities)
         lineage = self._lineage(entities)
+        names = {
+            str(e.source): str(name)
+            for e in entities
+            if (name := (e.metadata or {}).get("name"))
+        }
         table = RetrievalResult(
             content=render_answer(
                 plan,
@@ -891,6 +896,9 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 "truncated": answer.truncated,
                 "exact": not answer.truncated,
                 "entity_ids": vertex_ids,
+                # Each returned entity's name, in entity_ids order (None for
+                # a vertex the result holds no properties of).
+                "entity_names": [names.get(vertex_id) for vertex_id in vertex_ids],
                 "backend": result.backend,
                 # The result's citation names the documents its evidence
                 # rows rest on (application/retrieval/citations.py).

@@ -30,6 +30,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import (
     Citation,
+    CitedDocument,
     Config,
     GraphEdge,
     RetrievalResult,
@@ -495,6 +496,79 @@ async def test_answer_records_carry_their_citation_markers() -> None:
     assert all(r.citation is None and r.cited is None for r in found)
 
 
+@pytest.mark.parametrize(
+    ("strategy", "rank_key", "kind", "text"),
+    [
+        ("global", "key_point_rank", "key_point", "Key point: 창고가 부품을 보관한다."),
+        (
+            "drift",
+            "intermediate_answer_rank",
+            "intermediate_answer",
+            "倉庫が保管する。",
+        ),
+    ],
+)
+async def test_a_cited_model_written_section_is_a_record(
+    strategy: str, rank_key: str, kind: str, text: str
+) -> None:
+    # Regression (rv5 M2): kg_answer's records were the answer's sources
+    # alone, so a global or DRIFT answer citing [1], a key point or an
+    # intermediate answer (never reported as a source), named no record
+    # and no document. Each such citation is now a record with the
+    # documents its citation resolved (under the caller's filters).
+    written = RetrievalResult(
+        content=text,
+        score=0.8,
+        source=f"synthesized_{strategy}_1",
+        retriever_type="general",
+        metadata={"synthesized": True, rank_key: 1, "text_unit_ids": ["u1", "u2"]},
+    )
+
+    class _Chain(FakeChain):
+        async def ainvoke(self, rag_input: RAGInput) -> RAGOutput:
+            output = await super().ainvoke(rag_input)
+            # The chain never reports a model-written result as a source.
+            output.sources = [
+                s for s in output.sources if not s["metadata"].get("synthesized")
+            ]
+            return output
+
+    chain = _Chain()
+    chain.results = [written, _text()]
+    chain.citations = [
+        Citation(
+            marker=1,
+            cited=True,
+            section_type="general",
+            source_id=written.source,
+            text_unit_ids=["u1", "u2"],
+            documents=[
+                CitedDocument(document_id="d-ko", file_name="contract.ko.txt"),
+                CitedDocument(document_id="d-ja", file_name="memo.ja.txt"),
+            ],
+            document_id="d-ko",
+            file_name="contract.ko.txt",
+        ),
+        Citation(marker=2, cited=False, section_type="text", source_id=_UNIT),
+    ]
+    records = (await _tools(chain).answer("q")).records
+    # First, as the strategy ranks it (and kg_search lists it).
+    assert [(r.rank, r.kind, r.citation, r.cited) for r in records] == [
+        (1, kind, 1, True),
+        (2, "text", 2, False),
+    ]
+    record = records[0]
+    assert record.synthesized and record.text == text
+    assert record.source_id == written.source
+    # Its citation's documents, not a second, unfiltered read of its units.
+    assert record.documents == ["contract.ko.txt", "memo.ja.txt"]
+    assert (record.document_id, record.document_name) == ("d-ko", "contract.ko.txt")
+    assert record.text_unit_ids == ["u1", "u2"]
+    # kg_search lists the section among the results, uncited.
+    found = (await _tools(chain).search("q")).records
+    assert [r.citation for r in found] == [None, None]
+
+
 async def test_a_blocked_query_says_so() -> None:
     guardrail = [{"source": "INPUT", "action": "BLOCKED", "policies": ["x"]}]
     chain = FakeChain(blocked=True, guardrail=guardrail)
@@ -541,7 +615,8 @@ async def test_a_query_result_record_keeps_its_table_and_entities() -> None:
             metadata={
                 "plan_description": "Count items by supplier",
                 "operation": "count",
-                "entity_ids": ["e-Vendor", "e-Depot"],
+                "entity_ids": ["e-Vendor", "e-Depot", "e-Extra"],
+                "entity_names": ["Vendor", "창고"],
                 "row_count": 500,
             },
         )
@@ -549,7 +624,11 @@ async def test_a_query_result_record_keeps_its_table_and_entities() -> None:
     (record,) = (await _tools(chain, max_text_chars=2000).search("q")).records
     assert record.kind == "query_result"
     assert record.name == "Count items by supplier"
-    assert [e.id for e in record.entities] == ["e-Vendor", "e-Depot"]
+    assert [(e.id, e.name) for e in record.entities] == [
+        ("e-Vendor", "Vendor"),
+        ("e-Depot", "창고"),
+        ("e-Extra", None),
+    ]
     assert record.text == table[: mcp_tools.MAX_TABLE_CHARS]
     assert record.text_truncated
     # Other records keep mcp.max_text_chars.

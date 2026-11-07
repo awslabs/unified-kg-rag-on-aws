@@ -31,8 +31,10 @@ _TRUNCATION_BREAK = re.compile(r"[\s。．！？、，；]")
 # used to leave a few characters), so the cut falls at the character instead.
 _TRUNCATION_BACKOFF_RATIO = 0.2
 # The marker a numbered section is counted with before the numbers are
-# known (optimize_context(number_sections=True)): as wide as any context
-# needs, so the rendered context never exceeds the budget it was packed in.
+# known (optimize_context(number_sections=True)), and the last number given:
+# as wide as any marker, so the rendered context never exceeds the budget it
+# was packed in, and the widest an answer's marker is read at
+# (domain/retrieval/citations.py).
 _MARKER_PLACEHOLDER = 999
 
 
@@ -324,7 +326,10 @@ class TokenManager:
     @classmethod
     def _numbered(cls, sections: list[ContextSection]) -> list[ContextSection]:
         """``sections`` with their markers numbered 1, 2, ... in the order
-        ``build_context_string`` renders them (type block, then position)."""
+        ``build_context_string`` renders them (type block, then position).
+        Past :data:`_MARKER_PLACEHOLDER` a section is unnumbered: wider
+        numbers were counted at no width, and an answer's marker has at most
+        three digits (a bracketed year is text), so it could not be cited."""
         order = [
             i
             for stype in cls._SECTION_LABELS
@@ -333,7 +338,9 @@ class TokenManager:
         ]
         numbered = list(sections)
         for number, i in enumerate(order, start=1):
-            numbered[i] = sections[i].model_copy(update={"marker": number})
+            numbered[i] = sections[i].model_copy(
+                update={"marker": number if number <= _MARKER_PLACEHOLDER else None}
+            )
         return numbered
 
     def _create_context_sections(

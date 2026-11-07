@@ -37,7 +37,10 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
 )
-from unified_kg_rag.domain.prompts.retrieval import CITATION_INSTRUCTIONS
+from unified_kg_rag.domain.prompts.retrieval import (
+    CITATION_INSTRUCTIONS,
+    SYNTHESIS_CITATION_INSTRUCTIONS,
+)
 from unified_kg_rag.domain.retrieval.citations import (
     CitationMarkerScanner,
     cited_markers,
@@ -235,6 +238,35 @@ def test_a_numbered_context_numbers_its_evidence_in_rendered_order(
         assert len(line.split()) <= section.token_count, line
 
 
+def test_no_section_is_numbered_past_the_widest_marker(config: Config) -> None:
+    # Regression (rv5): sections were counted at a three-digit marker and
+    # numbered without a cap, so a 1000th section rendered "[1000]", wider
+    # than counted and a number no answer marker is read as.
+    from unified_kg_rag.adapters.retrieval.token_manager import _MARKER_PLACEHOLDER
+
+    manager = _token_manager(config)
+    results = [
+        RetrievalResult(
+            content=f"Passage {i}.",
+            score=1.0 - i / 2000,
+            source=f"tu-{i}",
+            retriever_type="text",
+            metadata={"id": f"tu-{i}"},
+        )
+        for i in range(_MARKER_PLACEHOLDER + 5)
+    ]
+    optimized = manager.optimize_context(
+        results, "q", max_tokens=10**6, number_sections=True
+    )
+    markers = [s.marker for s in optimized.sections]
+    assert len(markers) == len(results)
+    assert max(m for m in markers if m is not None) == _MARKER_PLACEHOLDER
+    assert markers.count(None) == 5
+    context = manager.build_context_string(optimized)
+    assert f"[{_MARKER_PLACEHOLDER}] " in context
+    assert f"[{_MARKER_PLACEHOLDER + 1}]" not in context
+
+
 def test_a_synthesized_section_naming_its_evidence_is_numbered(
     config: Config,
 ) -> None:
@@ -405,13 +437,51 @@ async def test_graph_citations_resolve_their_lineage_in_context_first() -> None:
         ]
 
     await citations.aresolve_documents([passage, relationship], fetch, limit=4)
-    # The context's own unit first, seed units never; up to the limit.
-    assert asked == [["tu-7", "tu-8", "tu-9"]]
+    # The context's own unit first, seed units never; up to the limit of
+    # units the fetch returns (tu-9 is not, so tu-6 is read next).
+    assert asked == [["tu-7", "tu-8", "tu-9"], ["tu-6"]]
     assert relationship.title == "Vendor -> Buyer"
-    assert [d.document_id for d in relationship.documents] == ["doc-2", "doc-1"]
+    assert [d.document_id for d in relationship.documents] == [
+        "doc-2",
+        "doc-1",
+        "doc-3",
+    ]
     assert relationship.documents[0].text_unit_ids == ["tu-7", "tu-8"]
     assert (relationship.file_name, relationship.page) == ("b.txt", 2)
     assert relationship.documents[1].file_path == "a.txt"
+
+
+async def test_the_lineage_cap_counts_the_units_the_filters_let_through() -> None:
+    # Regression (rv5): the first lineage_units units were fetched and the
+    # rest never read, so a filter excluding those named no document though
+    # later units pass. The units are read in growing pages until each
+    # citation has the limit or its lineage is read.
+    report = citations.citation_from_entry(
+        1,
+        _entry(
+            {
+                "section_type": "community",
+                "text_unit_ids": [f"u{i}" for i in range(40)],
+            },
+            "c-1",
+        ),
+    )
+    allowed = {"u12": "계약서.ko.txt", "u13": "メモ.ja.txt", "u30": "plan.txt"}
+    asked: list[list[str]] = []
+
+    async def fetch(ids: list[str]) -> list[dict[str, Any]]:
+        asked.append(ids)
+        return [
+            {"id": i, "document_ids": [f"doc-{i}"], "attributes": {"file_name": n}}
+            for i, n in allowed.items()
+            if i in ids
+        ]
+
+    await citations.aresolve_documents([report], fetch, limit=2)
+    assert [d.file_name for d in report.documents] == ["계약서.ko.txt", "メモ.ja.txt"]
+    # Pages of 2, 4, 8 (what it lacks, doubled each time): each unit once.
+    assert [len(ids) for ids in asked] == [2, 4, 8]
+    assert [u for ids in asked for u in ids] == [f"u{i}" for i in range(14)]
 
 
 async def test_a_fully_known_lineage_needs_no_fetch() -> None:
@@ -604,6 +674,43 @@ async def test_the_answer_cites_numbered_sections_and_their_documents(
     assert out.metadata["unknown_citation_markers"] == [9]
     # Sources are unchanged.
     assert [s["source"] for s in out.sources] == ["tu-1", "e-1"]
+
+
+@pytest.mark.parametrize(
+    ("strategy", "softened"),
+    [
+        (SearchStrategy.GLOBAL, True),
+        (SearchStrategy.DRIFT, True),
+        (SearchStrategy.LOCAL, False),
+        (SearchStrategy.MIX, False),
+    ],
+)
+def test_global_and_drift_answers_cite_where_possible(
+    config: Config, strategy: SearchStrategy, softened: bool
+) -> None:
+    # rv5: with citations on, pairwise judges preferred the uncited global
+    # and DRIFT answers on comprehensiveness: "after each statement, cite"
+    # read as leaving out what has no marker. Their answers are told to
+    # keep every relevant point and cite where possible; the grounding
+    # rules (the prompt's own) still decide what may be stated.
+    chain, _store, _prompts = _chain(config)
+    optimized = _token_manager(config).optimize_context(
+        _results(), "q", number_sections=True
+    )
+    instructions = chain._answer_instructions(
+        {"optimized_context": optimized, "resolved_strategy": strategy}
+    )
+    assert instructions.startswith(CITATION_INSTRUCTIONS)
+    assert (SYNTHESIS_CITATION_INSTRUCTIONS in instructions) is softened
+    assert "Cite where possible" in SYNTHESIS_CITATION_INSTRUCTIONS
+    # Without a numbered context there is nothing to cite.
+    unnumbered = _token_manager(config).optimize_context(_results(), "q")
+    assert (
+        chain._answer_instructions(
+            {"optimized_context": unnumbered, "resolved_strategy": strategy}
+        )
+        == ""
+    )
 
 
 _KEY_POINT_ANSWERS = {

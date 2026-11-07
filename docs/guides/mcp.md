@@ -69,15 +69,15 @@ and ontology tooling exchange:
 
 | Field | Holds |
 |---|---|
-| `rank`, `kind`, `score` | Position (1 is best), the item's kind (`text`, `entity`, `relationship`, `community`, `claim`, `summary`, `query_result` for a [structured graph query](./structured-queries.md)'s result table) and its relevance score |
+| `rank`, `kind`, `score` | Position (1 is best), the item's kind (`text`, `entity`, `relationship`, `community`, `claim`, `summary`, `query_result` for a [structured graph query](./structured-queries.md)'s result table; in `kg_answer`, `key_point` or `intermediate_answer` for a model-written section the answer can cite) and its relevance score |
 | `chunk_id`, `text`, `text_truncated` | The chunk (text unit) id of a text record; the text, cut to `mcp.max_text_chars` (a `query_result`'s table to 6000 characters, as the console shows it, or `mcp.max_text_chars` if more) |
 | `source_id`, `name`, `type` | The stored item's id; an entity's or report's name, a relationship as `A -> B`, a `query_result`'s plan description; the entity or relationship type |
 | `document_id`, `document_name`, `documents` | The source document: its id where stored, its file name (never its path); for a graph item, the file names of the chunks it was extracted from |
 | `text_unit_ids` | The chunks a graph item was extracted from (the first 20) |
-| `entities` | References (`id`, `name`, `type`, `iri`): the entity itself, a relationship's or claim's endpoints, the entities a `query_result` returned (ids), or the entities of the same response that cite this chunk |
+| `entities` | References (`id`, `name`, `type`, `iri`): the entity itself, a relationship's or claim's endpoints, the entities a `query_result` returned (ids and names), or the entities of the same response that cite this chunk |
 | `provenance`, `synthesized` | Seed-graph provenance (`kind`, `seed_graphs`, `iri`); `true` for model-written text such as global search's key points |
 | `attributes` | Kind-specific scalars: `rank`, `weight`, `in_schema`, `type_iri`, `predicate_iri`, `hops` |
-| `citation`, `cited` | `kg_answer` only: the `[n]` marker the answer context gave the record and whether the answer cites it ([citations](./query.md#citations)); `null` for a synthesized record and in `kg_search` |
+| `citation`, `cited` | `kg_answer` only: the `[n]` marker the answer context gave the record and whether the answer cites it ([citations](./query.md#citations)); `null` in `kg_search` |
 
 A response past `mcp.max_response_chars` drops its lowest-ranked records
 and says so (`truncated`, `omitted`).

@@ -63,15 +63,15 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 
 | 필드 | 내용 |
 |---|---|
-| `rank`, `kind`, `score` | 순위(1이 가장 높음), 항목 종류(`text`, `entity`, `relationship`, `community`, `claim`, `summary`, [구조화 그래프 질의](./structured-queries.ko.md)의 결과 표는 `query_result`), 관련도 점수 |
+| `rank`, `kind`, `score` | 순위(1이 가장 높음), 항목 종류(`text`, `entity`, `relationship`, `community`, `claim`, `summary`, [구조화 그래프 질의](./structured-queries.ko.md)의 결과 표는 `query_result`, `kg_answer`에서 답변이 인용할 수 있는 모델 작성 섹션은 `key_point` 또는 `intermediate_answer`), 관련도 점수 |
 | `chunk_id`, `text`, `text_truncated` | 텍스트 레코드의 청크(텍스트 유닛) id, `mcp.max_text_chars`로 자른 텍스트(`query_result`의 표는 콘솔처럼 6000자까지, `mcp.max_text_chars`가 더 크면 그만큼) |
 | `source_id`, `name`, `type` | 저장된 항목의 id, 엔터티나 리포트의 이름(관계는 `A -> B`, `query_result`는 계획 설명), 엔터티나 관계의 타입 |
 | `document_id`, `document_name`, `documents` | 원본 문서. 저장된 경우 id, 파일 이름(경로는 절대 아님). 그래프 항목은 추출된 청크들의 파일 이름 |
 | `text_unit_ids` | 그래프 항목이 추출된 청크(처음 20개) |
-| `entities` | 참조(`id`, `name`, `type`, `iri`). 엔터티 자신, 관계나 클레임의 양 끝, `query_result`가 돌려준 엔터티(id), 또는 같은 응답에서 이 청크를 인용하는 엔터티 |
+| `entities` | 참조(`id`, `name`, `type`, `iri`). 엔터티 자신, 관계나 클레임의 양 끝, `query_result`가 돌려준 엔터티(id와 이름), 또는 같은 응답에서 이 청크를 인용하는 엔터티 |
 | `provenance`, `synthesized` | 시드 그래프 출처(`kind`, `seed_graphs`, `iri`). 글로벌 검색의 핵심 요점처럼 모델이 쓴 텍스트면 `true` |
 | `attributes` | 종류별 스칼라 값: `rank`, `weight`, `in_schema`, `type_iri`, `predicate_iri`, `hops` |
-| `citation`, `cited` | `kg_answer`만: 답변 컨텍스트가 레코드에 붙인 `[n]` 표식과 답변이 그것을 인용했는지([인용](./query.ko.md#인용)). 모델이 쓴 레코드와 `kg_search`에서는 `null` |
+| `citation`, `cited` | `kg_answer`만: 답변 컨텍스트가 레코드에 붙인 `[n]` 표식과 답변이 그것을 인용했는지([인용](./query.ko.md#인용)). `kg_search`에서는 `null` |
 
 응답이 `mcp.max_response_chars`를 넘으면 순위가 낮은 레코드부터 빼고 그 사실을
 알립니다(`truncated`, `omitted`).

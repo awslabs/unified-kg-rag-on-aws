@@ -56,7 +56,10 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGInput,
     RAGOutput,
 )
-from unified_kg_rag.domain.ingestion.report_references import report_cited_ids
+from unified_kg_rag.domain.ingestion.report_references import (
+    report_cited_ids,
+    report_cited_records,
+)
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
@@ -850,6 +853,8 @@ def test_a_global_answers_report_sources_name_the_records_their_findings_cite(
             os_config.relationships_index_prefix,
         )
     }
+    # Map even the one report, so the answer reads its key point.
+    config.search.global_search.map_reduce_min_results = 1
     chain = GraphRAGChain(config, providers=providers)
     try:
         out = _ask(chain, SearchStrategy.GLOBAL)
@@ -866,5 +871,84 @@ def test_a_global_answers_report_sources_name_the_records_their_findings_cite(
         assert len(entity_ids) == 2 and len(relationship_ids) == 1, metadata
         assert set(entity_ids) <= stored[os_config.entities_index_prefix]
         assert set(relationship_ids) <= stored[os_config.relationships_index_prefix]
-        # The references left the searched text.
+        # The references left the searched text; the source keeps each
+        # finding's ids, not its text again.
         assert "[Data:" not in metadata["full_content"]
+        assert all(
+            set(finding) <= {"entity_ids", "relationship_ids"}
+            for finding in metadata["findings"]
+        )
+    # Each key point cites the text units of the records its reports'
+    # findings cite (read from the stores), not the reports' communities.
+    units = {
+        hit["_id"]: hit["_source"]["text_unit_ids"]
+        for prefix in stored
+        for hit in _stored(config, providers, prefix)
+    }
+    points = [
+        r.metadata for r in out.search_results.results if r.metadata.get("synthesized")
+    ]
+    assert points, out.search_results.results
+    for point in points:
+        cited = {
+            unit
+            for metadata in reports
+            if str(metadata.get("id")) in point["report_ids"]
+            for record in report_cited_records(metadata)
+            for unit in units.get(record[1], [])
+        }
+        assert cited and set(point["text_unit_ids"]) == cited, point
+
+
+def test_a_key_point_names_only_the_documents_its_findings_cite(
+    tmp_path: Path, no_aws
+) -> None:
+    # rv5 M1: a key point named every document of its report's community
+    # (membership). Its finding cites one relationship, stated by one of
+    # three documents (one in Korean, one in Japanese): the point names it.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    config.search.global_search.map_reduce_min_results = 1
+
+    def respond(system: str, human: str) -> str:
+        if "community analysis" in system:
+            return stages._REPORT.replace(
+                "Vendor works with Buyer and Depot.",
+                "Vendor works with Buyer and Depot [Data: Relationships (1)].",
+            )
+        return _respond(system, human)
+
+    server = FakeOllama(respond, ANSWER, DIM)
+    providers = _providers(config, server, FakeCrossEncoder("synthetic-reranker"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.ko.txt").write_text("Vendor supplies widgets to Buyer. 공급사.")
+    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+    (source / "freight.ja.txt").write_text("Carrier moves gadgets for Depot. 運送業者.")
+    context = _ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    os_config = config.indexing.opensearch
+    relationships = {
+        hit["_id"]: hit["_source"]["text_unit_ids"]
+        for hit in _stored(config, providers, os_config.relationships_index_prefix)
+    }
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        out = _ask(chain, SearchStrategy.GLOBAL)
+    finally:
+        chain.close()
+    reports = {
+        str(r.source): r.metadata
+        for r in out.search_results.results
+        if r.retriever_type == "community"
+    }
+    points = [
+        r.metadata for r in out.search_results.results if r.metadata.get("synthesized")
+    ]
+    assert points and reports
+    for point in points:
+        credited = [reports[i] for i in point["report_ids"] if i in reports]
+        membership = {u for m in credited for u in m["text_unit_ids"]}
+        (cited,) = {r for m in credited for _, r in report_cited_records(m)}
+        assert point["text_unit_ids"] == relationships[cited]
+        assert set(point["text_unit_ids"]) < membership
