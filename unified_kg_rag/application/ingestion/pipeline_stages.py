@@ -144,6 +144,7 @@ from unified_kg_rag.ports.indexer import BaseIndexer, GraphIndexer
 from unified_kg_rag.shared import (
     ConfigurationError,
     ConfirmationDeclinedError,
+    NamespaceLeaseError,
     PipelineStageError,
     get_logger,
     observability,
@@ -2774,7 +2775,7 @@ class IndexingStage(_RegistryStage):
                 ),
             )
         else:
-            self._record_removed_artifacts(text_units)
+            self._record_removed_artifacts(text_units, delta)
 
         metrics = {
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},
@@ -2939,7 +2940,9 @@ class IndexingStage(_RegistryStage):
                 counters[suffix] = written.communities
         return counters
 
-    def _record_removed_artifacts(self, text_units: list[TextUnit]) -> None:
+    def _record_removed_artifacts(
+        self, text_units: list[TextUnit], delta: DocumentDelta | None = None
+    ) -> None:
         """Drop from each suffix's stored build record the artifacts this
         run's methodologies no longer build (``artifacts_to_build``).
 
@@ -2947,7 +2950,10 @@ class IndexingStage(_RegistryStage):
         indices keep the one of the run that did), but a run under a
         narrower profile stops maintaining the removed methodologies'
         artifacts all the same: unrecorded, their strategies would still be
-        served until a run with a delta. Best-effort, as ``record_build``.
+        served until a run with a delta. The suffixes are the configured
+        one and those the registry records of the ``delta``'s unchanged
+        documents name (a document with an index value of its own).
+        Best-effort, as ``record_build``.
         """
         building = artifacts_to_build(self.config)
         vector_indexer = self.indexing_manager.vector_indexer
@@ -2955,6 +2961,20 @@ class IndexingStage(_RegistryStage):
             self.config.processing.document_parsing.index_value
             or Constants.DEFAULT_SUFFIX.value
         }
+        if delta is not None and delta.unchanged:
+            try:
+                records = self._build_doc_status_store().get_many(delta.unchanged)
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - best-effort, as the record
+                logger.warning(
+                    "Could not read the unchanged documents' index suffixes; "
+                    "only '%s' records the methodologies no longer built: %s",
+                    ", ".join(sorted(suffixes)),
+                    e,
+                )
+            else:
+                suffixes |= {r.suffix for r in records.values() if r.suffix}
         for suffix in sorted(suffixes):
             stored = vector_indexer.read_build_record(suffix)
             held = stored_artifacts(stored)

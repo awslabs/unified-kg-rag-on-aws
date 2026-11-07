@@ -599,3 +599,48 @@ def test_a_run_starts_with_no_state_left_from_an_earlier_one(mocker) -> None:
     stage._execute_core(_context(_full_delta(), [_document("run-changed", _CHANGED)]))
 
     assert order[:2] == ["reset", "index"]
+
+
+def test_a_run_with_no_change_narrows_every_suffix_its_documents_hold(
+    mocker,
+) -> None:
+    # A no-change run under fewer methodologies narrowed only the configured
+    # suffix's build record: a document indexed under its own index value
+    # kept its suffix serving strategies whose artifacts no run maintains.
+    from tests.fixtures.fakes.stores import FakeVectorStore
+    from unified_kg_rag.domain.models import IndexBuildRecord, Methodology
+
+    store = FakeDocStatusStore()
+    vectors = FakeVectorStore()
+    manager = _RecordingManager()
+    manager.vector_indexer = vectors
+    config = Config()
+    held = IndexBuildRecord(
+        pipeline_id="run-1",
+        mode="full",
+        built_at=datetime(2026, 1, 1),
+        documents=1,
+        extraction_fingerprint=extraction_fingerprint(config),
+    ).with_artifacts(ps.artifacts_to_build(config))
+    for suffix in ("default", "tenant-b"):
+        vectors.record_build(held, suffix)
+    own = compute_doc_id("own.json", "tenant-b", "/corpus")
+    store.put(
+        DocStatusRecord(
+            doc_id=own,
+            file_path="own.json",
+            content_hash="h",
+            status=DocStatus.PROCESSED,
+            suffix="tenant-b",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
+    )
+    mocker.patch.object(ps, "IndexingManager", return_value=manager)
+    stage = ps.IndexingStage(config=config, doc_status=store)
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+
+    stage._record_removed_artifacts([], DocumentDelta(unchanged=[own]))
+
+    for suffix in ("default", "tenant-b"):
+        record = vectors.read_build_record(suffix)
+        assert record is not None and "graphrag" not in record["methodologies"]
