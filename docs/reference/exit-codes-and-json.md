@@ -52,7 +52,9 @@ banner, progress and logs to stderr, so the output pipes into `jq` (not with
 holds:
 
 - **`run-rag`**: `success` and the answer or the search results; a failed
-  query has `"success": false` and its `error` (exit `1`).
+  query has `"success": false` and its `error` (exit `1`). An answer's
+  `search_results` leaves out `results`, which repeat its `sources`, unless
+  `--verbose` (they also hold the results the context budget cut).
 - **`run-ingestion`**: with `--verify-metadata`, `pipeline_id` and
   `"metadata_valid": true` (a missing or corrupt record exits `1` with the
   status document below). Otherwise the pipeline id, the status, the model

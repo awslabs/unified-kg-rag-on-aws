@@ -204,6 +204,8 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
 - `--output-format json` prints one JSON document on stdout (a status document on failure, argparse errors included)
   and everything else on stderr; `run-ingestion` rejects it with `--metrics-sink cloudwatch` (#333, #359, #366,
   #420).
+- `run-rag --output-format json`: an answer's `search_results` leaves out `results`, which repeated its `sources`;
+  `--verbose` keeps them (#PR).
 - `run-eval --search-strategy` takes a list (`["auto"]` by default); with several strategies or `--repeats` it
   overrides an item's `search_strategy`; `abstention_statistics.unanswerable` has the overall block's shape
   (`completed`, `abstained`, `answered`, `abstention_rate`) (#292, #324, #600).
@@ -898,6 +900,10 @@ From a `main` checkout (formats and keys no release had):
   switch, and a running query service follows it without a restart (#466, #470, #473, #474).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk quantized vectors on OpenSearch 2.17+ (#461).
 - `run-prompt-tuning` reads every format ingestion parses; each `run-*` `--help` ends with an example (#121).
+- `run-rag` text output: `--mode search` prints each hit (type, file or name, score, the start of its text) where it
+  printed a header alone, and an answer is followed by one line naming its source files and counting its graph
+  elements; `--verbose` lists every source with its score and text, in `--interactive` mode too (which printed
+  the details on every answer) (#PR).
 - `run-ingestion --suffix`, `--methodologies a,b` and `--reset` set `processing.document_parsing.index_value`,
   `indexing.methodologies` and `indexing.reset` for one run, validated as the config keys are (a bad value exits
   2); `run-ingestion` and `run-rag` print the run's index namespace (suffix and `indexing.additional_suffix`) as

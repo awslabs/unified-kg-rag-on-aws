@@ -27,10 +27,25 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "Where was the founder of the company that acquired X born?" \
   --search-strategy ppr --config-path config.yaml
 
-# Verbose (entities, top sources, metrics) with attribute filters
+# Verbose (entities, every source with its score and text, metrics) with
+# attribute filters
 run-rag --query "..." --verbose --filters attr_category:research type:person \
   --config-path config.yaml
 ```
+
+텍스트 출력에는 다음이 나옵니다.
+
+- **답변** 뒤에는 출처를 한 줄로 보여 줍니다. 텍스트 유닛이 나온 파일과 모델이 읽은 그래프
+  요소의 유형별 개수입니다(`Sources (13): files: acme.txt, globex.txt; 7 relationships, 4
+  entities, 1 community report`). `--verbose`를 주면 대신 출처마다 유형, 파일이나 이름,
+  점수, 텍스트 앞부분을 나열하고 질의 처리 정보와 지표를 이어서 보여 줍니다. `--interactive`
+  모드에서도 같습니다.
+- **`--mode search`**는 검색 결과를 출력합니다. 유형, 파일(텍스트 유닛이며 파일에 청크가
+  여럿이면 청크 번호도) 또는 이름(엔티티, 커뮤니티 리포트, 관계는 양 끝), 점수, 텍스트
+  앞부분이며 `--verbose`가 없으면 처음 20개만 보여 줍니다.
+- **`--output-format json`**은 결과를 문서 하나로 출력합니다. 답변의 `search_results`에서는
+  `sources`와 겹치는 `results`를 빼며, `--verbose`를 주면 남깁니다(컨텍스트 예산에서 잘린
+  결과도 들어 있습니다).
 
 ## 필터
 

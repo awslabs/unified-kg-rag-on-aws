@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from rich.panel import Panel
@@ -145,6 +146,110 @@ def _filter_pair(item: str) -> str:
     return item
 
 
+# The hits --mode search prints without --verbose, and the files the
+# sources line of an answer names.
+_HITS_SHOWN = 20
+_FILES_SHOWN = 5
+_SNIPPET_CHARS = 160
+# Plurals of the result types a sources line counts.
+_PLURALS = {"entity": "entities", "community": "community reports"}
+
+
+def _hit_kind(item: dict[str, Any]) -> str:
+    """The type of a search result or source: its retriever type
+    (``text``, ``entity``, ``relationship``, ``community``, ...)."""
+    metadata = item.get("metadata") or {}
+    return str(item.get("retriever_type") or metadata.get("section_type") or "result")
+
+
+def _hit_file(item: dict[str, Any]) -> str | None:
+    """The file a text-unit result was chunked from, when it says so."""
+    metadata = item.get("metadata") or {}
+    attributes = metadata.get("attributes") or {}
+    for record in (attributes, metadata):
+        if name := record.get("file_name"):
+            return str(name)
+        if path := record.get("file_path"):
+            return Path(str(path)).name
+    return None
+
+
+def _hit_label(item: dict[str, Any]) -> str:
+    """What a result is, for a person: the file of a text unit (and its
+    chunk when the file has several), the entity or community name, a
+    relationship's ends, else the result's id."""
+    metadata = item.get("metadata") or {}
+    if file := _hit_file(item):
+        attributes = metadata.get("attributes") or {}
+        total = attributes.get("total_chunks")
+        if isinstance(total, int) and total > 1:
+            return f"{file} (chunk {attributes.get('chunk_id')}/{total})"
+        return file
+    if metadata.get("source_name") and metadata.get("target_name"):
+        return f"{metadata['source_name']} -> {metadata['target_name']}"
+    if name := metadata.get("name"):
+        return str(name)
+    return str(item.get("source") or "N/A")
+
+
+def _snippet(text: str) -> str:
+    """``text`` on one line, cut to ``_SNIPPET_CHARS`` characters."""
+    line = " ".join(str(text).split())
+    if len(line) > _SNIPPET_CHARS:
+        return line[: _SNIPPET_CHARS - 3] + "..."
+    return line
+
+
+def _print_hits(items: list[dict[str, Any]], *, limit: int | None) -> None:
+    """Print search results or sources, numbered: type, label, score and a
+    snippet of the text (retrieved text: printed literally)."""
+    shown = items if limit is None else items[:limit]
+    for i, item in enumerate(shown, 1):
+        score = item.get("score")
+        scored = f"  (score {score:.3f})" if isinstance(score, int | float) else ""
+        console.print(
+            f"{i:>3}. [{_hit_kind(item)}] {terminal_safe(_hit_label(item))}{scored}",
+            markup=False,
+            highlight=False,
+        )
+        if snippet := _snippet(terminal_safe(item.get("content") or "")):
+            console.print(f"     {snippet}", markup=False, highlight=False, style="dim")
+    if len(items) > len(shown):
+        console.print(
+            f"     ... and {len(items) - len(shown)} more (--verbose lists them "
+            "all; --output-format json prints every field)",
+            markup=False,
+            highlight=False,
+        )
+
+
+def _sources_line(sources: list[dict[str, Any]]) -> str:
+    """One line for an answer's sources: the files its text came from and
+    how many graph elements of each type it read."""
+    files = list(dict.fromkeys(f for f in map(_hit_file, sources) if f is not None))
+    counts: dict[str, int] = {}
+    for source in sources:
+        if _hit_file(source) is None:
+            kind = _hit_kind(source)
+            counts[kind] = counts.get(kind, 0) + 1
+    parts = []
+    if files:
+        named = ", ".join(files[:_FILES_SHOWN])
+        if len(files) > _FILES_SHOWN:
+            named += f" and {len(files) - _FILES_SHOWN} more"
+        parts.append(f"files: {named}")
+    if counts:
+        parts.append(
+            ", ".join(
+                f"{n} {kind if n == 1 else _PLURALS.get(kind, kind + 's')}"
+                for kind, n in counts.items()
+            )
+        )
+    return terminal_safe(
+        f"Sources ({len(sources)}): {'; '.join(parts)} (--verbose lists each)"
+    )
+
+
 class CommandLineInterface:
     def __init__(self) -> None:
         self.parser = self._setup_arguments()
@@ -241,7 +346,10 @@ class CommandLineInterface:
             "--verbose",
             "-v",
             action="store_true",
-            help="Show query-processing details, sources and metrics",
+            help="Show more of each result: the query processing, every source "
+            "(or search hit) with its score and text, and the metrics; with "
+            "--output-format json, also an answer's search_results.results "
+            "(the logs: --log-level)",
         )
         add_config_arguments(parser)
         add_provider_arguments(parser)
@@ -375,7 +483,7 @@ class RAGChainRunner:
 
                 result = await self._run_query(rag_input)
                 if self.json_output:
-                    print_json(result)
+                    print_json(self._json_document(result))
                 else:
                     self._print_result(result, self.args.verbose)
 
@@ -469,7 +577,7 @@ class RAGChainRunner:
                     ),
                 )
                 result = await self._run_query(rag_input)
-                self._print_result(result, verbose=True)
+                self._print_result(result, verbose=self.args.verbose)
                 state["conversation_id"] = result.get(
                     "conversation_id", state["conversation_id"]
                 )
@@ -566,6 +674,21 @@ class RAGChainRunner:
                 "conversation_id": rag_input.conversation_id,
             }
 
+    def _json_document(self, result: dict[str, Any]) -> dict[str, Any]:
+        """The ``--output-format json`` document of a query: an answer's
+        ``search_results`` without its ``results``, which repeat the
+        ``sources`` (``--verbose`` keeps them: every retrieved result, also
+        those the context budget left out)."""
+        search_results = result.get("search_results")
+        if (
+            self.args.verbose
+            or "sources" not in result
+            or not isinstance(search_results, dict)
+        ):
+            return result
+        kept = {k: v for k, v in search_results.items() if k != "results"}
+        return {**result, "search_results": kept}
+
     def _settings_lines(self) -> list[str]:
         """The search settings, as the run banner and show-config print them."""
         return [
@@ -616,17 +739,25 @@ class RAGChainRunner:
             console.print(f"\n[red]Error: {error}[/red]")
             return
 
-        if answer := result.get("answer"):
+        sources = result.get("sources")
+        if "answer" in result:
             console.print("\n\n" + "=" * 50)
             console.print("[bold blue]Final Answer:[/bold blue]")
             # Model output: never interpret it as markup.
-            console.print(terminal_safe(answer), markup=False, highlight=False)
+            console.print(
+                terminal_safe(result.get("answer") or ""), markup=False, highlight=False
+            )
             console.print("=" * 50)
             print_citations(result)
+            if sources and not verbose:
+                console.print(_sources_line(sources), markup=False, highlight=False)
         else:
+            # --mode search: the hits are the result.
+            hits = (result.get("search_results") or {}).get("results") or []
             console.print("\n\n" + "=" * 50)
-            console.print("[bold blue]Search Mode Results[/bold blue]")
+            console.print(f"[bold blue]Search Results ({len(hits)})[/bold blue]")
             console.print("=" * 50)
+            _print_hits(hits, limit=None if verbose else _HITS_SHOWN)
 
         if verbose:
             console.print("\n[bold]Details:[/bold]")
@@ -661,27 +792,11 @@ class RAGChainRunner:
                         )
                     )
 
-            sources = result.get("sources")
-            if not sources and result.get("search_results"):
-                sources = result.get("search_results", {}).get("results", [])
-
             if sources:
-                sources_content = ""
-                for i, source in enumerate(sources[:5], 1):
-                    score = source.get("score", 0)
-                    source_id = markup_safe(source.get("source", "N/A"))
-                    sources_content += f"  {i}. {source_id} (score: {score:.3f})\n"
-
-                if len(sources) > 5:
-                    sources_content += f"  ... and {len(sources) - 5} more sources\n"
-
                 console.print(
-                    Panel(
-                        sources_content.rstrip(),
-                        title=f"[cyan]Reference Sources ({len(sources)} found)[/cyan]",
-                        border_style="cyan",
-                    )
+                    f"\n[bold cyan]Reference Sources ({len(sources)})[/bold cyan]"
                 )
+                _print_hits(sources, limit=None)
 
             search_result = result.get("search_results", {})
             metadata = result.get("metadata", {})

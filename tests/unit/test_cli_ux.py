@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from unified_kg_rag.application.cli import run_ingestion_pipeline
+from unified_kg_rag.application.cli import run_ingestion_pipeline, run_rag_chain
 from unified_kg_rag.domain.models import Config, Methodology
 
 pytestmark = pytest.mark.unit
@@ -101,3 +101,272 @@ def test_ingestion_banner_names_the_namespace_as_run_rag_does(mocker, tmp_path) 
     text = str(panel.renderable)
     assert "Index Namespace:[/dim] 'tenant-a-v2'" in text
     assert "Methodologies:[/dim] graphrag, lightrag" in text
+
+
+# --- run-rag: hits and sources ------------------------------------------
+
+_TEXT_HIT = {
+    "content": "Acme Robotics is a manufacturer\nof warehouse robots.",
+    "score": 0.5,
+    "source": "tu-1",
+    "retriever_type": "text",
+    "metadata": {
+        "id": "tu-1",
+        "attributes": {"file_name": "acme.txt", "file_path": "corpus/acme.txt"},
+    },
+}
+_SECOND_CHUNK = {
+    "content": "Second chunk.",
+    "score": 0.4,
+    "source": "tu-2",
+    "retriever_type": "text",
+    "metadata": {
+        "attributes": {
+            "file_path": "corpus/globex.txt",
+            "chunk_id": 2,
+            "total_chunks": 3,
+        }
+    },
+}
+_RELATIONSHIP_HIT = {
+    "content": "Relationship: Acme Robotics -[SUPPLIES]-> Globex Sensors",
+    "score": 0.25,
+    "source": "rel-1",
+    "retriever_type": "relationship",
+    "metadata": {"source_name": "Acme Robotics", "target_name": "Globex Sensors"},
+}
+_ENTITY_SOURCE = {
+    "content": "Entity: Acme Robotics",
+    "score": 0.2,
+    "source": "ent-1",
+    "metadata": {"name": "Acme Robotics", "section_type": "entity"},
+}
+
+
+@pytest.fixture
+def printed(monkeypatch: pytest.MonkeyPatch):
+    """What run-rag prints, as plain text."""
+    import io
+
+    from rich.console import Console
+
+    out = io.StringIO()
+    monkeypatch.setattr(
+        run_rag_chain, "console", Console(file=out, width=200, color_system=None)
+    )
+    return out
+
+
+def test_search_mode_prints_each_hit(printed) -> None:
+    # --mode search printed a header and nothing else without --verbose.
+    run_rag_chain.RAGChainRunner._print_result(
+        {
+            "success": True,
+            "search_results": {
+                "results": [_TEXT_HIT, _SECOND_CHUNK, _RELATIONSHIP_HIT]
+            },
+        }
+    )
+    text = printed.getvalue()
+    assert "Search Results (3)" in text
+    assert "1. [text] acme.txt  (score 0.500)" in text
+    # The snippet is the text on one line.
+    assert "Acme Robotics is a manufacturer of warehouse robots." in text
+    assert "2. [text] globex.txt (chunk 2/3)  (score 0.400)" in text
+    assert "3. [relationship] Acme Robotics -> Globex Sensors  (score 0.250)" in text
+
+
+def test_search_mode_shows_the_first_hits_unless_verbose(printed, monkeypatch) -> None:
+    monkeypatch.setattr(run_rag_chain, "_HITS_SHOWN", 2)
+    hits = {"success": True, "search_results": {"results": [_TEXT_HIT] * 3}}
+    run_rag_chain.RAGChainRunner._print_result(hits)
+    assert "... and 1 more" in printed.getvalue()
+    assert "3. [text]" not in printed.getvalue()
+    run_rag_chain.RAGChainRunner._print_result(hits, verbose=True)
+    assert "3. [text] acme.txt" in printed.getvalue()
+
+
+def test_an_answer_prints_a_short_sources_line_by_default(printed) -> None:
+    sources = [_TEXT_HIT, _SECOND_CHUNK, _TEXT_HIT, _RELATIONSHIP_HIT, _ENTITY_SOURCE]
+    run_rag_chain.RAGChainRunner._print_result(
+        {"success": True, "answer": "Acme supplies.", "sources": sources}
+    )
+    text = printed.getvalue()
+    assert (
+        "Sources (5): files: acme.txt, globex.txt; 1 relationship, 1 entity "
+        "(--verbose lists each)" in text
+    )
+    # Not the per-source list.
+    assert "(score" not in text
+
+
+def test_a_verbose_answer_lists_each_source_with_its_text(printed) -> None:
+    run_rag_chain.RAGChainRunner._print_result(
+        {
+            "success": True,
+            "answer": "Acme supplies.",
+            "sources": [_TEXT_HIT, _ENTITY_SOURCE],
+        },
+        verbose=True,
+    )
+    text = printed.getvalue()
+    assert "Reference Sources (2)" in text
+    assert "1. [text] acme.txt  (score 0.500)" in text
+    assert "2. [entity] Acme Robotics  (score 0.200)" in text
+    assert "Sources (2):" not in text
+
+
+def test_the_sources_line_counts_many_files_and_types(printed) -> None:
+    sources = [
+        {**_TEXT_HIT, "metadata": {"attributes": {"file_name": f"f{i}.txt"}}}
+        for i in range(7)
+    ] + [_ENTITY_SOURCE, _ENTITY_SOURCE]
+    line = run_rag_chain._sources_line(sources)
+    assert line.startswith("Sources (9): files: f0.txt, f1.txt, f2.txt, f3.txt, f4.txt")
+    assert "and 2 more; 2 entities" in line
+
+
+def _json_runner(*flags: str) -> run_rag_chain.RAGChainRunner:
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.args = run_rag_chain.CommandLineInterface._setup_arguments().parse_args(
+        ["-q", "hi", "--output-format", "json", *flags]
+    )
+    return runner
+
+
+def test_the_json_answer_does_not_repeat_its_sources() -> None:
+    result = {
+        "success": True,
+        "answer": "a",
+        "sources": [_TEXT_HIT],
+        "search_results": {"results": [_TEXT_HIT], "total_results": 1},
+    }
+    document = _json_runner()._json_document(result)
+    assert document["sources"] == [_TEXT_HIT]
+    assert document["search_results"] == {"total_results": 1}
+    # --verbose keeps every retrieved result; the result itself is unchanged.
+    assert _json_runner("--verbose")._json_document(result) == result
+    assert result["search_results"]["results"] == [_TEXT_HIT]
+    # --mode search has no sources: its results are the result.
+    search = {"success": True, "search_results": {"results": [_TEXT_HIT]}}
+    assert _json_runner("--mode", "search")._json_document(search) == search
+
+
+# --- run-rag --interactive: the commands --------------------------------
+
+
+def _interactive_runner(mocker, lines: list[str], *flags: str):
+    """A runner whose prompt reads ``lines`` (then EOF) and whose queries
+    are recorded, not run."""
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.args = run_rag_chain.CommandLineInterface._setup_arguments().parse_args(
+        ["--interactive", *flags]
+    )
+    runner.config = Config()
+    runner.rag_chain = mocker.MagicMock()
+    runner.rag_chain.acheck_methodology = mocker.AsyncMock()
+    runner.interactive_commands = {
+        "help": runner._handle_help,
+        "new": runner._handle_new_conversation,
+        "set-filter": runner._handle_set_filter,
+        "clear-filters": runner._handle_clear_filters,
+        "show-config": runner._handle_show_config,
+    }
+    mocker.patch.object(
+        run_rag_chain.console, "input", side_effect=[*lines, EOFError()]
+    )
+    queries: list = []
+
+    async def run_query(rag_input):
+        queries.append(rag_input)
+        return {"success": True, "answer": "ok", "conversation_id": "c-1"}
+
+    runner._run_query = run_query  # type: ignore[method-assign]
+    runner._print_result = mocker.MagicMock()  # type: ignore[method-assign]
+    return runner, queries
+
+
+async def test_interactive_help_is_a_command_only_as_the_whole_line(
+    mocker, printed
+) -> None:
+    runner, queries = _interactive_runner(mocker, ["help", "help me find Acme"])
+    await runner._interactive_mode()
+    assert "set-filter <k:v>" in printed.getvalue()
+    # "help me ..." is a question.
+    assert [q.query for q in queries] == ["help me find Acme"]
+
+
+async def test_interactive_filters_reach_the_next_questions(mocker, printed) -> None:
+    runner, queries = _interactive_runner(
+        mocker,
+        [
+            "set-filter category:contract",
+            "set-filter no-colon",
+            "show-config",
+            "first question",
+            "clear-filters",
+            "second question",
+        ],
+    )
+    await runner._interactive_mode()
+    text = printed.getvalue()
+    assert "Filter added: 'category' = 'contract'" in text
+    assert "Invalid filter format" in text
+    assert "Filters: category:contract" in text
+    assert "All filters cleared." in text
+    assert queries[0].filters == {"category": "contract"}
+    assert not queries[1].filters
+    # Every question of the session keeps memory on.
+    assert all(q.use_memory for q in queries)
+
+
+async def test_interactive_new_starts_another_conversation(mocker, printed) -> None:
+    runner, queries = _interactive_runner(
+        mocker, ["first", "new", "second"], "--conversation-id", "mine"
+    )
+    await runner._interactive_mode()
+    assert queries[0].conversation_id == "mine"
+    assert queries[1].conversation_id not in ("mine", "c-1")
+    assert "Starting new conversation" in printed.getvalue()
+
+
+async def test_interactive_quit_and_eof_end_the_session(mocker, printed) -> None:
+    runner, queries = _interactive_runner(mocker, ["  ", "QUIT", "never asked"])
+    await runner._interactive_mode()
+    assert queries == []
+    assert "Ending conversation." in printed.getvalue()
+    # EOF (Ctrl-D, a piped stdin) ends it too instead of spinning.
+    runner, queries = _interactive_runner(mocker, [])
+    await runner._interactive_mode()
+    assert "Conversation interrupted." in printed.getvalue()
+
+
+async def test_interactive_answers_print_details_only_with_verbose(mocker) -> None:
+    runner, _ = _interactive_runner(mocker, ["question"])
+    await runner._interactive_mode()
+    runner._print_result.assert_called_once_with(
+        {"success": True, "answer": "ok", "conversation_id": "c-1"}, verbose=False
+    )
+    runner, _ = _interactive_runner(mocker, ["question"], "--verbose")
+    await runner._interactive_mode()
+    assert runner._print_result.call_args.kwargs == {"verbose": True}
+
+
+async def test_interactive_a_failing_question_does_not_end_the_session(
+    mocker, printed
+) -> None:
+    runner, queries = _interactive_runner(mocker, ["boom", "after"])
+    calls = 0
+
+    async def run_query(rag_input):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("model down")
+        queries.append(rag_input)
+        return {"success": True, "answer": "ok"}
+
+    runner._run_query = run_query  # type: ignore[method-assign]
+    await runner._interactive_mode()
+    assert "Unexpected error: model down" in printed.getvalue()
+    assert [q.query for q in queries] == ["after"]

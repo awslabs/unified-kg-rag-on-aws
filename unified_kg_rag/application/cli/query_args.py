@@ -144,11 +144,15 @@ def add_query_arguments(
         "--top-k",
         type=positive_int,
         default=10,
-        help="Set the maximum number of search results",
+        help="Set the maximum number of search results (times "
+        "--retrieval-multiplier; default 10)",
     )
     parser.add_argument(
         "--retrieval-multiplier",
         type=positive_int,
         default=1,
-        help="Multiplier that increases the retrieval depth",
+        help="Widen the search N times: each index and graph expansion fetches "
+        "up to top-k x N candidates and the fused list keeps up to top-k x N "
+        "for the reranker and the context budget, at the cost of larger "
+        "searches (default 1)",
     )
