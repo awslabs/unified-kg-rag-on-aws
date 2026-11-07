@@ -12,7 +12,10 @@ Context keys (all optional; sensible defaults shown). A key of this shape
 (lower-case snake_case) that is none of them fails the synth, so a typo
 cannot leave its setting at the default:
 
-  env_name            "dev"            stack/resource name prefix
+  env_name            "dev"            stack/resource name prefix; synth fails
+                                       when a name it makes is too long (the
+                                       guardrail's 50 characters hold up to 16
+                                       in any region, 21 in us-east-1)
   bedrock_region      account region   region for Bedrock model calls
 
   # --- Networking: reuse vs create, public vs private ---
@@ -63,6 +66,15 @@ cannot leave its setting at the default:
   opensearch_volume_gib 50             GP3 volume per OpenSearch data node; the
                                        free-storage alarm fires at 40% of it
   backup_retention_days 7              Neptune automated backup retention
+  neptune_audit_log   False            Neptune audit logs (a cluster parameter
+                                       group with neptune_enable_audit_log=1),
+                                       exported to CloudWatch Logs; a static
+                                       parameter: reboot the instances after
+                                       the deploy that turns it on
+  neptune_parameter_group_family "neptune1.4"  family of that parameter group;
+                                       must match the cluster's engine version
+                                       (1.4.x: neptune1.4; neptune1,
+                                       neptune1.2, neptune1.3)
   neptune_maintenance_window "sun:20:00-sun:21:00"  weekly Neptune maintenance
                                        window (UTC, ddd:hh24:mi-ddd:hh24:mi, at
                                        least 30 minutes)
@@ -436,6 +448,20 @@ _LOG_RETENTION_DAYS = frozenset(
 )
 
 
+# Neptune parameter group families (one per engine minor line).
+NEPTUNE_PARAMETER_GROUP_FAMILIES = (
+    "neptune1",
+    "neptune1.2",
+    "neptune1.3",
+    "neptune1.4",
+)
+
+
+# The longest AWS region name (e.g. ap-southeast-5), for a name checked
+# before the deploy region is known.
+_LONGEST_REGION_NAME = 14
+
+
 # The shape of this app's context keys. CDK's own keys (feature flags such as
 # "@aws-cdk/...", "aws:cdk:..." settings, cached lookups such as
 # "availability-zones:...", "acknowledged-issue-numbers") and "_doc" notes
@@ -547,6 +573,10 @@ class DeploymentConfig:
     # 10:00 P.M. local default).
     neptune_maintenance_window: str = "sun:20:00-sun:21:00"
     neptune_backup_window: str = "18:00-19:00"
+    # Neptune audit logs, exported to CloudWatch Logs. Off: the templates are
+    # exactly as without the feature.
+    neptune_audit_log: bool = False
+    neptune_parameter_group_family: str = "neptune1.4"
     opensearch_off_peak_start: tuple[int, int] | None = None
     # p90 latency of run-rag queries (seconds) the QueryLatencyHigh alarm
     # fires above.
@@ -626,6 +656,49 @@ class DeploymentConfig:
                     "Replicate the secret to the deploy region and give that ARN, "
                     "or use network_mode=public (NAT)."
                 )
+
+    def check_physical_names(
+        self, deploy_region: str | None, bedrock_region: str | None = None
+    ) -> None:
+        """Fail the synth when ``env_name`` makes a physical name longer than
+        its service allows: the created cache bucket
+        (``<prefix>-cache-<account>-<region>``, at most 63 characters) and
+        the guardrail (``<prefix>-guardrail-<region>``, at most 50). Without
+        a region (an environment-agnostic synth) the longest region name is
+        assumed, so a name that fits there fits everywhere."""
+        problems = []
+        if not self.cache_bucket_name:
+            region = deploy_region or "x" * _LONGEST_REGION_NAME
+            name = self.cache_bucket("1" * 12, region)
+            if len(name) > 63:
+                problems.append(
+                    f"the cache bucket name ({len(name)} characters, at most 63)"
+                )
+        if self.create_guardrail:
+            region = bedrock_region or deploy_region or "x" * _LONGEST_REGION_NAME
+            name = f"{self.prefix}-guardrail-{region}"
+            if len(name) > 50:
+                problems.append(
+                    f"the guardrail name ({len(name)} characters, at most 50)"
+                )
+        if problems:
+            raise ValueError(
+                f"env_name '{self.env_name}' is too long for "
+                + " and ".join(problems)
+                + (
+                    ""
+                    if deploy_region
+                    else f" (no deploy region is set, so a {_LONGEST_REGION_NAME}"
+                    "-character region name is assumed)"
+                )
+                + ". Use a shorter env_name"
+                + (
+                    ""
+                    if self.cache_bucket_name
+                    else ", or reuse a bucket with cache_bucket_name"
+                )
+                + "."
+            )
 
     def cache_bucket(self, account: str, region: str) -> str:
         """Cache bucket name: the reused bucket, else the one storage creates.
@@ -737,6 +810,20 @@ class DeploymentConfig:
         ).lower()
         neptune_backup_window = str(ctx("neptune_backup_window", "18:00-19:00"))
         _check_neptune_windows(neptune_maintenance_window, neptune_backup_window)
+        neptune_audit_log = as_bool("neptune_audit_log", default=False)
+        family = ctx("neptune_parameter_group_family")
+        if family is not None and not neptune_audit_log:
+            raise ValueError(
+                "neptune_parameter_group_family only applies with "
+                "neptune_audit_log=true"
+            )
+        family = str(family or "neptune1.4")
+        if family not in NEPTUNE_PARAMETER_GROUP_FAMILIES:
+            raise ValueError(
+                "neptune_parameter_group_family must be one of "
+                f"{', '.join(NEPTUNE_PARAMETER_GROUP_FAMILIES)} (the family of "
+                f"the cluster's engine version), got {family!r}"
+            )
         observability_secret_arn = ctx("observability_secret_arn")
         if observability_secret_arn is not None and not _SECRET_ARN.fullmatch(
             str(observability_secret_arn)
@@ -843,6 +930,8 @@ class DeploymentConfig:
             ),
             neptune_maintenance_window=neptune_maintenance_window,
             neptune_backup_window=neptune_backup_window,
+            neptune_audit_log=neptune_audit_log,
+            neptune_parameter_group_family=family,
             opensearch_off_peak_start=_as_window_start(
                 "opensearch_off_peak_start", ctx("opensearch_off_peak_start")
             ),

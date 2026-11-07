@@ -167,6 +167,21 @@ def test_odd_node_count_in_two_zones_fails_at_synth(count: int) -> None:
     )
 
 
+def test_an_odd_count_without_an_account_says_why_it_sees_two_azs() -> None:
+    # Without an account and region the created VPC has 2 AZs whatever
+    # max_azs asks: the error says so instead of advising max_azs=3 again.
+    app = cdk.App(context={"opensearch_count": 3, "max_azs": 3})
+    config = DeploymentConfig.from_context(app)
+    networking = NetworkingStack(app, "Net", config=config)
+    with pytest.raises(ValueError, match="CDK_DEFAULT_ACCOUNT"):
+        StorageStack(app, "Store", config=config, networking=networking)
+    # With an account it is the plain advice.
+    lookup = f"availability-zones:account={_ENV.account}:region={_ENV.region}"
+    with pytest.raises(ValueError) as raised:
+        _storage_template({"opensearch_count": 3, lookup: ["us-west-2a", "us-west-2b"]})
+    assert "CDK_DEFAULT_ACCOUNT" not in str(raised.value)
+
+
 def test_neptune_serverless_runs_every_instance_serverless() -> None:
     template = _storage_template(
         {"neptune_serverless_ncu": "1-16", "neptune_instances": "2"}
@@ -275,3 +290,44 @@ def test_access_logs_only_where_the_buckets_are_retained(prod: Template) -> None
     assert len(logged) == 1
     assert len(prod.find_resources("AWS::S3::Bucket")) == 2
     assert not prod.find_resources("Custom::S3AutoDeleteObjects")
+
+
+def test_neptune_audit_log_is_off_by_default_and_exported_when_on() -> None:
+    template = _storage_template({})
+    assert not template.find_resources("AWS::Neptune::DBClusterParameterGroup")
+    (cluster,) = template.find_resources("AWS::Neptune::DBCluster").values()
+    assert "EnableCloudwatchLogsExports" not in cluster["Properties"]
+
+    template = _storage_template(
+        {"neptune_audit_log": "true", "neptune_parameter_group_family": "neptune1.3"}
+    )
+    template.has_resource_properties(
+        "AWS::Neptune::DBClusterParameterGroup",
+        {"Family": "neptune1.3", "Parameters": {"neptune_enable_audit_log": "1"}},
+    )
+    (cluster,) = template.find_resources("AWS::Neptune::DBCluster").values()
+    assert cluster["Properties"]["EnableCloudwatchLogsExports"] == ["audit"]
+    assert "DBClusterParameterGroupName" in cluster["Properties"]
+    # The export's log group, with the stack's retention.
+    (group,) = [
+        g
+        for g in template.find_resources("AWS::Logs::LogGroup").values()
+        if "/audit" in str(g["Properties"].get("LogGroupName"))
+    ]
+    assert group["Properties"]["RetentionInDays"] == 30
+
+
+def test_neptune_parameter_group_family_is_checked() -> None:
+    with pytest.raises(ValueError, match="only applies with neptune_audit_log"):
+        DeploymentConfig.from_context(
+            cdk.App(context={"neptune_parameter_group_family": "neptune1.4"})
+        )
+    with pytest.raises(ValueError, match="must be one of"):
+        DeploymentConfig.from_context(
+            cdk.App(
+                context={
+                    "neptune_audit_log": "true",
+                    "neptune_parameter_group_family": "neptune2",
+                }
+            )
+        )

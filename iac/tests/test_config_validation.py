@@ -319,3 +319,28 @@ def test_methodology_names_are_the_packages() -> None:
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
     )
     assert values and values == METHODOLOGIES
+
+
+def test_env_name_too_long_for_a_physical_name_fails_at_synth() -> None:
+    # 16 characters fit the guardrail name in the longest region, 17 do not.
+    _config({"env_name": "x" * 16}).check_physical_names(None)
+    with pytest.raises(ValueError, match=r"guardrail name \(51 characters"):
+        _config({"env_name": "x" * 17}).check_physical_names(None)
+    # A known, shorter region leaves room: us-east-1 fits 21.
+    _config({"env_name": "x" * 21}).check_physical_names("us-east-1")
+    with pytest.raises(ValueError, match="cache bucket name") as raised:
+        _config({"env_name": "x" * 26}).check_physical_names("us-east-1")
+    assert "cache_bucket_name" in str(raised.value)
+    # A reused bucket and no guardrail make no such name.
+    _config(
+        {
+            "env_name": "x" * 40,
+            "cache_bucket_name": "my-cache",
+            "create_guardrail": "false",
+        }
+    ).check_physical_names("us-east-1")
+    # The guardrail lives in bedrock_region.
+    with pytest.raises(ValueError, match="guardrail name"):
+        _config({"env_name": "x" * 21}).check_physical_names(
+            "us-east-1", "ap-southeast-2"
+        )

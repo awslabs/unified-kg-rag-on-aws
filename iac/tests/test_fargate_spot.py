@@ -391,3 +391,23 @@ def test_spot_settings_without_spot_fail(key: str) -> None:
 def test_spot_settings_out_of_range_fail(key: str, value: str) -> None:
     with pytest.raises(ValueError, match=key):
         DeploymentConfig.from_context(cdk.App(context={**_SPOT, key: value}))
+
+
+@pytest.mark.parametrize("context", [{}, _SPOT], ids=["fargate", "spot"])
+def test_ingestion_tasks_carry_the_task_definition_tags(
+    context: dict[str, Any],
+) -> None:
+    # Cost allocation: RunTask propagates the task definition's tags, and
+    # tagging the task it creates is authorized for that RunTask only.
+    _, orchestration = _stacks(context)
+    ingest = _definition(orchestration)["States"]["Ingest"]
+    assert ingest["Parameters"]["PropagateTags"] == "TASK_DEFINITION"
+    statements = [
+        s
+        for policy in orchestration.find_resources("AWS::IAM::Policy").values()
+        for s in policy["Properties"]["PolicyDocument"]["Statement"]
+        if s["Action"] == "ecs:TagResource"
+    ]
+    (statement,) = statements
+    assert statement["Condition"] == {"StringEquals": {"ecs:CreateAction": "RunTask"}}
+    assert _render(statement["Resource"]).endswith(":task/graphrag-cluster/*")

@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from aws_cdk import Annotations, CfnOutput, Duration, RemovalPolicy, Stack
+from aws_cdk import Annotations, CfnOutput, Duration, RemovalPolicy, Stack, Token
 from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
@@ -48,6 +48,15 @@ CHECKPOINT_NONCURRENT_DAYS = 1
 # (enable_version_upgrade); with opensearch_nori_package the Nori package of
 # the new version is associated after the upgrade.
 OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_13
+
+# DeploymentConfig.neptune_parameter_group_family -> the construct's family
+# (ParameterGroupFamily has no constructor from a name).
+_NEPTUNE_FAMILIES = {
+    "neptune1": neptune.ParameterGroupFamily.NEPTUNE_1,
+    "neptune1.2": neptune.ParameterGroupFamily.NEPTUNE_1_2,
+    "neptune1.3": neptune.ParameterGroupFamily.NEPTUNE_1_3,
+    "neptune1.4": neptune.ParameterGroupFamily.NEPTUNE_1_4,
+}
 
 
 class StorageStack(Stack):
@@ -156,6 +165,10 @@ class StorageStack(Stack):
                 else s3.BucketEncryption.S3_MANAGED
             ),
             encryption_key=self.kms_key,
+            # With the CMK, an S3 Bucket Key: S3 asks KMS for a bucket-level
+            # data key instead of one per object, so the stage cache's many
+            # small objects do not each cost a KMS request.
+            bucket_key_enabled=True if self.kms_key else None,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
             enforce_ssl=True,
             server_access_logs_bucket=access_logs,
@@ -256,6 +269,7 @@ class StorageStack(Stack):
         # db.serverless and scales each between the NCU bounds; the endpoints,
         # IAM auth and Gremlin API are the same, so the app needs no change.
         serverless = self.config.neptune_serverless_ncu
+        audit = self.config.neptune_audit_log
         cluster = neptune.DatabaseCluster(
             self,
             "Neptune",
@@ -290,8 +304,41 @@ class StorageStack(Stack):
             # window, which must not overlap the backup window (config.py).
             preferred_maintenance_window=self.config.neptune_maintenance_window,
             preferred_backup_window=self.config.neptune_backup_window,
+            # neptune_audit_log: the parameter that turns audit logging on
+            # (static: it applies once the instances reboot) and its export.
+            cluster_parameter_group=(
+                neptune.ClusterParameterGroup(
+                    self,
+                    "NeptuneAuditParameters",
+                    family=_NEPTUNE_FAMILIES[
+                        self.config.neptune_parameter_group_family
+                    ],
+                    description="unified-kg-rag-on-aws Neptune audit logging",
+                    parameters={"neptune_enable_audit_log": "1"},
+                )
+                if audit
+                else None
+            ),
+            cloudwatch_logs_exports=[neptune.LogType.AUDIT] if audit else None,
             removal_policy=self.removal_policy,
         )
+        if audit:
+            # The log group Neptune exports to, created here so it gets the
+            # CMK, the retention and the removal policy (Neptune would create
+            # it unencrypted and kept forever). It is created right after the
+            # cluster, before an instance can export: a new cluster's
+            # instances are created after it, and a deployed one logs only
+            # once its instances reboot.
+            audit_logs = logs.LogGroup(
+                self,
+                "NeptuneAuditLogs",
+                log_group_name=(
+                    f"/aws/neptune/cluster/{cluster.cluster_identifier}/audit"
+                ),
+                encryption_key=self.kms_key,
+                removal_policy=self.removal_policy,
+            )
+            set_retention(audit_logs, self.config.log_retention_days)
         # The instances' own window (OS patches, instance-level updates): the
         # construct offers none, so set the cluster's on each one.
         for child in cluster.node.children:
@@ -319,11 +366,23 @@ class StorageStack(Stack):
         # Availability Zone deployment"); fail at synth instead. Three AZs
         # take any count (a multiple of three is only recommended).
         if multi_node and zone_count == 2 and self.config.opensearch_count % 2:
+            # An environment-agnostic stack (no account/region) sees only 2
+            # AZs, whatever max_azs asks for.
+            agnostic = Token.is_unresolved(self.account) or Token.is_unresolved(
+                self.region
+            )
             raise ValueError(
                 f"opensearch_count={self.config.opensearch_count} is odd, but the "
                 "domain spans 2 AZs and OpenSearch needs an even number of data "
                 "nodes there. Use an even opensearch_count, or a VPC with 3 AZs "
                 "(max_azs=3 for a created VPC)."
+                + (
+                    " This synth has no account and region, so it sees only 2 "
+                    "AZs: set CDK_DEFAULT_ACCOUNT and CDK_DEFAULT_REGION (or "
+                    "synth with credentials) for max_azs=3 to take effect."
+                    if agnostic and self.config.create_vpc and self.config.max_azs >= 3
+                    else ""
+                )
             )
         zone_awareness = (
             opensearch.ZoneAwarenessConfig(

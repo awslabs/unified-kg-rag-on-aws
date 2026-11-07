@@ -249,10 +249,32 @@ class ComputeStack(Stack):
             )
         )
         # OpenSearch HTTP(S) operations on the domain.
+        domain_arn = storage.opensearch_domain.domain_arn
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=["es:ESHttp*"],
-                resources=[f"{storage.opensearch_domain.domain_arn}/*"],
+                resources=[f"{domain_arn}/*"],
+            )
+        )
+        # Ingestion works on its own indices and aliases only (index, mapping,
+        # alias, _bulk, _refresh, _search requests); it never changes the
+        # cluster's settings or a plugin's configuration (security, ISM,
+        # ...), so those writes are denied, by the legacy _opendistro path
+        # too.
+        role.add_to_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.DENY,
+                actions=[
+                    "es:ESHttpPost",
+                    "es:ESHttpPut",
+                    "es:ESHttpDelete",
+                    "es:ESHttpPatch",
+                ],
+                resources=[
+                    f"{domain_arn}/_cluster/*",
+                    f"{domain_arn}/_plugins/*",
+                    f"{domain_arn}/_opendistro/*",
+                ],
             )
         )
         # DynamoDB doc-status registry + S3 cache (scoped to our resources).
@@ -264,7 +286,7 @@ class ComputeStack(Stack):
         storage.cache_bucket.grant_put(role)
         if self.corpus_bucket is not None:
             # A corpus kept outside the cache bucket is only read (entrypoint
-            # `aws s3 sync`); the S3 endpoint policy allows it too.
+            # S3 sync, docker/s3_sync.py); the S3 endpoint policy allows it too.
             self.corpus_bucket.grant_read(role)
         self._grant_tracing(role)
         return role
@@ -645,7 +667,7 @@ class ComputeStack(Stack):
             stop_timeout=Duration.seconds(120),
             # An init process as PID 1 forwards the stop signal to the CLI
             # and reaps the processes it leaves (pool workers, the
-            # entrypoint's aws s3 sync); the CLI as PID 1 got no signal it
+            # entrypoint's S3 sync); the CLI as PID 1 got no signal it
             # had no handler for and reaped nothing.
             linux_parameters=ecs.LinuxParameters(
                 task_def, "AppLinuxParameters", init_process_enabled=True

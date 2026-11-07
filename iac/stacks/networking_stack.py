@@ -36,7 +36,7 @@ GATEWAY_ENDPOINTS = {
 }
 
 # Interface endpoints the private (no-NAT) data plane needs: only services the
-# app, its entrypoint (`aws s3 sync`, via the S3 gateway) or the Fargate agent
+# app, its entrypoint (the S3 sync, via the S3 gateway) or the Fargate agent
 # (image pull, awslogs driver) actually call. Nothing calls SSM, Step Functions
 # (RUN_JOB tracks the task service-side) or CloudWatch monitoring (metrics are
 # EMF records in the logs), so those endpoints are not created; Secrets Manager
