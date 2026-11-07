@@ -191,8 +191,8 @@ indexing:
   same; a re-run of the same `--pipeline-id` runs only `community_detection`
   and `indexing` from its stage cache.
 - **Removing one** stops the runs from maintaining its artifacts: the next
-  run that writes the namespace records them gone and its strategies are
-  refused from then on; until then (an unchanged corpus) they stay current.
+  run of the namespace, one with an unchanged corpus too, records them gone
+  and its strategies are refused from then on.
   Nothing is deleted. To delete them, run once with `indexing.reset: true`
   and the remaining methodologies: the rebuild replaces the community-reports
   index with an empty one, drops the graph's community vertices and, without

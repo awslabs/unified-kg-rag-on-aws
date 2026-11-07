@@ -8,6 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
+from pydantic import ValidationError
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.ingestion.chunker import ChunkerFactory
@@ -99,6 +100,7 @@ from unified_kg_rag.domain.ingestion.methodologies import (
     artifacts_to_build,
     built_artifacts,
     selected_stages,
+    stored_artifacts,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
@@ -2745,6 +2747,8 @@ class IndexingStage(_RegistryStage):
                     if key.startswith("vector_summary_nodes_")
                 ),
             )
+        else:
+            self._record_removed_artifacts(text_units)
 
         metrics = {
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},
@@ -2908,6 +2912,45 @@ class IndexingStage(_RegistryStage):
             if written is not None and written.communities is not None:
                 counters[suffix] = written.communities
         return counters
+
+    def _record_removed_artifacts(self, text_units: list[TextUnit]) -> None:
+        """Drop from each suffix's stored build record the artifacts this
+        run's methodologies no longer build (``artifacts_to_build``).
+
+        An incremental run with nothing to index writes no record (the
+        indices keep the one of the run that did), but a run under a
+        narrower profile stops maintaining the removed methodologies'
+        artifacts all the same: unrecorded, their strategies would still be
+        served until a run with a delta. Best-effort, as ``record_build``.
+        """
+        building = artifacts_to_build(self.config)
+        vector_indexer = self.indexing_manager.vector_indexer
+        suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units} or {
+            self.config.processing.document_parsing.index_value
+            or Constants.DEFAULT_SUFFIX.value
+        }
+        for suffix in sorted(suffixes):
+            stored = vector_indexer.read_build_record(suffix)
+            held = stored_artifacts(stored)
+            if stored is None or held is None or held <= building:
+                continue
+            try:
+                record = IndexBuildRecord.model_validate(stored)
+            except ValidationError:
+                continue
+            kept = record.with_artifacts(held & building)
+            logger.info(
+                "Methodologies of '%s' no longer built: %s; recorded as gone "
+                "(their stored items stay until a reset)",
+                suffix,
+                ", ".join(
+                    m
+                    for m in record.methodologies or []
+                    if m not in (kept.methodologies or [])
+                )
+                or "none",
+            )
+            vector_indexer.record_build(kept, suffix)
 
     def _index_incremental(
         self,

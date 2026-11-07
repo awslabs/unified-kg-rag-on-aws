@@ -405,3 +405,38 @@ def test_without_the_registry_a_new_run_reuses_the_stored_extractions(
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert set(calls.since(before)) == {"report"}
     assert _record(providers)["methodologies"] == ["graphrag", "lightrag", "hipporag"]
+
+
+def test_removing_a_methodology_is_recorded_by_a_run_with_no_change(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Regression (real AWS): a state-machine run under a narrower profile
+    # with an unchanged corpus wrote no build record, so the removed
+    # methodology's strategies kept being served on artifacts no run
+    # maintains any more, until a run with a delta.
+    config, providers, server, calls = _setup(tmp_path)
+    source = _corpus(tmp_path)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert "graphrag" in _record(providers)["methodologies"]
+
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    before = Counter(calls.kinds)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert calls.since(before) == Counter()  # nothing changed, nothing asked
+    record = _record(providers)
+    assert record["methodologies"] == ["lightrag", "hipporag"]
+    assert "community_reports" not in record["artifacts"]
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        with pytest.raises(MethodologyNotIndexedError):
+            _ask(chain, SearchStrategy.LOCAL)
+        assert _ask(chain, SearchStrategy.MIX).answer == e2e.ANSWER
+    finally:
+        chain.close()
+
+    # A run with no change under the same profile leaves the record as it is.
+    context = e2e._ingest(config, providers, source, tmp_path / "run-3")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert _record(providers) == record

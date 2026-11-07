@@ -69,6 +69,7 @@ class _RecordingManager:
             set_doc_status_tracking=lambda tracked: None,
             set_replaced_vector_keeping=lambda keep: None,
             record_build=lambda record, suffix: None,
+            read_build_record=lambda suffix: None,
             read_text_unit_ids=lambda ids, suffix=None: ids,
         )
 

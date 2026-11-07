@@ -618,7 +618,7 @@ From a `main` checkout (formats and keys no release had):
   (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()` are public (#619).
   Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
-  them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
+  them, and the next run records them gone, one with no document change too (#PR). Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
   reads less declares its artifacts (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace
   that holds the text units, and `simple` sweeps only the indexes it holds (#607). A filter key is checked, after
   the methodology check, against the indexes the strategy reads that the namespace holds and a run of the config

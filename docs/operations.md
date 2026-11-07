@@ -202,7 +202,7 @@ definition's environment and the image config again, so a setting every run
 must keep, such as `indexing.methodologies`, belongs in the image config or a
 CDK context key ([Methodology profiles on the CDK stack](#methodology-profiles-on-the-cdk-stack)):
 a one-off run that added a methodology is undone by the next state-machine run,
-which records the added artifacts gone.
+which records the added artifacts gone (a run with no document change too).
 
 ### Methodology profiles on the CDK stack
 
@@ -236,8 +236,9 @@ Then deploy and start runs as usual:
   hold exits 2 (`MethodologyNotIndexedError`) before any model call
   (`run-eval` checks every strategy it compares, or each query's own,
   before its first answer), and `auto` routes only among the held ones.
-- **Removing a methodology.** The next run that writes the namespace records
-  its artifacts gone and its strategies are refused from then on. Nothing is
+- **Removing a methodology.** The next run of the namespace records its
+  artifacts gone, one with no document change too, and its strategies are
+  refused from then on. Nothing is
   deleted: a [one-off](#run-a-one-off-ingestion-task) run with
   `UKR__INDEXING__RESET=true` empties the community-reports index and drops
   the community vertices.

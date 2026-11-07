@@ -1059,7 +1059,9 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   builds (`held_artifacts`, from `artifacts_to_build`), so nothing is missing
   and an upgrade promotes no run.
 - **Removing a methodology** stops maintaining its artifacts: the next run
-  that writes the namespace records them gone, and its strategies fail fast.
+  of the namespace records them gone (one with nothing to index narrows the
+  stored record to what it builds, `_record_removed_artifacts`), and its
+  strategies fail fast.
   Nothing is deleted: a reset with the remaining methodologies replaces the
   community-reports index with an empty one and drops the graph's community
   vertices (the rebuild sweep, §5.2). A run creates no vector index of an
