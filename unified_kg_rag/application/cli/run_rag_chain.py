@@ -67,6 +67,7 @@ from unified_kg_rag.domain.models import SearchStrategy
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     ConfigurationError,
+    IndexNotFoundError,
     InvalidFilterError,
     MethodologyNotIndexedError,
     MetricsSink,
@@ -667,13 +668,18 @@ class RAGChainRunner:
 
         except Exception as e:
             if (
-                isinstance(e, InvalidFilterError | MethodologyNotIndexedError)
+                isinstance(
+                    e,
+                    InvalidFilterError
+                    | MethodologyNotIndexedError
+                    | IndexNotFoundError,
+                )
                 and not self.args.interactive
             ):
-                # A --filters key no index declares, or a --search-strategy
-                # whose methodology the namespace does not hold: the command
-                # line is wrong.
-                usage_error(str(e))
+                # A --filters key no index declares, a --search-strategy
+                # whose methodology the namespace does not hold, or a --suffix
+                # nothing was ingested under: the command line is wrong.
+                usage_error(str(e), error_type=type(e).__name__)
             if isinstance(e, QueryTimeoutError):
                 # An expected outcome with its own message: no traceback.
                 logger.error("Query timed out: %s", e)

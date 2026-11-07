@@ -1487,12 +1487,45 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 raise
             return  # Cannot tell: keep skipping just the missing index.
         shown = suffix or Constants.DEFAULT_SUFFIX.value
+        ingested = await self._ingested_suffixes()
+        held = (
+            f" Suffixes ingested on this store: {', '.join(ingested)}."
+            if ingested
+            else " No suffix was ingested on this store."
+        )
         raise IndexNotFoundError(
             f"No indices found for suffix '{shown}' (the text units index "
             f"'{alias}' does not exist). Did you run ingestion with "
             f"processing.document_parsing.index_value '{shown}'? Query with the "
-            "suffix the corpus was ingested under (run-rag/run-eval --suffix)."
+            f"suffix the corpus was ingested under (run-rag/run-eval --suffix).{held}"
         ) from cause
+
+    async def _ingested_suffixes(self) -> list[str]:
+        """The suffixes a text units alias exists for (each ingested
+        namespace has one), for the message of a suffix none exists for;
+        empty when the store cannot tell."""
+        prefix = f"{self._opensearch_config.text_units_index_prefix}-"
+        additional = self._config.indexing.additional_suffix
+        try:
+            indices = await asyncio.to_thread(
+                self._opensearch_client.get_aliases_by_index, f"{prefix}*"
+            )
+        except Exception as e:  # noqa: BLE001 - only the message's hint
+            logger.debug("Listing the ingested suffixes failed: %s", e)
+            return []
+        suffixes: set[str] = set()
+        for aliases in indices.values():
+            for name in aliases:
+                if not name.startswith(prefix):
+                    continue
+                rest = name[len(prefix) :]
+                if additional:
+                    if not rest.endswith(f"-{additional}"):
+                        continue
+                    rest = rest[: -len(additional) - 1]
+                if rest:
+                    suffixes.add(rest)
+        return sorted(suffixes)
 
     def _parse_hit(self, hit: dict[str, Any]) -> RetrievalResult:
         source = hit.get("_source", {})

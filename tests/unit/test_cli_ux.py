@@ -520,3 +520,64 @@ def test_a_failed_run_names_the_first_stage_error_and_the_next_step() -> None:
     assert "rerun with --pipeline-id run-7" in step
     context.stage_results[1].error_message = "throttled"
     assert "models.embedding" not in runner._next_step(context)
+
+
+# --- a suffix nothing was ingested under --------------------------------
+
+
+@pytest.mark.parametrize(
+    ("additional", "expected"),
+    [(None, "default, tenant-a, tenant-a-v2"), ("v2", "tenant-a")],
+)
+async def test_a_typod_suffix_names_the_ingested_ones(
+    additional: str | None, expected: str
+) -> None:
+    from unified_kg_rag.adapters.retrievers.opensearch_retriever import (
+        OpenSearchRetriever,
+    )
+    from unified_kg_rag.shared import IndexNotFoundError
+
+    config = Config(indexing={"additional_suffix": additional})
+    prefix = config.indexing.opensearch.text_units_index_prefix
+
+    class _Client:
+        async def aindex_exists(self, name: str) -> bool:
+            return False
+
+        def get_aliases_by_index(self, pattern: str) -> dict[str, list[str]]:
+            assert pattern == f"{prefix}-*"
+            return {
+                f"{prefix}-default-1": [f"{prefix}-default"],
+                f"{prefix}-tenant-a-2": [f"{prefix}-tenant-a"],
+                f"{prefix}-tenant-a-v2-3": [f"{prefix}-tenant-a-v2"],
+                f"{prefix}-stale-4": [],
+            }
+
+    retriever = OpenSearchRetriever.__new__(OpenSearchRetriever)
+    object.__setattr__(retriever, "_config", config)
+    object.__setattr__(retriever, "_opensearch_config", config.indexing.opensearch)
+    object.__setattr__(retriever, "_opensearch_client", _Client())
+    with pytest.raises(IndexNotFoundError) as refused:
+        await retriever._require_ingested_suffix("tenant-b", RuntimeError("404"))
+    assert f"Suffixes ingested on this store: {expected}." in str(refused.value)
+
+
+async def test_run_rag_exits_2_for_a_suffix_nothing_was_ingested_under(
+    mocker, capsys
+) -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import RAGInput
+    from unified_kg_rag.shared import IndexNotFoundError
+
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.args = run_rag_chain.CommandLineInterface._setup_arguments().parse_args(
+        ["-q", "hi", "--suffix", "tenant-b"]
+    )
+    runner.metrics_sink = mocker.MagicMock()
+    runner.rag_chain = mocker.MagicMock()
+    runner.rag_chain.ainvoke = mocker.AsyncMock(
+        side_effect=IndexNotFoundError("No indices found for suffix 'tenant-b'")
+    )
+    with pytest.raises(SystemExit) as exited:
+        await runner._run_query(RAGInput(query="hi"))
+    assert exited.value.code == 2
+    assert "No indices found for suffix 'tenant-b'" in capsys.readouterr().err

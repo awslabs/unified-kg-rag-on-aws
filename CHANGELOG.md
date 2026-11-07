@@ -925,6 +925,8 @@ From a `main` checkout (formats and keys no release had):
   writes vectors embeds one probe text before its first model stage and stops (exit 2) when the model returns
   another dimension than `models.embedding.dimension`, naming the setting, where every vector write failed at the
   indexing stage after the extraction was paid for (one embedding call per run) (#PR).
+- `run-rag --suffix` that nothing was ingested under (a typo) exits 2, not 1, and the message lists the suffixes
+  ingested on the store (#PR).
 - Every CLI takes `--log-level` (over `logging.level`) and `--version`; with `--output-format text` the console logs
   are plain lines unless `logging.log_format` is set (they were JSON records between the CLI's own output whenever
   stdout was not a terminal; the CDK tasks set `structured` and keep them), and `prepare-benchmark assertions` logs
