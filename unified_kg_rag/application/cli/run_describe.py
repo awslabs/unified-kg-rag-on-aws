@@ -34,7 +34,7 @@ from unified_kg_rag.application.cli.conventions import (
     print_json,
     setup_cli_logging,
 )
-from unified_kg_rag.application.cli.display import console
+from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.preflight import missing_extras_error
 from unified_kg_rag.application.cli.provider_args import (
@@ -140,6 +140,11 @@ def _print(description: NamespaceDescription) -> None:
             f"{n} {status}" for status, n in description.registry.items()
         )
         console.print(f"Doc-status registry: {counts or 'no record'}")
+    elif description.registry_unavailable is not None:
+        console.print(
+            "[yellow]Doc-status registry: unavailable "
+            f"({markup_safe(description.registry_unavailable)})[/yellow]"
+        )
 
 
 @exits_on_sigterm

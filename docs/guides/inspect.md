@@ -39,7 +39,10 @@ Every flag: [CLI Reference](../reference/cli.md#run-describe).
   `full` or `incremental`, when, how many documents, the extraction
   fingerprint and settings, and the community counters.
 - **Registry.** With the doc-status registry on, its records of the
-  namespace by status (`processed`, `failed`, `quarantined`, ...).
+  namespace by status (`processed`, `failed`, `quarantined`, ...). A
+  registry the caller cannot read (no table, or no access to it, as the
+  deployed query task has none) is reported unavailable, with the reason
+  (`registry_unavailable`), and the rest is still described.
 
 A namespace that holds no index exits 2 (a mistyped `--suffix`, say).
 

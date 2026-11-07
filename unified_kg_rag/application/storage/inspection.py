@@ -44,7 +44,10 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.ports.indexer import StoredItemKind
 from unified_kg_rag.shared import ConfigurationError, get_logger
-from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
+from unified_kg_rag.shared.exceptions import (
+    DocStatusRegistryError,
+    MethodologyNotIndexedError,
+)
 
 logger = get_logger(__name__)
 
@@ -101,7 +104,12 @@ class NamespaceDescription(BaseModel):
     indices: list[IndexDescription] = Field(description="Its indices")
     registry: dict[str, int] | None = Field(
         description="The doc-status registry's records of the namespace by "
-        "status (None with the registry off)"
+        "status (None with the registry off or unavailable)"
+    )
+    registry_unavailable: str | None = Field(
+        default=None,
+        description="Why the registry, on, could not be read (access denied, "
+        "no table, ...); None when it was read or is off",
     )
 
 
@@ -178,21 +186,11 @@ def describe_namespace(
     except MethodologyNotIndexedError:
         routes = []
     namespace = config_registry_namespace(config.indexing, name)
-    registry = None
-    if providers.doc_status_enabled:
-        store = providers.build_doc_status()
-        try:
-            registry = dict(
-                sorted(
-                    Counter(
-                        r.status.value for r in store.list_namespace(namespace)
-                    ).items()
-                )
-            )
-        finally:
-            close = getattr(store, "close", None)
-            if callable(close):
-                close()
+    registry, unavailable = (
+        _registry_counts(providers, namespace)
+        if providers.doc_status_enabled
+        else (None, None)
+    )
     return NamespaceDescription(
         suffix=name,
         namespace=namespace,
@@ -209,7 +207,44 @@ def describe_namespace(
         auto_routes=routes,
         indices=indices,
         registry=registry,
+        registry_unavailable=unavailable,
     )
+
+
+def _registry_counts(
+    providers: Providers, namespace: str
+) -> tuple[dict[str, int] | None, str | None]:
+    """The registry's records of ``namespace`` by status, or ``None`` and why
+    it could not be read.
+
+    The registry is reported, not needed: a caller that may read the
+    stores but not the registry (the deployed query task holds no DynamoDB
+    grant) still gets the rest of the description, with a warning.
+    """
+    try:
+        store = providers.build_doc_status()
+        try:
+            return (
+                dict(
+                    sorted(
+                        Counter(
+                            r.status.value for r in store.list_namespace(namespace)
+                        ).items()
+                    )
+                ),
+                None,
+            )
+        finally:
+            close = getattr(store, "close", None)
+            if callable(close):
+                close()
+    except (DocStatusRegistryError, ConfigurationError) as e:
+        logger.warning(
+            "The doc-status registry is unavailable; describing the namespace "
+            "without its records: %s",
+            e,
+        )
+        return None, str(e)
 
 
 # Export: the kinds in the order they are written (text units first, so
