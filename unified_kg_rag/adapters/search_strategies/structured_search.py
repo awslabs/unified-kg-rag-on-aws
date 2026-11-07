@@ -216,13 +216,11 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         super().__init__(config, retrievers, **kwargs)
         self.settings = config.search.structured
         graph = self.graph_retriever
-        if not _answers_graph_queries(graph):
-            raise ConfigurationError(
-                "search strategy 'structured' needs a graph store that answers "
-                "structured queries (GraphQueryPort); providers.graph.kind "
-                f"'{config.providers.graph.kind}' does not"
-            )
-        self.graph_query: GraphQueryPort = cast(GraphQueryPort, graph)
+        # Checked when a query runs (``_port``), not here: the chain builds
+        # every strategy it checks filter keys for.
+        self._graph_query: GraphQueryPort | None = (
+            cast(GraphQueryPort, graph) if _answers_graph_queries(graph) else None
+        )
         self.planner: Runnable[Any, Any] = setup_chain(
             factory=self.providers.llm_factory,
             model_id=config.model_id(ModelRole.GRAPH_QUERY),
@@ -246,6 +244,22 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             # sees what extraction stored (the observed profile).
             return None
         return schema if schema.entity_types or schema.relationship_types else None
+
+    @property
+    def graph_query(self) -> GraphQueryPort:
+        """The GRAPH retriever as a ``GraphQueryPort``.
+
+        Raises:
+            ConfigurationError: The graph store answers no structured query
+                (a custom retriever without the port).
+        """
+        if self._graph_query is None:
+            raise ConfigurationError(
+                "search strategy 'structured' needs a graph store that answers "
+                "structured queries (GraphQueryPort); providers.graph.kind "
+                f"'{self.config.providers.graph.kind}' does not"
+            )
+        return self._graph_query
 
     # --- the filter contract ---------------------------------------------------------
 
@@ -271,6 +285,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     async def asearch(
         self, query: SearchQuery, config: RunnableConfig | None = None
     ) -> SearchResult:
+        self.graph_query  # noqa: B018 - before any model call, fail on a store without the port
         start = time.time()
         run = _Run(mode=self.settings.mode)
         rerank = self._new_rerank_trace()

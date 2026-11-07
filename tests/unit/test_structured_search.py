@@ -287,13 +287,18 @@ def test_it_is_registered_served_by_every_graph_namespace_and_not_routed() -> No
     Config(search={"auto_routable_strategies": ["local", "structured"]})
 
 
-def test_a_graph_store_without_the_port_is_refused() -> None:
+async def test_a_graph_store_without_the_port_is_refused() -> None:
     class _Plain:
         async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
             return []
 
+    planner = _Planner({})
+    # Built (the chain builds every strategy it checks filters for), refused
+    # by its first query before any model call.
+    strategy, *_ = _strategy(planner, graph=_Plain())
     with pytest.raises(ConfigurationError, match="GraphQueryPort"):
-        _strategy(_Planner({}), graph=_Plain())
+        await strategy.asearch(_query())
+    assert planner.calls == []
 
 
 def test_the_filter_contract() -> None:
