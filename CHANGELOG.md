@@ -243,6 +243,11 @@ See [`iac/README.md`](iac/README.md).
   `owner` tag is applied only when `-c owner=...` is set; `GraphRagSecurity` is synthesized only with `use_cmk`; the
   OpenSearch domain requires `Policy-Min-TLS-1-2-PFS-2023-10` (TLS 1.2+ with ECDHE) (#566); a `removal_destroy`
   environment stops writing cache-bucket access logs and deletes `CacheAccessLogs` with its logs (#583).
+- The OpenSearch domain runs 2.19 (was 2.13), and the local stack (`docker/compose.local.yaml`) 2.19.7. A deployed
+  domain upgrades in place on its next deploy of `GraphRagStorage`: same endpoint and indices, no reindex, a
+  blue/green deployment of 15 minutes to several hours with slower queries and ingestion, and no downgrade
+  (*Upgrading*). The application's defaults behave the same on both versions and it still runs on 2.13 clusters;
+  `vector_mode` / `compression_level` and faiss with `cosinesimil` now work on the CDK domain, opt-in as before.
 
 #### Library API
 - 0.2.3 exported only `__version__`. The public API is what `unified_kg_rag` exports (`unified_kg_rag.__all__`):
@@ -324,6 +329,12 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    (they share the environment names, EMF dimension, query task and registry table). Add `-c sts_endpoint=true` when
    a private-mode image config sets `aws.bedrock.assumed_role_arn` (or the role assumption hangs), and `-c
    opensearch_nori_package=true` for Korean on the CDK domain (or keep its `cjk`) (#282, #459, #566).
+   A 0.2.3 domain has no `EnableVersionUpgrade` update policy, and a deploy that adds it and changes the engine
+   version at once is not covered by it: CloudFormation can replace the domain with a new, empty one. So set
+   `OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_13` in `iac/stacks/storage_stack.py` for the deploys
+   of steps 7-8, then put back `OPENSEARCH_2_19` and upgrade the domain as the runbook's
+   [Upgrading OpenSearch](docs/operations.md#upgrading-opensearch) says (snapshot first; 15 minutes to several
+   hours; `cdk diff GraphRagStorage` must show no `UpdatePolicy` added).
 7. A deployed stack: run `cdk deploy GraphRagOrchestration --exclusively` (`GraphRag<Env>Orchestration` outside
    `dev`) with your usual `-c` flags and the new `image_tag`, then `cdk deploy --all`; a plain `--all` stops at
    `GraphRagCompute` ("Cannot delete export ...") and rolls back unchanged. Container Insights series restart under
@@ -351,6 +362,13 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     charts to get the SVG pages (#563, #576).
 
 From a `main` checkout (formats and keys no release had):
+- OpenSearch 2.19: the next deploy of `GraphRagStorage` upgrades a domain deployed on 2.13 in place (deployed from
+  #457 on, it has the update policy; `cdk diff GraphRagStorage` must change only `EngineVersion`). It takes 15
+  minutes to several hours, queries and ingestion run slower meanwhile, and the only way back to 2.13 is a manual
+  snapshot restored on a new domain: stop ingestion and take one first
+  ([Upgrading OpenSearch](docs/operations.md#upgrading-opensearch)). Nothing is re-indexed or re-run. To postpone,
+  set `OPENSEARCH_VERSION` back to `OPENSEARCH_2_13` before deploying. Local stores: `docker compose -f docker/compose.local.yaml up -d --build --wait`
+  rebuilds the OpenSearch image and restarts it on 2.19 with its data volume, whose indices it reads as they are.
 - `aws.bedrock.default_max_output_tokens` is `models.default_max_output_tokens` (the load fails until renamed;
   nothing re-runs). The pre-release `search.llm_retry`, `providers.llm.max_retries`,
   `providers.embedding.max_retries` and `evaluation.ragas_max_retries` are unknown keys: set `retry` (#216, #584).

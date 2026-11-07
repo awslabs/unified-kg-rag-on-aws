@@ -246,12 +246,18 @@ did-you-mean hint.
 | `owner`, `cost_center` | —, `unified-kg-rag-on-aws` | Tags applied to every resource (no `owner` tag unless set) |
 | `log_retention_days` | `30` | Retention of the task (`/graphrag/tasks`), pipeline (`/graphrag/pipeline`), OpenSearch application and custom-resource log groups; a CloudWatch Logs retention value |
 
-**The OpenSearch engine version is pinned (2.13) and upgrades in place.**
-The domain carries the `EnableVersionUpgrade` update policy, so changing
-`OPENSEARCH_VERSION` in `storage_stack.py` (to 2.19, say) upgrades the deployed domain
-as a blue/green deployment, keeping its indices, instead of replacing it with
-an empty one. Snapshot it first: see
-[Upgrading OpenSearch](../docs/operations.md#upgrading-opensearch).
+**The OpenSearch engine version is pinned (2.19) and upgrades in place.**
+The domain carries the `EnableVersionUpgrade` update policy, so a changed
+`OPENSEARCH_VERSION` in `storage_stack.py` upgrades the deployed domain as a
+blue/green deployment, keeping its endpoint and indices, instead of replacing
+it with an empty one. **A domain deployed on 2.13 upgrades to 2.19 on its next
+deploy of `GraphRagStorage`**: 15 minutes to several hours, queries and
+ingestion slower meanwhile, and no way back to 2.13 except restoring a manual
+snapshot on a new domain. Before that deploy, stop ingestion, take a manual
+snapshot, run the eligibility check and check that `cdk diff GraphRagStorage`
+changes only `EngineVersion`
+([Upgrading OpenSearch](../docs/operations.md#upgrading-opensearch)); to
+postpone it, set `OPENSEARCH_VERSION` back to `OPENSEARCH_2_13` first.
 
 **The Neptune engine version is not pinned.** A new cluster starts on
 Neptune's default engine version at creation; pinning one now would change the

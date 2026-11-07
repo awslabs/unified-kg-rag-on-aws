@@ -115,7 +115,7 @@ or store and only accepts them). The keys each flag sets are in the
 
 [`docker/compose.local.yaml`](../../docker/compose.local.yaml) runs the stores
 as servers: a Gremlin Server (in-memory TinkerGraph), a single-node
-OpenSearch 2.13 with `analysis-nori` (security plugin off) and, under the
+OpenSearch 2.19 (the CDK domain's version) with `analysis-nori` (security plugin off) and, under the
 `models` profile, Ollama. OpenSearch is the engine of Amazon OpenSearch
 Service, so use it to check ranking before an AWS deployment
 ([Multilingual corpora](./multilingual.md#analyzers) covers `nori` on AWS).
