@@ -1749,7 +1749,25 @@ class _VisualizationExport:
         incremental delta's."""
         export = self.config.graph.visualization.export_data
         delta = context.incremental_delta
-        if export and delta is not None and delta.unchanged:
+        others = (
+            [s for s in delta.stored_scopes if s != context.incremental_scope]
+            if delta is not None and not self.config.indexing.reset
+            else []
+        )
+        if export and others:
+            # The namespace holds other source scopes' documents, which this
+            # run's graph does not: exporting it would replace the
+            # namespace's visualization data with this corpus's part.
+            logger.info(
+                "Visualization skipped: the index namespace also holds the "
+                "documents of %d other source scope(s), which this run's "
+                "graph does not. Export the whole namespace's graph with "
+                "run-describe --output-path (GraphML or JSON Lines), or give "
+                "each corpus its own namespace "
+                "(processing.document_parsing.index_value).",
+                len(others),
+            )
+        elif export and delta is not None and delta.unchanged:
             # An incremental run's graph holds only the delta's documents:
             # exporting it would replace the full graph's visualization data
             # with a fragment.

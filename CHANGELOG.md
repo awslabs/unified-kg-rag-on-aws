@@ -1310,6 +1310,9 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- A run into a namespace that holds other source scopes' documents no longer exports `visualization_data.json`
+  from its own corpus's graph (or fails to, `Communities must be detected before exporting`): it logs an INFO line
+  pointing at `run-describe --output-path` and leaves the earlier file in place.
 - A source scope's first run into a namespace that holds other scopes' documents is recorded as the incremental
   build it is: the build record kept only that run's documents and artifacts as a full build, restarted the
   community counters and dropped the full build it was applied on.

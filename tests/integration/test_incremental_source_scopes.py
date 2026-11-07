@@ -695,3 +695,30 @@ def test_a_new_scope_beside_another_is_recorded_as_an_incremental_build(
     assert record["full_build"]["documents"] == 2
     assert record["artifacts"] == full["artifacts"]
     assert record["communities"]["runs_since"] == 1
+
+
+def test_a_new_scope_beside_another_keeps_the_namespaces_visualization(
+    registry, tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The second scope's run exported its own graph (or failed to: its
+    # delta held no community), replacing the namespace's visualization
+    # data with one corpus's part.
+    config = scope_test_config()
+    config.graph.visualization.export_data = True
+    config.graph.visualization.outputs_directory = str(tmp_path / "viz")
+    stack = ScopeStack(registry, tmp_path, config)
+    stack.run(
+        write_corpus(
+            tmp_path / "src-a",
+            {"a.txt": "Vendor supplies Buyer, Buyer banks with Bank at the Depot."},
+        )
+    )
+    data = tmp_path / "viz" / "visualization_data.json"
+    written = data.read_text(encoding="utf-8")
+    assert "Vendor" in written
+
+    with caplog.at_level("INFO"):
+        stack.run(write_corpus(tmp_path / "src-b", {"b.txt": B_TEXT}))
+    assert data.read_text(encoding="utf-8") == written
+    assert "other source scope(s)" in caplog.text
+    assert "Visualization data export failed" not in caplog.text
