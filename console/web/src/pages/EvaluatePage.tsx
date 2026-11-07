@@ -24,6 +24,7 @@ interface DatasetPreview {
 interface RunListing {
   ref: string;
   label: string;
+  job_id: string | null;
   modified: number;
   summaries: number;
   strategies: string[];
@@ -159,11 +160,11 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
                   onJobsChanged();
                   void runs.reload();
                   void jobs.reload();
-                  if (job.output_directory) {
-                    const label = job.output_directory.split("/").pop();
-                    const found = runs.data?.runs.find((r) => r.label === label);
+                  // The run the job saved, once the list is read again.
+                  void get<{ runs: RunListing[] }>("evaluations").then(({ runs: listed }) => {
+                    const found = listed.find((r) => r.job_id === job.id);
                     if (found) setRun(found.ref);
-                  }
+                  });
                 }}
               >
                 {(job) => <GateResult job={job} />}

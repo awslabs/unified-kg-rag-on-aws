@@ -348,7 +348,7 @@ def test_an_evaluation_job_runs_the_cli_and_its_run_is_saved(client: Any) -> Non
     assert done["result"]["gate_failures"] == []
     assert "--output-directory" in done["command"]
     runs = client.get("/api/evaluations").json()["runs"]
-    mine = next(r for r in runs if r["label"] == job["id"])
+    mine = next(r for r in runs if r["job_id"] == job["id"])
     assert mine["strategies"] == ["local", "naive"]
     run = client.get("/api/evaluations/run", params={"ref": mine["ref"]}).json()
     assert run["comparison"]["baseline"] == "local"

@@ -79,7 +79,7 @@ async function ensureEvaluation() {
     await new Promise((r) => setTimeout(r, 1000));
   }
   ({ runs } = await api("evaluations"));
-  const mine = runs.find((r) => r.label === job.id);
+  const mine = runs.find((r) => r.job_id === job.id);
   if (!mine?.comparisons.length) throw new Error(`evaluation ${job.id} saved no comparison`);
   return mine;
 }

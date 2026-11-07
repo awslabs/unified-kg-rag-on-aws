@@ -136,6 +136,7 @@ def find_runs(roots: Roots, name: str = "outputs") -> list[dict[str, Any]]:
             {
                 "ref": ref,
                 "label": directory.name,
+                "job_id": console_job_of(directory),
                 "modified": newest,
                 "summaries": len(files["summaries"]),
                 "comparisons": [roots.ref(p) for p in sorted(files["comparisons"])],
@@ -143,6 +144,15 @@ def find_runs(roots: Roots, name: str = "outputs") -> list[dict[str, Any]]:
             }
         )
     return sorted(runs, key=lambda r: r["modified"], reverse=True)
+
+
+def console_job_of(directory: Path) -> str | None:
+    """The console job that wrote a run directory: ``<outputs>/console/<job
+    id>/`` itself, or the ``run_<stamp>/`` run-eval writes inside it."""
+    for candidate in (directory, directory.parent):
+        if candidate.parent.name == "console":
+            return candidate.name
+    return None
 
 
 def _strategy_of(path: Path) -> str:

@@ -459,3 +459,12 @@ def test_the_dashboard_prices_usage_and_leaves_unpriced_models_out(
     assert summary["jobs"][0]["duration_seconds"] == 10.0
     assert store.clear_queries() == 2 and store.queries() == []
     store.close()
+
+
+def test_a_saved_run_is_traced_to_the_console_job_that_wrote_it(tmp_path: Path) -> None:
+    from unified_kg_rag.application.cli.console.evaluations import console_job_of
+
+    job = tmp_path / "console" / "20261107-000000-abcdef"
+    assert console_job_of(job) == job.name
+    assert console_job_of(job / "run_20261107_000001_12345678") == job.name
+    assert console_job_of(tmp_path / "elsewhere" / "run_1") is None
