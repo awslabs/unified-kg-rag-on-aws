@@ -572,6 +572,14 @@ _SPLIT_EDGE_C = [
     ),
 ]
 
+# An edge to "벤더", then a document naming "(주)벤더" beside it (see the
+# example of the insert/delete summaries test).
+_KOREAN_LEGAL_FORM_C = [(["벤더"], [], [("Vendor", "벤더", 1)])]
+_KOREAN_LEGAL_FORM_B = [
+    (["Vendor"], [], []),
+    (["Vendor", "(주)벤더"], [], [("Vendor", "벤더", 1), ("Vendor", "(주)벤더", 1)]),
+]
+
 # Both spellings of a name in one unit ("Vendor Inc" is "Vendor"'s compact
 # key, and the same type here, so they stay one entity).
 _TWO_SPELLINGS = [(["Vendor", "Vendor Inc"], [("Vendor Inc", "Depot", 1)], [])]
@@ -720,6 +728,17 @@ def _run_changes(
             _PATHS[2]: [(["Vendor"], [], []), (["Vendor Inc"], [], [])],
         },
         {_PATHS[0]: "keep", _PATHS[1]: "delete", _PATHS[2]: "keep"},
+    ]
+)
+# c.txt's Vendor -> 벤더 edge is stored; b.txt then names "(주)벤더" beside
+# "Vendor" and resolves the Korean legal form into "벤더" in the delta, but
+# the stored graph keeps "(주)벤더" apart: the derivation splits it off, and
+# the stored Vendor -> 벤더 summary must not be extended with the delta's
+# description, whose (주)벤더 line moved to the split edge.
+@example(
+    changes=[
+        {_PATHS[0]: "keep", _PATHS[1]: "keep", _PATHS[2]: _KOREAN_LEGAL_FORM_C},
+        {_PATHS[0]: "keep", _PATHS[1]: _KOREAN_LEGAL_FORM_B, _PATHS[2]: "keep"},
     ]
 )
 def test_insert_and_delete_calls_match_a_full_build_with_summaries(changes) -> None:
