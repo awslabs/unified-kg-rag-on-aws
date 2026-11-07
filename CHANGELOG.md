@@ -557,6 +557,10 @@ From a `main` checkout (formats and keys no release had):
   language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps the rebuilt tree into its own
   index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children are unchanged reuses its
   summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
+  are unchanged reuses its summary. The tree is built again when a text unit's id, text, translation or document
+  filters changed (a reset after re-filtering or re-translating the same units kept the old tree, its nodes' old
+  filters passing queries filtered by the old value), over the translations with their own token counts (#PR).
+  Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
   (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, and one still over the budget
   keeps its whole sentences within it (#601). `run-ingestion --enabled-stages summary_tree` builds the tree under the
   pipeline id that built the namespace even after an upgrade changed the earlier stages' cache keys, running none of

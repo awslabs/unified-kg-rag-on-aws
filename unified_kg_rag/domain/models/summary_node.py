@@ -55,7 +55,9 @@ class SummaryTreeRecord(BaseModel):
     pipeline_id: str = Field(description="The ingestion run that built it")
     built_at: datetime = Field(description="When it was written (UTC)")
     leaf_digest: str = Field(
-        description="Digest of the sorted text-unit ids it was built over"
+        description="Digest of the text units it was built over: each one's "
+        "id, the text the tree read (its translation, when it holds one) and "
+        "its document filters"
     )
     fingerprint: str = Field(
         description="Fingerprint of the tree settings, summary model, prompt, "

@@ -2454,13 +2454,16 @@ earlier stage keeps its cache key), run when `raptor` is selected, `application/
    graphs' units left out as every text search leaves them out): their
    id, indexed text (the `target_language` translation when one is
    stored, the source text otherwise, as the indexer embeds them), stored
-   vector, `n_tokens`, file name and document `filters`. Reading the
+   vector, `n_tokens` (counted again for a translation: the stored count
+   is the source text's), file name and document `filters`. Reading the
    committed store, not the run's context, makes the tree a function of
    what is stored: an incremental run and a full build of the same corpus
    build the same tree, and a run with an empty delta can build a tree
    that is missing.
-2. *Trigger.* The leaf-set digest (the sorted leaf ids, which derive from
-   the document's content) and the tree fingerprint (every tree setting,
+2. *Trigger.* The leaf-set digest (each leaf's id, a hash of the text the
+   tree reads, its translation when it holds one, and its document
+   `filters`: a reset that re-chunks, re-translates or re-filters text units
+   under the same ids changes it) and the tree fingerprint (every tree setting,
    the summary model, prompt and language, the embedding model and
    dimension) are compared with the build record in the summary index's
    `_meta` (`summary_tree`). Equal and complete: nothing is done. A tree

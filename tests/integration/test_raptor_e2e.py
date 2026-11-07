@@ -1014,6 +1014,132 @@ def test_a_summary_passes_a_filter_only_when_all_its_documents_do(
         chain.close()
 
 
+def _parsed_with_filters(
+    tmp_path: Path, filters: dict[str, str], parsed: Path | None = None
+) -> Path:
+    """The corpus as pre-parsed documents, each with ``filters`` (read
+    without a parsing stage, see the test above)."""
+    import json
+
+    source = corpus(tmp_path)
+    parsed = parsed or tmp_path / "parsed"
+    parsed.mkdir(exist_ok=True)
+    for path in sorted(source.glob("*.txt")):
+        (parsed / f"{path.stem}.json").write_text(
+            json.dumps(
+                {
+                    "document_id": path.stem,
+                    "page_content": path.read_text(),
+                    "file_name": path.name,
+                    "file_path": path.name,
+                    "metadata": {"filters": filters},
+                }
+            )
+        )
+    return parsed
+
+
+def test_a_reset_after_the_filters_changed_rebuilds_the_tree(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Regression: the leaf digest hashed the text-unit ids only, so a reset
+    # after the documents' filters changed (same content, same ids) found
+    # the tree current: its nodes kept the old uniform filters, and a query
+    # filtered by the old value still got the summaries.
+    from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+
+    config, providers, _, _ = setup(tmp_path)
+    config.processing.document_parsing.source_scope = "corpus"
+    stages = set(PipelineStageType) - {PipelineStageType.DOCUMENT_PARSING}
+    parsed = _parsed_with_filters(tmp_path, {"category": "north"})
+    context = ingest(config, providers, parsed, tmp_path / "run-1", stages)
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert {n["attributes"]["filters"]["category"] for n in tree_nodes(providers)} == {
+        "north"
+    }
+
+    _parsed_with_filters(tmp_path, {"category": "south"}, parsed)
+    config.indexing.reset = True
+    context = ingest(config, providers, parsed, tmp_path / "run-2", stages)
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+
+    nodes = tree_nodes(providers)
+    assert nodes
+    assert {n["attributes"]["filters"]["category"] for n in nodes} == {"south"}
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        assert not ask(chain, filters={"attr_category": "north"}).sources
+        assert by_type(ask(chain, filters={"attr_category": "south"}), "summary")
+    finally:
+        chain.close()
+
+
+def test_the_tree_is_built_over_the_translations_and_follows_them(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # The leaves are the translations into the index language, with their
+    # own token counts (the stored count is the source text's), and a reset
+    # that translates the same text units otherwise builds the tree again:
+    # the leaf digest hashed the ids only, so the summaries of the old
+    # translations stayed.
+    from unified_kg_rag.application.ingestion.summary_tree_stage import (
+        SummaryTreeStage,
+    )
+    from unified_kg_rag.domain.models.config import LanguageCode
+
+    config, providers, server, calls = setup(tmp_path)
+    config.processing.document_parsing.source_scope = "corpus"
+    translation = config.processing.translation
+    translation.enabled = True
+    translation.source_language = LanguageCode.KO
+    translation.target_language = LanguageCode.EN
+    rendering = {"prefix": "Rendered"}
+
+    def respond(system: str, human: str) -> str:
+        if "professional translator" in system:
+            text = re.search(r"<text>\n(.*?)\n</text>", human, re.S)
+            assert text
+            return f"{rendering['prefix']} as follows: {text.group(1)}"
+        return e2e._respond(system, human)
+
+    calls.respond = respond
+    source = corpus(tmp_path)
+    context = ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    level_1 = [n for n in tree_nodes(providers) if n["level"] == 1]
+    assert level_1
+    assert all(n["text"].startswith("Summary: Rendered as") for n in level_1)
+
+    indexer = providers.build_vector_indexer()
+    try:
+        stage = SummaryTreeStage(config, providers=providers)
+        leaves = [
+            leaf for group in stage._leaves(indexer, None).values() for leaf in group
+        ]
+        stored = {
+            str(row["id"]): row
+            for row in indexer.scan_text_units(None, fields=["text", "n_tokens"]) or []
+        }
+    finally:
+        indexer.close()
+    assert leaves
+    for leaf in leaves:
+        assert leaf.text.startswith("Rendered as follows: ")
+        assert leaf.n_tokens == stage.summarizer.count_tokens(leaf.text)
+        assert leaf.n_tokens != stored[leaf.id]["n_tokens"]
+
+    # Another translation model: the reset translates the same text units
+    # (same ids) otherwise.
+    rendering["prefix"] = "Restated"
+    config.models.roles.translation = "synthetic-translator"
+    config.indexing.reset = True
+    context = ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    level_1 = [n for n in tree_nodes(providers) if n["level"] == 1]
+    assert level_1
+    assert all(n["text"].startswith("Summary: Restated as") for n in level_1)
+
+
 def test_a_korean_corpus_is_summarized_in_korean_with_cjk_counts(
     tmp_path: Path, no_aws  # noqa: F811 - the fixture
 ) -> None:
