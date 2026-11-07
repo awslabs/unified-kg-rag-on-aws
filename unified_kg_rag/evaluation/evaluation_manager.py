@@ -52,6 +52,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     model_id_value,
 )
+from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
 from unified_kg_rag.domain.retrieval.abstention import (
     ABSTENTION_REASON_KEY,
     CONTEXT_SUFFICIENT_KEY,
@@ -102,10 +103,7 @@ EVAL_EXTRA_HINT = (
 )
 
 # The LLM-judge evaluators -> the modules of the eval extra each needs.
-# langchain_classic's load_evaluator imports langchain_openai even when it is
-# handed a model, so the LangChain judge needs it although it calls Bedrock.
 _EVAL_EXTRA_MODULES: dict[EvaluatorType, tuple[str, ...]] = {
-    EvaluatorType.LANGCHAIN: ("langchain_openai",),
     EvaluatorType.RAGAS: ("ragas", "datasets", "pandas"),
 }
 
@@ -204,23 +202,24 @@ class EvaluationManager:
     ) -> Callable[..., BaseGraphRAGEvaluator] | None:
         """The evaluator class for ``evaluator_type``.
 
-        The langchain and ragas evaluators are imported here, on use: ragas
-        alone takes seconds to import, and every CLI imports this module
-        (``application.cli`` exports ``EvaluationRunner``). Both need the
-        ``eval`` extra.
+        The ragas evaluator is imported here, on use: ragas takes seconds
+        to import, and every CLI imports this module (``application.cli``
+        exports ``EvaluationRunner``). It needs the ``eval`` extra.
 
         Raises:
             ConfigurationError: The evaluator's part of the ``eval`` extra is
                 not installed (not dropped under ``processing.ignore_errors``:
-                a missing package is a setting to fix).
+                a missing package is a setting to fix), or the type is a
+                removed one (``REMOVED_EVALUATORS``; ``enabled_evaluators``
+                drops it on load, so only a config built around validation
+                gets here).
         """
-        _require_eval_extra(evaluator_type)
-        if evaluator_type is EvaluatorType.LANGCHAIN:
-            from unified_kg_rag.adapters.evaluators.langchain_evaluator import (
-                LangChainEvaluator,
+        if evaluator_type.value in REMOVED_EVALUATORS:
+            raise ConfigurationError(
+                f"The '{evaluator_type.value}' evaluator is removed: "
+                f"{REMOVED_EVALUATORS[evaluator_type.value]}"
             )
-
-            return LangChainEvaluator
+        _require_eval_extra(evaluator_type)
         if evaluator_type is EvaluatorType.RAGAS:
             from unified_kg_rag.adapters.evaluators.ragas_evaluator import (
                 RagasEvaluator,
@@ -236,9 +235,8 @@ class EvaluationManager:
         if evaluator_type is EvaluatorType.ASSERTION:
             return AssertionEvaluator
         # Defensive: a future EvaluatorType with no mapping resolves to None and
-        # is skipped by the caller. mypy sees the enum as exhaustive today, hence
-        # the ignore — the branch is real once a new member is added.
-        return None  # type: ignore[unreachable]
+        # is skipped by the caller.
+        return None
 
     def __init__(
         self,

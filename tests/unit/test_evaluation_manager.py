@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -42,6 +44,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
 )
+from unified_kg_rag.domain.models.config import EvaluationConfig
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.evaluation_manager import (
     _WARM_UP_QUESTION,
@@ -279,12 +282,8 @@ class TestInitialization:
 
     @requires_eval
     def test_resolver_covers_all_types(self) -> None:
-        # The lazy resolver returns a class for every evaluator type (langchain/
-        # ragas are imported on demand to avoid a circular import at module load).
-        assert (
-            EvaluationManager._resolve_evaluator_class(EvaluatorType.LANGCHAIN).__name__
-            == "LangChainEvaluator"
-        )
+        # The lazy resolver returns a class for every evaluator type (ragas
+        # is imported on demand to avoid a circular import at module load).
         assert (
             EvaluationManager._resolve_evaluator_class(EvaluatorType.RAGAS).__name__
             == "RagasEvaluator"
@@ -294,15 +293,45 @@ class TestInitialization:
             is GraphAwareEvaluator
         )
 
-    def test_deterministic_evaluators_enabled_by_default(self) -> None:
-        # The langchain judge is opt-in: its correctness metrics repeat
-        # ragas' answer_correctness on every query.
+    def test_only_the_deterministic_evaluators_are_enabled_by_default(self) -> None:
+        # The LLM judges are opt-in: ragas costs about ten judge calls per
+        # answer and needs the eval extra (a core install exited 2).
         assert Config().evaluation.enabled_evaluators == [
-            EvaluatorType.RAGAS,
             EvaluatorType.ANSWER_MATCH,
             EvaluatorType.RETRIEVAL,
             EvaluatorType.GRAPH_AWARE,
         ]
+
+    def test_the_removed_langchain_evaluator_is_dropped_with_a_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING):
+            evaluation = EvaluationConfig(
+                enabled_evaluators=["langchain", "answer_match"]
+            )
+        assert evaluation.enabled_evaluators == [EvaluatorType.ANSWER_MATCH]
+        assert "'langchain' evaluator is removed" in caplog.text
+        assert "answer_correctness" in caplog.text
+
+    def test_the_removed_langchain_metrics_key_loads_with_a_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from unified_kg_rag.application.config import get_config
+
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "evaluation:\n  langchain_metrics: [correctness]\n"
+            "  enabled_evaluators: [langchain, retrieval]\n"
+        )
+        with caplog.at_level(logging.WARNING):
+            config = get_config(path)
+        assert config.evaluation.enabled_evaluators == [EvaluatorType.RETRIEVAL]
+        assert "evaluation.langchain_metrics" in caplog.text
+        assert "answer_correctness" in caplog.text
+
+    def test_a_removed_evaluator_built_around_validation_is_refused(self) -> None:
+        with pytest.raises(ConfigurationError, match="langchain.*removed"):
+            EvaluationManager._resolve_evaluator_class(EvaluatorType.LANGCHAIN)
 
     def test_only_enabled_evaluators_initialized(self, config: Config) -> None:
         manager = _graph_aware_manager(config)
@@ -375,7 +404,6 @@ class TestWithoutTheEvalExtra:
     @pytest.mark.parametrize(
         ("evaluator", "package"),
         [
-            (EvaluatorType.LANGCHAIN, "langchain_openai"),
             (EvaluatorType.RAGAS, "ragas"),
             (EvaluatorType.RAGAS, "datasets"),
         ],
@@ -402,7 +430,7 @@ class TestWithoutTheEvalExtra:
     def test_the_llm_free_evaluators_need_no_extra(
         self, config: Config, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _without_modules(monkeypatch, "ragas", "datasets", "pandas", "langchain_openai")
+        _without_modules(monkeypatch, "ragas", "datasets", "pandas")
         llm_free = [
             EvaluatorType.ANSWER_MATCH,
             EvaluatorType.RETRIEVAL,
@@ -907,9 +935,11 @@ class TestMetricOutcomes:
     def _report(self, metrics=(), metadata=None) -> EvaluationReport:
         return EvaluationReport(
             query_id="q",
-            evaluator_type=EvaluatorType.LANGCHAIN,
+            evaluator_type=EvaluatorType.RAGAS,
             metrics=[
-                EvaluationMetric(metric_type=EvaluationMetricType.CORRECTNESS, value=v)
+                EvaluationMetric(
+                    metric_type=EvaluationMetricType.ANSWER_CORRECTNESS, value=v
+                )
                 for v in metrics
             ],
             metadata=metadata or {},
@@ -922,15 +952,15 @@ class TestMetricOutcomes:
         manager.evaluators = {}  # count from reports only
         reports = [
             self._report([0.8]),
-            self._report(metadata={"failed_metrics": {"correctness": "boom"}}),
-            self._report(metadata={"skipped_metrics": {"correctness": "empty"}}),
+            self._report(metadata={"failed_metrics": {"answer_correctness": "boom"}}),
+            self._report(metadata={"skipped_metrics": {"answer_correctness": "empty"}}),
         ]
         stats = manager._calculate_metric_statistics(reports)
-        assert stats["correctness"]["mean"] == pytest.approx(0.8)
-        assert stats["correctness"]["count"] == 1
+        assert stats["answer_correctness"]["mean"] == pytest.approx(0.8)
+        assert stats["answer_correctness"]["count"] == 1
         outcomes = manager._calculate_metric_outcomes([], reports)
         assert outcomes == {
-            "langchain": {"correctness": {"scored": 1, "failed": 1, "skipped": 1}}
+            "ragas": {"answer_correctness": {"scored": 1, "failed": 1, "skipped": 1}}
         }
 
 

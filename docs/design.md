@@ -177,7 +177,7 @@ unified_kg_rag/
 │  ├─ schema_sources/   #   @register_schema_source: extraction-schema loaders (file, owl)
 │  ├─ seed_sources/     #   @register_seed_source: seed graph loaders (jsonl, csv, rdf)
 │  ├─ source_files/     #   shared readers of a source's files: local/S3 locations, RDF files, checks, parse
-│  ├─ evaluators/       #   evaluator bases + langchain/ragas evaluators
+│  ├─ evaluators/       #   evaluator bases + the ragas evaluator
 │  ├─ store_errors.py   #   is_fatal_retrieval_error: the fatal-vs-degraded policy (§8.1)
 │  ├─ providers.py      #   Providers: the per-run bundle of model and store providers
 │  └─ provider_registry.py # @register_provider: builders keyed by role and kind
@@ -3159,9 +3159,10 @@ scores: [Evaluation output](./reference/evaluation-output.md#evaluator-details))
 choices:
 
 - **LLM-free evaluators are first-class.** `answer_match`, `retrieval` and
-  `graph_aware` are deterministic and free, so they run by default next to the
-  RAGAS judge. The LangChain judge is opt-in: its correctness metrics repeat
-  RAGAS' `answer_correctness`.
+  `graph_aware` are deterministic and free, so they are the default. The RAGAS
+  judge is opt-in (several judge calls per answer, and the `eval` extra).
+  The LangChain judge was removed: its correctness metrics repeated RAGAS'
+  `answer_correctness`.
 - **`graph_aware` emits recall only.** Precision and F1 would need every
   entity of a free-text answer enumerated, so they would only re-label recall.
   Because answer-text coverage grows with length, it also reports the

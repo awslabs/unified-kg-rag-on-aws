@@ -22,7 +22,7 @@ Alt text: "Console demo: a question about two companies is answered with the mix
 - **Incremental indexing.** With the document-status registry on, only new and changed documents are re-indexed and merged into the live graph, and deleting a document removes only what no other document states ([Incremental indexing](./docs/guides/incremental.md)).
 - **Bring your own knowledge graph.** Seed graphs (JSONL, CSV or RDF instance data) merge a graph you already have into the extracted one as virtual documents: the documents stay canonical, and the seed adds descriptions, properties, IRIs and edges ([Seed graphs](./docs/guides/seed-graphs.md)).
 - **Multilingual.** Optional translation at indexing and query time, per-language analyzers (`nori` for Korean) and multilingual keyword extraction ([Multilingual corpora](./docs/guides/multilingual.md)).
-- **Measured, not assumed.** `run-eval` scores answers with LLM-free metrics (answer match, retrieval hit rate, graph coverage) and LLM judges, compares strategies with paired intervals and meters each query's cost; the defaults it set are on [Defaults and evidence](./docs/concepts/defaults-and-evidence.md) ([Evaluation](./docs/guides/evaluate.md)).
+- **Measured, not assumed.** `run-eval` scores answers with LLM-free metrics by default (answer match, retrieval hit rate, graph coverage) and opt-in LLM judges (RAGAS, assertions), compares strategies with paired intervals and meters each query's cost; the defaults it set are on [Defaults and evidence](./docs/concepts/defaults-and-evidence.md) ([Evaluation](./docs/guides/evaluate.md)).
 
 How this compares with the papers and with Amazon Bedrock Knowledge Bases GraphRAG: [Overview](./docs/concepts/overview.md#compared-with-amazon-bedrock-knowledge-bases-graphrag).
 

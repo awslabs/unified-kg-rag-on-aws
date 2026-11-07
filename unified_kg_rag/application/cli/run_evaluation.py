@@ -76,6 +76,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     model_id_value,
 )
+from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.evaluation.answer_match_evaluator import answer_scoring
 from unified_kg_rag.evaluation.closed_book import (
@@ -167,6 +168,36 @@ def with_judge_model(config: Config, model_id: str | None) -> Config:
     )
 
 
+def _evaluator_list(value: str) -> list[EvaluatorType]:
+    """A comma-separated list of distinct evaluators (``answer_match,ragas``)."""
+    names = [name.strip() for name in value.split(",")]
+    valid = [t.value for t in EvaluatorType if t.value not in REMOVED_EVALUATORS]
+    removed = [name for name in names if name in REMOVED_EVALUATORS]
+    if removed:
+        raise argparse.ArgumentTypeError(
+            f"the {removed[0]} evaluator is removed: {REMOVED_EVALUATORS[removed[0]]}"
+        )
+    unknown = [name for name in names if name and name not in valid]
+    if "" in names or unknown:
+        raise argparse.ArgumentTypeError(
+            f"invalid evaluator {', '.join(unknown) or repr(value)} "
+            f"(choose from {', '.join(valid)})"
+        )
+    if len(set(names)) != len(names):
+        raise argparse.ArgumentTypeError(f"evaluator listed twice in '{value}'")
+    return [EvaluatorType(name) for name in names]
+
+
+def with_evaluators(config: Config, evaluators: list[EvaluatorType] | None) -> Config:
+    """``config`` with ``evaluation.enabled_evaluators`` set to ``evaluators``."""
+    if evaluators is None:
+        return config
+    evaluation = config.evaluation.model_copy(
+        update={"enabled_evaluators": list(evaluators)}
+    )
+    return config.model_copy(update={"evaluation": evaluation})
+
+
 def with_pairwise_mode(config: Config, mode: str | None) -> Config:
     """``config`` with ``evaluation.pairwise_mode`` set to ``mode``."""
     if not mode:
@@ -176,9 +207,7 @@ def with_pairwise_mode(config: Config, mode: str | None) -> Config:
 
 
 # The evaluators that call the LLM judge (models.roles.evaluation).
-_JUDGE_EVALUATORS = frozenset(
-    {EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS, EvaluatorType.ASSERTION}
-)
+_JUDGE_EVALUATORS = frozenset({EvaluatorType.RAGAS, EvaluatorType.ASSERTION})
 
 
 def failure_budget_breaches(
@@ -340,7 +369,7 @@ class CommandLineInterface:
             metavar="MODEL_ID",
             help=(
                 "Model of the LLM judges for this run (models.roles.evaluation): "
-                "the pairwise judge and the langchain/ragas evaluators"
+                "the pairwise judge and the ragas/assertion evaluators"
             ),
         )
         parser.add_argument(
@@ -354,6 +383,19 @@ class CommandLineInterface:
             ),
         )
         add_query_arguments(parser, multiple_strategies=True)
+        parser.add_argument(
+            "--evaluators",
+            type=_evaluator_list,
+            metavar="NAME[,NAME...]",
+            help=(
+                "Evaluators that score this run, comma-separated (default: "
+                "evaluation.enabled_evaluators, answer_match,retrieval,"
+                "graph_aware). The LLM judges are opt-in: ragas (the eval "
+                "extra; several judge calls per answer, one per context for "
+                "context_precision) and assertion (evaluation.assertion_trials "
+                "calls per answer)"
+            ),
+        )
         parser.add_argument(
             "--repeats",
             type=positive_int,
@@ -440,7 +482,10 @@ class EvaluationRunner:
         pairwise judge then (default: from ``config``)."""
         self.args = args
         self.config = with_pairwise_mode(
-            with_judge_model(config, getattr(args, "judge_model", None)),
+            with_judge_model(
+                with_evaluators(config, getattr(args, "evaluators", None)),
+                getattr(args, "judge_model", None),
+            ),
             getattr(args, "pairwise_mode", None),
         )
         self.rag_chain = rag_chain
@@ -485,7 +530,7 @@ class EvaluationRunner:
             return []
         return [
             "--judge-model is given without --pairwise-judge and no LLM-judge "
-            "evaluator (langchain, ragas, assertion) scores this run, so it "
+            "evaluator (ragas, assertion) scores this run, so it "
             "judges nothing."
         ]
 
@@ -503,7 +548,7 @@ class EvaluationRunner:
 
     def _uses_llm_judge(self) -> bool:
         """Whether this run calls an LLM judge: --pairwise-judge, or a
-        langchain/ragas evaluator scoring answers it generates."""
+        ragas/assertion evaluator scoring answers it generates."""
         if getattr(self.args, "pairwise_judge", False):
             return True
         return self._from_results is None and bool(
@@ -565,6 +610,11 @@ class EvaluationRunner:
                 usage_error(
                     "--repeats does not apply to --from-results (the saved runs "
                     "are the repeats)"
+                )
+            if getattr(self.args, "evaluators", None) is not None:
+                usage_error(
+                    "--evaluators does not apply to --from-results (the saved "
+                    "runs are compared on the scores they hold)"
                 )
             try:
                 if is_s3_uri(self._output_directory()):

@@ -3,7 +3,7 @@
 > 🇬🇧 English version: [evaluate.md](./evaluate.md)
 
 `run-eval --data-path <dataset.json>`은 데이터셋의 모든 질문에 답한 뒤 답변과 출처를
-채점합니다. 평가기 셋은 LLM 없이 비용 없이 동작하고, 셋은 LLM 심사 모델을 씁니다.
+채점합니다. 평가기 셋은 LLM 없이 비용 없이 동작하고(기본값), 둘은 LLM 심사 모델을 씁니다.
 전략을 여럿 주거나 `--repeats`를 주면 짝지은 비교가 됩니다.
 
 모든 플래그와 기본값은 [CLI 레퍼런스](../reference/cli.md#run-eval)(영문)에 있습니다.
@@ -13,29 +13,30 @@
 
 ## 평가기
 
-`evaluation.enabled_evaluators`로 고르며, 여섯 개 중 `ragas`와 LLM이 필요 없는 세 개, 모두
-네 개가 기본으로 켜져 있습니다(`langchain`과 `assertion`은 선택 사항). 결정적 평가기는 데이터셋 필드가 없는 질의를 건너뜁니다. 심사 모델 없이
-실행하려면 `enabled_evaluators: [answer_match, retrieval, graph_aware]`로 설정하세요.
-`langchain`의 `correctness`·`partial_correctness`는 `ragas`의 `answer_correctness`와
-같은 것을 재면서 질의마다 심사 호출을 두 번 더 하므로 선택 사항입니다. 실행하려면
-나머지와 함께 나열하세요: `enabled_evaluators: [langchain, ragas, answer_match,
-retrieval, graph_aware]`.
+`evaluation.enabled_evaluators`로 고르며(한 번의 실행에서는 `run-eval --evaluators
+a,b`), LLM이 필요 없는 세 개가 기본으로 켜져 있고 데이터셋 필드가 없는 질의는 건너뜁니다.
+심사 평가기는 선택 사항입니다. `ragas`는 지표 다섯 개를 위해 답변마다 심사 호출을 여러 번 하고
+(`context_precision`은 검색된 컨텍스트마다 한 번, 최대 `evaluation.ragas_max_contexts`인 20번)
+`eval` extra가 필요하며, `assertion`은 데이터셋에 단언문이 있어야 합니다. `ragas`를 더하려면
+`run-eval --evaluators answer_match,retrieval,graph_aware,ragas`로 실행하거나
+`enabled_evaluators`에 넣으세요. `langchain` 평가기는 삭제했습니다(`correctness`가
+`ragas`의 `answer_correctness`와 같은 것을 쟀습니다). 아직 이를 나열하거나
+`evaluation.langchain_metrics`를 설정한 설정 파일은 경고와 함께 그 항목 없이 로드됩니다.
 
 | 평가기 | LLM | 데이터셋에 필요한 필드 | 주요 지표 |
 |---|---|---|---|
 | `answer_match` | 없음 | `answer`(+ `answer_aliases`) | `answer_contains`(대표 지표), `exact_match`, `token_f1` |
 | `retrieval` | 없음 | `reference_sources` | `hit_at_k`, `recall_at_k`, `mrr`(k = `evaluation.retrieval_k`, 기본값 5) |
 | `graph_aware` | 없음 | `expected_entities` / `expected_relationships` | 답변과 검색된 출처에서의 엔티티·관계 커버리지(재현율) |
-| `langchain` | 심사 | `answer` | `correctness`, `partial_correctness` |
 | `ragas` | 심사 | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 | `assertion` | 심사 | `assertions` | `assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`(선택 사항) |
 
 `assertion`도 선택 사항입니다(`enabled_evaluators`에 추가). 답변마다 항목의 단언문(assertion)을
 확인하며, 답변당 심사 호출을 `evaluation.assertion_trials`번(기본값 3) 하고 extra는 필요 없습니다.
 자세한 내용은 [단언문, 길이 통제, 클로즈드북 기준선](#단언문-길이-통제-클로즈드북-기준선)에 있습니다.
-`langchain`·`ragas` 심사 평가기는 `eval` extra가 필요합니다(`uv sync --extra eval`, [설치](../getting-started/aws.ko.md#설치)). extra가
+`ragas` 심사 평가기는 `eval` extra가 필요합니다(`uv sync --extra eval`, [설치](../getting-started/aws.ko.md#설치)). extra가
 없으면 `run-eval`은 첫 질의 전에 extra 이름을 알려 주고 종료 코드 `2`로 종료하며,
-`processing.ignore_errors: true`여도 같습니다. 위의 심사 모델 없는 실행에는 extra가
+`processing.ignore_errors: true`여도 같습니다. 심사 모델 없는 기본 실행에는 extra가
 필요 없습니다. 그 밖에 켜 둔 평가기를 만들 수 없거나(예: 심사 모델의 Bedrock 접근 권한
 없음) 설정을 거부하면 실행이 멈춥니다. `processing.ignore_errors: true`이면 그 평가기를 빼고
 `run_manifest.dropped_evaluators`에 기록합니다. 채점은 모든 답변을 생성한 뒤에

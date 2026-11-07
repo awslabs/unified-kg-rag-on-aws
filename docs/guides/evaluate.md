@@ -4,7 +4,7 @@
 
 `run-eval --data-path <dataset.json>` answers every question of a dataset and
 scores the answers and their sources. Three evaluators need no LLM and cost
-nothing; three use an LLM judge. Several strategies (or `--repeats`) turn the run
+nothing (the default); two use an LLM judge. Several strategies (or `--repeats`) turn the run
 into a paired comparison.
 
 Every flag with its default: [CLI Reference](../reference/cli.md#run-eval).
@@ -14,21 +14,23 @@ as a corpus and a dataset: [Benchmarks](./benchmarks.md).
 
 ## Evaluators
 
-`evaluation.enabled_evaluators` selects them; four of the six are on by
-default: `ragas` and the three LLM-free ones (`langchain` and `assertion`
-are opt-in). The deterministic ones skip a query that lacks their dataset fields;
-for a judge-free run set `enabled_evaluators: [answer_match, retrieval,
-graph_aware]`. `langchain` is opt-in because its `correctness` and
-`partial_correctness` measure what `ragas`' `answer_correctness` already does,
-at two more judge calls per query; to run it, list it with the others:
-`enabled_evaluators: [langchain, ragas, answer_match, retrieval, graph_aware]`.
+`evaluation.enabled_evaluators` selects them (`run-eval --evaluators
+a,b` for one run); the three LLM-free ones are on by default and skip a
+query that lacks their dataset fields. The judges are opt-in: `ragas` makes
+several judge calls per answer for its five metrics, `context_precision` one
+per retrieved context (up to `evaluation.ragas_max_contexts`, 20), and needs
+the `eval` extra; `assertion` needs assertions in the dataset. To add `ragas`:
+`run-eval --evaluators answer_match,retrieval,graph_aware,ragas`, or list it
+in `enabled_evaluators`. The `langchain` evaluator was removed (its
+`correctness` repeated `ragas`' `answer_correctness`); a config that still
+lists it, or sets `evaluation.langchain_metrics`, loads with a warning and
+without it.
 
 | Evaluator | LLM | Needs in the dataset | Main metrics |
 |---|---|---|---|
 | `answer_match` | no | `answer` (+ `answer_aliases`) | `answer_contains` (headline), `exact_match`, `token_f1` |
 | `retrieval` | no | `reference_sources` | `hit_at_k`, `recall_at_k`, `mrr` (k = `evaluation.retrieval_k`, default 5) |
 | `graph_aware` | no | `expected_entities` / `expected_relationships` | entity and relationship coverage (recall), in the answer and in the retrieved sources |
-| `langchain` | judge | `answer` | `correctness`, `partial_correctness` |
 | `ragas` | judge | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 | `assertion` | judge | `assertions` | `assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate` (opt-in) |
 
@@ -36,10 +38,10 @@ at two more judge calls per query; to run it, list it with the others:
 answer against the item's assertions, `evaluation.assertion_trials` (default
 3) judge calls per answer, and needs no extra; see
 [Assertions, length control and a closed-book bound](#assertions-length-control-and-a-closed-book-bound).
-The `langchain` and `ragas` judges need the `eval` extra (`uv sync --extra eval`, [Install](../getting-started/aws.md#install));
+The `ragas` judge needs the `eval` extra (`uv sync --extra eval`, [Install](../getting-started/aws.md#install));
 without it `run-eval` stops before the first query with exit `2`, naming the
-extra, even with `processing.ignore_errors: true`. The judge-free run above
-needs no extra. Any other enabled evaluator that cannot be built (no Bedrock
+extra, even with `processing.ignore_errors: true`. The default, judge-free
+run needs no extra. Any other enabled evaluator that cannot be built (no Bedrock
 access for the judge, say) or rejects its configuration stops the run; with
 `processing.ignore_errors: true` it is dropped and listed in
 `run_manifest.dropped_evaluators`. Scoring starts after every answer is

@@ -790,6 +790,68 @@ def test_eval_parser_defaults() -> None:
     assert args.output_directory is None
 
 
+def test_eval_evaluators_flag_picks_the_run_evaluators(config, capsys) -> None:
+    args = _eval_parser().parse_args(
+        ["--data-path", "d", "--evaluators", "answer_match, ragas"]
+    )
+    assert args.evaluators == [EvaluatorType.ANSWER_MATCH, EvaluatorType.RAGAS]
+    assert run_evaluation.with_evaluators(
+        config, args.evaluators
+    ).evaluation.enabled_evaluators == [EvaluatorType.ANSWER_MATCH, EvaluatorType.RAGAS]
+    # Not given: the config's list.
+    default = _eval_parser().parse_args(["--data-path", "d"])
+    assert default.evaluators is None
+    assert run_evaluation.with_evaluators(config, None) is config
+    for value, message in [
+        ("langchain", "langchain evaluator is removed"),
+        ("answer_match,nope", "invalid evaluator nope"),
+        ("retrieval,retrieval", "listed twice"),
+        ("retrieval,", "invalid evaluator"),
+    ]:
+        with pytest.raises(SystemExit):
+            _eval_parser().parse_args(["--data-path", "d", "--evaluators", value])
+        assert message in capsys.readouterr().err
+
+
+async def test_eval_runner_scores_with_the_evaluators_flag(
+    config, mocker, tmp_path
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    data = tmp_path / "eval.json"
+    data.write_text(
+        json.dumps(
+            [
+                {
+                    "question": "Who ships?",
+                    "answer": "Vendor",
+                    "reference_sources": ["a.txt"],
+                }
+            ]
+        )
+    )
+    out = tmp_path / "out"
+    args = _eval_parser().parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(out),
+            "--search-strategy",
+            "local",
+            "--evaluators",
+            "retrieval",
+        ]
+    )
+    runner = run_evaluation.EvaluationRunner(args, _StrategyChain(), config)
+    assert await runner.run() == 0
+    (summary,) = out.rglob("evaluation_summary_*.json")
+    manifest = json.loads(summary.read_text())["run_manifest"]
+    assert manifest["enabled_evaluators"] == ["retrieval"]
+
+
 @pytest.mark.parametrize("flag", ["--top-k", "--retrieval-multiplier"])
 @pytest.mark.parametrize("parser", [_rag_parser, _eval_parser])
 def test_query_width_flags_must_be_positive(parser, flag: str) -> None:

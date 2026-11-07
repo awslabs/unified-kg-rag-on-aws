@@ -179,7 +179,7 @@ stored is read again: follow *Upgrading* in order.
 | `search.answer_prompt_style` | every strategy concise | `{global: comprehensive}`, merged under your map (#533) |
 | `search.global_search.evidence_tokens` | every cited report the budget holds | 4000; `null` removes the cap (#533) |
 | `search.local_search.text_unit_ranking` (local's text-unit order) | by how many expanded entities cite a unit (no setting) | `ppr`, HippoRAG 2's PageRank; `support` is the earlier order, which DRIFT's follow-ups keep (`search.drift_search.text_unit_ranking`) (#597, #602, #607) |
-| `evaluation.enabled_evaluators` | `langchain`, `ragas` | `ragas`, `answer_match`, `retrieval`, `graph_aware`; `langchain` is opt-in (#121, #576) |
+| `evaluation.enabled_evaluators` | `langchain`, `ragas` | `answer_match`, `retrieval`, `graph_aware`; `ragas` is opt-in, `langchain` is removed (#121, #576, #PR) |
 | `evaluation.max_context_tokens` | 8192 | `null`, the answer budget (#315) |
 | `run-eval` warm-up | none | one unscored, untimed query per strategy and run, not configurable (#529, #577) |
 | `logging.log_to_file` | `true` | `false`; the console carries every record (#520) |
@@ -343,8 +343,10 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     _search/pipeline/graphrag-hybrid-search-pipeline`) and `s3://<bucket>/embedding-cache/` if you used it.
 13. Scripts: update the renamed flags, exit codes and JSON output, `.States.PrepPhase` to `.States.Ingest` and
     `$.last_phase` to `$.task`, and `indexing_results` keys to `vector_*` / `graph_*` (#328, #333, #584).
-14. Evaluation: list `langchain` in `evaluation.enabled_evaluators` to keep its scores (a `--fail-if langchain/...`
-    gate fails without it; leaving it out saves two judge calls per query). `graph_aware` coverage matches by entity
+14. Evaluation: list `ragas` in `evaluation.enabled_evaluators` (or `run-eval --evaluators ...,ragas`) to keep its
+    scores, with the `eval` extra; a `--fail-if ragas/...` gate fails without it. The `langchain` evaluator is removed
+    (a config naming it, or `evaluation.langchain_metrics`, loads with a WARNING and without it): gate on
+    `ragas/answer_correctness` instead of `langchain/correctness` (#PR). `graph_aware` coverage matches by entity
     key and can read lower than before on the same answers: run baselines again before comparing. Re-render static
     charts to get the SVG pages (#563, #576).
 
@@ -816,6 +818,11 @@ From a `main` checkout (formats and keys no release had):
   question's language, one sentence per supported language told by its script and function words (English, the
   0.2.3 reply, or the index language when they do not tell); evaluation counts a decline by `metadata.abstained`
   alone, no longer by the English text (#619).
+- `run-eval` scores with the three LLM-free evaluators by default (`answer_match`, `retrieval`, `graph_aware`): a
+  core install no longer exits 2 for want of the `eval` extra, and a run calls no judge unless asked.
+  `run-eval --evaluators a,b` picks the evaluators of one run; `ragas` and `assertion` are opt-in. The `langchain`
+  evaluator is removed; its `correctness` repeated `ragas`' `answer_correctness`. The `eval` extra keeps
+  `langchain-openai` as the security floor of the copy ragas depends on (#PR).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch

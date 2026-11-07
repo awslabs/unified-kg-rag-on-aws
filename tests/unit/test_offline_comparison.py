@@ -753,6 +753,10 @@ def test_saved_runs_need_their_reports(tmp_path: Path) -> None:
     [
         (["--from-results", "d", "--repeats", "2"], "--repeats does not apply"),
         (
+            ["--from-results", "d", "--evaluators", "retrieval"],
+            "--evaluators does not apply",
+        ),
+        (
             ["--data-path", "x.json", "--fail-if", "a/b:ci_high<0"],
             "--fail-if needs a comparison",
         ),
@@ -867,14 +871,14 @@ def test_the_default_judge_falls_back_from_the_saved_answer_model(
 def test_a_re_judge_without_the_pairwise_judge_names_no_judge(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # --from-results answers nothing, so the langchain/ragas judges score
+    # --from-results answers nothing, so the ragas/assertion judges score
     # nothing: no LLM judge is chosen or logged.
     import logging
 
     saved = tmp_path / "runs"
     _saved_comparison(saved, _WORSE)
     config = Config()
-    config.evaluation.enabled_evaluators = [EvaluatorType.LANGCHAIN]
+    config.evaluation.enabled_evaluators = [EvaluatorType.RAGAS]
     args = run_evaluation.CommandLineInterface().parser.parse_args(
         ["--from-results", str(saved)]
     )

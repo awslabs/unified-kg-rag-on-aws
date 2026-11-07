@@ -170,14 +170,11 @@ def test_evaluation_manager_hands_the_chain_bundle_to_evaluators(
     no_bedrock, mocker
 ) -> None:
     import unified_kg_rag.evaluation  # noqa: F401  (resolves package import cycle)
-    from unified_kg_rag.adapters.evaluators import langchain_evaluator as lc_module
     from unified_kg_rag.domain.models import EvaluatorType
     from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
 
-    mocker.patch.object(lc_module, "load_evaluator", return_value=object())
     config = Config()
     config.evaluation.enabled_evaluators = [
-        EvaluatorType.LANGCHAIN,
         EvaluatorType.RAGAS,
         EvaluatorType.GRAPH_AWARE,
     ]
@@ -195,5 +192,4 @@ def test_evaluation_manager_hands_the_chain_bundle_to_evaluators(
 
     assert manager.providers is providers
     assert set(manager.evaluators) == set(config.evaluation.enabled_evaluators)
-    for evaluator_type in (EvaluatorType.LANGCHAIN, EvaluatorType.RAGAS):
-        assert manager.evaluators[evaluator_type].providers is providers
+    assert manager.evaluators[EvaluatorType.RAGAS].providers is providers

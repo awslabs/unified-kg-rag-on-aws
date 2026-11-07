@@ -92,9 +92,9 @@ uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 `uv sync` alone installs ingestion and queries. Two extras add the rest;
 without one, the command that needs it stops with exit `2`, naming it:
 
-- **`eval`**: the LangChain and RAGAS judges of `run-eval` (ragas, datasets,
-  pandas, langchain-openai); RAGAS is on by default, LangChain is opt-in ([Evaluators](../guides/evaluate.md#evaluators)).
-  The LLM-free evaluators need no extra.
+- **`eval`**: the opt-in RAGAS judge of `run-eval` (ragas, datasets,
+  pandas; [Evaluators](../guides/evaluate.md#evaluators)). The default,
+  LLM-free evaluators need no extra.
 - **`viz`**: pyvis for `run-visualization`'s interactive graph ([Visualization](../guides/visualize.md)); the static charts need no extra.
 
 **Markdown and HTML** need the `unstructured` extra

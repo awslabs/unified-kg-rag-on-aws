@@ -116,14 +116,11 @@ cat > sample-eval.json <<'EOF'
 EOF
 ```
 
-평가기 네 개가 기본으로 켜져 있고, 그중 하나(`ragas`)는 LLM 판정 모델을 호출합니다. LLM이
-필요 없는 세 개만 남기고(여기서는 환경 변수로 지정.
-[환경 변수로 덮어쓰기](../guides/configure.ko.md#환경-변수로-덮어쓰기) 참고) 같은 질문으로
-두 전략을 비교합니다.
+기본으로 켜진 평가기 세 개는 LLM 판정 모델이 필요 없습니다. 같은 질문으로 두 전략을
+비교합니다.
 
 ```bash
-UKR__EVALUATION__ENABLED_EVALUATORS='["answer_match", "retrieval", "graph_aware"]' \
-  uv run run-eval --backend local --data-path sample-eval.json --search-strategy local,mix
+uv run run-eval --backend local --data-path sample-eval.json --search-strategy local,mix
 ```
 
 전략마다 결과, 보고서, 요약 파일과 `evaluation_comparison_<timestamp>.json`(`mix`의 지표를

@@ -106,8 +106,8 @@ unstructured = [
     "llvmlite>=0.48.0",
     "unstructured[md]>=0.24.1",
 ]
-# Optional: the LLM-judge evaluators of `run-eval` (`ragas`, in the default
-# evaluation.enabled_evaluators, and the opt-in `langchain`). The core package
+# Optional: the ragas LLM-judge evaluator of `run-eval` (opt-in: add it to
+# evaluation.enabled_evaluators or `run-eval --evaluators`). The core package
 # imports none of these; the evaluation manager fails fast naming this extra
 # when an enabled judge's packages are missing. The LLM-free evaluators (graph_aware,
 # retrieval, answer_match) need none of it.
@@ -125,9 +125,8 @@ eval = [
     # langchain_community.chat_models.vertexai unconditionally, which 0.4
     # removed, so this only holds ragas' copy at 0.3.x. Drop it with ragas.
     "langchain-community>=0.3.27,<0.4.0",
-    # Not imported here: langchain_classic's load_evaluator imports it for the
-    # langchain evaluator even when handed a Bedrock model. 1.1.14 fixes SSRF
-    # through image token counting (GHSA-r7w7-9xr2-qq2r).
+    # Not imported here: ragas depends on it without a bound. 1.1.14 fixes
+    # SSRF through image token counting (GHSA-r7w7-9xr2-qq2r).
     "langchain-openai>=1.1.14,<2.0.0",
     "pandas>=2.3.1",
     # Not imported here: ragas depends on Pillow, and 13.0.0 fixes the

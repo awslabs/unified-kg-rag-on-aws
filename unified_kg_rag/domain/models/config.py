@@ -451,7 +451,7 @@ _EVALUATION_ROLE_FIELD: Any = Field(
     default=None,
     min_length=1,
     description=(
-        "Model of the run-eval LLM judges (the langchain and ragas evaluators "
+        "Model of the run-eval LLM judges (the ragas and assertion evaluators "
         "and --pairwise-judge): a model id, or a tier name ('default' / "
         f"'fast'). null = {JUDGE_MODEL_ID} on Bedrock, a model other than "
         "the default answer model; when the answer model is that model, the "
@@ -754,6 +754,10 @@ REMOVED_KEYS: dict[str, str] = {
     "evaluation.warm_up_query": (
         "run-eval always answers one untimed, unscored warm-up query per "
         "strategy and run (the default before)"
+    ),
+    "evaluation.langchain_metrics": (
+        "the langchain evaluator is removed; ragas' answer_correctness "
+        "(evaluation.ragas_metrics) scores correctness against the answer"
     ),
 }
 
@@ -5835,33 +5839,61 @@ class ModelPrice(BaseModel):
         return self
 
 
+# Evaluator types no longer built -> why; enabled_evaluators drops them with
+# a warning (EvaluatorType keeps the member, so saved runs holding their
+# reports still load for run-eval --from-results).
+REMOVED_EVALUATORS: dict[str, str] = {
+    "langchain": (
+        "its correctness and partial_correctness repeated ragas' "
+        "answer_correctness: enable ragas for an LLM-judged correctness score"
+    ),
+}
+
+
+def _without_removed_evaluators(value: Any) -> Any:
+    """``enabled_evaluators`` without the removed types, each warned about."""
+    if not isinstance(value, list | tuple):
+        return value
+    kept = []
+    for item in value:
+        name = item.value if isinstance(item, Enum) else item
+        if isinstance(name, str) and name in REMOVED_EVALUATORS:
+            _logger.warning(
+                "evaluation.enabled_evaluators: the '%s' evaluator is removed "
+                "and ignored: %s",
+                name,
+                REMOVED_EVALUATORS[name],
+            )
+            continue
+        kept.append(item)
+    return kept
+
+
 class EvaluationConfig(BaseModel):
     outputs_directory: str | Path = Field(
         default="outputs/evaluation",
         description=("Directory the evaluation results are written to."),
     )
-    enabled_evaluators: list[EvaluatorType] = Field(
+    enabled_evaluators: Annotated[
+        list[EvaluatorType], BeforeValidator(_without_removed_evaluators)
+    ] = Field(
         default=[
-            EvaluatorType.RAGAS,
             EvaluatorType.ANSWER_MATCH,
             EvaluatorType.RETRIEVAL,
             EvaluatorType.GRAPH_AWARE,
         ],
         description=(
-            "List of evaluator types to enable for this evaluation run. The "
-            "deterministic ones (answer_match, retrieval, graph_aware) are free "
-            "and skip a query that lacks their dataset fields, so they are on "
-            "by default alongside the ragas LLM judge. The langchain judge is "
-            "opt-in (add it to this list): its correctness and "
-            "partial_correctness repeat ragas' answer_correctness."
+            "List of evaluator types to enable for this evaluation run "
+            "(run-eval --evaluators overrides it). The default is the "
+            "deterministic ones (answer_match, retrieval, graph_aware): free, "
+            "no extra, and each skips a query that lacks its dataset fields. "
+            "The LLM judges are opt-in (add them to this list): ragas (the "
+            "eval extra; answer_correctness and four more metrics, several "
+            "judge calls per answer, context_precision one per context up to "
+            "ragas_max_contexts) and assertion. 'langchain' was removed "
+            "(ragas' answer_correctness measures its correctness): a list "
+            "that names it loads with a warning and without it."
         ),
-    )
-    langchain_metrics: list[EvaluationMetricType] = Field(
-        default=[
-            EvaluationMetricType.CORRECTNESS,
-            EvaluationMetricType.PARTIAL_CORRECTNESS,
-        ],
-        description="Specific evaluation metrics to calculate when using LangChain evaluator.",
     )
     ragas_metrics: list[EvaluationMetricType] = Field(
         default=[
@@ -5890,7 +5922,8 @@ class EvaluationConfig(BaseModel):
     judge_effort: EffortLevel | None = Field(
         default="low",
         description=(
-            "Reasoning effort for the LLM judge (RAGAS and LangChain evaluators) "
+            "Reasoning effort for the LLM judges (ragas, assertion, "
+            "--pairwise-judge and the answer_span 'extracted' calls) "
             "on adaptive-thinking models (Claude 4.7+). Judge prompts are short "
             "extraction/classification calls, so a low effort keeps each metric "
             "well inside the RAGAS timeout. null inherits the effort of the "
