@@ -4109,6 +4109,39 @@ flags. The `assertion` evaluator is one branch in
 `EvaluationManager._resolve_evaluator_class`. No store, retriever or
 ingestion code changes.
 
+### 9.4 Structural benchmark (the `structured` strategy)
+
+`prepare-benchmark structural` (`evaluation/benchmarks/structural.py`)
+generates a neutral procurement world from a seed, nothing committed: a
+JSONL seed graph with seed properties (`country`, `founded`, `employees`)
+and every `SUPPLIES`/`MAKES` edge, a document per vendor and buyer stating
+part of those facts plus a fact only text states (each vendor's chief
+executive), the extraction schema and seed entry, and a `run-eval` dataset.
+Templates: count by relationship, count with a seed-property filter (of
+vendors and of buyers), the top supplier and the top three (left out when
+the cut ties), the vendor between a named buyer and a named product (a
+two-hop chain, kept when one vendor matches), the buyer two named vendors
+share (a two-hop path, kept when unique), yes/no supply (balanced), the
+largest and smallest employee count, and text-only controls. The gold
+answer of every graph template is computed by the reference executor
+(§6.6) over the generated graph from the template's plan
+(`metadata.gold_plan`), so the generator and the strategy share one
+semantics; numbers carry digit and word aliases.
+
+The measurement plan (needs the maintainer's budget): `run-eval
+--search-strategy structured,local,mix --repeats 3` (paired), and `auto`
+with and without `structured` in `search.auto_routable_strategies`;
+`answer_match` (containment the headline, EM and F1 with
+`answer_span: extracted`) per template (`category`); from
+`structured_statistics` the valid-plan, repair, fallback-by-reason and
+truncation rates; calls, tokens and latency from the usage. Expected: large
+gains on the count, ranking and path templates, where `local` counts from a
+top-k context, and parity or small losses on the controls under
+`fallback`. MuSiQue non-regression: `auto` with the default routable set
+against the set with `structured`, no more than 1 point absolute loss on
+containment, and the share routed to `structured` and its fallback rate;
+`structured` joins the default routable set only after both.
+
 ---
 
 ## 10. Visualization & Analytics

@@ -634,6 +634,14 @@ From a `main` checkout (formats and keys no release had):
   `search.auto_routable_strategies`. `GraphQueryPort` is exported for custom graph backends, and
   `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md §6.6,
   [guide](docs/guides/structured-queries.md)).
+- `prepare-benchmark structural [--seed N] [--size small|medium]` (#PR): a generated, never committed, procurement
+  world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`, `MAKES`), a
+  document per vendor and buyer (part of those facts, and a chief executive only text states), the schema and seed
+  config, and `eval_data.json` with count, ranking, two-hop, shared-buyer, yes/no, numeric and text-only control
+  templates (`category`), each graph gold answer computed by the reference executor from its plan
+  (`metadata.gold_plan`). `run-eval` keeps each answer's `structured` record and reports `structured_statistics`
+  (status, fallback reasons, valid-plan, repair, truncation and exact rates), per arm under a comparison
+  ([guide](docs/guides/benchmarks.md#structural-benchmark)).
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
   after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
   mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index

@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""``prepare-benchmark``: a public benchmark as a corpus and a run-eval dataset.
+"""``prepare-benchmark``: a benchmark as a corpus and a run-eval dataset.
 
 Writes ``<output-directory>/corpus/`` (ingest it with ``run-ingestion``) and
 ``<output-directory>/eval_data.json`` (score it with ``run-eval``). The
@@ -9,7 +9,10 @@ run time; it is not part of this package. ``--unanswerable N`` adds N
 unanswerable questions (``metadata.answerable: false``) from the full split,
 filtered so the pooled corpus does not answer them. ``prepare-benchmark
 assertions`` instead generates questions and assertions from your own corpus
-(``--source-directory``; ``application.cli.assertion_benchmark``).
+(``--source-directory``; ``application.cli.assertion_benchmark``), and
+``prepare-benchmark structural`` a synthetic procurement world with a seed
+graph and graph-structure questions for the structured strategy
+(``evaluation.benchmarks.structural``; generated, never downloaded).
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.evaluation.benchmarks import musique
+from unified_kg_rag.evaluation.benchmarks import musique, structural
 from unified_kg_rag.shared import EvaluationException
 
 
@@ -53,8 +56,9 @@ def _parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
         description=(
             "Prepare a public benchmark (MuSiQue) as a corpus directory and a "
-            "run-eval dataset, or generate questions and assertions from your "
-            "corpus (assertions)"
+            "run-eval dataset, generate questions and assertions from your "
+            "corpus (assertions), or generate a synthetic structural "
+            "benchmark for the structured strategy (structural)"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=doc_epilog(
@@ -64,10 +68,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "benchmark",
-        choices=["musique", "assertions"],
+        choices=["musique", "assertions", "structural"],
         help=(
-            "Benchmark to prepare: musique, or assertions (questions and "
-            "assertions generated from --source-directory)"
+            "Benchmark to prepare: musique, assertions (questions and "
+            "assertions generated from --source-directory), or structural (a "
+            "generated procurement world: corpus/, seed/structural.jsonl, "
+            "structural-config.yaml and graph-structure questions with gold "
+            "answers computed over the generated graph)"
         ),
     )
     parser.add_argument(
@@ -126,7 +133,22 @@ def _parser() -> argparse.ArgumentParser:
             "--limit (default: every hop count, sampled as one pool)"
         ),
     )
-    parser.add_argument("--seed", type=int, default=0, help="Sampling seed (default 0)")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Sampling seed; for structural, the generated world's (default 0)",
+    )
+    parser.add_argument(
+        "--size",
+        choices=["small", "medium"],
+        default="small",
+        help=(
+            "structural only: the world's size (small: 8 vendors, 6 buyers, "
+            "up to 4 questions a template; medium: 40 vendors, 30 buyers, "
+            "up to 25 a template; default small)"
+        ),
+    )
     add_assertion_arguments(parser)
     add_output_format_argument(parser)
     return parser
@@ -140,6 +162,9 @@ def main(argv: list[str] | None = None) -> None:
         setup_cli_logging(Config(), args)
     if args.benchmark == "assertions":
         _assertions(args, as_json)
+        return
+    if args.benchmark == "structural":
+        _structural(args, as_json)
         return
     for path in (args.data_path, args.unanswerable_data_path):
         if path is not None and not path.is_file():
@@ -201,6 +226,31 @@ def main(argv: list[str] | None = None) -> None:
             "without a twin); written as 'musique-full-unanswerable' with "
             "metadata.answerable false."
         )
+    if as_json:
+        print_json({"output_directory": str(args.output_directory), **counts})
+
+
+def _structural(args: argparse.Namespace, as_json: bool) -> None:
+    try:
+        counts = structural.prepare(
+            args.output_directory, seed=args.seed, size=args.size
+        )
+    except EvaluationException as e:
+        usage_error(str(e))
+    except OSError as e:
+        console.print(f"[red]Error: {markup_safe(e)}[/red]")
+        sys.exit(EXIT_FAILURE)
+    out = markup_safe(args.output_directory)
+    console.print(
+        f"[green]Structural benchmark (seed {counts['seed']}, {counts['size']}): "
+        f"{counts['questions']} questions, {counts['documents']} documents and a "
+        f"seed graph of {counts['nodes']} nodes and {counts['edges']} edges "
+        f"written to '{out}'.[/green]\n"
+        f"Ingest: run-ingestion --config-path {out}/structural-config.yaml "
+        f"--source-directory {out}/corpus\n"
+        f"Score: run-eval --data-path {out}/eval_data.json "
+        "--search-strategy structured,local,mix --repeats 3"
+    )
     if as_json:
         print_json({"output_directory": str(args.output_directory), **counts})
 

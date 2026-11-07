@@ -91,6 +91,7 @@ from .comparison import USAGE_SCHEMA
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
+from .structured_statistics import structured_statistics
 
 logger = get_logger(__name__)
 
@@ -910,6 +911,7 @@ class EvaluationManager:
         if not isinstance(rag_metadata, dict):
             return {}
         iterative = rag_metadata.get("iterative")
+        structured = rag_metadata.get("structured")
         sufficient = rag_metadata.get(CONTEXT_SUFFICIENT_KEY)
         reason = rag_metadata.get(INSUFFICIENCY_REASON_KEY)
         return {
@@ -917,6 +919,7 @@ class EvaluationManager:
             "context_sufficient": sufficient if isinstance(sufficient, bool) else None,
             "insufficiency_reason": None if reason is None else str(reason),
             "iterative": dict(iterative) if isinstance(iterative, dict) else None,
+            "structured": dict(structured) if isinstance(structured, dict) else None,
         }
 
     @staticmethod
@@ -1273,6 +1276,7 @@ class EvaluationManager:
                     ).items()
                 )
             ),
+            structured_statistics=structured_statistics(results),
             grouped_statistics=self._calculate_grouped_statistics(
                 queries, results, reports
             ),
