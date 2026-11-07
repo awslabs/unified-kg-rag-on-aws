@@ -505,6 +505,17 @@ class EvaluationSummary(BaseModel):
             "answer and an exact one; empty when no answer had a record."
         ),
     )
+    iterative_statistics: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Over the answers the iterative strategy gave (an "
+            "EvaluationResult.iterative record): their count ('queries'), "
+            "the follow-up rounds per answer ('rounds' histogram, "
+            "'mean_rounds'), the stop reasons, the share stopped at "
+            "search.iterative.max_rounds ('max_rounds_rate') and the "
+            "degraded runs; empty when no answer had a record."
+        ),
+    )
     benchmarks: dict[str, int] = Field(
         default_factory=dict,
         description=(

@@ -79,6 +79,7 @@ from unified_kg_rag.domain.models.config import ModelPrice
 from unified_kg_rag.shared import get_logger
 
 from .answer_match_evaluator import ANSWER_SPAN_KEY, SPAN_FALLBACK_KEY
+from .iterative_statistics import iterative_statistics
 from .structured_statistics import structured_statistics
 
 logger = get_logger(__name__)
@@ -545,6 +546,10 @@ def _paired_comparison(
             "failed_queries": failed,
             # The structured strategy's run records (over every repeat).
             "structured_statistics": structured_statistics(
+                result for _, results in runs[strategy] for result in results
+            ),
+            # The iterative strategy's run records (over every repeat).
+            "iterative_statistics": iterative_statistics(
                 result for _, results in runs[strategy] for result in results
             ),
             # Answers the guardrail blocked (over every repeat), by blocked text.

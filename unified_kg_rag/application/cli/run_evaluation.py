@@ -810,6 +810,22 @@ class EvaluationRunner:
                 f"{reasons})\n"
             )
 
+        if iterative := summary.iterative_statistics:
+            rounds = markup_safe(
+                ", ".join(f"{n} {count}" for n, count in iterative["rounds"].items())
+            )
+            stops = markup_safe(
+                ", ".join(
+                    f"{reason} {count}"
+                    for reason, count in iterative["stop_reasons"].items()
+                )
+            )
+            summary_text += (
+                f"Iterative: {iterative['queries']} answers, rounds {rounds} "
+                f"(mean {iterative['mean_rounds']:.2f}), stopped by {stops}; "
+                f"{iterative['max_rounds_rate']:.0%} at max_rounds\n"
+            )
+
         if summary.total_queries > 0:
             success_rate = (
                 summary.successful_evaluations / summary.total_queries
@@ -1806,6 +1822,7 @@ _SUMMARY_FIELDS = {
     "answer_span_statistics",
     "guardrail_blocked_counts",
     "structured_statistics",
+    "iterative_statistics",
     "usage",
 }
 

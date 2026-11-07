@@ -93,6 +93,7 @@ from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_
 from .citation_scoring import cited_section_types, cited_source_ids
 from .comparison import USAGE_SCHEMA
 from .graph_aware_evaluator import GraphAwareEvaluator
+from .iterative_statistics import iterative_statistics
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
 from .structured_statistics import structured_statistics
@@ -467,7 +468,6 @@ class EvaluationManager:
             raise EvaluationException(
                 f"{where}: 'metadata.answerable' must be true or false."
             )
-
         if not isinstance(item_metadata.get(DECLINE_IS_CORRECT_KEY, False), bool):
             raise EvaluationException(
                 f"{where}: 'metadata.{DECLINE_IS_CORRECT_KEY}' must be true or false."
@@ -1317,6 +1317,7 @@ class EvaluationManager:
                 )
             ),
             structured_statistics=structured_statistics(results),
+            iterative_statistics=iterative_statistics(results),
             grouped_statistics=self._calculate_grouped_statistics(
                 queries, results, reports
             ),
