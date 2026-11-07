@@ -833,6 +833,32 @@ class TestWarmUp:
             built = manager.build_run_manifest(queries=[query], ground_truths=[truth])
             assert built["dataset"]["dense_script"] is True, (question, answer)
 
+    def test_the_manifest_records_the_judge_effort_span_model_and_citations(
+        self, config: Config
+    ) -> None:
+        # A judge at another effort, a span from another model, or answers
+        # with and without citation markers score differently: recorded so
+        # a comparison can tell.
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        config.evaluation.answer_span = "extracted"
+        config.evaluation.judge_effort = "medium"
+        config.search.citations.enabled = False
+        manager = EvaluationManager(config, rag_chain=object())
+        manifest = manager.build_run_manifest(
+            cli_args={"pairwise_judge": True, "search_strategy": ["a", "b"]}
+        )
+        scoring = manifest["answer_scoring"]
+        assert scoring["span_model"] == manifest["models"]["answer_span"]
+        assert scoring["span_effort"] == "medium"
+        assert manifest["models"]["judge_effort"] == "medium"
+        assert manifest["citations"] == {"enabled": False, "scoring": "file_weighted"}
+        # null inherits the judge model's tier effort.
+        config.evaluation.judge_effort = None
+        inherited = EvaluationManager(config, rag_chain=object()).build_run_manifest(
+            cli_args={"pairwise_judge": True, "search_strategy": ["a", "b"]}
+        )
+        assert inherited["models"]["judge_effort"] == config.aws.bedrock.default_effort
+
 
 class TestErroredQueries:
     async def test_failed_query_is_called_once(self, config: Config) -> None:

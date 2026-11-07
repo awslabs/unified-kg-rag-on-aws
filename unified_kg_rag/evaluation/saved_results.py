@@ -32,7 +32,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
 
-from .answer_match_evaluator import TOKENS_KEY
+from .answer_match_evaluator import SPAN_EFFORT_KEY, SPAN_MODEL_KEY, TOKENS_KEY
 from .comparison import USAGE_SCHEMA, Run
 
 logger = get_logger(__name__)
@@ -275,15 +275,26 @@ def check_answer_scoring(
     """
     if dense_script is None:
         dense_script = dataset_dense_script(manifests)
+    scorings = [(label, _answer_scoring(manifest)) for label, manifest in manifests]
+    # An extracted span's model and effort, recorded since: compared only
+    # when every extracted run records them.
+    extracted = {
+        label: SPAN_MODEL_KEY in sc
+        for label, sc in scorings
+        if isinstance(sc, dict) and sc.get("answer_span") == "extracted"
+    }
+    span_unrecorded = [label for label, known in extracted.items() if not known]
+    drop = {TOKENS_KEY} if dense_script is False else set()
+    if span_unrecorded and len(span_unrecorded) < len(extracted):
+        drop |= {SPAN_MODEL_KEY, SPAN_EFFORT_KEY}
     scored: dict[str, list[str]] = {}
     unknown: list[str] = []
-    for label, manifest in manifests:
-        scoring = _answer_scoring(manifest)
+    for label, scoring in scorings:
         if scoring is _UNKNOWN:
             unknown.append(label)
         elif scoring is not None:  # None: answer_match was not enabled
-            if dense_script is False and isinstance(scoring, dict):
-                scoring = {k: v for k, v in scoring.items() if k != TOKENS_KEY}
+            if isinstance(scoring, dict):
+                scoring = {k: v for k, v in scoring.items() if k not in drop}
             key = json.dumps(scoring, sort_keys=True)
             scored.setdefault(key, []).append(label)
     if len(scored) > 1:
@@ -302,14 +313,73 @@ def check_answer_scoring(
             "dropped only Korean particles of their closed class: re-run "
             "it)."
         )
+    warnings = []
+    if SPAN_MODEL_KEY in drop:
+        warnings.append(
+            f"The runs of {', '.join(span_unrecorded)} record no answer-span "
+            "model (saved before it was recorded): check their extracted "
+            "spans came from the same models.roles.answer_span and effort as "
+            "the others'."
+        )
     if unknown and scored:
-        return [
+        warnings.append(
             f"The runs of {', '.join(dict.fromkeys(unknown))} record no "
             "answer_scoring (no summary file, or saved before it was "
             "recorded): check they scored exact_match and token_f1 like the "
             "others."
-        ]
-    return []
+        )
+    return warnings
+
+
+def citation_warnings(
+    manifests: Sequence[tuple[str, dict[str, Any] | None]],
+) -> list[str]:
+    """Warnings when the compared runs differ in ``search.citations.enabled``
+    (the answer prompt asks for markers on one side only: the answers differ
+    by the prompt as well as the strategy) or scored the citation metrics
+    another way (``citations.scoring``; a run saved before it was recorded
+    credited a graph citation whole)."""
+    enabled: dict[str, list[str]] = {}
+    # How the runs that may have scored citations did (one saved before
+    # the block was recorded may have).
+    scoring: dict[str, list[str]] = {}
+    for label, manifest in manifests:
+        if manifest is None:
+            continue
+        citations = manifest.get("citations")
+        if not isinstance(citations, dict):
+            scoring.setdefault("unrecorded", []).append(label)
+            continue
+        enabled.setdefault(str(citations.get("enabled")), []).append(label)
+        if citations.get("enabled"):
+            scoring.setdefault(str(citations.get("scoring")), []).append(label)
+    warnings = []
+    if len(enabled) > 1:
+        listed = "; ".join(
+            f"{'on' if value == 'True' else 'off'}: "
+            f"{', '.join(dict.fromkeys(labels))}"
+            for value, labels in enabled.items()
+        )
+        warnings.append(
+            f"The compared runs differ in search.citations.enabled ({listed}): "
+            "the answer prompt asks for citation markers on one side only, so "
+            "the deltas measure that prompt as well as the strategies "
+            "(answer_match, graph_aware and the pairwise judge read the "
+            "answers without markers; the citation metrics exist on one side "
+            "only)."
+        )
+    if len(scoring) > 1 and enabled.get("True"):
+        listed = "; ".join(
+            f"{value}: {', '.join(dict.fromkeys(labels))}"
+            for value, labels in scoring.items()
+        )
+        warnings.append(
+            f"The compared runs scored citation_precision and citation_recall "
+            f"differently ({listed}; runs saved before 'file_weighted' "
+            "credited a graph citation whole when any of its files matched): "
+            "re-score them with run-eval --from-results --rescore."
+        )
+    return warnings
 
 
 def rerank_unmetered(

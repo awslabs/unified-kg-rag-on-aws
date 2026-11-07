@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
     error_digest,
+    judge_effort,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.observability.endpoints import safe_url
@@ -90,7 +91,11 @@ from .answer_match_evaluator import (
     answer_scoring,
 )
 from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
-from .citation_scoring import cited_section_types, cited_source_ids
+from .citation_scoring import (
+    CITATION_SCORING,
+    cited_section_types,
+    cited_source_ids,
+)
 from .comparison import USAGE_SCHEMA
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .iterative_statistics import iterative_statistics
@@ -1522,14 +1527,27 @@ class EvaluationManager:
                     and evaluation.answer_span == "extracted"
                     else None
                 ),
+                # The judges' reasoning effort (evaluation.judge_effort, else
+                # the judge model's tier): a judge at another effort scores
+                # differently.
+                "judge_effort": (
+                    judge_effort(self.config, judge_model) if uses_judge else None
+                ),
             },
             # How exact match and token F1 read an answer: two runs scored
             # differently are not comparable on them.
             "answer_scoring": (
-                answer_scoring(evaluation)
+                answer_scoring(self.config)
                 if EvaluatorType.ANSWER_MATCH in enabled
                 else None
             ),
+            # Whether the answers cite (the answer prompt asks for markers)
+            # and how the citation metrics weigh a citation's files: arms
+            # that differ compare those too.
+            "citations": {
+                "enabled": self.config.search.citations.enabled,
+                "scoring": CITATION_SCORING,
+            },
             # What the usage records count (USAGE_SCHEMA: 2 meters the
             # rerank requests), so a comparison prices like with like.
             "usage_schema": USAGE_SCHEMA,
@@ -1845,7 +1863,13 @@ class EvaluationManager:
         reports: list[EvaluationReport],
         summary: EvaluationSummary,
         outputs_dir: str | Path,
-    ) -> None:
+        *,
+        label: str | None = None,
+    ) -> Path:
+        """Write the run's results, reports and summary files; returns the
+        results file's path (written with ``evaluation.save_detailed_results``).
+        ``label`` names the files instead of the run's strategy (a
+        ``run-eval --arm`` run, ``<strategy>@<arm>``)."""
         if isinstance(outputs_dir, str):
             outputs_dir = Path(outputs_dir)
         outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -1861,7 +1885,12 @@ class EvaluationManager:
             for r in results
             if (strategy := r.metadata.get("search_strategy") or r.search_strategy)
         }
-        stem = f"{strategies.pop()}_{timestamp}" if len(strategies) == 1 else timestamp
+        if label is not None:
+            stem = f"{label}_{timestamp}"
+        else:
+            stem = (
+                f"{strategies.pop()}_{timestamp}" if len(strategies) == 1 else timestamp
+            )
 
         if self.config.evaluation.save_detailed_results:
             self._save_json(
@@ -1877,6 +1906,7 @@ class EvaluationManager:
             outputs_dir / f"evaluation_summary_{stem}.json", summary.model_dump()
         )
         logger.info("Evaluation results saved to '%s'", outputs_dir)
+        return outputs_dir / f"evaluation_results_{stem}.json"
 
     @staticmethod
     def _save_json(path: Path, data: Any) -> None:

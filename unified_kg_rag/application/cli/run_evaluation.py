@@ -80,6 +80,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
+    LLMUsage,
     ModelRole,
     SearchStrategy,
     model_id_value,
@@ -134,6 +135,7 @@ if TYPE_CHECKING:
     from unified_kg_rag.evaluation.saved_results import (
         SavedRun,
         check_answer_scoring,
+        citation_warnings,
         dataset_warnings,
         group_runs,
         interleaving_warnings,
@@ -226,6 +228,7 @@ __getattr__, _load_evaluation = lazy_names(
         "delta_cell": _report_module,
         "SavedRun": _saved_results_module,
         "check_answer_scoring": _saved_results_module,
+        "citation_warnings": _saved_results_module,
         "dataset_warnings": _saved_results_module,
         "group_runs": _saved_results_module,
         "interleaving_warnings": _saved_results_module,
@@ -459,6 +462,23 @@ class CommandLineInterface:
                 "the saved answers (with --judge-model, another model). The "
                 "strategies compare in --search-strategy order when given, else "
                 "in the order the oldest run listed them. Local paths only."
+            ),
+        )
+        parser.add_argument(
+            "--rescore",
+            nargs="?",
+            const="",
+            metavar="DATASET",
+            help=(
+                "With --from-results, score the saved answers again with this "
+                "run's evaluators (--evaluators, evaluation.*: answer_match's "
+                "span and normalization, the citation metrics, the LLM judges, "
+                "which are called again) instead of comparing the scores they "
+                "hold, and save the re-scored runs in this run's directory. "
+                "The gold answers are those saved with each answer, or "
+                "DATASET's (a run-eval dataset whose items pair by query id: "
+                "their answer, aliases, metadata and expectations replace the "
+                "saved ones). No answer is generated and no store is queried"
             ),
         )
         parser.add_argument(
@@ -728,6 +748,14 @@ class EvaluationRunner:
         return getattr(self.args, "from_results", None)
 
     @property
+    def _rescoring(self) -> bool:
+        """Whether --rescore scores the saved answers of --from-results again."""
+        return (
+            self._from_results is not None
+            and getattr(self.args, "rescore", None) is not None
+        )
+
+    @property
     def _baseline_results(self) -> list[Path] | None:
         return getattr(self.args, "baseline_results", None)
 
@@ -748,7 +776,7 @@ class EvaluationRunner:
             self.args, "pairwise_judge", False
         ):
             return []
-        if self._from_results is None and _JUDGE_EVALUATORS & set(
+        if (self._from_results is None or self._rescoring) and _JUDGE_EVALUATORS & set(
             self.config.evaluation.enabled_evaluators
         ):
             return []
@@ -780,7 +808,7 @@ class EvaluationRunner:
         ragas/assertion evaluator scoring answers it generates."""
         if getattr(self.args, "pairwise_judge", False):
             return True
-        return self._from_results is None and bool(
+        return (self._from_results is None or self._rescoring) and bool(
             _JUDGE_EVALUATORS & set(self.config.evaluation.enabled_evaluators)
         )
 
@@ -823,6 +851,11 @@ class EvaluationRunner:
         )
 
     def _validate_args(self) -> None:
+        if (
+            getattr(self.args, "rescore", None) is not None
+            and self._from_results is None
+        ):
+            usage_error("--rescore scores saved answers again: give --from-results")
         for warning in self._judge_model_warnings():
             logger.warning("%s", warning)
         if self._uses_llm_judge():
@@ -846,11 +879,17 @@ class EvaluationRunner:
                         f"--{flag.replace('_', '-')} does not apply to "
                         "--from-results (no answer is generated)"
                     )
-            if getattr(self.args, "evaluators", None) is not None:
+            if getattr(self.args, "evaluators", None) is not None and not (
+                self._rescoring
+            ):
                 usage_error(
                     "--evaluators does not apply to --from-results (the saved "
-                    "runs are compared on the scores they hold)"
+                    "runs are compared on the scores they hold; --rescore "
+                    "scores their answers again)"
                 )
+            dataset = getattr(self.args, "rescore", None)
+            if dataset and not Path(dataset).is_file():
+                raise InvalidDatasetError(f"--rescore dataset '{dataset}' not found")
             try:
                 if is_s3_uri(self._output_directory()):
                     parse_s3_uri(self._output_directory(), require_key=False)
@@ -1158,7 +1197,7 @@ class EvaluationRunner:
         baseline = self._load_baseline()
         start_time = time.time()
         if self._from_results is not None:
-            measured = self._saved_runs_input()
+            measured = await self._saved_runs_input(local_outputs)
         else:
             measured = await self._answer_and_score(
                 s3_client, work_dir, local_outputs, baseline
@@ -1342,13 +1381,13 @@ class EvaluationRunner:
 
     def _answer_scoring(self) -> dict[str, Any] | None:
         """The answer_scoring this run's manifests will record."""
-        evaluation = self.config.evaluation
-        if EvaluatorType.ANSWER_MATCH not in evaluation.enabled_evaluators:
+        if EvaluatorType.ANSWER_MATCH not in self.config.evaluation.enabled_evaluators:
             return None
-        return answer_scoring(evaluation)
+        return answer_scoring(self.config)
 
-    def _saved_runs_input(self) -> _Measured:
-        """The comparison input rebuilt from ``--from-results``."""
+    async def _saved_runs_input(self, local_outputs: Path) -> _Measured:
+        """The comparison input rebuilt from ``--from-results`` (with
+        ``--rescore``, from its answers scored again)."""
         try:
             saved = load_saved_runs(self._from_results or [])
             order = None
@@ -1366,6 +1405,9 @@ class EvaluationRunner:
             *summary_warnings(saved, "--from-results"),
             *pooling_warnings(grouped),
         ]
+        if self._rescoring:
+            grouped = await self._rescore(grouped, local_outputs)
+            saved = [run for runs in grouped.values() for run in runs]
         console.rule(
             f"[bold]Rebuilding the comparison from {len(saved)} saved run(s)[/bold]",
             style="blue",
@@ -1403,6 +1445,175 @@ class EvaluationRunner:
             breaches=[],
             comparing=True,
             warnings=warnings,
+        )
+
+    def _rescore_dataset(
+        self,
+    ) -> tuple[Path | None, dict[str, tuple[EvaluationQuery, EvaluationGroundTruth]]]:
+        """``--rescore DATASET``'s path and its items by query id (none
+        without a DATASET: the saved gold answers score)."""
+        dataset = getattr(self.args, "rescore", None)
+        if not dataset:
+            return None, {}
+        try:
+            queries, ground_truths = EvaluationManager.load_data(dataset)
+        except (json.JSONDecodeError, EvaluationException) as e:
+            raise InvalidDatasetError(f"--rescore: {e}") from e
+        golds = {gt.query_id: gt for gt in ground_truths}
+        return Path(dataset), {
+            q.query_id: (
+                q,
+                golds.get(q.query_id)
+                or EvaluationGroundTruth(query_id=q.query_id, ground_truth=""),
+            )
+            for q in queries
+        }
+
+    async def _rescore(
+        self, grouped: dict[str, list[SavedRun]], local_outputs: Path
+    ) -> dict[str, list[SavedRun]]:
+        """Score every saved run's answers again with this run's evaluators,
+        save them as runs of this invocation's directory, and return them in
+        place of the saved ones."""
+        dataset_path, dataset = self._rescore_dataset()
+        console.rule("[bold]Re-scoring the saved answers[/bold]", style="blue")
+        managers: dict[bool, EvaluationManager] = {}
+        rescored: dict[str, list[SavedRun]] = {}
+        for label, runs in grouped.items():
+            rescored[label] = []
+            for run in runs:
+                # answer_match and graph_aware read the answers without
+                # their citation markers when the run's answers carried them.
+                cited = bool(
+                    ((run.manifest or {}).get("citations") or {}).get(
+                        "enabled", self.config.search.citations.enabled
+                    )
+                )
+                if cited not in managers:
+                    config = self.config.model_copy(deep=True)
+                    config.search.citations.enabled = cited
+                    managers[cited] = EvaluationManager(
+                        config=config,
+                        rag_chain=_no_answers(),
+                        providers=(
+                            self.evaluation_manager.providers
+                            if self.evaluation_manager is not None
+                            else self.providers
+                        ),
+                    )
+                    self.evaluation_manager = self.evaluation_manager or managers[cited]
+                rescored[label].append(
+                    await self._rescore_run(
+                        managers[cited],
+                        label,
+                        run,
+                        (dataset_path, dataset),
+                        local_outputs,
+                    )
+                )
+        return rescored
+
+    async def _rescore_run(
+        self,
+        manager: EvaluationManager,
+        label: str,
+        run: SavedRun,
+        dataset: tuple[
+            Path | None, dict[str, tuple[EvaluationQuery, EvaluationGroundTruth]]
+        ],
+        local_outputs: Path,
+    ) -> SavedRun:
+        """One saved run, scored again and saved."""
+        dataset_path, items = dataset
+        results = [result.model_copy(deep=True) for result in run.results]
+        queries: list[EvaluationQuery] = []
+        ground_truths: list[EvaluationGroundTruth] = []
+        for result in results:
+            metadata = dict(result.metadata)
+            category = result.category
+            if items:
+                if result.query_id not in items:
+                    raise InvalidDatasetError(
+                        f"--rescore: the dataset has no query '{result.query_id}' "
+                        f"of {run.path.name}"
+                    )
+                query, gold = items[result.query_id]
+                if query.question != result.question:
+                    raise InvalidDatasetError(
+                        f"--rescore: query '{result.query_id}' asks another "
+                        f"question in the dataset than in {run.path.name}"
+                    )
+                for key in _SAVED_EXPECTATIONS:
+                    metadata.pop(key, None)
+                # The dataset's metadata over the saved one; the run's own
+                # strategy and query flags stay.
+                metadata.update(
+                    {
+                        k: v
+                        for k, v in query.metadata.items()
+                        if k not in _RUN_METADATA or k not in metadata
+                    }
+                )
+                category = query.category or category
+            else:
+                gold = EvaluationGroundTruth(
+                    query_id=result.query_id,
+                    ground_truth=result.ground_truth,
+                    reference_sources=metadata.get("reference_sources") or [],
+                    expected_entities=metadata.get("expected_entities") or [],
+                    expected_relationships=(
+                        metadata.get("expected_relationships") or []
+                    ),
+                    assertions=metadata.get("assertions") or [],
+                )
+            result.metadata = metadata
+            result.category = category
+            queries.append(
+                EvaluationQuery(
+                    query_id=result.query_id,
+                    question=result.question,
+                    category=category,
+                    metadata=metadata,
+                )
+            )
+            ground_truths.append(gold)
+        old = run.summary
+        answer_usage = ((old.usage if old else None) or {}).get("answer_generation")
+        reports, summary = await manager.score_answers(
+            queries,
+            results,
+            ground_truths,
+            start_time=(
+                old.evaluation_start_time
+                if old and old.evaluation_start_time
+                else datetime.now()
+            ),
+            answer_usage=(
+                answer_usage
+                if isinstance(answer_usage, LLMUsage)
+                else LLMUsage.model_validate(answer_usage or {})
+            ),
+            dataset_path=dataset_path,
+            cli_args=vars(self.args),
+        )
+        summary.run_manifest = rescored_manifest(
+            run.manifest, summary.run_manifest or {}, run.path, dataset_path
+        )
+        summary.configuration["outputs_directory"] = self._run_target()
+        path = manager.save_results(
+            results=results,
+            reports=reports,
+            summary=summary,
+            outputs_dir=local_outputs,
+            label=label,
+        )
+        return SavedRun(
+            path=path,
+            strategy=label,
+            stamp=run.stamp,
+            results=results,
+            reports=reports,
+            summary=summary,
         )
 
     async def _answer_and_score(
@@ -1777,6 +1988,7 @@ class EvaluationRunner:
                 *check_answer_scoring(manifests),
                 *dataset_warnings(manifests),
                 *interleaving_warnings(manifests),
+                *citation_warnings(manifests),
             ]
         except EvaluationException as e:
             raise InvalidDatasetError(str(e)) from e
@@ -1917,6 +2129,84 @@ class EvaluationRunner:
                 )
             }
         }
+
+
+def _no_answers() -> Runnable[Any, Any]:
+    """The chain of a manager that only scores (``--rescore``)."""
+    from langchain_core.runnables import RunnableLambda
+
+    def refuse(inputs: Any) -> Any:
+        raise EvaluationException("re-scoring saved answers generates none")
+
+    return RunnableLambda(refuse)
+
+
+# The expectations the scoring wrote into a saved result's metadata, which a
+# --rescore dataset replaces.
+_SAVED_EXPECTATIONS = (
+    "answer_aliases",
+    "expected_entities",
+    "expected_relationships",
+    "reference_sources",
+    "assertions",
+)
+# The query settings a run answered with (its strategy and query flags):
+# a --rescore dataset does not overwrite them.
+_RUN_METADATA = frozenset(
+    {"search_strategy", "suffix", "search_type", "top_k", "retrieval_multiplier"}
+)
+# The manifest entries a re-score replaces: how the answers were scored.
+# What answered them (models, index, configuration, run order) stays.
+_SCORING_MANIFEST_KEYS = (
+    "answer_scoring",
+    "enabled_evaluators",
+    "dropped_evaluators",
+    "assertion_scoring",
+)
+_SCORING_MODEL_KEYS = (
+    "evaluation_judge",
+    "evaluation_embedding",
+    "answer_span",
+    "judge_effort",
+)
+
+
+def rescored_manifest(
+    saved: dict[str, Any] | None,
+    scored: dict[str, Any],
+    source: Path,
+    dataset_path: Path | None,
+) -> dict[str, Any]:
+    """The run manifest of a re-scored run: the saved one (what answered),
+    with the scoring entries of ``scored`` (the manifest the re-score
+    built) and a ``rescored`` record of when, from which file and by which
+    code; the dataset's entry too when ``--rescore`` read one."""
+    saved = dict(saved or {})
+    merged = {**saved, **{key: scored.get(key) for key in _SCORING_MANIFEST_KEYS}}
+    models = dict(saved.get("models") or {})
+    new_models = scored.get("models") or {}
+    models.update({key: new_models.get(key) for key in _SCORING_MODEL_KEYS})
+    judge = models.get("evaluation_judge")
+    answer = models.get("answer_generation")
+    models["judge_is_answer_model"] = (
+        model_id_value(judge) == model_id_value(answer)
+        if judge is not None and answer is not None
+        else None
+    )
+    merged["models"] = models
+    citations = dict(saved.get("citations") or {})
+    citations["scoring"] = (scored.get("citations") or {}).get("scoring")
+    merged["citations"] = citations
+    if dataset_path is not None:
+        merged["dataset"] = scored.get("dataset")
+    merged["rescored"] = {
+        "created_at": scored.get("created_at"),
+        "from": str(source),
+        "package_version": scored.get("package_version"),
+        "git_sha": scored.get("git_sha"),
+        "dataset": str(dataset_path) if dataset_path is not None else None,
+    }
+    return merged
 
 
 # The run summary fields the JSON result lists per run.

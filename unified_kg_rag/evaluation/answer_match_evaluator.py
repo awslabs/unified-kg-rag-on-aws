@@ -88,6 +88,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
     error_digest,
+    judge_effort,
     judge_model_kwargs,
 )
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
@@ -102,6 +103,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     ModelPurpose,
     ModelRole,
+    model_id_value,
 )
 from unified_kg_rag.domain.prompts import NO_ANSWER_SPAN, AnswerSpanExtractionPrompt
 from unified_kg_rag.domain.retrieval.citations import strip_markers
@@ -330,16 +332,29 @@ def token_f1_tokens(normalization: str) -> str:
     return SCRIPT_AWARE_TOKENS if normalization == "default" else "whitespace"
 
 
-def answer_scoring(evaluation: Any) -> dict[str, Any]:
-    """How exact match and token F1 read an answer under the
-    ``EvaluationConfig`` ``evaluation`` (the run manifest's
-    ``answer_scoring``): two runs scored differently are not comparable on
-    them."""
-    return {
+# The answer_scoring keys of an ``extracted`` span: the model that extracted
+# it and its effort (runs saved before they were recorded lack them).
+SPAN_MODEL_KEY = "span_model"
+SPAN_EFFORT_KEY = "span_effort"
+
+
+def answer_scoring(config: Config) -> dict[str, Any]:
+    """How exact match and token F1 read an answer under ``config`` (the run
+    manifest's ``answer_scoring``): the span mode, the normalization and
+    its tokenization, and with an ``extracted`` span the model
+    (``models.roles.answer_span``) and effort that extracted it. Two runs
+    scored differently are not comparable on them."""
+    evaluation = config.evaluation
+    scoring: dict[str, Any] = {
         "answer_span": evaluation.answer_span,
         "answer_normalization": evaluation.answer_normalization,
         TOKENS_KEY: token_f1_tokens(evaluation.answer_normalization),
     }
+    if evaluation.answer_span == "extracted":
+        model = config.model_id(ModelRole.ANSWER_SPAN)
+        scoring[SPAN_MODEL_KEY] = model_id_value(model)
+        scoring[SPAN_EFFORT_KEY] = judge_effort(config, model)
+    return scoring
 
 
 class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
