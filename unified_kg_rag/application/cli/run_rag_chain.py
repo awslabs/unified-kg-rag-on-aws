@@ -97,6 +97,41 @@ def _rerank_line(rerank: dict[str, Any]) -> str:
     return line
 
 
+def _citation_line(citation: dict[str, Any]) -> str:
+    """One cited source as ``run-rag`` prints it: its marker, file and pages
+    (or its seed graphs), and what the section is."""
+    where = citation.get("file_path") or citation.get("file_name")
+    page, page_end = citation.get("page"), citation.get("page_end")
+    if where and page:
+        where += (
+            f", p. {page}" if page_end in (None, page) else f", pp. {page}-{page_end}"
+        )
+    provenance = citation.get("provenance") or {}
+    if not where and provenance.get("seed_graphs"):
+        where = "seed graph " + ", ".join(provenance["seed_graphs"])
+    others = len(citation.get("documents") or []) - 1
+    if where and others > 0:
+        where += f" (+{others} more)"
+    title = citation.get("title")
+    detail = f"{citation.get('section_type')}: {title}" if title else None
+    parts = [p for p in (where, detail) if p] or [str(citation.get("source_id"))]
+    return f"[{citation.get('marker')}] " + " - ".join(parts)
+
+
+def print_citations(result: dict[str, Any]) -> None:
+    """The context sections the answer cites (``RAGOutput.citations``)."""
+    cited = [c for c in result.get("citations") or [] if c.get("cited")]
+    if not cited:
+        return
+    console.print(
+        Panel(
+            "\n".join(f"  {markup_safe(_citation_line(c))}" for c in cited),
+            title=f"[cyan]Citations ({len(cited)})[/cyan]",
+            border_style="cyan",
+        )
+    )
+
+
 def _filter_pair(item: str) -> str:
     """A ``--filters`` pair: ``key:value`` with a key and a value. Anything
     else is a usage error rather than a filter left out or matching nothing
@@ -593,6 +628,7 @@ class RAGChainRunner:
             # Model output: never interpret it as markup.
             console.print(terminal_safe(answer), markup=False, highlight=False)
             console.print("=" * 50)
+            print_citations(result)
         else:
             console.print("\n\n" + "=" * 50)
             console.print("[bold blue]Search Mode Results[/bold blue]")
