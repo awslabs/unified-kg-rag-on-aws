@@ -615,6 +615,92 @@ def test_the_tree_is_served_while_it_is_rebuilt_and_refused_once_it_fails(
         chain.close()
 
 
+def test_a_failed_indexing_stage_builds_no_tree(
+    tmp_path: Path, no_aws, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    # Run on (continue_on_error) past a failed indexing stage, the tree
+    # stage must not summarize stores that may not hold the run's text.
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+
+    config, providers, _, calls = setup(tmp_path)
+    source = corpus(tmp_path)
+
+    def fail(self: Any, context: Any) -> Any:
+        raise RuntimeError("simulated indexing failure")
+
+    monkeypatch.setattr(ps.IndexingStage, "execute", fail)
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(
+            stages_enabled=dict.fromkeys(PipelineStageType, True),
+            local_directory=tmp_path / "run-1",
+            continue_on_error=True,
+        ),
+        source_directory=source,
+        providers=providers,
+    )
+    try:
+        context = pipeline.run(source, pipeline_id="run-1")
+    finally:
+        pipeline.close()
+
+    results = {r.stage_name: r for r in context.stage_results}
+    assert results["indexing"].status is PipelineStageStatus.FAILED
+    tree = results["summary_tree"]
+    assert tree.status is PipelineStageStatus.COMPLETED, tree.error_message
+    assert tree.metrics["tree_skipped"] == "indexing_failed"
+    assert calls.kinds["summary"] == 0
+    assert tree_record(providers) is None
+
+
+def test_a_text_unit_without_a_vector_is_left_out_of_the_tree(
+    tmp_path: Path,
+    no_aws,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A stored unit whose vector (or text) is missing cannot be clustered:
+    # it is skipped with a warning, the others are summarized. A vector
+    # read as a JSON list is used like the store's float32 array.
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+
+    config, providers, _, calls = setup(tmp_path)
+    source = corpus(tmp_path)
+    scan = OpenSearchIndexer.scan_text_units
+    blank = "depot"
+
+    def degraded(self: Any, suffix: Any, **kwargs: Any) -> Any:
+        rows = scan(self, suffix, **kwargs)
+        if "text_embedding" not in kwargs["fields"]:
+            return rows
+        for row in rows:
+            if blank in str(row.get("attributes", {}).get("file_name", "")):
+                row["text_embedding"] = None
+            elif row.get("text_embedding") is not None:
+                row["text_embedding"] = [float(v) for v in row["text_embedding"]]
+        return rows
+
+    monkeypatch.setattr(OpenSearchIndexer, "scan_text_units", degraded)
+    with caplog.at_level("WARNING"):
+        context = ingest(config, providers, source, tmp_path / "run-1")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert "hold no vector or text" in caplog.text
+    assert calls.kinds["summary"] > 0
+    nodes = tree_nodes(providers)
+    assert nodes
+    cited = {unit for node in nodes for unit in node["text_unit_ids"]}
+    indexer = providers.build_vector_indexer()
+    try:
+        units = scan(indexer, None, fields=["attributes"])
+    finally:
+        indexer.close()
+    skipped = {r["id"] for r in units if blank in r["attributes"].get("file_name", "")}
+    assert len(skipped) == 2
+    assert not cited & skipped
+    assert cited
+
+
 # --- the tree strategy ------------------------------------------------------
 
 
