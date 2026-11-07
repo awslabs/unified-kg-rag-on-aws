@@ -815,6 +815,7 @@ def _open_fds() -> int:
     return len(os.listdir(_FD_DIR))
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not _FD_DIR.is_dir(), reason="needs /proc/self/fd")
 def test_successive_event_loops_leave_no_ollama_clients_or_sockets() -> None:
     # asyncio.run closes its loop but not the clients used on it. A client

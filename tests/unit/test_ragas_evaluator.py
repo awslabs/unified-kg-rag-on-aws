@@ -943,6 +943,7 @@ class TestRunConfigAndJudgeEffort:
         assert "effort" not in kwargs
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(("preset", "tracked"), [(None, False), ("false", True)])
 def test_ragas_telemetry_is_off_unless_the_user_opts_in(
     preset: str | None, tracked: bool

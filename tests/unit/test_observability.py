@@ -137,6 +137,7 @@ def test_disabled_by_default_and_every_call_is_a_shared_noop() -> None:
     assert configure_observability(ObservabilityConfig()) is False
 
 
+@pytest.mark.slow
 def test_disabled_path_never_imports_the_otel_adapter() -> None:
     # A fresh interpreter in which OpenTelemetry cannot be imported at all: the
     # composition roots, the port and the batch processor still work, and the

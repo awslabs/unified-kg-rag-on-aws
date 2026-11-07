@@ -38,6 +38,7 @@ def _in_letter_ranges(ch: str) -> bool:
     return any(lo <= ord(ch) <= hi for lo, hi in scripts._DENSE_SCRIPT_LETTER_RANGES)
 
 
+@pytest.mark.slow
 def test_dense_script_char_matches_the_letter_ranges_at_every_code_point() -> None:
     # The compiled class answers as the range table it is built from.
     differing = [

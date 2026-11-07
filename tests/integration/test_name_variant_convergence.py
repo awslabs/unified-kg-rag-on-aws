@@ -2514,6 +2514,7 @@ def _scoped_state(
     return _read_state(config, providers)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("corpora", "inc_steps", "gleaning"),
     [

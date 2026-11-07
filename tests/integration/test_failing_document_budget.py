@@ -530,6 +530,7 @@ def test_output_cut_alike_on_several_documents_excludes_them_after_the_limit(
     assert seen[-1][2] is False, seen
 
 
+@pytest.mark.slow
 @_COUNTED_STAGES
 def test_outage_runs_neither_count_nor_end_an_output_cut_streak(
     tmp_path: Path, stage: str

@@ -172,6 +172,7 @@ _EXTRA_MODULES = (
 )
 
 
+@pytest.mark.slow
 def test_the_public_api_loads_no_optional_extra() -> None:
     # Every public name (BaseRenderer, register_renderer and
     # EvaluationManager included) works on a core install: the built-in

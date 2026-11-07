@@ -232,6 +232,7 @@ def _corpus_paths() -> dict[str, DocStatus]:
     return dict.fromkeys(CORPUS, DocStatus.PROCESSED)
 
 
+@pytest.mark.slow
 def test_a_seed_beside_a_corpus_lives_through_its_lifecycle(tmp_path: Path) -> None:
     harness = _Harness(tmp_path / "seeded")
 
@@ -724,6 +725,7 @@ def _vendor_entries(harness: _Harness, start: int = 0) -> list[str]:
     return entries
 
 
+@pytest.mark.slow
 def test_a_seed_edit_reports_the_current_descriptions_only(tmp_path: Path) -> None:
     # Documents and seed v1, then v2, then v2 without Vendor's description:
     # each incremental report reads Vendor as a full build of the same

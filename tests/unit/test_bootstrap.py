@@ -492,6 +492,7 @@ _CLI_MODULES = (
 )
 
 
+@pytest.mark.slow
 def test_local_cli_pipeline_chain_and_stores_load_no_aws_sdk(tmp_path) -> None:
     # A local run, from the CLI imports to the stores it builds, must not
     # import the AWS SDK: AWS-only modules (S3 sync and transfer, SigV4

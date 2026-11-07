@@ -361,6 +361,7 @@ def test_colliding_labels_raise_unless_qualified(
     )
 
 
+@pytest.mark.slow
 @given(
     model=models(),
     roots=st.sets(st.integers(0, 6), min_size=1, max_size=3),

@@ -34,6 +34,7 @@ print(json.dumps(changed))
 """
 
 
+@pytest.mark.slow
 def test_importing_cli_modules_does_not_change_sys_path() -> None:
     modules = sorted(
         f"{cli_package.__name__}.{path.stem}"
