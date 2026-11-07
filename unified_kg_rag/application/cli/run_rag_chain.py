@@ -692,15 +692,15 @@ class RAGChainRunner:
             if (
                 isinstance(
                     e,
-                    InvalidFilterError
-                    | MethodologyNotIndexedError
-                    | IndexNotFoundError,
+                    InvalidFilterError | ConfigurationError | IndexNotFoundError,
                 )
                 and not self.args.interactive
             ):
                 # A --filters key no index declares, a --search-strategy
-                # whose methodology the namespace does not hold, or a --suffix
-                # nothing was ingested under: the command line is wrong.
+                # whose methodology the namespace does not hold, a setting
+                # the index cannot serve (an embedding dimension it does not
+                # hold) or a --suffix nothing was ingested under: the command
+                # line or the configuration is wrong (exit 2).
                 usage_error(str(e), error_type=type(e).__name__)
             if isinstance(e, QueryTimeoutError):
                 # An expected outcome with its own message: no traceback.

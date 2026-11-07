@@ -52,7 +52,11 @@ def _score(
     values = {m.metric_type.value: m.value for m in report.metrics}
     # The citation metrics have their own tests (test_citation_scoring).
     skipped = report.metadata.get("skipped_metrics", {})
-    for key in ("citation_precision", "citation_recall"):
+    for key in (
+        "citation_precision",
+        "citation_recall",
+        "citation_precision_passages",
+    ):
         skipped.pop(key, None)
     if not skipped:
         report.metadata.pop("skipped_metrics", None)

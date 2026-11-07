@@ -783,6 +783,30 @@ class TestWarmUp:
         with pytest.raises(MethodologyNotIndexedError, match="raptor"):
             await manager.warm_up(query)
 
+    @pytest.mark.parametrize("kind", ["index", "config"])
+    async def test_a_missing_index_or_a_bad_setting_fails_fast(
+        self, config: Config, kind: str
+    ) -> None:
+        # Nothing ingested under the suffix, or an embedding dimension the
+        # index does not hold: the run used to answer the whole dataset,
+        # every query failing the same way.
+        from unified_kg_rag.shared import ConfigurationError, IndexNotFoundError
+
+        error = (
+            IndexNotFoundError("no index for suffix 'typo'")
+            if kind == "index"
+            else ConfigurationError("embedding dimension 64, index holds 32")
+        )
+
+        class _Chain:
+            async def ainvoke(self, inputs, config=None):
+                raise error
+
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        manager = EvaluationManager(config, rag_chain=_Chain())
+        with pytest.raises(type(error)):
+            await manager.warm_up(EvaluationQuery(query_id="q1", question="Who?"))
+
     def test_the_manifest_records_dense_script_and_the_usage_schema(
         self, config: Config
     ) -> None:
@@ -808,6 +832,32 @@ class TestWarmUp:
             truth = EvaluationGroundTruth(query_id="q1", ground_truth=answer)
             built = manager.build_run_manifest(queries=[query], ground_truths=[truth])
             assert built["dataset"]["dense_script"] is True, (question, answer)
+
+    def test_the_manifest_records_the_judge_effort_span_model_and_citations(
+        self, config: Config
+    ) -> None:
+        # A judge at another effort, a span from another model, or answers
+        # with and without citation markers score differently: recorded so
+        # a comparison can tell.
+        config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+        config.evaluation.answer_span = "extracted"
+        config.evaluation.judge_effort = "medium"
+        config.search.citations.enabled = False
+        manager = EvaluationManager(config, rag_chain=object())
+        manifest = manager.build_run_manifest(
+            cli_args={"pairwise_judge": True, "search_strategy": ["a", "b"]}
+        )
+        scoring = manifest["answer_scoring"]
+        assert scoring["span_model"] == manifest["models"]["answer_span"]
+        assert scoring["span_effort"] == "medium"
+        assert manifest["models"]["judge_effort"] == "medium"
+        assert manifest["citations"] == {"enabled": False, "scoring": "file_weighted"}
+        # null inherits the judge model's tier effort.
+        config.evaluation.judge_effort = None
+        inherited = EvaluationManager(config, rag_chain=object()).build_run_manifest(
+            cli_args={"pairwise_judge": True, "search_strategy": ["a", "b"]}
+        )
+        assert inherited["models"]["judge_effort"] == config.aws.bedrock.default_effort
 
 
 class TestErroredQueries:

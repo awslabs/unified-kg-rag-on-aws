@@ -326,6 +326,16 @@ class TestRetrievedCoverage:
         assert values["answer_length"] == 3.0
         assert metadata["retrieved_matched_entity_count"] == 1
 
+    def test_citation_markers_are_no_length(self, config: Config) -> None:
+        # A citations-on arm against an off one: the markers ([1]) count
+        # neither as coverage nor as answer length.
+        config.search.citations.enabled = True
+        evaluator = GraphAwareEvaluator(config)
+        cited, _ = self._report(evaluator, "Vendor ships [1][2].")
+        plain, _ = self._report(evaluator, "Vendor ships.")
+        assert cited["answer_length"] == plain["answer_length"]
+        assert cited["entity_coverage"] == plain["entity_coverage"] == 0.5
+
     def test_wordy_answer_does_not_raise_retrieved_coverage(
         self, evaluator: GraphAwareEvaluator
     ) -> None:

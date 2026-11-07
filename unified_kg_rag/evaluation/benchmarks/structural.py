@@ -212,6 +212,11 @@ class _Question:
     aliases: list[str] = field(default_factory=list)
     plan: dict[str, Any] | None = None
     sources: list[str] = field(default_factory=list)
+    # How answer_match reads the answer (``metadata.answer_type``: "number",
+    # "set" with ``items``) and whether a decline is the right answer.
+    answer_type: str | None = None
+    items: list[str] = field(default_factory=list)
+    decline_is_correct: bool = False
 
 
 class _Gold:
@@ -270,6 +275,7 @@ def _count_suppliers(gold: _Gold, rng: random.Random) -> list[_Question]:
                 str(count),
                 _number_aliases(count),
                 plan,
+                answer_type="number",
             )
         )
     return out
@@ -299,6 +305,7 @@ def _count_by_country(gold: _Gold, rng: random.Random) -> list[_Question]:
                 str(count),
                 _number_aliases(count),
                 plan,
+                answer_type="number",
             )
         )
         buyers = {
@@ -322,6 +329,7 @@ def _count_by_country(gold: _Gold, rng: random.Random) -> list[_Question]:
                 str(count),
                 _number_aliases(count),
                 buyers,
+                answer_type="number",
             )
         )
     return out
@@ -400,6 +408,8 @@ def _top_three(gold: _Gold, rng: random.Random) -> list[_Question]:
                 ", ".join(names),
                 aliases,
                 plan,
+                answer_type="set",
+                items=list(names),
             )
         )
     return out
@@ -541,6 +551,7 @@ def _max_employees(gold: _Gold, rng: random.Random) -> list[_Question]:
                     str(int(value)),
                     _number_aliases(value),
                     json.loads(json.dumps(plan)),
+                    answer_type="number",
                 )
             )
     return out
@@ -593,6 +604,7 @@ def _absent_entity(gold: _Gold, rng: random.Random) -> list[_Question]:
                     "no",
                     [],
                     exists,
+                    decline_is_correct=True,
                 )
             )
         else:
@@ -611,6 +623,8 @@ def _absent_entity(gold: _Gold, rng: random.Random) -> list[_Question]:
                     "0",
                     ["zero", "none", "no buyers"],
                     count,
+                    answer_type="number",
+                    decline_is_correct=True,
                 )
             )
     return out
@@ -632,6 +646,38 @@ _LOCALIZED = {
 }
 
 
+# Korean native numerals in their form before a counter ("세 곳"), 1-20.
+_KOREAN_NATIVE = (
+    "한 두 세 네 다섯 여섯 일곱 여덟 아홉 열 열한 열두 열세 열네 열다섯 열여섯 "
+    "열일곱 열여덟 열아홉 스무"
+).split()
+_HAN_NUMERALS = "〇一二三四五六七八九"
+
+
+def _han_numeral(number: int) -> str:
+    """``number`` (0-99) in Han numerals: 3 三, 12 十二, 40 四十."""
+    if number < 10:
+        return _HAN_NUMERALS[number]
+    tens, ones = divmod(number, 10)
+    return (
+        ("" if tens == 1 else _HAN_NUMERALS[tens])
+        + "十"
+        + (_HAN_NUMERALS[ones] if ones else "")
+    )
+
+
+def _native_count_aliases(language: str, count: int) -> list[str]:
+    """A vendor count as the localized question's answer writes it: Korean
+    "3곳" and "세 곳", Japanese "3社" and "三社"."""
+    if language == "ko":
+        native = [f"{_KOREAN_NATIVE[count - 1]} 곳"] if 1 <= count <= 20 else []
+        return [f"{count}곳", *native]
+    if language == "ja":
+        han = [f"{_han_numeral(count)}社"] if 0 <= count < 100 else []
+        return [f"{count}社", *han]
+    return []
+
+
 def _multilingual(gold: _Gold, rng: random.Random) -> list[_Question]:
     out = []
     counts = _count_suppliers(gold, rng)
@@ -647,8 +693,12 @@ def _multilingual(gold: _Gold, rng: random.Random) -> list[_Question]:
                     f"multilingual_{language}",
                     count_text.format(buyer=buyer),
                     q.answer,
-                    [a for a in q.aliases if a.isdigit()],
+                    [
+                        *(a for a in q.aliases if a.isdigit()),
+                        *_native_count_aliases(language, int(q.answer)),
+                    ],
                     q.plan,
+                    answer_type="number",
                 )
             )
         for q in yes_no[index :: len(_LOCALIZED)]:
@@ -827,6 +877,9 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
                 ),
                 "graph_question": q.plan is not None,
                 **({"gold_plan": q.plan} if q.plan is not None else {}),
+                **({"answer_type": q.answer_type} if q.answer_type else {}),
+                **({"answer_items": q.items} if q.items else {}),
+                **({"decline_is_correct": True} if q.decline_is_correct else {}),
             },
         }
         for index, q in enumerate(found)

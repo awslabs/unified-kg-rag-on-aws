@@ -28,7 +28,10 @@ pytestmark = pytest.mark.unit
 
 
 def _scores(
-    config: Config, cited: list[list[str]] | None, refs: list[str]
+    config: Config,
+    cited: list[list[str]] | None,
+    refs: list[str],
+    types: list[str] | None = None,
 ) -> tuple[dict[str, float], dict[str, str]]:
     result = EvaluationResult(
         query_id="q",
@@ -38,6 +41,7 @@ def _scores(
         retrieved_source_ids=[["a.txt"]],
         retrieved_source_types=["text"],
         cited_source_ids=cited,
+        cited_section_types=types,
         metadata={"reference_sources": refs},
     )
     report = RetrievalEvaluator(config).evaluate_single(
@@ -55,8 +59,43 @@ def test_citations_are_scored_against_the_references(config: Config) -> None:
         [["a.txt"], ["b.txt", "계약서.pdf"], ["c.txt"], []],
         ["a.txt", "계약서", "d.txt"],
     )
-    assert values["citation_precision"] == pytest.approx(2 / 3)
-    assert values["citation_recall"] == pytest.approx(2 / 3)
+    # Each citation counts the share of its files that are references.
+    assert values["citation_precision"] == pytest.approx((1 + 0.5 + 0) / 3)
+    # Each reference the largest weight of a citation naming it.
+    assert values["citation_recall"] == pytest.approx((1 + 0.5 + 0) / 3)
+
+
+def test_a_hub_citation_is_weighted_by_its_lineage(config: Config) -> None:
+    # A hub entity whose lineage spans ten files, two of them references,
+    # used to score precision 1.0 and recall 1.0.
+    hub = [f"f{i}.txt" for i in range(8)] + ["a.txt", "b.txt"]
+    values, _ = _scores(config, [hub], ["a.txt", "b.txt"], ["entity"])
+    assert values["citation_precision"] == pytest.approx(0.2)
+    assert values["citation_recall"] == pytest.approx(0.1)
+    # A passage of each reference recalls them fully.
+    values, _ = _scores(
+        config,
+        [hub, ["a.txt"], ["b.txt"]],
+        ["a.txt", "b.txt"],
+        ["entity", "text", "text"],
+    )
+    assert values["citation_recall"] == 1.0
+
+
+def test_passage_precision_is_reported_apart(config: Config) -> None:
+    values, _ = _scores(
+        config,
+        [["a.txt"], ["z.txt"], ["a.txt", "y.txt"]],
+        ["a.txt"],
+        ["text", "text", "relationship"],
+    )
+    assert values["citation_precision_passages"] == 0.5
+    assert values["citation_precision"] == pytest.approx((1 + 0 + 0.5) / 3)
+    _, skipped = _scores(config, [["a.txt", "b.txt"]], ["a.txt"], ["entity"])
+    assert skipped["citation_precision_passages"] == "no_cited_passages"
+    # Saved before the section types were recorded.
+    _, skipped = _scores(config, [["a.txt"]], ["a.txt"])
+    assert skipped["citation_precision_passages"] == "no_citation_data"
 
 
 def test_an_answer_citing_nothing_recalls_nothing(config: Config) -> None:

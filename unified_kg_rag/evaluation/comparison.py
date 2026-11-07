@@ -59,6 +59,7 @@ alone, so ``run-eval --from-results`` rebuilds it without a model call.
 
 from __future__ import annotations
 
+import math
 from collections import Counter, defaultdict
 from collections.abc import Collection, Mapping, Sequence
 from typing import Any
@@ -78,6 +79,7 @@ from unified_kg_rag.domain.models.config import ModelPrice
 from unified_kg_rag.shared import get_logger
 
 from .answer_match_evaluator import ANSWER_SPAN_KEY, SPAN_FALLBACK_KEY
+from .iterative_statistics import iterative_statistics
 from .structured_statistics import structured_statistics
 
 logger = get_logger(__name__)
@@ -181,6 +183,11 @@ def per_query_means(
     }
 
 
+# Resampled values drawn at once by ``bootstrap_ci`` before it draws them in
+# chunks of rows (bounds its memory at the family-scaled resample counts).
+_BOOTSTRAP_CHUNK_VALUES = 4_000_000
+
+
 def bootstrap_ci(
     deltas: Sequence[float], *, resamples: int, confidence: float, seed: int
 ) -> tuple[float, float]:
@@ -189,10 +196,44 @@ def bootstrap_ci(
     if data.size == 1:
         return float(data[0]), float(data[0])
     rng = np.random.default_rng(seed)
-    means = data[rng.integers(0, data.size, size=(resamples, data.size))].mean(axis=1)
+    rows = max(1, _BOOTSTRAP_CHUNK_VALUES // data.size)
+    if resamples <= rows:
+        means = data[rng.integers(0, data.size, size=(resamples, data.size))].mean(
+            axis=1
+        )
+    else:
+        means = np.concatenate(
+            [
+                data[
+                    rng.integers(
+                        0, data.size, size=(min(rows, resamples - start), data.size)
+                    )
+                ].mean(axis=1)
+                for start in range(0, resamples, rows)
+            ]
+        )
     tail = (1.0 - confidence) / 2 * 100
     low, high = np.percentile(means, [tail, 100 - tail])
     return float(low), float(high)
+
+
+# Resamples per test a family of m tests at level alpha needs: at least
+# this many times m / alpha. The Monte Carlo sign-flip p-value is never below
+# 1 / (1 + resamples), and Holm multiplies the smallest by m, so with 2,000
+# resamples a family of 100 tests could not reject at 0.05 however large the
+# difference; at 20 m / alpha the floor times m is alpha / 20. The family's
+# Bonferroni interval reads the alpha / (2 m) tails, which then hold at least
+# ten resampled means each instead of a fraction of one.
+FAMILY_RESAMPLES_FACTOR = 20
+
+
+def family_resamples(resamples: int, tests: int, alpha: float) -> int:
+    """The resamples a family of ``tests`` tests at ``alpha`` reads its
+    p-values and intervals from: ``resamples``, or
+    ``FAMILY_RESAMPLES_FACTOR * tests / alpha`` when that is more."""
+    if tests <= 0 or alpha <= 0:
+        return resamples
+    return max(resamples, math.ceil(FAMILY_RESAMPLES_FACTOR * tests / alpha))
 
 
 # Rows of sign patterns drawn at a time by ``sign_flip_p_value`` (bounds its
@@ -505,6 +546,10 @@ def _paired_comparison(
             "failed_queries": failed,
             # The structured strategy's run records (over every repeat).
             "structured_statistics": structured_statistics(
+                result for _, results in runs[strategy] for result in results
+            ),
+            # The iterative strategy's run records (over every repeat).
+            "iterative_statistics": iterative_statistics(
                 result for _, results in runs[strategy] for result in results
             ),
             # Answers the guardrail blocked (over every repeat), by blocked text.
@@ -1115,8 +1160,14 @@ def adjust_for_multiplicity(
     ``1 - alpha / m`` (Bonferroni over the family's ``m`` tests, so
     simultaneous for the family and a little wider than Holm's decision
     needs: read ``adjusted_p_value`` for whether a difference counts, the
-    interval for its size). ``deltas_by_category`` stays unadjusted
-    (exploratory). Returns ``comparison``, with a ``multiplicity`` block.
+    interval for its size). Both read ``family_resamples`` resamples (at
+    least ``FAMILY_RESAMPLES_FACTOR * m / alpha``): a p-value under alpha is
+    drawn again from that many sign patterns (``p_value_resamples``), so the
+    Monte Carlo floor ``1 / (1 + resamples)`` times ``m`` stays far below
+    alpha, and the interval's ``alpha / (2 m)`` tails hold enough resampled
+    means. ``deltas_by_category`` stays unadjusted (exploratory). Returns
+    ``comparison``, with a ``multiplicity`` block (each family's ``tests``,
+    ``interval_confidence`` and ``resamples``).
     """
     stats = comparison.get("bootstrap") or {}
     resamples = int(stats.get("resamples", 2000))
@@ -1154,11 +1205,21 @@ def adjust_for_multiplicity(
         if not members:
             continue
         level = 1.0 - alpha / len(members)
+        scaled = family_resamples(resamples, len(members), alpha)
+        for delta in members:
+            # Only a p-value under alpha can reject once adjusted (Holm's
+            # never falls below the raw one): those are read again from
+            # enough sign patterns that the Monte Carlo floor is no bound.
+            if scaled > resamples and float(delta["p_value"]) < alpha:
+                delta["p_value"] = sign_flip_p_value(
+                    list(delta["per_query"].values()), resamples=scaled, seed=seed
+                )
+                delta["p_value_resamples"] = scaled
         adjusted = holm_adjusted([float(d["p_value"]) for d in members])
         for delta, value in zip(members, adjusted, strict=True):
             low, high = bootstrap_ci(
                 list(delta["per_query"].values()),
-                resamples=resamples,
+                resamples=scaled,
                 confidence=level,
                 seed=seed,
             )
@@ -1168,7 +1229,11 @@ def adjust_for_multiplicity(
                 adjusted_ci_low=low,
                 adjusted_ci_high=high,
             )
-        summary[name] = {"tests": len(members), "interval_confidence": level}
+        summary[name] = {
+            "tests": len(members),
+            "interval_confidence": level,
+            "resamples": scaled,
+        }
     comparison["multiplicity"] = {
         "method": "holm",
         "p_value": "sign_flip",

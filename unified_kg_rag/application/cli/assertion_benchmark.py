@@ -32,8 +32,7 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.domain.models import LanguageCode, LLMUsage
-from unified_kg_rag.evaluation.benchmarks import autoq
-from unified_kg_rag.evaluation.comparison import answer_cost_usd
+from unified_kg_rag.evaluation.benchmarks import QUESTION_CLASSES
 from unified_kg_rag.shared import EvaluationException
 from unified_kg_rag.shared.usage import merge_usage
 from unified_kg_rag.shared.utils import event_loop
@@ -41,11 +40,11 @@ from unified_kg_rag.shared.utils import event_loop
 
 def _classes(value: str) -> list[str]:
     names = [name.strip() for name in value.split(",") if name.strip()]
-    unknown = [name for name in names if name not in autoq.QUESTION_CLASSES]
+    unknown = [name for name in names if name not in QUESTION_CLASSES]
     if unknown or not names:
         raise argparse.ArgumentTypeError(
             f"invalid class {', '.join(unknown) or repr(value)} (choose from "
-            f"{', '.join(autoq.QUESTION_CLASSES)})"
+            f"{', '.join(QUESTION_CLASSES)})"
         )
     return list(dict.fromkeys(names))
 
@@ -74,10 +73,10 @@ def add_assertion_arguments(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--classes",
         type=_classes,
-        default=list(autoq.QUESTION_CLASSES),
+        default=list(QUESTION_CLASSES),
         help=(
             "assertions: comma-separated question classes (default all: "
-            f"{','.join(autoq.QUESTION_CLASSES)}); only the data_* classes get "
+            f"{','.join(QUESTION_CLASSES)}); only the data_* classes get "
             "assertions"
         ),
     )
@@ -135,6 +134,8 @@ def _usage_lines(report: dict[str, Any], prices: dict[str, Any]) -> list[str]:
     total = LLMUsage.model_validate(merge_usage(list(usage.values())) if usage else {})
     cost = ""
     if prices:
+        from unified_kg_rag.evaluation.comparison import answer_cost_usd
+
         usd, unpriced = answer_cost_usd(total, prices)
         cost = (
             f", about ${usd:.2f}"
@@ -154,6 +155,9 @@ def run_assertion_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     Raises:
         EvaluationException: The corpus holds no text, or generation failed.
     """
+    # The generator loads the model stack: imported here, not for --help.
+    from unified_kg_rag.evaluation.benchmarks import autoq
+
     corpus = args.source_directory
     if corpus is None or not corpus.is_dir():
         usage_error(

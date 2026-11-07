@@ -196,6 +196,10 @@ _KOREAN_MAGNITUDES = frozenset("십백천만억조경")
 # "5,000원"), longest first; a particle may follow them ("2024년에").
 _KOREAN_UNITS = (
     "개월",
+    "개사",
+    "군데",
+    "가지",
+    "곳",
     "년",
     "월",
     "일",
@@ -491,3 +495,195 @@ def _substring_beside_han_or_kana(needle: str, haystack: str) -> bool:
             return True
         start = haystack.find(needle, start + 1)
     return False
+
+
+# --- the number an answer states ----------------------------------------------
+
+_ENGLISH_UNITS = (
+    "zero one two three four five six seven eight nine ten eleven twelve "
+    "thirteen fourteen fifteen sixteen seventeen eighteen nineteen"
+).split()
+_ENGLISH_TENS = dict(
+    zip(
+        "twenty thirty forty fifty sixty seventy eighty ninety".split(),
+        range(20, 100, 10),
+        strict=True,
+    )
+)
+_ENGLISH_ZERO = ("none", "no")
+# Korean native numerals, in the form they take before a counter ("세 곳",
+# "두 군데", "스무 개사") or alone ("셋"), ones and tens apart: 열세 is 13.
+_KOREAN_NATIVE_ONES = {
+    "한": 1,
+    "하나": 1,
+    "두": 2,
+    "둘": 2,
+    "세": 3,
+    "셋": 3,
+    "석": 3,
+    "네": 4,
+    "넷": 4,
+    "다섯": 5,
+    "여섯": 6,
+    "일곱": 7,
+    "여덟": 8,
+    "아홉": 9,
+}
+_KOREAN_NATIVE_TENS = {"열": 10, "스물": 20, "스무": 20, "서른": 30, "마흔": 40}
+# The counters a Korean count answer takes; a native numeral counts only
+# before one, since "네" alone is also "yes" and "세" a word of its own.
+_KOREAN_COUNTERS = ("개사", "군데", "가지", "곳", "개", "명", "건", "회", "번")
+# Japanese (and Chinese) numerals before a counter ("三社", "十二件").
+_HAN_DIGITS = {
+    "〇": 0,
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+_HAN_MULTIPLIERS = {"十": 10, "百": 100, "千": 1000}
+_HAN_COUNTERS = (
+    "社",
+    "つ",
+    "件",
+    "人",
+    "名",
+    "個",
+    "箇所",
+    "か所",
+    "カ所",
+    "ヶ所",
+    "家",
+    "个",
+)
+
+_DIGITS = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?")
+_ENGLISH_NUMBER = re.compile(
+    r"\b(?:(?P<tens>"
+    + "|".join(_ENGLISH_TENS)
+    + r")(?:[-\s](?P<ones>"
+    + "|".join(_ENGLISH_UNITS[1:10])
+    + r"))?|(?P<unit>"
+    + "|".join(sorted(_ENGLISH_UNITS, key=len, reverse=True))
+    + r")|(?P<zero>"
+    + "|".join(_ENGLISH_ZERO)
+    + r"))\b",
+    re.IGNORECASE,
+)
+_KOREAN_NUMBER = re.compile(
+    r"(?<![가-힣])(?P<tens>"
+    + "|".join(sorted(_KOREAN_NATIVE_TENS, key=len, reverse=True))
+    + r")?(?P<ones>"
+    + "|".join(sorted(_KOREAN_NATIVE_ONES, key=len, reverse=True))
+    + r")?\s?(?="
+    + "|".join(_KOREAN_COUNTERS)
+    + r")"
+)
+_KOREAN_NONE = re.compile(r"없(?:습니다|어요|다|음)")
+_HAN_NUMBER = re.compile(
+    "["
+    + "".join([*_HAN_DIGITS, *_HAN_MULTIPLIERS])
+    + "]+(?="
+    + "|".join(_HAN_COUNTERS)
+    + ")"
+)
+
+
+def _han_value(numeral: str) -> int | None:
+    """``三`` 3, ``十二`` 12, ``二十三`` 23, ``百五`` 105; ``None`` when the
+    digits do not read as one number."""
+    if all(ch in _HAN_DIGITS for ch in numeral):
+        return int("".join(str(_HAN_DIGITS[ch]) for ch in numeral))
+    total, digit = 0, None
+    for ch in numeral:
+        if ch in _HAN_DIGITS:
+            if digit is not None:
+                return None
+            digit = _HAN_DIGITS[ch]
+        else:
+            total += (1 if digit is None else digit) * _HAN_MULTIPLIERS[ch]
+            digit = None
+    return total + (digit or 0)
+
+
+def _stands_alone(text: str, start: int, end: int) -> bool:
+    """Whether ``text[start:end]`` is no part of a Latin word or a longer
+    number: a Han, Hangul or Kana letter may touch it ("3곳", "3社"), a
+    Latin letter or digit may not ("Zortal13", "3rd")."""
+
+    def joins(ch: str) -> bool:
+        return ch.isdigit() or (ch.isalpha() and not is_dense_script_char(ch))
+
+    before = text[start - 1] if start else ""
+    after = text[end] if end < len(text) else ""
+    if before and (
+        joins(before) or (before in ".," and start > 1 and text[start - 2].isdigit())
+    ):
+        return False
+    return not (
+        after
+        and (joins(after) or (after in ".," and text[end + 1 : end + 2].isdigit()))
+    )
+
+
+def leading_number(text: str) -> float | None:
+    """The first number ``text`` states, or ``None``: digits ("4,486",
+    "3곳", "3社"), an English number word ("Three", "twenty-one", "none"
+    or "no" for 0), a Korean native numeral before a counter ("세 곳", "열두
+    개사"; "없습니다" for 0) or a Han numeral before a counter ("三社").
+    Markdown heading lines are skipped; a number inside a word ("Zortal13")
+    is none. A count answer states its number first ("Three vendors ...
+    Two of them ..." is 3), so a numeric gold is compared with this number,
+    not with every number the answer happens to name."""
+    lines = [
+        line
+        for line in unicodedata.normalize("NFKC", text).splitlines()
+        if not re.match(r"\s*#{1,6}(?:\s|$)", line)
+    ]
+    body = "\n".join(lines)
+    found: list[tuple[int, float]] = []
+    for match in _DIGITS.finditer(body):
+        if _stands_alone(body, match.start(), match.end()):
+            found.append((match.start(), float(match.group().replace(",", ""))))
+            break
+    for match in _ENGLISH_NUMBER.finditer(body):
+        if match.group("zero"):
+            value = 0
+        elif match.group("unit"):
+            value = _ENGLISH_UNITS.index(match.group("unit").lower())
+        else:
+            value = _ENGLISH_TENS[match.group("tens").lower()] + (
+                _ENGLISH_UNITS.index(match.group("ones").lower())
+                if match.group("ones")
+                else 0
+            )
+        found.append((match.start(), float(value)))
+        break
+    for match in _KOREAN_NUMBER.finditer(body):
+        if not (match.group("tens") or match.group("ones")):
+            continue
+        value = _KOREAN_NATIVE_TENS.get(match.group("tens") or "", 0) + (
+            _KOREAN_NATIVE_ONES.get(match.group("ones") or "", 0)
+        )
+        found.append((match.start(), float(value)))
+        break
+    if (none := _KOREAN_NONE.search(body)) is not None:
+        found.append((none.start(), 0.0))
+    for match in _HAN_NUMBER.finditer(body):
+        han = _han_value(match.group())
+        if han is not None:
+            found.append((match.start(), float(han)))
+            break
+    return min(found)[1] if found else None
+
+
+def number_value(text: str) -> float | None:
+    """The number a gold answer is ("3", "4,486", "three"), else ``None``."""
+    value = leading_number(text)
+    return value if value is not None and normalize_answer(text) else None

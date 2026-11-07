@@ -506,6 +506,7 @@ def _save(
     started: datetime,
     scoring: dict[str, Any] | None = None,
     answer_model: str = "m-a",
+    manifest: dict[str, Any] | None = None,
 ) -> None:
     """Write a run's files as EvaluationManager.save_results names them."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -522,6 +523,7 @@ def _save(
             "answer_scoring": scoring or _SCORING,
             "dataset": {"content_sha256": "d" * 64},
             "models": {"answer_generation": answer_model},
+            **(manifest or {}),
         },
     )
     for kind, data in (
@@ -1228,7 +1230,11 @@ def test_from_results_warns_on_pooled_runs_with_other_settings(
         ["--from-results", str(saved)]
     )
     with pytest.raises(run_evaluation.InvalidDatasetError, match="--pool-runs"):
-        run_evaluation.EvaluationRunner(args, None, Config())._saved_runs_input()
+        asyncio.run(
+            run_evaluation.EvaluationRunner(args, None, Config())._saved_runs_input(
+                tmp_path / "o"
+            )
+        )
     code, out = _cli(
         [
             "--from-results",
@@ -1423,3 +1429,178 @@ def test_runs_saved_before_script_aware_tokens_are_not_compared() -> None:
         )
         == []
     )
+
+
+def test_interleaved_repeats_reload_in_repeat_order(tmp_path: Path) -> None:
+    # The interleaved runs of an invocation share their start time; the
+    # files' stamps are random, so a rebuilt comparison paired repeat 1 of
+    # one strategy with repeat 2 of another. The manifest's repeat orders
+    # them.
+    saved = tmp_path / "runs"
+    for repeat, stamp in (
+        (1, "20260101_090000_ffffffff"),
+        (2, "20260101_090000_00000000"),
+    ):
+        _save(
+            saved,
+            "local",
+            _run({"q1": float(repeat)}, "local"),
+            stamp=stamp,
+            order=["local"],
+            started=_T0,
+            manifest={"run_id": "r1", "repeat": repeat},
+        )
+    runs = load_saved_runs([saved])
+    assert [r.manifest["repeat"] for r in runs] == [1, 2]
+    assert [r.results[0].query_id for r in runs] == ["q1", "q1"]
+    assert [r.reports[0].metrics[0].value for r in runs] == [1.0, 2.0]
+
+
+def _answered(strategy: str, answers: dict[str, str], gold: str) -> Any:
+    """A saved run whose answers were scored by an earlier answer_match:
+    answer_contains 1.0 everywhere (any number in the prose matched)."""
+    reports = [
+        EvaluationReport(
+            query_id=qid,
+            evaluator_type=EvaluatorType.ANSWER_MATCH,
+            metrics=[
+                EvaluationMetric(
+                    metric_type=EvaluationMetricType.ANSWER_CONTAINS, value=1.0
+                )
+            ],
+            evaluation_time=datetime(2026, 1, 1),
+        )
+        for qid in answers
+    ]
+    results = [
+        EvaluationResult(
+            query_id=qid,
+            question=f"How many vendors supply {qid}?",
+            generated_answer=answer,
+            ground_truth=gold,
+            search_strategy=strategy,
+            metadata={"search_strategy": strategy, "answer_type": "number"},
+        )
+        for qid, answer in answers.items()
+    ]
+    return reports, results
+
+
+def _contains(out: dict[str, Any], strategy: str) -> float:
+    return out["comparison"]["strategies"][strategy]["metrics"][
+        "answer_match/answer_contains"
+    ]["mean"]
+
+
+def test_rescore_scores_the_saved_answers_again(tmp_path: Path) -> None:
+    saved = tmp_path / "runs"
+    answers = {"b1": "Three vendors. Two of them are local.", "b2": "2 vendors."}
+    for strategy, stamp in (("local", "aaaaaaaa"), ("mix", "bbbbbbbb")):
+        _save(
+            saved,
+            strategy,
+            _answered(strategy, answers, "2"),
+            stamp=f"20260101_090000_{stamp}",
+            order=["local", "mix"],
+            started=_T0,
+            manifest={"run_id": "r1", "run_order": "interleaved", "repeat": 1},
+        )
+    config = Config()
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    code, out = _cli(["--from-results", str(saved)], config)
+    assert code == 0 and _contains(out, "local") == 1.0  # the saved scores
+
+    target = tmp_path / "rescored"
+    code, out = _cli(
+        [
+            "--from-results",
+            str(saved),
+            "--rescore",
+            "--evaluators",
+            "answer_match",
+            "--output-directory",
+            str(target),
+        ],
+        config,
+    )
+    assert code == 0
+    # "Three vendors ... Two of them" states 3: the gold 2 no longer matches.
+    assert _contains(out, "local") == _contains(out, "mix") == 0.5
+    manifest = out["comparison"]["run_manifest"]
+    # What answered is kept, how it was scored is the re-score's.
+    assert (manifest["run_id"], manifest["repeat"]) == ("r1", 1)
+    assert manifest["rescored"]["from"].endswith(".json")
+    assert manifest["answer_scoring"]["answer_span"] == "first_line"
+    # The re-scored runs are saved and rebuild the same comparison.
+    code, again = _cli(["--from-results", str(target)], config)
+    assert code == 0 and _contains(again, "local") == 0.5
+
+    # A dataset replaces the saved golds (by query id).
+    dataset = tmp_path / "eval.json"
+    dataset.write_text(
+        json.dumps(
+            [
+                {
+                    "query_id": qid,
+                    "question": f"How many vendors supply {qid}?",
+                    "answer": "3",
+                    "metadata": {"answer_type": "number"},
+                }
+                for qid in answers
+            ]
+        )
+    )
+    code, out = _cli(["--from-results", str(saved), "--rescore", str(dataset)], config)
+    assert code == 0 and _contains(out, "local") == 0.5  # b1 now right, b2 wrong
+    assert out["comparison"]["run_manifest"]["rescored"]["dataset"] == str(dataset)
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["--data-path", "x.json", "--rescore"], "give --from-results"),
+        (
+            ["--from-results", "d", "--evaluators", "answer_match"],
+            "--rescore scores their answers again",
+        ),
+    ],
+)
+def test_rescore_usage_errors(argv: list[str], message: str, capsys) -> None:
+    args = run_evaluation.CommandLineInterface().parser.parse_args(argv)
+    with pytest.raises(SystemExit) as exc:
+        run_evaluation.EvaluationRunner(args, None, Config())
+    assert exc.value.code == 2
+    assert message in capsys.readouterr().err
+
+
+def test_a_span_model_recorded_on_one_side_only_is_warned_not_refused() -> None:
+    old = {"answer_span": "extracted", "answer_normalization": "default"}
+    new = {**old, "span_model": "m-span", "span_effort": "low"}
+    warnings = check_answer_scoring(
+        [
+            ("baseline:local", {"answer_scoring": old}),
+            ("local", {"answer_scoring": new}),
+        ]
+    )
+    assert any("record no answer-span model" in w for w in warnings)
+    # Both recorded and different: not comparable.
+    with pytest.raises(EvaluationException, match="answer_scoring"):
+        check_answer_scoring(
+            [
+                ("a", {"answer_scoring": new}),
+                ("b", {"answer_scoring": {**new, "span_model": "other"}}),
+            ]
+        )
+
+
+def test_arms_that_differ_in_citations_are_warned() -> None:
+    from unified_kg_rag.evaluation.saved_results import citation_warnings
+
+    on = {"citations": {"enabled": True, "scoring": "file_weighted"}}
+    off = {"citations": {"enabled": False, "scoring": "file_weighted"}}
+    (warning,) = citation_warnings([("local", off), ("local@cited", on)])
+    assert "search.citations.enabled (off: local; on: local@cited)" in warning
+    assert citation_warnings([("a", on), ("b", on)]) == []
+    # A run saved before the weighting scored a graph citation whole.
+    (old,) = citation_warnings([("baseline:a", {"answer_scoring": None}), ("a", on)])
+    assert "--rescore" in old

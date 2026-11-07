@@ -2963,12 +2963,49 @@ def extraction_cache_scope(scope: str) -> Iterator[None]:
 class _ExtractionCache:
     """A bounded, thread-safe LRU of query extractions (immutable values),
     keyed within the current ``extraction_cache_scope``; a size of 0 keeps
-    nothing."""
+    nothing.
+
+    It also tracks the extractions in flight (``claim`` / ``release``), so
+    two queries of one scope that miss together, the interleaved arms of a
+    run-eval repeat, make one call: the first pays for it, the others wait
+    for its value and count a cache hit."""
 
     def __init__(self, size: int) -> None:
         self._size = size
         self._entries: OrderedDict[tuple[str, ...], Any] = OrderedDict()
+        self._inflight: dict[tuple[str, ...], asyncio.Future[Any]] = {}
         self._lock = threading.Lock()
+
+    def claim(self, key: tuple[str, ...]) -> tuple[asyncio.Future[Any] | None, bool]:
+        """``(future, owner)`` for an extraction of ``key`` about to run:
+        the one in flight on this loop and ``False`` (await it), else a new
+        one and ``True`` (extract, then ``release``). ``(None, True)`` with
+        a size of 0 (nothing is shared)."""
+        if self._size <= 0:
+            return None, True
+        key = (_EXTRACTION_SCOPE.get(), *key)
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            found = self._inflight.get(key)
+            if found is not None and not found.done() and found.get_loop() is loop:
+                return found, False
+            future: asyncio.Future[Any] = loop.create_future()
+            self._inflight[key] = future
+            return future, True
+
+    def release(
+        self, key: tuple[str, ...], future: asyncio.Future[Any] | None, value: Any
+    ) -> None:
+        """End the owner's claim on ``key``: its waiters get ``value``
+        (``None``: it failed, so each extracts on its own)."""
+        if future is None:
+            return
+        key = (_EXTRACTION_SCOPE.get(), *key)
+        with self._lock:
+            if self._inflight.get(key) is future:
+                del self._inflight[key]
+        if not future.done():
+            future.set_result(value)
 
     def get(self, key: tuple[str, ...]) -> Any:
         key = (_EXTRACTION_SCOPE.get(), *key)

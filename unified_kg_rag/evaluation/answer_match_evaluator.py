@@ -36,7 +36,14 @@ records the span mode (``answer_span``) and the text scored
   "예"/"네"/"아니요"/"아니오"/"아닙니다", Chinese "是"/"对"/"否"/"不是"/"没有", Japanese
   "はい"/"いいえ") is instead compared with the polarity of the first yes/no
   word that answers the question (not a heading, not the determiner in
-  "there is no clause", not part of a longer word such as "예외").
+  "there is no clause", not part of a longer word such as "예외"). An item
+  whose ``metadata.answer_type`` is ``number`` is instead compared by the
+  first number the answer (its extracted span, with ``extracted``) states:
+  digits, an English number word, a Korean native numeral before a counter
+  ("세 곳") or a Han numeral before one ("三社"), so "Three vendors ... Two
+  of them ..." is 3, not a match of the gold 2. One whose ``answer_type``
+  is ``set`` scores 1.0 when every one of its ``metadata.answer_items``
+  appears in the answer, in any order or layout.
 - ``exact_match``: 1.0 if the normalized span equals the normalized reference.
 - ``token_f1``: harmonic mean of token precision/recall (multiset overlap).
   Under ``default`` the tokens are script-aware
@@ -53,7 +60,9 @@ References are the dataset ``answer`` plus optional ``metadata.answer_aliases``
 A query with no reference is skipped. An abstained answer
 (``EvaluationResult.abstained``: the no-context reply, or a declined answer
 under ``search.abstention``) is a wrong answer: every metric scores 0, with
-``abstained`` in the report and no span extraction call. Exact match
+``abstained`` in the report and no span extraction call; on an item marked
+``metadata.decline_is_correct`` (a question about something the data does
+not hold) it is the right answer and scores 1. Exact match
 compares whole normalized strings, so it under-counts an answer that adds
 a Korean particle ("서울은" for "서울") or a Chinese or Japanese copula.
 Each report records the token-F1 tokenization (``token_f1_tokens``:
@@ -79,6 +88,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
     error_digest,
+    judge_effort,
     judge_model_kwargs,
 )
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
@@ -93,14 +103,17 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     ModelPurpose,
     ModelRole,
+    model_id_value,
 )
 from unified_kg_rag.domain.prompts import NO_ANSWER_SPAN, AnswerSpanExtractionPrompt
 from unified_kg_rag.domain.retrieval.citations import strip_markers
 from unified_kg_rag.shared import EvaluationException, get_logger
 
 from .text_matching import (
+    leading_number,
     normalize_answer,
     normalize_answer_squad,
+    number_value,
     phrase_in_text,
     script_tokens,
 )
@@ -121,6 +134,15 @@ SCRIPT_AWARE_TOKENS = "script_aware_v2"
 SCORED_SPAN_KEY = "scored_span"
 SPAN_FALLBACK_KEY = "answer_span_fallback"
 ABSTAINED_KEY = "abstained"
+# Dataset metadata that says how a gold answer is matched (structural
+# benchmarks): ``answer_type`` "number" (the answer's leading number against
+# the gold's), "set" (every one of ``answer_items`` in the answer, in any
+# order or layout); ``decline_is_correct``, a question about something the
+# data does not hold, where a decline is the right answer.
+ANSWER_TYPE_KEY = "answer_type"
+ANSWER_ITEMS_KEY = "answer_items"
+DECLINE_IS_CORRECT_KEY = "decline_is_correct"
+ANSWER_TYPES = frozenset({"number", "set"})
 
 __all__ = [
     "AnswerMatchEvaluator",
@@ -229,6 +251,24 @@ def answer_contains(prediction: str, reference: str) -> float:
     return float(phrase_in_text(reference, prediction))
 
 
+def number_matches(prediction: str, reference: str) -> float:
+    """1.0 when the first number ``prediction`` states
+    (``text_matching.leading_number``: digits, an English, Korean or Han
+    numeral) is the number ``reference`` is; 0.0 otherwise, and when the
+    reference is no number (then ``answer_contains`` reads it)."""
+    gold = number_value(reference)
+    if gold is None:
+        return answer_contains(prediction, reference)
+    return float(leading_number(prediction) == gold)
+
+
+def items_contained(prediction: str, items: list[str]) -> float:
+    """1.0 when every one of ``items`` appears in ``prediction`` as a phrase
+    (``text_matching.phrase_in_text``), in any order and layout (a comma
+    list, a numbered list, one per line)."""
+    return float(bool(items) and all(phrase_in_text(i, prediction) for i in items))
+
+
 def first_answer_line(answer: str) -> str:
     """The answer's first line that is neither empty nor a Markdown heading
     (the whole answer, stripped, when every line is one of those)."""
@@ -292,16 +332,29 @@ def token_f1_tokens(normalization: str) -> str:
     return SCRIPT_AWARE_TOKENS if normalization == "default" else "whitespace"
 
 
-def answer_scoring(evaluation: Any) -> dict[str, Any]:
-    """How exact match and token F1 read an answer under the
-    ``EvaluationConfig`` ``evaluation`` (the run manifest's
-    ``answer_scoring``): two runs scored differently are not comparable on
-    them."""
-    return {
+# The answer_scoring keys of an ``extracted`` span: the model that extracted
+# it and its effort (runs saved before they were recorded lack them).
+SPAN_MODEL_KEY = "span_model"
+SPAN_EFFORT_KEY = "span_effort"
+
+
+def answer_scoring(config: Config) -> dict[str, Any]:
+    """How exact match and token F1 read an answer under ``config`` (the run
+    manifest's ``answer_scoring``): the span mode, the normalization and
+    its tokenization, and with an ``extracted`` span the model
+    (``models.roles.answer_span``) and effort that extracted it. Two runs
+    scored differently are not comparable on them."""
+    evaluation = config.evaluation
+    scoring: dict[str, Any] = {
         "answer_span": evaluation.answer_span,
         "answer_normalization": evaluation.answer_normalization,
         TOKENS_KEY: token_f1_tokens(evaluation.answer_normalization),
     }
+    if evaluation.answer_span == "extracted":
+        model = config.model_id(ModelRole.ANSWER_SPAN)
+        scoring[SPAN_MODEL_KEY] = model_id_value(model)
+        scoring[SPAN_EFFORT_KEY] = judge_effort(config, model)
+    return scoring
 
 
 class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
@@ -428,6 +481,34 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         self._spans[key] = span
         return span
 
+    def _contains(
+        self,
+        answer: str,
+        span: str,
+        references: list[str],
+        result: EvaluationResult,
+        span_metadata: dict[str, Any],
+    ) -> float:
+        """``answer_contains`` as the item's ``answer_type`` reads it: a
+        number by the leading number of the extracted span (of the answer
+        without one, or when the span fell back), a set by every one of its
+        ``answer_items``, else any reference as a phrase."""
+        kind = result.metadata.get(ANSWER_TYPE_KEY)
+        if kind == "number":
+            read = (
+                span
+                if self.answer_span == "extracted"
+                and span
+                and SPAN_FALLBACK_KEY not in span_metadata
+                else answer
+            )
+            return max(number_matches(read, ref) for ref in references)
+        if kind == "set":
+            items = result.metadata.get(ANSWER_ITEMS_KEY)
+            if isinstance(items, list) and items:
+                return items_contained(answer, [str(i) for i in items])
+        return max(answer_contains(answer, ref) for ref in references)
+
     def _score(
         self,
         query: EvaluationQuery,
@@ -451,12 +532,14 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             )
         if result.abstained:
             # A decline is not an answer, even one that names the gold
-            # entity while saying what is missing.
+            # entity while saying what is missing; on a question about
+            # something the data does not hold it is the right one.
+            correct = result.metadata.get(DECLINE_IS_CORRECT_KEY) is True
             return EvaluationReport(
                 query_id=query.query_id,
                 evaluator_type=self.evaluator_type,
                 metrics=[
-                    EvaluationMetric(metric_type=metric, value=0.0)
+                    EvaluationMetric(metric_type=metric, value=float(correct))
                     for metric in self.metric_types()
                 ],
                 evaluation_time=datetime.now(),
@@ -465,10 +548,11 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                     "num_references": len(references),
                     ANSWER_SPAN_KEY: self.answer_span,
                     ABSTAINED_KEY: True,
+                    **({DECLINE_IS_CORRECT_KEY: True} if correct else {}),
                 },
             )
         answer = self._answer(result)
-        contains = max(answer_contains(answer, ref) for ref in references)
+        contains = self._contains(answer, span, references, result, span_metadata)
         normalization = self.config.evaluation.answer_normalization
         normalize = (
             normalize_answer if normalization == "default" else normalize_answer_squad

@@ -48,6 +48,9 @@ class EvaluationMetricType(str, Enum):
     # citations naming a file, and references a cited citation names.
     CITATION_PRECISION = "citation_precision"
     CITATION_RECALL = "citation_recall"
+    # citation_precision over the cited passages (text sections) only: one
+    # file each, so no lineage weighting is involved.
+    CITATION_PRECISION_PASSAGES = "citation_precision_passages"
     # Deterministic SQuAD-style answer metrics (max over answer + aliases).
     EXACT_MATCH = "exact_match"
     TOKEN_F1 = "token_f1"
@@ -204,6 +207,14 @@ class EvaluationResult(BaseModel):
             "Per citation the answer uses (RAGOutput.citations with cited "
             "true), the file names it stands for; None when the answer "
             "carried no citations (search.citations off)."
+        ),
+    )
+    cited_section_types: list[str] | None = Field(
+        default=None,
+        description=(
+            "Section type of each citation of cited_source_ids (text for a "
+            "passage, entity, relationship, community...); None for a "
+            "result saved before it was recorded."
         ),
     )
     retrieved_entities: list[str] = Field(
@@ -492,6 +503,17 @@ class EvaluationSummary(BaseModel):
             "per status, per fallback reason, and the rates of a valid plan "
             "(one that reached the graph store), a repair call, a truncated "
             "answer and an exact one; empty when no answer had a record."
+        ),
+    )
+    iterative_statistics: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Over the answers the iterative strategy gave (an "
+            "EvaluationResult.iterative record): their count ('queries'), "
+            "the follow-up rounds per answer ('rounds' histogram, "
+            "'mean_rounds'), the stop reasons, the share stopped at "
+            "search.iterative.max_rounds ('max_rounds_rate') and the "
+            "degraded runs; empty when no answer had a record."
         ),
     )
     benchmarks: dict[str, int] = Field(

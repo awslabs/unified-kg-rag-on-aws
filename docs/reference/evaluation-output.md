@@ -104,6 +104,11 @@ from the text, and under
   `valid_plan_rate` (plans that reached the graph store), `repair_rate`,
   and of the answered ones the `truncated_rate` and `exact_rate`; `{}`
   without such answers. A strategy comparison reports it per arm.
+- `iterative_statistics`: over the answers with an `iterative` record,
+  their count (`queries`), the follow-up `rounds` per answer (a histogram,
+  and `mean_rounds`), the `stop_reasons`, `max_rounds_rate` (the share the
+  round cap ended, not the controller) and the `degraded` runs; `{}`
+  without such answers. A comparison reports it per arm.
 - `benchmarks`: the questions per benchmark label of a
   [prepared benchmark](../guides/benchmarks.md) dataset (also
   `dataset.benchmarks` in the run manifest).
@@ -124,8 +129,15 @@ The console prints the same summary.
   long ones; a run saved without it counted none);
 - from `run-eval`: `run_id`, the invocation that answered the run (one per
   `run-eval`, shared by its strategies and repeats), with several runs
-  `run_order` (`interleaved` or `sequential`, `evaluation.run_order`) and
-  with `--repeats` `repeat_extractions` (`resample` or `reuse`);
+  `run_order` (`interleaved` or `sequential`, `evaluation.run_order`),
+  with `--repeats` `repeat_extractions` (`resample` or `reuse`), and
+  `repeat` (1-based; the interleaved runs share a start time, so a
+  rebuilt comparison pairs repeat r with repeat r by it); with `--arm`,
+  the run's `arm` (`name`, `overlay` path, `overlay_sha256`, `suffix`) and
+  `compared_runs`, the run labels in comparison order; after
+  `--rescore`, `rescored` (when, from which file, by which code and with
+  which dataset; the rest of the manifest is the answering run's, with the
+  scoring entries replaced);
 - the model ids and `judge_is_answer_model` (a judge that is the answer
   model inflates judge scores; the default Bedrock judge, Opus 5.5, is not
   the default answer model, and falls back to another when the answer
@@ -134,13 +146,19 @@ The console prints the same summary.
   comparison counts as a judge, and `pairwise_judge` records its settings
   (`overall`, `mode`, and in the differential mode the `overlap_model`); so
   does the `assertion` evaluator, and `assertion_scoring` records its
-  `trials`;
+  `trials`. `models.judge_effort` is the judges' reasoning effort
+  (`evaluation.judge_effort`, else the judge model's tier effort);
 - `answer_scoring`: the `answer_span` and `answer_normalization` exact
   match and token F1 used and the token-F1 tokenization they imply
   (`token_f1_tokens`: `script_aware_v2` or `whitespace`) (with
-  `answer_match`), and `models.answer_span`
-  the extracting model; runs scored differently are not comparable on
-  those two metrics;
+  `answer_match`), with an `extracted` span its `span_model` and
+  `span_effort`, and `models.answer_span` the extracting model; runs
+  scored differently are not comparable on those two metrics (a run saved
+  before the span model was recorded is warned about, not refused);
+- `citations`: `enabled` (`search.citations.enabled`: the answer prompt
+  asked for markers) and `scoring` (`file_weighted`, how the citation
+  metrics weigh a citation's files); a comparison warns when its runs
+  differ in either;
 - `retrieval_config_sha256`, a hash of every configuration setting that
   can change an answer or a score (model ids and ingestion settings
   included; regions, endpoints, credentials, paths, timeouts and other
@@ -186,7 +204,8 @@ strategies, or `--repeats`) saves every run's files and adds
   retrieval's and the answer's. With `repeat_extractions: reuse` every
   repeat reuses the first one's extractions, and `repeat_stdev` leaves the
   extraction's noise out.
-- `deltas_vs_baseline.<s>.<metric>`: paired against the first strategy over
+- `deltas_vs_baseline.<s>.<metric>`: paired against the first strategy (an
+  `--arm` run `<s>@NAME` against `<s>`; `baselines` names each one's) over
   the queries both scored: `mean_delta`, a 95% paired bootstrap interval
   (`ci_low`/`ci_high`; 2,000 resamples, seed 0), `wins`/`ties`/`losses`, the
   per-query deltas, `unpaired` and `p_value` (a two-sided sign-flip
@@ -197,7 +216,13 @@ strategies, or `--repeats`) saves every run's files and adds
   `evaluation.primary_metric` / `--primary-metric`, default
   `answer_match/answer_contains` when scored; its tests are the compared
   strategies), `secondary` (every other metric with per-query deltas) and
-  `cost` (`cost.deltas_vs_baseline`); closed-book arms are in none
+  `cost` (`cost.deltas_vs_baseline`). Each family reads at least
+  20 x tests / alpha resamples (`multiplicity.families.<f>.resamples`;
+  `evaluation.resamples`, 2,000, is the base): a `p_value` under alpha is
+  drawn again from that many sign patterns (`p_value_resamples`), since
+  the Monte Carlo p-value is never below 1 / (1 + resamples) and Holm
+  multiplies the smallest by the family's size, and the simultaneous
+  interval's tails hold enough resampled means; closed-book arms are in none
   (`unadjusted`). Each member delta has `family`, `adjusted_p_value` and
   `adjusted_ci_low` / `adjusted_ci_high`, the bootstrap interval at
   confidence 1 - 0.05 / m for a family of m tests (simultaneous over it, so
@@ -337,8 +362,12 @@ strategies, or `--repeats`) saves every run's files and adds
 - Run order. With `evaluation.run_order: interleaved` (the default,
   `--run-order`) every query is answered by every run of the comparison
   before the next query starts, the runs' order reversed on every other
-  query (ABBA), in one batch under `processing.max_concurrency`; each run
-  is then scored and saved. Answered one run after another
+  query (ABBA) and the other way round on every other repeat (an even
+  `--repeats` balances an odd-sized dataset's every query), in one batch
+  under `processing.max_concurrency`; each run is then scored and saved.
+  The runs of one repeat that ask a question's extraction together share
+  the call in flight: the first pays for it, the others count a cache
+  hit. Answered one run after another
   (`sequential`), every later run answers later, and a service whose
   latency drifts over the run, or caches warmed by the earlier runs, show
   up as latency deltas: two runs of one configuration answered so differed
@@ -521,16 +550,21 @@ Did the sources the answer model saw include the gold documents?
   `AC/DC` is compared whole.
 - **Skips.** Skipped when a query has no `reference_sources` or none of its
   sources is attributable; a query that retrieved no sources scores 0.
-- **Citations.** `citation_precision` (cited citations naming a reference
-  file / cited citations naming a file) and `citation_recall` (references a
-  cited citation names / references) score what the answer *cites*
-  (`RAGOutput.citations` its `[n]` markers use; a graph citation stands for
-  the files of its resolved lineage), kept per result as
-  `cited_source_ids`. Skipped without `reference_sources`
+- **Citations.** `citation_precision` (over the cited citations naming a
+  file, the mean share of each one's files that are references) and
+  `citation_recall` (per reference, the largest `1 / n` weight of a cited
+  citation of `n` files naming it, averaged over the references) score
+  what the answer *cites* (`RAGOutput.citations` its `[n]` markers use; a
+  graph citation stands for the files of its resolved lineage, so a hub
+  entity citing ten files, one a reference, counts a tenth, not 1), kept
+  per result as `cited_source_ids` and `cited_section_types`.
+  `citation_precision_passages` is the share of cited passages (`text`
+  sections, one file each) whose file is a reference. Skipped without `reference_sources`
   (`no_reference_sources`), with `search.citations.enabled: false`
   (`citations_disabled`) or for results saved before citations
   (`no_citation_data`); precision is also skipped for an answer that cites
-  no file (`no_citations`), where recall is 0.
+  no file (`no_citations`), where recall is 0, and passage precision for
+  one that cites no passage (`no_cited_passages`).
 
 ### `assertion`
 
@@ -607,6 +641,18 @@ list, top level or under `metadata`, which wins), taking the maximum.
   substring (`AWS` matches `AWSは`, `2024` matches `2024年`; `AI` does not
   match `airport附近` nor `2` `12年`); next to Hangul the Korean rules
   above decide.
+- **Structured golds.** An item's `metadata.answer_type` changes how
+  `answer_contains` reads it: `number` compares the first number the
+  answer (its extracted span, with `extracted`) states, in digits, English
+  words, a Korean native numeral before a counter (`세 곳`, `열두 개사`;
+  `없습니다` is 0) or a Han numeral before one (`三社`), with the gold's
+  number, so `Three vendors ... Two of them ...` is 3 and does not match
+  the gold 2; `set` scores 1.0 when every one of `metadata.answer_items`
+  appears in the answer, in any order or layout (a numbered list too).
+  With `metadata.decline_is_correct` (a question about something the data
+  does not hold) a decline scores 1 on every `answer_match` metric. A
+  Korean counter (`곳`, `군데`, `가지`, `개사`) keeps a number's value like a
+  unit (`3` matches `3곳입니다`).
 - **Yes/no golds** (`yes`/`no`/`nope`, Korean `예`/`네`/`아니요`/`아니오`/
   `아닙니다`, Chinese `是`/`对`/`否`/`不是`/`没有`, Japanese `はい`/`いいえ`) are
   scored by the polarity of the first yes/no word that answers the question,

@@ -92,6 +92,14 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
   `source` for a reviewer. Write them in the language the answers are in.
 - Per-item `metadata` (e.g. `search_strategy`) overrides the CLI defaults for
   that question. `id` may also be given as `query_id`.
+- `metadata.answer_type` says how `answer_match` reads a structured gold:
+  `number` compares the first number the answer states (digits, number
+  words, Korean and Han numerals before a counter: `세 곳`, `三社`) with
+  the gold's, `set` needs every one of `metadata.answer_items` (a list of
+  strings) in the answer in any layout; `metadata.decline_is_correct:
+  true` scores a decline as the right answer (a question about something
+  the data does not hold). `prepare-benchmark structural` writes them
+  ([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match)).
 - Mark a question the corpus cannot answer with
   `"metadata": {"answerable": false}`: no evaluator grades it; it counts only
   in `abstention_statistics`
@@ -205,7 +213,10 @@ How to read it:
   adjusted only over the compared strategies. Every other metric is a
   secondary one, Holm-adjusted over all of them (and the cost measures over
   theirs): `adjusted_p_value` below 0.05 is a difference that survives the
-  many deltas read, and the tables print it as `Holm p`; read `ci_low` /
+  many deltas read, and the tables print it as `Holm p` (each family reads
+  enough Monte Carlo resamples for its size, at least 20 x tests / 0.05,
+  so a comparison of many strategies and arms can still reject;
+  `evaluation.resamples` sets the base, 2,000); read `ci_low` /
   `ci_high` (unadjusted) or `adjusted_ci_low` / `adjusted_ci_high`
   (simultaneous over the family) for its size. Ten metrics read unadjusted
   show a difference on noise in 30-40% of comparisons of one
@@ -235,7 +246,9 @@ How to read it:
   (`--run-order interleaved`, `evaluation.run_order`): each query by every
   strategy and repeat before the next query, their order reversed on every
   other query, so a service that slows down over the run, or caches the
-  first runs warmed, do not show up as latency deltas (two runs of one
+  first runs warmed, do not show up as latency deltas (and reversed again
+  on every other repeat, so an even `--repeats` balances an odd-sized
+  dataset's every query; two runs of one
   configuration answered one after the other differed by 0.5-5.8 s per
   query). `--run-order sequential` answers one run after another, keeps
   the finished runs when stopped part-way, and warns that its latency
@@ -244,8 +257,10 @@ How to read it:
 - **Repeats.** Each repeat extracts the query's entities and keywords again
   (`--repeat-extractions resample`, `evaluation.repeat_extractions`), so
   `repeat_stdev` includes the extraction's noise; it costs that fast-model
-  call once per query and repeat. The strategies of one repeat share the
-  extraction, so their deltas compare retrieval on the same keywords.
+  call once per query and repeat. The strategies and arms of one repeat
+  share the extraction, so their deltas compare retrieval on the same
+  keywords: those that ask together share the call in flight (the first
+  pays, the others count a cache hit; under ABBA the payer alternates).
   `reuse` extracts once for every repeat (the earlier behaviour).
 
 Every field, the failure and fill rules, the warnings and what the cost
@@ -284,6 +299,39 @@ The estimate covers the calls the usage records: botocore's resent requests
 are not priced, so CloudWatch's invocation count and the bill can run a
 little higher (measured:
 [Usage records against the bill](../concepts/defaults-and-evidence.md#usage-records-against-the-bill)).
+
+## Configuration arms
+
+`--arm NAME=overlay.yaml` compares configurations, not only strategies: the
+arm answers the same dataset with the run's configuration under the
+overlay, a YAML mapping merged over it, as a chain of its own, with every
+`--search-strategy`, interleaved with the base runs. Repeat the flag for
+more arms; `,suffix=SUFFIX` queries another index namespace with the arm
+(one ingested with other settings, say).
+
+```bash
+# Rerank off against on, and an A/A copy for the noise floor.
+printf 'providers:\n  rerank:\n    kind: none\n' > norerank.yaml
+: > aa.yaml
+run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
+  --arm norerank=norerank.yaml --arm aa=aa.yaml --config-path config.yaml
+```
+
+- Its runs are labelled `<strategy>@NAME` (`local@norerank`) in the files
+  and the comparison, and each is compared with the same strategy's base
+  run, so its deltas measure the overlay; the base strategies compare with
+  the first as usual. Holm adjusts the arms' deltas with the strategies'.
+- The overlay is validated like a config file (an unknown key stops the
+  run, exit 2, unless `--allow-unknown-keys`); its `evaluation` section is
+  ignored with a warning, since every arm is scored as the base runs are.
+- The run manifest records each arm run's `arm` (name, overlay path and
+  sha256, suffix) and `compared_runs`, so `--from-results` rebuilds the
+  same pairs. A comparison whose arms differ in `search.citations.enabled`
+  warns that the answer prompt differs too.
+- An empty overlay (`aa.yaml` above) is an A/A arm: its deltas are the
+  noise floor of each metric for this dataset and repeat count.
+- Each arm costs what a strategy costs (its answers and warm-up), times
+  the strategies listed.
 
 ## Assertions, length control and a closed-book bound
 
@@ -366,6 +414,10 @@ run-eval --from-results out/ --output-directory out/
 # Re-judge the saved answers with another judge model (no answer call).
 run-eval --from-results out/ --pairwise-judge --judge-model <judge-model-id>
 
+# Re-score the saved answers with this version's evaluators (and a
+# regenerated dataset's golds), saved as new runs in --output-directory.
+run-eval --from-results out/ --rescore new_eval.json --output-directory rescored/
+
 # CI: compare this run with an earlier one and fail on a supported regression.
 run-eval --data-path eval.json --search-strategy local \
   --baseline-results ci/previous/ --output-directory ci/current/ \
@@ -382,6 +434,13 @@ run-eval --data-path eval.json --search-strategy local \
   `--pool-runs` to pool them anyway (a warning names what they mix).
 - **Re-judging.** `--pairwise-judge` with `--from-results` judges the saved
   answers again; `--judge-model` sets the judge model for the run.
+- **Re-scoring.** `--rescore` scores the saved answers again with this
+  run's evaluators (`--evaluators`, `evaluation.answer_span`, the citation
+  metrics, the judges, which are called again) instead of comparing the
+  scores they hold, against the golds saved with each answer, or with
+  `--rescore DATASET` that dataset's (by query id, the same questions).
+  The re-scored runs are saved in this run's directory; their manifest
+  keeps what answered them and records the re-score (`rescored`).
 - **A baseline run.** `--baseline-results` compares each strategy with the
   same strategy of an earlier run (`baseline:<strategy>`). Run it with the
   same `--repeats`; each run is saved in a run subdirectory of its own, and

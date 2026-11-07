@@ -10,6 +10,7 @@ import pytest
 
 from unified_kg_rag.evaluation.text_matching import (
     is_spaceless_script,
+    leading_number,
     phrase_in_text,
     strip_possessives,
     tokenize,
@@ -236,3 +237,52 @@ class TestLatinInsideChineseAndJapanese:
     )
     def test_no_match(self, phrase: str, text: str) -> None:
         assert phrase_in_text(phrase, text) is False
+
+
+class TestKoreanCounters:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "벤더는 3곳입니다.",
+            "3군데에 공급합니다",
+            "3가지 제품",
+            "3개사가 공급합니다",
+        ],
+    )
+    def test_a_count_keeps_its_value_before_a_counter(self, text: str) -> None:
+        assert phrase_in_text("3", text) is True
+
+
+class TestLeadingNumber:
+    @pytest.mark.parametrize(
+        ("text", "number"),
+        [
+            ("Three vendors supply it. Two of them are local.", 3),
+            ("It has 3 vendors (one with 2 products).", 3),
+            ("twenty-one vendors", 21),
+            ("It supplies no buyers.", 0),
+            ("None.", 0),
+            ("The largest has 4,486 employees.", 4486),
+            ("# 2 headings\nIt has 5 vendors.", 5),
+            ("세 곳의 벤더가 공급합니다.", 3),
+            ("총 4곳이며, 그중 3곳은 국내입니다.", 4),
+            ("열두 개사가 공급합니다", 12),
+            ("공급하는 벤더가 없습니다", 0),
+            ("ベンダーは三社です。", 3),
+            ("二十三件です", 23),
+            ("ベンダーは3社です", 3),
+        ],
+    )
+    def test_the_first_number_stated(self, text: str, number: float) -> None:
+        assert leading_number(text) == number
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "I could not find Zortal13 Holdings.",  # a number inside a word
+            "네, 공급합니다.",  # "네" is yes, not four, without a counter
+            "The 3rd vendor",
+        ],
+    )
+    def test_none(self, text: str) -> None:
+        assert leading_number(text) is None

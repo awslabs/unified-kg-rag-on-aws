@@ -24,6 +24,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
     error_digest,
+    judge_effort,
 )
 from unified_kg_rag.adapters.llm.langchain import BATCH_ITEM_FAILED, BatchProcessor
 from unified_kg_rag.adapters.observability.endpoints import safe_url
@@ -68,8 +69,8 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.exceptions import (
+    IndexNotFoundError,
     InvalidFilterError,
-    MethodologyNotIndexedError,
 )
 from unified_kg_rag.shared.usage import (
     UsageMeter,
@@ -81,14 +82,23 @@ from unified_kg_rag.shared.usage import (
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 from .answer_match_evaluator import (
+    ANSWER_ITEMS_KEY,
+    ANSWER_TYPE_KEY,
+    ANSWER_TYPES,
+    DECLINE_IS_CORRECT_KEY,
     SPAN_FALLBACK_KEY,
     AnswerMatchEvaluator,
     answer_scoring,
 )
 from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
-from .citation_scoring import cited_source_ids
+from .citation_scoring import (
+    CITATION_SCORING,
+    cited_section_types,
+    cited_source_ids,
+)
 from .comparison import USAGE_SCHEMA
 from .graph_aware_evaluator import GraphAwareEvaluator
+from .iterative_statistics import iterative_statistics
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
 from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
 from .structured_statistics import structured_statistics
@@ -463,6 +473,26 @@ class EvaluationManager:
             raise EvaluationException(
                 f"{where}: 'metadata.answerable' must be true or false."
             )
+        if not isinstance(item_metadata.get(DECLINE_IS_CORRECT_KEY, False), bool):
+            raise EvaluationException(
+                f"{where}: 'metadata.{DECLINE_IS_CORRECT_KEY}' must be true or false."
+            )
+        answer_type = item_metadata.get(ANSWER_TYPE_KEY)
+        if answer_type is not None and answer_type not in ANSWER_TYPES:
+            raise EvaluationException(
+                f"{where}: 'metadata.{ANSWER_TYPE_KEY}' must be one of "
+                f"{', '.join(sorted(ANSWER_TYPES))}."
+            )
+        items = item_metadata.get(ANSWER_ITEMS_KEY)
+        if answer_type == "set" and not (
+            isinstance(items, list)
+            and items
+            and all(isinstance(i, str) and i.strip() for i in items)
+        ):
+            raise EvaluationException(
+                f"{where}: 'metadata.{ANSWER_ITEMS_KEY}' must be a non-empty list "
+                "of strings with answer_type 'set'."
+            )
 
         final_metadata = {**base_metadata, **item_metadata}
         # Aliases sit next to ``answer`` as naturally as under ``metadata``.
@@ -635,7 +665,9 @@ class EvaluationManager:
         well as the strategy (an A/A pair of one configuration differed by
         up to 6 s). Here every query is answered by every run before the
         next query starts, the runs' order alternating (ABBA: forward on
-        even queries, reversed on odd ones), in one batch under the first
+        even queries, reversed on odd ones, and the other way round for
+        every other repeat, ``attributes["eval.repeat"]``, so an even number
+        of repeats balances each query), in one batch under the first
         run's ``processing.max_concurrency``: each query's answers start
         close together and no run is systematically first. The queries of
         every arm pair by position (one dataset). Returns per arm its
@@ -653,7 +685,10 @@ class EvaluationManager:
         store connections and the models' first calls. Its question is no
         dataset question, so it fills no extraction cache entry they read;
         it uses no conversation memory. A failure is logged, not raised,
-        but a ``MethodologyNotIndexedError``: every query would fail."""
+        but one every query would meet too: a ``ConfigurationError`` (a
+        ``MethodologyNotIndexedError``, an embedding dimension the index
+        does not hold) or an ``IndexNotFoundError`` (nothing ingested under
+        the suffix), so the run stops before answering the dataset."""
         inputs = {
             key: query.metadata[key] for key in _WARM_UP_KEYS if key in query.metadata
         }
@@ -661,8 +696,9 @@ class EvaluationManager:
             await self.rag_chain.ainvoke(
                 {**inputs, "query": _WARM_UP_QUESTION, "use_memory": False}
             )
-        except MethodologyNotIndexedError:
-            # The namespace serves no query of this strategy: fail fast.
+        except (ConfigurationError, IndexNotFoundError):
+            # The namespace or the settings serve no query of this run: fail
+            # fast.
             raise
         except Exception as e:  # noqa: BLE001 - a warm-up is best-effort
             logger.warning(
@@ -688,12 +724,20 @@ class EvaluationManager:
             raise EvaluationException(
                 "the interleaved runs must answer the same number of queries"
             )
-        # (arm, query index) in answer order: every arm per query, forward on
-        # even queries and reversed on odd ones.
+        # (arm, query index) in answer order: every arm per query, the arms
+        # of each repeat (``eval.repeat``) forward on even queries and
+        # reversed on odd ones, and the other way round on every other
+        # repeat. ABBA over pairs of queries left an odd-sized dataset one
+        # query unbalanced; reversed per repeat too, an even number of
+        # repeats balances every query.
+        repeats: dict[Any, list[int]] = {}
+        for a, arm in enumerate(arms):
+            repeats.setdefault(arm.attributes.get("eval.repeat", 1), []).append(a)
         order = [
             (a, j)
             for j in range(count)
-            for a in (range(len(arms)) if j % 2 == 0 else reversed(range(len(arms))))
+            for g, members in enumerate(repeats.values())
+            for a in (members if (j + g) % 2 == 0 else reversed(members))
         ]
         # Per answer (keyed by its input, which every attempt receives), the
         # usage of the attempts that raised and the time from its first
@@ -785,6 +829,7 @@ class EvaluationManager:
                         ),
                         **self._extract_source_details(raw_result),
                         cited_source_ids=cited_source_ids(raw_result),
+                        cited_section_types=cited_section_types(raw_result),
                         enable_thinking=rag_metadata.get("enable_thinking", False),
                         search_strategy=rag_metadata.get("search_strategy"),
                         response_time=_response_time(
@@ -1277,6 +1322,7 @@ class EvaluationManager:
                 )
             ),
             structured_statistics=structured_statistics(results),
+            iterative_statistics=iterative_statistics(results),
             grouped_statistics=self._calculate_grouped_statistics(
                 queries, results, reports
             ),
@@ -1481,14 +1527,27 @@ class EvaluationManager:
                     and evaluation.answer_span == "extracted"
                     else None
                 ),
+                # The judges' reasoning effort (evaluation.judge_effort, else
+                # the judge model's tier): a judge at another effort scores
+                # differently.
+                "judge_effort": (
+                    judge_effort(self.config, judge_model) if uses_judge else None
+                ),
             },
             # How exact match and token F1 read an answer: two runs scored
             # differently are not comparable on them.
             "answer_scoring": (
-                answer_scoring(evaluation)
+                answer_scoring(self.config)
                 if EvaluatorType.ANSWER_MATCH in enabled
                 else None
             ),
+            # Whether the answers cite (the answer prompt asks for markers)
+            # and how the citation metrics weigh a citation's files: arms
+            # that differ compare those too.
+            "citations": {
+                "enabled": self.config.search.citations.enabled,
+                "scoring": CITATION_SCORING,
+            },
             # What the usage records count (USAGE_SCHEMA: 2 meters the
             # rerank requests), so a comparison prices like with like.
             "usage_schema": USAGE_SCHEMA,
@@ -1804,7 +1863,13 @@ class EvaluationManager:
         reports: list[EvaluationReport],
         summary: EvaluationSummary,
         outputs_dir: str | Path,
-    ) -> None:
+        *,
+        label: str | None = None,
+    ) -> Path:
+        """Write the run's results, reports and summary files; returns the
+        results file's path (written with ``evaluation.save_detailed_results``).
+        ``label`` names the files instead of the run's strategy (a
+        ``run-eval --arm`` run, ``<strategy>@<arm>``)."""
         if isinstance(outputs_dir, str):
             outputs_dir = Path(outputs_dir)
         outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -1820,7 +1885,12 @@ class EvaluationManager:
             for r in results
             if (strategy := r.metadata.get("search_strategy") or r.search_strategy)
         }
-        stem = f"{strategies.pop()}_{timestamp}" if len(strategies) == 1 else timestamp
+        if label is not None:
+            stem = f"{label}_{timestamp}"
+        else:
+            stem = (
+                f"{strategies.pop()}_{timestamp}" if len(strategies) == 1 else timestamp
+            )
 
         if self.config.evaluation.save_detailed_results:
             self._save_json(
@@ -1836,6 +1906,7 @@ class EvaluationManager:
             outputs_dir / f"evaluation_summary_{stem}.json", summary.model_dump()
         )
         logger.info("Evaluation results saved to '%s'", outputs_dir)
+        return outputs_dir / f"evaluation_results_{stem}.json"
 
     @staticmethod
     def _save_json(path: Path, data: Any) -> None:

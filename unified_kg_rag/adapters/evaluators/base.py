@@ -49,6 +49,17 @@ def judge_model_kwargs(config: Config) -> dict[str, Any]:
     return {"effort": effort} if effort else {}
 
 
+def judge_effort(config: Config, model_id: str) -> str:
+    """The reasoning effort an LLM judge call on ``model_id`` runs at:
+    ``evaluation.judge_effort``, else the effort of the model's tier
+    (``aws.bedrock.default_effort`` / ``fast_effort``), as recorded in the
+    run manifest. Models without adaptive thinking ignore it."""
+    return str(
+        config.evaluation.judge_effort
+        or config.aws.bedrock.tier_effort(config.model_tier(model_id))
+    )
+
+
 class BaseGraphRAGEvaluator:
     """Evaluator base: batch scoring, failure reports and search metadata.
 

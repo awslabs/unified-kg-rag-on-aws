@@ -588,6 +588,22 @@ async def test_rag_a_strategy_the_namespace_cannot_serve_is_a_usage_error(
     )
 
 
+async def test_rag_a_query_time_configuration_error_is_a_usage_error(
+    config, mocker
+) -> None:
+    # An embedding dimension the index does not hold surfaces at query time
+    # as a ConfigurationError: the configuration to fix (exit 2), not 1.
+    from unified_kg_rag.shared import ConfigurationError
+
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
+    runner.rag_chain = mocker.AsyncMock()
+    runner.rag_chain.ainvoke.side_effect = ConfigurationError("dimension 64 != 32")
+    with pytest.raises(SystemExit) as exit_info:
+        await runner._run_query(run_rag_chain.RAGInput(query="hi"))
+    assert exit_info.value.code == 2
+
+
 def test_rag_parse_filters_types_boolean_and_numeric_fields() -> None:
     # Every value was a string: in_schema:false matched nothing on the
     # graph stores, where the Python API's False matched.
@@ -1324,11 +1340,16 @@ async def test_eval_runner_compares_strategies_pairwise(
     if order == "sequential":
         assert chain.strategies == ["local"] * 9 + ["mix"] * 9 + ["auto"] * 9
     else:
-        # The warm-ups first, then each query by every run, the runs'
-        # order reversed on every other query (ABBA).
-        runs = ["local", "local", "mix", "mix", "auto", "auto"]
-        assert chain.strategies == ["local", "mix", "auto"] + [
-            s for j in range(4) for s in (runs if j % 2 == 0 else runs[::-1])
+        # The warm-ups first, then each query by every run: each repeat's
+        # runs in order, reversed on every other query (ABBA) and on every
+        # other repeat.
+        strategies = ["local", "mix", "auto"]
+        runs = strategies * 2
+        assert chain.strategies == strategies + [
+            s
+            for j in range(4)
+            for g in range(2)
+            for s in (strategies if (j + g) % 2 == 0 else strategies[::-1])
         ]
         questions = chain.questions[3:]
         assert questions == [q for q in sorted(set(questions)) for _ in runs]
@@ -2197,3 +2218,27 @@ def test_a_valid_suffix_is_kept() -> None:
         _rag_parser().parse_args(["--query", "q", "--suffix", "tenant-a"]).suffix
         == "tenant-a"
     )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "module", ["run_evaluation", "prepare_benchmark", "run_rag_chain"]
+)
+def test_help_loads_no_chain_or_evaluation_manager(module: str) -> None:
+    # --help took ~3 s for run-eval and prepare-benchmark: the module
+    # imported the RAG chain, every search strategy and the evaluation
+    # manager before parsing anything.
+    import subprocess
+    import sys
+
+    code = (
+        "import sys\n"
+        f"from unified_kg_rag.application.cli import {module} as cli\n"
+        "heavy = [m for m in sys.modules if m.endswith(('.rag_chain', "
+        "'.evaluation_manager', '.autoq')) or '.search_strategies' in m]\n"
+        "print(heavy)\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    ).stdout
+    assert out.strip() == "[]", out

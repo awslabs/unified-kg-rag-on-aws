@@ -73,6 +73,7 @@ from unified_kg_rag.domain.prompts import (
     PairwiseDifferentialPrompt,
     PairwiseOverlapPrompt,
 )
+from unified_kg_rag.domain.retrieval.citations import strip_markers
 from unified_kg_rag.shared import EvaluationException, get_logger, observability
 
 from .comparison import bootstrap_ci
@@ -424,7 +425,7 @@ class PairwiseJudge:
             judged_keys.append(key)
             if agreed is not None:
                 agreements.append(agreed)
-            lengths[key] = answer_lengths(base.generated_answer, cand.generated_answer)
+            lengths[key] = answer_lengths(_words(base), _words(cand))
             if split is not None:
                 lengths[key].update(
                     {
@@ -519,14 +520,10 @@ class PairwiseJudge:
         try:
             if self.mode == "differential":
                 return await self._ajudge_differential(
-                    candidate.question,
-                    baseline.generated_answer,
-                    candidate.generated_answer,
+                    candidate.question, _words(baseline), _words(candidate)
                 )
             outcome, consistent = await self._ajudge_both_orders(
-                candidate.question,
-                baseline.generated_answer,
-                candidate.generated_answer,
+                candidate.question, _words(baseline), _words(candidate)
             )
             return outcome, consistent, None
         except Exception as e:  # noqa: BLE001 - a failed pair is counted, not fatal
@@ -538,6 +535,13 @@ class PairwiseJudge:
             )
             logger.debug("Pairwise judge error for '%s': %s", candidate.query_id, e)
             return None
+
+
+def _words(result: EvaluationResult) -> str:
+    """The answer the judge reads: its words, without citation markers
+    ([1]), so a strategy that cites (search.citations) is judged, and
+    measured for length, on what it says like one that does not."""
+    return strip_markers(result.generated_answer or "")
 
 
 def _answered(result: EvaluationResult) -> bool:

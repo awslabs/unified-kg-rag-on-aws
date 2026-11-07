@@ -1,5 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import argparse
 import inspect
 import json
@@ -13,9 +15,9 @@ from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
-from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 from rich.panel import Panel
 from rich.table import Table
@@ -28,6 +30,11 @@ from unified_kg_rag.adapters.aws.s3_transfer import (
     upload_directory_to_s3,
 )
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.cli.arm_args import (
+    arm_config,
+    arm_spec,
+    overlay_sha256,
+)
 from unified_kg_rag.application.cli.config_args import (
     add_config_arguments,
     exit_on_config_error,
@@ -54,6 +61,7 @@ from unified_kg_rag.application.cli.display import (
     markup_safe,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.lazy import lazy_names
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     missing_extras_error,
@@ -69,62 +77,26 @@ from unified_kg_rag.application.cli.query_args import (
     query_suffix,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.application.retrieval.rag_chain import (
-    GraphRAGChain,
-    extraction_cache_scope,
-)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
     EvaluationQuery,
+    EvaluationReport,
+    EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
+    LLMUsage,
     ModelRole,
     SearchStrategy,
     model_id_value,
 )
 from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
-from unified_kg_rag.evaluation import EvaluationManager
-from unified_kg_rag.evaluation.answer_match_evaluator import answer_scoring
-from unified_kg_rag.evaluation.closed_book import (
-    CLOSED_BOOK_ARM,
-    closed_book_arms,
-    closed_book_chain,
-)
-from unified_kg_rag.evaluation.comparison import (
-    Run,
-    adjust_for_multiplicity,
-    baseline_comparison,
-    paired_comparison,
-    per_query_rows,
-)
-from unified_kg_rag.evaluation.evaluation_manager import AnswerArm
-from unified_kg_rag.evaluation.gates import Gate, gate_breaches, parse_gate
-from unified_kg_rag.evaluation.pairwise import PairwiseJudge
-from unified_kg_rag.evaluation.report import (
-    baseline_metric_keys,
-    compared_pairs,
-    comparison_csv,
-    comparison_markdown,
-    delta_cell,
-)
-from unified_kg_rag.evaluation.saved_results import (
-    SavedRun,
-    check_answer_scoring,
-    dataset_warnings,
-    group_runs,
-    interleaving_warnings,
-    load_saved_runs,
-    pooling_errors,
-    pooling_warnings,
-    rerank_unmetered,
-    summary_warnings,
-)
 from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
     DataProcessingError,
     EvaluationException,
+    IndexNotFoundError,
     MethodologyNotIndexedError,
     get_logger,
     observability,
@@ -132,6 +104,168 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
+
+if TYPE_CHECKING:
+    from langchain_core.runnables import Runnable
+
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        GraphRAGChain,
+        extraction_cache_scope,
+    )
+    from unified_kg_rag.evaluation.answer_match_evaluator import answer_scoring
+    from unified_kg_rag.evaluation.arms import (
+        arm_label,
+        arm_pairs,
+        is_arm_label,
+        label_strategy,
+    )
+    from unified_kg_rag.evaluation.closed_book import (
+        CLOSED_BOOK_ARM,
+        closed_book_arms,
+        closed_book_chain,
+    )
+    from unified_kg_rag.evaluation.comparison import (
+        adjust_for_multiplicity,
+        baseline_comparison,
+        paired_comparison,
+        per_query_rows,
+    )
+    from unified_kg_rag.evaluation.evaluation_manager import (
+        AnswerArm,
+        EvaluationManager,
+    )
+    from unified_kg_rag.evaluation.gates import Gate, gate_breaches
+    from unified_kg_rag.evaluation.pairwise import PairwiseJudge
+    from unified_kg_rag.evaluation.report import (
+        baseline_metric_keys,
+        compared_pairs,
+        comparison_csv,
+        comparison_markdown,
+        delta_cell,
+    )
+    from unified_kg_rag.evaluation.saved_results import (
+        SavedRun,
+        check_answer_scoring,
+        citation_warnings,
+        dataset_warnings,
+        group_runs,
+        interleaving_warnings,
+        load_saved_runs,
+        pooling_errors,
+        pooling_warnings,
+        rerank_unmetered,
+        strategy_order,
+        summary_warnings,
+    )
+
+
+def _chain_module() -> ModuleType:
+    from unified_kg_rag.application.retrieval import rag_chain
+
+    return rag_chain
+
+
+def _manager_module() -> ModuleType:
+    from unified_kg_rag.evaluation import evaluation_manager
+
+    return evaluation_manager
+
+
+def _answer_match_module() -> ModuleType:
+    from unified_kg_rag.evaluation import answer_match_evaluator
+
+    return answer_match_evaluator
+
+
+def _closed_book_module() -> ModuleType:
+    from unified_kg_rag.evaluation import closed_book
+
+    return closed_book
+
+
+def _comparison_module() -> ModuleType:
+    from unified_kg_rag.evaluation import comparison
+
+    return comparison
+
+
+def _gates_module() -> ModuleType:
+    from unified_kg_rag.evaluation import gates
+
+    return gates
+
+
+def _pairwise_module() -> ModuleType:
+    from unified_kg_rag.evaluation import pairwise
+
+    return pairwise
+
+
+def _report_module() -> ModuleType:
+    from unified_kg_rag.evaluation import report
+
+    return report
+
+
+def _arms_module() -> ModuleType:
+    from unified_kg_rag.evaluation import arms
+
+    return arms
+
+
+def _saved_results_module() -> ModuleType:
+    from unified_kg_rag.evaluation import saved_results
+
+    return saved_results
+
+
+# Imported on first use: the chain and the evaluation manager load LangChain
+# and every search strategy (seconds), which --help and a refused command
+# line never need. Tests patch them as attributes of this module.
+__getattr__, _load_evaluation = lazy_names(
+    globals(),
+    {
+        "GraphRAGChain": _chain_module,
+        "extraction_cache_scope": _chain_module,
+        "EvaluationManager": _manager_module,
+        "AnswerArm": _manager_module,
+        "answer_scoring": _answer_match_module,
+        "CLOSED_BOOK_ARM": _closed_book_module,
+        "closed_book_arms": _closed_book_module,
+        "closed_book_chain": _closed_book_module,
+        "adjust_for_multiplicity": _comparison_module,
+        "baseline_comparison": _comparison_module,
+        "paired_comparison": _comparison_module,
+        "per_query_rows": _comparison_module,
+        "gate_breaches": _gates_module,
+        "PairwiseJudge": _pairwise_module,
+        "baseline_metric_keys": _report_module,
+        "compared_pairs": _report_module,
+        "comparison_csv": _report_module,
+        "comparison_markdown": _report_module,
+        "delta_cell": _report_module,
+        "SavedRun": _saved_results_module,
+        "strategy_order": _saved_results_module,
+        "arm_label": _arms_module,
+        "arm_pairs": _arms_module,
+        "is_arm_label": _arms_module,
+        "label_strategy": _arms_module,
+        "check_answer_scoring": _saved_results_module,
+        "citation_warnings": _saved_results_module,
+        "dataset_warnings": _saved_results_module,
+        "group_runs": _saved_results_module,
+        "interleaving_warnings": _saved_results_module,
+        "load_saved_runs": _saved_results_module,
+        "pooling_errors": _saved_results_module,
+        "pooling_warnings": _saved_results_module,
+        "rerank_unmetered": _saved_results_module,
+        "summary_warnings": _saved_results_module,
+    },
+)
+
+# One run: the reports and results of one strategy and repeat
+# (``comparison.Run``).
+Run = tuple[list[EvaluationReport], list[EvaluationResult]]
 
 logger = get_logger(__name__)
 
@@ -155,6 +289,8 @@ def _data_path(value: str) -> str | Path:
 
 
 def _gate(value: str) -> Gate:
+    from unified_kg_rag.evaluation.gates import parse_gate
+
     try:
         return parse_gate(value)
     except ValueError as e:
@@ -352,6 +488,23 @@ class CommandLineInterface:
             ),
         )
         parser.add_argument(
+            "--rescore",
+            nargs="?",
+            const="",
+            metavar="DATASET",
+            help=(
+                "With --from-results, score the saved answers again with this "
+                "run's evaluators (--evaluators, evaluation.*: answer_match's "
+                "span and normalization, the citation metrics, the LLM judges, "
+                "which are called again) instead of comparing the scores they "
+                "hold, and save the re-scored runs in this run's directory. "
+                "The gold answers are those saved with each answer, or "
+                "DATASET's (a run-eval dataset whose items pair by query id: "
+                "their answer, aliases, metadata and expectations replace the "
+                "saved ones). No answer is generated and no store is queried"
+            ),
+        )
+        parser.add_argument(
             "--baseline-results",
             type=Path,
             nargs="+",
@@ -526,6 +679,24 @@ class CommandLineInterface:
             ),
         )
         parser.add_argument(
+            "--arm",
+            type=arm_spec,
+            action="append",
+            metavar="NAME=OVERLAY[,suffix=SUFFIX]",
+            help=(
+                "A configuration arm, repeatable: answer the dataset again with "
+                "the config under OVERLAY (a YAML mapping merged over it, as "
+                "a config file is validated; its evaluation section is the "
+                "run's), as a chain of its own, with each --search-strategy. "
+                "Its runs are labelled <strategy>@NAME and compared with the "
+                "same strategy's base run, interleaved with it (--run-order) "
+                "and Holm-adjusted with the other deltas; the run manifest "
+                "records the overlay's path and sha256. suffix= queries "
+                "another index namespace with the arm. An empty overlay is an "
+                "A/A arm (the noise floor)"
+            ),
+        )
+        parser.add_argument(
             "--max-failure-rate",
             type=_failure_rate,
             default=1.0,
@@ -572,12 +743,19 @@ class EvaluationRunner:
         rag_chain: Runnable[Any, Any] | None,
         config: Config,
         providers: Providers | None = None,
+        *,
+        chain_factory: Callable[[Config], Runnable[Any, Any]] | None = None,
     ) -> None:
         """``config`` is the run's configuration, provider flags applied (the
         one ``rag_chain`` was built from). ``rag_chain`` is ``None`` with
         ``--from-results`` (nothing is answered); ``providers`` builds the
-        pairwise judge then (default: from ``config``)."""
+        pairwise judge then (default: from ``config``). ``chain_factory``
+        builds the chain of each ``--arm`` from its configuration (default:
+        ``GraphRAGChain``); the runner closes them."""
+        _load_evaluation()
         self.args = args
+        self.chain_factory = chain_factory
+        self._arm_chains: list[Any] = []
         self.config = with_pairwise_mode(
             with_judge_model(
                 with_evaluators(config, getattr(args, "evaluators", None)),
@@ -617,6 +795,19 @@ class EvaluationRunner:
         return getattr(self.args, "from_results", None)
 
     @property
+    def _arms(self) -> list[dict[str, Any]]:
+        """The ``--arm`` configuration arms."""
+        return list(getattr(self.args, "arm", None) or [])
+
+    @property
+    def _rescoring(self) -> bool:
+        """Whether --rescore scores the saved answers of --from-results again."""
+        return (
+            self._from_results is not None
+            and getattr(self.args, "rescore", None) is not None
+        )
+
+    @property
     def _baseline_results(self) -> list[Path] | None:
         return getattr(self.args, "baseline_results", None)
 
@@ -637,7 +828,7 @@ class EvaluationRunner:
             self.args, "pairwise_judge", False
         ):
             return []
-        if self._from_results is None and _JUDGE_EVALUATORS & set(
+        if (self._from_results is None or self._rescoring) and _JUDGE_EVALUATORS & set(
             self.config.evaluation.enabled_evaluators
         ):
             return []
@@ -669,7 +860,7 @@ class EvaluationRunner:
         ragas/assertion evaluator scoring answers it generates."""
         if getattr(self.args, "pairwise_judge", False):
             return True
-        return self._from_results is None and bool(
+        return (self._from_results is None or self._rescoring) and bool(
             _JUDGE_EVALUATORS & set(self.config.evaluation.enabled_evaluators)
         )
 
@@ -712,12 +903,25 @@ class EvaluationRunner:
         )
 
     def _validate_args(self) -> None:
+        if (
+            getattr(self.args, "rescore", None) is not None
+            and self._from_results is None
+        ):
+            usage_error("--rescore scores saved answers again: give --from-results")
         for warning in self._judge_model_warnings():
             logger.warning("%s", warning)
         if self._uses_llm_judge():
             judge, reason = self._judge_choice()
             logger.info("LLM judge: %s (%s)", judge, reason)
+        names = [arm["name"] for arm in self._arms]
+        if len(set(names)) != len(names):
+            usage_error(f"--arm names must differ (got {', '.join(names)})")
         if self._from_results is not None:
+            if self._arms:
+                usage_error(
+                    "--arm answers the questions, --from-results answers none "
+                    "(the saved runs' arms are compared when they hold some)"
+                )
             if getattr(self.args, "closed_book", False):
                 usage_error(
                     "--closed-book answers the questions, --from-results answers "
@@ -735,11 +939,17 @@ class EvaluationRunner:
                         f"--{flag.replace('_', '-')} does not apply to "
                         "--from-results (no answer is generated)"
                     )
-            if getattr(self.args, "evaluators", None) is not None:
+            if getattr(self.args, "evaluators", None) is not None and not (
+                self._rescoring
+            ):
                 usage_error(
                     "--evaluators does not apply to --from-results (the saved "
-                    "runs are compared on the scores they hold)"
+                    "runs are compared on the scores they hold; --rescore "
+                    "scores their answers again)"
                 )
+            dataset = getattr(self.args, "rescore", None)
+            if dataset and not Path(dataset).is_file():
+                raise InvalidDatasetError(f"--rescore dataset '{dataset}' not found")
             try:
                 if is_s3_uri(self._output_directory()):
                     parse_s3_uri(self._output_directory(), require_key=False)
@@ -750,6 +960,7 @@ class EvaluationRunner:
             self._gates
             and len(self.args.search_strategy) < 2
             and not self._baseline_results
+            and not self._arms
         ):
             usage_error(
                 "--fail-if needs a comparison: list two or more strategies in "
@@ -807,6 +1018,22 @@ class EvaluationRunner:
                 f"{structured['queries']}, valid plans "
                 f"{structured['valid_plan_rate']:.0%} (fallback reasons: "
                 f"{reasons})\n"
+            )
+
+        if iterative := summary.iterative_statistics:
+            rounds = markup_safe(
+                ", ".join(f"{n} {count}" for n, count in iterative["rounds"].items())
+            )
+            stops = markup_safe(
+                ", ".join(
+                    f"{reason} {count}"
+                    for reason, count in iterative["stop_reasons"].items()
+                )
+            )
+            summary_text += (
+                f"Iterative: {iterative['queries']} answers, rounds {rounds} "
+                f"(mean {iterative['mean_rounds']:.2f}), stopped by {stops}; "
+                f"{iterative['max_rounds_rate']:.0%} at max_rounds\n"
             )
 
         if summary.total_queries > 0:
@@ -977,6 +1204,19 @@ class EvaluationRunner:
         finally:
             if not keep_work_dir:
                 shutil.rmtree(work_dir, ignore_errors=True)
+            await self._close_arm_chains()
+
+    async def _close_arm_chains(self) -> None:
+        """Release the arms' store connections (the base chain is the
+        caller's)."""
+        chains, self._arm_chains = self._arm_chains, []
+        for chain in chains:
+            close = getattr(chain, "aclose", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception as e:  # noqa: BLE001 - closing is best-effort
+                    logger.warning("Could not close an --arm chain: %s", e)
 
     def _local_outputs(self, work_dir: Path) -> Path:
         """Where the result files are written (``work_dir`` for an S3 target)."""
@@ -1031,7 +1271,7 @@ class EvaluationRunner:
         baseline = self._load_baseline()
         start_time = time.time()
         if self._from_results is not None:
-            measured = self._saved_runs_input()
+            measured = await self._saved_runs_input(local_outputs)
         else:
             measured = await self._answer_and_score(
                 s3_client, work_dir, local_outputs, baseline
@@ -1187,12 +1427,14 @@ class EvaluationRunner:
         self,
         queries: list[EvaluationQuery],
         strategies: list[str] | None,
+        chain: Any = None,
+        where: str = "",
     ) -> None:
         """Refuse, before any answer, a strategy a queried namespace does
         not serve (``MethodologyNotIndexedError``: every one of its queries
         would fail; exit 2, as ``run-rag``): each of ``strategies`` (a
         comparison's), else each query's own, on each query's suffix."""
-        check = getattr(self.rag_chain, "acheck_methodology", None)
+        check = getattr(chain or self.rag_chain, "acheck_methodology", None)
         if not inspect.iscoroutinefunction(check):
             return
         pairs = dict.fromkeys(
@@ -1210,26 +1452,34 @@ class EvaluationRunner:
                 await check(SearchStrategy(strategy), suffix)
             except MethodologyNotIndexedError as e:
                 raise MethodologyNotIndexedError(
-                    f"--search-strategy {strategy}: {e}"
+                    f"--search-strategy {strategy}{where}: {e}"
                 ) from e
 
     def _answer_scoring(self) -> dict[str, Any] | None:
         """The answer_scoring this run's manifests will record."""
-        evaluation = self.config.evaluation
-        if EvaluatorType.ANSWER_MATCH not in evaluation.enabled_evaluators:
+        if EvaluatorType.ANSWER_MATCH not in self.config.evaluation.enabled_evaluators:
             return None
-        return answer_scoring(evaluation)
+        return answer_scoring(self.config)
 
-    def _saved_runs_input(self) -> "_Measured":
-        """The comparison input rebuilt from ``--from-results``."""
+    async def _saved_runs_input(self, local_outputs: Path) -> _Measured:
+        """The comparison input rebuilt from ``--from-results`` (with
+        ``--rescore``, from its answers scored again)."""
         try:
             saved = load_saved_runs(self._from_results or [])
             order = None
             if self._strategies_given():
                 # The closed-book arm is no --search-strategy: compared last.
+                labels = list(dict.fromkeys(run.strategy for run in saved))
                 order = [
                     *self.args.search_strategy,
-                    *closed_book_arms(dict.fromkeys(run.strategy for run in saved)),
+                    # The --arm runs of the listed strategies.
+                    *(
+                        label
+                        for label in strategy_order(saved)
+                        if is_arm_label(label)
+                        and label_strategy(label) in self.args.search_strategy
+                    ),
+                    *closed_book_arms(labels),
                 ]
             grouped = group_runs(saved, order)
         except EvaluationException as e:
@@ -1239,6 +1489,9 @@ class EvaluationRunner:
             *summary_warnings(saved, "--from-results"),
             *pooling_warnings(grouped),
         ]
+        if self._rescoring:
+            grouped = await self._rescore(grouped, local_outputs)
+            saved = [run for runs in grouped.values() for run in runs]
         console.rule(
             f"[bold]Rebuilding the comparison from {len(saved)} saved run(s)[/bold]",
             style="blue",
@@ -1278,13 +1531,182 @@ class EvaluationRunner:
             warnings=warnings,
         )
 
+    def _rescore_dataset(
+        self,
+    ) -> tuple[Path | None, dict[str, tuple[EvaluationQuery, EvaluationGroundTruth]]]:
+        """``--rescore DATASET``'s path and its items by query id (none
+        without a DATASET: the saved gold answers score)."""
+        dataset = getattr(self.args, "rescore", None)
+        if not dataset:
+            return None, {}
+        try:
+            queries, ground_truths = EvaluationManager.load_data(dataset)
+        except (json.JSONDecodeError, EvaluationException) as e:
+            raise InvalidDatasetError(f"--rescore: {e}") from e
+        golds = {gt.query_id: gt for gt in ground_truths}
+        return Path(dataset), {
+            q.query_id: (
+                q,
+                golds.get(q.query_id)
+                or EvaluationGroundTruth(query_id=q.query_id, ground_truth=""),
+            )
+            for q in queries
+        }
+
+    async def _rescore(
+        self, grouped: dict[str, list[SavedRun]], local_outputs: Path
+    ) -> dict[str, list[SavedRun]]:
+        """Score every saved run's answers again with this run's evaluators,
+        save them as runs of this invocation's directory, and return them in
+        place of the saved ones."""
+        dataset_path, dataset = self._rescore_dataset()
+        console.rule("[bold]Re-scoring the saved answers[/bold]", style="blue")
+        managers: dict[bool, EvaluationManager] = {}
+        rescored: dict[str, list[SavedRun]] = {}
+        for label, runs in grouped.items():
+            rescored[label] = []
+            for run in runs:
+                # answer_match and graph_aware read the answers without
+                # their citation markers when the run's answers carried them.
+                cited = bool(
+                    ((run.manifest or {}).get("citations") or {}).get(
+                        "enabled", self.config.search.citations.enabled
+                    )
+                )
+                if cited not in managers:
+                    config = self.config.model_copy(deep=True)
+                    config.search.citations.enabled = cited
+                    managers[cited] = EvaluationManager(
+                        config=config,
+                        rag_chain=_no_answers(),
+                        providers=(
+                            self.evaluation_manager.providers
+                            if self.evaluation_manager is not None
+                            else self.providers
+                        ),
+                    )
+                    self.evaluation_manager = self.evaluation_manager or managers[cited]
+                rescored[label].append(
+                    await self._rescore_run(
+                        managers[cited],
+                        label,
+                        run,
+                        (dataset_path, dataset),
+                        local_outputs,
+                    )
+                )
+        return rescored
+
+    async def _rescore_run(
+        self,
+        manager: EvaluationManager,
+        label: str,
+        run: SavedRun,
+        dataset: tuple[
+            Path | None, dict[str, tuple[EvaluationQuery, EvaluationGroundTruth]]
+        ],
+        local_outputs: Path,
+    ) -> SavedRun:
+        """One saved run, scored again and saved."""
+        dataset_path, items = dataset
+        results = [result.model_copy(deep=True) for result in run.results]
+        queries: list[EvaluationQuery] = []
+        ground_truths: list[EvaluationGroundTruth] = []
+        for result in results:
+            metadata = dict(result.metadata)
+            category = result.category
+            if items:
+                if result.query_id not in items:
+                    raise InvalidDatasetError(
+                        f"--rescore: the dataset has no query '{result.query_id}' "
+                        f"of {run.path.name}"
+                    )
+                query, gold = items[result.query_id]
+                if query.question != result.question:
+                    raise InvalidDatasetError(
+                        f"--rescore: query '{result.query_id}' asks another "
+                        f"question in the dataset than in {run.path.name}"
+                    )
+                for key in _SAVED_EXPECTATIONS:
+                    metadata.pop(key, None)
+                # The dataset's metadata over the saved one; the run's own
+                # strategy and query flags stay.
+                metadata.update(
+                    {
+                        k: v
+                        for k, v in query.metadata.items()
+                        if k not in _RUN_METADATA or k not in metadata
+                    }
+                )
+                category = query.category or category
+            else:
+                gold = EvaluationGroundTruth(
+                    query_id=result.query_id,
+                    ground_truth=result.ground_truth,
+                    reference_sources=metadata.get("reference_sources") or [],
+                    expected_entities=metadata.get("expected_entities") or [],
+                    expected_relationships=(
+                        metadata.get("expected_relationships") or []
+                    ),
+                    assertions=metadata.get("assertions") or [],
+                )
+            result.metadata = metadata
+            result.category = category
+            queries.append(
+                EvaluationQuery(
+                    query_id=result.query_id,
+                    question=result.question,
+                    category=category,
+                    metadata=metadata,
+                )
+            )
+            ground_truths.append(gold)
+        old = run.summary
+        answer_usage = ((old.usage if old else None) or {}).get("answer_generation")
+        reports, summary = await manager.score_answers(
+            queries,
+            results,
+            ground_truths,
+            start_time=(
+                old.evaluation_start_time
+                if old and old.evaluation_start_time
+                else datetime.now()
+            ),
+            answer_usage=(
+                answer_usage
+                if isinstance(answer_usage, LLMUsage)
+                else LLMUsage.model_validate(answer_usage or {})
+            ),
+            dataset_path=dataset_path,
+            cli_args=vars(self.args),
+        )
+        summary.run_manifest = rescored_manifest(
+            run.manifest, summary.run_manifest or {}, run.path, dataset_path
+        )
+        summary.configuration["outputs_directory"] = self._run_target()
+        path = manager.save_results(
+            results=results,
+            reports=reports,
+            summary=summary,
+            outputs_dir=local_outputs,
+            label=label,
+        )
+        return SavedRun(
+            path=path,
+            strategy=label,
+            stamp=run.stamp,
+            results=results,
+            reports=reports,
+            summary=summary,
+        )
+
     async def _answer_and_score(
         self,
         s3_client: Any,
         work_dir: Path,
         local_outputs: Path,
         baseline: dict[str, list[SavedRun]] | None,
-    ) -> "_Measured":
+    ) -> _Measured:
         """Answer and score the dataset once per strategy and repeat."""
         assert self.rag_chain is not None
         eval_data_uri = self.args.data_path
@@ -1310,6 +1732,7 @@ class EvaluationRunner:
             or self.args.repeats > 1
             or bool(baseline)
             or closed_book
+            or bool(self._arms)
         )
         try:
             queries, ground_truths = self.evaluation_manager.load_data(
@@ -1357,6 +1780,16 @@ class EvaluationRunner:
             comparing=comparing,
         )
         managers = dict.fromkeys(strategies, self.evaluation_manager)
+        # Per run label, its strategy and its arm (None: the base config).
+        runs_of: dict[str, tuple[str, dict[str, Any] | None]] = {
+            strategy: (strategy, None) for strategy in strategies
+        }
+        for arm in self._arms:
+            manager = await self._arm_manager(arm, queries, strategies)
+            for strategy in strategies:
+                label = arm_label(strategy, arm["name"])
+                managers[label] = manager
+                runs_of[label] = (strategy, arm)
         if closed_book:
             # No retrieval: the answer model alone, scored by the same
             # evaluators (sharing the strategies' providers).
@@ -1367,16 +1800,19 @@ class EvaluationRunner:
                 providers=providers,
             )
 
-        def arm_queries(strategy: str) -> list[EvaluationQuery]:
+        def arm_queries(label: str) -> list[EvaluationQuery]:
             # The run's strategy overrides a per-item one: every run of a
             # comparison must answer the same queries the same way.
             if not comparing:
                 return queries
-            arm = (
+            strategy, config_arm = runs_of.get(label, (label, None))
+            arm: dict[str, Any] = (
                 {"search_strategy": strategy, "retrieval": "none"}
                 if strategy == CLOSED_BOOK_ARM
                 else {"search_strategy": strategy}
             )
+            if config_arm is not None and config_arm.get("suffix"):
+                arm["suffix"] = config_arm["suffix"]
             return [
                 q.model_copy(update={"metadata": {**q.metadata, **arm}})
                 for q in queries
@@ -1397,6 +1833,17 @@ class EvaluationRunner:
             repeat_extractions=(
                 self._repeat_extractions() if self.args.repeats > 1 else None
             ),
+            arms={
+                label: {
+                    "name": arm["name"],
+                    "overlay": arm["overlay"],
+                    "overlay_sha256": overlay_sha256(arm),
+                    "suffix": arm.get("suffix"),
+                }
+                for label, (_, arm) in runs_of.items()
+                if arm is not None
+            },
+            compared_runs=list(managers),
         )
         if context.run_order == "interleaved":
             await self._answer_interleaved(
@@ -1450,6 +1897,58 @@ class EvaluationRunner:
                 self._print_summary(summary, time.time() - run_start)
         return recorded
 
+    async def _arm_manager(
+        self,
+        arm: dict[str, Any],
+        queries: list[EvaluationQuery],
+        strategies: list[str],
+    ) -> EvaluationManager:
+        """The evaluation manager of an ``--arm``: its configuration (the
+        overlay over the run's), its own chain and the run's evaluators.
+        Its chain shares the base chain's query extraction cache (keyed by
+        prompt, model and question), so an arm whose overlay leaves the
+        extraction alone retrieves on the same keywords.
+
+        Raises:
+            ConfigurationError: The overlay is invalid, or the arm's
+                configuration lacks an extra or an endpoint its strategies
+                need (exit 2, before any answer).
+        """
+        config, warnings = arm_config(
+            self.config,
+            arm,
+            allow_unknown_keys=bool(getattr(self.args, "allow_unknown_keys", False)),
+        )
+        for warning in warnings:
+            logger.warning("%s", warning)
+        error = missing_extras_error(config, seeds=False) or missing_endpoints_error(
+            config,
+            {
+                role
+                for name in strategies
+                for role in strategy_roles(config, SearchStrategy(name))
+            },
+            f"--arm {arm['name']}",
+        )
+        if error:
+            raise ConfigurationError(error)
+        chain = (self.chain_factory or GraphRAGChain)(config)
+        self._arm_chains.append(chain)
+        shared = getattr(self.rag_chain, "_extractions", None)
+        if shared is not None and hasattr(chain, "_extractions"):
+            chain._extractions = shared
+        suffix = {"suffix": arm["suffix"]} if arm.get("suffix") else {}
+        await self._check_methodologies(
+            [
+                q.model_copy(update={"metadata": {**q.metadata, **suffix}})
+                for q in queries
+            ],
+            strategies,
+            chain,
+            f" (--arm {arm['name']})",
+        )
+        return EvaluationManager(config=config, rag_chain=chain)
+
     def _run_order(self) -> str:
         """``--run-order``, else ``evaluation.run_order``."""
         return str(
@@ -1479,8 +1978,8 @@ class EvaluationRunner:
         planned: list[tuple[str, int]],
         managers: dict[str, EvaluationManager],
         arm_queries: Callable[[str], list[EvaluationQuery]],
-        context: "_RunContext",
-        recorded: "_Measured",
+        context: _RunContext,
+        recorded: _Measured,
     ) -> None:
         """Answer every run of the comparison interleaved, query by query
         (``EvaluationManager.answer_interleaved``), then score each run."""
@@ -1539,8 +2038,8 @@ class EvaluationRunner:
         manager: EvaluationManager,
         run: Run,
         summary: EvaluationSummary,
-        context: "_RunContext",
-        recorded: "_Measured",
+        context: _RunContext,
+        recorded: _Measured,
     ) -> None:
         """Save one run's files and add it to the comparison's input."""
         reports, results = run
@@ -1552,10 +2051,21 @@ class EvaluationRunner:
             # the comparison warns on latency deltas across runs not
             # answered interleaved together.
             summary.run_manifest["run_id"] = self.run_id
+            # Which repeat it is: the interleaved runs share a start time,
+            # so a comparison rebuilt from the files pairs repeat r with
+            # repeat r by this, not by the files' random stamps.
+            summary.run_manifest["repeat"] = repeat
             if context.run_order is not None:
                 summary.run_manifest["run_order"] = context.run_order
             if context.repeat_extractions is not None:
                 summary.run_manifest["repeat_extractions"] = context.repeat_extractions
+            if strategy in context.arms:
+                # The configuration arm it ran under (--arm).
+                summary.run_manifest["arm"] = context.arms[strategy]
+            if context.arms:
+                # The runs in comparison order: the files' stamps do not
+                # order the arms of an interleaved run.
+                summary.run_manifest["compared_runs"] = context.compared_runs
         # The directory this run wrote to (--output-directory, or the config
         # default, and its run subdirectory).
         summary.configuration["outputs_directory"] = context.outputs_target
@@ -1564,6 +2074,7 @@ class EvaluationRunner:
             reports=reports,
             summary=summary,
             outputs_dir=context.local_outputs,
+            label=strategy if strategy in context.arms else None,
         )
         recorded.manifest = recorded.manifest or summary.run_manifest
         recorded.manifests.append((strategy, summary.run_manifest))
@@ -1581,7 +2092,7 @@ class EvaluationRunner:
         )
 
     def _baseline_pairs(
-        self, measured: "_Measured", baseline: dict[str, list[SavedRun]]
+        self, measured: _Measured, baseline: dict[str, list[SavedRun]]
     ) -> tuple[dict[str, str], list[str]]:
         """Each strategy's baseline label: ``baseline:<s>``, else the
         baseline's first strategy (warned about)."""
@@ -1606,7 +2117,7 @@ class EvaluationRunner:
 
     async def _compare(
         self,
-        measured: "_Measured",
+        measured: _Measured,
         baseline: dict[str, list[SavedRun]] | None,
         local_outputs: Path,
         elapsed: float,
@@ -1646,6 +2157,7 @@ class EvaluationRunner:
                 *check_answer_scoring(manifests),
                 *dataset_warnings(manifests),
                 *interleaving_warnings(manifests),
+                *citation_warnings(manifests),
             ]
         except EvaluationException as e:
             raise InvalidDatasetError(str(e)) from e
@@ -1668,6 +2180,7 @@ class EvaluationRunner:
                 categories=measured.categories,
                 prices=prices,
                 unmetered_rerank=unmetered,
+                resamples=self.config.evaluation.resamples,
             )
             rows = [
                 row
@@ -1678,12 +2191,35 @@ class EvaluationRunner:
                     prices,
                 )
             ]
+        elif arms_paired := arm_pairs(names):
+            # Each --arm run against the same strategy's base run, the
+            # base strategies against the first.
+            pairs = arms_paired
+            comparison = baseline_comparison(
+                {label: runs[label] for label in dict.fromkeys(pairs.values())},
+                {label: runs[label] for label in pairs},
+                pairs,
+                categories=measured.categories,
+                prices=prices,
+                unmetered_rerank=unmetered,
+                resamples=self.config.evaluation.resamples,
+            )
+            rows = [
+                row
+                for label, base in pairs.items()
+                for row in per_query_rows(
+                    {base: runs[base], label: runs[label]},
+                    measured.categories,
+                    prices,
+                )
+            ]
         else:
             comparison = paired_comparison(
                 runs,
                 categories=measured.categories,
                 prices=prices,
                 unmetered_rerank=unmetered,
+                resamples=self.config.evaluation.resamples,
             )
             rows = per_query_rows(runs, measured.categories, prices)
             pairs = dict.fromkeys(names[1:], names[0])
@@ -1768,7 +2304,7 @@ class EvaluationRunner:
         self._print_comparison(comparison, elapsed)
         return comparison, gate_failures
 
-    def _judge_manifest(self, measured: "_Measured") -> dict[str, Any] | None:
+    def _judge_manifest(self, measured: _Measured) -> dict[str, Any] | None:
         """The manifest the judge warnings read: a re-judge's judge is this
         run's evaluation model, compared with the saved runs' answer model."""
         if self._from_results is None and self._baseline_results is None:
@@ -1786,6 +2322,84 @@ class EvaluationRunner:
         }
 
 
+def _no_answers() -> Runnable[Any, Any]:
+    """The chain of a manager that only scores (``--rescore``)."""
+    from langchain_core.runnables import RunnableLambda
+
+    def refuse(inputs: Any) -> Any:
+        raise EvaluationException("re-scoring saved answers generates none")
+
+    return RunnableLambda(refuse)
+
+
+# The expectations the scoring wrote into a saved result's metadata, which a
+# --rescore dataset replaces.
+_SAVED_EXPECTATIONS = (
+    "answer_aliases",
+    "expected_entities",
+    "expected_relationships",
+    "reference_sources",
+    "assertions",
+)
+# The query settings a run answered with (its strategy and query flags):
+# a --rescore dataset does not overwrite them.
+_RUN_METADATA = frozenset(
+    {"search_strategy", "suffix", "search_type", "top_k", "retrieval_multiplier"}
+)
+# The manifest entries a re-score replaces: how the answers were scored.
+# What answered them (models, index, configuration, run order) stays.
+_SCORING_MANIFEST_KEYS = (
+    "answer_scoring",
+    "enabled_evaluators",
+    "dropped_evaluators",
+    "assertion_scoring",
+)
+_SCORING_MODEL_KEYS = (
+    "evaluation_judge",
+    "evaluation_embedding",
+    "answer_span",
+    "judge_effort",
+)
+
+
+def rescored_manifest(
+    saved: dict[str, Any] | None,
+    scored: dict[str, Any],
+    source: Path,
+    dataset_path: Path | None,
+) -> dict[str, Any]:
+    """The run manifest of a re-scored run: the saved one (what answered),
+    with the scoring entries of ``scored`` (the manifest the re-score
+    built) and a ``rescored`` record of when, from which file and by which
+    code; the dataset's entry too when ``--rescore`` read one."""
+    saved = dict(saved or {})
+    merged = {**saved, **{key: scored.get(key) for key in _SCORING_MANIFEST_KEYS}}
+    models = dict(saved.get("models") or {})
+    new_models = scored.get("models") or {}
+    models.update({key: new_models.get(key) for key in _SCORING_MODEL_KEYS})
+    judge = models.get("evaluation_judge")
+    answer = models.get("answer_generation")
+    models["judge_is_answer_model"] = (
+        model_id_value(judge) == model_id_value(answer)
+        if judge is not None and answer is not None
+        else None
+    )
+    merged["models"] = models
+    citations = dict(saved.get("citations") or {})
+    citations["scoring"] = (scored.get("citations") or {}).get("scoring")
+    merged["citations"] = citations
+    if dataset_path is not None:
+        merged["dataset"] = scored.get("dataset")
+    merged["rescored"] = {
+        "created_at": scored.get("created_at"),
+        "from": str(source),
+        "package_version": scored.get("package_version"),
+        "git_sha": scored.get("git_sha"),
+        "dataset": str(dataset_path) if dataset_path is not None else None,
+    }
+    return merged
+
+
 # The run summary fields the JSON result lists per run.
 _SUMMARY_FIELDS = {
     "total_queries",
@@ -1799,6 +2413,7 @@ _SUMMARY_FIELDS = {
     "answer_span_statistics",
     "guardrail_blocked_counts",
     "structured_statistics",
+    "iterative_statistics",
     "usage",
 }
 
@@ -1815,6 +2430,10 @@ class _RunContext(BaseModel):
     # resampled their extractions (None: one repeat).
     run_order: str | None = None
     repeat_extractions: str | None = None
+    # Per --arm run label, what its manifest records of the arm; the run
+    # labels in comparison order.
+    arms: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    compared_runs: list[str] = Field(default_factory=list)
 
 
 class _Measured(BaseModel):
@@ -1838,6 +2457,7 @@ def main() -> None:
     try:
         cli = CommandLineInterface()
         args = cli.parse_args()
+        _load_evaluation()
 
         with exit_on_config_error():
             config = apply_provider_arguments(
@@ -1903,7 +2523,9 @@ def main() -> None:
         logger.error("Invalid evaluation dataset: %s", e)
         sys.exit(EXIT_USAGE)
 
-    except ConfigurationError as e:
+    except (ConfigurationError, IndexNotFoundError) as e:
+        # A setting or a namespace no query of the run can be answered
+        # with (the warm-up raises it): a usage error, before the dataset.
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         logger.error("Evaluation configuration error: %s", e)
         sys.exit(EXIT_USAGE)
