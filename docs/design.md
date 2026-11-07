@@ -183,8 +183,9 @@ unified_kg_rag/
 │  ├─ providers.py      #   Providers: the per-run bundle of model and store providers
 │  └─ provider_registry.py # @register_provider: builders keyed by role and kind
 ├─ application/         # orchestration + entry points
-│  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning, prepare-benchmark,
-│  │                    #   run-mcp-server (mcp_tools, mcp_server: §8.4),
+│  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning/describe,
+│  │                    #   prepare-benchmark, run-mcp-server (mcp_tools, mcp_server: §8.4),
+│  │                    #   run-console + console/ (the web console's server, jobs, APIs: §10.1),
 │  │                    #   display (rich console helpers)
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages, IncrementalIndexer,
 │  │                    #   namespace lease, extraction-record store, stage cache
@@ -192,7 +193,8 @@ unified_kg_rag/
 │  │                    #   point and rewinds in resume) and run metrics
 │  │                    #   (pipeline_metrics), the summary-tree stage (summary_tree_stage)
 │  ├─ storage/          #   IndexingManager (indexer fan-out) and its collaborators:
-│  │                    #   cross_run_merge, removal, reannotation, stored_items
+│  │                    #   cross_run_merge, removal, reannotation, stored_items;
+│  │                    #   inspection (describe_namespace, export_graph: run-describe)
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output), its query
 │  │                    #   processing (query_processing) and filter-key checks
 │  │                    #   (filter_validation), methodology_check (what a namespace holds),

@@ -478,7 +478,7 @@ questions:
 
 | Arm against `naive` | Answers | Retrieval | Latency and cost |
 |---|---|---|---|
-| `tree` | `answer_contains` +8.0 points [+3.0, +14.0] (0.62 to 0.70), EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1]: all significant | recall@5 -0.6 [-3.2, +2.0], n.s.; MRR -1.9 [-4.0, -0.3]: the passages come first, and the 5.2 summaries a context gains follow them | +1.2 s [+0.9, +1.4] (4.1 s to 5.3 s); +$0.0060 a query ($0.0182 to $0.0243), the summaries' 2,922 input tokens |
+| `tree` | `answer_contains` +8.0 points [+3.0, +14.0] (0.62 to 0.70), EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1]: each significant on its own (95% intervals, not adjusted for the several metrics read) | recall@5 -0.6 [-3.2, +2.0], n.s.; MRR -1.9 [-4.0, -0.3]: the passages come first, and the 5.2 summaries a context gains follow them | +1.2 s [+0.9, +1.4] (4.1 s to 5.3 s); +$0.0060 a query ($0.0182 to $0.0243), the summaries' 2,922 input tokens |
 | `mix` | `answer_contains` +19.0 [+11.0, +27.0], EM +15.0 [+8.0, +23.0] | recall@5 +2.5, n.s. | +4.3 s; +$0.0407 a query |
 | `local` | `answer_contains` +18.0 [+7.0, +29.0], EM +10.0 [+1.0, +19.0] | recall@5 +2.0, n.s. | +5.0 s; +$0.0266 a query |
 
@@ -731,6 +731,25 @@ excludes zero.
   repaired copy.
 - **Costs are upper bounds** when the prompt cache hit, and they use the
   dated list prices above.
+- **Earlier answer prompts and run order.** Every run above predates
+  three changes to what a run with today's defaults does. Answers now cite
+  their context with `[n]` markers (`search.citations.enabled`, on since
+  #627): the measured answers were written without them, from a context
+  without numbered sections, so their text, length and the judges'
+  verdicts may differ, and no run has compared citations on and off yet.
+  Community reports now follow an evidence-only prompt with data
+  references (#618), and split communities stay parents of their pieces:
+  the `global` and `drift` measurements read reports of the earlier prompt
+  and hierarchy. And `run-eval` now answers a comparison interleaved
+  (#620): these arms ran one after another (see *Latency* above), so a
+  latency delta here carries the drift between them, which an interleaved
+  run spreads over every arm.
+- **Unadjusted intervals.** The intervals here are per metric, 95% each,
+  with no correction for the several metrics and arms one run reads (the
+  Holm adjustment `run-eval` reports came later, #620): a single
+  "significant" metric among many is weaker evidence than its interval
+  alone suggests. Where a section says a Holm correction, it applied one
+  by hand.
 - **Settings no run compared.** `search.local_search.type_quota` (only its
   entity and relationship floors follow MS GraphRAG),
   `search.local_search.entity_candidates_per_focus`,

@@ -131,7 +131,8 @@ measure what misrouting costs. Nothing is downloaded or committed.
 prepare-benchmark structural --output-directory bench/structural --size medium --seed 0
 run-ingestion --config-path bench/structural/structural-config.yaml \
   --source-directory bench/structural/corpus --suffix structural
-run-eval --data-path bench/structural/eval_data.json --suffix structural \
+run-eval --config-path bench/structural/structural-config.yaml \
+  --data-path bench/structural/eval_data.json --suffix structural \
   --search-strategy structured,local,mix --repeats 3
 ```
 
