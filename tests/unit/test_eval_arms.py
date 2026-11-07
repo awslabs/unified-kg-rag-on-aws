@@ -96,3 +96,47 @@ def test_arm_usage_errors(argv: list[str], message: str, tmp_path, capsys) -> No
         run_evaluation.EvaluationRunner(args, None, Config())
     assert exc.value.code == 2
     assert message in capsys.readouterr().err
+
+
+class _Chain:
+    """A chain with an extraction cache of its own."""
+
+    def __init__(self, config: Config) -> None:
+        self.config = config
+        self._extractions = object()
+
+
+@pytest.mark.parametrize(
+    ("overlay", "shared"),
+    [
+        ({}, True),  # A/A: the same extraction
+        ({"search": {"citations": {"enabled": False}}}, True),
+        # The extraction runs on the default tier: the fast one is not its.
+        ({"aws": {"bedrock": {"fast_effort": "high"}}}, True),
+        ({"aws": {"bedrock": {"default_effort": "low"}}}, False),
+        ({"search": {"output_ceilings": {"query_extraction": 64}}}, False),
+        ({"aws": {"bedrock": {"region_name": "eu-west-1"}}}, False),
+        ({"models": {"roles": {"entity_extraction": "fast"}}}, False),
+        ({"providers": {"llm": {"temperature": 0.7}}}, False),
+        # A cache of 0 in the overlay is the arm's: nothing kept or shared.
+        ({"search": {"query_extraction_cache_size": 0}}, False),
+    ],
+)
+async def test_an_arm_shares_extractions_only_when_they_would_be_the_same(
+    overlay: dict, shared: bool, tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "o.yaml"
+    path.write_text(yaml.safe_dump(overlay))
+    data = tmp_path / "x.json"
+    data.write_text("[]")
+    monkeypatch.setattr(
+        run_evaluation, "EvaluationManager", lambda **kw: kw, raising=False
+    )
+    args = run_evaluation.CommandLineInterface().parser.parse_args(
+        ["--data-path", str(data), "--arm", f"a={path}"]
+    )
+    base = _Chain(Config())
+    runner = run_evaluation.EvaluationRunner(args, base, Config(), chain_factory=_Chain)
+    manager = await runner._arm_manager(args.arm[0], [], [])
+    chain = manager["rag_chain"]
+    assert (chain._extractions is base._extractions) is shared

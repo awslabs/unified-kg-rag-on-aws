@@ -285,8 +285,15 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
 - 실행 매니페스트는 비교군 실행마다 `arm`(이름, 오버레이 경로와 sha256, suffix)과
   `compared_runs`를 기록하므로 `--from-results`가 같은 짝을 다시 만듭니다. 비교군끼리
   `search.citations.enabled`가 다르면 답변 프롬프트도 다르다고 경고합니다.
+- 오버레이가 질의 추출(질문마다 한 번 호출하는 엔터티와 키워드)을 바꾸지 않으면 비교군은 기본
+  실행의 추출 결과로 검색합니다. 추출 모델, 기본 계층의 추론 강도(effort),
+  `search.output_ceilings.query_extraction`, LLM 제공자(kind, `base_url`, temperature, 출력
+  상한), Bedrock 리전을 바꾸거나 `search.query_extraction_cache_size: 0`을 지정한 비교군은 직접
+  추출합니다.
 - 빈 오버레이(위의 `aa.yaml`)는 A/A 비교군입니다. 그 차이가 이 데이터셋과 반복 횟수에서 지표마다의
-  잡음 수준입니다.
+  잡음 수준입니다. 기본 실행과 추출 결과를 공유하므로 이 잡음 수준에는 추출의 잡음이 빠집니다.
+  `search: {query_extraction_cache_size: 0}` 오버레이로 만든 A/A 비교군은 직접 추출해 그 잡음을
+  포함하며, 질문과 반복마다 추출 호출이 한 번 더 듭니다.
 - 비교군 하나는 전략 하나만큼(답변과 워밍업) 들며, 나열한 전략 수만큼 곱해집니다.
 
 ## 단언문, 길이 통제, 클로즈드북 기준선

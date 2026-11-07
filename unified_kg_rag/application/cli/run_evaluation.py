@@ -312,6 +312,29 @@ def _model_id(value: str) -> str:
     return value.strip()
 
 
+def extraction_settings(config: Config) -> dict[str, Any]:
+    """What a query entity or keyword extraction depends on besides its
+    cache key (prompt, model, templates, question, language): the call's
+    reasoning effort and output ceiling, and the provider that answers it.
+    An arm differing in any of them extracts on its own instead of sharing
+    the base chain's extractions."""
+    model = config.model_id(ModelRole.ENTITY_EXTRACTION)
+    bedrock = config.aws.bedrock
+    llm = config.providers.llm
+    return {
+        "model": model,
+        "effort": bedrock.tier_effort(config.model_tier(model)),
+        "output_ceiling": config.search.output_ceilings.query_extraction,
+        "provider": llm.kind,
+        "base_url": llm.base_url,
+        "temperature": llm.temperature,
+        "max_output_tokens": llm.max_output_tokens,
+        "region": config.aws.bedrock_region,
+        "global_profile": bedrock.enable_global_profile,
+        "model_overrides": bedrock.model_overrides.get(model),
+    }
+
+
 def with_judge_model(config: Config, model_id: str | None) -> Config:
     """``config`` with ``models.roles.evaluation`` set to ``model_id``."""
     if not model_id:
@@ -1906,8 +1929,9 @@ class EvaluationRunner:
         """The evaluation manager of an ``--arm``: its configuration (the
         overlay over the run's), its own chain and the run's evaluators.
         Its chain shares the base chain's query extraction cache (keyed by
-        prompt, model and question), so an arm whose overlay leaves the
-        extraction alone retrieves on the same keywords.
+        prompt, model and question) when its overlay leaves the extraction
+        alone (``extraction_settings``) and keeps the cache on, so it
+        retrieves on the same keywords; otherwise it extracts on its own.
 
         Raises:
             ConfigurationError: The overlay is invalid, or the arm's
@@ -1935,7 +1959,12 @@ class EvaluationRunner:
         chain = (self.chain_factory or GraphRAGChain)(config)
         self._arm_chains.append(chain)
         shared = getattr(self.rag_chain, "_extractions", None)
-        if shared is not None and hasattr(chain, "_extractions"):
+        if (
+            shared is not None
+            and hasattr(chain, "_extractions")
+            and config.search.query_extraction_cache_size > 0
+            and extraction_settings(config) == extraction_settings(self.config)
+        ):
             chain._extractions = shared
         suffix = {"suffix": arm["suffix"]} if arm.get("suffix") else {}
         await self._check_methodologies(

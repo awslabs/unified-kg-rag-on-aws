@@ -331,8 +331,18 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   sha256, suffix) and `compared_runs`, so `--from-results` rebuilds the
   same pairs. A comparison whose arms differ in `search.citations.enabled`
   warns that the answer prompt differs too.
+- An arm retrieves on the base runs' query extractions (entities and
+  keywords, one call per question) when its overlay leaves them alone; one
+  that changes the extraction's model, the default tier's effort,
+  `search.output_ceilings.query_extraction`, the LLM provider (kind,
+  `base_url`, temperature, output cap), the Bedrock region or sets
+  `search.query_extraction_cache_size: 0` extracts on its own.
 - An empty overlay (`aa.yaml` above) is an A/A arm: its deltas are the
-  noise floor of each metric for this dataset and repeat count.
+  noise floor of each metric for this dataset and repeat count. It shares
+  the base runs' extractions, so that floor leaves out the extraction's
+  noise; an A/A overlay of `search: {query_extraction_cache_size: 0}`
+  extracts on its own and includes it, at one extra extraction call per
+  question and repeat.
 - Each arm costs what a strategy costs (its answers and warm-up), times
   the strategies listed.
 
