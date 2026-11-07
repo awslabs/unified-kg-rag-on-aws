@@ -144,7 +144,7 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 ```
 
 두 경로 모두 `s3://` URI를 받으므로 `run-eval`도 CDK 스택에서 일회성 태스크로
-실행할 수 있습니다([After deploy](../../iac/README.md#5-evaluate-from-inside-the-vpc)).
+실행할 수 있습니다([After deploy](../../iac/README.md#5-evaluate-from-inside-the-vpc), 영문).
 결과는 실행이 끝날 때 `aws.s3.encryption` 설정으로 올리며, 업로드가 실패하면 0이 아닌
 코드로 끝나고 로컬 파일을 남깁니다(경로를 출력). S3에는 설정의 `aws.profile_name` /
 `aws.region_name`으로 접속하며, 셸의 `AWS_PROFILE` / `AWS_REGION`은 설정이 비워 둔 경우에만

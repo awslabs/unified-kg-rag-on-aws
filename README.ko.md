@@ -106,9 +106,9 @@ UKR__LOGGING__LEVEL=WARNING uv run run-rag --backend local --search-strategy mix
 
 ## AWS에 배포(선택)
 
-[`iac/`](./iac/README.md)의 AWS CDK 앱이 스택 전체를 만듭니다. 엔드포인트를 갖춘 VPC, Neptune, OpenSearch, DynamoDB 문서 상태 테이블, S3 캐시 버킷, ECS Fargate 데이터 플레인, Step Functions 수집 파이프라인, CloudWatch 대시보드와 경보, 선택적 Bedrock Guardrail이 포함됩니다. `cdk synth`, `cdk bootstrap`, `cdk deploy --all` 명령과 `-c key=value` 옵션 전체는 [`iac/README.md`](./iac/README.md#quick-start)(영문)에 있습니다. 저장소는 VPC 안에서만 접근할 수 있으므로 배포된 Fargate 태스크가 CLI를 실행합니다([After deploy](./iac/README.md#after-deploy)).
+[`iac/`](./iac/README.md)(영문)의 AWS CDK 앱이 스택 전체를 만듭니다. 엔드포인트를 갖춘 VPC, Neptune, OpenSearch, DynamoDB 문서 상태 테이블, S3 캐시 버킷, ECS Fargate 데이터 플레인, Step Functions 수집 파이프라인, CloudWatch 대시보드와 경보, 선택적 Bedrock Guardrail이 포함됩니다. `cdk synth`, `cdk bootstrap`, `cdk deploy --all` 명령과 `-c key=value` 옵션 전체는 [`iac/README.md`](./iac/README.md#quick-start)(영문)에 있습니다. 저장소는 VPC 안에서만 접근할 수 있으므로 배포된 Fargate 태스크가 CLI를 실행합니다([After deploy](./iac/README.md#after-deploy), 영문).
 
-> **비용과 정리.** 코퍼스에 비례해 늘어나는 비용은 모델 호출입니다. 짧은 문단 3,318개(약 28만 단어)의 인덱스를 기본 모델로 만드는 데 Bedrock 호출 16,069번, 2026년 11월 정가 기준 $371.64가 들었고, 질의 비용은 `ppr`의 $0.016부터 `mix`·`global`의 약 $0.06까지였습니다([측정 방법](./docs/concepts/defaults-and-evidence.md#how-the-measurements-were-run)(영문), [비용 조절 수단](./docs/guides/ingest.ko.md#비용-조절-수단)). Neptune과 OpenSearch는 시간 단위로 과금되며, `public` 네트워크 모드에서는 NAT 게이트웨이 비용이 추가됩니다. 기본 `dev` 환경은 `cdk destroy --all`로 정리되지만, dev가 아닌 환경은 기본적으로 상태 저장소를 보존하고 삭제 방지를 켭니다. 프로덕션에 쓰기 전에 [`iac/README.md`](./iac/README.md)의 강화 옵션(`use_cmk`, `deletion_protection`, 다중 AZ 구성, `vpc_flow_logs`)을 검토하세요.
+> **비용과 정리.** 코퍼스에 비례해 늘어나는 비용은 모델 호출입니다. 짧은 문단 3,318개(약 28만 단어)의 인덱스를 기본 모델로 만드는 데 Bedrock 호출 16,069번, 2026년 11월 정가 기준 $371.64가 들었고, 질의 비용은 `ppr`의 $0.016부터 `mix`·`global`의 약 $0.06까지였습니다([측정 방법](./docs/concepts/defaults-and-evidence.md#how-the-measurements-were-run)(영문), [비용 조절 수단](./docs/guides/ingest.ko.md#비용-조절-수단)). Neptune과 OpenSearch는 시간 단위로 과금되며, `public` 네트워크 모드에서는 NAT 게이트웨이 비용이 추가됩니다. 기본 `dev` 환경은 `cdk destroy --all`로 정리되지만, dev가 아닌 환경은 기본적으로 상태 저장소를 보존하고 삭제 방지를 켭니다. 프로덕션에 쓰기 전에 [`iac/README.md`](./iac/README.md)(영문)의 강화 옵션(`use_cmk`, `deletion_protection`, 다중 AZ 구성, `vpc_flow_logs`)을 검토하세요.
 
 ## 문서 안내
 
@@ -132,7 +132,7 @@ UKR__LOGGING__LEVEL=WARNING uv run run-rag --backend local --search-strategy mix
 - 본인의 AWS 계정에서 본인의 리소스를 대상으로 실행하세요. 배포 환경의 IAM 정책, 네트워크 구성, 데이터 분류, 최종 사용자 인증은 사용자 책임입니다.
 - 선택 사항인 CDK 스택(`iac/`)은 안전한 기본값(프라이빗 VPC 격리, AWS 관리형 키 또는 `use_cmk`로 켜는 고객 관리형 KMS 키를 이용한 저장 데이터 암호화, TLS 강제, 최소 권한 IAM, PII·프롬프트 공격 필터링용 선택적 Bedrock Guardrail)을 제공하지만, 배포 책임은 사용자에게 있으므로 환경에 맞게 검토해야 합니다.
 - 프로덕션에 쓰기 전에 Bedrock Guardrail(`aws.bedrock.guardrail`)을 켜고, 용도에 맞는 호출 제한과 모니터링을 적용하세요.
-- 보안 이슈는 공개 이슈로 올리지 말고 [SECURITY.md](./SECURITY.md)의 절차를 따라 신고하세요.
+- 보안 이슈는 공개 이슈로 올리지 말고 [SECURITY.md](./SECURITY.md)(영문)의 절차를 따라 신고하세요.
 
 ## 기여
 

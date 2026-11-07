@@ -2,16 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 """Check the documentation's links, fragments and EN/KO structure.
 
-Every tracked ``*.md`` file is scanned for relative links and images: the
-target must exist and be tracked by Git (a file, or a directory holding one;
-not through a tracked symlink to an untracked file), and a ``#fragment`` into a Markdown file must match one of its
-headings (GitHub slug rules, duplicate headings get ``-1``, ``-2``...) or an
-``<a id>``/``<a name>``. Code and configuration under ``unified_kg_rag/``,
-``scripts/`` and ``iac/`` that cite ``docs/*.md`` paths or this repository's
-``blob/main/docs/...#fragment`` URLs are checked the same way. Each EN/KO pair in
-:data:`TRANSLATED_PAGES` must keep the same structure, unless the Korean page
-carries :data:`LAG_NOTE`. ``tests/unit/test_docs_links.py`` and
-``tests/unit/test_docs_translations.py`` run these checks in CI.
+Every tracked ``*.md`` file is scanned for relative links, images,
+``<a href>`` and reference-style link definitions: the target must exist and
+be tracked by Git (a file, or a directory holding one; not through a tracked
+symlink to an untracked file), and a ``#fragment`` into a Markdown file must
+match one of its headings (GitHub slug rules, duplicate headings get ``-1``,
+``-2``...) or an ``<a id>``/``<a name>``. An inline code span that names a
+repository path (``unified_kg_rag/...``, ``docs/...``, a package layer such as
+``domain/models/config.py``, a module such as ``ports/__init__``) must name a
+tracked file or directory. Code and configuration under :data:`CODE_DIRS` and
+:data:`CODE_FILES` that cite ``docs/*.md`` paths or this repository's
+``blob/main/docs/...#fragment`` URLs are checked the same way. Each EN/KO pair
+in :data:`TRANSLATED_PAGES` must keep the same structure (headings, code
+blocks, table rows, link targets, inline code spans; every number of the
+English page in the Korean one), its Korean page must link the Korean twin of
+a translated page and mark a link to an English-only page "(영문)", unless the
+Korean page carries :data:`LAG_NOTE`. ``tests/unit/test_docs_links.py`` and
+``tests/unit/test_docs_translations.py`` run these checks in CI, and
+``tests/unit/test_docs_facts.py`` checks the counts and lists the docs state
+against the code.
 
 Usage:
     uv run python scripts/check_docs.py   # exit 1 and list every failure
@@ -54,7 +63,15 @@ TRANSLATED_PAGES = [
 LAG_NOTE = "이 번역은 영문판보다 늦을 수 있습니다"
 
 REPO_URL = "https://github.com/awslabs/unified-kg-rag-on-aws/blob/main/"
-CODE_DIRS = ("unified_kg_rag", "scripts", "iac")
+CODE_DIRS = ("unified_kg_rag", "scripts", "iac", "tests", ".github", "docker")
+# Root files outside CODE_DIRS whose docs/*.md citations are checked too.
+CODE_FILES = ("config-template.yaml", "pyproject.toml")
+# Files whose doc paths are the checker's own test inputs, not citations.
+CITATION_FIXTURES = (
+    "tests/unit/test_changelog_section.py",
+    "tests/unit/test_docs_links.py",
+    "tests/unit/test_docs_translations.py",
+)
 SKIP_PARTS = {".git", ".venv", "node_modules", "references", "cdk.out"}
 
 _FENCE = re.compile(r"(`{3,}|~{3,})")
@@ -68,9 +85,50 @@ _TARGET = r"\(\s*(<[^>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:\s+[\"'(][^)]*)
 _IMAGE = re.compile(r"!\[[^\[\]]*\]" + _TARGET)
 _LINK = re.compile(r"(?<!!)\[(?:[^\[\]]|\[[^\[\]]*\])*\]" + _TARGET)
 _IMG_SRC = re.compile(r"<img\s[^>]*?\bsrc\s*=\s*[\"']([^\"']+)[\"']", re.I)
+_A_HREF = re.compile(r"<a\s[^>]*?\bhref\s*=\s*[\"']([^\"']+)[\"']", re.I)
+# A reference-style link definition: [label]: target "title".
+_REF_DEF = re.compile(r"^ {0,3}\[[^\]]+\]:[ \t]*(<[^>\n]*>|\S+)", re.M)
+# An inline code span's text.
+_CODE_TEXT = re.compile(r"(`+)(?!`)([\s\S]*?)(?<!`)\1(?!`)")
+# A code span that names a repository path: it starts at a top-level
+# directory (or a package layer, read under unified_kg_rag/) and holds no
+# placeholder, glob or space.
+_PATH_SPAN = re.compile(r"[\w.-]+/(?:[\w.-]+/)*[\w.-]*(?:#[\w-]+)?")
+_PATH_ROOTS = (
+    "unified_kg_rag/",
+    "scripts/",
+    "iac/",
+    "docs/",
+    "tests/",
+    "docker/",
+    ".github/",
+    "assets/",
+)
+_PACKAGE_LAYERS = (
+    "domain/",
+    "adapters/",
+    "application/",
+    "ports/",
+    "shared/",
+    "evaluation/",
+)
+# Code spans under those roots that are not paths of this repository: an
+# example mount, a metric namespace, an example file name and two files of
+# the upstream libraries the overview names relative to their own roots.
+EXTERNAL_PATHS = frozenset(
+    {
+        "docker/ontology/procure.ttl",
+        "unified_kg_rag/query",
+        "docs/Terms.pdf",
+        # Split so the citation check of this file does not read it as ours.
+        "docs/index/" "byog.md",
+        "evaluation/eval_rag_quality.py",
+    }
+)
 _SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
-# docs/<path>.md[#fragment] inside code, docstrings, comments and YAML.
-_CODE_CITE = re.compile(r"(?<![\w-])docs/[\w./-]+?\.md(?:#[^\s\"'`)\]>,;]+)?")
+# docs/<path>.md[#fragment] inside code, docstrings, comments and YAML. A
+# heading id holds no "." (slugs drop it), so a sentence's full stop ends it.
+_CODE_CITE = re.compile(r"(?<![\w-])docs/[\w./-]+?\.md(?:#[^\s\"'`)\]>,;.]+)?")
 _TOKEN_START = re.compile(r"[\s\"'`(\[<=]")
 
 
@@ -142,11 +200,9 @@ def fragments(path: Path) -> frozenset[str]:
     return frozenset(out)
 
 
-def links(text: str) -> list[tuple[int, str, bool]]:
-    """The ``(line, target, is_image)`` of every link outside code.
-
-    Paragraphs are scanned whole, so a link whose text wraps is found.
-    """
+def _paragraphs(text: str) -> list[tuple[int, str]]:
+    """The ``(first line, text)`` of each paragraph outside fenced code, with
+    code spans and comments blanked (offsets and newlines kept)."""
     paragraphs: list[list[tuple[int, str]]] = []
     for number, line in prose_lines(text):
         if not line.strip():
@@ -157,14 +213,25 @@ def links(text: str) -> list[tuple[int, str, bool]]:
             paragraphs.append([(number, line)])
     out = []
     for paragraph in paragraphs:
-        first = paragraph[0][0]
         body = "\n".join(line for _, line in paragraph)
-        # Blank code and comments out, keeping offsets and newlines.
         for pattern in (_CODE_SPAN, _COMMENT):
             body = pattern.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), body)
+        out.append((paragraph[0][0], body))
+    return out
+
+
+def links(text: str) -> list[tuple[int, str, bool]]:
+    """The ``(line, target, is_image)`` of every link outside code.
+
+    Paragraphs are scanned whole, so a link whose text wraps is found.
+    """
+    out = []
+    for first, body in _paragraphs(text):
         found = [(m.start(), m.group(1), True) for m in _IMAGE.finditer(body)]
         found += [(m.start(), m.group(1), False) for m in _LINK.finditer(body)]
         found += [(m.start(), m.group(1), True) for m in _IMG_SRC.finditer(body)]
+        found += [(m.start(), m.group(1), False) for m in _A_HREF.finditer(body)]
+        found += [(m.start(), m.group(1), False) for m in _REF_DEF.finditer(body)]
         for start, target, image in sorted(found):
             out.append((first + body.count("\n", 0, start), target.strip("<>"), image))
     return out
@@ -224,6 +291,37 @@ def _check_target(
             report.failures.append(f"{where}: missing fragment #{fragment} in {shown}")
 
 
+def code_paths(text: str) -> list[tuple[int, str]]:
+    """The ``(line, path)`` of every inline code span outside fences that
+    names a repository path (:data:`_PATH_ROOTS`, :data:`_PACKAGE_LAYERS`)."""
+    out = []
+    for number, line in prose_lines(text):
+        for match in _CODE_TEXT.finditer(_COMMENT.sub("", line)):
+            span = match.group(2).strip()
+            if not _PATH_SPAN.fullmatch(span):
+                continue
+            path = span.partition("#")[0]
+            if path.startswith(_PATH_ROOTS + _PACKAGE_LAYERS):
+                out.append((number, path))
+    return out
+
+
+def _path_exists(root: Path, path: str, tracked: set[Path]) -> bool:
+    """Whether a code span's path is tracked: as written, under the package
+    for a layer path, or as a module (``x/y`` for ``x/y.py``, ``x/y.attr``)."""
+    bases = [root / "unified_kg_rag"] if path.startswith(_PACKAGE_LAYERS) else []
+    bases.append(root)
+    stem = path.rstrip("/")
+    candidates = [stem, f"{stem}.py"]
+    if "." in stem.rsplit("/", 1)[-1]:
+        candidates.append(stem.rsplit(".", 1)[0] + ".py")
+    return any(
+        (base / c).exists() and _is_tracked((base / c).resolve(), tracked)
+        for base in bases
+        for c in candidates
+    )
+
+
 def check_links(root: Path = REPO_ROOT) -> Report:
     """Check Markdown links and images, then code-cited doc paths."""
     report = Report()
@@ -241,10 +339,23 @@ def check_links(root: Path = REPO_ROOT) -> Report:
                 continue
             report.counts["images" if image else "links"] += 1
             _check_target(root, md, f"{rel}:{number}", target, base, report, tracked)
+        for number, code_path in code_paths(md.read_text(encoding="utf-8")):
+            if code_path in EXTERNAL_PATHS:
+                continue
+            report.counts["code paths"] += 1
+            if not _path_exists(root, code_path, tracked):
+                report.failures.append(
+                    f"{rel}:{number}: missing code path: {code_path}"
+                )
     code = [
         p
         for p in files
-        if p.suffix != ".md" and p.relative_to(root).parts[0] in CODE_DIRS
+        if p.suffix != ".md"
+        and (
+            p.relative_to(root).parts[0] in CODE_DIRS
+            or p.relative_to(root).as_posix() in CODE_FILES
+        )
+        and p.relative_to(root).as_posix() not in CITATION_FIXTURES
     ]
     for path in code:
         try:
@@ -299,7 +410,84 @@ def structure(text: str, page: Path, root: Path) -> dict[str, object]:
         "fenced code blocks": blocks,
         "table rows": rows,
         "link targets": targets,
+        "inline code": inline_code(text),
     }
+
+
+def _prose(text: str) -> str:
+    """The text outside fenced code blocks and HTML comments."""
+    return _COMMENT.sub(" ", "\n".join(line for _, line in prose_lines(text)))
+
+
+def inline_code(text: str) -> set[str]:
+    """The distinct inline code spans, whitespace collapsed and ``<...>``
+    placeholders (translated) blanked."""
+    return {
+        re.sub(r"<[^<>]*>", "<>", re.sub(r"\s+", " ", m.group(2).strip()))
+        for m in _CODE_TEXT.finditer(_prose(text))
+    }
+
+
+_NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?")
+# Korean writes 100,000 as 10만.
+_MAN = re.compile(r"(\d+(?:\.\d+)?)만")
+
+
+def numbers(text: str, korean: bool = False) -> set[str]:
+    """The distinct numbers of the prose outside code and link targets,
+    thousands separators dropped (and ``N만`` read as ``N * 10,000``)."""
+    prose = _CODE_TEXT.sub(" ", _prose(text))
+    prose = re.sub(r"\]\([^)]*\)", "]", re.sub(r"<[^>]+>", " ", prose))
+    if korean:
+        prose = _MAN.sub(lambda m: f"{round(float(m.group(1)) * 10000)}", prose)
+    return {n.replace(",", "") for n in _NUMBER.findall(prose)}
+
+
+_LINK_TEXT = re.compile(r"(?<!!)\[((?:[^\[\]]|\[[^\[\]]*\])*)\]" + _TARGET)
+# Where a Korean clause ends: a table cell, or a sentence's full stop.
+_CLAUSE_END = re.compile(r"\||(?<=[다요])\.(?=\s|$)")
+ENGLISH_MARK = "영문"
+
+
+def korean_link_problems(text: str, page: Path, root: Path) -> list[str]:
+    """Links of a Korean page that skip a Korean twin, or that reach an
+    English-only page without "(영문)" in the same clause."""
+    translated = {f"{p}.md" for p in TRANSLATED_PAGES}
+    stem = page.relative_to(root).as_posix().removesuffix(".ko.md")
+    rel_page = page.relative_to(root).as_posix()
+    problems = []
+    for first, paragraph in _paragraphs(text):
+        for m in _LINK_TEXT.finditer(paragraph):
+            path = m.group(2).strip("<>").partition("#")[0]
+            if not path.endswith(".md") or _SCHEME.match(path):
+                continue
+            try:
+                rel = (page.parent / unquote(path)).resolve()
+                rel_s = rel.relative_to(root.resolve()).as_posix()
+            except ValueError:
+                continue
+            if rel_s.endswith(".ko.md") or rel_s == f"{stem}.md":
+                continue
+            where = f"{rel_page}:{first + paragraph.count(chr(10), 0, m.start())}"
+            if rel_s in translated:
+                if m.group(1).strip() != "English":
+                    problems.append(
+                        f"{where}: links {rel_s}, which has a Korean twin: "
+                        f"link {rel_s.removesuffix('.md')}.ko.md"
+                    )
+                continue
+            starts = [0] + [e.end() for e in _CLAUSE_END.finditer(paragraph)]
+            start = max(x for x in starts if x <= m.start())
+            end = next(
+                (e.start() for e in _CLAUSE_END.finditer(paragraph, m.end())),
+                len(paragraph),
+            )
+            if ENGLISH_MARK not in paragraph[start:end]:
+                problems.append(
+                    f"{where}: link to the English-only {rel_s} needs "
+                    f'"({ENGLISH_MARK})" in its clause'
+                )
+    return problems
 
 
 def check_translation(page: str, root: Path = REPO_ROOT) -> Report:
@@ -324,6 +512,10 @@ def check_translation(page: str, root: Path = REPO_ROOT) -> Report:
             else:
                 detail = f"EN {a[key]}, KO {b[key]}"
             problems.append(f"{page}: {key} differ: {detail}")
+    missing = numbers(en.read_text(encoding="utf-8")) - numbers(ko_text, korean=True)
+    if missing:
+        problems.append(f"{page}: numbers differ: EN only {sorted(missing)}")
+    problems += korean_link_problems(ko_text, ko, root)
     if problems and LAG_NOTE in ko_text:
         report.lagging.append(f"{page}.ko.md lags its English page")
     else:
