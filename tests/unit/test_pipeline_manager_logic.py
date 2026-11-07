@@ -116,6 +116,36 @@ def test_pipeline_exists_true_after_save(tmp_path) -> None:
     assert state.pipeline_exists("pid") is True
 
 
+@pytest.mark.parametrize(
+    ("content", "named"),
+    [
+        ("", "is empty"),
+        ('{"pipeline_id": "pid", "status": ', "invalid JSON"),
+        ("[1, 2]", "does not contain a JSON object"),
+        ('{"pipeline_id": "pid"}', "missing one of required fields"),
+    ],
+    ids=["empty", "truncated", "not-an-object", "missing-fields"],
+)
+def test_an_unreadable_metadata_file_is_a_state_error_naming_it(
+    tmp_path, content: str, named: str
+) -> None:
+    # A file cut short by a full disk, or edited by hand: loading it fails
+    # with what is wrong and where, never with the JSON parser's own error.
+    from unified_kg_rag.shared.exceptions import PipelineStateError
+
+    state = PipelineStateManager(_StubCacheManager(tmp_path))
+    path = tmp_path / "pid" / state.PIPELINE_METADATA_FILE
+    path.parent.mkdir(parents=True)
+    path.write_text(content, encoding="utf-8")
+
+    # An empty file is no run to resume (a new run starts).
+    assert state.pipeline_exists("pid") is (content != "")
+    with pytest.raises(PipelineStateError, match=named) as raised:
+        state.load_pipeline_metadata("pid")
+    assert str(path) in str(raised.value)
+    assert state.verify_pipeline_metadata("pid") is False
+
+
 def test_save_excludes_heavy_data_fields(tmp_path) -> None:
     # Heavy graph payloads must never be serialized into the metadata file.
     state = PipelineStateManager(_StubCacheManager(tmp_path))
