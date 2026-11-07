@@ -42,6 +42,7 @@ from unified_kg_rag.adapters.local.sqlite_util import (
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
+    GraphQueryCompileError,
     GraphQueryExecutionError,
     StoreConfigurationError,
     StoreTimeoutError,
@@ -97,6 +98,9 @@ _NODE_KEYS = (
     "iri",
     "source_kinds",
 )
+
+# The tables a structured query may read (``query_read_only``'s authorizer).
+_QUERY_TABLES = frozenset({"vertices", "edges"})
 
 # A vertex filter for a traversal: its stored valueMap -> kept.
 VertexFilter = Callable[[dict[str, Any]], bool]
@@ -281,6 +285,22 @@ class SQLiteGraphStore:
         def past_deadline() -> int:
             return 1 if time.monotonic() > deadline else 0
 
+        allowed = {name.lower() for name in functions} | {"count"}
+
+        def authorize(
+            action: int, first: str | None, second: str | None, *_: Any
+        ) -> int:
+            # A second wall behind the statement checker: reads of the two
+            # store tables and calls of the registered functions only (no
+            # schema table, no recursion, no other statement).
+            if action == sqlite3.SQLITE_SELECT:
+                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_READ and first in _QUERY_TABLES:
+                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_FUNCTION and (second or "").lower() in allowed:
+                return sqlite3.SQLITE_OK
+            return sqlite3.SQLITE_DENY
+
         with self._query_connection() as connection:
             for name, (count, function) in functions.items():
                 connection.create_function(name, count, function, deterministic=True)
@@ -289,11 +309,25 @@ class SQLiteGraphStore:
                 with self.errors("run a structured query"):
                     try:
                         with read_snapshot(connection):
-                            return list(
-                                connection.execute(sql, list(params)).fetchall()
-                            )
-                    except sqlite3.OperationalError as e:
+                            connection.set_authorizer(authorize)
+                            try:
+                                cursor = connection.execute(sql, list(params))
+                                return list(cursor.fetchall())
+                            finally:
+                                connection.set_authorizer(None)
+                    except sqlite3.DatabaseError as e:
                         message = str(e).lower()
+                        if "not authorized" in message or "prohibited" in message:
+                            logger.error(
+                                "The structured query's authorizer refused a "
+                                "statement the checker passed (a bug): %s",
+                                e,
+                            )
+                            raise GraphQueryCompileError(
+                                "the read-only authorizer refused the query"
+                            ) from e
+                        if not isinstance(e, sqlite3.OperationalError):
+                            raise
                         if "interrupt" in message:
                             raise GraphQueryExecutionError(
                                 "The graph store stopped the query at its time "

@@ -52,6 +52,7 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     answer_from_result,
     hydrate_keys,
     plan_operation,
+    reference_execute,
     reference_operation,
     validate_plan,
 )
@@ -137,6 +138,7 @@ def _request(
         vars=op.vars,
         group_var=op.group_var,
         group_key=op.group_key,
+        order=op.order,
         limit=op.limit,
         hydrate=hydrate_keys(plan),
         **fields,
@@ -379,3 +381,102 @@ def test_a_query_past_its_time_limit_falls_back(harness: StoreHarness) -> None:
     with pytest.raises(GraphQueryExecutionError) as error:
         asyncio.run(run())
     assert error.value.timed_out
+
+
+def _ranked_graph(suffix: str) -> tuple[list[Entity], list[Relationship]]:
+    """Vendor k (rank k) supplies k buyers, k = 1..8: the top vendor is v8."""
+    entities, rels = [], []
+    for k in range(1, 9):
+        entities.append(
+            Entity(
+                id=f"v{k}",
+                name=f"V{k}",
+                type="VENDOR",
+                rank=k,
+                attributes={"index": suffix},
+            )
+        )
+        for j in range(k):
+            buyer = f"b{k}-{j}"
+            entities.append(
+                Entity(
+                    id=buyer,
+                    name=buyer.upper(),
+                    type="BUYER",
+                    attributes={"index": suffix},
+                )
+            )
+            rels.append(
+                Relationship(
+                    id=f"r{k}-{j}",
+                    source_id=f"v{k}",
+                    target_id=buyer,
+                    type="SUPPLIES",
+                    attributes={"index": suffix},
+                )
+            )
+    return entities, rels
+
+
+CAPPED_PLANS = {
+    "top_vendor": {
+        "nodes": [{"var": "v", "types": ["VENDOR"]}, {"var": "b", "types": ["BUYER"]}],
+        "edges": [{"types": ["SUPPLIES"]}],
+        "returns": {
+            "kind": "group_count",
+            "group_by": {"var": "v"},
+            "vars": ["b"],
+            "limit": 1,
+        },
+    },
+    "fewest": {
+        "nodes": [{"var": "v", "types": ["VENDOR"]}, {"var": "b", "types": ["BUYER"]}],
+        "edges": [{"types": ["SUPPLIES"]}],
+        "returns": {
+            "kind": "group_count",
+            "group_by": {"var": "v"},
+            "vars": ["b"],
+            "order": "asc",
+            "limit": 2,
+        },
+    },
+    "top_ranked_vendors": {
+        "nodes": [{"var": "v", "types": ["VENDOR"]}],
+        "returns": {"kind": "rows", "limit": 2},
+    },
+}
+
+
+@pytest.mark.parametrize("name", sorted(CAPPED_PLANS))
+def test_a_capped_store_page_keeps_the_first_by_the_plan_order(
+    harness: StoreHarness, name: str
+) -> None:
+    """With a page (cap) shorter than the matches, every store cuts in the
+    plan's order, so the answer is the exact top, not an arbitrary subset."""
+    suffix = harness.suffix("capped")
+    entities, rels = _ranked_graph(suffix)
+    harness.graph_indexer.index_entities(entities, suffixes=[suffix])
+    harness.graph_indexer.index_relationships(rels)
+    graph = property_graph(entities, rels)
+    plan = _plan(CAPPED_PLANS[name], graph)
+    request = _request(plan, suffix, cap=3)
+
+    async def run() -> Any:
+        port = (
+            FakeGraphQueryRetriever({suffix: graph_of(harness.graph_indexer, suffix)})
+            if harness.kind == "fake"
+            else harness.graph_retriever()  # type: ignore[misc]
+        )
+        try:
+            return await port.aexecute(request)
+        finally:
+            await _close(port)
+
+    result = asyncio.run(run())
+    assert result.truncated
+    answer = answer_from_result(plan, result)
+    full = reference_execute(plan, graph)
+    assert not answer.truncated
+    assert (answer.groups, answer.rows) == (full.groups, full.rows)
+    if name == "top_vendor":
+        assert [(g.key, g.count) for g in answer.groups] == [("v8", 8)]

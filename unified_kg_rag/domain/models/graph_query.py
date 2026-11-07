@@ -336,7 +336,10 @@ class ValidatedPlan(_Closed):
 # count: the distinct bindings of ``vars``, exact; group: (key, distinct
 # bindings of ``vars``) per key; tuples: the distinct bindings of ``vars``;
 # paths: the walks. Every list is at most ``limit + 1`` long (one more than
-# kept: the result is then ``truncated``), in no particular order.
+# kept: the result is then ``truncated``), and the store cuts it in one
+# order (``domain.retrieval.graph_query``): groups by count (``order``) then
+# key, tuples by the first node's rank (desc) then the ids, paths by length
+# then their ids, so a cut keeps the same rows on every backend.
 GraphOperation = Literal["count", "group", "tuples", "paths"]
 
 
@@ -357,6 +360,7 @@ class GraphQueryRequest(_Closed):
     vars: tuple[str, ...] = ()
     group_var: str | None = None
     group_key: str | None = None
+    order: Order = "desc"
     limit: int = 1
     filters: dict[str, Any] | None = None
     allowed_ids: tuple[str, ...] | None = None
@@ -416,6 +420,9 @@ class QueryAnswer(_Closed):
     rows: tuple[dict[str, str], ...] = ()
     paths: tuple[PathRow, ...] = ()
     truncated: bool = False
+    # More rows, groups or paths matched than the plan's limit kept (they
+    # are the first by the plan's order: not a truncation).
+    more: bool = False
 
     @property
     def empty(self) -> bool:

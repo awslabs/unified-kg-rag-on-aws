@@ -480,7 +480,16 @@ class NeptuneRetriever(GraphExpansionRetriever):
         ids = named_vertex_ids(
             fields, request.operation == "group" and request.group_key is None
         )
-        vertices = await self._hydrate(label, ids, request.hydrate, timeout_ms)
+        # One limit for the query and its hydration: the reads get what the
+        # query left of it.
+        left_ms = timeout_ms - int((time.monotonic() - started) * 1000)
+        if ids and request.hydrate and left_ms <= 0:
+            raise GraphQueryExecutionError(
+                "The graph store query used up its time limit before its "
+                "entities were read",
+                timed_out=True,
+            )
+        vertices = await self._hydrate(label, ids, request.hydrate, max(left_ms, 1))
         return GraphQueryResult(
             operation=request.operation,
             vertices=vertices,

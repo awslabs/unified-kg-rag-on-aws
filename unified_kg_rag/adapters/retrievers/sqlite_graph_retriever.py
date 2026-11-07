@@ -216,7 +216,10 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
             self._neptune_config.entity_label_prefix, request.suffix
         )
         filters = self._scope_filters_to_label(label, request.filters)
-        query = SQLiteQuery(
+        # Compiled and checked off the loop: a long walk's statement takes
+        # tens of milliseconds to write and read back.
+        query = await asyncio.to_thread(
+            SQLiteQuery,
             request,
             label,
             vertex_ok=vertex_filter(filters),

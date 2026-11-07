@@ -28,7 +28,7 @@ import math
 from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
 from unified_kg_rag.domain.models import Constants
@@ -518,13 +518,24 @@ def _check_value_kind(prop: PropertyRef, op: str, value: Any, field: str) -> Non
     if op == "exists":
         return
     if op == "contains":
-        if prop.kinds and "string" not in prop.kinds:
+        # Only a property that holds strings alone: a store compares a
+        # substring against a number by failing the query (Gremlin's
+        # TextP.containing).
+        if prop.kinds != ("string",):
             raise _fail(
-                field, f"'contains' needs a string property; {prop.name} is not"
+                field,
+                f"'contains' needs a property of string values only; {prop.name} "
+                f"holds {'/'.join(prop.kinds) or 'unknown'} values",
             )
         return
     if op in _NUMERIC_OPS and value_kind(values[0]) == "boolean":
         raise _fail(field, f"'{op}' does not compare booleans")
+    if op in _NUMERIC_OPS and len(prop.kinds) > 1:
+        raise _fail(
+            field,
+            f"'{op}' compares values of one kind; {prop.name} holds "
+            f"{'/'.join(prop.kinds)} values",
+        )
     if not prop.kinds:
         return
     for item in values:
@@ -732,8 +743,13 @@ def _node_text(node: ResolvedNode, linked: Mapping[str, Sequence[str]]) -> str:
         node.var + (": " + " | ".join(node.type_labels) if node.type_labels else "")
     ]
     if node.mention is not None:
-        count = len(linked.get(node.var, ()))
-        parts.append(f"named {_quoted(node.mention)} ({count} linked)")
+        names = list(dict.fromkeys(linked.get(node.var, ())))
+        shown = ", ".join(_quoted(n) for n in names[:5])
+        more = f" and {len(names) - 5} more" if len(names) > 5 else ""
+        parts.append(
+            f"named {_quoted(node.mention)}"
+            + (f" = {shown}{more}" if names else " (linked to nothing)")
+        )
     parts.extend(_condition_text(c) for c in node.conditions)
     return "(" + ", ".join(parts) + ")"
 
@@ -751,7 +767,8 @@ def describe_plan(
     plan: ValidatedPlan, linked: Mapping[str, Sequence[str]] | None = None
 ) -> str:
     """The plan in English and pattern notation, written by code (the
-    context, the logs and ``metadata.structured``)."""
+    context, the logs and ``metadata.structured``); ``linked`` gives each
+    mention node the names of the stored entities it was linked to."""
     linked = linked or {}
     pattern = _node_text(plan.nodes[0], linked)
     for edge, node in zip(plan.edges, plan.nodes[1:], strict=True):
@@ -796,6 +813,7 @@ class Operation:
     group_var: str | None = None
     group_key: str | None = None
     scan: bool = False
+    order: Literal["desc", "asc"] = "desc"
 
 
 def plan_operation(plan: ValidatedPlan, *, scan: bool, cap: int) -> Operation:
@@ -828,6 +846,7 @@ def plan_operation(plan: ValidatedPlan, *, scan: bool, cap: int) -> Operation:
             cap,
             group_var=r.group_var,
             group_key=r.group_prop.key if r.group_prop else None,
+            order=r.order,
         )
     if r.kind == "path":
         return Operation("paths", every, cap)
@@ -902,20 +921,47 @@ def _aggregate(fn: str, values: list[float]) -> float | None:
 
 
 def answer_from_result(plan: ValidatedPlan, result: GraphQueryResult) -> QueryAnswer:
-    """The answer of a store result of ``plan_operation(plan, scan=False)``."""
+    """The answer of a store result of ``plan_operation(plan, scan=False)``.
+
+    The store cuts groups, rows and paths in the plan's order, so the first
+    ``limit`` of them are exact whenever its page holds that many: only a
+    page shorter than the limit and cut (never with the default caps) is a
+    truncation."""
     r = plan.returns
+
+    def cut(found: int) -> bool:
+        return result.truncated and found < r.limit
+
     if result.operation == "count":
         return QueryAnswer(kind=r.kind, count=result.count or 0)
     if result.operation == "group":
-        groups = _ordered_groups(result.groups, r.order)[: r.limit]
+        groups = _ordered_groups(result.groups, r.order)
         return QueryAnswer(
-            kind=r.kind, groups=tuple(groups), truncated=result.truncated
+            kind=r.kind,
+            groups=tuple(groups[: r.limit]),
+            truncated=cut(len(groups)),
+            more=result.truncated or len(groups) > r.limit,
         )
     if result.operation == "paths":
-        paths = _ordered_paths(result.paths)[: r.limit]
-        return QueryAnswer(kind=r.kind, paths=tuple(paths), truncated=result.truncated)
+        paths = _ordered_paths(result.paths)
+        return QueryAnswer(
+            kind=r.kind,
+            paths=tuple(paths[: r.limit]),
+            truncated=cut(len(paths)),
+            more=result.truncated or len(paths) > r.limit,
+        )
     if r.kind == "exists":
         return QueryAnswer(kind=r.kind, exists=bool(result.rows))
+    if r.kind == "rows":
+        answer = aggregate_bindings(
+            plan, result.rows, result.vertices, truncated=False, filtered=False
+        )
+        return answer.model_copy(
+            update={
+                "truncated": cut(len(answer.rows)),
+                "more": answer.more or result.truncated,
+            }
+        )
     return aggregate_bindings(
         plan, result.rows, result.vertices, truncated=result.truncated, filtered=False
     )
@@ -939,14 +985,21 @@ def aggregate_bindings(
     lower bound and a list a subset.
     """
     r = plan.returns
-    rows = _distinct(bindings, plan.vars if filtered else r.vars)
-    if filtered:
-        rows = [row for row in rows if _seed_conditions_hold(plan, row, vertices)]
+    rows = (
+        matching_bindings(plan, bindings, vertices)
+        if filtered
+        else _distinct(bindings, r.vars)
+    )
     if r.kind == "path":
         ends = {tuple(row[v] for v in plan.vars) for row in rows}
         kept = [p for p in paths if (p.vertex_ids[0], p.vertex_ids[-1]) in ends]
-        walked = _ordered_paths(kept)[: r.limit]
-        return QueryAnswer(kind=r.kind, paths=tuple(walked), truncated=truncated)
+        walked = _ordered_paths(kept)
+        return QueryAnswer(
+            kind=r.kind,
+            paths=tuple(walked[: r.limit]),
+            truncated=truncated,
+            more=len(walked) > r.limit,
+        )
     if r.kind == "count":
         return QueryAnswer(kind=r.kind, count=len(rows), truncated=truncated)
     if r.kind == "count_distinct":
@@ -972,8 +1025,13 @@ def aggregate_bindings(
         groups = _ordered_groups(
             (GroupRow(key=key, count=len(ids)) for key, ids in counted.items()),
             r.order,
-        )[: r.limit]
-        return QueryAnswer(kind=r.kind, groups=tuple(groups), truncated=truncated)
+        )
+        return QueryAnswer(
+            kind=r.kind,
+            groups=tuple(groups[: r.limit]),
+            truncated=truncated,
+            more=len(groups) > r.limit,
+        )
     if r.kind == "aggregate":
         assert r.aggregate_var is not None and r.aggregate_prop is not None
         numbers = []
@@ -995,8 +1053,20 @@ def aggregate_bindings(
     return QueryAnswer(
         kind=r.kind,
         rows=tuple(ordered[: r.limit]),
-        truncated=truncated or len(ordered) > r.limit,
+        truncated=truncated,
+        more=len(ordered) > r.limit,
     )
+
+
+def matching_bindings(
+    plan: ValidatedPlan,
+    bindings: Iterable[Mapping[str, str]],
+    vertices: Mapping[str, VertexMap],
+) -> list[dict[str, str]]:
+    """The distinct ``bindings`` of every node whose seed conditions hold
+    (what a scan's answer is computed over)."""
+    rows = _distinct(bindings, plan.vars)
+    return [row for row in rows if _seed_conditions_hold(plan, row, vertices)]
 
 
 def _seed_conditions_hold(
@@ -1178,9 +1248,9 @@ def reference_operation(
                 if key is None:
                     continue
             counted[key].add(project(walk, request.vars))
-        groups = sorted(
+        groups = _ordered_groups(
             (GroupRow(key=k, count=len(v)) for k, v in counted.items()),
-            key=lambda g: scalar_sort_key(g.key),
+            request.order,
         )
         truncated = len(groups) > request.limit
         groups = groups[: request.limit]
@@ -1203,12 +1273,15 @@ def reference_operation(
                 ),
             )
             found.setdefault((row.vertex_ids, tuple(e.id for e in row.edges)), row)
-        walked = [found[k] for k in sorted(found)]
+        walked = _ordered_paths(found.values())
         truncated = len(walked) > request.limit
         walked = walked[: request.limit]
         named = {v for p in walked for v in p.vertex_ids}
         return _result(request, graph, named, paths=tuple(walked), truncated=truncated)
-    tuples = sorted({project(w, request.vars) for w in walks})
+    tuples = sorted(
+        {project(w, request.vars) for w in walks},
+        key=lambda t: (-vertex_rank(graph.vertices.get(t[0])) if t else 0.0, t),
+    )
     truncated = len(tuples) > request.limit
     rows = tuple(
         dict(zip(request.vars, t, strict=True)) for t in tuples[: request.limit]
@@ -1312,7 +1385,8 @@ def render_answer(
     r = plan.returns
     lines = [f"Graph query: {describe_plan(plan, linked)}"]
     scope = (
-        "computed over the whole graph"
+        "computed by code over every match in the graph, within the request's "
+        "filters"
         if not answer.truncated
         else "TRUNCATED: computed over the first matches only"
     )
@@ -1377,4 +1451,6 @@ def render_answer(
     listed = max(len(answer.rows), len(answer.groups), len(answer.paths))
     if listed > max_lines:
         lines.append(f"... and {listed - max_lines} more")
+    elif answer.more and listed:
+        lines.append(f"(the first {listed} by the plan's order; more matched)")
     return "\n".join(lines)

@@ -37,6 +37,7 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     VertexPredicate,
     node_holds,
     value_kind,
+    vertex_rank,
 )
 from unified_kg_rag.shared.utils.common import compute_hash
 
@@ -98,6 +99,9 @@ class SQLiteQuery:
             functions["kg_edge"] = (2, self._kg_edge)
         if self.request.group_key is not None:
             functions["kg_key"] = (1, self._kg_key)
+            functions["kg_sortable"] = (1, _sortable)
+        if self.request.operation == "tuples":
+            functions["kg_rank"] = (1, _rank)
         return functions
 
     def _kg_node(self, index: int, vertex_id: str, props: str) -> int:
@@ -149,6 +153,7 @@ class SQLiteQuery:
             + [f"x{i}" for i in steps]
             + [f"t{i}" for i in steps]
             + [f"s{i}" for i in steps]
+            + ["k"]
         )
 
     def _branch(
@@ -212,6 +217,7 @@ class SQLiteQuery:
             select += [f"{e}.id" for e in edges] + ["NULL"] * pad
             select += [f"{e}.type" for e in edges] + ["NULL"] * pad
             select += [f"{e}.source_id" for e in edges] + ["NULL"] * pad
+            select.append(str(len(edges)))
         sql = (
             f"SELECT {', '.join(select)} FROM vertices AS b0 "
             + " ".join(joins)
@@ -243,10 +249,23 @@ class SQLiteQuery:
                 params,
             )
         if request.operation == "tuples":
-            return walk + f"SELECT DISTINCT {picked} FROM w LIMIT ?", [*params, limit]
+            # The store's cut keeps the first by the first node's rank, then
+            # the ids (domain.retrieval.graph_query's order).
+            ids = ", ".join(f"w.n{index[v]}" for v in request.vars)
+            first = f"n{index[request.vars[0]]}"
+            return (
+                walk + f"SELECT DISTINCT {ids}, kg_rank(v.props) AS r FROM w "
+                f"JOIN vertices AS v ON v.label = ? AND v.id = w.{first} "
+                f"ORDER BY r DESC, {ids} LIMIT ?",
+                [*params, self.label, limit],
+            )
         if request.operation == "paths":
-            cols = ", ".join(c for c in columns if c[0] in "pxts")
-            return walk + f"SELECT DISTINCT {cols} FROM w LIMIT ?", [*params, limit]
+            cols = [c for c in columns if c[0] in "pxts"]
+            return (
+                walk + f"SELECT DISTINCT {', '.join(cols)}, k FROM w "
+                f"ORDER BY k, {', '.join(cols)} LIMIT ?",
+                [*params, limit],
+            )
         assert request.group_var is not None
         group = f"n{index[request.group_var]}"
         counted = ", ".join(f"w.n{index[v]}" for v in request.vars)
@@ -259,9 +278,11 @@ class SQLiteQuery:
                 f"JOIN vertices AS v ON v.label = ? AND v.id = w.{group}"
             )
             inner_params = [self.label]
+        direction = "DESC" if request.order == "desc" else "ASC"
+        key = "q.g" if request.group_key is None else "kg_sortable(q.g)"
         return (
             walk + f"SELECT q.g, count(*) FROM ({inner}) AS q WHERE q.g IS NOT NULL "
-            "GROUP BY q.g LIMIT ?",
+            f"GROUP BY q.g ORDER BY count(*) {direction}, {key} LIMIT ?",
             [*params, *inner_params, limit],
         )
 
@@ -282,7 +303,7 @@ class SQLiteQuery:
             paths = [self._path(row) for row in rows]
             return {"paths": tuple(paths[:keep]), "truncated": len(paths) > keep}
         bindings = [
-            {var: str(value) for var, value in zip(request.vars, row, strict=True)}
+            {var: str(value) for var, value in zip(request.vars, row, strict=False)}
             for row in rows
         ]
         return {"rows": tuple(bindings[:keep]), "truncated": len(bindings) > keep}
@@ -293,7 +314,7 @@ class SQLiteQuery:
         ids, types, sources = (
             row[n + 1 : 2 * n + 1],
             row[2 * n + 1 : 3 * n + 1],
-            row[3 * n + 1 :],
+            row[3 * n + 1 : 4 * n + 1],
         )
         edges = []
         for step in range(len(vertices) - 1):
@@ -308,3 +329,14 @@ class SQLiteQuery:
                 )
             )
         return PathRow(vertex_ids=tuple(str(v) for v in vertices), edges=tuple(edges))
+
+
+def _rank(props: str) -> float:
+    """A vertex's rank as the domain orders rows by it (``vertex_rank``)."""
+    return vertex_rank(json.loads(props))
+
+
+def _sortable(key: str | None) -> Any:
+    """A group key (JSON) as SQLite orders it like ``scalar_sort_key``:
+    numbers (booleans as 0/1) before strings."""
+    return None if key is None else json.loads(key)

@@ -210,6 +210,7 @@ def test_the_store_operation_recounts_every_match(
         vars=op.vars,
         group_var=op.group_var,
         group_key=op.group_key,
+        order=op.order,
         limit=op.limit,
         hydrate=hydrate_keys(plan),
     )

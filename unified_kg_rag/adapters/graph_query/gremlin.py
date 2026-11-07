@@ -24,7 +24,7 @@ from gremlin_python.process.graph_traversal import (
     GraphTraversalSource,
     __,
 )
-from gremlin_python.process.traversal import P, TextP, Traversal
+from gremlin_python.process.traversal import Column, Order, P, Scope, TextP, Traversal
 
 from unified_kg_rag.adapters.graph_query.checks import check_gremlin
 from unified_kg_rag.domain.models.graph_query import (
@@ -217,8 +217,17 @@ class GremlinQuery:
             projected = traversal.project("_g", *request.vars).by(group_by)
             for counted in request.vars:
                 projected = projected.by(__.select(counted).values(ID))
+            # Cut in the domain's order: by count, then by key.
+            direction = Order.desc if request.order == "desc" else Order.asc
             return (
-                projected.dedup().groupCount().by(__.select("_g")).unfold().limit(limit)
+                projected.dedup()
+                .groupCount()
+                .by(__.select("_g"))
+                .order(Scope.local)
+                .by(Column.values, direction)
+                .by(Column.keys, Order.asc)
+                .unfold()
+                .limit(limit)
             )
         if request.operation == "paths":
             edge_projection = (
@@ -227,14 +236,28 @@ class GremlinQuery:
                 .by(__.label())
                 .by(__.outV().hasLabel(self.label).values(ID))
             )
+            # Shortest first, as the domain orders them.
             return (
                 traversal.path()
                 .by(__.values(ID))
                 .by(edge_projection)
                 .dedup()
+                .order()
+                .by(__.count(Scope.local), Order.asc)
                 .limit(limit)
             )
-        return self._ids(traversal, request.vars).dedup().limit(limit)
+        # By the first node's rank (desc), then the ids: the domain's order.
+        keys = list(request.vars)
+        projected = traversal.project(*keys, "_r")
+        for var in keys:
+            projected = projected.by(__.select(var).values(ID))
+        projected = projected.by(
+            __.select(keys[0]).coalesce(__.values("rank"), __.constant(0))
+        )
+        ordered = projected.dedup().order().by(__.select("_r"), Order.desc)
+        for var in keys:
+            ordered = ordered.by(__.select(var), Order.asc)
+        return ordered.limit(limit)
 
     # --- decoding ------------------------------------------------------------------
 

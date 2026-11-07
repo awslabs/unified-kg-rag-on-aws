@@ -22,6 +22,7 @@ from tests.fixtures.graph_query import (
 )
 from unified_kg_rag.adapters.retrievers.graph_expansion import edge_predicate
 from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import vertex_filter
+from unified_kg_rag.domain.models import Entity
 from unified_kg_rag.domain.models.graph_query import (
     GraphQueryPlan,
     GraphQueryRequest,
@@ -383,8 +384,11 @@ def test_the_plan_is_described_by_code() -> None:
             "returns": {"kind": "rows", "vars": ["p"]},
         }
     )
-    text = describe_plan(mention, {"x": ["v3"]})
-    assert '(x, named "가나다 상사" (1 linked))' in text
+    text = describe_plan(mention, {"x": ["가나다 상사"]})
+    # The stored names a mention linked to are shown, so the answer sees
+    # which entities were counted.
+    assert '(x, named "가나다 상사" = "가나다 상사")' in text
+    assert "(linked to nothing)" in describe_plan(mention, {})
     assert "-[MAKES *1..2]->" in text
 
 
@@ -465,6 +469,7 @@ def test_the_store_operation_answers_as_the_scan_does(name: str) -> None:
         vars=op.vars,
         group_var=op.group_var,
         group_key=op.group_key,
+        order=op.order,
         limit=op.limit,
         hydrate=hydrate_keys(plan),
     )
@@ -557,3 +562,45 @@ def test_an_empty_answer_is_one_without_rows_but_never_a_count() -> None:
     assert QueryAnswer(kind="aggregate").empty
     assert not QueryAnswer(kind="count", count=0).empty
     assert not QueryAnswer(kind="exists", exists=False).empty
+
+
+def test_text_and_order_comparisons_need_one_value_kind() -> None:
+    """A property holding strings and numbers: Gremlin fails the query on a
+    substring test of a number, so the plan is refused before it runs."""
+    graph = property_graph(
+        [
+            Entity(id="a", name="A", type="VENDOR", attributes={"score": 3}),
+            Entity(id="b", name="B", type="VENDOR", attributes={"score": "s4"}),
+        ],
+        [],
+    )
+    profile = profile_of(graph)
+    for op, value in (("contains", "s"), ("gt", 2)):
+        with pytest.raises(InvalidGraphQueryError, match="attr.score"):
+            validate_plan(
+                _plan(
+                    nodes=[
+                        {
+                            "var": "v",
+                            "where": [{"prop": "attr.score", "op": op, "value": value}],
+                        }
+                    ],
+                    returns={"kind": "count"},
+                ),
+                profile,
+                max_hops=3,
+            )
+    # Equality across kinds stays allowed (no store fails it).
+    validate_plan(
+        _plan(
+            nodes=[
+                {
+                    "var": "v",
+                    "where": [{"prop": "attr.score", "op": "eq", "value": "s4"}],
+                }
+            ],
+            returns={"kind": "count"},
+        ),
+        profile,
+        max_hops=3,
+    )

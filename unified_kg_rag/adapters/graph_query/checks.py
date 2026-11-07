@@ -23,6 +23,7 @@ ERROR and raised as ``GraphQueryCompileError``, and nothing is sent.
 
 from __future__ import annotations
 
+import bisect
 import re
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any
@@ -71,6 +72,7 @@ GREMLIN_STEPS = frozenset(
         "fold",
         "unfold",
         "limit",
+        "order",
         "union",
         "simplePath",
         "path",
@@ -155,8 +157,27 @@ def _check_steps(steps: Sequence[Sequence[Any]], label: str) -> None:
 
 
 def _check_argument(arg: Any, label: str) -> None:
-    from gremlin_python.process.traversal import Bytecode, P, Traversal
+    """Every argument by its type alone: scalars, predicates, the ordering
+    tokens, nested traversals and collections of them. Anything else (a
+    lambda, a strategy, a token such as ``T.label``) is refused, and so is a
+    string naming a hidden token (``~label``, ``~id``)."""
+    from gremlin_python.process.traversal import (
+        Bytecode,
+        Column,
+        Order,
+        P,
+        Scope,
+        Traversal,
+    )
 
+    if arg is None or isinstance(arg, bool | int | float):
+        return
+    if isinstance(arg, str):
+        if arg.startswith("~"):
+            raise _refuse("Gremlin", f"argument {arg!r} names a hidden token")
+        return
+    if isinstance(arg, Order | Scope | Column):
+        return
     if isinstance(arg, Traversal):
         arg = arg.bytecode
     if isinstance(arg, Bytecode):
@@ -171,8 +192,13 @@ def _check_argument(arg: Any, label: str) -> None:
         for item in arg:
             _check_argument(item, label)
     elif isinstance(arg, dict):
-        for item in arg.values():
+        for key, item in arg.items():
+            _check_argument(key, label)
             _check_argument(item, label)
+    else:
+        raise _refuse(
+            "Gremlin", f"an argument of type {type(arg).__name__} is not allowed"
+        )
 
 
 # --- SQL ---------------------------------------------------------------------------
@@ -180,16 +206,21 @@ def _check_argument(arg: Any, label: str) -> None:
 SQL_TABLES = frozenset({"vertices", "edges"})
 # The functions the SQLite compiler calls: the vertex, edge and group-key
 # predicates it registers on the connection, and the aggregate count.
-SQL_FUNCTIONS = frozenset({"kg_node", "kg_edge", "kg_key", "count"})
+SQL_FUNCTIONS = frozenset(
+    {"kg_node", "kg_edge", "kg_key", "kg_rank", "kg_sortable", "count"}
+)
 _SQL_KEYWORDS_BEFORE_PAREN = frozenset(
     {"in", "as", "from", "join", "on", "and", "or", "not", "where", "select", "all"}
 )
 _SQL_DENIED = re.compile(
     r"\b(insert|update|delete|replace|create|drop|alter|attach|detach|pragma|"
     r"vacuum|reindex|analyze|savepoint|release|begin|commit|rollback|"
-    r"transaction|returning|trigger|view|load_extension|conflict)\b",
+    r"transaction|returning|trigger|view|load_extension|conflict|recursive|"
+    r"or|having|window|over|values)\b",
     re.IGNORECASE,
 )
+# A numbered placeholder (?1) binds a parameter out of its position.
+_NUMBERED = re.compile(r"\?\d")
 _SQL_FORBIDDEN_CHARS = frozenset(";'\"`:@$[]\\")
 _TABLE_REF = re.compile(r"\b(?:from|join)\s+([a-z_][a-z0-9_]*|\()", re.IGNORECASE)
 _STORE_TABLE = re.compile(
@@ -213,38 +244,85 @@ def check_sql(sql: str, params: Sequence[Any], label: str) -> None:
         raise _refuse("SQL", "comments are not allowed")
     if match := _SQL_DENIED.search(text):
         raise _refuse("SQL", f"keyword '{match.group(1)}' is not allowed")
+    if _NUMBERED.search(text):
+        raise _refuse("SQL", "numbered placeholders are not allowed")
     if text.count("?") != len(params):
         raise _refuse("SQL", "the parameters do not match the placeholders")
+    _check_from_clauses(text)
     ctes = {name.lower() for name in _CTE.findall(text)}
+    _check_ctes(text, ctes)
     for ref in _TABLE_REF.findall(text):
         if ref != "(" and ref.lower() not in SQL_TABLES | ctes:
             raise _refuse("SQL", f"table '{ref}' is not allowed")
-    for name in _CALL.findall(text):
+    for name in set(_CALL.findall(text)):
         lowered = name.lower()
         if lowered in _SQL_KEYWORDS_BEFORE_PAREN or lowered in ctes:
             continue
         if lowered not in SQL_FUNCTIONS:
             raise _refuse("SQL", f"function '{name}' is not allowed")
-    aliases: list[str] = []
+    aliases: dict[str, None] = {}
     for match in _STORE_TABLE.finditer(text):
         if match.group(3) is None:
             raise _refuse("SQL", f"'{match.group(1)}' is read without an alias")
-        aliases.append(match.group(3))
+        aliases[match.group(3)] = None
     if not aliases:
         raise _refuse("SQL", "the statement reads no store table")
+    marks = [i for i, char in enumerate(text) if char == "?"]
     for alias in aliases:
-        _check_label_bound(text, params, alias, label)
+        _check_label_bound(text, params, alias, label, marks)
+
+
+def _check_from_clauses(text: str) -> None:
+    """Refuse a comma join: in a FROM clause, a comma at the clause's own
+    nesting level (the compiler joins with JOIN ... ON only)."""
+    lowered = text.lower()
+    for match in re.finditer(r"\bfrom\b", lowered):
+        depth = 0
+        index = match.end()
+        while index < len(lowered):
+            char = lowered[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif depth == 0:
+                if char == ",":
+                    raise _refuse("SQL", "a comma join is not allowed")
+                if re.match(r"\b(where|group|order|limit|union)\b", lowered[index:]):
+                    break
+            index += 1
+
+
+def _check_ctes(text: str, ctes: set[str]) -> None:
+    """Refuse a CTE that reads itself (a recursive one: unbounded)."""
+    for name in ctes:
+        head = re.search(
+            rf"(?:\bwith|,)\s*{re.escape(name)}\s*(?:\([^()]*\))?\s+as\s*\(",
+            text,
+            re.IGNORECASE,
+        )
+        if head is None:
+            continue
+        depth, index = 1, head.end()
+        while index < len(text) and depth:
+            depth += {"(": 1, ")": -1}.get(text[index], 0)
+            index += 1
+        body = text[head.end() : index]
+        if re.search(rf"\b{re.escape(name)}\b", body, re.IGNORECASE):
+            raise _refuse("SQL", f"CTE '{name}' reads itself")
 
 
 def _check_label_bound(
-    text: str, params: Sequence[Any], alias: str, label: str
+    text: str, params: Sequence[Any], alias: str, label: str, marks: list[int]
 ) -> None:
     pattern = re.compile(rf"\b{re.escape(alias)}\.label\s*=\s*\?")
     positions = [m.end() - 1 for m in pattern.finditer(text)]
     if not positions:
         raise _refuse("SQL", f"alias '{alias}' has no label = ? restriction")
     for position in positions:
-        index = text.count("?", 0, position)
+        index = bisect.bisect_left(marks, position)
         if params[index] != label:
             raise _refuse("SQL", f"alias '{alias}' is bound to another label")
 

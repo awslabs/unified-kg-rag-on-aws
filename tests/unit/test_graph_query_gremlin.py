@@ -57,6 +57,7 @@ def _query(plan_name_or_raw: str | dict, **request: Any) -> GremlinQuery:
         "vars": op.vars,
         "group_var": op.group_var,
         "group_key": op.group_key,
+        "order": op.order,
         "limit": op.limit,
         "hydrate": hydrate_keys(plan),
         **request,
@@ -209,6 +210,20 @@ def _bad(build) -> Bytecode:
         pytest.param(
             lambda s: s.V().hasLabel(LABEL).coalesce(__.addE("X")), id="nested-write"
         ),
+        pytest.param(
+            lambda s: s.V()
+            .hasLabel(LABEL)
+            .project("x")
+            .by(lambda: ("it.property('x', 'y'); 1", "gremlin-groovy")),
+            id="lambda",
+        ),
+        pytest.param(
+            lambda s: s.V().hasLabel(LABEL).has("~label", "Entity-other"),
+            id="hidden-token",
+        ),
+        pytest.param(
+            lambda s: s.V().hasLabel(LABEL).has("name", object()), id="object-arg"
+        ),
     ],
 )
 def test_the_checker_refuses_writes_and_escapes(build) -> None:
@@ -246,6 +261,7 @@ def test_every_valid_plan_compiles_to_a_checked_traversal(raw: dict) -> None:
                 vars=op.vars,
                 group_var=op.group_var,
                 group_key=op.group_key,
+                order=op.order,
                 limit=op.limit,
             ),
             LABEL,

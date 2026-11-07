@@ -56,6 +56,7 @@ def _query(raw: str | dict, **fields: Any) -> SQLiteQuery:
         vars=op.vars,
         group_var=op.group_var,
         group_key=op.group_key,
+        order=op.order,
         limit=op.limit,
         hydrate=hydrate_keys(plan),
         **fields,
@@ -121,6 +122,26 @@ def test_values_are_bound_parameters() -> None:
             [LABEL],
         ),
         ("SELECT id FROM vertices AS v WHERE v.label = ?", [LABEL, "extra"]),
+        (
+            "SELECT a.id, m.sql FROM vertices AS a, sqlite_master AS m "
+            "WHERE a.label = ?",
+            [LABEL],
+        ),
+        (
+            "SELECT a.id FROM vertices AS a WHERE ?2 IS NOT NULL AND a.label = ?1",
+            ["Entity-other", LABEL],
+        ),
+        ("SELECT a.id FROM vertices AS a WHERE a.label = ? OR 1", [LABEL]),
+        (
+            "SELECT x.id FROM (SELECT id FROM vertices AS v WHERE v.label = ? OR 1) "
+            "AS x",
+            [LABEL],
+        ),
+        (
+            "WITH r(n) AS (SELECT 1 FROM vertices AS a WHERE a.label = ? UNION ALL "
+            "SELECT n + 1 FROM r) SELECT count(*) FROM r",
+            [LABEL],
+        ),
     ],
 )
 def test_the_checker_refuses_writes_and_escapes(sql: str, params: list) -> None:
@@ -147,6 +168,7 @@ def test_every_valid_plan_compiles_to_a_checked_statement(raw: dict) -> None:
             vars=op.vars,
             group_var=op.group_var,
             group_key=op.group_key,
+            order=op.order,
             limit=op.limit,
         )
         query = SQLiteQuery(request, LABEL, vertex_ok=None, edge_ok=lambda p: True)
@@ -182,7 +204,9 @@ def test_the_read_only_connection_refuses_a_write(
     store: SQLiteGraphStore, statement: str
 ) -> None:
     """Even a statement the checker never lets through cannot write."""
-    with pytest.raises((StoreConfigurationError, sqlite3.Error)):
+    with pytest.raises(
+        (GraphQueryCompileError, StoreConfigurationError, sqlite3.Error)
+    ):
         store.query_read_only(statement, [], functions={}, timeout_seconds=5)
     with store.read("count") as connection:
         assert connection.execute("SELECT count(*) FROM vertices").fetchone()[0] == 10
@@ -192,13 +216,30 @@ def test_the_read_only_connection_refuses_a_write(
 
 
 def test_the_progress_handler_stops_a_long_query(store: SQLiteGraphStore) -> None:
-    long = (
-        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) "
-        "SELECT count(*) FROM n"
+    long = "SELECT count(*) FROM vertices AS a " + " ".join(
+        f"JOIN vertices AS v{i}" for i in range(9)
     )
     with pytest.raises(GraphQueryExecutionError) as error:
         store.query_read_only(long, [], functions={}, timeout_seconds=0.2)
     assert error.value.timed_out
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT name FROM sqlite_master",
+        "WITH r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT count(*) FROM r",
+        "SELECT a.id, randomblob(8) FROM vertices AS a",
+        "SELECT a.id FROM vertices AS a, sqlite_schema AS m",
+    ],
+)
+def test_the_authorizer_refuses_what_the_checker_would(
+    store: SQLiteGraphStore, statement: str
+) -> None:
+    """Behind the statement checker: reads of the store tables and the
+    registered functions only, no recursion."""
+    with pytest.raises(GraphQueryCompileError):
+        store.query_read_only(statement, [], functions={}, timeout_seconds=5)
 
 
 def test_functions_are_registered_for_one_query_only(store: SQLiteGraphStore) -> None:
@@ -211,7 +252,9 @@ def test_functions_are_registered_for_one_query_only(store: SQLiteGraphStore) ->
     assert rows and all(row == (1,) for row in rows)
     # Afterwards the name no longer runs the function (sqlite3 cannot
     # unregister one; it is replaced by one that fails).
-    with pytest.raises((GraphQueryExecutionError, StoreConfigurationError)):
+    with pytest.raises(
+        (GraphQueryCompileError, GraphQueryExecutionError, StoreConfigurationError)
+    ):
         store.query_read_only(
             "SELECT kg_node(?, v.id, v.props) FROM vertices AS v WHERE v.label = ?",
             [0, LABEL],
@@ -232,6 +275,7 @@ async def test_the_retriever_answers_a_plan(store: SQLiteGraphStore) -> None:
             vars=op.vars,
             group_var=op.group_var,
             group_key=op.group_key,
+            order=op.order,
             limit=op.limit,
             hydrate=hydrate_keys(plan),
         )
