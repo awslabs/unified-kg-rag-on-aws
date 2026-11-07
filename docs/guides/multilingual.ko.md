@@ -56,7 +56,12 @@ processing:
   분석하므로 번역하지 않더라도 코퍼스 언어로 지정하세요. `source_language: en`이면 한국어
   코퍼스가 조사가 붙은 단어("홍길동으로부터")를 토큰 하나로 둡니다. 바꾸면 매핑이
   바뀌므로 `indexing.reset: true`로 한 번 실행할 때까지 증분 실행이
-  `was built for other language settings`로 멈춥니다.
+  `was built for other language settings`로 멈춥니다. 문서 로딩 단계는 코퍼스 표본(처음
+  20개 문서의 앞 2,000자)을 보고, 표본의 문자 체계가 설정과 맞지 않으면
+  `processing.translation.source_language`를 지목하는 WARNING을 남깁니다. 다른 문자
+  체계의 언어로 설정했는데 한글·가나·한자가 대부분이면(`ko`, `ja`, `zh` 중 하나를 제안),
+  `ko`, `ja`, `zh`로 설정했는데 그런 문자가 적으면 경고합니다. 같은 문자 체계의 두
+  언어(영어와 독일어)는 구별하지 못하며, 실행은 계속됩니다.
 - **유니코드.** 텍스트와 질의는 NFC로 정규화하므로 분해형 한글(NFD)도 조합형과 맞습니다.
 - **분석기는 클러스터에 있어야** 하며, 없으면 인덱싱 단계가
   `the cluster has no analyzer '<name>'`로 실패합니다. `nori`는 `analysis-nori`

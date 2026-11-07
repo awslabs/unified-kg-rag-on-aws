@@ -46,9 +46,13 @@ domain-adapted `custom_prompts` YAML fragment to review and merge into
 run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
 ```
 
-The output holds a `custom_prompts` block and a `profile` with the detected
-domain and entity types. **Review it**, then copy the prompts you want under
-`custom_prompts:`.
+The output holds a `custom_prompts` block, a `profile` with the detected
+domain and entity types and, when the sample's language is known (from its
+script for Korean, Japanese and Chinese, else the profile's language),
+`processing.translation.source_language`, which the prompts and analyzers
+follow (a WARNING says when the config sets another). **Review it**, then copy
+the prompts you want under `custom_prompts:` and the language setting into
+your config.
 
 - The tuned `graph_extraction_system` and `community_report_system` are a
   domain preamble followed by the built-in rules and output format, verbatim;

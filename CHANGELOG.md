@@ -912,6 +912,10 @@ From a `main` checkout (formats and keys no release had):
   and the three ways out (`models.roles.entity_extraction`, `processing.ignore_errors`, `--disable-query-processing`)
   instead of the parser's `Expecting value: line 1 column 1` (a `LanguageModelError` now, not a
   `json.JSONDecodeError`) (#PR).
+- The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
+  naming `processing.translation.source_language`, when its script disagrees with the setting: a Korean, Japanese
+  or Chinese corpus under the default `en` was extracted with prompts asking for English and analyzed as English
+  without a word. `run-prompt-tuning` writes the `source_language` the sample reads as into its output (#PR).
 - `run-ingestion` failures say why: a run a stage failed names the first failed stage's error (it named the stage
   alone; the cause was only in the logs) and prints the next step, the pipeline id to resume with; and a run that
   writes vectors embeds one probe text before its first model stage and stops (exit 2) when the model returns

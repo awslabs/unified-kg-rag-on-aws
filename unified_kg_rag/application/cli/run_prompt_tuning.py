@@ -14,6 +14,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -47,6 +48,7 @@ from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.prompts.tuner import PromptTuner, SchemaDraft
 from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
+from unified_kg_rag.domain.ingestion.corpus_language import corpus_source_language
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
 from unified_kg_rag.shared.utils import event_loop
@@ -226,6 +228,32 @@ def _schema_source_path(schema_out: Path, config_path: str | None) -> str:
         return str(schema_out.resolve())
 
 
+def _with_source_language(
+    result: dict[str, Any], texts: list[str], config: Config
+) -> dict[str, Any]:
+    """``result`` with ``processing.translation.source_language`` after the
+    profile: the language the sample reads as (its script, else the
+    profile's language), which the prompts and analyzers follow, so the
+    tuned file carries the setting a corpus in another language than the
+    default 'en' needs. A WARNING says when the config sets another."""
+    language = corpus_source_language(texts, result["profile"].get("language"))
+    if language is None:
+        return result
+    configured = config.processing.translation.source_language
+    if language is not configured:
+        logger.warning(
+            "The corpus reads as '%s', but processing.translation.source_language "
+            "is '%s': the tuned file sets it to '%s'",
+            language.value,
+            configured.value,
+            language.value,
+        )
+    profile = {"profile": result["profile"]}
+    setting = {"processing": {"translation": {"source_language": language.value}}}
+    rest = {k: v for k, v in result.items() if k != "profile"}
+    return {**profile, **setting, **rest}
+
+
 @exits_on_sigterm
 def main() -> int:
     load_cli_dotenv()
@@ -259,6 +287,7 @@ def main() -> int:
             io_workers=config.processing.io_workers,
         )
         draft: SchemaDraft | None = result.pop("schema_draft", None)
+        result = _with_source_language(result, texts, config)
 
         args.output_path.write_text(
             yaml.safe_dump(result, sort_keys=False, allow_unicode=True),
