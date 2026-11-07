@@ -85,6 +85,7 @@ METRIC_STAGES: dict[str, frozenset[str]] = {
     "total_tree_uncovered_leaves": frozenset({"summary_tree"}),
     "total_gleaning_failures": frozenset({"gleaning"}),
     "total_claim_extraction_failures": frozenset({"claim_extraction"}),
+    "total_unrecognised_claim_statuses": frozenset({"claim_extraction"}),
 }
 
 
@@ -162,6 +163,12 @@ def create_pipeline_metrics(
         ),
         "total_claim_extraction_failures": int(
             get_stage_metric(context, "claim_extraction", "failed_units")
+        ),
+        # A status the model wrote outside the words the claim reader knows
+        # is stored as unknown: a rising count means the prompt's vocabulary
+        # is not followed (another answer language, say).
+        "total_unrecognised_claim_statuses": int(
+            get_stage_metric(context, "claim_extraction", "unrecognised_claim_statuses")
         ),
         # Documents an incremental run stopped retrying because their
         # processing kept killing the run (the DocumentsQuarantined

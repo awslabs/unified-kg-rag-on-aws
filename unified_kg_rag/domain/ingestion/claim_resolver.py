@@ -442,78 +442,88 @@ DISPUTED_STATUS = "disputed"
 UNKNOWN_STATUS = "unknown"
 CLAIM_STATUSES = (TRUE_STATUS, FALSE_STATUS, DISPUTED_STATUS, UNKNOWN_STATUS)
 
-# What a model writes for a status outside the vocabulary (another casing,
-# punctuation, MS GraphRAG's SUSPECTED, a word of the answer language),
-# casefolded and stripped of punctuation and spaces.
+# What a model writes for a status: the prompt's words, MS GraphRAG's
+# SUSPECTED, and the few words that state the same status plainly, each with
+# its Korean, Japanese and Chinese rendering (a model answering in the index
+# language may translate the status), casefolded and stripped of punctuation
+# and spaces. "Uncertain" and "unverified" state that the truth is not known,
+# not that statements disagree: unknown, in every language. Any other word is
+# read as unknown and counted (``claim_status_recognised``).
 _STATUS_WORDS = {
     TRUE_STATUS: (
+        # true
         "true",
-        "yes",
-        "fact",
-        "factual",
-        "confirmed",
-        "established",
-        "verified",
         "참",
-        "사실",
+        "진실",
         "真",
+        "真実",
         "真实",
         "真實",
-        "真実",
+        # fact
+        "fact",
+        "factual",
+        "사실",
         "事実",
-        "正しい",
-        "本当",
+        "事实",
+        "事實",
     ),
     FALSE_STATUS: (
+        # false
         "false",
-        "no",
         "untrue",
-        "denied",
-        "contradicted",
-        "negated",
-        "refuted",
         "거짓",
         "허위",
+        "偽",
+        "虚偽",
         "假",
         "虚假",
         "虛假",
-        "偽",
-        "誤り",
-        "虚偽",
     ),
     DISPUTED_STATUS: (
+        # disputed
         "disputed",
-        "suspected",
-        "contested",
-        "conflicting",
-        "uncertain",
-        "alleged",
-        "unverified",
         "논란",
         "분쟁",
-        "의심",
-        "争议",
-        "有争议",
-        "爭議",
-        "有爭議",
-        "疑い",
         "係争",
         "争い",
+        "争议",
+        "爭議",
+        "有争议",
+        "有爭議",
+        # suspected (MS GraphRAG's status)
+        "suspected",
+        "의심",
+        "疑い",
+        "可疑",
+        "涉嫌",
     ),
     UNKNOWN_STATUS: (
+        # unknown
         "unknown",
-        "none",
-        "na",
-        "insufficient",
-        "unclear",
-        "unspecified",
         "알수없음",
         "불명",
-        "모름",
-        "未知",
         "不明",
-        "不详",
-        "不詳",
+        "未知",
+        # uncertain, unverified
+        "uncertain",
+        "unverified",
+        "불확실",
+        "미확인",
+        "不確か",
+        "不確実",
+        "未確認",
+        "不确定",
+        "不確定",
+        "未证实",
+        "未證實",
+        "未确认",
+        # none
+        "none",
+        "na",
+        "없음",
+        "なし",
+        "无",
+        "無",
     ),
 }
 _STATUS_BY_WORD = {
@@ -522,14 +532,26 @@ _STATUS_BY_WORD = {
 _STATUS_NOISE = re.compile(r"[\W_]+")
 
 
+def _status_word(raw: str | None) -> str:
+    return _STATUS_NOISE.sub("", unicodedata.normalize("NFKC", raw or "")).casefold()
+
+
 def claim_status(raw: str | None) -> str:
     """The stored claim status (one of ``CLAIM_STATUSES``) a model's
     ``raw`` status names: the prompt's ``TRUE``, ``FALSE``, ``DISPUTED`` or
     ``UNKNOWN``, read case-, punctuation- and space-insensitively
     (``"True."`` is ``true``, MS GraphRAG's ``SUSPECTED`` is ``disputed``,
-    ``"참"`` is ``true``); ``unknown`` for a missing or unrecognised one."""
-    word = _STATUS_NOISE.sub("", unicodedata.normalize("NFKC", raw or "")).casefold()
-    return _STATUS_BY_WORD.get(word, UNKNOWN_STATUS)
+    ``"참"`` is ``true``, ``"불확실"`` is ``unknown``, see ``_STATUS_WORDS``);
+    ``unknown`` for a missing or unrecognised one."""
+    return _STATUS_BY_WORD.get(_status_word(raw), UNKNOWN_STATUS)
+
+
+def claim_status_recognised(raw: str | None) -> bool:
+    """Whether :func:`claim_status` reads ``raw`` as a word it knows (a
+    missing status is not an unrecognised one): the claim extractor counts
+    the others, read as ``unknown``."""
+    word = _status_word(raw)
+    return not word or word in _STATUS_BY_WORD
 
 
 def merge_claim_statuses(statuses: Iterable[str | None]) -> str | None:

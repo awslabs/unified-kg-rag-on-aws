@@ -448,6 +448,11 @@ From a `main` checkout (formats and keys no release had):
   an index built before #565 it costs a first build (the #565 prompts below).
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
+- #640 claim statuses: claims stored before it keep the status the model wrote (`True.`, `Suspected`) until a
+  reset, which reads them from the stored records into the vocabulary without an extraction call; that first reset
+  also asks again the community reports whose input held such a status (their input changed). Claim records stored
+  since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again
+  (#PR).
 - Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
   (#564, #589), also a run resumed after dying between its removal and its commit (#592), and a summary that kept
   the lines of a spelling a later run split off or lost those of a spelling a run folded in (#624), or the line of
@@ -1368,7 +1373,10 @@ Ingestion and incremental indexing.
   kept the stored status whatever the new documents said (#624). A status is read into the prompt's vocabulary
   (`true`, `false`, `disputed`, `unknown`, as stored: `True.` is `true`, MS GraphRAG's `SUSPECTED` is `disputed`, an
   unrecognised word `unknown`) at extraction and in every merge, so a stored off-vocabulary status no longer
-  disputes the same one.
+  disputes the same one (#640). The words read are the prompt's, `SUSPECTED` and a few plain synonyms, the same in
+  English, Korean, Japanese and Chinese (`uncertain`, `불확실`, `未確認` are all `unknown`; English read `uncertain` as
+  `disputed` and Korean as unrecognised); the claims whose status is none of them are counted in the
+  `total_unrecognised_claim_statuses` metric (#PR).
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

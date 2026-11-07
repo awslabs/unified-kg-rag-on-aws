@@ -36,6 +36,7 @@ from unified_kg_rag.domain.ingestion.claim_resolver import (
     claim_identity_suffix,
     claim_object_value,
     claim_status,
+    claim_status_recognised,
 )
 from unified_kg_rag.domain.models import (
     Claim,
@@ -91,6 +92,9 @@ class ClaimExtractionStats(BaseModel):
     # The failed units whose error was their own (item_error_predicate).
     item_failed_text_unit_ids: list[str] = []
     total_claims_extracted: int = 0
+    # Claims whose status the model wrote outside the words claim_status
+    # knows: stored as unknown.
+    unrecognised_statuses: int = 0
     total_processing_time: float = 0.0
 
     @property
@@ -330,6 +334,15 @@ class ClaimExtractor(BaseProcessor):
             if not all([subject_name, claim_type]):
                 return None
 
+            raw_status = coerce_llm_text(claim_data.get("claim_status"))
+            if not claim_status_recognised(raw_status):
+                self.stats.unrecognised_statuses += 1
+                logger.debug(
+                    "Unrecognised claim status %r in text unit '%s': stored as "
+                    "unknown",
+                    raw_status,
+                    text_unit.id,
+                )
             start_date = coerce_llm_text(claim_data.get("start_date"))
             end_date = coerce_llm_text(claim_data.get("end_date"))
             claim_id = self._generate_claim_id(
@@ -345,7 +358,7 @@ class ClaimExtractor(BaseProcessor):
                 object_id="",
                 object_name=object_name,
                 type=claim_type,
-                status=claim_status(coerce_llm_text(claim_data.get("claim_status"))),
+                status=claim_status(raw_status),
                 start_date=start_date,
                 end_date=end_date,
                 description=coerce_llm_text(claim_data.get("description"), join=True),

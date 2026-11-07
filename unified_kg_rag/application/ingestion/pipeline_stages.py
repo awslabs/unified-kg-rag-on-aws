@@ -1658,6 +1658,7 @@ class ClaimExtractionStage(PipelineStage):
             "text_units_reused": reused,
             "text_units_without_entities": len(answered) - len(extracted),
             "claims_extracted": len(claims),
+            "unrecognised_claim_statuses": stats.unrecognised_statuses,
             "failed_units": stats.num_failed_extractions,
             "records_not_stored": len(unsaved),
             "extraction_stats": stats.model_dump(),
