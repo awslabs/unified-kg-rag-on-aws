@@ -45,14 +45,22 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.models.methodology import (
+    METHODOLOGY_PROFILES,
     Methodology,
-    required_artifacts_of,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
 from unified_kg_rag.shared import ConfigurationError, StoreConnectionError
 from unified_kg_rag.shared.exceptions import GraphQueryExecutionError
 
 pytestmark = pytest.mark.unit
+
+
+def required_artifacts_of(
+    methodologies: list[Methodology],
+) -> frozenset[IndexArtifact]:
+    """What a namespace holding ``methodologies`` holds at least."""
+    return frozenset().union(*(METHODOLOGY_PROFILES[m].required for m in methodologies))
+
 
 PREFIXES = Config().indexing.opensearch
 ENTITIES, TEXT_UNITS, RELATIONSHIPS = (
