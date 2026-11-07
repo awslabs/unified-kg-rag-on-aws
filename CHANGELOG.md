@@ -377,6 +377,13 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     scores, with the `eval` extra; a `--fail-if ragas/...` gate fails without it. The `langchain` evaluator is removed
     (a config naming it, or `evaluation.langchain_metrics`, loads with a WARNING and without it): gate on
     `ragas/answer_correctness` instead of `langchain/correctness` (#620). `graph_aware` coverage matches by entity
+    A Python script that runs ingestion (`DataIngestionPipeline`, `DirectoryLoader.deduplicate_documents`, the
+    graph resolver) must keep its entry point behind `if __name__ == "__main__":`: the deduplication and fuzzy
+    matching worker processes now start from a forkserver, which imports the main module, instead of forking a
+    process that runs threads (a lock another thread held could hang the worker). The console scripts and a
+    notebook need nothing; what a custom pool task gets must pickle (#(PR)).
+14. Evaluation: list `langchain` in `evaluation.enabled_evaluators` to keep its scores (a `--fail-if langchain/...`
+    gate fails without it; leaving it out saves two judge calls per query). `graph_aware` coverage matches by entity
     key and can read lower than before on the same answers: run baselines again before comparing. Re-render static
     charts to get the SVG pages (#563, #576).
 
@@ -942,6 +949,9 @@ From a `main` checkout (formats and keys no release had):
   `run-eval --evaluators a,b` picks the evaluators of one run; `ragas` and `assertion` are opt-in. The `langchain`
   evaluator is removed; its `correctness` repeated `ragas`' `answer_correctness`. The `eval` extra keeps
   `langchain-openai` as the security floor of the copy ragas depends on (#620).
+- The document deduplication and fuzzy entity matching worker processes start from a forkserver (`spawn` where
+  the platform has none) instead of forking the run, whose I/O and client-pool threads may hold a lock the forked
+  worker would wait on forever; see *Upgrading* for scripts (#(PR)).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch

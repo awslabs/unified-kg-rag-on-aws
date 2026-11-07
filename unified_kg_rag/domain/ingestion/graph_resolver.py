@@ -3,7 +3,7 @@
 import time
 from collections import defaultdict
 from collections.abc import Iterator
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import Executor, as_completed
 from datetime import datetime
 from typing import Any
 
@@ -35,6 +35,7 @@ from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.utils import entity_key, text_digest
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
+    process_pool,
     shut_down_after,
 )
 
@@ -315,22 +316,26 @@ class EntityResolver(BaseResolver):
         self, fuzzy_matcher: FuzzyMatcher, entity_names: list[str]
     ) -> Iterator[tuple[str, list[tuple[str, float]]]]:
         """Yield ``(name, matches)`` for every name, matched in a worker pool."""
-        executor_class = (
-            ProcessPoolExecutor if self.use_process_pool else ContextThreadPoolExecutor
-        )
         # Send the matcher to each worker ONCE via the pool initializer, then
         # submit only the (tiny) entity name per task. This holds for both the
-        # ProcessPoolExecutor (initializer runs once per process) and the
+        # process pool (initializer runs once per process; the matcher is
+        # pickled to it, as the forkserver workers share nothing) and the
         # thread-pool path (initializer runs once per thread; the matcher
-        # is shared in-process anyway). The thread pool accepts the same
-        # initializer/initargs signature.
-        with shut_down_after(
-            executor_class(
+        # is shared in-process anyway).
+        pool: Executor = (
+            process_pool(
+                self.max_workers,
+                initializer=_init_worker_fuzzy_matcher,
+                initargs=(fuzzy_matcher,),
+            )
+            if self.use_process_pool
+            else ContextThreadPoolExecutor(
                 max_workers=self.max_workers,
                 initializer=_init_worker_fuzzy_matcher,
                 initargs=(fuzzy_matcher,),
             )
-        ) as executor:
+        )
+        with shut_down_after(pool) as executor:
             future_to_name = {
                 executor.submit(find_all_matches_for_entity_task, name): name
                 for name in entity_names
