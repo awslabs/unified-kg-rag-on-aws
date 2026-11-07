@@ -358,6 +358,9 @@ async def test_a_stopped_run_uploads_the_finished_runs(
         str(data),
         "--search-strategy",
         "local,mix",
+        # Run by run: the first run is finished when the second is stopped.
+        "--run-order",
+        "sequential",
         "--output-directory",
         f"s3://{BUCKET}/out/",
     )
@@ -381,6 +384,8 @@ async def test_a_stopped_run_keeps_what_it_cannot_upload(
         str(data),
         "--search-strategy",
         "local,mix",
+        "--run-order",
+        "sequential",
         "--output-directory",
         "s3://no-such-bucket/out",
     )

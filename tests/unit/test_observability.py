@@ -1448,8 +1448,9 @@ def test_bound_attributes_tag_every_span_and_nest(tracing) -> None:
     assert "kg_rag.eval.strategy" not in after
 
 
+@pytest.mark.parametrize("order", ["sequential", "interleaved"])
 async def test_run_eval_root_spans_name_the_run_strategy_and_repeat(
-    tracing, mocker, tmp_path
+    tracing, mocker, tmp_path, order: str
 ) -> None:
     # The kg_rag.batch and kg_rag.evaluate roots of a comparison's runs had
     # no strategy or repeat, so the runs' traces could not be told apart.
@@ -1467,8 +1468,9 @@ async def test_run_eval_root_spans_name_the_run_strategy_and_repeat(
 
     class _Chain:
         async def ainvoke(self, inputs, config=None):
-            meta = {"search_strategy": inputs["search_strategy"]}
-            return {"answer": "Vendor", "sources": [], "metadata": meta}
+            with observability.span("probe"):
+                meta = {"search_strategy": inputs["search_strategy"]}
+                return {"answer": "Vendor", "sources": [], "metadata": meta}
 
     args = run_evaluation.CommandLineInterface._setup_arguments().parse_args(
         [
@@ -1480,17 +1482,30 @@ async def test_run_eval_root_spans_name_the_run_strategy_and_repeat(
             "local,mix",
             "--repeats",
             "2",
+            "--run-order",
+            order,
         ]
     )
     assert await run_evaluation.EvaluationRunner(args, _Chain(), config).run() == 0
     runs = [("local", 1), ("local", 2), ("mix", 1), ("mix", 2)]
     spans = _by_name(exporter)
-    for name in ("kg_rag.batch", "kg_rag.evaluate"):
+
+    def tagged(name: str) -> list[tuple[str, int]]:
+        return sorted(
+            (_attrs(s)["kg_rag.eval.strategy"], _attrs(s)["kg_rag.eval.repeat"])
+            for s in spans[name]
+            if "kg_rag.eval.strategy" in _attrs(s)
+        )
+
+    # Interleaved, one batch answers every run: each answer's spans carry
+    # its run (the warm-up queries, one per strategy, carry none).
+    roots = ["kg_rag.evaluate"]
+    if order == "sequential":
+        roots.append("kg_rag.batch")
+    else:
+        (batch,) = spans["kg_rag.batch"]
+        assert batch.parent is None and _attrs(batch)["kg_rag.items"] == 4
+    for name in roots:
         assert all(s.parent is None for s in spans[name]), name
-        assert (
-            sorted(
-                (_attrs(s)["kg_rag.eval.strategy"], _attrs(s)["kg_rag.eval.repeat"])
-                for s in spans[name]
-            )
-            == runs
-        ), name
+        assert tagged(name) == runs, name
+    assert tagged("probe") == runs

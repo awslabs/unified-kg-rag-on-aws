@@ -757,6 +757,14 @@ def test_saved_runs_need_their_reports(tmp_path: Path) -> None:
             "--evaluators does not apply",
         ),
         (
+            ["--from-results", "d", "--run-order", "sequential"],
+            "--run-order does not apply",
+        ),
+        (
+            ["--from-results", "d", "--repeat-extractions", "reuse"],
+            "--repeat-extractions does not apply",
+        ),
+        (
             ["--data-path", "x.json", "--fail-if", "a/b:ci_high<0"],
             "--fail-if needs a comparison",
         ),

@@ -9,6 +9,8 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -65,7 +67,10 @@ from unified_kg_rag.application.cli.query_args import (
     warn_deprecated_query_arguments,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+from unified_kg_rag.application.retrieval.rag_chain import (
+    GraphRAGChain,
+    extraction_cache_scope,
+)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
@@ -90,6 +95,7 @@ from unified_kg_rag.evaluation.comparison import (
     paired_comparison,
     per_query_rows,
 )
+from unified_kg_rag.evaluation.evaluation_manager import AnswerArm
 from unified_kg_rag.evaluation.gates import Gate, gate_breaches, parse_gate
 from unified_kg_rag.evaluation.pairwise import PairwiseJudge
 from unified_kg_rag.evaluation.report import (
@@ -104,6 +110,7 @@ from unified_kg_rag.evaluation.saved_results import (
     check_answer_scoring,
     dataset_warnings,
     group_runs,
+    interleaving_warnings,
     load_saved_runs,
     pooling_warnings,
     rerank_unmetered,
@@ -407,6 +414,29 @@ class CommandLineInterface:
             ),
         )
         parser.add_argument(
+            "--run-order",
+            choices=["interleaved", "sequential"],
+            help=(
+                "How the runs of a comparison are answered (default: "
+                "evaluation.run_order, 'interleaved'): every query by every "
+                "run before the next query, the runs' order alternating "
+                "(ABBA), so latency deltas do not measure time; or "
+                "'sequential', one run after another"
+            ),
+        )
+        parser.add_argument(
+            "--repeat-extractions",
+            choices=["resample", "reuse"],
+            help=(
+                "With --repeats, whether each repeat extracts the query's "
+                "entities and keywords again (default: "
+                "evaluation.repeat_extractions, 'resample': repeat_stdev "
+                "includes the extraction's variance, at one set of fast-model "
+                "extraction calls per query and repeat) or reuses the first "
+                "repeat's ('reuse')"
+            ),
+        )
+        parser.add_argument(
             "--pairwise-judge",
             action="store_true",
             help=(
@@ -490,6 +520,11 @@ class EvaluationRunner:
         )
         self.rag_chain = rag_chain
         self.providers = providers
+        # This invocation, in every run manifest it writes: the runs a
+        # comparison reads back tell the invocations apart by it.
+        self.run_id = (
+            f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+        )
         self.json_output = json_output(args)
         self.evaluation_manager: EvaluationManager | None = None
         self._validate_args()
@@ -611,6 +646,12 @@ class EvaluationRunner:
                     "--repeats does not apply to --from-results (the saved runs "
                     "are the repeats)"
                 )
+            for flag in ("run_order", "repeat_extractions"):
+                if getattr(self.args, flag, None) is not None:
+                    usage_error(
+                        f"--{flag.replace('_', '-')} does not apply to "
+                        "--from-results (no answer is generated)"
+                    )
             if getattr(self.args, "evaluators", None) is not None:
                 usage_error(
                     "--evaluators does not apply to --from-results (the saved "
@@ -1154,11 +1195,14 @@ class EvaluationRunner:
         self._check_baseline_scoring(baseline, queries, ground_truths)
         await self._check_methodologies(queries, strategies if comparing else None)
 
-        runs: dict[str, list[Run]] = {}
-        summaries: list[dict[str, Any]] = []
-        breaches: list[str] = []
-        manifest: dict[str, Any] | None = None
-        manifests: list[tuple[str, dict[str, Any] | None]] = []
+        recorded = _Measured(
+            runs={},
+            manifests=[],
+            manifest=None,
+            categories={q.query_id: q.category for q in queries if q.category},
+            summaries=[],
+            comparing=comparing,
+        )
         managers = dict.fromkeys(strategies, self.evaluation_manager)
         if closed_book:
             # No retrieval: the answer model alone, scored by the same
@@ -1169,88 +1213,217 @@ class EvaluationRunner:
                 rag_chain=closed_book_chain(self.config, providers),
                 providers=providers,
             )
-        for strategy, manager in managers.items():
-            for repeat in range(1, self.args.repeats + 1):
-                # The run's strategy overrides a per-item one: every run of a
-                # comparison must answer the same queries the same way.
-                arm = (
-                    {"search_strategy": strategy, "retrieval": "none"}
-                    if strategy == CLOSED_BOOK_ARM
-                    else {"search_strategy": strategy}
-                )
-                run_queries = (
-                    [
-                        q.model_copy(update={"metadata": {**q.metadata, **arm}})
-                        for q in queries
-                    ]
-                    if comparing
-                    else queries
-                )
-                label = (
-                    f" ({strategy}"
-                    f"{', no retrieval' if strategy == CLOSED_BOOK_ARM else ''}, "
-                    f"repeat {repeat}/{self.args.repeats})"
-                    if comparing
-                    else ""
-                )
-                console.rule(
-                    f"[bold]Running Evaluation on {len(queries)} Queries{label}[/bold]",
-                    style="blue",
-                )
-                if repeat == 1 and queries and strategy != CLOSED_BOOK_ARM:
-                    # Untimed: the first strategy must not pay for warming
-                    # the connections and models the others then reuse.
-                    await manager.warm_up(run_queries[0])
-                run_start = time.time()
-                # On the run's root spans (kg_rag.batch, kg_rag.evaluate), so
-                # the runs of a comparison tell apart.
-                with observability.bind_attributes(
+
+        def arm_queries(strategy: str) -> list[EvaluationQuery]:
+            # The run's strategy overrides a per-item one: every run of a
+            # comparison must answer the same queries the same way.
+            if not comparing:
+                return queries
+            arm = (
+                {"search_strategy": strategy, "retrieval": "none"}
+                if strategy == CLOSED_BOOK_ARM
+                else {"search_strategy": strategy}
+            )
+            return [
+                q.model_copy(update={"metadata": {**q.metadata, **arm}})
+                for q in queries
+            ]
+
+        planned = [
+            (strategy, repeat)
+            for strategy in managers
+            for repeat in range(1, self.args.repeats + 1)
+        ]
+        context = _RunContext(
+            ground_truths=ground_truths,
+            dataset_path=eval_data_path,
+            dataset_uri=eval_data_uri,
+            outputs_target=outputs_target,
+            local_outputs=local_outputs,
+            run_order=self._run_order() if len(planned) > 1 else None,
+            repeat_extractions=(
+                self._repeat_extractions() if self.args.repeats > 1 else None
+            ),
+        )
+        if context.run_order == "interleaved":
+            await self._answer_interleaved(
+                planned, managers, arm_queries, context, recorded
+            )
+            return recorded
+        for strategy, repeat in planned:
+            manager = managers[strategy]
+            run_queries = arm_queries(strategy)
+            label = (
+                f" ({strategy}"
+                f"{', no retrieval' if strategy == CLOSED_BOOK_ARM else ''}, "
+                f"repeat {repeat}/{self.args.repeats})"
+                if comparing
+                else ""
+            )
+            console.rule(
+                f"[bold]Running Evaluation on {len(queries)} Queries{label}[/bold]",
+                style="blue",
+            )
+            if repeat == 1 and queries and strategy != CLOSED_BOOK_ARM:
+                # Untimed: the first strategy must not pay for warming
+                # the connections and models the others then reuse.
+                await manager.warm_up(run_queries[0])
+            run_start = time.time()
+            # On the run's root spans (kg_rag.batch, kg_rag.evaluate), so
+            # the runs of a comparison tell apart.
+            with (
+                observability.bind_attributes(
                     **{"eval.strategy": strategy, "eval.repeat": repeat}
-                ):
-                    results, reports, summary = await manager.evaluate_dataset(
-                        queries=run_queries,
-                        ground_truths=ground_truths,
-                        show_progress=True,
-                        dataset_path=eval_data_path,
-                        cli_args=vars(self.args),
-                    )
-                if is_s3_uri(eval_data_uri) and summary.run_manifest:
-                    # Record where the dataset came from, not the temporary copy.
-                    summary.run_manifest.get("dataset", {})["path"] = eval_data_uri
-                # The directory --output-directory chose, not the config default.
-                summary.configuration["outputs_directory"] = outputs_target
-                manager.save_results(
-                    results=results,
-                    reports=reports,
-                    summary=summary,
-                    outputs_dir=local_outputs,
+                ),
+                self._extraction_scope(repeat),
+            ):
+                results, reports, summary = await manager.evaluate_dataset(
+                    queries=run_queries,
+                    ground_truths=ground_truths,
+                    show_progress=True,
+                    dataset_path=eval_data_path,
+                    cli_args=vars(self.args),
                 )
-                manifest = manifest or summary.run_manifest
-                manifests.append((strategy, summary.run_manifest))
-                runs.setdefault(strategy, []).append((reports, results))
-                summaries.append(
-                    {
-                        "strategy": strategy,
-                        "repeat": repeat,
-                        **summary.model_dump(mode="json", include=_SUMMARY_FIELDS),
-                    }
+            self._record_run(
+                strategy,
+                repeat,
+                manager,
+                (reports, results),
+                summary,
+                context,
+                recorded,
+            )
+            if not comparing:
+                self._print_summary(summary, time.time() - run_start)
+        return recorded
+
+    def _run_order(self) -> str:
+        """``--run-order``, else ``evaluation.run_order``."""
+        return str(
+            getattr(self.args, "run_order", None) or self.config.evaluation.run_order
+        )
+
+    def _repeat_extractions(self) -> str:
+        """``--repeat-extractions``, else ``evaluation.repeat_extractions``."""
+        return str(
+            getattr(self.args, "repeat_extractions", None)
+            or self.config.evaluation.repeat_extractions
+        )
+
+    def _extraction_scope_name(self, repeat: int) -> str | None:
+        """The query extraction cache scope of ``repeat``: its own with
+        several repeats resampling their extractions, else ``None``."""
+        if self.args.repeats > 1 and self._repeat_extractions() == "resample":
+            return f"{self.run_id}/repeat-{repeat}"
+        return None
+
+    def _extraction_scope(self, repeat: int) -> AbstractContextManager[None]:
+        scope = self._extraction_scope_name(repeat)
+        return nullcontext() if scope is None else extraction_cache_scope(scope)
+
+    async def _answer_interleaved(
+        self,
+        planned: list[tuple[str, int]],
+        managers: dict[str, EvaluationManager],
+        arm_queries: Callable[[str], list[EvaluationQuery]],
+        context: "_RunContext",
+        recorded: "_Measured",
+    ) -> None:
+        """Answer every run of the comparison interleaved, query by query
+        (``EvaluationManager.answer_interleaved``), then score each run."""
+        arms = {
+            (strategy, repeat): AnswerArm(
+                manager=managers[strategy],
+                queries=arm_queries(strategy),
+                attributes={"eval.strategy": strategy, "eval.repeat": repeat},
+                extraction_scope=self._extraction_scope_name(repeat),
+            )
+            for strategy, repeat in planned
+        }
+        for strategy, manager in managers.items():
+            run_queries = arms[(strategy, 1)].queries
+            if run_queries and strategy != CLOSED_BOOK_ARM:
+                # Untimed, as before a sequential run.
+                await manager.warm_up(run_queries[0])
+        n_queries = len(arms[planned[0]].queries)
+        console.rule(
+            f"[bold]Running Evaluation on {n_queries} Queries x {len(planned)} "
+            "runs, interleaved[/bold]",
+            style="blue",
+        )
+        start = datetime.now()
+        answered = await EvaluationManager.answer_interleaved(
+            list(arms.values()), show_progress=True
+        )
+        for (strategy, repeat), (results, usage) in zip(planned, answered, strict=True):
+            manager = managers[strategy]
+            with observability.bind_attributes(
+                **{"eval.strategy": strategy, "eval.repeat": repeat}
+            ):
+                reports, summary = await manager.score_answers(
+                    arms[(strategy, repeat)].queries,
+                    results,
+                    context.ground_truths,
+                    start_time=start,
+                    answer_usage=usage,
+                    dataset_path=context.dataset_path,
+                    cli_args=vars(self.args),
                 )
-                if not comparing:
-                    self._print_summary(summary, time.time() - run_start)
-                breaches.extend(
-                    f"{strategy}#{repeat}: {b}" if comparing else b
-                    for b in failure_budget_breaches(
-                        summary, self.args.max_failure_rate
-                    )
-                )
-        return _Measured(
-            runs=runs,
-            manifests=manifests,
-            manifest=manifest,
-            categories={q.query_id: q.category for q in queries if q.category},
-            summaries=summaries,
-            breaches=breaches,
-            comparing=comparing,
+            self._record_run(
+                strategy,
+                repeat,
+                manager,
+                (reports, results),
+                summary,
+                context,
+                recorded,
+            )
+
+    def _record_run(
+        self,
+        strategy: str,
+        repeat: int,
+        manager: EvaluationManager,
+        run: Run,
+        summary: EvaluationSummary,
+        context: "_RunContext",
+        recorded: "_Measured",
+    ) -> None:
+        """Save one run's files and add it to the comparison's input."""
+        reports, results = run
+        if summary.run_manifest is not None:
+            if is_s3_uri(context.dataset_uri):
+                # Record where the dataset came from, not the temporary copy.
+                summary.run_manifest.get("dataset", {})["path"] = context.dataset_uri
+            # Which invocation answered it, and how its runs were ordered:
+            # the comparison warns on latency deltas across runs not
+            # answered interleaved together.
+            summary.run_manifest["run_id"] = self.run_id
+            if context.run_order is not None:
+                summary.run_manifest["run_order"] = context.run_order
+            if context.repeat_extractions is not None:
+                summary.run_manifest["repeat_extractions"] = context.repeat_extractions
+        # The directory --output-directory chose, not the config default.
+        summary.configuration["outputs_directory"] = context.outputs_target
+        manager.save_results(
+            results=results,
+            reports=reports,
+            summary=summary,
+            outputs_dir=context.local_outputs,
+        )
+        recorded.manifest = recorded.manifest or summary.run_manifest
+        recorded.manifests.append((strategy, summary.run_manifest))
+        recorded.runs.setdefault(strategy, []).append(run)
+        recorded.summaries.append(
+            {
+                "strategy": strategy,
+                "repeat": repeat,
+                **summary.model_dump(mode="json", include=_SUMMARY_FIELDS),
+            }
+        )
+        recorded.breaches.extend(
+            f"{strategy}#{repeat}: {b}" if recorded.comparing else b
+            for b in failure_budget_breaches(summary, self.args.max_failure_rate)
         )
 
     def _baseline_pairs(
@@ -1318,6 +1491,7 @@ class EvaluationRunner:
             warnings += [
                 *check_answer_scoring(manifests),
                 *dataset_warnings(manifests),
+                *interleaving_warnings(manifests),
             ]
         except EvaluationException as e:
             raise InvalidDatasetError(str(e)) from e
@@ -1452,6 +1626,20 @@ _SUMMARY_FIELDS = {
     "guardrail_blocked_counts",
     "usage",
 }
+
+
+class _RunContext(BaseModel):
+    """What every run of one run-eval invocation is recorded with."""
+
+    ground_truths: list[EvaluationGroundTruth]
+    dataset_path: str | Path
+    dataset_uri: str | Path
+    outputs_target: str
+    local_outputs: Path
+    # How several runs were ordered (None: one run), and whether repeats
+    # resampled their extractions (None: one repeat).
+    run_order: str | None = None
+    repeat_extractions: str | None = None
 
 
 class _Measured(BaseModel):

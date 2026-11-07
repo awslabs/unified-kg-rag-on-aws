@@ -217,6 +217,22 @@ How to read it:
 - **Cost and latency.** `cost.strategies.<s>` and `cost.deltas_vs_baseline`
   give the answers' calls, tokens and latency per query, paired like the
   metrics; a failed answer counts with what it spent before failing.
+- **Run order.** The runs are answered interleaved by default
+  (`--run-order interleaved`, `evaluation.run_order`): each query by every
+  strategy and repeat before the next query, their order reversed on every
+  other query, so a service that slows down over the run, or caches the
+  first runs warmed, do not show up as latency deltas (two runs of one
+  configuration answered one after the other differed by 0.5-5.8 s per
+  query). `--run-order sequential` answers one run after another, keeps
+  the finished runs when stopped part-way, and warns that its latency
+  deltas measure time too; so does a comparison of runs from separate
+  invocations (`--from-results`, `--baseline-results`).
+- **Repeats.** Each repeat extracts the query's entities and keywords again
+  (`--repeat-extractions resample`, `evaluation.repeat_extractions`), so
+  `repeat_stdev` includes the extraction's noise; it costs that fast-model
+  call once per query and repeat. The strategies of one repeat share the
+  extraction, so their deltas compare retrieval on the same keywords.
+  `reuse` extracts once for every repeat (the earlier behaviour).
 
 Every field, the failure and fill rules, the warnings and what the cost
 counts: [Evaluation output: Comparison](../reference/evaluation-output.md#comparison).
@@ -315,7 +331,9 @@ are grouped by strategy and compared in the order the oldest run listed them
 (`--search-strategy` picks and orders them instead), so a comparison that was
 stopped part-way is finished by running only the missing strategies into the
 same directory, with the same `--repeats`, and rebuilding: its deltas are
-those of an uninterrupted run. A strategy whose runs were all lost runs again
+those of an uninterrupted run. That needs `--run-order sequential`, which
+saves each run as it finishes: an interleaved comparison finishes all its
+runs together, so one stopped part-way saved none. A strategy whose runs were all lost runs again
 with `--repeats N`; one with some repeats saved runs only the missing ones
 (`--repeats` of the difference), or delete its partial files and run all N.
 

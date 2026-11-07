@@ -1224,8 +1224,9 @@ class _StrategyChain:
         return {"answer": answer, "sources": [], "metadata": meta}
 
 
+@pytest.mark.parametrize("order", ["interleaved", "sequential"])
 async def test_eval_runner_compares_strategies_pairwise(
-    config, mocker, tmp_path
+    config, mocker, tmp_path, order: str
 ) -> None:
     import json
 
@@ -1256,15 +1257,27 @@ async def test_eval_runner_compares_strategies_pairwise(
             "local,mix,auto",
             "--repeats",
             "2",
+            "--run-order",
+            order,
         ]
     )
     chain = _StrategyChain()
     runner = run_evaluation.EvaluationRunner(args, chain, config)
     assert await runner.run() == 0
     # One untimed warm-up query per strategy, then 4 queries x 2 repeats.
-    assert chain.strategies == ["local"] * 9 + ["mix"] * 9 + ["auto"] * 9
     assert chain.questions.count(_WARM_UP_QUESTION) == 3
     assert chain.questions[0] == _WARM_UP_QUESTION
+    if order == "sequential":
+        assert chain.strategies == ["local"] * 9 + ["mix"] * 9 + ["auto"] * 9
+    else:
+        # The warm-ups first, then each query by every run, the runs'
+        # order reversed on every other query (ABBA).
+        runs = ["local", "local", "mix", "mix", "auto", "auto"]
+        assert chain.strategies == ["local", "mix", "auto"] + [
+            s for j in range(4) for s in (runs if j % 2 == 0 else runs[::-1])
+        ]
+        questions = chain.questions[3:]
+        assert questions == [q for q in sorted(set(questions)) for _ in runs]
     assert len(list(out.glob("evaluation_summary_*.json"))) == 6
     comparison = json.loads(next(out.glob("evaluation_comparison_*.json")).read_text())
     assert comparison["baseline"] == "local"

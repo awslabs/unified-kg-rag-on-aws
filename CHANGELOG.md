@@ -463,6 +463,11 @@ From a `main` checkout (formats and keys no release had):
   `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
   now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`. The tree
   stored before stays in the build record, so `tree` keeps serving the text units it covers (#612).
+- #PR run order: a `run-eval` comparison is answered interleaved, so one stopped part-way saves no run (all finish
+  together); run `--run-order sequential` to complete an interrupted comparison by its missing strategies. With
+  `--repeats N`, each repeat makes its own query extraction calls (fast model; one entity or keyword extraction per
+  query and repeat instead of per query), and `repeat_stdev` can read higher than before on the same answers: it now
+  includes the extraction's noise (`--repeat-extractions reuse` for the earlier numbers).
 - #612 report generation off: a namespace built with `graph.community_detection.report_generation.enabled: false`
   holds `graphrag` again, so `local` answers on it (refused since #603); `global` and `drift`, which read the
   reports, are refused naming the switch. Nothing re-runs.
@@ -818,6 +823,15 @@ From a `main` checkout (formats and keys no release had):
   question's language, one sentence per supported language told by its script and function words (English, the
   0.2.3 reply, or the index language when they do not tell); evaluation counts a decline by `metadata.abstained`
   alone, no longer by the English text (#619).
+- `run-eval` answers the runs of a comparison interleaved: every query by every strategy and repeat before the next
+  query, their order reversed on every other query (ABBA), in one batch. Answered one run after another, the later
+  runs answered later, and two runs of one configuration differed by 0.5-5.8 s of latency per query; the drift now
+  lands on every run alike. `--run-order sequential` (`evaluation.run_order`) keeps the earlier order, and a
+  comparison whose runs were not answered interleaved in one invocation (sequential, `--from-results` of several,
+  `--baseline-results`) warns that its latency deltas measure time too. Each repeat extracts the query's entities and
+  keywords again (`--repeat-extractions resample`, `evaluation.repeat_extractions`), so `repeat_stdev` includes the
+  extraction's variance; `reuse` keeps one extraction for every repeat. Run manifests record `run_id`, `run_order`
+  and `repeat_extractions` (#PR).
 - `run-eval` scores with the three LLM-free evaluators by default (`answer_match`, `retrieval`, `graph_aware`): a
   core install no longer exits 2 for want of the `eval` extra, and a run calls no judge unless asked.
   `run-eval --evaluators a,b` picks the evaluators of one run; `ragas` and `assertion` are opt-in. The `langchain`

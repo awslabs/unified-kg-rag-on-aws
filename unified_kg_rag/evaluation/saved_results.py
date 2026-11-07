@@ -333,6 +333,40 @@ def dataset_warnings(
     ]
 
 
+def interleaving_warnings(
+    manifests: Sequence[tuple[str, dict[str, Any] | None]],
+) -> list[str]:
+    """A warning when the compared runs were not answered interleaved in one
+    ``run-eval`` (one ``run_id`` whose manifests record ``run_order``
+    ``interleaved``): runs answered one after another, in separate
+    invocations (``--from-results`` of several, ``--baseline-results``) or
+    before the order was recorded, differ in the time they ran at, so their
+    latency deltas measure that time as well as the strategies. ``manifests``
+    are ``(label, run manifest)`` pairs; one label compares nothing."""
+    if len({label for label, _ in manifests}) < 2:
+        return []
+    invocations = {(manifest or {}).get("run_id") for _, manifest in manifests}
+    orders = {(manifest or {}).get("run_order") for _, manifest in manifests}
+    known = invocations - {None}
+    if len(invocations) == 1 and known and orders == {"interleaved"}:
+        return []
+    if len(known) > 1:
+        how = f"in {len(known)} separate run-eval invocations"
+    elif None in invocations:
+        how = "one after another (saved before run-eval interleaved them)"
+    else:
+        how = "one after another (--run-order sequential)"
+    return [
+        f"The compared runs were answered {how}, not interleaved in one run: "
+        "their latency deltas (latency/response_time_seconds) also measure "
+        "what changed between them (service load, warm connections and "
+        "caches), and so may their usage deltas: two runs of one "
+        "configuration answered one after the other differed by 0.5-5.8 s "
+        "per query. Compare latency on runs answered together (one run-eval "
+        "listing every strategy, --run-order interleaved)."
+    ]
+
+
 # The run settings the saved runs of one strategy must share to be pooled as
 # its repeats: the query flags of run-eval, then manifest entries. The CLI
 # query flags are not in retrieval_config_sha256 (a hash of the

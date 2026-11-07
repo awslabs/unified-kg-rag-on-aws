@@ -6067,6 +6067,36 @@ class EvaluationConfig(BaseModel):
             "(run-eval --from-results and --baseline-results read them)."
         ),
     )
+    run_order: Literal["interleaved", "sequential"] = Field(
+        default="interleaved",
+        description=(
+            "How run-eval answers the runs of a comparison (several "
+            "strategies, --repeats, --closed-book; run-eval --run-order "
+            "overrides it). 'interleaved' (default) answers every query with "
+            "every run before the next query, the runs' order alternating "
+            "(ABBA), in one batch under processing.max_concurrency, so the "
+            "latency and cost deltas do not measure what changed between "
+            "runs answered one after another (service load, warm caches). "
+            "'sequential' answers each run's queries in turn, the order "
+            "before; the comparison then warns that its latency deltas are "
+            "confounded with time. Recorded in the run manifest (run_order)."
+        ),
+    )
+    repeat_extractions: Literal["resample", "reuse"] = Field(
+        default="resample",
+        description=(
+            "Whether the run-eval --repeats of a strategy extract the "
+            "query's entities and keywords again (run-eval "
+            "--repeat-extractions overrides it). 'resample' (default) gives "
+            "each repeat its own query extraction cache scope, so repeat_stdev "
+            "includes the extraction's run-to-run variance; the arms of one "
+            "repeat still share their extractions. It costs the fast-model "
+            "extraction calls of a query once per repeat instead of once. "
+            "'reuse' shares them across repeats (the behaviour before), so "
+            "the repeats only resample the answer. No effect with one repeat "
+            "or search.query_extraction_cache_size 0."
+        ),
+    )
     prices: dict[str, ModelPrice] = Field(
         default_factory=dict,
         description=(

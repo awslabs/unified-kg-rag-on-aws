@@ -977,8 +977,10 @@ def _measure_warnings(strategies: Mapping[str, Any]) -> list[str]:
 def _cache_warnings(strategies: Mapping[str, Any], names: Sequence[str]) -> list[str]:
     """Warnings when a strategy ran a different number of repeats than the
     baseline, or hit the query extraction cache at another rate per answer:
-    a later repeat reuses the earlier ones' extractions, so either makes the
-    usage deltas measure the cache as well as the strategy."""
+    a later repeat that reuses the earlier ones' extractions
+    (``evaluation.repeat_extractions: reuse``), or a run that shares the
+    cache with another, makes the usage deltas measure the cache as well as
+    the strategy."""
     if len(names) < 2:
         return []
     baseline = strategies[names[0]]
@@ -989,9 +991,10 @@ def _cache_warnings(strategies: Mapping[str, Any], names: Sequence[str]) -> list
         warnings.append(
             f"The compared strategies ran different numbers of repeats "
             f"({listed}): their means average different numbers of runs, and "
-            "a later repeat reuses the query extractions of the earlier ones "
-            "(cache_hits), so the usage deltas reflect the repeat counts too. "
-            "Compare runs made with the same --repeats."
+            "a later repeat may reuse the query extractions of the earlier "
+            "ones (cache_hits, with --repeat-extractions reuse), so the usage "
+            "deltas reflect the repeat counts too. Compare runs made with the "
+            "same --repeats."
         )
 
     def rate(stats: Mapping[str, Any]) -> float:
