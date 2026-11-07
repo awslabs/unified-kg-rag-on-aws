@@ -33,6 +33,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | How-to | [Domain adaptation](./guides/domain-adaptation.md) | Entity types, prompt tuning, custom prompt overrides and how they are checked, the prompts without an override |
 | How-to | [Extraction schema](./guides/extraction-schema.md), [Ontology](./guides/ontology.md), [Seed graphs](./guides/seed-graphs.md) | Schema modes, declaring types and patterns, the stored schema fields and their filters, what a schema change re-runs; reading the schema from an OWL/RDFS ontology; merging a knowledge graph you already have, how seeds meet the schema and the documents, their lifecycle and cost |
 | How-to | [Evaluation](./guides/evaluate.md), [Benchmarks](./guides/benchmarks.md), [Visualization](./guides/visualize.md), [Inspect and export](./guides/inspect.md) | Evaluators and what they need, the dataset format, paired comparisons of strategies, cost and prices, rebuilding, re-judging and CI gates; MuSiQue as a corpus and a dataset; rendering the exported graph; what a namespace holds, and its graph as GraphML or JSON Lines |
+| How-to | [Console](./guides/console.md) | The local web console (`run-console`): ask with a provenance trail into the graph, ingest, compare evaluations, explore the graph, usage and cost, settings; the demo and port forwarding |
 | How-to | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md) | Screening queries and answers, the contextual grounding check; tracing with Jaeger, Langfuse, Phoenix or CloudWatch, export limits and privacy |
 | How-to | [Using the library from Python](./guides/python-library.md) | Ingesting and querying from Python, results and errors to tell apart, async code, closing, logging, injected backends |
 | How-to | [MCP server](./guides/mcp.md) | Serving an index to agents as read-only MCP tools: the tools and their records, scope and limits, HTTP behind an authenticating proxy, cost and telemetry |
@@ -53,6 +54,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | I want to | Go to |
 |---|---|
 | Try it without an AWS account | [Getting started locally](./getting-started/local.md) |
+| Use it in a browser | [Console](./guides/console.md) |
 | Deploy the whole stack on AWS | [`iac/README.md`](../iac/README.md#quick-start) |
 | Enable the Bedrock models it needs | [Required models](./getting-started/aws.md#required-models) |
 | Change a model or a setting | [Configuration](./guides/configure.md), [Model selection notes](./reference/models.md#model-selection-notes), [Configuration Reference](./reference/configuration.md) |

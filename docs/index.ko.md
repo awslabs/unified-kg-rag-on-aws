@@ -35,6 +35,7 @@
 | 사용 방법 | [도메인 적응](./guides/domain-adaptation.ko.md) | 엔티티 유형, 프롬프트 튜닝, 사용자 정의 프롬프트 재정의와 그 검사, 재정의할 수 없는 프롬프트 |
 | 사용 방법 | [Extraction schema](./guides/extraction-schema.md), [Ontology](./guides/ontology.md), [Seed graphs](./guides/seed-graphs.md)(영문) | 스키마 모드, 유형과 패턴 선언, 저장하는 스키마 필드와 그 필터, 스키마를 바꾸면 다시 실행되는 것. OWL/RDFS 온톨로지에서 스키마 읽기. 이미 가진 지식 그래프 합치기, 시드가 스키마와 문서를 만날 때의 규칙, 수명 주기와 비용 |
 | 사용 방법 | [평가](./guides/evaluate.ko.md), [Benchmarks](./guides/benchmarks.md)(영문), [Visualization](./guides/visualize.md)(영문), [Inspect and export](./guides/inspect.md)(영문) | 평가기와 필요한 필드, 데이터 형식, 전략의 짝지은 비교, 비용과 가격, 다시 만들기·다시 판정하기·CI 게이트. MuSiQue를 코퍼스와 데이터셋으로 변환. 내보낸 그래프 렌더링. 네임스페이스가 담은 내용과 그래프를 GraphML·JSON Lines로 내보내기 |
+| 사용 방법 | [콘솔](./guides/console.ko.md) | 로컬 웹 콘솔(`run-console`): 그래프까지 이어지는 출처 추적과 함께 질문, 수집, 평가 비교, 그래프 탐색, 사용량과 비용, 설정. 데모와 포트 포워딩 |
 | 사용 방법 | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md)(영문) | 질의와 답변 검사, 컨텍스트 근거 검사. Jaeger, Langfuse, Phoenix, CloudWatch로 추적, 전송 제한과 개인정보 |
 | 사용 방법 | [Using the library from Python](./guides/python-library.md)(영문) | Python에서 수집과 질의, 구분해 처리할 결과와 오류, 비동기 코드, 닫기, 로깅, 백엔드 주입 |
 | 사용 방법 | [MCP 서버](./guides/mcp.ko.md) | 인덱스를 읽기 전용 MCP 도구로 에이전트에 제공. 도구와 레코드, 범위와 한도, 인증 프록시 뒤의 HTTP, 비용과 텔레메트리 |
@@ -55,6 +56,7 @@
 | 하려는 일 | 문서 |
 |---|---|
 | AWS 계정 없이 써 보기 | [로컬에서 시작하기](./getting-started/local.ko.md) |
+| 브라우저에서 쓰기 | [콘솔](./guides/console.ko.md) |
 | AWS에 전체 스택 배포 | [`iac/README.md`](../iac/README.md#quick-start)(영문) |
 | 필요한 Bedrock 모델 활성화 | [필수 모델](./getting-started/aws.ko.md#필수-모델) |
 | 모델이나 설정 변경 | [설정](./guides/configure.ko.md), [모델 선택 참고 사항](./reference/models.md#model-selection-notes)(영문), [설정 레퍼런스](./reference/configuration.md)(영문) |

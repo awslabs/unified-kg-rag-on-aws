@@ -68,13 +68,13 @@ jobs:
 
       - name: Sync dependencies
         # --locked: fail if uv.lock is stale relative to pyproject.toml.
-        run: uv sync --locked --extra otel --extra eval --extra viz --extra ontology --extra mcp --extra docx
+        run: uv sync --locked --extra otel --extra eval --extra viz --extra ontology --extra mcp --extra docx --extra console
 
-      - name: Check the eval, viz, ontology, mcp and docx extras are importable
+      - name: Check the eval, viz, ontology, mcp, docx and console extras are importable
         # The tests that need them skip themselves without them
         # (tests/fixtures/extras.py), which would let this job pass without
         # running them.
-        run: uv run --frozen python -c "import datasets, docx, langchain_openai, mcp, pandas, pyvis, ragas, rdflib"
+        run: uv run --frozen python -c "import datasets, docx, langchain_openai, mcp, pandas, pyvis, ragas, rdflib, fastapi, uvicorn, multipart"
 
       - name: Ruff (lint)
         run: uv run ruff check unified_kg_rag tests iac scripts
@@ -352,6 +352,67 @@ jobs:
 
       - name: pytest
         run: uv run --python 3.13 --frozen pytest -q -n logical
+
+  console-web:
+    # The console's web client: the lockfile installs, it type-checks, lints,
+    # passes its unit tests (every locale checked against the English
+    # catalog) and builds. The Python side runs in the quality job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: console/web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Install (lockfile)
+        run: npm ci --no-audit --no-fund
+      - name: Type check
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Audit
+        run: npm audit --audit-level=moderate
+
+  console-smoke:
+    # One browser pass through the console on the demo workspace with the
+    # fake models (no AWS, no model): pushes to main only, as it installs a
+    # browser.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.23"
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Install
+        run: |
+          uv sync --locked --extra console
+          cd console/web && npm ci --no-audit --no-fund && npm run build
+          npx playwright install --with-deps chromium
+      - name: Start the demo console
+        run: |
+          uv run --frozen python console/demo/demo.py --models fake --workspace "$RUNNER_TEMP/demo" --port 8501 > "$RUNNER_TEMP/demo.log" 2>&1 &
+          for _ in $(seq 120); do curl -fs http://127.0.0.1:8501/api/status > /dev/null && break; sleep 1; done
+          curl -fs http://127.0.0.1:8501/api/status
+      - name: Smoke test
+        working-directory: console/web
+        run: npm run test:smoke
+      - name: Demo log
+        if: failure()
+        run: cat "$RUNNER_TEMP/demo.log"
 
   iac:
     # Synthesize the CDK app with cdk-nag enabled so the Well-Architected
