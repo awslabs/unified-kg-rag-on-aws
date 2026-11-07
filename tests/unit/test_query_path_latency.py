@@ -34,13 +34,15 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     _LEFTOVER_EXTRACTIONS,
     AnswerGenerationPrompt,
     ComprehensiveAnswerPrompt,
-    EntityExtractionPrompt,
     GraphRAGChain,
-    KeywordsExtractionPrompt,
     StrategySelectionPrompt,
-    TranslationPrompt,
 )
 from unified_kg_rag.domain.models import Config, LanguageModelId, SearchStrategy
+from unified_kg_rag.domain.prompts import (
+    EntityExtractionPrompt,
+    KeywordsExtractionPrompt,
+    TranslationPrompt,
+)
 from unified_kg_rag.ports.model_factory import ceiled_output_tokens
 from unified_kg_rag.shared.utils.concurrency import discard
 

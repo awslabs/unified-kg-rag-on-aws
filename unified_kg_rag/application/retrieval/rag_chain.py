@@ -101,7 +101,6 @@ from unified_kg_rag.domain.models import (
     IndexArtifact,
     LanguageCode,
     Methodology,
-    ModelRole,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -114,11 +113,8 @@ from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     BasePrompt,
     ComprehensiveAnswerPrompt,
-    EntityExtractionPrompt,
-    KeywordsExtractionPrompt,
     QueryRewritePrompt,
     StrategySelectionPrompt,
-    TranslationPrompt,
 )
 from unified_kg_rag.domain.prompts.retrieval import (
     ABSTENTION_INSTRUCTIONS,
@@ -894,23 +890,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         parser: BaseOutputParser[Any],
         **kwargs: Any,
     ) -> Runnable[Any, Any]:
-        model_id_map: dict[type[BasePrompt], str] = {
-            EntityExtractionPrompt: self.config.model_id(ModelRole.ENTITY_EXTRACTION),
-            KeywordsExtractionPrompt: self.config.model_id(ModelRole.ENTITY_EXTRACTION),
-            TranslationPrompt: self.config.model_id(ModelRole.QUERY_TRANSLATION),
-            StrategySelectionPrompt: self.config.model_id(ModelRole.STRATEGY_SELECTION),
-            QueryRewritePrompt: self.config.model_id(ModelRole.QUERY_REWRITE),
-            AnswerGenerationPrompt: self.config.model_id(ModelRole.ANSWER_GENERATION),
-            ComprehensiveAnswerPrompt: self.config.model_id(
-                ModelRole.ANSWER_GENERATION
-            ),
-        }
-        model_id = model_id_map.get(prompt_class)
-        if model_id is None:
+        role = prompt_class.model_role
+        if role is None:
             raise ValueError(
-                f"No model id configured for prompt {prompt_class.__name__}; "
-                f"add it to _get_chain_for_prompt's model_id_map."
+                f"No model role declared for prompt {prompt_class.__name__}; "
+                "set its model_role."
             )
+        model_id = self.config.model_id(role)
         # Built once per chain: setup_chain builds the model and its boto
         # clients, so building per query paid that (and fresh connection
         # pools) on every request. Parsers are stateless; one of each type.

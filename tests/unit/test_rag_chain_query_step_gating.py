@@ -20,19 +20,21 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
 from unified_kg_rag.application.retrieval.rag_chain import (
-    EntityExtractionPrompt,
     GraphRAGChain,
-    KeywordsExtractionPrompt,
     ProcessedQuery,
     RAGInput,
     StrategySelectionPrompt,
-    TranslationPrompt,
 )
 from unified_kg_rag.domain.models import (
     Config,
     SearchQuery,
     SearchResult,
     SearchStrategy,
+)
+from unified_kg_rag.domain.prompts import (
+    EntityExtractionPrompt,
+    KeywordsExtractionPrompt,
+    TranslationPrompt,
 )
 
 pytestmark = pytest.mark.unit

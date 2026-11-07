@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Sequence
 
+from unified_kg_rag.domain.models.config import ModelRole
 from unified_kg_rag.domain.models.retrieval import SearchStrategy
 
 from .base import BasePrompt
@@ -9,6 +10,7 @@ from .base import BasePrompt
 
 class AnswerGenerationPrompt(BasePrompt):
     prompt_key = "answer_generation"
+    model_role = ModelRole.ANSWER_GENERATION
     input_variables = ["query", "context"]
 
     system_prompt_template = """You are an expert AI assistant that answers questions from knowledge graph context:
@@ -72,6 +74,7 @@ class ComprehensiveAnswerPrompt(BasePrompt):
     """
 
     prompt_key = "comprehensive_answer"
+    model_role = ModelRole.ANSWER_GENERATION
     input_variables = ["query", "context"]
 
     system_prompt_template = """You are a helpful assistant responding to questions about a dataset by synthesizing
@@ -209,6 +212,7 @@ Relevance Score (1-10):"""
 
 class EntityExtractionPrompt(BasePrompt):
     prompt_key = "entity_extraction"
+    model_role = ModelRole.ENTITY_EXTRACTION
     input_variables = ["query", "target_language"]
 
     system_prompt_template = """You are a specialized entity extraction expert for graph-based retrieval. Your task
@@ -331,6 +335,7 @@ class KeywordsExtractionPrompt(BasePrompt):
     so it shares unified-kg-rag-on-aws's multilingual support.
     """
 
+    model_role = ModelRole.ENTITY_EXTRACTION
     input_variables = ["query", "target_language"]
     output_variables = ["high_level_keywords", "low_level_keywords"]
 
@@ -704,6 +709,7 @@ class QueryRewritePrompt(BasePrompt):
     """Rewrite a follow-up message as a standalone question before retrieval."""
 
     prompt_key = "query_rewrite"
+    model_role = ModelRole.QUERY_REWRITE
     input_variables = ["query", "conversation_history"]
 
     system_prompt_template = """You rewrite the latest user message of a conversation as a standalone question that a
@@ -735,6 +741,7 @@ Standalone question:"""
 
 class StrategySelectionPrompt(BasePrompt):
     prompt_key = "strategy_selection"
+    model_role = ModelRole.STRATEGY_SELECTION
     input_variables = ["query", "strategies", "strategy_descriptions"]
 
     system_prompt_template = """You are an expert search strategy selector for advanced knowledge graph retrieval
@@ -762,6 +769,7 @@ Strategy:"""
 
 
 class TranslationPrompt(BasePrompt):
+    model_role = ModelRole.QUERY_TRANSLATION
     input_variables = ["query", "target_language"]
 
     system_prompt_template = """You are a professional technical translator specializing in preserving semantic meaning

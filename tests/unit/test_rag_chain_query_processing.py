@@ -17,11 +17,13 @@ import pytest
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
 from unified_kg_rag.application.retrieval import query_processing
 from unified_kg_rag.application.retrieval.rag_chain import (
-    EntityExtractionPrompt,
     GraphRAGChain,
-    TranslationPrompt,
 )
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.prompts import (
+    EntityExtractionPrompt,
+    TranslationPrompt,
+)
 
 pytestmark = pytest.mark.unit
 
