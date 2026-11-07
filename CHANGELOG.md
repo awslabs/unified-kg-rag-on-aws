@@ -851,7 +851,8 @@ From a `main` checkout (formats and keys no release had):
   multi-hop questions, for about 0.1 s more retrieval a query
   ([evidence](docs/concepts/defaults-and-evidence.md#local-ppr-ranking)) (#602); DRIFT's follow-up local searches
   keep `support` (`search.drift_search.text_unit_ranking`) (#607). Graph retrievers gain `aneighbourhood_edges`
-  (Neptune, Gremlin Server, SQLite; the relationships index under a document filter), and `SearchQuery.max_hops`
+  (Neptune, Gremlin Server, SQLite; the relationships index under a document filter and on Neptune, which reads every
+  edge within the set, not one 100-edge page of them, before the per-vertex cap), and `SearchQuery.max_hops`
   overrides the expansion depth (#597).
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs with the CMK and
   `log_retention_days` (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot

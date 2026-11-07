@@ -2325,11 +2325,16 @@ cannot tell; the strategy then reads the relationships index.
 - Under a document filter (and from a graph that scans incident edges)
   the graph cannot tell which edges a passing document states, so the
   edges come from the relationships index
-  (`_incident_relationships`, as the filtered walk reads them: one request per
-  batch of source ids with the target pinned to the set, a page of at most
-  `max_query_size` edges best first; under two or more document keys an
-  edge also needs one passing document by its text units), cut per vertex
-  alike. A `source_kinds` filter applies to the edges of every path; there
+  (`_indexed_neighbourhood_edges`: one request per batch of source ids
+  with the target pinned to the set, a page of at most `max_query_size`
+  edges best first; a batch whose page comes back full is asked again in
+  halves down to one vertex, and a source with more than a page is asked
+  from its targets' end with the source pinned, so a hub's edges are all
+  read; under two or more document keys an edge also needs one passing
+  document by its text units), cut per vertex alike. Only a vertex past a
+  page at both ends keeps its best-ranked page there. Without the halving
+  the whole set got one page: on a real Neptune graph 100 of 178-678
+  edges, and the PageRank ran on a rank-biased cut. A `source_kinds` filter applies to the edges of every path; there
   the index also applies the caller's relationship keys (`predicate_iri`,
   `in_schema`, `weight`), which the graph path does not apply to edges, as
   the graph walk crosses every edge.

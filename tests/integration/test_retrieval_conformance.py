@@ -1972,3 +1972,54 @@ def test_the_relationships_index_gives_the_graphs_neighbourhood_edges(
     assert asyncio.run(run(None)) == ["r-ab", "r-bc"]
     assert asyncio.run(run({"attr_category": ["kept", "other"]})) == ["r-ab", "r-bc"]
     assert asyncio.run(run({"attr_category": "kept"})) == ["r-ab"]
+
+
+def test_the_relationships_index_gives_a_hubs_neighbourhood_edges(
+    graph_harness: StoreHarness,
+) -> None:
+    # Regression (real Neptune): the relationships index, which Neptune
+    # deployments always read the PageRank graph from, returned at most one
+    # page (indexing.opensearch.max_query_size, 100) of edges for the whole
+    # vertex set: a hub with 499 edges within the set came back with 100.
+    # Each vertex keeps its first per_vertex edges by id, as on the graph.
+    h = graph_harness
+    h.initialize()
+    page = h.config.indexing.opensearch.max_query_size
+    leaves = [f"n{i:03d}" for i in range(page + 50)]
+    edges = [(f"r-hub-{n}", "hub", n) for n in leaves]
+    # A second hub the leaves point at, and edges among the first leaves.
+    edges += [(f"r-{n}-hub2", n, "hub2") for n in leaves]
+    edges += [
+        (f"r-{a}-{b}", a, b) for a, b in zip(leaves[:30], leaves[1:31], strict=True)
+    ]
+    _connect(h, edges)
+    relationships = [
+        Relationship(id=rel, source_id=a, target_id=b, description=f"{a} {b}")
+        for rel, a, b in edges
+    ]
+    assert h.vector_indexer.index_relationships(relationships).failed_items == 0
+    assert h.vector_retriever is not None and h.graph_retriever is not None
+    vertices = ["hub", "hub2", *leaves]
+
+    async def indexed(per_vertex: int) -> list[str] | None:
+        assert h.vector_retriever is not None and h.graph_retriever is not None
+        documents, graph = h.vector_retriever(), h.graph_retriever()
+        config = h.config.model_copy(deep=True)
+        config.providers.rerank.kind = "none"  # no model is built
+        strategy = LocalSearchStrategy(
+            config,
+            {RetrieverRole.DOCUMENT.value: documents, RetrieverRole.GRAPH.value: graph},
+        )
+        try:
+            found = await strategy._indexed_neighbourhood_edges(
+                SearchQuery(query="", suffix=_SUFFIX), vertices, per_vertex
+            )
+        finally:
+            await documents.aclose()
+            await graph.aclose()
+        return None if found is None else [e.id for e in found]
+
+    for per_vertex in (1, 50, 1000):
+        on_graph = [e[0] for e in _edges_within(h, vertices, per_vertex=per_vertex)]
+        assert asyncio.run(indexed(per_vertex)) == on_graph, per_vertex
+    assert len(on_graph) == len(edges)

@@ -1331,12 +1331,21 @@ class BaseSearchStrategy(ABC):
         self, query: SearchQuery, ids: list[str], per_vertex: int
     ) -> list[GraphEdge] | None:
         """``_neighbourhood_edges`` from the relationships index, under the
-        caller's filters: one request per batch of source ids, the target
-        pinned to the set (when the set fits one terms clause; past it the
-        targets are kept in the set here), each page at most
-        ``_incident_fetch_limit`` best (rank, weight) edges; under two or
-        more document keys an edge also needs one passing document (its text
-        units). ``None`` when the index is missing at query time."""
+        caller's filters: the edges between two of ``ids`` (one request per
+        batch of source ids, the target pinned to the set when the set fits
+        one terms clause; past it the targets are kept in the set here),
+        then each vertex's first ``per_vertex`` by id
+        (``cap_edges_per_vertex``), as the graph gives them; under two or
+        more document keys an edge also needs one passing document (its
+        text units). ``None`` when the index is missing at query time.
+
+        A request returns one page (``_incident_fetch_limit``), so a batch
+        whose page came back full is asked again in halves, down to one
+        vertex: a hub's edges are all read, not the best-ranked page of the
+        whole set. The edges of a source with more than a page of them are
+        then asked from their targets' end (the source pinned), so each
+        target still keeps its own; only a vertex past a page at both ends
+        keeps the best-ranked page of them (logged at DEBUG)."""
         retriever = self.document_retriever
         assert retriever is not None  # the caller checks
         prefix = self.config.indexing.opensearch.relationships_index_prefix
@@ -1347,28 +1356,67 @@ class BaseSearchStrategy(ABC):
             if len(documents) > 1 or f != "text_unit_ids"
         ]
         limits = await retriever.aindex_limits(prefix, query.suffix)
-        pinned = (
-            query.model_copy(
-                update={"filters": scope_filters(query.filters, target_id=ids)}
+        hits: dict[str, RetrievalResult] = {}
+
+        async def read(end: str, others: list[str]) -> list[str]:
+            """Every edge with its ``end`` in ``ids`` and its other end in
+            ``others``, into ``hits``; the vertices whose page alone came
+            back full."""
+            pinned = len(others) <= limits.max_terms_count
+            other = "target_id" if end == "source_id" else "source_id"
+            within = (
+                query.model_copy(
+                    update={"filters": scope_filters(query.filters, **{other: others})}
+                )
+                if pinned
+                else query
             )
-            if len(ids) <= limits.max_terms_count
-            else query
-        )
-        hits, full = await self._incident_relationships(
-            pinned, ids, fields, ends=("source_id",)
-        )
-        if full:
+            truncated: list[str] = []
+            pending = [ids]
+            while pending:
+                pages = await gather_bounded(
+                    self.config.search.max_concurrency,
+                    (
+                        self._incident_relationships(within, batch, fields, ends=(end,))
+                        for batch in pending
+                    ),
+                )
+                split: list[list[str]] = []
+                for batch, (found, full) in zip(pending, pages, strict=True):
+                    for hit in found:
+                        hits.setdefault(self._relationship_identity(hit), hit)
+                    if not full:
+                        continue
+                    if len(batch) == 1 or not pinned:
+                        # Unpinned, a page holds edges leaving the set too:
+                        # halving would ask about every vertex alone.
+                        truncated += batch
+                        continue
+                    half = len(batch) // 2
+                    split += [batch[:half], batch[half:]]
+                pending = split
+            return truncated
+
+        crowded = await read("source_id", ids)
+        if crowded:
+            # Their targets' end: the targets past a page of edges from them
+            # are the ones left with a cut.
+            crowded = await read("target_id", crowded)
+        if crowded:
             logger.debug(
-                "Neighbourhood edges: a page of the relationships index came "
-                "back full; the lowest-ranked edges of %s entities are left out",
+                "Neighbourhood edges: %s of %s entities have more edges within "
+                "the set than a page of the relationships index at both ends; "
+                "their lowest-ranked edges are left out",
+                len(crowded),
                 len(ids),
             )
-        if len(documents) > 1 and hits:
-            hits = await self._edges_one_document_passes(query, hits, documents)
-        if not hits and (await retriever.ahas_index(prefix, query.suffix)) is False:
+        edges = list(hits.values())
+        if len(documents) > 1 and edges:
+            edges = await self._edges_one_document_passes(query, edges, documents)
+        if not edges and (await retriever.ahas_index(prefix, query.suffix)) is False:
             return None
         return cap_edges_per_vertex(
-            (edge for hit in hits if (edge := _graph_edge(hit)) is not None),
+            (edge for hit in edges if (edge := _graph_edge(hit)) is not None),
             ids,
             per_vertex,
         )
