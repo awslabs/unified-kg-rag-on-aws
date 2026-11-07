@@ -106,6 +106,9 @@ _SCOPED_MODELS = {
         # The deploy that upgrades a 0.2.3 stack set keeps its registry
         # table's exports while it replaces the table.
         {"legacy_doc_status_table": "graphrag-doc-status"},
+        # ... with the CMK, flow logs and retained resources of a production
+        # stack set.
+        {**_PROD_HARDENED, "legacy_doc_status_table": "graphrag-doc-status"},
     ],
     ids=[
         "dev",
@@ -120,6 +123,7 @@ _SCOPED_MODELS = {
         "scoped-models",
         "prod-hardened-neptune-audit",
         "legacy-doc-status-table",
+        "prod-hardened-legacy-doc-status-table",
     ],
 )
 def test_concrete_account_synth_has_no_nag_errors(

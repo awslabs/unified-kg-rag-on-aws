@@ -546,6 +546,8 @@ _CLUSTER_WRITES = [
     ("PUT", "/_template/graphrag"),
     ("PUT", "/_ingest/pipeline/rewrite"),
     ("DELETE", "/_ingest/pipeline/rewrite"),
+    ("PUT", "/_search/pipeline/rewrite"),
+    ("DELETE", "/_search/pipeline/rewrite"),
     ("POST", "/_scripts/painless"),
 ]
 

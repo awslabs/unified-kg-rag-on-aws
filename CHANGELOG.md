@@ -1519,8 +1519,9 @@ Deployment (CDK).
 - Releases attach SHA-256 checksums and a CycloneDX SBOM of the locked dependencies, with a signed build provenance
   attestation of the distributions (`gh attestation verify`) (#617).
 - IaC: the ingestion role cannot change OpenSearch cluster settings or plugin configuration (writes under
-  `_cluster`, `_plugins` and `_opendistro` are denied), nor write snapshot repositories, templates, ingest pipelines
-  or stored scripts (`_snapshot`, `_index_template`, `_component_template`, `_template`, `_ingest`, `_scripts`); the logger-credential semgrep finding is suppressed on each
+  `_cluster`, `_plugins` and `_opendistro` are denied), nor write snapshot repositories, templates, ingest or search
+  pipelines or stored scripts (`_snapshot`, `_index_template`, `_component_template`, `_template`, `_ingest`,
+  `_search/pipeline`, `_scripts`); the logger-credential semgrep finding is suppressed on each
   matched line, not the whole package (#617).
 - A failed query step (routing, query processing, follow-up rewrite, context optimization, the answer and its
   stream, conversation memory) or claim extraction step logs its error as its type and a digest, its text at DEBUG,
