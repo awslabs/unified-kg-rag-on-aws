@@ -79,15 +79,15 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
 | `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`, `iterative`, `ppr`, `tree`. |
 | `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
-| `--top-k` | `10` | Set the maximum number of search results. |
-| `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
+| `--top-k` | `10` | Set the maximum number of search results (times --retrieval-multiplier; default 10). |
+| `--retrieval-multiplier` | `1` | Widen the search N times: each index and graph expansion fetches up to top-k x N candidates and the fused list keeps up to top-k x N for the reranker and the context budget, at the cost of larger searches (default 1). |
 | `--disable-query-processing` | off | Skip query translation and the query-side entity and keyword extraction (no LLM call before retrieval). mix and hybrid then have no high- or low-level keywords: a question shorter than search.lightrag_search.raw_query_fallback_max_len characters (a CJK or Hangul character counting 4) is searched as its own low-level keyword, a longer one retrieves no entities or relationships. |
 | `--filters` | — | Attribute filters as space-separated 'key:value' pairs (a repeated --filters adds its pairs); a boolean or numeric field takes its type's value (in_schema:false, rank:2). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |
 | `--metrics-sink` | `none` | Where to send query metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout: query_latency_ms of each --mode rag query under unified_kg_rag/query, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and a Strategy dimension; not with --output-format json). |
-| `--verbose`, `-v` | off | Show query-processing details, sources and metrics. |
+| `--verbose`, `-v` | off | Show more of each result: the query processing, every source (or search hit) with its score and text, and the metrics; with --output-format json, also an answer's search_results.results (the logs: --log-level). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 
@@ -109,8 +109,8 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
 | `--search-strategy` | `auto` | Search strategy, or a comma-separated list (e.g. local,mix,global) to answer the same queries with each and compare them pairwise against the first. Give the flag once: a second one is a usage error. |
 | `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
-| `--top-k` | `10` | Set the maximum number of search results. |
-| `--retrieval-multiplier` | `1` | Multiplier that increases the retrieval depth. |
+| `--top-k` | `10` | Set the maximum number of search results (times --retrieval-multiplier; default 10). |
+| `--retrieval-multiplier` | `1` | Widen the search N times: each index and graph expansion fetches up to top-k x N candidates and the fused list keeps up to top-k x N for the reranker and the context budget, at the cost of larger searches (default 1). |
 | `--evaluators` `NAME[,NAME...]` | — | Evaluators that score this run, comma-separated (default: evaluation.enabled_evaluators, answer_match,retrieval,graph_aware). The LLM judges are opt-in: ragas (the eval extra; several judge calls per answer, one per context for context_precision) and assertion (evaluation.assertion_trials calls per answer). |
 | `--repeats` | `1` | Answer and score the dataset this many times per strategy; the comparison averages each query over the repeats and reports the run-to-run spread (default 1). |
 | `--primary-metric` `EVALUATOR/METRIC` | — | The comparison's primary metric, declared in advance (default: evaluation.primary_metric, else answer_match/answer_contains when scored): adjusted only over the compared strategies, while every other metric's delta is Holm-adjusted over all of them (adjusted_p_value, adjusted_ci_low/high, which --fail-if can read). |
@@ -161,6 +161,8 @@ Guide: [Inspect and export](../guides/inspect.md). Also takes the [provider flag
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 
 ## `run-prompt-tuning`
 
@@ -225,6 +227,8 @@ Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider
 | `--host` | `127.0.0.1` | Address the HTTP transport binds (default 127.0.0.1, this machine only); a non-loopback address needs --allow-remote. |
 | `--port` | `8000` | Port of the HTTP transport (default 8000). |
 | `--allow-remote` | off | Let the HTTP transport bind a non-loopback address. The server authenticates no caller: put it behind a proxy or gateway that authenticates every request, and keep the port unreachable otherwise. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 
