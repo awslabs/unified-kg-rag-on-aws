@@ -140,7 +140,7 @@ class TestExtractDualKeywords:
                 ["Alice"],
             )
         else:
-            with pytest.raises(ValueError, match="unclosed"):
+            with pytest.raises(LanguageModelError, match="unclosed"):
                 await chain._extract_dual_keywords("q", "English")
 
     async def test_ignore_errors_returns_empty(
@@ -165,8 +165,16 @@ class TestExtractDualKeywords:
             "_get_chain_for_prompt",
             lambda *a, **k: _StubChain("not json"),
         )
-        with pytest.raises(json.JSONDecodeError):
+        with pytest.raises(LanguageModelError) as raised:
             await chain._extract_dual_keywords("q", "English")
+        # The parser's error alone ('Expecting value') named neither the
+        # model that answered nor what to do.
+        assert isinstance(raised.value.__cause__, json.JSONDecodeError)
+        message = str(raised.value)
+        assert "model role entity_extraction" in message
+        assert "models.roles.entity_extraction" in message
+        assert "processing.ignore_errors: true" in message
+        assert "--disable-query-processing" in message
 
     @pytest.mark.parametrize(
         "raw",

@@ -100,10 +100,16 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 `INFO` 이상에서 사용자 텍스트와 코퍼스 텍스트는 길이, 개수, ID, 항상 같은 짧은
 해시(`query: len=42 sha=1a2b3c4d`)로만 기록합니다. 질의 원문, 다시 쓴 질의, 엔티티
 이름, 모델 원본 출력은 `DEBUG`에서만 기록하며, 예외 메시지에는 모델 출력을 넣지
-않습니다. `DEBUG` 로그(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`,
-`run-eval --verbose`. `run-rag --verbose`는 콘솔에 더 많이 출력할 뿐 로그 수준은 바꾸지
-않음)와 `logging.library_levels`에서 `DEBUG`로 둔 라이브러리(`botocore`는 요청
-본문을 기록함)에는 사용자 데이터와 코퍼스 데이터가 들어 있다고 보세요.
+않습니다. `DEBUG` 로그(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, 모든 CLI의
+`--log-level DEBUG`, 지원 중단된 `run-eval --verbose`. `run-rag --verbose`는 결과를 더
+자세히 출력할 뿐 로그 수준은 바꾸지 않음)와 `logging.library_levels`에서 `DEBUG`로 둔
+라이브러리(`botocore`는 요청 본문을 기록함)에는 사용자 데이터와 코퍼스 데이터가 들어 있다고
+보세요.
+
+모든 CLI는 `--log-level`(`logging.level`보다 우선)과 `--version`을 받습니다.
+`--output-format text`에서는 `logging.log_format`을 지정하지 않으면 콘솔 로그가 일반 텍스트
+줄로 나옵니다(CDK 작업은 CloudWatch용 JSON 레코드인 `structured`를 지정). `--output-format
+json`에서는 stderr에 JSON 레코드로 나옵니다.
 
 `logging.log_to_file: true`로 두면 CLI는 `logging.log_file_path`(`logs/log.txt`,
 날짜별 `log_YYYYMMDD.txt`, 작업 디렉터리 기준이라 그 디렉터리에 쓸 수 있어야 함)에도

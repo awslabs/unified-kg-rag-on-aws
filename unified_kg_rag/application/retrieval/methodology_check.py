@@ -166,9 +166,13 @@ def not_indexed_message(
     holds = ", ".join(m.value for m in held) or "no methodology"
     instead = f"; its strategies: {', '.join(serving)}, or auto" if serving else ""
     if methodology is Methodology.RAPTOR:
-        # The tree is built from the stored text units: no rebuild.
+        # The tree is built from the stored text units: no rebuild. A tree
+        # run without raptor selected is refused, so the command names it.
+        listed = [m.value for m in config.indexing.methodologies]
+        selected = ",".join(dict.fromkeys([*listed, methodology.value]))
         how = (
-            "re-run ingestion: the summary tree is built from the stored text "
+            "re-run ingestion (run-ingestion --methodologies "
+            f"{selected}): the summary tree is built from the stored text "
             "units, with no re-extraction."
         )
     elif set(held) <= {Methodology.RAPTOR}:

@@ -28,10 +28,27 @@ run-rag --query "..." --mode search --output-format json --config-path config.ya
 run-rag --query "Where was the founder of the company that acquired X born?" \
   --search-strategy ppr --config-path config.yaml
 
-# Verbose (entities, top sources, metrics) with attribute filters
+# Verbose (entities, every source with its score and text, metrics) with
+# attribute filters
 run-rag --query "..." --verbose --filters attr_category:research type:person \
   --config-path config.yaml
 ```
+
+What the text output shows:
+
+- **An answer** is followed by one line naming its sources: the files its
+  text units came from and how many graph elements of each type the model
+  read (`Sources (13): files: acme.txt, globex.txt; 7 relationships, 4
+  entities, 1 community report`). `--verbose` lists each source instead,
+  with its type, file or name, score and the start of its text, then the
+  query processing and the metrics; in `--interactive` mode too.
+- **`--mode search`** prints the hits: type, file (a text unit, with its
+  chunk when the file has several) or name (an entity, a community report;
+  a relationship's two ends), score and the start of the text, the first
+  20 unless `--verbose`.
+- **`--output-format json`** prints the result as one document; an answer's
+  `search_results` there leaves out `results`, which repeat its `sources`,
+  unless `--verbose` (they also hold what the context budget cut).
 
 ## Filters
 

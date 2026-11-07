@@ -1032,7 +1032,12 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   (a listed stage runs, an unlisted one does not); a run that writes the
   index (lists `indexing`) and leaves out a stage a selected methodology
   needs logs a WARNING naming both (not for `OPTIONAL_STAGES`: parsing,
-  translation, gleaning).
+  translation, gleaning). A stage `--enabled-stages` names that no selected
+  methodology needs (and its config section allows) is refused by
+  `run-ingestion` before any model call (exit 2,
+  `pipeline.unneeded_stage_error`): it would pay for an artifact
+  the build record does not list. A library `stages_enabled` map, where
+  switching one stage off leaves every other listed, runs it with a WARNING.
 - **Build record.** `IndexBuildRecord` gains `artifacts` (what the namespace
   holds and the runs maintain) and `methodologies` (those whose required
   artifacts it holds, for manifests and readers). A run's artifacts
@@ -2729,7 +2734,7 @@ measured default path).
 | More than `max_leaves_in_memory` (100,000) leaves in one tree | The stage fails before it reads their vectors, naming `partition_by` and `scope: document` |
 | Writing the new index fails | The new index is dropped, the old tree (without its stale nodes) stays, the stage fails |
 | Indexing failed in the same run | The stage is skipped |
-| No summary tree at query time | `tree` is refused when the build record says so (`MethodologyNotIndexedError`); with a record from before methodology profiles it answers from the text units with `metadata["summary_tree"] = "missing"` and a WARNING. `run-ingestion --enabled-stages summary_tree` builds the tree from the stored text units |
+| No summary tree at query time | `tree` is refused when the build record says so (`MethodologyNotIndexedError`); with a record from before methodology profiles it answers from the text units with `metadata["summary_tree"] = "missing"` and a WARNING. `run-ingestion --enabled-stages summary_tree` (with `raptor` selected) builds the tree from the stored text units |
 
 **Cost.** Calls ≈ leaves / (children per node − 1), about 0.18 per leaf.
 On the MuSiQue benchmark store (3,318 leaves, 0.37M tokens) the fast tier

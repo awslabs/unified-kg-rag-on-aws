@@ -124,6 +124,58 @@ def test_every_cli_offers_json_output(cli: str) -> None:
 
 
 @pytest.mark.parametrize("cli", ALL_PARSERS)
+def test_every_cli_has_version_and_log_level(cli: str, capsys) -> None:
+    from unified_kg_rag import __version__
+
+    parser = ALL_PARSERS[cli]()
+    with pytest.raises(SystemExit) as exited:
+        parser.parse_args(["--version"])
+    assert exited.value.code == 0
+    assert capsys.readouterr().out.strip().endswith(__version__)
+    action = next(a for a in parser._actions if "--log-level" in a.option_strings)
+    assert action.default is None
+    assert list(action.choices or []) == [
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL",
+    ]
+    # Case-insensitive, as logging.level is.
+    assert action.type("debug") == "DEBUG"
+
+
+@pytest.mark.parametrize(
+    ("flags", "config", "level", "log_format"),
+    [
+        ([], {}, "INFO", "plain"),
+        (["--log-level", "warning"], {}, "WARNING", "plain"),
+        # A deployment that sets the format keeps it; JSON output keeps JSON
+        # records (on stderr).
+        ([], {"logging": {"log_format": "structured"}}, "INFO", "structured"),
+        (["--output-format", "json"], {}, "INFO", "structured"),
+        (["--log-level", "ERROR"], {"logging": {"level": "DEBUG"}}, "ERROR", "plain"),
+    ],
+)
+def test_cli_logging_follows_the_flags(
+    mocker, flags: list[str], config: dict, level: str, log_format: str
+) -> None:
+    from unified_kg_rag.application.cli import conventions
+
+    setup = mocker.patch.object(conventions, "setup_logging")
+    args = PARSERS["run-visualization"]().parse_args(["--data-path", "g.json", *flags])
+    conventions.setup_cli_logging(Config(**config), args)
+    (loaded, overrides), kwargs = setup.call_args
+    effective = {
+        "level": loaded.logging.level,
+        "log_format": loaded.logging.log_format,
+        **(overrides or {}),
+    }
+    assert (effective["level"], effective["log_format"]) == (level, log_format)
+    assert (kwargs["stream"] is sys.stderr) is ("json" in flags)
+
+
+@pytest.mark.parametrize("cli", ALL_PARSERS)
 def test_flag_abbreviations_are_rejected(cli: str) -> None:
     # A prefix such as --output-dir must not silently match a longer flag.
     assert ALL_PARSERS[cli]().allow_abbrev is False
@@ -348,7 +400,11 @@ def test_a_stopped_cli_that_does_not_unwind_is_ended_after_the_grace_period() ->
         """)
     assert result.returncode == 143, result.stderr
     assert time.time() - started < 20
-    assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
+    assert json.loads(result.stdout) == {
+        "status": "interrupted",
+        "exit_code": 143,
+        "error_type": "Interrupted",
+    }
 
 
 def test_a_text_mode_cli_ended_after_the_grace_period_says_it_was_stopped() -> None:
@@ -446,7 +502,11 @@ def test_a_second_signal_ends_a_stopping_cli_at_once() -> None:
         """)
     assert result.returncode == 143, result.stderr
     assert time.time() - started < 20
-    assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
+    assert json.loads(result.stdout) == {
+        "status": "interrupted",
+        "exit_code": 143,
+        "error_type": "Interrupted",
+    }
 
 
 @pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
@@ -609,7 +669,11 @@ def test_a_sigterm_while_a_cli_loads_exits_143(
     )
     assert done.returncode == 143, done.stderr
     if output_format == "json":
-        assert json.loads(done.stdout) == {"status": "interrupted", "exit_code": 143}
+        assert json.loads(done.stdout) == {
+            "status": "interrupted",
+            "exit_code": 143,
+            "error_type": "Interrupted",
+        }
     else:
         assert done.stdout == ""
 
@@ -637,7 +701,11 @@ def test_a_ctrl_c_while_a_cli_loads_exits_130() -> None:
         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
     )
     assert done.returncode == 130, done.stderr
-    assert json.loads(done.stdout) == {"status": "interrupted", "exit_code": 130}
+    assert json.loads(done.stdout) == {
+        "status": "interrupted",
+        "exit_code": 130,
+        "error_type": "Interrupted",
+    }
 
 
 def test_a_ctrl_c_ignored_by_the_parent_stays_ignored_while_a_cli_loads() -> None:
@@ -804,6 +872,7 @@ def test_json_output_prints_a_status_when_stopped(
     assert json.loads(capsys.readouterr().out) == {
         "status": "interrupted",
         "exit_code": code,
+        "error_type": "Interrupted",
     }
 
 
@@ -882,7 +951,10 @@ def test_ingestion_json_result_lists_each_stage(
     assert result["pipeline_id"] == "run-1"
     assert result["status"] == "failed"
     # Named like the status of a run that fails before it prints.
-    assert result["error"] == "Pipeline failed at stage(s): text_chunking"
+    assert result["error"] == (
+        "Pipeline failed at stage(s): text_chunking. First error "
+        "(text_chunking): boom"
+    )
     assert result["exit_code"] == 1
     assert result["failed_documents"] == 0
     assert result["stages"] == [
@@ -1057,10 +1129,16 @@ def test_visualization_json_output_names_the_written_files(
     )
     monkeypatch.setattr(run_visualization, "load_cli_config", lambda _args: Config())
     assert run_visualization.main() == 1  # an empty graph renders nothing
-    assert json.loads(capsys.readouterr().out) == {
+    result = json.loads(capsys.readouterr().out)
+    # The result shows the failure with the keys of every failure document.
+    assert "No visualization files were rendered" in result.pop("error")
+    assert result == {
         "output_directory": str(tmp_path / "out"),
         "files": [],
         "failed_renderers": {},
+        "status": "failed",
+        "exit_code": 1,
+        "error_type": "RunFailed",
     }
 
 
@@ -1220,6 +1298,7 @@ def test_ctrl_c_exits_130_with_a_json_status_in_every_cli(
         assert json.loads(capsys.readouterr().out) == {
             "status": "interrupted",
             "exit_code": 130,
+            "error_type": "Interrupted",
         }, argv[0]
 
 
@@ -1277,6 +1356,7 @@ def test_interrupted_ingestion_json_names_the_pipeline_id(
     expected = {
         "status": "interrupted",
         "exit_code": 128 + signum,
+        "error_type": "Interrupted",
         "pipeline_id": "run-7",
     }
     if waits:
@@ -1424,19 +1504,26 @@ def test_a_failed_json_run_prints_a_failed_status(
             run_visualization.main,
             ["run-visualization", "--data-path", str(data), *json_flags],
             "renderer crashed",
+            "RuntimeError",
         ),
         (
             run_prompt_tuning.main,
             ["run-prompt-tuning", "--source-directory", str(empty), *json_flags],
             "No text documents found",
+            "RunFailed",
         ),
     ]
-    for main, argv, error in cases:
+    for main, argv, error, kind in cases:
         monkeypatch.setattr(sys, "argv", argv)
         assert main() == 1, argv[0]
         status = json.loads(capsys.readouterr().out)
         assert error in status.pop("error"), argv[0]
-        assert status == {"status": "failed", "exit_code": 1}, argv[0]
+        assert status == {
+            "status": "failed",
+            "exit_code": 1,
+            # The exception it failed with, else a run that failed.
+            "error_type": kind,
+        }, argv[0]
 
 
 def _json_status(main: Callable[[], object], argv: list[str], capsys: Any) -> Any:
@@ -1491,7 +1578,15 @@ def test_a_json_run_failing_while_running_names_the_error(
         ),
     }[cli]
     got = _json_status(main, [cli, *argv, "--output-format", "json"], capsys)
-    assert got == (code, {"status": "failed", "exit_code": code, "error": str(error)})
+    assert got == (
+        code,
+        {
+            "status": "failed",
+            "exit_code": code,
+            "error": str(error),
+            "error_type": type(error).__name__,
+        },
+    )
 
 
 @pytest.mark.parametrize("cli", ["run-rag", "run-visualization", "run-prompt-tuning"])
@@ -1512,7 +1607,7 @@ def test_a_json_run_with_an_unknown_flag_names_it(
     )
     assert code == 2
     assert status.pop("error") == "unrecognized arguments: --bogus"
-    assert status == {"status": "failed", "exit_code": 2}
+    assert status == {"status": "failed", "exit_code": 2, "error_type": "UsageError"}
 
 
 def test_an_invalid_visualization_data_file_names_the_error_in_json(
@@ -1533,7 +1628,11 @@ def test_an_invalid_visualization_data_file_names_the_error_in_json(
     )
     assert code == 2
     assert status.pop("error")
-    assert status == {"status": "failed", "exit_code": 2}
+    assert status == {
+        "status": "failed",
+        "exit_code": 2,
+        "error_type": "InvalidVisualizationDataError",
+    }
 
 
 def test_prepare_benchmark_ctrl_c_exits_130_without_a_traceback(
@@ -1660,7 +1759,7 @@ def test_an_early_usage_error_still_prints_a_json_status(
     status = json.loads(capsys.readouterr().out)
     # The error it exited for is named (it was not).
     assert error in status.pop("error")
-    assert status == {"status": "failed", "exit_code": 2}
+    assert status == {"status": "failed", "exit_code": 2, "error_type": "UsageError"}
 
 
 @pytest.mark.parametrize(
@@ -1712,6 +1811,7 @@ def test_a_failed_ingestion_status_names_the_error_and_pipeline_id(
         "status": "failed",
         "exit_code": code,
         "error": str(raised),
+        "error_type": type(raised).__name__,
         "pipeline_id": "run-7",
     }
 
@@ -1746,7 +1846,11 @@ def test_a_stopped_cli_exits_without_joining_the_threads_it_abandoned() -> None:
     )
     assert result.returncode == 143
     assert time.time() - started < 20
-    assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 143}
+    assert json.loads(result.stdout) == {
+        "status": "interrupted",
+        "exit_code": 143,
+        "error_type": "Interrupted",
+    }
 
 
 @pytest.mark.parametrize("code", [1, 2])
@@ -1765,6 +1869,7 @@ def test_a_json_run_that_exits_with_an_error_prints_a_failed_status(
     assert json.loads(capsys.readouterr().out) == {
         "status": "failed",
         "exit_code": code,
+        "error_type": "UsageError" if code == 2 else "RunFailed",
     }
 
 
@@ -1835,7 +1940,11 @@ def test_an_explicit_argv_decides_json_output(
     with pytest.raises(SystemExit):
         main(["--output-format", "json"])
     assert seen == [True]
-    assert json.loads(capsys.readouterr().out) == {"status": "failed", "exit_code": 2}
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "failed",
+        "exit_code": 2,
+        "error_type": "UsageError",
+    }
 
 
 def _run_cli_script(body: str) -> Any:
@@ -1975,7 +2084,11 @@ def test_a_ctrl_c_stop_the_watchdog_ends_exits_130() -> None:
         main()
         """)
     assert result.returncode == 130, result.stderr
-    assert json.loads(result.stdout) == {"status": "interrupted", "exit_code": 130}
+    assert json.loads(result.stdout) == {
+        "status": "interrupted",
+        "exit_code": 130,
+        "error_type": "Interrupted",
+    }
 
 
 class TestStopsInTheLoop:
@@ -2084,3 +2197,81 @@ def test_each_query_cli_runs_its_coroutine_as_the_stoppable_task(
         importlib.import_module(f"unified_kg_rag.application.cli.{module}")
     )
     assert call in source
+
+
+# --- one failure schema --------------------------------------------------
+
+
+async def test_a_failed_run_rag_query_has_the_failure_keys(mocker) -> None:
+    # A failed query printed {"success": false, "error": ...}, a run that
+    # failed before it {"status": "failed", "exit_code": ...}: one schema
+    # now, with the error's type; success stays for existing consumers.
+    from unified_kg_rag.application.retrieval.rag_chain import RAGInput
+    from unified_kg_rag.shared import QueryTimeoutError
+
+    runner = object.__new__(run_rag_chain.RAGChainRunner)
+    runner.args = run_rag_chain.CommandLineInterface._setup_arguments().parse_args(
+        ["-q", "hi"]
+    )
+    runner.metrics_sink = MagicMock()
+    runner.rag_chain = MagicMock()
+    runner.rag_chain.ainvoke = mocker.AsyncMock(
+        side_effect=QueryTimeoutError(
+            "search.query_timeout_seconds (90 s) passed", timeout_seconds=90
+        )
+    )
+    result = await runner._run_query(RAGInput(query="hi", conversation_id="c-1"))
+    assert result == {
+        "success": False,
+        "status": "failed",
+        "exit_code": 1,
+        "error": "search.query_timeout_seconds (90 s) passed",
+        "error_type": "QueryTimeoutError",
+        "conversation_id": "c-1",
+    }
+
+    # processing.ignore_errors: the degraded answer names the error's type.
+    degraded = MagicMock()
+    degraded.model_dump.return_value = {
+        "answer": "sorry",
+        "metadata": {"error": True, "error_type": "StoreConnectionError"},
+        "search_results": {"metadata": {"error": "Neptune down"}},
+    }
+    runner.rag_chain.ainvoke = mocker.AsyncMock(return_value=degraded)
+    result = await runner._run_query(RAGInput(query="hi"))
+    assert result["success"] is False
+    assert (result["status"], result["exit_code"]) == ("failed", 1)
+    assert (result["error"], result["error_type"]) == (
+        "Neptune down",
+        "StoreConnectionError",
+    )
+
+
+def test_a_failing_run_eval_result_has_the_failure_keys() -> None:
+    failure = run_evaluation.EvaluationRunner._failure
+    assert failure(0, [], [], None) == {}
+    assert failure(1, ["local: 3 of 10 queries failed"], ["f1 < 0.5"], None) == {
+        "status": "failed",
+        "exit_code": 1,
+        "error": "local: 3 of 10 queries failed; f1 < 0.5",
+        "error_type": "FailureBudgetExceeded",
+    }
+    assert failure(1, [], ["f1 < 0.5"], None)["error_type"] == "RegressionGateFailed"
+    assert failure(1, [], [], OSError("upload refused"))["error_type"] == "OSError"
+
+
+def test_a_refused_config_names_its_error_type(capsys, monkeypatch) -> None:
+    from unified_kg_rag.application.cli import conventions
+    from unified_kg_rag.application.cli.config_args import exit_on_config_error
+
+    monkeypatch.setattr(conventions, "_json", {"enabled": True, "printed": False})
+    with pytest.raises(SystemExit) as exited, exit_on_config_error():
+        raise ConfigurationError("models.default is required")
+    assert exited.value.code == 2
+    status = json.loads(capsys.readouterr().out)
+    assert status == {
+        "status": "failed",
+        "exit_code": 2,
+        "error": "models.default is required",
+        "error_type": "ConfigurationError",
+    }

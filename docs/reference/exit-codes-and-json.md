@@ -12,7 +12,7 @@ prints. Every flag: [CLI Reference](./cli.md); what an error message means:
 |---|---|
 | `0` | Success |
 | `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, or an unreachable store), a breached `--max-failure-rate`, a failed `run-eval --fail-if` gate, a failed upload, nothing rendered or a failed renderer |
-| `2` | Usage or configuration error: a bad flag, a `run-rag` or `run-eval` `--search-strategy` (or a `run-eval` query's own strategy) whose methodology the index namespace does not hold ([methodology profiles](../concepts/overview.md#methodology-profiles)), a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint, a missing extra the selected providers need (`local`) (all before any work), or a `ConfigurationError` found while running outside a stage, such as `run-ingestion`'s pre-run refusal before its first model call (the search engine refused to create an index the run needs, an incremental run's live indices, a deletion-only run's included, were built for other embedding, language or registry settings, or an incremental run would add a methodology to a namespace that also holds other source scopes' documents) |
+| `2` | Usage or configuration error: a bad flag, a `run-rag` `--suffix` nothing was ingested under (the message lists the ingested ones), a `run-rag` or `run-eval` `--search-strategy` (or a `run-eval` query's own strategy) whose methodology the index namespace does not hold ([methodology profiles](../concepts/overview.md#methodology-profiles)), a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint, a missing extra the selected providers need (`local`) (all before any work), or a `ConfigurationError` found while running outside a stage, such as `run-ingestion`'s pre-run refusal before its first model call (the search engine refused to create an index the run needs, an incremental run's live indices, a deletion-only run's included, were built for other embedding, language or registry settings, an incremental run would add a methodology to a namespace that also holds other source scopes' documents, or the embedding model returned vectors of another dimension than `models.embedding.dimension` for the probe text it embeds first) |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
 
@@ -52,7 +52,9 @@ banner, progress and logs to stderr, so the output pipes into `jq` (not with
 holds:
 
 - **`run-rag`**: `success` and the answer or the search results; a failed
-  query has `"success": false` and its `error` (exit `1`).
+  query has `"success": false` and its `error` (exit `1`). An answer's
+  `search_results` leaves out `results`, which repeat its `sources`, unless
+  `--verbose` (they also hold the results the context budget cut).
 - **`run-ingestion`**: with `--verify-metadata`, `pipeline_id` and
   `"metadata_valid": true` (a missing or corrupt record exits `1` with the
   status document below). Otherwise the pipeline id, the status, the model
@@ -103,21 +105,35 @@ holds:
 
 ### Failures and interruptions
 
+Every failure has the same keys, in a status document or in a result that
+shows the failure:
+
+| Key | Value |
+|---|---|
+| `status` | `"failed"` (`"interrupted"` for a stopped run; a `run-ingestion` result keeps the run's own status) |
+| `exit_code` | The process's exit code |
+| `error` | The message, when there is one |
+| `error_type` | What failed: the exception's class name (`ConfigurationError`, `QueryTimeoutError`, `StoreConnectionError`, `PipelineExecutionError`, ...), `UsageError` for a refused command line, `FailureBudgetExceeded` or `RegressionGateFailed` for `run-eval`, `RunFailed` for a run that failed without an exception (nothing rendered), `Interrupted` for a stopped run |
+
 A run that printed its result prints nothing more; the result shows the
-failure, as listed above. A run that did not prints a status document
+failure with these keys: a failed `run-rag` query (also with
+`"success": false`), a `run-ingestion` run a stage failed, a `run-eval`
+breach, gate or upload error, a `run-visualization` run that rendered
+nothing or lost a renderer. A run that did not prints a status document
 instead:
 
 - A run stopped by a signal before it printed prints
-  `{"status": "interrupted", "exit_code": 143}` (`130` for Ctrl-C).
+  `{"status": "interrupted", "exit_code": 143, "error_type": "Interrupted"}`
+  (`130` for Ctrl-C).
 - A run that fails before it printed prints
-  `{"status": "failed", "exit_code": 1}` (or `2`) with the `error` it failed
-  with, an argparse error included.
+  `{"status": "failed", "exit_code": 1, "error_type": ...}` (or `2`) with the
+  `error` it failed with, an argparse error included.
 - That holds from the first moment: a SIGTERM while the CLI still loads, or
   after it printed its result while the process exits, exits `143` too, and
   a Ctrl-C while it loads `130` (the status document only while loading; a
   SIGINT the parent ignores, as `nohup` does, stays ignored).
-- A `run-ingestion` result whose run a stage failed carries the same `error`
-  and `exit_code`. `run-ingestion` adds the `pipeline_id` to resume with
+- A `run-ingestion` result whose run a stage failed carries the same `error`,
+  `exit_code` and `error_type`. `run-ingestion` adds the `pipeline_id` to resume with
   (once the run resolved it) and, when a stopped run's next run on the
   namespace must wait for writes possibly still in flight (this run's, or
   those of the run whose expired lease it took over),

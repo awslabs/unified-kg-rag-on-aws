@@ -109,10 +109,16 @@ At `INFO` and above, user and corpus text is logged only as lengths, counts,
 ids and a stable short hash (`query: len=42 sha=1a2b3c4d`). Query text,
 rewritten queries, entity names and raw model output are logged only at
 `DEBUG`, and exception messages never carry model output. Treat `DEBUG` logs
-(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG` or `run-eval --verbose`;
-`run-rag --verbose` prints more to the console but leaves the log level), and
-libraries set to `DEBUG` in `logging.library_levels` (`botocore` logs request
-bodies), as containing user and corpus data.
+(`logging.level: DEBUG`, `UKR__LOGGING__LEVEL=DEBUG`, any CLI's `--log-level
+DEBUG` or the deprecated `run-eval --verbose`; `run-rag --verbose` prints more
+of each result but leaves the log level), and libraries set to `DEBUG` in
+`logging.library_levels` (`botocore` logs request bodies), as containing user
+and corpus data.
+
+Every CLI takes `--log-level` (over `logging.level`) and `--version`. With
+`--output-format text` the console logs are plain lines unless
+`logging.log_format` is set (the CDK tasks set `structured`, JSON records for
+CloudWatch); with `--output-format json` they are JSON records on stderr.
 
 With `logging.log_to_file: true` the CLIs also write `logging.log_file_path`
 (`logs/log.txt`, dated `log_YYYYMMDD.txt`, relative to the working directory,

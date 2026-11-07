@@ -33,7 +33,10 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     source_kinds_values,
     union_filter_fields,
 )
-from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
+from unified_kg_rag.adapters.storage.search_engine import (
+    SearchEngineClient,
+    engine_name,
+)
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_key
@@ -333,11 +336,17 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             )
         return kept or None
 
+    @property
+    def _engine(self) -> str:
+        """The engine as messages name it (OpenSearch, or the embedded one)."""
+        return engine_name(getattr(self, "_opensearch_client", None))
+
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         start_time = time.time()
         query_preview = text_digest(query.query)
         logger.info(
-            "OpenSearch retrieval started - query: %s ('%s')",
+            "%s retrieval started - query: %s ('%s')",
+            self._engine,
             query_preview,
             query.search_type.value,
         )
@@ -418,7 +427,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             processing_time = time.time() - start_time
 
             logger.info(
-                "OpenSearch retrieval completed - retrieved: %s results (%.2fs)",
+                "%s retrieval completed - retrieved: %s results (%.2fs)",
+                self._engine,
                 len(final_results),
                 processing_time,
             )
@@ -431,12 +441,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             # masquerading as "0 results"; degrade only on transient ones.
             if is_fatal_retrieval_error(e):
                 logger.error(
-                    "OpenSearch retrieval failed (fatal): %s", e, exc_info=True
+                    "%s retrieval failed (fatal): %s",
+                    self._engine,
+                    e,
+                    exc_info=True,
                 )
                 raise
             logger.error(
-                "OpenSearch retrieval failed (transient, degrading to empty "
-                "results): %s",
+                "%s retrieval failed (transient, degrading to empty results): %s",
+                self._engine,
                 e,
                 exc_info=True,
             )
@@ -993,7 +1006,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         stored = f"model '{stored_model}'" if stored_model else "an unrecorded model"
         shown_dimensions = ", ".join(str(d) for d in sorted(stored_dimensions))
         raise ConfigurationError(
-            f"The OpenSearch index '{index_name}' holds embeddings of {stored} "
+            f"The {self._engine} index '{index_name}' holds embeddings of {stored} "
             f"(dimension {shown_dimensions or 'unknown'}), but queries embed with "
             f"'{model}' (dimension {dimension}), so its vector search would fail "
             "or rank by unrelated vectors. Query with the embedding model and "
@@ -1479,12 +1492,45 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 raise
             return  # Cannot tell: keep skipping just the missing index.
         shown = suffix or Constants.DEFAULT_SUFFIX.value
+        ingested = await self._ingested_suffixes()
+        held = (
+            f" Suffixes ingested on this store: {', '.join(ingested)}."
+            if ingested
+            else " No suffix was ingested on this store."
+        )
         raise IndexNotFoundError(
             f"No indices found for suffix '{shown}' (the text units index "
             f"'{alias}' does not exist). Did you run ingestion with "
             f"processing.document_parsing.index_value '{shown}'? Query with the "
-            "suffix the corpus was ingested under (run-rag/run-eval --suffix)."
+            f"suffix the corpus was ingested under (run-rag/run-eval --suffix).{held}"
         ) from cause
+
+    async def _ingested_suffixes(self) -> list[str]:
+        """The suffixes a text units alias exists for (each ingested
+        namespace has one), for the message of a suffix none exists for;
+        empty when the store cannot tell."""
+        prefix = f"{self._opensearch_config.text_units_index_prefix}-"
+        additional = self._config.indexing.additional_suffix
+        try:
+            indices = await asyncio.to_thread(
+                self._opensearch_client.get_aliases_by_index, f"{prefix}*"
+            )
+        except Exception as e:  # noqa: BLE001 - only the message's hint
+            logger.debug("Listing the ingested suffixes failed: %s", e)
+            return []
+        suffixes: set[str] = set()
+        for aliases in indices.values():
+            for name in aliases:
+                if not name.startswith(prefix):
+                    continue
+                rest = name[len(prefix) :]
+                if additional:
+                    if not rest.endswith(f"-{additional}"):
+                        continue
+                    rest = rest[: -len(additional) - 1]
+                if rest:
+                    suffixes.add(rest)
+        return sorted(suffixes)
 
     def _parse_hit(self, hit: dict[str, Any]) -> RetrievalResult:
         source = hit.get("_source", {})

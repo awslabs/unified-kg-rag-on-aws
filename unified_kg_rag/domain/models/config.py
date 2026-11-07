@@ -1426,8 +1426,8 @@ class DocumentParsingConfig(BaseModel):
             "label is named <prefix>-<index_value>. null = 'default'. run-rag "
             "and run-eval query it too unless --suffix names another "
             "(RAGInput.suffix in Python, which does not read it). "
-            "run-ingestion has no flag for it: use one config file per tenant "
-            "or corpus version. Lowercase letters, digits, '-' and '_'."
+            "run-ingestion --suffix sets it for one run. Lowercase letters, "
+            "digits, '-' and '_'."
         ),
     )
     source_scope: str | None = Field(

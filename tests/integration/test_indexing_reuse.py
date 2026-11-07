@@ -25,7 +25,10 @@ from tests.integration import test_embedded_e2e as e2e
 from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
 from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
-from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.ingestion.pipeline import (
+    EMBEDDING_PROBE_TEXT,
+    DataIngestionPipeline,
+)
 from unified_kg_rag.domain.ingestion.cache_keys import chunk_boundary_fingerprint
 from unified_kg_rag.domain.ingestion.contributions import (
     CHUNKS_RECORD_KIND,
@@ -208,7 +211,8 @@ def test_unchanged_runs_ask_embed_and_write_nothing_again(
         )
         for field in ("name", "summary", "full_content")
     }
-    assert set(server.embedded) <= report_texts
+    # And the one text the run embeds to check the model's dimension.
+    assert set(server.embedded) - {EMBEDDING_PROBE_TEXT} <= report_texts
 
 
 def test_an_incremental_commit_keeps_no_vector_it_replaces(

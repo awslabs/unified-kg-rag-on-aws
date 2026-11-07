@@ -12,12 +12,14 @@ control.
 
 Every index and graph label of a corpus is named `<prefix>-<suffix>`
 (plus `-<additional_suffix>` with `indexing.additional_suffix`); `<suffix>` is
-the **index suffix**. Ingestion takes it from
-`processing.document_parsing.index_value` (no flag); `run-rag` and `run-eval`
+the **index suffix**, and the CLIs print the result as the run's **Index
+Namespace**. Ingestion takes it from `processing.document_parsing.index_value`
+unless `run-ingestion --suffix` names another; `run-rag` and `run-eval`
 query the same `index_value` of their config unless `--suffix` names another,
 and in Python `RAGInput.suffix` selects it (the chain does not read
-`index_value`). All default to `default`. Use one index suffix, and one config file, per
-tenant or corpus version, with the same `indexing.additional_suffix` on both
+`index_value`). All default to `default`. Use one index suffix per
+tenant or corpus version (the same `--suffix`, or the same config file, for
+ingestion and queries), with the same `indexing.additional_suffix` on both
 sides; incremental indexing and deletion are scoped to it
 ([Incremental indexing](../guides/incremental.md)).
 

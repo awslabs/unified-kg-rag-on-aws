@@ -84,6 +84,10 @@ from unified_kg_rag.domain.ingestion.contributions import (
     record_payload,
     unit_entities,
 )
+from unified_kg_rag.domain.ingestion.corpus_language import (
+    script_share,
+    source_language_mismatch,
+)
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
 )
@@ -524,6 +528,20 @@ class DocumentLoadingStage(_RegistryStage):
         # incremental indexing is enabled; built lazily otherwise.
         self._doc_status = doc_status
 
+    def _warn_of_another_script(self, documents: list[Document]) -> None:
+        """WARN when a sample of the corpus is written in another script
+        than processing.translation.source_language says (a Korean corpus
+        under the default 'en' is extracted with English prompts and
+        analyzed as English); the run goes on."""
+        source_language = self.config.processing.translation.source_language
+        share = script_share(
+            document.page_content
+            for document in documents
+            if not is_seed_document(document)
+        )
+        if reason := source_language_mismatch(share, source_language):
+            logger.warning("Corpus language: %s", reason)
+
     def _execute_core(
         self, context: PipelineContext
     ) -> tuple[int, int, dict[str, Any] | None]:
@@ -599,6 +617,7 @@ class DocumentLoadingStage(_RegistryStage):
         context.documents = documents
         output_count = len(context.documents)
         seeds_kept = sum(1 for document in documents if is_seed_document(document))
+        self._warn_of_another_script(documents)
 
         if failed_files:
             logger.warning("Failed to load %s files", len(failed_files))

@@ -1,5 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import argparse
 import os
 import signal
@@ -8,7 +10,8 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 from rich.panel import Panel
@@ -27,18 +30,22 @@ from unified_kg_rag.application.cli.conventions import (
     ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    interrupted_fields,
     json_output,
     print_json,
     print_status,
+    setup_cli_logging,
     usage_error,
 )
 from unified_kg_rag.application.cli.display import (
+    PRODUCT_NAME,
     console,
     display_ascii_art,
     display_pipeline_results,
     markup_safe,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.lazy import lazy_names
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     missing_extras_error,
@@ -47,13 +54,11 @@ from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
 )
-from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.application.ingestion.pipeline import (
-    DataIngestionPipeline,
-    run_token_usage,
-)
+from unified_kg_rag.application.cli.query_args import namespace_name, suffix_arg
+from unified_kg_rag.application.config import load_cli_dotenv, resolve_relative_paths
 from unified_kg_rag.domain.ingestion.methodologies import writes_graph_store
 from unified_kg_rag.domain.models import (
+    Config,
     PipelineConfig,
     PipelineContext,
     PipelineStageStatus,
@@ -61,6 +66,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     validate_path_segment,
 )
+from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     ConfigurationError,
@@ -71,10 +77,33 @@ from unified_kg_rag.shared import (
     PipelineInterrupted,
     StoreConnectionError,
     get_logger,
-    setup_logging,
 )
+from unified_kg_rag.shared.utils.validation import format_validation_errors
+
+if TYPE_CHECKING:
+    from unified_kg_rag.application.ingestion.pipeline import (
+        DataIngestionPipeline,
+        run_token_usage,
+        unneeded_stage_error,
+    )
 
 logger = get_logger(__name__)
+
+
+def _pipeline_module() -> ModuleType:
+    from unified_kg_rag.application.ingestion import pipeline
+
+    return pipeline
+
+
+# Imported on first use: --help and a refused command line load no pipeline.
+__getattr__, _load_pipeline = lazy_names(
+    globals(),
+    dict.fromkeys(
+        ("DataIngestionPipeline", "run_token_usage", "unneeded_stage_error"),
+        _pipeline_module,
+    ),
+)
 
 
 def _pipeline_id_arg(value: str) -> str | None:
@@ -104,12 +133,52 @@ _FALSE = frozenset({"", "0", "false", "no"})
 
 def _stage_name_arg(value: str) -> str:
     """A pipeline stage name, case-insensitive; unknown names are a usage error."""
+    _load_pipeline()
     try:
         normalized = DataIngestionPipeline.normalize_stage_name(value)
     except ConfigurationError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
     assert normalized is not None
     return normalized
+
+
+def _methodology_list(value: str) -> list[str]:
+    """A comma-separated methodology list; the configuration validates the
+    names (an unknown one is a usage error naming the valid ones)."""
+    names = [name.strip() for name in value.split(",")]
+    if not all(names):
+        raise argparse.ArgumentTypeError(f"empty methodology name in '{value}'")
+    return names
+
+
+def apply_namespace_arguments(config: Config, args: argparse.Namespace) -> Config:
+    """``config`` with ``--suffix``, ``--methodologies`` and ``--reset``
+    applied (validated as the config file's keys are); ``config`` itself
+    when none is given.
+
+    Raises:
+        ConfigurationError: A value the configuration refuses (an unknown
+            methodology, a selection a switch leaves nothing of).
+    """
+    overrides: dict[str, Any] = {}
+    if suffix := getattr(args, "suffix", None):
+        overrides["processing"] = {"document_parsing": {"index_value": suffix}}
+    indexing: dict[str, Any] = {}
+    if methodologies := getattr(args, "methodologies", None):
+        indexing["methodologies"] = methodologies
+    if getattr(args, "reset", False):
+        indexing["reset"] = True
+    if indexing:
+        overrides["indexing"] = indexing
+    if not overrides:
+        return config
+    try:
+        updated = Config.model_validate(merge_over(config.as_input(), overrides))
+    except ValidationError as e:
+        raise ConfigurationError(format_validation_errors("", e)) from e
+    if config_path := getattr(args, "config_path", None):
+        resolve_relative_paths(updated, config_path)
+    return updated
 
 
 class CommandLineInterface:
@@ -120,7 +189,8 @@ class CommandLineInterface:
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = ArgumentParser(
             allow_abbrev=False,
-            description="GraphRAG Data Ingestion Pipeline - Process documents and build knowledge graphs",
+            description=f"{PRODUCT_NAME}: parse documents and build the "
+            "knowledge graph and indexes the selected methodologies read",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
                 "guides/ingest.md#examples",
@@ -273,6 +343,31 @@ class CommandLineInterface:
             "Repeatable; added to "
             "indexing.retire_source_scopes. Never this run's own scope.",
         )
+        namespace = parser.add_argument_group(
+            "index namespace",
+            "Override what the run writes; each flag applies to this run only.",
+        )
+        namespace.add_argument(
+            "--suffix",
+            type=suffix_arg,
+            help="Index suffix (namespace) the run writes: "
+            "processing.document_parsing.index_value (default: the config's, "
+            "else 'default'). Query it with run-rag/run-eval --suffix",
+        )
+        namespace.add_argument(
+            "--methodologies",
+            type=_methodology_list,
+            metavar="LIST",
+            help="Comma-separated methodologies to build (graphrag, lightrag, "
+            "hipporag, raptor): indexing.methodologies",
+        )
+        namespace.add_argument(
+            "--reset",
+            action="store_true",
+            help="Rebuild the namespace from the whole corpus instead of "
+            "applying a delta (indexing.reset: true for this run only, so a "
+            "config file need not be edited back)",
+        )
         add_config_arguments(parser)
         add_output_format_argument(parser)
         add_provider_arguments(parser)
@@ -304,11 +399,11 @@ class CommandLineInterface:
 
 class IngestionPipelineRunner:
     def __init__(self, args: argparse.Namespace):
+        _load_pipeline()
         self.args = args
         with exit_on_config_error():
-            self.config = apply_provider_arguments(
-                load_cli_config(args),
-                args,
+            self.config = apply_namespace_arguments(
+                apply_provider_arguments(load_cli_config(args), args), args
             )
         retired = getattr(args, "retire_source_scope", None) or []
         if retired:
@@ -321,7 +416,7 @@ class IngestionPipelineRunner:
             except ValidationError as e:
                 usage_error(f"--retire-source-scope: {e}")
         self.json_output = json_output(args)
-        setup_logging(self.config, stream=sys.stderr if self.json_output else None)
+        setup_cli_logging(self.config, args)
         self.pipeline: DataIngestionPipeline | None = None
         # Whether the run reported its result (a stop after it came while
         # the run closed its connections: nothing is left to resume).
@@ -378,7 +473,7 @@ class IngestionPipelineRunner:
     def _display_run_info(self) -> None:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         info_lines = [
-            "[bold blue]Graph RAG Document Processing Pipeline[/bold blue]",
+            "[bold blue]Ingestion pipeline[/bold blue]",
             f"[dim]Timestamp:[/dim] '{timestamp}'",
             f"[dim]Cache Directory:[/dim] "
             f"'{markup_safe(self.args.cache_directory.absolute())}'",
@@ -391,8 +486,14 @@ class IngestionPipelineRunner:
                 f"'{markup_safe(self.args.source_directory.absolute())}'",
             )
 
+        parsing = self.config.processing.document_parsing
+        namespace = namespace_name(parsing.index_value, self.config)
         info_lines.extend(
             [
+                f"[dim]Index Namespace:[/dim] '{markup_safe(namespace)}'",
+                "[dim]Methodologies:[/dim] "
+                + ", ".join(m.value for m in self.config.effective_methodologies),
+                f"[dim]Reset:[/dim] {self.config.indexing.reset}",
                 f"[dim]Force Rebuild:[/dim] {self.args.force_rebuild}",
                 f"[dim]S3 Sync:[/dim] {self.args.s3_sync}",
                 f"[dim]Continue on Error:[/dim] {self.args.continue_on_error}",
@@ -447,6 +548,12 @@ class IngestionPipelineRunner:
                     f"{', '.join(sorted(invalid_stages))} (available: "
                     f"{', '.join(all_stages.keys())})"
                 )
+            # Before any model call: a listed stage no selected methodology
+            # needs would pay for what no query reads.
+            if error := unneeded_stage_error(
+                self.config, [all_stages[name] for name in sorted(enabled_stages_set)]
+            ):
+                usage_error(error, error_type=ConfigurationError.__name__)
         else:
             stages = dict.fromkeys(PipelineStageType, True)
 
@@ -619,6 +726,7 @@ class IngestionPipelineRunner:
             usage_error(error)
 
     def run(self) -> None:
+        _load_pipeline()
         display_ascii_art(__version__)
         self._display_run_info()
 
@@ -664,6 +772,10 @@ class IngestionPipelineRunner:
                 # non-zero and the failure surfaces.
                 error = self._stage_failure(context)
                 if error is not None:
+                    console.print(
+                        f"\n[yellow]Next step: {markup_safe(self._next_step(context))}"
+                        "[/yellow]"
+                    )
                     raise PipelineExecutionError(error)
                 success_msg = "✓ Pipeline completed successfully!"
                 console.print(
@@ -681,26 +793,65 @@ class IngestionPipelineRunner:
 
     @staticmethod
     def _stage_failure(context: PipelineContext) -> str | None:
-        """The error of a run a stage failed, or None."""
+        """The error of a run a stage failed, with the first failed stage's
+        own error (the cause, which was only in the logs), or None."""
         if context.status != PipelineStageStatus.FAILED:
             return None
         failed = [
-            r.stage_name
+            r for r in context.stage_results if r.status == PipelineStageStatus.FAILED
+        ]
+        error = (
+            f"Pipeline failed at stage(s): "
+            f"{', '.join(r.stage_name for r in failed) or 'unknown'}"
+        )
+        first = next((r for r in failed if r.error_message), None)
+        if first is not None:
+            error += f". First error ({first.stage_name}): {first.error_message}"
+        return error
+
+    @staticmethod
+    def _next_step(context: PipelineContext) -> str:
+        """What to do after a run a stage failed: the fix the error names
+        (an embedding dimension the index refuses), then the resume."""
+        error = " ".join(
+            r.error_message or ""
             for r in context.stage_results
             if r.status == PipelineStageStatus.FAILED
-        ]
-        return f"Pipeline failed at stage(s): {', '.join(failed) or 'unknown'}"
+        )
+        step = ""
+        if "dimension" in error.lower():
+            step = (
+                "The embedding dimension does not match the index: set "
+                "models.embedding.dimension (--embedding-dimension) to what "
+                "the embedding model returns, or ingest into a new namespace "
+                "(--suffix) or with --reset. "
+            )
+        return (
+            f"{step}Fix the cause, then rerun with --pipeline-id "
+            f"{context.pipeline_id} to resume from the failed stage (the "
+            "finished stages are cached; --force-rebuild recomputes them)."
+        )
 
     def _json_result(self, context: PipelineContext) -> dict[str, Any]:
         """The run's ``--output-format json`` result; a run a stage failed
         also has its ``error`` and ``exit_code``, as a run that fails before
         printing does."""
         assert self.pipeline is not None
+        _load_pipeline()
         error = self._stage_failure(context)
         return {
             "pipeline_id": context.pipeline_id,
             "status": context.status.value,
-            **({"error": error, "exit_code": EXIT_FAILURE} if error else {}),
+            # The keys of every failure document (status stays the run's).
+            **(
+                {
+                    "error": error,
+                    "exit_code": EXIT_FAILURE,
+                    "error_type": PipelineExecutionError.__name__,
+                }
+                if error
+                else {}
+            ),
             "duration_seconds": context.duration_seconds,
             "failed_documents": len(context.recorded_failed_doc_ids),
             # Text units a stage failed on: counted in a full build too,
@@ -789,8 +940,7 @@ def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -
     pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
     if runner and runner.json_output and pipeline_id and not runner.reported:
         status: dict[str, Any] = {
-            "status": "interrupted",
-            "exit_code": exit_code,
+            **interrupted_fields(exit_code),
             "pipeline_id": pipeline_id,
         }
         if when := _next_run_writes_from(runner):

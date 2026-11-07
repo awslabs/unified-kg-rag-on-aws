@@ -38,7 +38,7 @@ def exit_on_config_error() -> Iterator[None]:
     try:
         yield
     except (ConfigurationError, FileNotFoundError) as e:
-        usage_error(str(e))
+        usage_error(str(e), error_type=type(e).__name__)
 
 
 def add_config_arguments(

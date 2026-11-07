@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -40,12 +40,15 @@ from unified_kg_rag.application.cli.conventions import (
     ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    failure_fields,
     json_output,
     print_json,
+    setup_cli_logging,
     stoppable,
     usage_error,
 )
 from unified_kg_rag.application.cli.display import (
+    PRODUCT_NAME,
     console,
     display_ascii_art,
     markup_safe,
@@ -125,7 +128,6 @@ from unified_kg_rag.shared import (
     MethodologyNotIndexedError,
     get_logger,
     observability,
-    setup_logging,
 )
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
@@ -311,7 +313,8 @@ class CommandLineInterface:
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = ArgumentParser(
             allow_abbrev=False,
-            description="GraphRAG Evaluation System - Assess retrieval and generation performance",
+            description=f"{PRODUCT_NAME}: evaluate retrieval and answers on a "
+            "dataset, and compare strategies",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
                 "guides/evaluate.md#examples",
@@ -538,7 +541,9 @@ class CommandLineInterface:
             "--verbose",
             "-v",
             action="store_true",
-            help="Enable detailed logging output for debugging.",
+            help="(deprecated: use --log-level DEBUG, which it sets) Log at "
+            "DEBUG. --verbose means more of a result's detail in run-rag; the "
+            "log level of every CLI is --log-level",
         )
         add_config_arguments(parser)
         add_output_format_argument(parser)
@@ -547,6 +552,17 @@ class CommandLineInterface:
 
     def parse_args(self) -> argparse.Namespace:
         return self.parser.parse_args()
+
+
+# The widest a metric column is kept at; a longer name folds.
+_METRIC_COLUMN_MAX = 32
+
+
+def _widest(names: Iterable[str]) -> int:
+    """The width a table's metric column is kept at: its longest name, up
+    to ``_METRIC_COLUMN_MAX`` (longer ones fold onto the next line), so a
+    metric name is never cut to fit the terminal."""
+    return min(max((len(name) for name in names), default=6), _METRIC_COLUMN_MAX)
 
 
 class EvaluationRunner:
@@ -802,7 +818,12 @@ class EvaluationRunner:
                 show_header=True,
                 header_style="bold magenta",
             )
-            table.add_column("Metric")
+            # Never cut ("answer_match/answer_contai…"): a long name folds.
+            table.add_column(
+                "Metric",
+                min_width=_widest(summary.metric_statistics),
+                overflow="fold",
+            )
             table.add_column("Mean", style="green")
             table.add_column("Median", style="green")
             table.add_column("StdDev", style="cyan")
@@ -865,15 +886,20 @@ class EvaluationRunner:
             show_header=True,
             header_style="bold magenta",
         )
-        table.add_column("Metric")
+        keys = baseline_metric_keys(comparison)
+        # Never cut ("answer_match/answer_contai…"): a long name or value
+        # folds onto the next line instead.
+        table.add_column("Metric", min_width=_widest(keys), overflow="fold")
         closed = set(comparison.get("closed_book_arms") or ())
         for strategy in strategies:
             marked = f"{strategy} (no retrieval)" if strategy in closed else strategy
-            table.add_column(markup_safe(marked), style="green")
+            table.add_column(markup_safe(marked), style="green", overflow="fold")
         for strategy, label in pairs.items():
-            table.add_column(f"{strategy} - {label} [CI]", style="cyan")
+            table.add_column(
+                f"{strategy} - {label} [CI]", style="cyan", overflow="fold"
+            )
         primary = (comparison.get("multiplicity") or {}).get("primary_metric")
-        for key in baseline_metric_keys(comparison):
+        for key in keys:
             row = [markup_safe(f"{key} (primary)" if key == primary else key)]
             for strategy in strategies:
                 stats = strategies[strategy]["metrics"].get(key)
@@ -1053,9 +1079,33 @@ class EvaluationRunner:
                     "comparison": comparison,
                     "failure_budget_breaches": breaches,
                     "gate_failures": gate_failures,
+                    **self._failure(exit_code, breaches, gate_failures, upload_error),
                 }
             )
         return exit_code, upload_error is not None
+
+    @staticmethod
+    def _failure(
+        exit_code: int,
+        breaches: list[str],
+        gate_failures: list[str],
+        upload_error: Exception | None,
+    ) -> dict[str, Any]:
+        """The failure keys of a result that exits 1 (a breached budget, a
+        failed gate, a failed upload), as every CLI's failure document has
+        them; ``error_type`` names the first."""
+        if not exit_code:
+            return {}
+        errors = [*breaches, *gate_failures]
+        if upload_error is not None:
+            errors.append(str(upload_error))
+        if breaches:
+            kind = "FailureBudgetExceeded"
+        elif gate_failures:
+            kind = "RegressionGateFailed"
+        else:
+            kind = type(upload_error).__name__
+        return failure_fields(exit_code, "; ".join(errors) or None, kind)
 
     def _load_baseline(self) -> dict[str, list[SavedRun]] | None:
         """The ``--baseline-results`` runs by strategy (in the order the
@@ -1777,9 +1827,14 @@ def main() -> None:
                 load_cli_config(args),
                 args,
             )
-        setup_logging(config, stream=sys.stderr if json_output(args) else None)
+        json_output(args)
+        setup_cli_logging(config, args)
         if args.verbose:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)
+            logger.warning(
+                "run-eval --verbose is deprecated and will be removed: use "
+                "--log-level DEBUG (every CLI's log level flag)."
+            )
 
         if args.from_results is not None:
             # Rebuilt from saved answers: no chain, no store, no answer call.

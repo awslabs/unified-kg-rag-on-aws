@@ -68,7 +68,13 @@ unit holds any more are deleted by the next full build
   en` a Korean corpus keeps words with their particles ("홍길동으로부터") as
   single tokens. Changing it changes the mapping: an incremental run stops
   (`was built for other language settings`) until one `indexing.reset: true`
-  run.
+  run. The loading stage samples the corpus (the first 2,000 characters of
+  its first 20 documents) and logs a WARNING naming
+  `processing.translation.source_language` when the sample's script
+  disagrees with it: mostly Hangul, Kana or Han letters under a language of
+  another script (it suggests `ko`, `ja` or `zh`), or few of them under
+  `ko`, `ja` or `zh`. It cannot tell two languages of one script apart
+  (English from German), and the run goes on.
 - **Unicode.** Text and queries are NFC-normalized, so decomposed Hangul (NFD)
   matches its composed form.
 - **The analyzer must exist on the cluster**, or the indexing stage fails

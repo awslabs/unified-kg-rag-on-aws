@@ -236,8 +236,36 @@ def test_an_explicit_stage_list_wins_and_warns(caplog) -> None:
         pipe._initialize_stages()
     assert "enabled stages" not in caplog.text
 
-    # A listed stage no selected methodology needs runs, with a warning.
-    caplog.clear()
+
+def test_a_listed_stage_no_selected_methodology_needs_is_refused() -> None:
+    # It would pay for what no query reads (community reports for a
+    # lightrag-only namespace, a tree the build record does not list):
+    # run-ingestion refuses the stages it names before any model call.
+    from unified_kg_rag.application.ingestion.pipeline import unneeded_stage_error
+
+    refused = unneeded_stage_error
+    message = refused(_config(L), [S.GRAPH_EXTRACTION, S.COMMUNITY_DETECTION])
+    assert message is not None
+    assert "Stage 'community_detection'" in message
+    assert "indexing.methodologies: lightrag" in message
+    assert "add graphrag to indexing.methodologies" in message
+    assert "--methodologies lightrag,graphrag" in message
+
+    message = refused(Config(), [S.SUMMARY_TREE])
+    assert message is not None and "Stage 'summary_tree'" in message
+    assert "--methodologies graphrag,lightrag,raptor" in message
+    # With raptor selected the same list runs; so does a stage the config
+    # switches off (the run skips it) and every stage the selection needs.
+    assert refused(_config(G, L, R), [S.SUMMARY_TREE]) is None
+    assert refused(Config(), [S.CLAIM_EXTRACTION, S.CLAIM_RESOLUTION]) is None
+    assert refused(Config(), mp.selected_stages(Config())) is None
+
+
+def test_a_library_stage_list_with_an_unneeded_stage_runs_it_with_a_warning(
+    caplog,
+) -> None:
+    # A PipelineConfig that switches one stage off leaves every other stage
+    # listed: the pipeline runs the listed ones and warns.
     pipe = _pipeline_for_init(_config(L))
     pipe.pipeline_config.stages_enabled = dict.fromkeys(S, True) | {
         S.DOCUMENT_PARSING: False
@@ -981,6 +1009,8 @@ async def test_the_refusal_says_what_adding_the_methodology_costs() -> None:
     assert "include it in indexing.methodologies" in str(refused.value)
     assert "no re-extraction" in str(refused.value)
     assert "--enabled-stages" not in str(refused.value)
+    # The command it gives selects raptor with what the config selects.
+    assert "--methodologies graphrag,lightrag,raptor" in str(refused.value)
     assert "rebuilt" not in str(refused.value)
     # A graph methodology on a raptor-only namespace extracts every unit.
     with pytest.raises(MethodologyNotIndexedError) as refused:

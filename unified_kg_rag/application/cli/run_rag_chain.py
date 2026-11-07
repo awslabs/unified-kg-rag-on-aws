@@ -1,5 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import argparse
 import asyncio
 import os
@@ -7,7 +9,9 @@ import sys
 import time
 import uuid
 from collections.abc import Callable
-from typing import Any
+from pathlib import Path
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 from rich.panel import Panel
 
@@ -21,24 +25,29 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
+    RUN_FAILED,
     ArgumentParser,
     add_output_format_argument,
     add_removed_flag,
     exits_on_sigterm,
     failed,
+    failure_fields,
     interruptible,
     json_output,
     print_json,
+    setup_cli_logging,
     stoppable,
     usage_error,
 )
 from unified_kg_rag.application.cli.display import (
+    PRODUCT_NAME,
     console,
     display_ascii_art,
     markup_safe,
     terminal_safe,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.lazy import lazy_names
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     missing_extras_error,
@@ -50,28 +59,43 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
+    namespace_name,
     query_suffix,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.application.retrieval.rag_chain import (
-    GraphRAGChain,
-    RAGInput,
-)
-from unified_kg_rag.domain.models import Constants, SearchStrategy
+from unified_kg_rag.domain.models import SearchStrategy
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     ConfigurationError,
+    IndexNotFoundError,
     InvalidFilterError,
     MethodologyNotIndexedError,
     MetricsSink,
     NullMetricsSink,
     QueryTimeoutError,
     get_logger,
-    setup_logging,
 )
 from unified_kg_rag.shared.utils import event_loop
 
+if TYPE_CHECKING:
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        GraphRAGChain,
+        RAGInput,
+    )
+
 logger = get_logger(__name__)
+
+
+def _chain_module() -> ModuleType:
+    from unified_kg_rag.application.retrieval import rag_chain
+
+    return rag_chain
+
+
+# Imported on first use: --help and a refused command line load no chain.
+__getattr__, _load_chain = lazy_names(
+    globals(), {"GraphRAGChain": _chain_module, "RAGInput": _chain_module}
+)
 
 # --metrics-sink cloudwatch: query_latency_ms of each answered query, per
 # Environment and per Environment and Strategy (the CDK stack's
@@ -144,6 +168,110 @@ def _filter_pair(item: str) -> str:
     return item
 
 
+# The hits --mode search prints without --verbose, and the files the
+# sources line of an answer names.
+_HITS_SHOWN = 20
+_FILES_SHOWN = 5
+_SNIPPET_CHARS = 160
+# Plurals of the result types a sources line counts.
+_PLURALS = {"entity": "entities", "community": "community reports"}
+
+
+def _hit_kind(item: dict[str, Any]) -> str:
+    """The type of a search result or source: its retriever type
+    (``text``, ``entity``, ``relationship``, ``community``, ...)."""
+    metadata = item.get("metadata") or {}
+    return str(item.get("retriever_type") or metadata.get("section_type") or "result")
+
+
+def _hit_file(item: dict[str, Any]) -> str | None:
+    """The file a text-unit result was chunked from, when it says so."""
+    metadata = item.get("metadata") or {}
+    attributes = metadata.get("attributes") or {}
+    for record in (attributes, metadata):
+        if name := record.get("file_name"):
+            return str(name)
+        if path := record.get("file_path"):
+            return Path(str(path)).name
+    return None
+
+
+def _hit_label(item: dict[str, Any]) -> str:
+    """What a result is, for a person: the file of a text unit (and its
+    chunk when the file has several), the entity or community name, a
+    relationship's ends, else the result's id."""
+    metadata = item.get("metadata") or {}
+    if file := _hit_file(item):
+        attributes = metadata.get("attributes") or {}
+        total = attributes.get("total_chunks")
+        if isinstance(total, int) and total > 1:
+            return f"{file} (chunk {attributes.get('chunk_id')}/{total})"
+        return file
+    if metadata.get("source_name") and metadata.get("target_name"):
+        return f"{metadata['source_name']} -> {metadata['target_name']}"
+    if name := metadata.get("name"):
+        return str(name)
+    return str(item.get("source") or "N/A")
+
+
+def _snippet(text: str) -> str:
+    """``text`` on one line, cut to ``_SNIPPET_CHARS`` characters."""
+    line = " ".join(str(text).split())
+    if len(line) > _SNIPPET_CHARS:
+        return line[: _SNIPPET_CHARS - 3] + "..."
+    return line
+
+
+def _print_hits(items: list[dict[str, Any]], *, limit: int | None) -> None:
+    """Print search results or sources, numbered: type, label, score and a
+    snippet of the text (retrieved text: printed literally)."""
+    shown = items if limit is None else items[:limit]
+    for i, item in enumerate(shown, 1):
+        score = item.get("score")
+        scored = f"  (score {score:.3f})" if isinstance(score, int | float) else ""
+        console.print(
+            f"{i:>3}. [{_hit_kind(item)}] {terminal_safe(_hit_label(item))}{scored}",
+            markup=False,
+            highlight=False,
+        )
+        if snippet := _snippet(terminal_safe(item.get("content") or "")):
+            console.print(f"     {snippet}", markup=False, highlight=False, style="dim")
+    if len(items) > len(shown):
+        console.print(
+            f"     ... and {len(items) - len(shown)} more (--verbose lists them "
+            "all; --output-format json prints every field)",
+            markup=False,
+            highlight=False,
+        )
+
+
+def _sources_line(sources: list[dict[str, Any]]) -> str:
+    """One line for an answer's sources: the files its text came from and
+    how many graph elements of each type it read."""
+    files = list(dict.fromkeys(f for f in map(_hit_file, sources) if f is not None))
+    counts: dict[str, int] = {}
+    for source in sources:
+        if _hit_file(source) is None:
+            kind = _hit_kind(source)
+            counts[kind] = counts.get(kind, 0) + 1
+    parts = []
+    if files:
+        named = ", ".join(files[:_FILES_SHOWN])
+        if len(files) > _FILES_SHOWN:
+            named += f" and {len(files) - _FILES_SHOWN} more"
+        parts.append(f"files: {named}")
+    if counts:
+        parts.append(
+            ", ".join(
+                f"{n} {kind if n == 1 else _PLURALS.get(kind, kind + 's')}"
+                for kind, n in counts.items()
+            )
+        )
+    return terminal_safe(
+        f"Sources ({len(sources)}): {'; '.join(parts)} (--verbose lists each)"
+    )
+
+
 class CommandLineInterface:
     def __init__(self) -> None:
         self.parser = self._setup_arguments()
@@ -158,13 +286,16 @@ class CommandLineInterface:
             InvalidFilterError: A value its field's type cannot take.
         """
         filters = dict(item.split(":", 1) for item in filter_args or [])
+        _load_chain()
         return GraphRAGChain.typed_filter_values(filters) or {}
 
     @staticmethod
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = ArgumentParser(
             allow_abbrev=False,
-            description="GraphRAG Chain - Retrieval-augmented generation using knowledge graphs",
+            description=f"{PRODUCT_NAME}: answer a question (or, with --mode "
+            "search, retrieve) from the knowledge graph and indexes run-ingestion "
+            "built, with the GraphRAG, LightRAG, HippoRAG or RAPTOR strategies",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
                 "guides/query.md#examples",
@@ -240,7 +371,10 @@ class CommandLineInterface:
             "--verbose",
             "-v",
             action="store_true",
-            help="Show query-processing details, sources and metrics",
+            help="Show more of each result: the query processing, every source "
+            "(or search hit) with its score and text, and the metrics; with "
+            "--output-format json, also an answer's search_results.results "
+            "(the logs: --log-level)",
         )
         add_config_arguments(parser)
         add_provider_arguments(parser)
@@ -287,6 +421,7 @@ _ARGUMENT_COMMANDS = frozenset({"set-filter"})
 
 class RAGChainRunner:
     def __init__(self, args: argparse.Namespace) -> None:
+        _load_chain()
         self.args = args
         with exit_on_config_error():
             self.config = apply_provider_arguments(
@@ -296,7 +431,7 @@ class RAGChainRunner:
         # JSON mode keeps stdout machine-parseable (pipeable to jq): the banner,
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)
-        setup_logging(self.config, stream=sys.stderr if self.json_output else None)
+        setup_cli_logging(self.config, args)
         self.metrics_sink = self._build_metrics_sink()
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable[..., Any]] = {
@@ -328,16 +463,13 @@ class RAGChainRunner:
         )
 
     def _get_suffix_display(self) -> str:
-        """The suffix line: what the store names end in, the index suffix
-        queried plus ``indexing.additional_suffix`` (store_names)."""
+        """The namespace line: what the store names end in, the index suffix
+        queried plus ``indexing.additional_suffix`` (as run-ingestion names
+        the namespace it writes)."""
         chosen = query_suffix(self.args, self.config)
-        suffix = chosen or Constants.DEFAULT_SUFFIX.value
-        if additional := self.config.indexing.additional_suffix:
-            suffix = f"{suffix}-{additional}"
+        name = namespace_name(chosen, self.config)
         color = "orange3" if chosen else "gray"
-        return (
-            f"[dim]Index/Label Suffix:[/dim] [{color}]{markup_safe(suffix)}[/{color}]"
-        )
+        return f"[dim]Index Namespace:[/dim] [{color}]{markup_safe(name)}[/{color}]"
 
     async def run(self) -> None:
         # Only run-ingestion loads the seed graphs.
@@ -377,7 +509,7 @@ class RAGChainRunner:
 
                 result = await self._run_query(rag_input)
                 if self.json_output:
-                    print_json(result)
+                    print_json(self._json_document(result))
                 else:
                     self._print_result(result, self.args.verbose)
 
@@ -395,9 +527,10 @@ class RAGChainRunner:
 
     async def _initialize_chain(self) -> None:
         console.print("[bold]Initializing RAG chain...[/bold]")
+        _load_chain()
         try:
             self.rag_chain = GraphRAGChain(config=self.config)
-            console.print("[green]GraphRAG chain initialized successfully![/green]")
+            console.print("[green]Query chain initialized.[/green]")
         except Exception as e:
             logger.exception("Failed to initialize RAG chain: %s", e)
             console.print(f"[red]Error during initialization: {markup_safe(e)}[/red]")
@@ -405,7 +538,8 @@ class RAGChainRunner:
 
     async def _interactive_mode(self) -> None:
         console.print(
-            "[bold blue]\nGraph RAG Interactive Mode[/bold blue]\nType 'quit', 'exit' to end, or 'help' for commands."
+            "[bold blue]\nInteractive mode[/bold blue]\nType 'quit', 'exit' to end, "
+            "or 'help' for commands."
         )
         console.print("---")
 
@@ -471,7 +605,7 @@ class RAGChainRunner:
                     ),
                 )
                 result = await self._run_query(rag_input)
-                self._print_result(result, verbose=True)
+                self._print_result(result, verbose=self.args.verbose)
                 state["conversation_id"] = result.get(
                     "conversation_id", state["conversation_id"]
                 )
@@ -497,6 +631,7 @@ class RAGChainRunner:
         filters: dict[str, Any] | None,
     ) -> RAGInput:
         """A query with the command line's search settings."""
+        _load_chain()
         return RAGInput(
             query=query,
             suffix=query_suffix(self.args, self.config),
@@ -541,19 +676,32 @@ class RAGChainRunner:
                     f"\n[bold red]Error executing query: {markup_safe(error)}"
                     "[/bold red]"
                 )
-                return {"success": False, "error": error, **output}
+                return {
+                    "success": False,
+                    **output,
+                    **failure_fields(
+                        EXIT_FAILURE,
+                        error,
+                        (output.get("metadata") or {}).get("error_type") or RUN_FAILED,
+                    ),
+                }
             console.print("\n[bold green]Query executed successfully![/bold green]")
             return {"success": True, **output}
 
         except Exception as e:
             if (
-                isinstance(e, InvalidFilterError | MethodologyNotIndexedError)
+                isinstance(
+                    e,
+                    InvalidFilterError
+                    | MethodologyNotIndexedError
+                    | IndexNotFoundError,
+                )
                 and not self.args.interactive
             ):
-                # A --filters key no index declares, or a --search-strategy
-                # whose methodology the namespace does not hold: the command
-                # line is wrong.
-                usage_error(str(e))
+                # A --filters key no index declares, a --search-strategy
+                # whose methodology the namespace does not hold, or a --suffix
+                # nothing was ingested under: the command line is wrong.
+                usage_error(str(e), error_type=type(e).__name__)
             if isinstance(e, QueryTimeoutError):
                 # An expected outcome with its own message: no traceback.
                 logger.error("Query timed out: %s", e)
@@ -564,9 +712,24 @@ class RAGChainRunner:
             )
             return {
                 "success": False,
-                "error": str(e),
+                **failure_fields(EXIT_FAILURE, e),
                 "conversation_id": rag_input.conversation_id,
             }
+
+    def _json_document(self, result: dict[str, Any]) -> dict[str, Any]:
+        """The ``--output-format json`` document of a query: an answer's
+        ``search_results`` without its ``results``, which repeat the
+        ``sources`` (``--verbose`` keeps them: every retrieved result, also
+        those the context budget left out)."""
+        search_results = result.get("search_results")
+        if (
+            self.args.verbose
+            or "sources" not in result
+            or not isinstance(search_results, dict)
+        ):
+            return result
+        kept = {k: v for k, v in search_results.items() if k != "results"}
+        return {**result, "search_results": kept}
 
     def _settings_lines(self) -> list[str]:
         """The search settings, as the run banner and show-config print them."""
@@ -618,17 +781,25 @@ class RAGChainRunner:
             console.print(f"\n[red]Error: {error}[/red]")
             return
 
-        if answer := result.get("answer"):
+        sources = result.get("sources")
+        if "answer" in result:
             console.print("\n\n" + "=" * 50)
             console.print("[bold blue]Final Answer:[/bold blue]")
             # Model output: never interpret it as markup.
-            console.print(terminal_safe(answer), markup=False, highlight=False)
+            console.print(
+                terminal_safe(result.get("answer") or ""), markup=False, highlight=False
+            )
             console.print("=" * 50)
             print_citations(result)
+            if sources and not verbose:
+                console.print(_sources_line(sources), markup=False, highlight=False)
         else:
+            # --mode search: the hits are the result.
+            hits = (result.get("search_results") or {}).get("results") or []
             console.print("\n\n" + "=" * 50)
-            console.print("[bold blue]Search Mode Results[/bold blue]")
+            console.print(f"[bold blue]Search Results ({len(hits)})[/bold blue]")
             console.print("=" * 50)
+            _print_hits(hits, limit=None if verbose else _HITS_SHOWN)
 
         if verbose:
             console.print("\n[bold]Details:[/bold]")
@@ -663,27 +834,11 @@ class RAGChainRunner:
                         )
                     )
 
-            sources = result.get("sources")
-            if not sources and result.get("search_results"):
-                sources = result.get("search_results", {}).get("results", [])
-
             if sources:
-                sources_content = ""
-                for i, source in enumerate(sources[:5], 1):
-                    score = source.get("score", 0)
-                    source_id = markup_safe(source.get("source", "N/A"))
-                    sources_content += f"  {i}. {source_id} (score: {score:.3f})\n"
-
-                if len(sources) > 5:
-                    sources_content += f"  ... and {len(sources) - 5} more sources\n"
-
                 console.print(
-                    Panel(
-                        sources_content.rstrip(),
-                        title=f"[cyan]Reference Sources ({len(sources)} found)[/cyan]",
-                        border_style="cyan",
-                    )
+                    f"\n[bold cyan]Reference Sources ({len(sources)})[/bold cyan]"
                 )
+                _print_hits(sources, limit=None)
 
             search_result = result.get("search_results", {})
             metadata = result.get("metadata", {})

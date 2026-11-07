@@ -31,6 +31,7 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_INTERRUPTED,
     EXIT_USAGE,
     ArgumentParser,
+    add_log_level_and_version_arguments,
     exits_on_sigterm,
     failed,
     stoppable,
@@ -145,6 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
         "authenticates no caller: put it behind a proxy or gateway that "
         "authenticates every request, and keep the port unreachable otherwise",
     )
+    add_log_level_and_version_arguments(parser)
     add_config_arguments(parser)
     add_provider_arguments(parser)
     return parser
@@ -217,7 +219,8 @@ async def async_main(args: argparse.Namespace) -> int:
             config = apply_provider_arguments(load_cli_config(args), args)
         # stdout is the protocol's: everything else goes to stderr.
         console.stderr = True
-        setup_logging(config, stream=sys.stderr)
+        level = {"level": args.log_level} if args.log_level else None
+        setup_logging(config, level, stream=sys.stderr)
         error = (
             mcp_extra_error()
             or missing_extras_error(config, seeds=False)

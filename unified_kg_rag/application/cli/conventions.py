@@ -20,11 +20,14 @@ Exit codes:
 ``--output-format json`` prints one JSON document with the run's result to
 stdout and sends everything else (banner, progress, logs) to stderr, so the
 output pipes into ``jq``. A run stopped by a signal before it printed one
-prints ``{"status": "interrupted", "exit_code": 143}`` (or 130) instead, and
-one that fails before it printed one ``{"status": "failed", "exit_code": 1}``
-(or 2) with the ``error`` it failed with (an argparse error included, see
+prints ``{"status": "interrupted", "exit_code": 143, "error_type":
+"Interrupted"}`` (or 130) instead, and one that fails before it printed one
+``{"status": "failed", "exit_code": 1, "error_type": ...}`` (or 2) with the
+``error`` it failed with (an argparse error included, see
 :class:`ArgumentParser`), and ``run-ingestion`` the ``pipeline_id`` once
-resolved.
+resolved. A result document that shows a failure (a failed ``run-rag``
+query, a ``run-ingestion`` run a stage failed) carries the same keys
+(:func:`failure_fields`).
 """
 
 from __future__ import annotations
@@ -46,9 +49,10 @@ from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any, NoReturn, ParamSpec, TypeVar
 
+from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.display import console
 from unified_kg_rag.application.cli.launch import wants_json
-from unified_kg_rag.shared import observability
+from unified_kg_rag.shared import observability, setup_logging
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -90,11 +94,42 @@ _stop_now = threading.Event()
 _print_lock = threading.RLock()
 
 
-def usage_error(message: str) -> NoReturn:
-    """Report a usage or configuration error as argparse does and exit 2."""
+# The error_type of a failure without an exception: a usage error (an
+# argparse error, a refused flag) or a run that failed.
+USAGE_ERROR = "UsageError"
+RUN_FAILED = "RunFailed"
+INTERRUPTED = "Interrupted"
+
+
+def usage_error(message: str, error_type: str = USAGE_ERROR) -> NoReturn:
+    """Report a usage or configuration error as argparse does and exit 2
+    (``error_type`` names it in the JSON status: the exception's class when
+    one was refused, ``ConfigurationError``)."""
     print(f"{Path(sys.argv[0]).name}: error: {message}", file=sys.stderr)
-    print_status(EXIT_USAGE, message)
+    print_status(EXIT_USAGE, message, error_type=error_type)
     raise SystemExit(EXIT_USAGE)
+
+
+def error_type_of(exit_code: int, error: BaseException | str | None) -> str:
+    """The ``error_type`` of a failure: the exception's class name, else
+    :data:`USAGE_ERROR` for exit 2 and :data:`RUN_FAILED` otherwise."""
+    if isinstance(error, BaseException) and not isinstance(error, SystemExit):
+        return type(error).__name__
+    return USAGE_ERROR if exit_code == EXIT_USAGE else RUN_FAILED
+
+
+def failure_fields(
+    exit_code: int, error: BaseException | str | None, error_type: str | None = None
+) -> dict[str, Any]:
+    """The keys every JSON failure document has: ``status`` ``failed``, the
+    ``exit_code``, the ``error`` message (when there is one) and its
+    ``error_type`` (:func:`error_type_of` unless given). A CLI whose result
+    document shows a failure merges them into it."""
+    fields: dict[str, Any] = {"status": "failed", "exit_code": exit_code}
+    if isinstance(error, str | Exception) and str(error):
+        fields["error"] = str(error)
+    fields["error_type"] = error_type or error_type_of(exit_code, error)
+    return fields
 
 
 def failed(exit_code: int, error: BaseException | str) -> int:
@@ -367,7 +402,12 @@ def _stopped_in_teardown(signum: int, _frame: object) -> None:
     _exit_stopped(128 + signum)
 
 
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
 def add_output_format_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the flags every CLI has: ``--output-format``, ``--log-level``
+    and ``--version``."""
     parser.add_argument(
         "--output-format",
         default="text",
@@ -376,6 +416,41 @@ def add_output_format_argument(parser: argparse.ArgumentParser) -> None:
         "stdout (for a run that failed or was stopped before it, a status with "
         "the exit code and the error) and everything else to stderr",
     )
+    add_log_level_and_version_arguments(parser)
+
+
+def add_log_level_and_version_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add ``--log-level`` and ``--version`` (a CLI whose stdout is a
+    protocol, run-mcp-server, takes these without ``--output-format``)."""
+    parser.add_argument(
+        "--log-level",
+        type=str.upper,
+        choices=LOG_LEVELS,
+        help="Log level of this run (default: logging.level, INFO; DEBUG logs "
+        "hold user and corpus text). With --output-format text the logs are "
+        "plain lines unless logging.log_format is set",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Print the version and exit",
+    )
+
+
+def setup_cli_logging(config: Any, args: argparse.Namespace) -> None:
+    """``setup_logging`` for a CLI run: ``--log-level`` over
+    ``logging.level``; with ``--output-format json`` the logs go to stderr,
+    and in text mode, unless ``logging.log_format`` is set (a deployment
+    sets ``structured``), they are plain lines, not JSON records between
+    the CLI's own output."""
+    overrides: dict[str, Any] = {}
+    if level := getattr(args, "log_level", None):
+        overrides["level"] = level
+    as_json = getattr(args, "output_format", "text") == "json"
+    if not as_json and "log_format" not in config.logging.model_fields_set:
+        overrides["log_format"] = "plain"
+    setup_logging(config, overrides or None, stream=sys.stderr if as_json else None)
 
 
 def json_output(args: argparse.Namespace) -> bool:
@@ -394,22 +469,30 @@ def print_json(result: Any) -> None:
 
 
 def print_status(
-    exit_code: int, error: BaseException | str | None = None, **fields: Any
+    exit_code: int,
+    error: BaseException | str | None = None,
+    *,
+    error_type: str | None = None,
+    **fields: Any,
 ) -> None:
     """Print the status document of a run that exits ``exit_code`` without
     having printed its result (once, and only with JSON output): a failed
-    one names its ``error``; ``fields`` (``pipeline_id``) are added."""
+    one names its ``error`` and ``error_type`` (:func:`failure_fields`), a
+    stopped one has ``error_type`` ``Interrupted``; ``fields``
+    (``pipeline_id``) are added."""
     with _print_lock:
         if not _json["enabled"] or _json["printed"]:
             return
-        stopped = exit_code in (EXIT_INTERRUPTED, EXIT_TERMINATED)
-        status: dict[str, Any] = {
-            "status": "interrupted" if stopped else "failed",
-            "exit_code": exit_code,
-        }
-        if not stopped and isinstance(error, str | Exception) and str(error):
-            status["error"] = str(error)
+        if exit_code in (EXIT_INTERRUPTED, EXIT_TERMINATED):
+            status: dict[str, Any] = interrupted_fields(exit_code)
+        else:
+            status = failure_fields(exit_code, error, error_type)
         print_json({**status, **fields})
+
+
+def interrupted_fields(exit_code: int) -> dict[str, Any]:
+    """The keys of a stopped run's JSON status."""
+    return {"status": "interrupted", "exit_code": exit_code, "error_type": INTERRUPTED}
 
 
 def _exit_stopped(exit_code: int) -> None:

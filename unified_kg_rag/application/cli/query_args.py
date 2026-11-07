@@ -9,6 +9,7 @@ import argparse
 from unified_kg_rag.application.cli.conventions import add_removed_flag
 from unified_kg_rag.domain.models import (
     Config,
+    Constants,
     SearchStrategy,
     SearchType,
     validate_safe_name,
@@ -26,7 +27,7 @@ def positive_int(value: str) -> int:
     return number
 
 
-def _suffix(value: str) -> str:
+def suffix_arg(value: str) -> str:
     """An argparse ``type``: an index suffix, validated like ``index_value``."""
     try:
         return validate_safe_name(value, "--suffix")
@@ -40,6 +41,16 @@ def query_suffix(args: argparse.Namespace, config: Config) -> str | None:
     wrote with the same config), else ``None`` (the chain's ``default``)."""
     given: str | None = getattr(args, "suffix", None)
     return given or config.processing.document_parsing.index_value
+
+
+def namespace_name(suffix: str | None, config: Config) -> str:
+    """The index namespace a run writes or queries, as the CLIs print it:
+    the suffix (``default`` when unset) and ``indexing.additional_suffix``,
+    what every index name and graph label ends in."""
+    name = suffix or Constants.DEFAULT_SUFFIX.value
+    if additional := config.indexing.additional_suffix:
+        name = f"{name}-{additional}"
+    return name
 
 
 def _strategy_list(value: str) -> list[str]:
@@ -87,7 +98,7 @@ def add_query_arguments(
     """
     parser.add_argument(
         "--suffix",
-        type=_suffix,
+        type=suffix_arg,
         help="Index suffix to query (default: the config's "
         "processing.document_parsing.index_value, as ingestion writes, else "
         "'default'); must match the index_value the corpus was ingested with",
@@ -133,11 +144,15 @@ def add_query_arguments(
         "--top-k",
         type=positive_int,
         default=10,
-        help="Set the maximum number of search results",
+        help="Set the maximum number of search results (times "
+        "--retrieval-multiplier; default 10)",
     )
     parser.add_argument(
         "--retrieval-multiplier",
         type=positive_int,
         default=1,
-        help="Multiplier that increases the retrieval depth",
+        help="Widen the search N times: each index and graph expansion fetches "
+        "up to top-k x N candidates and the fused list keeps up to top-k x N "
+        "for the reranker and the context budget, at the cost of larger "
+        "searches (default 1)",
     )

@@ -496,14 +496,18 @@ def _opensearch_vector_retriever(providers: Providers) -> BaseGraphRAGRetriever:
     )
 
 
-def _sqlite_search_engine(providers: Providers) -> SearchEngineClient:
-    """An embedded engine on ``providers.vector.sqlite_path`` (no endpoint)."""
+def _sqlite_search_engine(
+    providers: Providers, *, create: bool = True
+) -> SearchEngineClient:
+    """An embedded engine on ``providers.vector.sqlite_path`` (no endpoint);
+    a reader passes ``create=False`` (``SQLiteSearchEngine``)."""
     from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
 
     config = providers.config
     return SQLiteSearchEngine(
         config.providers.vector.sqlite_path,
         timeout_seconds=config.search.store_timeout_seconds,
+        create=create,
     )
 
 
@@ -531,7 +535,8 @@ def _sqlite_vector_retriever(providers: Providers) -> BaseGraphRAGRetriever:
 
     return OpenSearchRetriever(
         config=providers.config,
-        opensearch_client=_sqlite_search_engine(providers),
+        # A query creates no store file where nothing was ingested.
+        opensearch_client=_sqlite_search_engine(providers, create=False),
         embedding_factory=providers.embedding_factory,
     )
 

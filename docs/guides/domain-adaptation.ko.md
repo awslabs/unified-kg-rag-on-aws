@@ -41,7 +41,10 @@ run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml -
 ```
 
 출력에는 `custom_prompts` 블록과, 감지한 도메인과 엔티티 유형이 담긴 `profile`이
-있습니다. **검토한 뒤** 원하는 프롬프트를 `custom_prompts:` 아래에 복사하세요.
+있고, 표본의 언어를 알 수 있으면(한국어·일본어·중국어는 문자 체계로, 그 밖에는 프로필의
+언어로) 프롬프트와 분석기가 따르는 `processing.translation.source_language`도 있습니다(설정
+파일이 다른 값을 지정하면 WARNING으로 알려 줍니다). **검토한 뒤** 원하는 프롬프트를
+`custom_prompts:` 아래에, 언어 설정은 설정 파일에 복사하세요.
 
 - 튜닝한 `graph_extraction_system`과 `community_report_system`은 도메인 머리말 뒤에
   내장 규칙과 출력 형식을 그대로 붙인 것이며, 생성한 퓨샷 예시는 마지막에 옵니다.

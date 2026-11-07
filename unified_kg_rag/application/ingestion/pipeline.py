@@ -22,6 +22,9 @@ from structlog.contextvars import bind_contextvars, reset_contextvars
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.adapters.storage.embedding_settings import (
+    resolve_embedding_dimension,
+)
 from unified_kg_rag.application.bootstrap import (
     CheckpointSync,
     build_checkpoint_sync,
@@ -90,6 +93,7 @@ from unified_kg_rag.domain.ingestion.methodologies import (
     selected_stages,
     stage_methodologies,
     stage_switched_off,
+    stages_for,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
 from unified_kg_rag.domain.models import (
@@ -98,6 +102,7 @@ from unified_kg_rag.domain.models import (
     Constants,
     Document,
     InputDocument,
+    ModelPurpose,
     PipelineConfig,
     PipelineContext,
     PipelineMetrics,
@@ -106,6 +111,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     validate_path_segment,
 )
+from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES, Methodology
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
@@ -133,6 +139,10 @@ from unified_kg_rag.shared.write_fence import (
 )
 
 logger = get_logger(__name__)
+
+# The text a run embeds to check the model's vector dimension before any
+# extraction (DataIngestionPipeline._check_embedding_dimension).
+EMBEDDING_PROBE_TEXT = "embedding dimension probe"
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -1681,6 +1691,12 @@ class DataIngestionPipeline:
         )
 
         index_creation_checked = False
+        # A run that writes vectors embeds one probe text first (one call).
+        embeds = any(
+            stage.name in self._EMBEDDING_STAGES
+            for stage in stages_to_execute
+            if stage.name not in completed_stage_names
+        )
         # Stages that only read the stores (summary_tree) create no index of
         # the namespace's: a run of them probes only the missing ones.
         rebuilds = not all(
@@ -1701,6 +1717,8 @@ class DataIngestionPipeline:
                     stage.name not in self._MODEL_FREE_STAGES
                 ):
                     self._check_index_creation(context, rebuilds=rebuilds)
+                    if embeds:
+                        self._check_embedding_dimension(context)
                     index_creation_checked = True
                 result = self._execute_stage(stage, context)
                 self._emit_stage_metrics(context, stage.name)
@@ -1728,6 +1746,56 @@ class DataIngestionPipeline:
             PipelineStageType.DOCUMENT_LOADING.value,
         }
     )
+
+    # The stages that write embeddings (_check_embedding_dimension).
+    _EMBEDDING_STAGES = frozenset(
+        {PipelineStageType.INDEXING.value, PipelineStageType.SUMMARY_TREE.value}
+    )
+
+    def _check_embedding_dimension(self, context: PipelineContext) -> None:
+        """Embed one probe text and compare its length with the dimension
+        the indices are (or will be) mapped with, before any extraction:
+        a model returning another one failed every vector write at the
+        indexing stage, after the extraction was paid for. Not for an
+        incremental run with no document to (re)extract, which embeds
+        nothing new.
+
+        Raises:
+            ConfigurationError: The dimensions differ (named with
+                ``models.embedding.dimension``), or the configured model
+                does not support the configured dimension.
+        """
+        try:
+            incremental = (
+                context.incremental_delta is not None and not self.config.indexing.reset
+            )
+            if incremental and not context.documents:
+                return
+            factory = self.providers.embedding_factory
+            expected = resolve_embedding_dimension(factory, self.config)
+            model = factory.get_model(
+                model_id=self.config.embedding_model_id,
+                dimensions=expected,
+                model_purpose=ModelPurpose.INGESTION,
+            )
+            got = len(model.embed_query(EMBEDDING_PROBE_TEXT))
+        except ConfigurationError:
+            raise
+        except Exception as e:  # noqa: BLE001 - the stages report the model
+            # A model that cannot answer now fails the stage that embeds.
+            logger.debug("Probing the embedding model's dimension failed: %s", e)
+            return
+        if got != expected:
+            raise ConfigurationError(
+                f"The embedding model '{self.config.embedding_model_id}' returns "
+                f"vectors of dimension {got}, but the indices are mapped with "
+                f"{expected} (models.embedding.dimension"
+                f"{'' if self.config.embedding_dimension else ', the model default'}"
+                f"). Set models.embedding.dimension (--embedding-dimension) to "
+                f"{got}, or use a model that returns {expected}; an index "
+                "already built with another dimension needs a new namespace "
+                "(--suffix) or a reset (--reset)."
+            )
 
     def _check_index_creation(
         self, context: PipelineContext, *, rebuilds: bool = True
@@ -2217,3 +2285,39 @@ class DataIngestionPipeline:
                 exc_info=True,
             )
             return False
+
+
+def unneeded_stage_error(
+    config: Config, stages: Iterable[PipelineStageType]
+) -> str | None:
+    """Why a run of ``config`` refuses ``stages``, the ones a caller named
+    (``run-ingestion --enabled-stages``), or ``None``: a named stage that
+    would run (its config section allows it) though no selected
+    methodology needs it pays for an artifact the build record does not
+    list, so no strategy could read it. The message names the
+    methodology that reads it (``summary_tree``: ``raptor``)."""
+    needed = selected_stages(config)
+    for stage in stages:
+        if stage in needed or not DataIngestionPipeline.CONFIG_ENABLED.get(
+            stage, lambda _: True
+        )(config):
+            continue
+        selected = [m.value for m in config.effective_methodologies]
+        readers = [
+            m.value
+            for m in Methodology
+            if stage in stages_for(METHODOLOGY_PROFILES[m].required)
+        ]
+        how = "leave the stage out of --enabled-stages"
+        if readers:
+            flag = ",".join([*selected, readers[0]])
+            how = (
+                f"add {' or '.join(readers)} to indexing.methodologies "
+                f"(run-ingestion --methodologies {flag}), or {how}"
+            )
+        return (
+            f"Stage '{stage.value}' is in --enabled-stages, but no selected "
+            "methodology needs it (indexing.methodologies: "
+            f"{', '.join(selected)}), so nothing it builds would be read: {how}."
+        )
+    return None

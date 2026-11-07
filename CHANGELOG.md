@@ -204,6 +204,12 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
 - `--output-format json` prints one JSON document on stdout (a status document on failure, argparse errors included)
   and everything else on stderr; `run-ingestion` rejects it with `--metrics-sink cloudwatch` (#333, #359, #366,
   #420).
+- JSON failures have one schema: `status` (`failed`, or `interrupted`), `exit_code`, `error` and a new `error_type`
+  (the exception's class, `UsageError`, `FailureBudgetExceeded`, `RegressionGateFailed`, `RunFailed` or
+  `Interrupted`), in a status document and in a result that shows a failure: a failed `run-rag` query adds them to
+  `success: false` (it had only `error`), and a failing `run-eval` or `run-visualization` result has them (#629).
+- `run-rag --output-format json`: an answer's `search_results` leaves out `results`, which repeated its `sources`;
+  `--verbose` keeps them (#629).
 - `run-eval --search-strategy` takes a list (`["auto"]` by default); with several strategies or `--repeats` it
   overrides an item's `search_strategy`; `abstention_statistics.unanswerable` has the overall block's shape
   (`completed`, `abstained`, `answered`, `abstention_rate`) (#292, #324, #600).
@@ -661,6 +667,11 @@ From a `main` checkout (formats and keys no release had):
   (#609, #619); `run-eval` refuses one before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only
   among the strategies it serves. A failed read of the record serves that query by the config and is not cached
   (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()` are public (#619).
+  holds and what adding the methodology costs (for `raptor`, the tree alone, with the `run-ingestion
+  --methodologies ... --enabled-stages summary_tree` command that builds it) (#609, #629); an `--enabled-stages`
+  stage no selected methodology needs (`summary_tree` without `raptor`) stops the run before any model call (exit 2),
+  naming the methodology to add to `indexing.methodologies` (#629); `run-eval` refuses one
+  before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only among the strategies it serves.
   Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them, and the next run records them gone, one with no document change too; a reset to fewer methodologies keeps
@@ -893,6 +904,43 @@ From a `main` checkout (formats and keys no release had):
   switch, and a running query service follows it without a restart (#466, #470, #473, #474).
 - `indexing.opensearch.vector_mode` / `compression_level`: on-disk quantized vectors on OpenSearch 2.17+ (#461).
 - `run-prompt-tuning` reads every format ingestion parses; each `run-*` `--help` ends with an example (#121).
+- `run-rag` text output: `--mode search` prints each hit (type, file or name, score, the start of its text) where it
+  printed a header alone, and an answer is followed by one line naming its source files and counting its graph
+  elements; `--verbose` lists every source with its score and text, in `--interactive` mode too (which printed
+  the details on every answer) (#629).
+- A LightRAG keyword extraction whose answer is no usable JSON fails naming the model role and model that answered
+  and the three ways out (`models.roles.entity_extraction`, `processing.ignore_errors`, `--disable-query-processing`)
+  instead of the parser's `Expecting value: line 1 column 1` (a `LanguageModelError` now, not a
+  `json.JSONDecodeError`) (#629).
+- The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
+  naming `processing.translation.source_language`, when its script disagrees with the setting: a Korean, Japanese
+  or Chinese corpus under the default `en` was extracted with prompts asking for English and analyzed as English
+  without a word. `run-prompt-tuning` writes the `source_language` the sample reads as into its output (#629).
+- `backend: local`: the refusals and retrieval logs of the embedded vector store name it ("The embedded SQLite search
+  engine index ...") instead of OpenSearch, and a query where nothing was ingested reads an empty store with a
+  WARNING naming `providers.vector.sqlite_path` instead of creating an empty `vector.sqlite3` (in the working
+  directory, for the default path) (#629).
+- `run-ingestion` failures say why: a run a stage failed names the first failed stage's error (it named the stage
+  alone; the cause was only in the logs) and prints the next step, the pipeline id to resume with; and a run that
+  writes vectors embeds one probe text before its first model stage and stops (exit 2) when the model returns
+  another dimension than `models.embedding.dimension`, naming the setting, where every vector write failed at the
+  indexing stage after the extraction was paid for (one embedding call per run) (#629).
+- `run-rag --suffix` that nothing was ingested under (a typo) exits 2, not 1, and the message lists the suffixes
+  ingested on the store (#629).
+- `run-eval`'s comparison and statistics tables fold a long metric name or value onto the next line instead of
+  cutting it ("answer_match/answer_contai…") (#629).
+- `run-rag`, `run-ingestion` and `run-prompt-tuning` load the chain, the pipeline and the tuner on first use, so
+  `--help` and a refused command line import none of them: about 1 s of CPU instead of 2-4 s (`run-eval` and
+  `prepare-benchmark` are unchanged) (#629).
+- Every CLI takes `--log-level` (over `logging.level`) and `--version`; with `--output-format text` the console logs
+  are plain lines unless `logging.log_format` is set (they were JSON records between the CLI's own output whenever
+  stdout was not a terminal; the CDK tasks set `structured` and keep them), and `prepare-benchmark assertions` logs
+  to stderr with `--output-format json`. The banner and the `--help` descriptions name the product (they said "GRAPH
+  RAG" and "GraphRAG", one of its methodologies) (#629).
+- `run-ingestion --suffix`, `--methodologies a,b` and `--reset` set `processing.document_parsing.index_value`,
+  `indexing.methodologies` and `indexing.reset` for one run, validated as the config keys are (a bad value exits
+  2); `run-ingestion` and `run-rag` print the run's index namespace (suffix and `indexing.additional_suffix`) as
+  one `Index Namespace` line (#629).
 - Operability: run, stage and query ids in logs, extraction-failure metrics and alarms, start-up endpoint checks,
   and runbook sections on backup, restore, replicas and store upgrades (#122, #178, #211, #457, #519).
 - IaC options: `neptune_serverless_ncu`, `ingestion_ephemeral_storage_gib`, `opensearch_master_instance`,
@@ -1088,6 +1136,11 @@ From a `main` checkout (formats and keys no release had):
   deprecation WARNING when set and will be removed: maximizing modularity on the coarse upper levels merges unrelated
   communities (it lost global search accuracy in testing, which is why it has been off by default since #141). They
   still apply; set `graph.community_detection.resolution` instead (#(PR)).
+- `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and will be removed: the default Claude 5.x
+  models always reason, so tune their depth with `aws.bedrock.default_effort` / `fast_effort`. It still turns
+  thinking on for models that opt in (#577).
+- `run-eval --verbose` logs a deprecation WARNING and will be removed: use `--log-level DEBUG`, which every CLI
+  takes (`--verbose` means more of each result in `run-rag`) (#629).
 
 ### Fixed
 Bugs present in 0.2.3.

@@ -20,7 +20,11 @@ from unified_kg_rag.application.cli.config_args import (
     exit_on_config_error,
     load_cli_config,
 )
-from unified_kg_rag.application.cli.conventions import stoppable, usage_error
+from unified_kg_rag.application.cli.conventions import (
+    setup_cli_logging,
+    stoppable,
+    usage_error,
+)
 from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
@@ -30,7 +34,7 @@ from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.domain.models import LanguageCode, LLMUsage
 from unified_kg_rag.evaluation.benchmarks import autoq
 from unified_kg_rag.evaluation.comparison import answer_cost_usd
-from unified_kg_rag.shared import EvaluationException, setup_logging
+from unified_kg_rag.shared import EvaluationException
 from unified_kg_rag.shared.usage import merge_usage
 from unified_kg_rag.shared.utils import event_loop
 
@@ -162,7 +166,7 @@ def run_assertion_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         usage_error(str(e))
     with exit_on_config_error():
         config = apply_provider_arguments(load_cli_config(args), args)
-    setup_logging(config)
+    setup_cli_logging(config, args)
     settings = autoq.GenerationSettings(
         questions_per_class=args.questions_per_class,
         classes=args.classes,

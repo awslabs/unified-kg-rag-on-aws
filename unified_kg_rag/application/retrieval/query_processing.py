@@ -458,8 +458,11 @@ async def extract_dual_keywords(
         )
         # Strict: with ignore_errors=False a broken keyword extraction
         # surfaces instead of silently yielding empty keyword lists.
-        payload = parse_llm_json(raw, strict=True, answer_keys=_KEYWORD_LEVELS)
-        hl_keywords, ll_keywords = _keyword_lists(payload)
+        try:
+            payload = parse_llm_json(raw, strict=True, answer_keys=_KEYWORD_LEVELS)
+            hl_keywords, ll_keywords = _keyword_lists(payload)
+        except (ValueError, LanguageModelError) as e:
+            raise _keyword_json_error(chain, e) from e
         chain._cache_extraction(key, (tuple(hl_keywords), tuple(ll_keywords)))
         return hl_keywords, ll_keywords
     except Exception as e:
@@ -469,6 +472,22 @@ async def extract_dual_keywords(
         logger.warning("Dual-keyword extraction failed: %s", type(e).__name__)
         logger.debug("Dual-keyword extraction error: %s", e)
         return [], []
+
+
+def _keyword_json_error(chain: GraphRAGChain, error: Exception) -> LanguageModelError:
+    """The error of a keyword extraction whose answer is no usable JSON:
+    which model role answered and what to do, not only the parser's
+    'Expecting value: line 1 column 1'."""
+    model = chain.config.model_id(ModelRole.ENTITY_EXTRACTION)
+    return LanguageModelError(
+        "Query keyword extraction (model role "
+        f"{ModelRole.ENTITY_EXTRACTION.value}, '{model}') returned no usable "
+        f"keyword JSON: {error}. Set models.roles.{ModelRole.ENTITY_EXTRACTION.value} "
+        "to a model that follows the JSON instructions, set "
+        "processing.ignore_errors: true to search without keywords, or query "
+        "with --disable-query-processing (RAGInput.enable_query_processing: "
+        "false), which searches a short question as its own keyword."
+    )
 
 
 def _keyword_lists(payload: dict[str, Any]) -> tuple[list[str], list[str]]:

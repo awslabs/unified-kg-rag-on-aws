@@ -26,6 +26,7 @@ import pytest
 from tests.fixtures.docs_check import check_docs
 from tests.fixtures.run_rag import patch_chain
 from unified_kg_rag.application.cli import (
+    conventions,
     prepare_benchmark,
     run_evaluation,
     run_ingestion_pipeline,
@@ -191,7 +192,7 @@ def test_rag_runner_json_mode_routes_decorations_and_logs_to_stderr(
 ) -> None:
     # stdout must carry only the JSON document so it can be piped to jq.
     mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
-    setup = mocker.patch.object(run_rag_chain, "setup_logging")
+    setup = mocker.patch.object(conventions, "setup_logging")
     mocker.patch.object(run_rag_chain.console, "stderr", False)
     args = _rag_parser().parse_args(["-q", "hi", "--output-format", "json"])
 
@@ -291,7 +292,7 @@ def test_rag_runner_suffix_line_names_the_additional_suffix(
     runner = run_rag_chain.RAGChainRunner(
         _rag_parser().parse_args(["-q", "hi", *flags])
     )
-    assert runner._get_suffix_display() == f"[dim]Index/Label Suffix:[/dim] {shown}"
+    assert runner._get_suffix_display() == f"[dim]Index Namespace:[/dim] {shown}"
 
 
 @pytest.mark.parametrize(
@@ -2130,7 +2131,7 @@ def test_eval_main_closes_the_chain(config, mocker, fails) -> None:
     chain.aclose = AsyncMock()
     mocker.patch.object(run_evaluation, "GraphRAGChain", return_value=chain)
     mocker.patch.object(run_evaluation, "load_cli_config", return_value=config)
-    mocker.patch.object(run_evaluation, "setup_logging")
+    mocker.patch.object(conventions, "setup_logging")
     # The endpoint preflight runs before the chain is built; this test is
     # about closing the chain, so let the preflight pass.
     mocker.patch.object(run_evaluation, "missing_endpoints_error", return_value=None)
