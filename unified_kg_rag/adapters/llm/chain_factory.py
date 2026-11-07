@@ -11,6 +11,7 @@ so they live in the adapters layer rather than the shared kernel — keeping
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import dataclasses
 import time
 from collections.abc import AsyncIterator, Iterator
@@ -219,6 +220,14 @@ _TRUNCATION_MARKERS = {
 }
 
 
+# Set by a caller that consumes a stream as a whole (GraphRAGChain.ainvoke
+# streaming its answer to a callback): a truncated stream then fails as an
+# unstreamed response does, after its last chunk, instead of being logged.
+STRICT_STREAM_TRUNCATION: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "kg_rag_strict_stream_truncation", default=False
+)
+
+
 def _truncation_reason(message: Any) -> str | None:
     """``key=value`` of the metadata marking ``message`` as cut, else None."""
     metadata = getattr(message, "response_metadata", None) or {}
@@ -239,7 +248,8 @@ class TruncationGuard(Runnable[Any, Any]):
     retry does not re-pay a generation that would hit the same limit.
 
     Streaming passes every chunk through: the stop reason arrives with the
-    last chunk, after the output reached the caller, so it is logged only.
+    last chunk, after the output reached the caller, so it is logged only;
+    under ``STRICT_STREAM_TRUNCATION`` it then raises, as unstreamed.
     """
 
     def __init__(self, prompt_name: str, model_id: str, purpose: ModelPurpose) -> None:
@@ -259,12 +269,15 @@ class TruncationGuard(Runnable[Any, Any]):
 
     def _check(self, message: Any) -> Any:
         if reason := _truncation_reason(message):
-            self._warn(reason)
-            raise LLMOutputTruncatedError(
-                f"'{self.prompt_name}' response from model '{self.model_id}' "
-                f"was cut at the output token limit"
-            )
+            self._check_reason(reason)
         return message
+
+    def _check_reason(self, reason: str) -> None:
+        self._warn(reason)
+        raise LLMOutputTruncatedError(
+            f"'{self.prompt_name}' response from model '{self.model_id}' "
+            f"was cut at the output token limit"
+        )
 
     def invoke(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
@@ -287,7 +300,7 @@ class TruncationGuard(Runnable[Any, Any]):
             reason = reason or _truncation_reason(chunk)
             yield chunk
         if reason:
-            self._warn(reason)
+            self._streamed_cut(reason)
 
     async def atransform(
         self,
@@ -300,7 +313,12 @@ class TruncationGuard(Runnable[Any, Any]):
             reason = reason or _truncation_reason(chunk)
             yield chunk
         if reason:
-            self._warn(reason)
+            self._streamed_cut(reason)
+
+    def _streamed_cut(self, reason: str) -> None:
+        if STRICT_STREAM_TRUNCATION.get():
+            self._check_reason(reason)
+        self._warn(reason)
 
 
 class TransientRetryRunnable(Runnable[Any, Any]):

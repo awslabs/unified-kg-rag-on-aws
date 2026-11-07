@@ -104,6 +104,8 @@ Ingestion is a resumable 13-stage pipeline: parse, chunk, extract entities and r
 
 `iterative` wraps `mix` or `local` with bounded follow-up rounds on the bridge entities of a multi-hop question. `auto`, the default, lets an LLM router pick one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `iterative`). [Retrieval](./docs/concepts/retrieval.md#search-strategies--when-to-use-which) explains when to use which strategy, and the [Design Doc](./docs/design.md) the layers, algorithms and data model.
 
+To do all of this in a browser on your machine, start the local [console](./docs/guides/console.md) (`run-console`; `uv run python console/demo/demo.py --models fake` tries it on a synthetic corpus).
+
 ## Deploy on AWS (optional)
 
 The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with endpoints, Neptune, OpenSearch, the DynamoDB document-status table, an S3 cache bucket, an ECS Fargate data plane, a Step Functions ingestion pipeline, CloudWatch dashboards and alarms, and an optional Bedrock Guardrail. [`iac/README.md`](./iac/README.md#quick-start) has the `cdk synth`, `cdk bootstrap` and `cdk deploy --all` commands and every `-c key=value` option; the stores are reachable only from inside the VPC, so the deployed Fargate tasks run the CLIs ([After deploy](./iac/README.md#after-deploy)).

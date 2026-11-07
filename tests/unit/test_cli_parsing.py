@@ -28,6 +28,7 @@ from tests.fixtures.run_rag import patch_chain
 from unified_kg_rag.application.cli import (
     conventions,
     prepare_benchmark,
+    run_console,
     run_evaluation,
     run_ingestion_pipeline,
     run_prompt_tuning,
@@ -2162,6 +2163,7 @@ _DOCS_URL = "https://github.com/awslabs/unified-kg-rag-on-aws/blob/main/"
         (run_visualization._build_parser, "run-visualization"),
         (run_prompt_tuning._build_parser, "run-prompt-tuning"),
         (prepare_benchmark._parser, "prepare-benchmark"),
+        (run_console._build_parser, "run-console"),
     ],
 )
 def test_help_epilog_shows_an_example_and_a_live_doc_section(parser, command) -> None:

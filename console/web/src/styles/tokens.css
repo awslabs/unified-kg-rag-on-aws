@@ -1,0 +1,85 @@
+/* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The console's tokens (docs/design.md#101-the-console-run-console-opt-in).
+ * Six named colours carry the identity; status and chart colours are
+ * functional and kept apart from them.
+ */
+:root {
+  /* Identity */
+  --film: #eef2f3; /* drafting-film background */
+  --ink: #17212b; /* blue-black text */
+  --graphite: #5a6773; /* secondary text, 5.2:1 on film */
+  --hairline: #c9d2d8; /* rules and borders */
+  --trace: #2747d6; /* the provenance trace, focus, primary actions */
+  --highlighter: #ffd84d; /* matched terms only */
+
+  /* Surfaces derived from them */
+  --sheet: #ffffff;
+  --sheet-sunk: #f6f8f9;
+  --trace-wash: #e7ebfb;
+  --trace-ink: #1b34a6;
+  --hairline-strong: #9aa7b1;
+
+  /* Status (never used for identity or series) */
+  --good: #18794e;
+  --good-wash: #e3f3ea;
+  --warn: #8a5300;
+  --warn-wash: #fdf1d8;
+  --bad: #b42318;
+  --bad-wash: #fde8e6;
+
+  /* Chart series: the validated categorical order (dataviz reference),
+   * first eight slots; a ninth folds into "other". */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-8: #e34948;
+  --series-other: #9aa7b1;
+
+  /* Type */
+  --font-display: "Bricolage Grotesque Variable", "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans",
+    "Helvetica Neue", Arial, sans-serif;
+  --font-data: "Atkinson Hyperlegible Mono", ui-monospace, "SFMono-Regular", "Cascadia Mono", Menlo, Consolas,
+    "Noto Sans Mono", monospace;
+  --cjk-ko: "Apple SD Gothic Neo", "Noto Sans KR", "Noto Sans CJK KR", "Malgun Gothic", "Source Han Sans K";
+  --cjk-ja: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Noto Sans CJK JP", "Yu Gothic UI",
+    "Yu Gothic", "Meiryo", "Source Han Sans";
+  --cjk-zh: "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "Source Han Sans SC";
+  --cyrillic: "Noto Sans", "Segoe UI", "Roboto", "Helvetica Neue", Arial;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.875rem;
+  --text-3xl: 2.5rem;
+
+  /* Space and shape */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --rail: 2px;
+  --station: 11px;
+  --shadow: 0 1px 0 rgb(23 33 43 / 4%), 0 2px 8px rgb(23 33 43 / 6%);
+  --nav-width: 236px;
+  --duration: 420ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration: 0ms;
+  }
+}

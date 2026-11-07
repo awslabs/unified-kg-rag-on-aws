@@ -97,6 +97,7 @@ run-prompt-tuning = "unified_kg_rag.application.cli.launch:run_prompt_tuning"
 run-describe = "unified_kg_rag.application.cli.launch:run_describe"
 prepare-benchmark = "unified_kg_rag.application.cli.launch:prepare_benchmark"
 run-mcp-server = "unified_kg_rag.application.cli.launch:run_mcp_server"
+run-console = "unified_kg_rag.application.cli.launch:run_console"
 
 [project.optional-dependencies]
 # Optional: the richer Markdown and HTML parser (heavy transitive deps, so not
@@ -153,6 +154,15 @@ docx = [
 # extra when it is missing. The static charts need no extra.
 viz = [
     "pyvis>=0.3.2",
+]
+# Optional: the local web console of `run-console` (ask, ingest, evaluate,
+# explore the graph, dashboard, settings). The core package imports none of
+# these; run-console fails fast naming this extra when they are missing.
+# python-multipart parses the corpus uploads (FastAPI's form support).
+console = [
+    "fastapi>=0.120.0",
+    "python-multipart>=0.0.20",
+    "uvicorn>=0.35.0",
 ]
 # Optional: OpenTelemetry tracing (`observability.enabled: true`). The core
 # package imports none of these; the OTel adapter loads them only when
@@ -415,6 +425,9 @@ test = [
 dev = [
     { include-group = "test" },
     "black>=25.9.0",
+    # The console extra's web packages, so mypy type-checks the console's
+    # server (application/cli/console/) on a plain `uv sync`.
+    "fastapi>=0.120.0",
     "isort>=5.12.0",
     # The OpenAI-compatible adapter of the [local] extra (the Ollama one is
     # in test), for their offline tests (the rest of the extra is heavy; the
@@ -427,6 +440,7 @@ dev = [
     "opentelemetry-sdk>=1.30.0",
     "pre-commit>=4.6.1",
     "pytest-cov>=4.1.0",
+    "python-multipart>=0.0.20",
     "ruff>=0.16.1",
     # The embedded engine's english stemmer (a [local] extra), so its analyzer
     # tests run in CI instead of skipping.
@@ -435,4 +449,5 @@ dev = [
     # package; types-boto3 covers the per-service clients used under TYPE_CHECKING.
     "boto3-stubs~=1.43.66",
     "types-boto3[full]>=1.43.71",
+    "uvicorn>=0.35.0",
 ]

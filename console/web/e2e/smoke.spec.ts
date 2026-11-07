@@ -1,0 +1,60 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+/** One pass through the console against a demo workspace: a question, its
+ * provenance trail into the graph, then every page, with no request to
+ * another host and no error in the page. Skipped without a browser. */
+import { existsSync } from "node:fs";
+import { chromium, expect, test } from "@playwright/test";
+
+const browser = process.env.CHROMIUM_PATH ?? chromium.executablePath();
+test.skip(!existsSync(browser), `no browser at ${browser} (npx playwright install chromium)`);
+
+test("ask, follow the trail into the graph, visit every page", async ({ page, baseURL }) => {
+  const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+  const foreign: string[] = [];
+  const errors: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.protocol.startsWith("http") && url.origin !== origin) foreign.push(request.url());
+  });
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.addInitScript(() => window.localStorage.setItem("ukr-console-locale", "en"));
+
+  // The address run-console printed carries the access token.
+  const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+  await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
+  await expect(page.getByRole("heading", { level: 1, name: "Ask" })).toBeVisible();
+  await page.getByLabel("Question").fill("Who carries the lidar units to Kestrel Depot?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".answer-meta").first()).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator(".answer-text").first()).toContainText("Umbra Freight");
+  // The answer's [n] opens the source it cites in the trace.
+  const cite = page.locator(".answer-text .cite-link").first();
+  await expect(cite).toBeVisible();
+  const marker = (await cite.textContent()) ?? "";
+  await cite.click();
+  await expect(page.locator(".source.open .marker")).toHaveText(marker);
+  await expect(page.locator(".citations-list li").first()).toBeVisible();
+  await page.locator('.source[data-kind="entity"] > button').first().click();
+  await expect(page.getByText("Stated in passages")).toBeVisible();
+  await page.getByRole("button", { name: "Show in the graph" }).click();
+  await expect(page).toHaveURL(/\/graph\?focus=/);
+  await expect(page.locator(".trail-banner")).toContainText("From your question");
+  await expect(page.locator(".graph-node .ring")).toHaveCount(1);
+
+  for (const [path, title] of <[string, string][]>[
+    ["/ingest", "Ingest"],
+    ["/evaluate", "Evaluate"],
+    ["/dashboard", "Dashboard"],
+    ["/settings", "Settings"],
+  ]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
+  }
+  await page.goto("/settings");
+  await page.getByLabel("Language").first().selectOption("ko");
+  await expect(page.locator("html")).toHaveAttribute("lang", "ko");
+
+  expect(foreign).toEqual([]);
+  expect(errors).toEqual([]);
+});

@@ -22,6 +22,7 @@ import pytest
 
 from unified_kg_rag.application.cli import (
     prepare_benchmark,
+    run_console,
     run_describe,
     run_evaluation,
     run_ingestion_pipeline,
@@ -83,6 +84,7 @@ PARSERS: dict[str, Callable[[], argparse.ArgumentParser]] = {
     "run-describe": run_describe._build_parser,
     "run-prompt-tuning": run_prompt_tuning._build_parser,
     "prepare-benchmark": prepare_benchmark._parser,
+    "run-console": run_console._build_parser,
 }
 # run-mcp-server has no --output-format: its stdout is the MCP stream
 # (test_the_mcp_server_offers_no_json_output); the other rules hold.
@@ -775,6 +777,7 @@ def test_a_launchers_blas_default_does_not_outlive_the_test() -> None:
         ("run_prompt_tuning", "run_prompt_tuning"),
         ("prepare_benchmark", "prepare_benchmark"),
         ("run_mcp_server", "run_mcp_server"),
+        ("run_console", "run_console"),
     ],
 )
 def test_each_launcher_entry_runs_its_own_cli(
@@ -806,6 +809,7 @@ def test_each_launcher_entry_runs_its_own_cli(
         ("run_eval", True),
         ("run_rag", True),
         ("run_mcp_server", True),
+        ("run_console", True),
         ("run_ingestion", False),
     ],
 )
@@ -901,6 +905,7 @@ def test_a_printed_json_result_is_not_followed_by_a_status(capsys, monkeypatch) 
         run_prompt_tuning.main,
         prepare_benchmark.main,
         run_mcp_server.main,
+        run_console.main,
     ],
 )
 def test_every_cli_main_handles_sigterm(main: Callable[..., object]) -> None:

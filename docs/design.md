@@ -4203,6 +4203,158 @@ work on a core install, and a missing extra fails the run
 (`BaseRenderer.check_dependencies`) before anything renders.
 Using it: [Visualization](./guides/visualize.md).
 
+### 10.1 The console (`run-console`, opt-in)
+
+A local web app over the same entry points the CLIs use: ask questions,
+ingest a corpus, run and compare evaluations, explore the exported graph,
+see what queries cost, and edit the configuration. It is a prototype for
+one person on one host, not a multi-user service. Using it:
+[Console](./guides/console.md).
+
+**Placement.** The server is an entry point, in
+`application/cli/console/` (the CLIs' layer, so `test_layering.py` holds it
+with an empty allowlist), started by `run-console`
+(`application/cli/run_console.py`). It imports the application layer
+(`GraphRAGChain`, `get_config`, the ingestion pipeline's stage table),
+evaluation's comparison helpers (`answer_cost_usd`), domain models and
+the shared kernel, and of the adapters only the two public registries the
+facade exports from (`strategy_registry`, `ParserFactory`; pinned by
+`test_run_console.py`). Its
+packages, FastAPI, Uvicorn and python-multipart, are the `console` extra;
+without them `run-console` exits 2 naming the extra. The web client is a
+Vite + React + TypeScript app in `console/web/` (source and npm lockfile
+committed, the build output not); `run-console` serves `console/web/dist`
+when it is built and otherwise says how to build it.
+
+**Data flow.**
+
+| Page | Server path | What runs |
+|---|---|---|
+| Ask | `POST /api/ask` (server-sent events) | One `GraphRAGChain` per loaded config, in the server's event loop. `ainvoke(on_answer_chunk=...)` hands the answer model's text over as it streams; the final `RAGOutput` follows, with its sources, `metadata.routing` (how `auto` chose), rerank status, usage and the query's trace id |
+| Ingest | `POST /api/jobs/ingest` | `run-ingestion` in a child process, with the console's cache directory and a pipeline id per corpus |
+| Evaluate | `POST /api/jobs/evaluate` | `run-eval --output-format json` in a child process, writing into its own directory under the evaluation outputs |
+| Graph | `GET /api/graphs/data` | Reads a `visualization_data.json` the ingestion exported; degrees, communities, source kinds and the layout (`spring_layout`) are computed on read |
+| Dashboard | `GET /api/dashboard` | Reads the console's query log (SQLite under its cache directory) and the evaluation result files |
+| Settings | `GET/POST /api/config/*` | Validates against `Config`, diffs against the file, writes the YAML file |
+
+**Jobs in child processes, not threads.** The ingestion pipeline stops
+through a signal in the thread that runs it (`request_stop` raises where
+that thread is, and defers during a checkpoint write); a thread of the
+server cannot be stopped that way. A child process running the unchanged
+CLI gets the stop the CLIs are built for: Stop sends SIGTERM, the
+pipeline checkpoints its finished stages and exits 143 (rerun resumes), and
+`run-eval` keeps the runs it finished; a process that outlives the CLIs'
+100 s stop grace is killed. The child also isolates the server from a
+crash or a memory peak of a run, and the result is exactly what the CLI
+would produce. Progress is read, not pushed: an ingestion's stages from
+its `pipeline_metadata.json` (written after every stage) against the stage
+plan the console computes from the config (`DataIngestionPipeline.STAGE_CLASSES`,
+`CONFIG_ENABLED`, `selected_stages`; pinned to a built pipeline's stages by
+a test), an evaluation's from the run summaries in its directory against
+strategies x repeats. Logs go to a file per job; the page shows its tail
+and each failed stage's error.
+
+**Concurrency.** One ingestion or evaluation job per index namespace at a
+time; a second is refused with the running job's id, also when both
+requests arrive at once (the namespace is claimed before the first await).
+A pipeline id is per corpus folder: a readable slug of its name and a hash
+of its resolved path and namespace. A question the run asks before it
+writes (the inputs of a resumed id changed, a reset, a mass deletion) is
+answered only by its own flag (`run-ingestion --confirm-integrity`,
+`--confirm-reset`, `--confirm-deletions`); unanswered, the job names it and
+the page offers to start again with that flag. A job a console process left
+running when it ended is marked lost at the next start. Across processes the
+pipeline's namespace lease still decides (a run started by another
+`run-ingestion` makes the console's run fail with `NamespaceLeaseError`'s
+message). Queries run while a job does; after an ingestion finishes the
+chain is rebuilt, so the next answer reads the new index.
+
+**Streaming.** `GraphRAGChain.ainvoke` takes an optional
+`on_answer_chunk` callback: the answer step then streams the answer model
+and passes each text chunk on; the returned `RAGOutput` is unchanged and
+stays authoritative (the client replaces the streamed text with its
+`answer`). It streams nothing when the output guardrail screens answers
+(nothing may be shown before screening) or when the answer is read for
+the `[NO_ANSWER]` token (`search.abstention`), so a decline is never shown
+half-written. `astream` is unchanged; it yields no sources. A streamed
+answer is the unstreamed one: its text is the chunks joined, so
+`citations` and `unknown_citation_markers` come out the same
+(`test_answer_chunks.py`). Each `chunk` event carries the markers that
+chunk closes, read by `CitationMarkerScanner` (a marker split across chunks
+counts once it closes); the `result` event gives each source the marker
+it was shown under and each citation the rank of its source, so the
+page links an answer's `[n]` to that source in the trace.
+
+**Follow-ups.** The page keeps the conversation and sends it with a
+follow-up as `RAGInput.history` (each answered question and its final
+answer; failed, stopped and blocked turns left out), not a conversation
+id in the chain's memory: a settings save or an ingestion rebuilds the
+chain, which would drop an in-process memory, and a config with memory
+off still continues the conversation. The chain bounds and screens the
+history as it does for any caller.
+
+**Settings.** The page edits the YAML file the console was started with
+(`--config-path`), field by field (each with its `Field(description=...)`
+from the JSON schema of `Config`) or as text. A change is validated by
+loading it as `Config` would be (unknown keys included), shown as a diff
+of the file, and written only on Save, refused when the file changed on
+disk since it was read. Secrets are never sent to the browser or written:
+`SecretStr` values (`providers.*.api_key`, `aws.opensearch.password`) are
+masked in every response, and a file or an edit that sets one is refused
+with the environment variable to use instead
+(`UKR__PROVIDERS__LLM__API_KEY`). The observability panel shows which
+`LANGFUSE_*` / `OTEL_*` variables are set, never their values.
+
+**Security.** It binds 127.0.0.1 by default; another address needs
+`--allow-remote`, and the guide says to put the console behind an
+authenticating reverse proxy then: it has no accounts. Every request needs
+a per-launch random access token (the printed address carries it once; the
+server moves it into an HttpOnly, SameSite=Strict cookie; scripts send it
+as `X-Console-Token`), so another local user or a page in another tab
+cannot drive the console. A Settings change to where a provider sends its
+requests (a `base_url`, a store endpoint or port) is saved only when
+confirmed: those requests carry the credentials the environment holds. Every path the client names (a corpus, a
+dataset, an upload, a graph file, a saved run) is resolved, symlinks
+included, and must stay inside the directories the console was started
+with: reads under `--source-directory` (default: the working directory)
+and the configured outputs, writes only to the uploads directory, the
+cache directory, the evaluation outputs and the config file. Uploads keep
+their relative paths, sanitized segment by segment. Requests with a
+foreign `Origin` or `Host` are refused (DNS rebinding), and no response
+carries a CORS header. The client makes no request to another host: the
+fonts (OFL) are bundled by the build, so it works offline and in a private
+VPC.
+
+**Cost.** The console adds no model call: a question costs what the same
+`run-rag` query costs, and a job what its CLI run costs. The dashboard
+prices recorded usage with `evaluation.prices` (`answer_cost_usd`); without
+prices it shows tokens only, as `run-eval` does.
+
+**Failure modes.** A missing extra exits 2 before binding. A config that
+does not validate starts the console with the Settings page only, showing
+the errors. A chain that cannot be built (a store unreachable) makes Ask
+report the error per question; jobs still start (their own run reports it).
+A server stopped by a signal sends SIGTERM to its running jobs and waits
+for them up to the CLIs' stop grace (110 s). A streamed answer cut at the
+output-token limit fails as the unstreamed one does
+(`STRICT_STREAM_TRUNCATION` makes the truncation guard raise after the last
+chunk).
+
+**Identity.** The client is a knowledge-graph workbench where every claim
+has a trail. One signature element: the *provenance trace*, a cobalt rail
+from an answer through each source it read (ranked), the passage and file
+it came from, to the entity or relationship in the graph, continued on the
+Graph page around that node. Everything else is quiet: drafting-film
+background (`#EEF2F3`), blue-black ink (`#17212B`), graphite secondary text
+(`#5A6773`), hairlines (`#C9D2D8`), trace cobalt (`#2747D6`, also focus and
+primary actions) and a highlighter (`#FFD84D`, matched terms only).
+Bricolage Grotesque for page titles and large figures, Atkinson
+Hyperlegible Next for text and Atkinson Hyperlegible Mono for ids and
+numbers (unambiguous glyphs for the ids a trail is made of), with per-locale
+CJK and Cyrillic system fallbacks set through `:lang()`. UI copy is English
+with nine more locales (the languages `LanguageCode` lists), English being
+the source and the fallback.
+
 ---
 
 ## 11. Prompts and Prompt Tuning

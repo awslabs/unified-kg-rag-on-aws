@@ -28,6 +28,7 @@ the [Configuration Reference](./configuration.md).
 - [`run-prompt-tuning`](#run-prompt-tuning)
 - [`prepare-benchmark`](#prepare-benchmark)
 - [`run-mcp-server`](#run-mcp-server)
+- [`run-console`](#run-console)
 - [Provider flags](#provider-flags)
 
 ## `run-ingestion`
@@ -51,6 +52,7 @@ Guide: [Ingestion](../guides/ingest.md). Also takes the [provider flags](#provid
 | `--yes`, `-y` | off | Answer yes to confirmation prompts (continuing after a failed integrity check, or a reset that asks first, as --confirm-reset does, or a mass deletion, as --confirm-deletions does). Without it, a prompt that cannot be asked because stdin is not a terminal fails the run. |
 | `--confirm-reset` | off | Answer yes to the question of an indexing.reset run that drops another source scope's seed graph documents, or, from a corpus of seed graphs alone, another scope's documents, and of a run with incremental indexing off that rebuilds a non-empty index from the seed graphs alone; nothing else (falls back to the UKR_CONFIRM_RESET env var: 1, true or yes). Without it (or --yes), the question is asked on the terminal, and the run stops (exit 1) when stdin is not one. |
 | `--confirm-deletions` | off | Answer yes to the question of an incremental run that would delete more than indexing.max_deletion_share of its source scope's documents (their files are gone from the corpus); nothing else (falls back to the UKR_CONFIRM_DELETIONS env var: 1, true or yes). Without it (or --yes), the question is asked on the terminal, and the run stops (exit 1) before it writes when stdin is not one. |
+| `--confirm-integrity` | off | Answer yes to the question of a run that resumes a --pipeline-id whose inputs changed since its stages ran (or whose cache is incomplete): continue, recomputing those stages; nothing else. Without it (or --yes), the question is asked on the terminal, and the run stops (exit 1) when stdin is not one. |
 | `--continue-on-error` | off | Keep going when a stage fails. When an artifact stage (translation through community detection) crashes, every document of the run is recorded FAILED, so the next incremental run processes them again. |
 | `--enabled-stages` | — | Comma-separated list of pipeline stages to enable (e.g., 'DOCUMENT_PARSING,TEXT_CHUNKING'). If not specified, all stages are enabled. |
 | `--metrics-sink` | `none` | Where to forward pipeline metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout, auto-extracted by CloudWatch Logs, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set; pipeline_id is a log property, not a dimension). A stage's metrics are emitted when it finishes and only by the run that executed it, so a resumed run does not repeat restored stages' counts. |
@@ -232,6 +234,26 @@ Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider
 | `--version` | — | Print the version and exit. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+
+## `run-console`
+
+Local web console: ask, ingest, evaluate, explore the graph, see usage and cost, edit the configuration
+
+Guide: [Console](../guides/console.md).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--source-directory` | — | Workspace the console reads corpora and datasets from, and writes uploads to (its uploads/ folder); nothing outside it, the cache directory and the evaluation outputs is read or written (default: the working directory). |
+| `--cache-directory` | — | Directory of the ingestion jobs' pipeline caches and of the console's own records (console/: questions asked, jobs, their logs) (default: cache). |
+| `--host` | `127.0.0.1` | Address to bind (default 127.0.0.1). Any other needs --allow-remote; the console has no login, so put an authenticating reverse proxy in front of it. |
+| `--port` | `8501` | Port to bind (default 8501; 0 picks a free one). |
+| `--allow-remote` | off | Allow a --host other than a loopback address. Anyone who can reach the port can then query, ingest and edit the configuration. |
+| `--trace-url` `TEMPLATE` | — | Link each answer to its trace: a URL with {trace_id}, e.g. http://localhost:16686/trace/{trace_id} for Jaeger (default with observability.backend langfuse: LANGFUSE_HOST/trace/{trace_id}). |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 
 ## Provider flags
 
