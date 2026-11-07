@@ -10,6 +10,7 @@ a filter no document matches.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -278,3 +279,67 @@ def test_a_removed_documents_filter_keys_stop_matching(
                 assert _ask(rag, strategy, {key: "secret"}).sources == [], strategy
     finally:
         rag.close()
+
+
+def test_ppr_edges_need_one_document_passing_every_key(tmp_path: Path) -> None:
+    # The relationships index unions each filter key's values over an
+    # edge's documents: Vendor-Buyer, stated by a {dept: x, year: y1} and a
+    # {dept: y, year: y2} document, carries dept [x, y] and year [y1, y2], so
+    # the index passes it under {dept: x, year: y2}, which neither document
+    # does. PPR's neighbourhood edges check its text units under two or more
+    # keys (base.py _edges_one_document_passes).
+    from unified_kg_rag.domain.models import SearchQuery, SearchType
+
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    server = FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM)
+    providers = e2e._providers(
+        config, server, e2e.FakeCrossEncoder("synthetic-reranker")
+    )
+    source = tmp_path / "corpus"
+    source.mkdir()
+    per_file = {
+        "a": {"dept": "x", "year": "y1"},
+        "b": {"dept": "y", "year": "y2"},
+        "c": {"dept": "x", "year": "y2"},
+    }
+    (source / "a.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "b.txt").write_text("Vendor ships gadgets to Buyer.")
+    (source / "c.txt").write_text("Depot stores crates.")
+    create = BaseChunker._create_text_unit
+
+    def with_filters(self: BaseChunker, chunk_text: str, document: Any, *a: Any) -> Any:
+        document.metadata["filters"] = dict(per_file[Path(document.file_name).stem])
+        return create(self, chunk_text, document, *a)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(BaseChunker, "_create_text_unit", with_filters)
+        context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+
+    async def edges(filters: dict[str, str]) -> set[frozenset[str]]:
+        rag = GraphRAGChain(config, providers=providers)
+        try:
+            strategy = rag._get_strategy_instance(SearchStrategy.PPR)
+            found = await rag.document_retriever().aretrieve(
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=10,
+                    index_prefixes=[config.indexing.opensearch.entities_index_prefix],
+                )
+            )
+            names = {str(r.metadata["id"]): r.metadata["name"] for r in found}
+            assert set(names.values()) >= {"Vendor", "Buyer"}
+            query = SearchQuery(query="q", filters=filters)
+            stored = await strategy._neighbourhood_edges(query, list(names), 10)
+            return {frozenset({names[e.source_id], names[e.target_id]}) for e in stored}
+        finally:
+            await rag.aclose()
+
+    vendor_buyer = frozenset({"Vendor", "Buyer"})
+    # One key: the index's own filter decides (a and c pass dept x).
+    assert vendor_buyer in asyncio.run(edges({"attr_dept": "x"}))
+    # Two keys one document passes: a states the edge.
+    assert vendor_buyer in asyncio.run(edges({"attr_dept": "x", "attr_year": "y1"}))
+    # Two keys only the union passes: no document states it under both.
+    assert vendor_buyer not in asyncio.run(edges({"attr_dept": "x", "attr_year": "y2"}))
