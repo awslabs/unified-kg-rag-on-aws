@@ -107,7 +107,8 @@ def test_a_remote_bind_needs_allow_remote(capsys: pytest.CaptureFixture[str]) ->
     args = run_mcp_server.parse_args(
         [*http, "--host", "0.0.0.0", "--allow-remote"]  # nosec B104
     )
-    assert (args.host, args.port, args.allow_remote) == ("0.0.0.0", 8000, True)
+    expected = ("0.0.0.0", 8000, True)  # nosec B104 - the address under test
+    assert (args.host, args.port, args.allow_remote) == expected
     assert run_mcp_server.parse_args(http).host == "127.0.0.1"
 
 
