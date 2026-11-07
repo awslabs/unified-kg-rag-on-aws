@@ -30,6 +30,11 @@ from unified_kg_rag.adapters.aws.s3_transfer import (
     upload_directory_to_s3,
 )
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.cli.arm_args import (
+    arm_config,
+    arm_spec,
+    overlay_sha256,
+)
 from unified_kg_rag.application.cli.config_args import (
     add_config_arguments,
     exit_on_config_error,
@@ -108,6 +113,12 @@ if TYPE_CHECKING:
         extraction_cache_scope,
     )
     from unified_kg_rag.evaluation.answer_match_evaluator import answer_scoring
+    from unified_kg_rag.evaluation.arms import (
+        arm_label,
+        arm_pairs,
+        is_arm_label,
+        label_strategy,
+    )
     from unified_kg_rag.evaluation.closed_book import (
         CLOSED_BOOK_ARM,
         closed_book_arms,
@@ -143,6 +154,7 @@ if TYPE_CHECKING:
         pooling_errors,
         pooling_warnings,
         rerank_unmetered,
+        strategy_order,
         summary_warnings,
     )
 
@@ -195,6 +207,12 @@ def _report_module() -> ModuleType:
     return report
 
 
+def _arms_module() -> ModuleType:
+    from unified_kg_rag.evaluation import arms
+
+    return arms
+
+
 def _saved_results_module() -> ModuleType:
     from unified_kg_rag.evaluation import saved_results
 
@@ -227,6 +245,11 @@ __getattr__, _load_evaluation = lazy_names(
         "comparison_markdown": _report_module,
         "delta_cell": _report_module,
         "SavedRun": _saved_results_module,
+        "strategy_order": _saved_results_module,
+        "arm_label": _arms_module,
+        "arm_pairs": _arms_module,
+        "is_arm_label": _arms_module,
+        "label_strategy": _arms_module,
         "check_answer_scoring": _saved_results_module,
         "citation_warnings": _saved_results_module,
         "dataset_warnings": _saved_results_module,
@@ -656,6 +679,24 @@ class CommandLineInterface:
             ),
         )
         parser.add_argument(
+            "--arm",
+            type=arm_spec,
+            action="append",
+            metavar="NAME=OVERLAY[,suffix=SUFFIX]",
+            help=(
+                "A configuration arm, repeatable: answer the dataset again with "
+                "the config under OVERLAY (a YAML mapping merged over it, as "
+                "a config file is validated; its evaluation section is the "
+                "run's), as a chain of its own, with each --search-strategy. "
+                "Its runs are labelled <strategy>@NAME and compared with the "
+                "same strategy's base run, interleaved with it (--run-order) "
+                "and Holm-adjusted with the other deltas; the run manifest "
+                "records the overlay's path and sha256. suffix= queries "
+                "another index namespace with the arm. An empty overlay is an "
+                "A/A arm (the noise floor)"
+            ),
+        )
+        parser.add_argument(
             "--max-failure-rate",
             type=_failure_rate,
             default=1.0,
@@ -702,13 +743,19 @@ class EvaluationRunner:
         rag_chain: Runnable[Any, Any] | None,
         config: Config,
         providers: Providers | None = None,
+        *,
+        chain_factory: Callable[[Config], Runnable[Any, Any]] | None = None,
     ) -> None:
         """``config`` is the run's configuration, provider flags applied (the
         one ``rag_chain`` was built from). ``rag_chain`` is ``None`` with
         ``--from-results`` (nothing is answered); ``providers`` builds the
-        pairwise judge then (default: from ``config``)."""
+        pairwise judge then (default: from ``config``). ``chain_factory``
+        builds the chain of each ``--arm`` from its configuration (default:
+        ``GraphRAGChain``); the runner closes them."""
         _load_evaluation()
         self.args = args
+        self.chain_factory = chain_factory
+        self._arm_chains: list[Any] = []
         self.config = with_pairwise_mode(
             with_judge_model(
                 with_evaluators(config, getattr(args, "evaluators", None)),
@@ -746,6 +793,11 @@ class EvaluationRunner:
     @property
     def _from_results(self) -> list[Path] | None:
         return getattr(self.args, "from_results", None)
+
+    @property
+    def _arms(self) -> list[dict[str, Any]]:
+        """The ``--arm`` configuration arms."""
+        return list(getattr(self.args, "arm", None) or [])
 
     @property
     def _rescoring(self) -> bool:
@@ -861,7 +913,15 @@ class EvaluationRunner:
         if self._uses_llm_judge():
             judge, reason = self._judge_choice()
             logger.info("LLM judge: %s (%s)", judge, reason)
+        names = [arm["name"] for arm in self._arms]
+        if len(set(names)) != len(names):
+            usage_error(f"--arm names must differ (got {', '.join(names)})")
         if self._from_results is not None:
+            if self._arms:
+                usage_error(
+                    "--arm answers the questions, --from-results answers none "
+                    "(the saved runs' arms are compared when they hold some)"
+                )
             if getattr(self.args, "closed_book", False):
                 usage_error(
                     "--closed-book answers the questions, --from-results answers "
@@ -900,6 +960,7 @@ class EvaluationRunner:
             self._gates
             and len(self.args.search_strategy) < 2
             and not self._baseline_results
+            and not self._arms
         ):
             usage_error(
                 "--fail-if needs a comparison: list two or more strategies in "
@@ -1143,6 +1204,19 @@ class EvaluationRunner:
         finally:
             if not keep_work_dir:
                 shutil.rmtree(work_dir, ignore_errors=True)
+            await self._close_arm_chains()
+
+    async def _close_arm_chains(self) -> None:
+        """Release the arms' store connections (the base chain is the
+        caller's)."""
+        chains, self._arm_chains = self._arm_chains, []
+        for chain in chains:
+            close = getattr(chain, "aclose", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception as e:  # noqa: BLE001 - closing is best-effort
+                    logger.warning("Could not close an --arm chain: %s", e)
 
     def _local_outputs(self, work_dir: Path) -> Path:
         """Where the result files are written (``work_dir`` for an S3 target)."""
@@ -1353,12 +1427,14 @@ class EvaluationRunner:
         self,
         queries: list[EvaluationQuery],
         strategies: list[str] | None,
+        chain: Any = None,
+        where: str = "",
     ) -> None:
         """Refuse, before any answer, a strategy a queried namespace does
         not serve (``MethodologyNotIndexedError``: every one of its queries
         would fail; exit 2, as ``run-rag``): each of ``strategies`` (a
         comparison's), else each query's own, on each query's suffix."""
-        check = getattr(self.rag_chain, "acheck_methodology", None)
+        check = getattr(chain or self.rag_chain, "acheck_methodology", None)
         if not inspect.iscoroutinefunction(check):
             return
         pairs = dict.fromkeys(
@@ -1376,7 +1452,7 @@ class EvaluationRunner:
                 await check(SearchStrategy(strategy), suffix)
             except MethodologyNotIndexedError as e:
                 raise MethodologyNotIndexedError(
-                    f"--search-strategy {strategy}: {e}"
+                    f"--search-strategy {strategy}{where}: {e}"
                 ) from e
 
     def _answer_scoring(self) -> dict[str, Any] | None:
@@ -1393,9 +1469,17 @@ class EvaluationRunner:
             order = None
             if self._strategies_given():
                 # The closed-book arm is no --search-strategy: compared last.
+                labels = list(dict.fromkeys(run.strategy for run in saved))
                 order = [
                     *self.args.search_strategy,
-                    *closed_book_arms(dict.fromkeys(run.strategy for run in saved)),
+                    # The --arm runs of the listed strategies.
+                    *(
+                        label
+                        for label in strategy_order(saved)
+                        if is_arm_label(label)
+                        and label_strategy(label) in self.args.search_strategy
+                    ),
+                    *closed_book_arms(labels),
                 ]
             grouped = group_runs(saved, order)
         except EvaluationException as e:
@@ -1648,6 +1732,7 @@ class EvaluationRunner:
             or self.args.repeats > 1
             or bool(baseline)
             or closed_book
+            or bool(self._arms)
         )
         try:
             queries, ground_truths = self.evaluation_manager.load_data(
@@ -1695,6 +1780,16 @@ class EvaluationRunner:
             comparing=comparing,
         )
         managers = dict.fromkeys(strategies, self.evaluation_manager)
+        # Per run label, its strategy and its arm (None: the base config).
+        runs_of: dict[str, tuple[str, dict[str, Any] | None]] = {
+            strategy: (strategy, None) for strategy in strategies
+        }
+        for arm in self._arms:
+            manager = await self._arm_manager(arm, queries, strategies)
+            for strategy in strategies:
+                label = arm_label(strategy, arm["name"])
+                managers[label] = manager
+                runs_of[label] = (strategy, arm)
         if closed_book:
             # No retrieval: the answer model alone, scored by the same
             # evaluators (sharing the strategies' providers).
@@ -1705,16 +1800,19 @@ class EvaluationRunner:
                 providers=providers,
             )
 
-        def arm_queries(strategy: str) -> list[EvaluationQuery]:
+        def arm_queries(label: str) -> list[EvaluationQuery]:
             # The run's strategy overrides a per-item one: every run of a
             # comparison must answer the same queries the same way.
             if not comparing:
                 return queries
-            arm = (
+            strategy, config_arm = runs_of.get(label, (label, None))
+            arm: dict[str, Any] = (
                 {"search_strategy": strategy, "retrieval": "none"}
                 if strategy == CLOSED_BOOK_ARM
                 else {"search_strategy": strategy}
             )
+            if config_arm is not None and config_arm.get("suffix"):
+                arm["suffix"] = config_arm["suffix"]
             return [
                 q.model_copy(update={"metadata": {**q.metadata, **arm}})
                 for q in queries
@@ -1735,6 +1833,17 @@ class EvaluationRunner:
             repeat_extractions=(
                 self._repeat_extractions() if self.args.repeats > 1 else None
             ),
+            arms={
+                label: {
+                    "name": arm["name"],
+                    "overlay": arm["overlay"],
+                    "overlay_sha256": overlay_sha256(arm),
+                    "suffix": arm.get("suffix"),
+                }
+                for label, (_, arm) in runs_of.items()
+                if arm is not None
+            },
+            compared_runs=list(managers),
         )
         if context.run_order == "interleaved":
             await self._answer_interleaved(
@@ -1787,6 +1896,58 @@ class EvaluationRunner:
             if not comparing:
                 self._print_summary(summary, time.time() - run_start)
         return recorded
+
+    async def _arm_manager(
+        self,
+        arm: dict[str, Any],
+        queries: list[EvaluationQuery],
+        strategies: list[str],
+    ) -> EvaluationManager:
+        """The evaluation manager of an ``--arm``: its configuration (the
+        overlay over the run's), its own chain and the run's evaluators.
+        Its chain shares the base chain's query extraction cache (keyed by
+        prompt, model and question), so an arm whose overlay leaves the
+        extraction alone retrieves on the same keywords.
+
+        Raises:
+            ConfigurationError: The overlay is invalid, or the arm's
+                configuration lacks an extra or an endpoint its strategies
+                need (exit 2, before any answer).
+        """
+        config, warnings = arm_config(
+            self.config,
+            arm,
+            allow_unknown_keys=bool(getattr(self.args, "allow_unknown_keys", False)),
+        )
+        for warning in warnings:
+            logger.warning("%s", warning)
+        error = missing_extras_error(config, seeds=False) or missing_endpoints_error(
+            config,
+            {
+                role
+                for name in strategies
+                for role in strategy_roles(config, SearchStrategy(name))
+            },
+            f"--arm {arm['name']}",
+        )
+        if error:
+            raise ConfigurationError(error)
+        chain = (self.chain_factory or GraphRAGChain)(config)
+        self._arm_chains.append(chain)
+        shared = getattr(self.rag_chain, "_extractions", None)
+        if shared is not None and hasattr(chain, "_extractions"):
+            chain._extractions = shared
+        suffix = {"suffix": arm["suffix"]} if arm.get("suffix") else {}
+        await self._check_methodologies(
+            [
+                q.model_copy(update={"metadata": {**q.metadata, **suffix}})
+                for q in queries
+            ],
+            strategies,
+            chain,
+            f" (--arm {arm['name']})",
+        )
+        return EvaluationManager(config=config, rag_chain=chain)
 
     def _run_order(self) -> str:
         """``--run-order``, else ``evaluation.run_order``."""
@@ -1898,6 +2059,13 @@ class EvaluationRunner:
                 summary.run_manifest["run_order"] = context.run_order
             if context.repeat_extractions is not None:
                 summary.run_manifest["repeat_extractions"] = context.repeat_extractions
+            if strategy in context.arms:
+                # The configuration arm it ran under (--arm).
+                summary.run_manifest["arm"] = context.arms[strategy]
+            if context.arms:
+                # The runs in comparison order: the files' stamps do not
+                # order the arms of an interleaved run.
+                summary.run_manifest["compared_runs"] = context.compared_runs
         # The directory this run wrote to (--output-directory, or the config
         # default, and its run subdirectory).
         summary.configuration["outputs_directory"] = context.outputs_target
@@ -1906,6 +2074,7 @@ class EvaluationRunner:
             reports=reports,
             summary=summary,
             outputs_dir=context.local_outputs,
+            label=strategy if strategy in context.arms else None,
         )
         recorded.manifest = recorded.manifest or summary.run_manifest
         recorded.manifests.append((strategy, summary.run_manifest))
@@ -2018,6 +2187,28 @@ class EvaluationRunner:
                 for strategy, label in pairs.items()
                 for row in per_query_rows(
                     {label: runs[label], strategy: runs[strategy]},
+                    measured.categories,
+                    prices,
+                )
+            ]
+        elif arms_paired := arm_pairs(names):
+            # Each --arm run against the same strategy's base run, the
+            # base strategies against the first.
+            pairs = arms_paired
+            comparison = baseline_comparison(
+                {label: runs[label] for label in dict.fromkeys(pairs.values())},
+                {label: runs[label] for label in pairs},
+                pairs,
+                categories=measured.categories,
+                prices=prices,
+                unmetered_rerank=unmetered,
+                resamples=self.config.evaluation.resamples,
+            )
+            rows = [
+                row
+                for label, base in pairs.items()
+                for row in per_query_rows(
+                    {base: runs[base], label: runs[label]},
                     measured.categories,
                     prices,
                 )
@@ -2239,6 +2430,10 @@ class _RunContext(BaseModel):
     # resampled their extractions (None: one repeat).
     run_order: str | None = None
     repeat_extractions: str | None = None
+    # Per --arm run label, what its manifest records of the arm; the run
+    # labels in comparison order.
+    arms: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    compared_runs: list[str] = Field(default_factory=list)
 
 
 class _Measured(BaseModel):

@@ -185,8 +185,13 @@ def strategy_order(saved: Sequence[SavedRun]) -> list[str]:
     present = list(dict.fromkeys(run.strategy for run in saved))
     listed: list[str] = []
     for run in saved:
-        args = (run.manifest or {}).get("cli_args") or {}
-        names = args.get("search_strategy")
+        manifest = run.manifest or {}
+        # A run with --arm records every run label in comparison order.
+        compared = manifest.get("compared_runs")
+        if isinstance(compared, list) and len(compared) > 1:
+            listed = [str(n) for n in compared]
+            break
+        names = (manifest.get("cli_args") or {}).get("search_strategy")
         if isinstance(names, list) and len(names) > 1:
             listed = [str(n) for n in names]
             break
