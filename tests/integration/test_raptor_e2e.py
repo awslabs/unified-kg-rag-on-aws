@@ -78,6 +78,10 @@ def setup(
     config = e2e._config(tmp_path / "stores", tmp_path / "viz")
     config.providers.doc_status.enabled = registry
     config.indexing.methodologies = methodologies or [Methodology.RAPTOR]
+    # Text unit ids hash the source scope, which defaults to the corpus
+    # directory: a fixed scope keeps the ids, and so the clusters the
+    # assertions read, the same whatever tmp_path pytest hands out.
+    config.processing.document_parsing.source_scope = "corpus"
     tree = config.indexing.summary_tree
     tree.min_nodes_to_cluster = 4
     tree.target_children = 3
