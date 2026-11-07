@@ -38,7 +38,10 @@ from langchain_core.runnables.config import merge_configs
 from pydantic import BaseModel, Field, field_validator, model_validator
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
-from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.chain_factory import (
+    STRICT_STREAM_TRUNCATION,
+    setup_chain,
+)
 from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
@@ -3016,11 +3019,16 @@ def _streamed_to(
 
     async def run(state: dict[str, Any], config: RunnableConfig) -> str:
         parts: list[str] = []
-        async for chunk in answer.astream(state, config):
-            text = str(chunk)
-            if text:
-                parts.append(text)
-                sink(text)
+        # A response cut at the output limit fails as it would unstreamed.
+        token = STRICT_STREAM_TRUNCATION.set(True)
+        try:
+            async for chunk in answer.astream(state, config):
+                text = str(chunk)
+                if text:
+                    parts.append(text)
+                    sink(text)
+        finally:
+            STRICT_STREAM_TRUNCATION.reset(token)
         return "".join(parts)
 
     return RunnableLambda(run)

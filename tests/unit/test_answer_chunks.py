@@ -12,11 +12,26 @@ query reports how it chose its strategy. Fakes as in
 
 from __future__ import annotations
 
-import pytest
+import itertools
+from typing import Any
 
-from tests.unit.test_rag_chain_streaming import _ANSWER, _input, _make_chain
-from unified_kg_rag.application.retrieval.rag_chain import ROUTING_KEY
+import pytest
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.outputs import ChatGenerationChunk
+
+from tests.unit.test_rag_chain_streaming import (
+    _ANSWER,
+    _input,
+    _make_chain,
+    _StreamingModelFactory,
+)
+from unified_kg_rag.application.retrieval.rag_chain import (
+    DEFAULT_ERROR_MESSAGE,
+    ROUTING_KEY,
+)
 from unified_kg_rag.domain.models import Config, SearchStrategy
+from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 
 pytestmark = pytest.mark.unit
 
@@ -112,3 +127,54 @@ def test_router_reply_naming_its_strategy_counts_as_the_router() -> None:
 
     assert GraphRAGChain._names_strategy("Local search.", SearchStrategy.LOCAL)
     assert not GraphRAGChain._names_strategy("I am not sure", SearchStrategy.LOCAL)
+
+
+class _CutModel(GenericFakeChatModel):
+    """Streams the answer, its last chunk marked cut at the output limit."""
+
+    async def _astream(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        async for chunk in super()._astream(*args, **kwargs):
+            yield chunk
+        yield ChatGenerationChunk(
+            message=AIMessageChunk(
+                content="", response_metadata={"stopReason": "max_tokens"}
+            )
+        )
+
+    def _generate(self, *args: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        result = super()._generate(*args, **kwargs)
+        result.generations[0].message.response_metadata["stopReason"] = "max_tokens"
+        return result
+
+
+class _CutFactory(_StreamingModelFactory):
+    def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+        self.get_model_calls += 1
+        return _CutModel(messages=itertools.repeat(AIMessage(content=_ANSWER)))
+
+
+@pytest.mark.parametrize("ignore_errors", [False, True])
+async def test_a_truncated_answer_fails_streamed_as_unstreamed(
+    config: Config, ignore_errors: bool
+) -> None:
+    outcomes = []
+    for stream in (False, True):
+        chain, _, _ = _make_chain(
+            config.model_copy(deep=True),
+            factory=_CutFactory(),
+            ignore_errors=ignore_errors,
+        )
+        chunks: list[str] = []
+        callback = chunks.append if stream else None
+        if ignore_errors:
+            output = await chain.ainvoke(_input(), on_answer_chunk=callback)
+            outcomes.append((output.answer, bool(output.metadata.get("error"))))
+        else:
+            with pytest.raises(LLMOutputTruncatedError):
+                await chain.ainvoke(_input(), on_answer_chunk=callback)
+            outcomes.append("raised")
+        if stream:
+            assert chunks  # the preview was shown before the cut was seen
+    assert outcomes[0] == outcomes[1]
+    if ignore_errors:
+        assert outcomes[0] == (DEFAULT_ERROR_MESSAGE, True)
