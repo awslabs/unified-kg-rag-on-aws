@@ -3,7 +3,7 @@
 > 🇬🇧 English version: [evaluate.md](./evaluate.md)
 
 `run-eval --data-path <dataset.json>`은 데이터셋의 모든 질문에 답한 뒤 답변과 출처를
-채점합니다. 평가기 셋은 LLM 없이 비용 없이 동작하고, 셋은 LLM 심사 모델을 씁니다.
+채점합니다. 평가기 셋은 LLM 없이 비용 없이 동작하고(기본값), 둘은 LLM 심사 모델을 씁니다.
 전략을 여럿 주거나 `--repeats`를 주면 짝지은 비교가 됩니다.
 
 모든 플래그와 기본값은 [CLI 레퍼런스](../reference/cli.md#run-eval)(영문)에 있습니다.
@@ -13,29 +13,30 @@
 
 ## 평가기
 
-`evaluation.enabled_evaluators`로 고르며, 여섯 개 중 `ragas`와 LLM이 필요 없는 세 개, 모두
-네 개가 기본으로 켜져 있습니다(`langchain`과 `assertion`은 선택 사항). 결정적 평가기는 데이터셋 필드가 없는 질의를 건너뜁니다. 심사 모델 없이
-실행하려면 `enabled_evaluators: [answer_match, retrieval, graph_aware]`로 설정하세요.
-`langchain`의 `correctness`·`partial_correctness`는 `ragas`의 `answer_correctness`와
-같은 것을 재면서 질의마다 심사 호출을 두 번 더 하므로 선택 사항입니다. 실행하려면
-나머지와 함께 나열하세요: `enabled_evaluators: [langchain, ragas, answer_match,
-retrieval, graph_aware]`.
+`evaluation.enabled_evaluators`로 고르며(한 번의 실행에서는 `run-eval --evaluators
+a,b`), LLM이 필요 없는 세 개가 기본으로 켜져 있고 데이터셋 필드가 없는 질의는 건너뜁니다.
+심사 평가기는 선택 사항입니다. `ragas`는 지표 다섯 개를 위해 답변마다 심사 호출을 여러 번 하고
+(`context_precision`은 검색된 컨텍스트마다 한 번, 최대 `evaluation.ragas_max_contexts`인 20번)
+`eval` extra가 필요하며, `assertion`은 데이터셋에 단언문이 있어야 합니다. `ragas`를 더하려면
+`run-eval --evaluators answer_match,retrieval,graph_aware,ragas`로 실행하거나
+`enabled_evaluators`에 넣으세요. `langchain` 평가기는 삭제했습니다(`correctness`가
+`ragas`의 `answer_correctness`와 같은 것을 쟀습니다). 아직 이를 나열하거나
+`evaluation.langchain_metrics`를 설정한 설정 파일은 경고와 함께 그 항목 없이 로드됩니다.
 
 | 평가기 | LLM | 데이터셋에 필요한 필드 | 주요 지표 |
 |---|---|---|---|
 | `answer_match` | 없음 | `answer`(+ `answer_aliases`) | `answer_contains`(대표 지표), `exact_match`, `token_f1` |
 | `retrieval` | 없음 | `reference_sources` | `hit_at_k`, `recall_at_k`, `mrr`(k = `evaluation.retrieval_k`, 기본값 5) |
 | `graph_aware` | 없음 | `expected_entities` / `expected_relationships` | 답변과 검색된 출처에서의 엔티티·관계 커버리지(재현율) |
-| `langchain` | 심사 | `answer` | `correctness`, `partial_correctness` |
 | `ragas` | 심사 | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 | `assertion` | 심사 | `assertions` | `assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`(선택 사항) |
 
 `assertion`도 선택 사항입니다(`enabled_evaluators`에 추가). 답변마다 항목의 단언문(assertion)을
 확인하며, 답변당 심사 호출을 `evaluation.assertion_trials`번(기본값 3) 하고 extra는 필요 없습니다.
 자세한 내용은 [단언문, 길이 통제, 클로즈드북 기준선](#단언문-길이-통제-클로즈드북-기준선)에 있습니다.
-`langchain`·`ragas` 심사 평가기는 `eval` extra가 필요합니다(`uv sync --extra eval`, [설치](../getting-started/aws.ko.md#설치)). extra가
+`ragas` 심사 평가기는 `eval` extra가 필요합니다(`uv sync --extra eval`, [설치](../getting-started/aws.ko.md#설치)). extra가
 없으면 `run-eval`은 첫 질의 전에 extra 이름을 알려 주고 종료 코드 `2`로 종료하며,
-`processing.ignore_errors: true`여도 같습니다. 위의 심사 모델 없는 실행에는 extra가
+`processing.ignore_errors: true`여도 같습니다. 심사 모델 없는 기본 실행에는 extra가
 필요 없습니다. 그 밖에 켜 둔 평가기를 만들 수 없거나(예: 심사 모델의 Bedrock 접근 권한
 없음) 설정을 거부하면 실행이 멈춥니다. `processing.ignore_errors: true`이면 그 평가기를 빼고
 `run_manifest.dropped_evaluators`에 기록합니다. 채점은 모든 답변을 생성한 뒤에
@@ -151,8 +152,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 그 값을 채웁니다. 실행 주체에는 데이터셋에 대한
 `s3:GetObject`와 접두사에 대한 `s3:PutObject` 권한이 필요합니다.
 
-실행마다 `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`을
-씁니다(질의가 여러 전략을 썼으면 `<strategy>`가 빠짐). 전략이 다른 파일은 이름순이
+`run-eval`은 출력 디렉터리 아래 자기만의 하위 디렉터리 `run_<timestamp>_<id>`에 쓰며
+(`evaluation.run_subdirectories`), 그 안에 실행마다
+`evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`을 씁니다(질의가 여러 전략을
+썼으면 `<strategy>`가 빠짐). 전략이 다른 파일은 이름순이
 시간순과 다르므로 최신 실행은 수정 시각(`ls -t`)으로 찾으세요. 요약에는 지표별 통계,
 채점/실패/건너뜀 개수, 답변 거절, 재순위화와 가드레일 집계, 그리고 무엇을 측정했는지 기록해 두 실행을 비교할 수 있게 하는 실행
 매니페스트가 있습니다([Evaluation output](../reference/evaluation-output.md), 영문).
@@ -175,12 +178,18 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   구합니다. 실패한 답변은 상대가 채점한 지표에서 0점이므로 실패로 이득을 볼 수 없습니다.
   표에는 차이마다 `pairs`와 `unpaired` 질의 수가 나옵니다. 판정 모델이 채점하지 못한 질의는
   짝을 이루지 못하며, 전략마다 그 수가 다르면 경고합니다.
-- **차이를 믿을 수 있는 경우.** 구간이 0을 포함하지 않으면 그 차이가 뒷받침됩니다. 이진
-  지표를 짝지어 비교하면 두 전략의 결과가 갈린 질의만 정보가 되므로, 검정력은 결과가
-  얼마나 자주 갈리는지에 달려 있습니다. 이 구간으로 시뮬레이션하면 10%p 차이는 질의의 15%에서
-  결과가 갈릴 때 질의 50개에서 45%, 200개에서 99%의 실행에서 찾아지고, 30%에서 갈릴 때는
-  28%와 73%에서 찾아집니다. 수백 개 질의로 비교하고, 같은 설정을 두 번 실행해 잡음 수준을
-  확인하세요. `deltas_by_category`는 차이를 데이터셋 `category`별로 나누며, 범주와
+- **차이를 믿을 수 있는 경우.** 지표 하나를 미리 주 지표(primary metric)로 정하세요
+  (`--primary-metric`, `evaluation.primary_metric`. 답변을 채점하면 기본값은
+  `answer_match/answer_contains`). 주 지표의 차이는 비교한 전략 수만큼만 보정합니다. 나머지
+  지표는 보조 지표로 모두 묶어 Holm 방법으로 보정하고(비용 측정값은 비용끼리), `adjusted_p_value`가
+  0.05보다 작으면 여러 차이를 함께 읽어도 남는 차이입니다. 표에는 `Holm p`로 나옵니다. 차이의
+  크기는 `ci_low`/`ci_high`(보정 전)나 `adjusted_ci_low`/`adjusted_ci_high`(묶음 전체에 대한
+  동시 구간)로 읽으세요. 지표 열 개를 보정 없이 읽으면 같은 설정끼리 비교해도 30-40%의 비교에서
+  우연히 차이가 나타납니다. 이진 지표를 짝지어 비교하면 두 전략의 결과가 갈린 질의만 정보가
+  되므로, 검정력은 결과가 얼마나 자주 갈리는지에 달려 있습니다. 이 구간으로 시뮬레이션하면
+  10%p 차이는 질의의 15%에서 결과가 갈릴 때 질의 50개에서 45%, 200개에서 99%의 실행에서
+  찾아지고, 30%에서 갈릴 때는 28%와 73%에서 찾아집니다. 수백 개 질의로 비교하고, 같은 설정을
+  두 번 실행해 잡음 수준을 확인하세요. `deltas_by_category`는 차이를 데이터셋 `category`별로 나누며, 범주와
   지표 수에 따른 다중 비교 보정을 하지 않으므로 여러 개 가운데 하나만 0을 벗어난 결과는
   탐색적으로 읽으세요.
 - **맞비교 판정.** `--pairwise-judge`는 GraphRAG / LightRAG 논문의 맞비교 LLM 판정(포괄성,
@@ -188,9 +197,23 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   `candidate_win_rate`는 `position_consistency`, 그리고 답변 길이 구간별 승률(`length`)과 함께
   읽으세요. LLM 판정 모델은 긴 답변을 선호하므로, 길이 비율이 커질수록 승률이 오르면 품질이
   아니라 길이의 효과입니다. `--pairwise-mode differential`은 두 답변이 다른 부분만 판정합니다(아래).
+  첫 번째 반복의 답변을 판정하며, `--pairwise-repeats all`은 모든 반복을 판정합니다(호출 수는
+  `--repeats`배). 이때 질의마다 반복의 점수를 먼저 평균한 뒤 질의끼리 평균합니다.
 - **비용과 지연 시간.** `cost.strategies.<s>`와 `cost.deltas_vs_baseline`은 답변의 질의당
   호출, 토큰, 지연 시간을 지표처럼 짝지어 보여 줍니다. 실패한 답변은 실패하기 전까지 쓴
   만큼 셉니다.
+- **실행 순서.** 기본값은 번갈아 답하기입니다(`--run-order interleaved`,
+  `evaluation.run_order`). 질의 하나를 모든 전략과 반복이 답한 뒤 다음 질의로 넘어가며,
+  질의마다 실행 순서를 뒤집습니다. 그래서 실행 도중 느려지는 서비스나 앞선 실행이 데운
+  캐시가 지연 시간 차이로 나타나지 않습니다(같은 설정의 두 실행을 차례로 답하면 질의당
+  0.5-5.8초 차이가 났습니다). `--run-order sequential`은 실행을 하나씩 차례로 답하고,
+  도중에 멈추면 끝난 실행을 남기며, 지연 시간 차이가 시간의 영향도 잰다고 경고합니다.
+  따로 실행한 결과를 비교할 때(`--from-results`, `--baseline-results`)도 같은 경고가 나옵니다.
+- **반복.** 반복마다 질의의 엔티티와 키워드를 다시 추출하므로
+  (`--repeat-extractions resample`, `evaluation.repeat_extractions`) `repeat_stdev`에 추출의
+  변동도 들어갑니다. 질의와 반복마다 빠른 모델 추출 호출이 한 번씩 듭니다. 한 반복 안의
+  전략들은 추출을 공유하므로 같은 키워드로 검색을 비교합니다. `reuse`는 모든 반복에서
+  한 번만 추출합니다(이전 동작).
 
 모든 필드, 실패와 0점 채우기 규칙, 경고, 비용에 세는 항목은
 [Evaluation output: Comparison](../reference/evaluation-output.md#comparison)(영문)에 있습니다.
@@ -271,16 +294,19 @@ evaluation:
 
 `run-eval --from-results <dir|files>`는 이전 실행이 저장한 파일(`evaluation_results_*`와 그 옆의
 `evaluation_reports_*`, `evaluation_summary_*`. 기본값인 `evaluation.save_detailed_results:
-true`일 때 저장됨)로 질의에 답하거나 저장소를 열지 않고 비교를 다시 만듭니다. 실행을 전략별로
+true`일 때 저장됨. 디렉터리는 그 실행 하위 디렉터리까지 읽음)로 질의에 답하거나 저장소를 열지 않고 비교를 다시 만듭니다. 실행을 전략별로
 묶어 가장 오래된 실행이 나열한 순서로 비교하므로(`--search-strategy`를 주면 그 전략을 그 순서로
 비교), 중간에 멈춘 비교는 빠진 전략만 같은 디렉터리에 같은 `--repeats`로 실행한 뒤 다시 만들면
-끝납니다. 이렇게 만든 차이는 중단 없이 실행한 비교와 같습니다. 실행이 모두 사라진 전략은
+끝납니다. 이렇게 만든 차이는 중단 없이 실행한 비교와 같습니다. 단, 이렇게 하려면 실행이
+끝날 때마다 저장하는 `--run-order sequential`로 실행해야 합니다. 번갈아 답하는 비교는 모든
+실행이 함께 끝나므로 도중에 멈추면 저장된 실행이 없습니다. 실행이 모두 사라진 전략은
 `--repeats N`으로 다시 실행하고, 반복 일부가 저장된 전략은 빠진 반복만 실행하거나(남은 횟수를
-`--repeats`로) 그 전략의 일부 파일을 지운 뒤 N번 모두 실행하세요.
+`--repeats`로 실행하고 `--pool-runs`로 다시 만들기. 아래 참고) 그 전략의 일부 파일을 지운 뒤
+N번 모두 실행하세요.
 
 ```bash
-# naive 실행 중에 멈춤(--repeats 3으로 실행): naive만 같은 디렉터리에 같은 --repeats로
-# 실행하고 다시 만들기.
+# naive 실행 중에 멈춤(--run-order sequential --repeats 3으로 실행): naive만 같은
+# 디렉터리에 같은 --repeats로 실행하고 두 실행 하위 디렉터리로 다시 만들기.
 run-eval --data-path eval.json --search-strategy naive --repeats 3 --output-directory out/
 run-eval --from-results out/ --output-directory out/
 
@@ -294,13 +320,17 @@ run-eval --data-path eval.json --search-strategy local \
   --fail-if "usage/total_tokens:mean_delta>500"
 ```
 
-- **합치기.** 한 전략의 저장된 실행들은 그 전략의 반복으로 합칩니다. 설정(질의 플래그,
-  구성 해시, 코드, 인덱스, 답변 모델)이 다른 실행이 섞이면 경고하므로, 그런 실행은 다른
-  디렉터리에 두세요.
+- **합치기.** 한 전략의 저장된 실행들은 `run-eval` 한 번이 같은 설정으로 답했을 때만 그
+  전략의 반복입니다. 여러 번 실행한 결과(`run_id`가 여러 개. `run_id`를 기록하기 전에 저장한
+  실행은 `--repeats`보다 실행이 많을 때)나 설정(질의 플래그, 구성 해시, 코드, 인덱스, 답변
+  모델)이 다른 실행이 섞이면 거부합니다(종료 코드 2). 실행 하위 디렉터리 하나를 가리키거나
+  결과 파일을 나열하고, 그래도 합치려면 `--pool-runs`를 주세요(무엇이 섞였는지 경고합니다).
 - **다시 판정하기.** `--from-results`와 `--pairwise-judge`를 함께 쓰면 저장한 답변을 다시
   판정합니다. `--judge-model`은 그 실행의 판정 모델을 정합니다.
 - **기준 실행.** `--baseline-results`는 각 전략을 이전 실행의 같은 전략(`baseline:<strategy>`)과
-  비교합니다. 기준 실행은 같은 `--repeats`로 만들고, 실행마다 디렉터리를 따로 두세요.
+  비교합니다. 기준 실행은 같은 `--repeats`로 만드세요. 실행마다 하위 디렉터리에 따로
+  저장되며, 한 전략을 여러 번 실행한 결과가 든 기준 디렉터리는 `--from-results`처럼
+  거부합니다(`--pool-runs`).
 - **채점 방식이 같아야 함.** exact match와 token F1이 답변을 다르게 읽은 실행
   (`evaluation.answer_span`, `answer_normalization`)은 답변을 생성하기 전에 거부합니다(종료
   코드 2). 데이터셋이 다른 실행은 경고하고 공통 질의 ID만 짝짓습니다.
@@ -314,7 +344,10 @@ run-eval --data-path eval.json --search-strategy local \
 - **게이트 개수.** 비교한 전략마다 게이트 하나하나가 별개의 검정입니다. `ci_high<0` 게이트는
   잡음만으로도 실행의 약 2.5%에서 실패하므로, 비교 전략 k개와 그런 게이트 m개면 문제없는
   변경도 최대 k × m × 2.5%의 확률로 실패합니다(전략 3개 × 게이트 4개면 최대 30%). 미리 정한
-  측정값 몇 개만, 여유를 두고(`<0`이 아니라 `ci_high<-0.02`) 게이트로 거세요.
+  측정값 몇 개만, 여유를 두고(`<0`이 아니라 `ci_high<-0.02`) 게이트로 걸거나, 비교한 전략과
+  지표 수를 반영한 보정 통계량으로 거세요:
+  `--fail-if "answer_match/token_f1:adjusted_ci_high<-0.02"`(`adjusted_ci_low`, `p_value`,
+  `adjusted_p_value`도 가능).
 
 전체 규칙(경고마다 비교하는 항목, 비용 게이트가 실패하는 경우)은
 [Evaluation output: Rebuilding and gating rules](../reference/evaluation-output.md#rebuilding-and-gating-rules)(영문)에

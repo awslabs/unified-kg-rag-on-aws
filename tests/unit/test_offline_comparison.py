@@ -34,6 +34,7 @@ from unified_kg_rag.domain.models.config import (
 )
 from unified_kg_rag.evaluation import gates as gates_module
 from unified_kg_rag.evaluation.comparison import (
+    adjust_for_multiplicity,
     answer_cost_usd,
     cost_comparison,
     paired_comparison,
@@ -361,6 +362,54 @@ class TestGates:
         )
         assert gate_breaches(enough, gates) == []
 
+    @staticmethod
+    def _per_strategy_baselines(**baseline_mix: Any) -> dict[str, Any]:
+        """A --baseline-results comparison: mix pairs with baseline:mix, not
+        with the first baseline (``baseline``), which is clean."""
+        delta = {"pairs": 20, "mean_delta": 0.0, "ci_low": -0.1, "ci_high": 0.1}
+        clean = {"answers_without_usage": 0, "failed_answers": 0}
+        return {
+            "baseline": "baseline:local",
+            "baselines": {"local": "baseline:local", "mix": "baseline:mix"},
+            "strategies": {
+                "baseline:local": {"failed_metrics": {}},
+                "baseline:mix": {
+                    "failed_metrics": baseline_mix.pop("failed_metrics", {})
+                },
+                "mix": {"failed_metrics": {}},
+            },
+            "deltas_vs_baseline": {"mix": {"answer_match/token_f1": dict(delta)}},
+            "cost": {
+                "strategies": {
+                    "baseline:local": dict(clean),
+                    "baseline:mix": {**clean, **baseline_mix},
+                    "mix": dict(clean),
+                },
+                "deltas_vs_baseline": {"mix": {"usage/total_tokens": dict(delta)}},
+            },
+        }
+
+    def test_each_check_reads_the_strategys_own_baseline(self) -> None:
+        # Each check read the strategy's baseline from "baselines", falling
+        # back to the first one; reading the first one always passed here.
+        tokens = [parse_gate("usage/total_tokens:mean_delta>1000")]
+        f1 = [parse_gate("answer_match/token_f1:ci_high<-0.5")]
+        unmeasured = self._per_strategy_baselines(answers_without_usage=3)
+        (breach,) = gate_breaches(unmeasured, tokens)
+        assert "answers without a value of 'usage/total_tokens' (baseline:mix 3)" in (
+            breach
+        )
+        failed = self._per_strategy_baselines(failed_answers=2)
+        (breach,) = gate_breaches(failed, tokens)
+        assert "failed answers differ (baseline:mix 2, mix 0)" in breach
+        scored = self._per_strategy_baselines(
+            failed_metrics={"answer_match/token_f1": 2}
+        )
+        (breach,) = gate_breaches(scored, f1)
+        assert "different numbers of answers (baseline:mix 2, mix 0)" in breach
+        clean = self._per_strategy_baselines()
+        assert gate_breaches(clean, [*tokens, *f1]) == []
+
 
 def _judged(
     scores: dict[str, float | None],
@@ -530,12 +579,14 @@ def test_from_results_rebuilds_the_comparison_without_a_chain(tmp_path: Path) ->
     )
     assert code == 0
     comparison = out["comparison"]
-    expected = paired_comparison(
-        {
-            "local": [_run(_BASE, "local")],
-            "mix": [_run(_WORSE, "mix", tokens=300)],
-        },
-        categories={"q1": "2hop", "q2": "1hop", "q3": "2hop", "q4": "1hop"},
+    expected = adjust_for_multiplicity(
+        paired_comparison(
+            {
+                "local": [_run(_BASE, "local")],
+                "mix": [_run(_WORSE, "mix", tokens=300)],
+            },
+            categories={"q1": "2hop", "q2": "1hop", "q3": "2hop", "q4": "1hop"},
+        )
     )
     assert comparison["baseline"] == "local"
     assert json.dumps(comparison["deltas_vs_baseline"], sort_keys=True) == json.dumps(
@@ -553,7 +604,7 @@ def test_from_results_rebuilds_the_comparison_without_a_chain(tmp_path: Path) ->
     assert [r["strategy"] for r in out["runs"]] == ["local", "mix"]
     # The comparison is exported next to its JSON.
     out_dir = tmp_path / "out"
-    (csv_path,) = out_dir.glob("evaluation_comparison_*.csv")
+    (csv_path,) = out_dir.rglob("evaluation_comparison_*.csv")
     rows = list(csv.DictReader(csv_path.open(encoding="utf-8")))
     f1 = [r for r in rows if r["measure"] == "answer_match/token_f1"]
     assert {r["query_id"] for r in f1} == set(_BASE)
@@ -565,7 +616,7 @@ def test_from_results_rebuilds_the_comparison_without_a_chain(tmp_path: Path) ->
         "2hop",
     )
     assert any(r["measure"] == "usage/llm_calls" for r in rows)
-    (md,) = out_dir.glob("evaluation_comparison_*.md")
+    (md,) = out_dir.rglob("evaluation_comparison_*.md")
     text = md.read_text(encoding="utf-8")
     assert "# Paired comparison vs `local`" in text
     assert "## Cost per query (mean / p50 / p95)" in text
@@ -741,17 +792,31 @@ async def test_a_baseline_is_checked_against_the_dataset_before_any_answer(
 def test_saved_runs_need_their_reports(tmp_path: Path) -> None:
     saved = tmp_path / "runs"
     _saved_comparison(saved, _WORSE)
-    next(saved.glob("evaluation_reports_mix_*")).unlink()
+    next(saved.rglob("evaluation_reports_mix_*")).unlink()
     with pytest.raises(Exception, match="has no reports file"):
         load_saved_runs([saved])
+    empty = tmp_path / "empty"
+    (empty / "run_1").mkdir(parents=True)
     with pytest.raises(Exception, match="holds no evaluation_results"):
-        load_saved_runs([tmp_path])
+        load_saved_runs([empty])
 
 
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
         (["--from-results", "d", "--repeats", "2"], "--repeats does not apply"),
+        (
+            ["--from-results", "d", "--evaluators", "retrieval"],
+            "--evaluators does not apply",
+        ),
+        (
+            ["--from-results", "d", "--run-order", "sequential"],
+            "--run-order does not apply",
+        ),
+        (
+            ["--from-results", "d", "--repeat-extractions", "reuse"],
+            "--repeat-extractions does not apply",
+        ),
         (
             ["--data-path", "x.json", "--fail-if", "a/b:ci_high<0"],
             "--fail-if needs a comparison",
@@ -867,14 +932,14 @@ def test_the_default_judge_falls_back_from_the_saved_answer_model(
 def test_a_re_judge_without_the_pairwise_judge_names_no_judge(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # --from-results answers nothing, so the langchain/ragas judges score
+    # --from-results answers nothing, so the ragas/assertion judges score
     # nothing: no LLM judge is chosen or logged.
     import logging
 
     saved = tmp_path / "runs"
     _saved_comparison(saved, _WORSE)
     config = Config()
-    config.evaluation.enabled_evaluators = [EvaluatorType.LANGCHAIN]
+    config.evaluation.enabled_evaluators = [EvaluatorType.RAGAS]
     args = run_evaluation.CommandLineInterface().parser.parse_args(
         ["--from-results", str(saved)]
     )
@@ -891,7 +956,7 @@ def _saved_strategies(
 ) -> None:
     """Save one run per strategy, listed in that order."""
     order = list(runs)
-    before = set(directory.glob("evaluation_summary_*.json"))
+    before = set(directory.rglob("evaluation_summary_*.json"))
     for i, (strategy, scores) in enumerate(runs.items()):
         _save(
             directory,
@@ -902,7 +967,7 @@ def _saved_strategies(
             started=_T0 + timedelta(days=day, minutes=i),
         )
     if manifest:
-        for path in set(directory.glob("evaluation_summary_*.json")) - before:
+        for path in set(directory.rglob("evaluation_summary_*.json")) - before:
             data = json.loads(path.read_text(encoding="utf-8"))
             data["run_manifest"].update(manifest)
             path.write_text(json.dumps(data), encoding="utf-8")
@@ -954,12 +1019,12 @@ def test_baseline_results_pair_each_strategy_with_its_own(
     # naive has no earlier run: the first strategy's, and a warning.
     (warning,) = [w for w in comparison["warnings"] if "has no run of" in w]
     assert "naive" in warning and "baseline:local" in warning
-    (md,) = (tmp_path / "o").glob("evaluation_comparison_*.md")
+    (md,) = (tmp_path / "o").rglob("evaluation_comparison_*.md")
     text = md.read_text(encoding="utf-8")
     assert "vs each strategy's baseline" in text
     assert "mix - baseline:mix [95% CI]" in text
     rows = list(
-        csv.DictReader(next((tmp_path / "o").glob("*.csv")).open(encoding="utf-8"))
+        csv.DictReader(next((tmp_path / "o").rglob("*.csv")).open(encoding="utf-8"))
     )
     assert {(r["strategy"], r["baseline"]) for r in rows} == {
         ("local", "baseline:local"),
@@ -1155,8 +1220,20 @@ def test_from_results_warns_on_pooled_runs_with_other_settings(
         day=1,
         cli_args={"search_strategy": ["local"], "top_k": 1},
     )
+    # Not one run's repeats: refused (exit 2) unless pooled explicitly.
+    args = run_evaluation.CommandLineInterface().parser.parse_args(
+        ["--from-results", str(saved)]
+    )
+    with pytest.raises(run_evaluation.InvalidDatasetError, match="--pool-runs"):
+        run_evaluation.EvaluationRunner(args, None, Config())._saved_runs_input()
     code, out = _cli(
-        ["--from-results", str(saved), "--output-directory", str(tmp_path / "o")]
+        [
+            "--from-results",
+            str(saved),
+            "--pool-runs",
+            "--output-directory",
+            str(tmp_path / "o"),
+        ]
     )
     warnings = out["comparison"]["warnings"]
     assert code == 0
@@ -1168,7 +1245,7 @@ def test_from_results_warns_on_pooled_runs_with_other_settings(
 def test_saved_runs_without_a_summary_are_warned(tmp_path: Path) -> None:
     saved = tmp_path / "runs"
     _saved_comparison(saved, _WORSE)
-    for path in saved.glob("evaluation_summary_*.json"):
+    for path in saved.rglob("evaluation_summary_*.json"):
         path.unlink()
     code, out = _cli(
         ["--from-results", str(saved), "--output-directory", str(tmp_path / "o")]
@@ -1214,9 +1291,15 @@ def test_output_directory_that_is_the_baseline_is_detected(tmp_path: Path) -> No
             str(tmp_path / "ci"),
         ]
     )
-    runner = run_evaluation.EvaluationRunner(args, None, Config())
+    config = Config()
+    config.evaluation.run_subdirectories = False
+    runner = run_evaluation.EvaluationRunner(args, None, config)
     assert runner._output_is_baseline()
     runner.args.output_directory = str(tmp_path / "elsewhere")
+    assert not runner._output_is_baseline()
+    # Into a run subdirectory of its own (the default), it grows nothing.
+    runner.args.output_directory = str(tmp_path / "ci")
+    runner.config.evaluation.run_subdirectories = True
     assert not runner._output_is_baseline()
 
 
@@ -1256,7 +1339,7 @@ def test_markdown_lists_the_pairwise_judge(tmp_path: Path, monkeypatch) -> None:
             str(tmp_path / "o"),
         ]
     )
-    (md,) = (tmp_path / "o").glob("evaluation_comparison_*.md")
+    (md,) = (tmp_path / "o").rglob("evaluation_comparison_*.md")
     text = md.read_text(encoding="utf-8")
     assert code == 0 and "## Pairwise judge" in text
     assert "| mix vs local | 4 | 0 | 75% | 0.25 [0.00, 0.50] |" in text

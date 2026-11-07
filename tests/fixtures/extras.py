@@ -17,10 +17,8 @@ def _installed(*modules: str) -> bool:
     return all(importlib.util.find_spec(module) is not None for module in modules)
 
 
-# The LLM judges' packages (the eval extra).
-EVAL_INSTALLED = _installed("ragas", "datasets", "pandas", "langchain_openai")
-# The langchain judge's alone (the dev group installs it for the local adapters).
-LANGCHAIN_JUDGE_INSTALLED = _installed("langchain_openai")
+# The ragas judge's packages (the eval extra).
+EVAL_INSTALLED = _installed("ragas", "datasets", "pandas")
 # The interactive renderer's package (the viz extra).
 VIZ_INSTALLED = _installed("pyvis")
 # The RDF reader of the ontology schema sources (the ontology extra).

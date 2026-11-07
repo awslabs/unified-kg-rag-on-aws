@@ -15,6 +15,7 @@ class EvaluationMetricType(str, Enum):
     ANSWER_RELEVANCY = "answer_relevancy"
     CONTEXT_PRECISION = "context_precision"
     CONTEXT_RECALL = "context_recall"
+    # The removed langchain evaluator's (kept for its saved reports).
     CORRECTNESS = "correctness"
     FAITHFULNESS = "faithfulness"
     PARTIAL_CORRECTNESS = "partial_correctness"
@@ -57,6 +58,8 @@ class EvaluationMetricType(str, Enum):
 
 
 class EvaluatorType(str, Enum):
+    # Removed (config.REMOVED_EVALUATORS: enabled_evaluators drops it with a
+    # warning); kept so saved runs that hold its reports still load.
     LANGCHAIN = "langchain"
     RAGAS = "ragas"
     GRAPH_AWARE = "graph_aware"

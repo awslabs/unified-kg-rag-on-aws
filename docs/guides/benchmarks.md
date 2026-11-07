@@ -53,7 +53,7 @@ processing:
 evaluation:
   answer_span: extracted                 # EM / F1 on the short span the answer gives
   answer_normalization: official_squad   # MuSiQue's evaluation script normalization
-  enabled_evaluators: [answer_match, retrieval]   # judge-free; add langchain / ragas if wanted
+  enabled_evaluators: [answer_match, retrieval]   # judge-free; add ragas if wanted
 ```
 
 ## Unanswerable questions

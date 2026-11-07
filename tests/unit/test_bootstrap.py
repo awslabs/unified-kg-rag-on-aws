@@ -348,9 +348,15 @@ def test_local_backend_reaches_every_ingestion_component(no_aws, tmp_path) -> No
 def test_local_backend_reaches_evaluators_and_prompt_tuning(no_aws, tmp_path) -> None:
     from unified_kg_rag.application.prompts.tuner import PromptTuner
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
+    from unified_kg_rag.domain.models import EvaluatorType
     from unified_kg_rag.evaluation import EvaluationManager
 
     config = _local_config(tmp_path)
+    # The ragas judge is opt-in: enabled here to check it gets the bundle.
+    config.evaluation.enabled_evaluators = [
+        *config.evaluation.enabled_evaluators,
+        EvaluatorType.RAGAS,
+    ]
     chain = GraphRAGChain(config)
     manager = EvaluationManager(config, rag_chain=chain)
     assert manager.providers is chain.providers

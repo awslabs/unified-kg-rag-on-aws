@@ -986,11 +986,13 @@ class TestCancellation:
             mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
         )
         release = threading.Event()
+        judging = threading.Event()
 
         class _Blocking:
             cancelled = False
 
             def results(self) -> list:
+                judging.set()
                 release.wait(5)
                 return [1.0]
 
@@ -1004,7 +1006,9 @@ class TestCancellation:
         task = asyncio.create_task(
             ev.aevaluate_batch([_query()], [_result()], ["truth"])
         )
-        await asyncio.sleep(0.1)
+        # Cancelled once the judging has started, not after a guessed delay
+        # (on a loaded host it had not started yet, and nothing was cancelled).
+        assert await asyncio.to_thread(judging.wait, 5)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task

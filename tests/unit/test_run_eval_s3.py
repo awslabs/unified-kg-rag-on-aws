@@ -165,14 +165,21 @@ async def test_runner_downloads_dataset_and_uploads_outputs(s3, eval_config) -> 
     args = _args("--data-path", uri, "--output-directory", f"s3://{BUCKET}/out/")
     assert args.data_path == uri  # not collapsed to a Path
 
-    assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 0
+    runner = run_evaluation.EvaluationRunner(args, _Chain(), eval_config)
+    assert await runner.run() == 0
 
+    # Under the run's own subdirectory of the prefix.
     keys = _keys(s3, "out/")
-    summary_key = next(k for k in keys if k.startswith("out/evaluation_summary_"))
+    summary_key = next(
+        k for k in keys if k.startswith(f"out/{runner.run_id}/evaluation_summary_")
+    )
     body = s3.get_object(Bucket=BUCKET, Key=summary_key)["Body"].read()
     saved = json.loads(body)
     # The effective outputs directory, not evaluation.outputs_directory.
-    assert saved["configuration"]["outputs_directory"] == f"s3://{BUCKET}/out/"
+    assert (
+        saved["configuration"]["outputs_directory"]
+        == f"s3://{BUCKET}/out/{runner.run_id}/"
+    )
     manifest = saved["run_manifest"]
     assert manifest["dataset"]["path"] == uri
     assert manifest["cli_args"]["data_path"] == uri
@@ -191,7 +198,7 @@ async def test_runner_s3_dataset_with_local_outputs(
         str(out),
     )
     assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 0
-    assert list(out.glob("evaluation_summary_*.json"))
+    assert list(out.rglob("evaluation_summary_*.json"))
     assert _keys(s3) == ["data.json"]  # nothing uploaded
 
 
@@ -207,7 +214,7 @@ async def test_runner_upload_failure_exits_non_zero_and_keeps_results(
         "--data-path", str(data), "--output-directory", "s3://no-such-bucket/out"
     )
     assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 1
-    assert list((work_dir / "outputs").glob("evaluation_summary_*.json"))
+    assert list((work_dir / "outputs").rglob("evaluation_summary_*.json"))
 
 
 async def test_runner_cleans_up_work_dir_on_success(
@@ -258,7 +265,7 @@ async def test_runner_local_paths_never_create_an_s3_client(
     assert await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run() == 0
     client.assert_not_called()
     assert await asyncio.to_thread(
-        lambda: list(tmp_path.glob("evaluation_summary_*.json"))
+        lambda: list(tmp_path.rglob("evaluation_summary_*.json"))
     )
 
 
@@ -358,12 +365,18 @@ async def test_a_stopped_run_uploads_the_finished_runs(
         str(data),
         "--search-strategy",
         "local,mix",
+        # Run by run: the first run is finished when the second is stopped.
+        "--run-order",
+        "sequential",
         "--output-directory",
         f"s3://{BUCKET}/out/",
     )
     with pytest.raises(type(stop)):
         await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run()
-    assert any(k.startswith("out/evaluation_summary_") for k in _keys(s3, "out/"))
+    assert any(
+        k.startswith("out/run_") and "/evaluation_summary_" in k
+        for k in _keys(s3, "out/")
+    )
     assert not work_dir.exists()
 
 
@@ -381,12 +394,14 @@ async def test_a_stopped_run_keeps_what_it_cannot_upload(
         str(data),
         "--search-strategy",
         "local,mix",
+        "--run-order",
+        "sequential",
         "--output-directory",
         "s3://no-such-bucket/out",
     )
     warning = mocker.spy(run_evaluation.logger, "warning")
     with pytest.raises(KeyboardInterrupt):
         await run_evaluation.EvaluationRunner(args, _Chain(), eval_config).run()
-    assert list((work_dir / "outputs").glob("evaluation_summary_*.json"))
+    assert list((work_dir / "outputs").rglob("evaluation_summary_*.json"))
     # Named before the upload, which the stop watchdog may cut short.
     assert any(work_dir / "outputs" in call.args for call in warning.call_args_list)

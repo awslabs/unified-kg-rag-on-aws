@@ -790,6 +790,117 @@ def test_eval_parser_defaults() -> None:
     assert args.output_directory is None
 
 
+def test_eval_evaluators_flag_picks_the_run_evaluators(config, capsys) -> None:
+    args = _eval_parser().parse_args(
+        ["--data-path", "d", "--evaluators", "answer_match, ragas"]
+    )
+    assert args.evaluators == [EvaluatorType.ANSWER_MATCH, EvaluatorType.RAGAS]
+    assert run_evaluation.with_evaluators(
+        config, args.evaluators
+    ).evaluation.enabled_evaluators == [EvaluatorType.ANSWER_MATCH, EvaluatorType.RAGAS]
+    # Not given: the config's list.
+    default = _eval_parser().parse_args(["--data-path", "d"])
+    assert default.evaluators is None
+    assert run_evaluation.with_evaluators(config, None) is config
+    for value, message in [
+        ("langchain", "langchain evaluator is removed"),
+        ("answer_match,nope", "invalid evaluator nope"),
+        ("retrieval,retrieval", "listed twice"),
+        ("retrieval,", "invalid evaluator"),
+    ]:
+        with pytest.raises(SystemExit):
+            _eval_parser().parse_args(["--data-path", "d", "--evaluators", value])
+        assert message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("flag", "config_value", "expected"),
+    [
+        (None, None, "answer_match/answer_contains"),
+        (None, "answer_match/token_f1", "answer_match/token_f1"),
+        (
+            "answer_match/exact_match",
+            "answer_match/token_f1",
+            "answer_match/exact_match",
+        ),
+    ],
+)
+async def test_eval_runner_declares_the_primary_metric(
+    config, mocker, tmp_path, flag, config_value, expected
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    config.evaluation.primary_metric = config_value
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
+    out = tmp_path / "out"
+    args = _eval_parser().parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(out),
+            "--search-strategy",
+            "local,mix",
+            *(["--primary-metric", flag] if flag else []),
+        ]
+    )
+    assert (
+        await run_evaluation.EvaluationRunner(args, _StrategyChain(), config).run() == 0
+    )
+    (path,) = out.rglob("evaluation_comparison_*.json")
+    comparison = json.loads(path.read_text())
+    assert comparison["multiplicity"]["primary_metric"] == expected
+    assert comparison["deltas_vs_baseline"]["mix"][expected]["family"] == "primary"
+
+
+def test_eval_primary_metric_must_name_an_evaluator_metric(capsys) -> None:
+    with pytest.raises(SystemExit):
+        _eval_parser().parse_args(["--data-path", "d", "--primary-metric", "token_f1"])
+    assert "is not <evaluator>/<metric>" in capsys.readouterr().err
+
+
+async def test_eval_runner_scores_with_the_evaluators_flag(
+    config, mocker, tmp_path
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    data = tmp_path / "eval.json"
+    data.write_text(
+        json.dumps(
+            [
+                {
+                    "question": "Who ships?",
+                    "answer": "Vendor",
+                    "reference_sources": ["a.txt"],
+                }
+            ]
+        )
+    )
+    out = tmp_path / "out"
+    args = _eval_parser().parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(out),
+            "--search-strategy",
+            "local",
+            "--evaluators",
+            "retrieval",
+        ]
+    )
+    runner = run_evaluation.EvaluationRunner(args, _StrategyChain(), config)
+    assert await runner.run() == 0
+    (summary,) = out.rglob("evaluation_summary_*.json")
+    manifest = json.loads(summary.read_text())["run_manifest"]
+    assert manifest["enabled_evaluators"] == ["retrieval"]
+
+
 @pytest.mark.parametrize("flag", ["--top-k", "--retrieval-multiplier"])
 @pytest.mark.parametrize("parser", [_rag_parser, _eval_parser])
 def test_query_width_flags_must_be_positive(parser, flag: str) -> None:
@@ -994,7 +1105,7 @@ async def test_eval_runner_exit_code_and_manifest(
     )
     runner = run_evaluation.EvaluationRunner(args, _DictChain(error), config)
     assert await runner.run() == code
-    summary_file = next(out.glob("evaluation_summary_*.json"))
+    summary_file = next(out.rglob("evaluation_summary_*.json"))
     manifest = json.loads(summary_file.read_text())["run_manifest"]
     assert manifest["cli_args"]["data_path"] == str(data)
     assert len(manifest["dataset"]["sha256"]) == 64
@@ -1162,8 +1273,9 @@ class _StrategyChain:
         return {"answer": answer, "sources": [], "metadata": meta}
 
 
+@pytest.mark.parametrize("order", ["interleaved", "sequential"])
 async def test_eval_runner_compares_strategies_pairwise(
-    config, mocker, tmp_path
+    config, mocker, tmp_path, order: str
 ) -> None:
     import json
 
@@ -1194,17 +1306,29 @@ async def test_eval_runner_compares_strategies_pairwise(
             "local,mix,auto",
             "--repeats",
             "2",
+            "--run-order",
+            order,
         ]
     )
     chain = _StrategyChain()
     runner = run_evaluation.EvaluationRunner(args, chain, config)
     assert await runner.run() == 0
     # One untimed warm-up query per strategy, then 4 queries x 2 repeats.
-    assert chain.strategies == ["local"] * 9 + ["mix"] * 9 + ["auto"] * 9
     assert chain.questions.count(_WARM_UP_QUESTION) == 3
     assert chain.questions[0] == _WARM_UP_QUESTION
-    assert len(list(out.glob("evaluation_summary_*.json"))) == 6
-    comparison = json.loads(next(out.glob("evaluation_comparison_*.json")).read_text())
+    if order == "sequential":
+        assert chain.strategies == ["local"] * 9 + ["mix"] * 9 + ["auto"] * 9
+    else:
+        # The warm-ups first, then each query by every run, the runs'
+        # order reversed on every other query (ABBA).
+        runs = ["local", "local", "mix", "mix", "auto", "auto"]
+        assert chain.strategies == ["local", "mix", "auto"] + [
+            s for j in range(4) for s in (runs if j % 2 == 0 else runs[::-1])
+        ]
+        questions = chain.questions[3:]
+        assert questions == [q for q in sorted(set(questions)) for _ in runs]
+    assert len(list(out.rglob("evaluation_summary_*.json"))) == 6
+    comparison = json.loads(next(out.rglob("evaluation_comparison_*.json")).read_text())
     assert comparison["baseline"] == "local"
     em = "answer_match/exact_match"
     mix = comparison["deltas_vs_baseline"]["mix"][em]
@@ -1260,8 +1384,57 @@ async def test_eval_runner_runs_the_pairwise_judge(config, mocker, tmp_path) -> 
     baseline, candidate = judge.return_value.acompare.await_args.args
     assert [r.generated_answer for r in baseline] == ["Vendor"]
     assert [r.generated_answer for r in candidate] == ["Buyer"]
-    comparison = json.loads(next(out.glob("evaluation_comparison_*.json")).read_text())
+    comparison = json.loads(next(out.rglob("evaluation_comparison_*.json")).read_text())
     assert comparison["pairwise_vs_baseline"] == {"mix": judged}
+
+
+@pytest.mark.parametrize("repeats", ["first", "all"])
+async def test_eval_runner_judges_the_repeats_asked_for(
+    config, mocker, tmp_path, repeats: str
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = []
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    judge = mocker.patch.object(run_evaluation, "PairwiseJudge")
+    judged = {
+        "judged": 2,
+        "failed": 0,
+        "candidate_errors": 0,
+        "baseline_errors": 0,
+        "criteria": {},
+    }
+    judge.return_value.acompare = mocker.AsyncMock(return_value=judged)
+    judge.return_value.acompare_repeats = mocker.AsyncMock(return_value=judged)
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
+    args = _eval_parser().parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--search-strategy",
+            "local,mix",
+            "--repeats",
+            "3",
+            "--pairwise-judge",
+            "--pairwise-repeats",
+            repeats,
+        ]
+    )
+    assert (
+        await run_evaluation.EvaluationRunner(args, _StrategyChain(), config).run() == 0
+    )
+    if repeats == "first":
+        judge.return_value.acompare_repeats.assert_not_awaited()
+        baseline, candidate = judge.return_value.acompare.await_args.args
+        assert [r.generated_answer for r in candidate] == ["Buyer"]
+        return
+    judge.return_value.acompare.assert_not_awaited()
+    baselines, candidates = judge.return_value.acompare_repeats.await_args.args
+    assert [[r.generated_answer for r in run] for run in baselines] == [["Vendor"]] * 3
+    assert [[r.generated_answer for r in run] for run in candidates] == [["Buyer"]] * 3
 
 
 def test_eval_runner_logs_the_judge_it_falls_back_to(config, caplog, tmp_path) -> None:

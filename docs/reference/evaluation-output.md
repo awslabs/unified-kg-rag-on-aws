@@ -9,7 +9,11 @@ comparison: [Evaluation](../guides/evaluate.md). Every flag:
 
 ## Result files
 
-Results are written as `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`
+Each `run-eval` invocation writes into a subdirectory of its own of the
+outputs directory (`--output-directory`, else `evaluation.outputs_directory`),
+named `run_<YYYYMMDD_HHMMSS>_<8 hex characters>`, the run manifest's
+`run_id` (`evaluation.run_subdirectories: false` writes into the directory
+itself, as before). Results are written as `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`
 when every query asked for, or used, one strategy (an `auto` run is
 `..._auto_...`), and as `evaluation_{results,reports,summary}_<timestamp>.json`
 otherwise; the results and reports only with `evaluation.save_detailed_results`
@@ -107,6 +111,10 @@ The console prints the same summary.
   text), a UTC timestamp, `dropped_evaluators` and `usage_schema` (`2`:
   the usage records count the rerank requests; a run saved without it
   counted none);
+- from `run-eval`: `run_id`, the invocation that answered the run (one per
+  `run-eval`, shared by its strategies and repeats), with several runs
+  `run_order` (`interleaved` or `sequential`, `evaluation.run_order`) and
+  with `--repeats` `repeat_extractions` (`resample` or `reuse`);
 - the model ids and `judge_is_answer_model` (a judge that is the answer
   model inflates judge scores; the default Bedrock judge, Opus 5.5, is not
   the default answer model, and falls back to another when the answer
@@ -157,14 +165,33 @@ strategies, or `--repeats`) saves every run's files and adds
 - `strategies.<s>.metrics.<evaluator>/<metric>`: the mean over queries of the
   per-query mean over repeats, and `repeat_stdev` (run-to-run noise);
   `routed_strategies` shows how `auto` routed. The chain extracts each
-  question's entities and keywords once (`search.query_extraction_cache_size`,
-  1024 questions), so the repeats and the strategies that read them (`mix`
-  and `hybrid` the keywords, `local` the entities) search with the same
-  ones, and the run-to-run noise is the retrieval's and the answer's.
+  question's entities and keywords once per repeat
+  (`search.query_extraction_cache_size`, 1024 questions, keyed by the
+  repeat under `evaluation.repeat_extractions: resample`, the default), so
+  the strategies that read them (`mix` and `hybrid` the keywords, `local`
+  the entities) search with the same ones within a repeat, and
+  `repeat_stdev` includes the extraction's run-to-run noise as well as the
+  retrieval's and the answer's. With `repeat_extractions: reuse` every
+  repeat reuses the first one's extractions, and `repeat_stdev` leaves the
+  extraction's noise out.
 - `deltas_vs_baseline.<s>.<metric>`: paired against the first strategy over
   the queries both scored: `mean_delta`, a 95% paired bootstrap interval
   (`ci_low`/`ci_high`; 2,000 resamples, seed 0), `wins`/`ties`/`losses`, the
-  per-query deltas and `unpaired`. A query whose answer generation failed
+  per-query deltas, `unpaired` and `p_value` (a two-sided sign-flip
+  randomization test of the mean delta: exact over every sign pattern up to
+  10 non-zero deltas, else 2,000 random patterns, seed 0; zero deltas carry
+  no sign). `multiplicity` sorts the deltas into families, each
+  Holm-adjusted over its tests: `primary` (`primary_metric`:
+  `evaluation.primary_metric` / `--primary-metric`, default
+  `answer_match/answer_contains` when scored; its tests are the compared
+  strategies), `secondary` (every other metric with per-query deltas) and
+  `cost` (`cost.deltas_vs_baseline`); closed-book arms are in none
+  (`unadjusted`). Each member delta has `family`, `adjusted_p_value` and
+  `adjusted_ci_low` / `adjusted_ci_high`, the bootstrap interval at
+  confidence 1 - 0.05 / m for a family of m tests (simultaneous over it, so
+  a little wider than Holm's decision: a delta can have `adjusted_p_value`
+  under 0.05 with an adjusted interval touching 0). `abstention/precision`
+  (a ratio) and `deltas_by_category` have no adjusted values. A query whose answer generation failed
   scores 0 on every metric the other run scored (`answer_length` and the
   lower-is-better `assertion_contradiction_rate` and
   `negative_assertion_violation_rate`, where 0 is the best score, excepted:
@@ -209,7 +236,12 @@ strategies, or `--repeats`) saves every run's files and adds
   empowerment and directness (plus LightRAG's `overall` with
   `evaluation.pairwise_overall: true`), using `models.roles.evaluation`
   (prompt: `custom_prompts.pairwise_comparison_*`) on the first repeat's
-  answers. Each pair is judged in both orders and a criterion counts as a
+  answers, or with `evaluation.pairwise_repeats: all` (`--pairwise-repeats
+  all`) on every repeat, repeat r against repeat r (`repeats` counts them;
+  the judge's calls times the repeats): each query's repeats are averaged
+  before the queries, the interval resamples queries (a cluster bootstrap),
+  the counts are over every pair, `per_query` lists each query's outcomes
+  per repeat, and `length.per_query` is keyed `<query_id>#<repeat>`. Each pair is judged in both orders and a criterion counts as a
   win only when both agree; `position_consistency` (overall and per
   criterion) is the share of judged pairs whose two orders agreed, and a
   value under 0.5 is warned about: such a judge decides by position, and its
@@ -278,17 +310,33 @@ strategies, or `--repeats`) saves every run's files and adds
   record or a latency are counted in `answers_without_usage` /
   `answers_without_latency` and warned about,
   and a `--fail-if` on a `usage/*` or `latency/*` measure fails for them.
-  The arms and repeats of one run share the chain's query extraction cache,
-  so a later one that reuses an extraction pays no call for it (counted in
-  `cache_hits`): its cost depends on what ran before it, and a strategy whose
-  repeat count or cache hits per answer differ from its baseline's is warned
-  about. To compare cold-cache cost, set `search.query_extraction_cache_size:
+  The arms of one repeat (and, with `repeat_extractions: reuse`, the
+  repeats) share the chain's query extraction cache, so one that reuses an
+  extraction pays no call for it (counted in `cache_hits`): its cost depends
+  on what ran before it, and a strategy whose repeat count or cache hits per
+  answer differ from its baseline's is warned about. To compare cold-cache cost, set `search.query_extraction_cache_size:
   0`; the quality deltas do not depend on it. Before each strategy's first
   run, `run-eval` answers one synthetic query with it, untimed, unscored and
   not counted, so the first strategy's latency does not include opening the
   store connections and the models' first calls; it costs one extra query
   (its model calls) per strategy and run, which is in neither the run's
   usage nor its USD estimate (Bedrock bills it all the same).
+- Run order. With `evaluation.run_order: interleaved` (the default,
+  `--run-order`) every query is answered by every run of the comparison
+  before the next query starts, the runs' order reversed on every other
+  query (ABBA), in one batch under `processing.max_concurrency`; each run
+  is then scored and saved. Answered one run after another
+  (`sequential`), every later run answers later, and a service whose
+  latency drifts over the run, or caches warmed by the earlier runs, show
+  up as latency deltas: two runs of one configuration answered so differed
+  by 0.5-5.8 s per query. A comparison whose runs were not answered
+  interleaved in one `run-eval` (a `sequential` run, `--from-results` of
+  several invocations, any `--baseline-results`, runs saved before
+  `run_order` was recorded) warns that its latency, and possibly usage,
+  deltas measure time too. An interleaved comparison that is stopped
+  writes no run (all of them finish together); `sequential` keeps the
+  finished runs, so a long comparison you may resume by its missing
+  strategies runs `--run-order sequential`.
 - `baselines` (with `--baseline-results`): each strategy's baseline
   ([below](#rebuilding-and-gating-rules)).
 - `gates` (with `--fail-if`): the `conditions` given and the `breaches`
@@ -308,14 +356,19 @@ a closed-book arm is marked "(no retrieval)").
 The full rules of `--from-results`, `--baseline-results` and `--fail-if`
 ([Rebuilding, re-judging and gating a comparison](../guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison)):
 
-- The saved runs of one strategy are pooled as its repeats. The rebuild
-  warns when they differ in a query flag (`suffix`, `top_k`, `search_type`,
-  `retrieval_multiplier`, `enable_thinking`), `retrieval_config_sha256`,
-  `git_sha`, the `index` build or the answer model (keep runs of other
-  settings in another directory, or list the result files), when the
-  strategies ran different numbers of repeats, and when a run has no
-  `evaluation_summary_*` file (its manifest, so none of these checks, nor
-  the answer-scoring and self-preference ones, can read it).
+- A directory is read with its run subdirectories (one level). The saved
+  runs of one strategy are pooled as its repeats only when they are one
+  invocation's: runs of several `run_id`s (or one with and one without; or,
+  saved before `run_id` was recorded, more runs than their
+  `cli_args.repeats`), or runs that differ in a query flag (`suffix`,
+  `top_k`, `search_type`, `retrieval_multiplier`, `enable_thinking`),
+  `retrieval_config_sha256`, `git_sha`, the `index` build or the answer
+  model are refused (exit 2) by `--from-results` and `--baseline-results`
+  unless `--pool-runs` is given, which pools them with a warning naming what
+  differs. The rebuild also warns when the strategies ran different numbers
+  of repeats, and when a run has no `evaluation_summary_*` file (its
+  manifest, so none of these checks, nor the answer-scoring and
+  self-preference ones, can read it).
 - `--pairwise-judge` with `--from-results` judges the saved answers again
   (`--judge-model` sets `models.roles.evaluation` for the run, here and in a
   normal run; without `--pairwise-judge` and an LLM-judge evaluator it
@@ -328,11 +381,14 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   against `baseline:<s>`; `baselines` maps each strategy to its baseline).
   A strategy the earlier run did not run is compared with its first
   strategy, with a warning. Run the baseline with the same `--repeats` as
-  the runs compared with it: repeats reuse the query extraction cache, so
-  different counts shift the usage deltas (warned about). Save each run in
-  a directory of its own: an `--output-directory` that is the
-  `--baseline-results` directory is warned about, since the next run that
-  reads it as its baseline pools this run in as repeats.
+  the runs compared with it: their means average that many runs, and with
+  `repeat_extractions: reuse` repeats reuse the query extraction cache, so
+  different counts shift the usage deltas (warned about). A baseline is a
+  separate run, so the latency deltas against it are warned about (run
+  order above). With `evaluation.run_subdirectories: false`, an
+  `--output-directory` that is the `--baseline-results` directory is warned
+  about, since the next run that reads it as its baseline would hold two
+  invocations (refused without `--pool-runs`).
 - Runs whose exact
   match and token F1 read the answer differently (`answer_scoring` in the
   run manifest: `evaluation.answer_span`, `answer_normalization`,
@@ -347,7 +403,10 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
 - `--fail-if <measure>:<stat><op><value>` (repeatable) exits 1 when a
   compared strategy's paired delta meets the condition: `<measure>` is a key
   of `deltas_vs_baseline` (`<evaluator>/<metric>`) or of
-  `cost.deltas_vs_baseline`, `<stat>` is `mean_delta`, `ci_low` or `ci_high`.
+  `cost.deltas_vs_baseline`, `<stat>` is `mean_delta`, `ci_low`, `ci_high`,
+  `p_value`, `adjusted_p_value`, `adjusted_ci_low` or `adjusted_ci_high`
+  (a delta without the statistic, such as `abstention/precision` for the
+  adjusted ones, fails the gate).
   `ci_high<-0.02` fails only when the whole interval is below -0.02, a
   regression the query sample supports. A strategy with no delta of the
   measure fails the gate too, and so does a cost measure (`usage/*`,

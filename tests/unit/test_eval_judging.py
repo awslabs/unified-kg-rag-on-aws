@@ -809,12 +809,12 @@ class TestClosedBook:
         # the closed-book arm called the answer model once per question.
         assert len(seen) == 2
         assert all(c.get("search_strategy") == "local" for c in rag_calls)
-        saved = list(out_dir.glob(f"evaluation_results_{CLOSED_BOOK_ARM}_*.json"))
+        saved = list(out_dir.rglob(f"evaluation_results_{CLOSED_BOOK_ARM}_*.json"))
         assert len(saved) == 1
         results = json.loads(saved[0].read_text())
         assert {r["metadata"]["retrieval"] for r in results} == {"none"}
         assert {r["search_strategy"] for r in results} == {CLOSED_BOOK_ARM}
-        markdown = next(out_dir.glob("evaluation_comparison_*.md")).read_text()
+        markdown = next(out_dir.rglob("evaluation_comparison_*.md")).read_text()
         assert f"{CLOSED_BOOK_ARM} (no retrieval)" in markdown
         assert "answered without retrieval" in markdown
 

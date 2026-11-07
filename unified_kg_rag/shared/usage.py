@@ -61,6 +61,7 @@ __all__ = [
     "UsageMeter",
     "current_meter",
     "merge_usage",
+    "metering",
     "record_cache_hit",
     "record_llm_call",
     "record_rerank_call",
@@ -149,6 +150,19 @@ def usage_scope() -> Iterator[UsageMeter]:
     """Count the model calls made in this context into a new meter (and the
     enclosing scopes' meters)."""
     meter = UsageMeter(parent=_CURRENT.get())
+    token = _CURRENT.set(meter)
+    try:
+        yield meter
+    finally:
+        _CURRENT.reset(token)
+
+
+@contextmanager
+def metering(meter: UsageMeter) -> Iterator[UsageMeter]:
+    """Count the model calls made in this context into ``meter`` again (and
+    its enclosing scopes' meters): the calls of one piece of work that runs
+    interleaved with others, such as one run of a ``run-eval`` comparison
+    whose answers alternate with another's, each into its own meter."""
     token = _CURRENT.set(meter)
     try:
         yield meter

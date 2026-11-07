@@ -27,6 +27,17 @@ The closed-book arm of ``run-eval --closed-book``
 (``closed_book_arms``) is not gated: it answers without retrieval, so it
 bounds the answer model's prior knowledge and is expected to score lower.
 
+``<stat>`` is ``mean_delta``, ``ci_low`` or ``ci_high``, or a
+multiplicity-adjusted one (``comparison.adjust_for_multiplicity``):
+``adjusted_ci_low`` / ``adjusted_ci_high`` (the interval simultaneous over
+the delta's family: the primary metric, the other metrics, or the cost
+measures), ``p_value`` (the sign-flip test's, unadjusted) or
+``adjusted_p_value`` (Holm over the family).
+``answer_match/token_f1:adjusted_ci_high<-0.02`` fails only on a
+regression that survives the many metrics the comparison reads. A delta
+without the statistic (``abstention/precision`` has no adjusted ones) fails
+the gate.
+
 A metric gate fails when an evaluator could not score the metric on
 different numbers of the strategy's and its baseline's answers
 (``strategies.<s>.failed_metrics``, a judge call that failed or returned
@@ -47,7 +58,16 @@ from pydantic import BaseModel, ConfigDict
 
 from .comparison import failed_metric_counts_differ
 
-STATS = ("mean_delta", "ci_low", "ci_high")
+STATS = (
+    "mean_delta",
+    "ci_low",
+    "ci_high",
+    "p_value",
+    "adjusted_p_value",
+    "adjusted_ci_low",
+    "adjusted_ci_high",
+)
+
 # A gated delta over fewer paired queries fails the gate. The bootstrap
 # percentile interval means little on a handful of queries: on 1 pair it has
 # zero width, and on 5 pairs that all win it is [1, 1] although an exact
@@ -224,6 +244,13 @@ def gate_breaches(comparison: Mapping[str, Any], gates: list[Gate]) -> list[str]
                     f"{strategy}: --fail-if {gate}: the '{gate.measure}' delta "
                     f"pairs {pairs} queries, fewer than the {MIN_GATE_PAIRS} a "
                     "gate needs to read its interval"
+                )
+                continue
+            if delta.get(gate.stat) is None:
+                breaches.append(
+                    f"{strategy}: --fail-if {gate}: the '{gate.measure}' delta "
+                    f"has no {gate.stat} (it is in no multiplicity family) to "
+                    "check"
                 )
                 continue
             observed = float(delta[gate.stat])

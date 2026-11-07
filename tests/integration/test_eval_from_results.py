@@ -118,7 +118,16 @@ def test_an_interrupted_comparison_completed_and_rebuilt_has_the_same_deltas(
     monkeypatch.setattr(EvaluationManager, "warm_up", _no_warm_up)
     dataset = tmp_path / "eval.json"
     dataset.write_text(json.dumps(_DATASET), encoding="utf-8")
-    strategies = ["--search-strategy", "local,mix,naive", "--data-path", str(dataset)]
+    # Run by run, so the stopped comparison keeps its finished runs (an
+    # interleaved one finishes every run at once, or none).
+    strategies = [
+        "--search-strategy",
+        "local,mix,naive",
+        "--run-order",
+        "sequential",
+        "--data-path",
+        str(dataset),
+    ]
     chain = GraphRAGChain(config, providers=providers)
     try:
         calls = len(server.chat_models)
@@ -153,7 +162,7 @@ def test_an_interrupted_comparison_completed_and_rebuilt_has_the_same_deltas(
                 [*strategies, "--output-directory", str(stopped)],
             )
         object.__setattr__(chain, "ainvoke", answer)
-        assert not list(stopped.glob("evaluation_results_naive_*"))
+        assert not list(stopped.rglob("evaluation_results_naive_*"))
         # The missing strategy alone, into the same directory.
         _cli(
             chain,

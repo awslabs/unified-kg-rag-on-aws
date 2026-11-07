@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from langchain_core.runnables import Runnable
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from unified_kg_rag.adapters.evaluators.base import (
     FAILED_METRICS_KEY,
@@ -36,6 +37,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
     RAGOutput,
+    extraction_cache_scope,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import answer_settings
 from unified_kg_rag.domain.models import (
@@ -52,6 +54,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     model_id_value,
 )
+from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
 from unified_kg_rag.domain.retrieval.abstention import (
     ABSTENTION_REASON_KEY,
     CONTEXT_SUFFICIENT_KEY,
@@ -68,7 +71,13 @@ from unified_kg_rag.shared.exceptions import (
     InvalidFilterError,
     MethodologyNotIndexedError,
 )
-from unified_kg_rag.shared.usage import merge_usage, usage_scope
+from unified_kg_rag.shared.usage import (
+    UsageMeter,
+    current_meter,
+    merge_usage,
+    metering,
+    usage_scope,
+)
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 from .answer_match_evaluator import (
@@ -102,10 +111,7 @@ EVAL_EXTRA_HINT = (
 )
 
 # The LLM-judge evaluators -> the modules of the eval extra each needs.
-# langchain_classic's load_evaluator imports langchain_openai even when it is
-# handed a model, so the LangChain judge needs it although it calls Bedrock.
 _EVAL_EXTRA_MODULES: dict[EvaluatorType, tuple[str, ...]] = {
-    EvaluatorType.LANGCHAIN: ("langchain_openai",),
     EvaluatorType.RAGAS: ("ragas", "datasets", "pandas"),
 }
 
@@ -185,6 +191,24 @@ def _answer_usage(chain_usage: Any, record: _AnswerSpend | None) -> LLMUsage | N
     )
 
 
+class AnswerArm(BaseModel):
+    """One run of a comparison to answer with ``answer_interleaved``.
+
+    ``manager`` (an ``EvaluationManager``) answers ``queries`` through its
+    chain; every call of the run carries ``attributes`` on its spans
+    (``observability.bind_attributes``) and, with ``extraction_scope``,
+    reads and fills the query extraction cache in that scope only
+    (``extraction_cache_scope``; ``None``: the chain's shared entries).
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    manager: Any
+    queries: list[EvaluationQuery]
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    extraction_scope: str | None = None
+
+
 class EvaluationManager:
     """Answer an evaluation dataset with a RAG chain and score the answers.
 
@@ -204,23 +228,24 @@ class EvaluationManager:
     ) -> Callable[..., BaseGraphRAGEvaluator] | None:
         """The evaluator class for ``evaluator_type``.
 
-        The langchain and ragas evaluators are imported here, on use: ragas
-        alone takes seconds to import, and every CLI imports this module
-        (``application.cli`` exports ``EvaluationRunner``). Both need the
-        ``eval`` extra.
+        The ragas evaluator is imported here, on use: ragas takes seconds
+        to import, and every CLI imports this module (``application.cli``
+        exports ``EvaluationRunner``). It needs the ``eval`` extra.
 
         Raises:
             ConfigurationError: The evaluator's part of the ``eval`` extra is
                 not installed (not dropped under ``processing.ignore_errors``:
-                a missing package is a setting to fix).
+                a missing package is a setting to fix), or the type is a
+                removed one (``REMOVED_EVALUATORS``; ``enabled_evaluators``
+                drops it on load, so only a config built around validation
+                gets here).
         """
-        _require_eval_extra(evaluator_type)
-        if evaluator_type is EvaluatorType.LANGCHAIN:
-            from unified_kg_rag.adapters.evaluators.langchain_evaluator import (
-                LangChainEvaluator,
+        if evaluator_type.value in REMOVED_EVALUATORS:
+            raise ConfigurationError(
+                f"The '{evaluator_type.value}' evaluator is removed: "
+                f"{REMOVED_EVALUATORS[evaluator_type.value]}"
             )
-
-            return LangChainEvaluator
+        _require_eval_extra(evaluator_type)
         if evaluator_type is EvaluatorType.RAGAS:
             from unified_kg_rag.adapters.evaluators.ragas_evaluator import (
                 RagasEvaluator,
@@ -236,9 +261,8 @@ class EvaluationManager:
         if evaluator_type is EvaluatorType.ASSERTION:
             return AssertionEvaluator
         # Defensive: a future EvaluatorType with no mapping resolves to None and
-        # is skipped by the caller. mypy sees the enum as exhaustive today, hence
-        # the ignore — the branch is real once a new member is added.
-        return None  # type: ignore[unreachable]
+        # is skipped by the caller.
+        return None
 
     def __init__(
         self,
@@ -521,33 +545,105 @@ class EvaluationManager:
         try:
             with usage_scope() as answering:
                 results = await self._generate_answers(queries, show_progress)
-            with usage_scope() as scoring:
-                reports = await self._evaluate_results(queries, results, ground_truths)
-            end_time = datetime.now()
-            summary = self._generate_summary(
-                queries, results, reports, start_time, end_time
-            )
-            summary.usage = {
-                "answer_generation": LLMUsage.model_validate(answering.snapshot()),
-                "scoring": LLMUsage.model_validate(scoring.snapshot()),
-            }
-            summary.run_manifest = self.build_run_manifest(
-                dataset_path,
-                cli_args,
-                queries=queries,
-                ground_truths=ground_truths,
-                index_builds=await self._read_index_builds(queries),
-            )
-
-            logger.info(
-                "Evaluation completed: %s/%s queries processed",
-                summary.successful_evaluations,
-                summary.total_queries,
+            reports, summary = await self._score(
+                queries,
+                results,
+                ground_truths,
+                start_time=start_time,
+                answer_usage=LLMUsage.model_validate(answering.snapshot()),
+                dataset_path=dataset_path,
+                cli_args=cli_args,
             )
             return results, reports, summary
         except Exception as e:
             logger.error("Dataset evaluation failed: %s", e)
             raise EvaluationException(f"Dataset evaluation failed: {e}") from e
+
+    async def score_answers(
+        self,
+        queries: list[EvaluationQuery],
+        results: list[EvaluationResult],
+        ground_truths: list[EvaluationGroundTruth],
+        *,
+        start_time: datetime,
+        answer_usage: LLMUsage,
+        dataset_path: str | Path | None = None,
+        cli_args: dict[str, Any] | None = None,
+    ) -> tuple[list[EvaluationReport], EvaluationSummary]:
+        """Score answers ``answer_interleaved`` generated, as
+        ``evaluate_dataset`` scores its own: the reports and the summary
+        (``answer_usage``, what answering them spent, in its usage)."""
+        try:
+            return await self._score(
+                queries,
+                results,
+                ground_truths,
+                start_time=start_time,
+                answer_usage=answer_usage,
+                dataset_path=dataset_path,
+                cli_args=cli_args,
+            )
+        except Exception as e:
+            logger.error("Dataset evaluation failed: %s", e)
+            raise EvaluationException(f"Dataset evaluation failed: {e}") from e
+
+    async def _score(
+        self,
+        queries: list[EvaluationQuery],
+        results: list[EvaluationResult],
+        ground_truths: list[EvaluationGroundTruth],
+        *,
+        start_time: datetime,
+        answer_usage: LLMUsage,
+        dataset_path: str | Path | None,
+        cli_args: dict[str, Any] | None,
+    ) -> tuple[list[EvaluationReport], EvaluationSummary]:
+        with usage_scope() as scoring:
+            reports = await self._evaluate_results(queries, results, ground_truths)
+        end_time = datetime.now()
+        summary = self._generate_summary(
+            queries, results, reports, start_time, end_time
+        )
+        summary.usage = {
+            "answer_generation": answer_usage,
+            "scoring": LLMUsage.model_validate(scoring.snapshot()),
+        }
+        summary.run_manifest = self.build_run_manifest(
+            dataset_path,
+            cli_args,
+            queries=queries,
+            ground_truths=ground_truths,
+            index_builds=await self._read_index_builds(queries),
+        )
+        logger.info(
+            "Evaluation completed: %s/%s queries processed",
+            summary.successful_evaluations,
+            summary.total_queries,
+        )
+        return reports, summary
+
+    @staticmethod
+    async def answer_interleaved(
+        arms: Sequence[AnswerArm], *, show_progress: bool = True
+    ) -> list[tuple[list[EvaluationResult], LLMUsage]]:
+        """Answer the runs of a comparison interleaved, query by query.
+
+        Answered one run after another, a slow hour of the service, a warm
+        connection pool or a cache filled by the earlier runs lands on the
+        later ones, and their latency and cost deltas measure that time as
+        well as the strategy (an A/A pair of one configuration differed by
+        up to 6 s). Here every query is answered by every run before the
+        next query starts, the runs' order alternating (ABBA: forward on
+        even queries, reversed on odd ones), in one batch under the first
+        run's ``processing.max_concurrency``: each query's answers start
+        close together and no run is systematically first. The queries of
+        every arm pair by position (one dataset). Returns per arm its
+        results and the usage its answers spent.
+        """
+        if not arms:
+            return []
+        manager: EvaluationManager = arms[0].manager
+        return await manager._answer_arms(arms, show_progress)
 
     async def warm_up(self, query: EvaluationQuery) -> None:
         """Answer one synthetic query the way ``query`` is answered (its
@@ -577,23 +673,61 @@ class EvaluationManager:
     async def _generate_answers(
         self, queries: list[EvaluationQuery], show_progress: bool
     ) -> list[EvaluationResult]:
+        ((results, _),) = await self._answer_arms(
+            [AnswerArm(manager=self, queries=queries)], show_progress
+        )
+        return results
+
+    async def _answer_arms(
+        self, arms: Sequence[AnswerArm], show_progress: bool
+    ) -> list[tuple[list[EvaluationResult], LLMUsage]]:
+        """``answer_interleaved`` on this manager's batch processor."""
+        count = len(arms[0].queries)
+        if any(len(arm.queries) != count for arm in arms):
+            raise EvaluationException(
+                "the interleaved runs must answer the same number of queries"
+            )
+        # (arm, query index) in answer order: every arm per query, forward on
+        # even queries and reversed on odd ones.
+        order = [
+            (a, j)
+            for j in range(count)
+            for a in (range(len(arms)) if j % 2 == 0 else reversed(range(len(arms))))
+        ]
         # Per answer (keyed by its input, which every attempt receives), the
         # usage of the attempts that raised and the time from its first
         # attempt's start to its last one's end: a failed or timed-out answer
         # keeps what it spent, so a strategy that fails is not cheaper.
         spent: dict[int, _AnswerSpend] = {}
         inputs: list[dict[str, Any]] = []
+        arm_of: dict[int, int] = {}
+        parent = current_meter()
+        meters = [UsageMeter(parent=parent) for _ in arms]
 
-        def prepare_inputs(query_batch: list[EvaluationQuery]) -> list[dict[str, Any]]:
+        def prepare_inputs(items: list[tuple[int, int]]) -> list[dict[str, Any]]:
             # The question wins over a ``query`` metadata key, as in load_data.
-            inputs.extend({**q.metadata, "query": q.question} for q in query_batch)
+            for a, j in items:
+                query = arms[a].queries[j]
+                single_input = {**query.metadata, "query": query.question}
+                arm_of[id(single_input)] = a
+                inputs.append(single_input)
             return inputs
 
         async def answer_one(single_input: dict[str, Any]) -> Any:
+            arm = arms[arm_of[id(single_input)]]
             record = spent.setdefault(id(single_input), _AnswerSpend())
-            with usage_scope() as meter:
+            with (
+                metering(meters[arm_of[id(single_input)]]),
+                observability.bind_attributes(**arm.attributes),
+                (
+                    extraction_cache_scope(arm.extraction_scope)
+                    if arm.extraction_scope is not None
+                    else contextlib.nullcontext()
+                ),
+                usage_scope() as meter,
+            ):
                 try:
-                    return await self.rag_chain.ainvoke(single_input)
+                    return await arm.manager.rag_chain.ainvoke(single_input)
                 except BaseException:
                     record.failed_usage.append(meter.snapshot())
                     raise
@@ -601,20 +735,40 @@ class EvaluationManager:
                     record.end = time.monotonic()
 
         raw_results = await self.batch_processor.aexecute_with_fallback(
-            items_to_process=queries,
+            items_to_process=order,
             prepare_inputs_func=prepare_inputs,
             sequential_func=answer_one,
             task_name="Answer Generation",
             show_progress=show_progress,
         )
+        raw_by_arm: list[list[Any]] = [[None] * count for _ in arms]
+        records_by_arm: list[list[_AnswerSpend | None]] = [[None] * count for _ in arms]
+        for index, ((a, j), raw) in enumerate(zip(order, raw_results, strict=True)):
+            raw_by_arm[a][j] = raw
+            if index < len(inputs):
+                records_by_arm[a][j] = spent.get(id(inputs[index]))
+        answered = []
+        for a, arm in enumerate(arms):
+            results = await arm.manager._build_results(
+                arm.queries, raw_by_arm[a], records_by_arm[a]
+            )
+            answered.append((results, LLMUsage.model_validate(meters[a].snapshot())))
+        return answered
 
+    async def _build_results(
+        self,
+        queries: list[EvaluationQuery],
+        raw_results: list[Any],
+        records: list[_AnswerSpend | None],
+    ) -> list[EvaluationResult]:
+        """One ``EvaluationResult`` per query from the chain's raw results,
+        sources attributed to files."""
         results = []
         provenance: list[SourceProvenance] = []
-        for index, (query, raw_result) in enumerate(
-            zip(queries, raw_results, strict=True)
+        for query, raw_result, record in zip(
+            queries, raw_results, records, strict=True
         ):
             provenance.append(self._extract_source_provenance(raw_result))
-            record = spent.get(id(inputs[index])) if index < len(inputs) else None
             try:
                 rag_metadata = self._extract_from_result(raw_result, "metadata", {})
                 error_message = self._detect_generation_error(raw_result, rag_metadata)

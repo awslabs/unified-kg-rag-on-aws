@@ -62,7 +62,7 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
 
 - **Quality.** Small local models extract noticeably worse (more failed
   chunks, weaker resolution and reports): use the largest model the hardware
-  runs. The `langchain` / `ragas` judges score less reliably.
+  runs. The `ragas` and `assertion` judges score less reliably.
 - **Model behaviour.** No prompt caching or reasoning effort; a response cut
   at the output limit is not detected (keep `max_output_tokens` at what the
   model can generate); token counts and so context budgets are estimates. A

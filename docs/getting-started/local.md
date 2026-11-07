@@ -122,19 +122,16 @@ cat > sample-eval.json <<'EOF'
 EOF
 ```
 
-Four evaluators are on by default, and one of them (`ragas`) calls an LLM
-judge. Keep only the three that need no LLM (here through an environment variable, see
-[Environment variable overrides](../guides/configure.md#environment-variable-overrides))
-and compare the two strategies on the same questions:
+The three evaluators on by default need no LLM judge. Compare the two
+strategies on the same questions:
 
 ```bash
-UKR__EVALUATION__ENABLED_EVALUATORS='["answer_match", "retrieval", "graph_aware"]' \
-  uv run run-eval --backend local --data-path sample-eval.json --search-strategy local,mix
+uv run run-eval --backend local --data-path sample-eval.json --search-strategy local,mix
 ```
 
 Each strategy's results, reports and summary, and
 `evaluation_comparison_<timestamp>.json` (each metric of `mix` paired against
-`local`), are written to `outputs/evaluation/`.
+`local`), are written to `outputs/evaluation/run_<timestamp>_<id>/`.
 [Evaluators](../guides/evaluate.md#evaluators) and
 [Comparing strategies](../guides/evaluate.md#comparing-strategies) explain the
 metrics; two questions show the mechanics only, so measure on a few hundred

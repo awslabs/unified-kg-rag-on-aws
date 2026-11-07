@@ -4,7 +4,7 @@
 
 `run-eval --data-path <dataset.json>` answers every question of a dataset and
 scores the answers and their sources. Three evaluators need no LLM and cost
-nothing; three use an LLM judge. Several strategies (or `--repeats`) turn the run
+nothing (the default); two use an LLM judge. Several strategies (or `--repeats`) turn the run
 into a paired comparison.
 
 Every flag with its default: [CLI Reference](../reference/cli.md#run-eval).
@@ -14,21 +14,23 @@ as a corpus and a dataset: [Benchmarks](./benchmarks.md).
 
 ## Evaluators
 
-`evaluation.enabled_evaluators` selects them; four of the six are on by
-default: `ragas` and the three LLM-free ones (`langchain` and `assertion`
-are opt-in). The deterministic ones skip a query that lacks their dataset fields;
-for a judge-free run set `enabled_evaluators: [answer_match, retrieval,
-graph_aware]`. `langchain` is opt-in because its `correctness` and
-`partial_correctness` measure what `ragas`' `answer_correctness` already does,
-at two more judge calls per query; to run it, list it with the others:
-`enabled_evaluators: [langchain, ragas, answer_match, retrieval, graph_aware]`.
+`evaluation.enabled_evaluators` selects them (`run-eval --evaluators
+a,b` for one run); the three LLM-free ones are on by default and skip a
+query that lacks their dataset fields. The judges are opt-in: `ragas` makes
+several judge calls per answer for its five metrics, `context_precision` one
+per retrieved context (up to `evaluation.ragas_max_contexts`, 20), and needs
+the `eval` extra; `assertion` needs assertions in the dataset. To add `ragas`:
+`run-eval --evaluators answer_match,retrieval,graph_aware,ragas`, or list it
+in `enabled_evaluators`. The `langchain` evaluator was removed (its
+`correctness` repeated `ragas`' `answer_correctness`); a config that still
+lists it, or sets `evaluation.langchain_metrics`, loads with a warning and
+without it.
 
 | Evaluator | LLM | Needs in the dataset | Main metrics |
 |---|---|---|---|
 | `answer_match` | no | `answer` (+ `answer_aliases`) | `answer_contains` (headline), `exact_match`, `token_f1` |
 | `retrieval` | no | `reference_sources` | `hit_at_k`, `recall_at_k`, `mrr` (k = `evaluation.retrieval_k`, default 5) |
 | `graph_aware` | no | `expected_entities` / `expected_relationships` | entity and relationship coverage (recall), in the answer and in the retrieved sources |
-| `langchain` | judge | `answer` | `correctness`, `partial_correctness` |
 | `ragas` | judge | `answer` | `answer_correctness`, `answer_relevancy`, `context_precision`, `context_recall`, `faithfulness` |
 | `assertion` | judge | `assertions` | `assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate` (opt-in) |
 
@@ -36,10 +38,10 @@ at two more judge calls per query; to run it, list it with the others:
 answer against the item's assertions, `evaluation.assertion_trials` (default
 3) judge calls per answer, and needs no extra; see
 [Assertions, length control and a closed-book bound](#assertions-length-control-and-a-closed-book-bound).
-The `langchain` and `ragas` judges need the `eval` extra (`uv sync --extra eval`, [Install](../getting-started/aws.md#install));
+The `ragas` judge needs the `eval` extra (`uv sync --extra eval`, [Install](../getting-started/aws.md#install));
 without it `run-eval` stops before the first query with exit `2`, naming the
-extra, even with `processing.ignore_errors: true`. The judge-free run above
-needs no extra. Any other enabled evaluator that cannot be built (no Bedrock
+extra, even with `processing.ignore_errors: true`. The default, judge-free
+run needs no extra. Any other enabled evaluator that cannot be built (no Bedrock
 access for the judge, say) or rejects its configuration stops the run; with
 `processing.ignore_errors: true` it is dropped and listed in
 `run_manifest.dropped_evaluators`. Scoring starts after every answer is
@@ -165,7 +167,9 @@ reached with the config's `aws.profile_name` / `aws.region_name`; the shell's
 The principal needs `s3:GetObject` on the dataset and `s3:PutObject` on the
 prefix.
 
-Each run writes `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`
+Each `run-eval` writes into a subdirectory of its own of the outputs
+directory, `run_<timestamp>_<id>` (`evaluation.run_subdirectories`), and each
+run in it `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`
 (without `<strategy>` when the queries used several; find the latest run by
 modification time, `ls -t`, since names of different strategies do not sort by
 time). The summary holds the per-metric
@@ -195,11 +199,20 @@ How to read it:
   help a strategy. The tables print each delta's `pairs` and `unpaired`
   queries: a judge that could not score a query leaves it unpaired, and
   different counts per strategy are warned about.
-- **When a difference counts.** A difference is supported when its interval
-  excludes 0. On a paired binary metric only the queries where the two
-  strategies disagree carry information, so power depends on how often
-  they do: in a simulation of this interval, a 10-point difference is
-  detected in 45% of runs with 50 queries and 99% with 200 when they
+- **When a difference counts.** Declare one metric in advance, the primary
+  metric (`--primary-metric`, `evaluation.primary_metric`; default
+  `answer_match/answer_contains` when answers are scored): its delta is
+  adjusted only over the compared strategies. Every other metric is a
+  secondary one, Holm-adjusted over all of them (and the cost measures over
+  theirs): `adjusted_p_value` below 0.05 is a difference that survives the
+  many deltas read, and the tables print it as `Holm p`; read `ci_low` /
+  `ci_high` (unadjusted) or `adjusted_ci_low` / `adjusted_ci_high`
+  (simultaneous over the family) for its size. Ten metrics read unadjusted
+  show a difference on noise in 30-40% of comparisons of one
+  configuration with itself. On a paired binary metric only the queries
+  where the two strategies disagree carry information, so power depends on
+  how often they do: in a simulation of this interval, a 10-point difference
+  is detected in 45% of runs with 50 queries and 99% with 200 when they
   disagree on 15% of the queries, and in 28% and 73% when they disagree on
   30%. Compare on a few hundred queries, and run the same configuration
   twice to see your noise floor. `deltas_by_category` splits the deltas by dataset `category`;
@@ -211,10 +224,29 @@ How to read it:
   next to `position_consistency` and the win rates per answer-length bucket
   (`length`): LLM judges prefer the longer answer, so a win rate that rises
   with the length ratio is length, not quality. `--pairwise-mode
-  differential` judges only what differs between the answers (below).
+  differential` judges only what differs between the answers (below). It
+  judges the first repeat's answers; `--pairwise-repeats all` judges every
+  repeat (its calls times `--repeats`), averaging each query's repeats
+  before the queries.
 - **Cost and latency.** `cost.strategies.<s>` and `cost.deltas_vs_baseline`
   give the answers' calls, tokens and latency per query, paired like the
   metrics; a failed answer counts with what it spent before failing.
+- **Run order.** The runs are answered interleaved by default
+  (`--run-order interleaved`, `evaluation.run_order`): each query by every
+  strategy and repeat before the next query, their order reversed on every
+  other query, so a service that slows down over the run, or caches the
+  first runs warmed, do not show up as latency deltas (two runs of one
+  configuration answered one after the other differed by 0.5-5.8 s per
+  query). `--run-order sequential` answers one run after another, keeps
+  the finished runs when stopped part-way, and warns that its latency
+  deltas measure time too; so does a comparison of runs from separate
+  invocations (`--from-results`, `--baseline-results`).
+- **Repeats.** Each repeat extracts the query's entities and keywords again
+  (`--repeat-extractions resample`, `evaluation.repeat_extractions`), so
+  `repeat_stdev` includes the extraction's noise; it costs that fast-model
+  call once per query and repeat. The strategies of one repeat share the
+  extraction, so their deltas compare retrieval on the same keywords.
+  `reuse` extracts once for every repeat (the earlier behaviour).
 
 Every field, the failure and fill rules, the warnings and what the cost
 counts: [Evaluation output: Comparison](../reference/evaluation-output.md#comparison).
@@ -308,18 +340,23 @@ changes a default until a measured experiment decides
 `run-eval --from-results <dir|files>` rebuilds the comparison from the files
 earlier runs saved (`evaluation_results_*` with the `evaluation_reports_*`
 and `evaluation_summary_*` next to them; `evaluation.save_detailed_results:
-true`, the default) without answering a query or opening a store. The runs
+true`, the default; a directory is read with its run subdirectories) without
+answering a query or opening a store. The runs
 are grouped by strategy and compared in the order the oldest run listed them
 (`--search-strategy` picks and orders them instead), so a comparison that was
 stopped part-way is finished by running only the missing strategies into the
 same directory, with the same `--repeats`, and rebuilding: its deltas are
-those of an uninterrupted run. A strategy whose runs were all lost runs again
+those of an uninterrupted run. That needs `--run-order sequential`, which
+saves each run as it finishes: an interleaved comparison finishes all its
+runs together, so one stopped part-way saved none. A strategy whose runs were all lost runs again
 with `--repeats N`; one with some repeats saved runs only the missing ones
-(`--repeats` of the difference), or delete its partial files and run all N.
+(`--repeats` of the difference, rebuilt with `--pool-runs`, below), or
+delete its partial files and run all N.
 
 ```bash
-# Stopped during naive (run with --repeats 3): run it alone into the same
-# directory with the same --repeats, then rebuild.
+# Stopped during naive (run with --run-order sequential --repeats 3): run it
+# alone into the same directory with the same --repeats, then rebuild from
+# both run subdirectories.
 run-eval --data-path eval.json --search-strategy naive --repeats 3 --output-directory out/
 run-eval --from-results out/ --output-directory out/
 
@@ -333,15 +370,20 @@ run-eval --data-path eval.json --search-strategy local \
   --fail-if "usage/total_tokens:mean_delta>500"
 ```
 
-- **Pooling.** The saved runs of one strategy are pooled as its repeats;
-  the rebuild warns when they ran with other settings (query flags,
-  configuration hash, code, index or answer model), so keep such runs in
-  another directory.
+- **Pooling.** The saved runs of one strategy are its repeats only when
+  one `run-eval` answered them with the same settings. Runs of one strategy
+  from several invocations (several `run_id`s; for runs saved before it was
+  recorded, more runs than their `--repeats`) or with other settings (query
+  flags, configuration hash, code, index or answer model) are refused
+  (exit 2): point at one run subdirectory or list the result files, or give
+  `--pool-runs` to pool them anyway (a warning names what they mix).
 - **Re-judging.** `--pairwise-judge` with `--from-results` judges the saved
   answers again; `--judge-model` sets the judge model for the run.
 - **A baseline run.** `--baseline-results` compares each strategy with the
   same strategy of an earlier run (`baseline:<strategy>`). Run it with the
-  same `--repeats`, and save each run in a directory of its own.
+  same `--repeats`; each run is saved in a run subdirectory of its own, and
+  a baseline directory holding several invocations of one strategy is
+  refused like `--from-results` (`--pool-runs`).
 - **Scoring must match.** Runs whose exact match and token F1 read the
   answer differently (`evaluation.answer_span`, `answer_normalization`) are
   refused (exit 2) before any answer is generated; runs of different
@@ -360,7 +402,10 @@ run-eval --data-path eval.json --search-strategy local \
   a `ci_high<0` gate breaches on noise alone in about 2.5% of runs, so with
   k compared strategies and m such gates a clean change fails up to
   k × m × 2.5% of the time (3 strategies × 4 gates: up to 30%). Gate a few
-  measures chosen in advance, with a margin (`ci_high<-0.02`, not `<0`).
+  measures chosen in advance, with a margin (`ci_high<-0.02`, not `<0`), or
+  gate on the adjusted statistics, which account for the strategies and
+  metrics compared: `--fail-if "answer_match/token_f1:adjusted_ci_high<-0.02"`
+  (also `adjusted_ci_low`, `p_value`, `adjusted_p_value`).
 
 The full rules (what each warning compares, when a cost gate fails):
 [Evaluation output: Rebuilding and gating rules](../reference/evaluation-output.md#rebuilding-and-gating-rules).

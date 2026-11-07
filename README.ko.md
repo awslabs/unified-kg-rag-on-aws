@@ -22,7 +22,7 @@ Unified Knowledge Graph RAG on AWS는 대규모 다국어 문서를 Amazon Neptu
 - **증분 인덱싱.** 문서 상태 레지스트리를 켜면 새 문서와 바뀐 문서만 다시 인덱싱해 운영 중인 그래프에 병합하고, 문서를 지우면 다른 문서가 기술하지 않는 내용만 제거합니다([증분 인덱싱](./docs/guides/incremental.ko.md)).
 - **보유한 지식 그래프 연결(BYOKG).** 시드 그래프(JSONL, CSV, RDF 인스턴스 데이터)로 이미 가진 그래프를 가상 문서로 추출 그래프에 합칩니다. 문서가 기준으로 남고, 시드는 설명, 속성, IRI, 에지를 더합니다([Seed graphs](./docs/guides/seed-graphs.md)(영문)).
 - **다국어.** 인덱싱과 질의 시점의 선택적 번역, 언어별 분석기(한국어는 `nori`), 다국어 키워드 추출을 지원합니다([다국어 코퍼스](./docs/guides/multilingual.ko.md)).
-- **가정이 아닌 측정.** `run-eval`은 LLM 없는 지표(답변 일치, 검색 적중률, 그래프 커버리지)와 LLM 심사로 답변을 채점하고, 짝지은 신뢰 구간으로 전략을 비교하며, 질의마다 비용을 잽니다. 이렇게 정한 기본값은 [기본값과 근거](./docs/concepts/defaults-and-evidence.md)(영문)에 있습니다([평가](./docs/guides/evaluate.ko.md)).
+- **가정이 아닌 측정.** `run-eval`은 기본으로 LLM 없는 지표(답변 일치, 검색 적중률, 그래프 커버리지)로, 선택하면 LLM 심사(RAGAS, assertion)로도 답변을 채점하고, 짝지은 신뢰 구간으로 전략을 비교하며, 질의마다 비용을 잽니다. 이렇게 정한 기본값은 [기본값과 근거](./docs/concepts/defaults-and-evidence.md)(영문)에 있습니다([평가](./docs/guides/evaluate.ko.md)).
 
 원 논문, 그리고 Amazon Bedrock Knowledge Bases GraphRAG와 무엇이 다른지는 [개요](./docs/concepts/overview.ko.md#amazon-bedrock-knowledge-bases-graphrag와-비교)에 정리했습니다.
 

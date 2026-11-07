@@ -177,7 +177,7 @@ unified_kg_rag/
 │  ├─ schema_sources/   #   @register_schema_source: extraction-schema loaders (file, owl)
 │  ├─ seed_sources/     #   @register_seed_source: seed graph loaders (jsonl, csv, rdf)
 │  ├─ source_files/     #   shared readers of a source's files: local/S3 locations, RDF files, checks, parse
-│  ├─ evaluators/       #   evaluator bases + langchain/ragas evaluators
+│  ├─ evaluators/       #   evaluator bases + the ragas evaluator
 │  ├─ store_errors.py   #   is_fatal_retrieval_error: the fatal-vs-degraded policy (§8.1)
 │  ├─ providers.py      #   Providers: the per-run bundle of model and store providers
 │  └─ provider_registry.py # @register_provider: builders keyed by role and kind
@@ -3159,9 +3159,10 @@ scores: [Evaluation output](./reference/evaluation-output.md#evaluator-details))
 choices:
 
 - **LLM-free evaluators are first-class.** `answer_match`, `retrieval` and
-  `graph_aware` are deterministic and free, so they run by default next to the
-  RAGAS judge. The LangChain judge is opt-in: its correctness metrics repeat
-  RAGAS' `answer_correctness`.
+  `graph_aware` are deterministic and free, so they are the default. The RAGAS
+  judge is opt-in (several judge calls per answer, and the `eval` extra).
+  The LangChain judge was removed: its correctness metrics repeated RAGAS'
+  `answer_correctness`.
 - **`graph_aware` emits recall only.** Precision and F1 would need every
   entity of a free-text answer enumerated, so they would only re-label recall.
   Because answer-text coverage grows with length, it also reports the
@@ -3183,6 +3184,26 @@ choices:
   own strategy scores somewhere (a metric the strategy never produces is no
   loss to invent), and a pair with one failed answer goes to the other side
   unjudged.
+- **A comparison guards against time and multiplicity.** Its runs are
+  answered interleaved (`EvaluationManager.answer_interleaved`): one batch,
+  each query by every run before the next, the runs' order reversed on
+  every other query (ABBA), each run with its own usage meter
+  (`shared.usage.metering`) and span attributes; answered one run after
+  another, later runs answer later, and an A/A pair of one configuration
+  showed 0.5-5.8 s latency "differences". Each repeat extracts the query
+  again in its own extraction cache scope (`extraction_cache_scope`), so
+  `repeat_stdev` includes that variance while the arms of a repeat still
+  share keywords. Every delta gets a sign-flip randomization p-value (exact
+  on few pairs, where the percentile bootstrap is anti-conservative), and
+  `adjust_for_multiplicity` Holm-adjusts them in families: the pre-declared
+  primary metric (`evaluation.primary_metric`, default `answer_contains`)
+  over the compared strategies only, every other metric, and the cost
+  measures, with Bonferroni-level intervals; ten unadjusted metrics would
+  show a "supported" difference on noise in 30-40% of A/A runs. Gates
+  can read the adjusted statistics. The pairwise judge reads the first
+  repeat by default (`evaluation.pairwise_repeats: all` judges every
+  repeat, clustered by query: the repeats of a query are averaged first and
+  its interval resamples queries).
 - **Cost is measured, not estimated.** `shared/usage.py` keeps contextvar
   scopes (one per ingestion stage, per query, per `run-eval` run and answer
   attempt) that a

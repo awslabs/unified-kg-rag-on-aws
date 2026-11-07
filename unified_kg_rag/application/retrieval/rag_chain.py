@@ -20,7 +20,7 @@ from collections.abc import (
     Collection,
     Iterator,
 )
-from contextlib import AbstractContextManager, aclosing
+from contextlib import AbstractContextManager, aclosing, contextmanager
 from typing import Any, TypeVar
 
 from langchain_core.output_parsers import (
@@ -2421,9 +2421,35 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             await self._save_memory(self._format_output_step(state), rag_input)
 
 
+# The query extraction cache's scope (``extraction_cache_scope``): part of
+# every entry's key, so the queries of one scope share no extraction with
+# those of another ("" outside one).
+_EXTRACTION_SCOPE: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "kg_rag_extraction_scope", default=""
+)
+
+
+@contextmanager
+def extraction_cache_scope(scope: str) -> Iterator[None]:
+    """Key the query extractions cached inside the block by ``scope`` too.
+
+    ``run-eval --repeats`` answers each repeat in a scope of its own, so a
+    repeat extracts the query's entities and keywords again instead of
+    reusing the first repeat's (the repeats then sample the extraction's
+    run-to-run variance), while the arms of one repeat still share them.
+    Tasks started inside the block inherit it.
+    """
+    token = _EXTRACTION_SCOPE.set(scope)
+    try:
+        yield
+    finally:
+        _EXTRACTION_SCOPE.reset(token)
+
+
 class _ExtractionCache:
-    """A bounded, thread-safe LRU of query extractions (immutable values);
-    a size of 0 keeps nothing."""
+    """A bounded, thread-safe LRU of query extractions (immutable values),
+    keyed within the current ``extraction_cache_scope``; a size of 0 keeps
+    nothing."""
 
     def __init__(self, size: int) -> None:
         self._size = size
@@ -2431,6 +2457,7 @@ class _ExtractionCache:
         self._lock = threading.Lock()
 
     def get(self, key: tuple[str, ...]) -> Any:
+        key = (_EXTRACTION_SCOPE.get(), *key)
         with self._lock:
             value = self._entries.get(key)
             if value is not None:
@@ -2440,6 +2467,7 @@ class _ExtractionCache:
     def put(self, key: tuple[str, ...], value: Any) -> None:
         if self._size <= 0:
             return
+        key = (_EXTRACTION_SCOPE.get(), *key)
         with self._lock:
             self._entries[key] = value
             self._entries.move_to_end(key)
