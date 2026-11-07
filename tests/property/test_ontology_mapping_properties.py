@@ -19,7 +19,7 @@ import re
 from collections.abc import Iterable
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from unified_kg_rag.adapters.schema_sources.ontology_mapping import (
@@ -332,8 +332,8 @@ def test_result_is_a_valid_schema_with_unique_labels(
     model: OntologyModel, options: MappingOptions
 ) -> None:
     outcome = _outcome(model, options)
-    if outcome[0] == "error":
-        return
+    # An error outcome states nothing to check: drawn again, not passed.
+    assume(outcome[0] != "error")
     document = outcome[1]
     schema = ExtractionSchema.from_items(
         document.entity_types,
@@ -353,8 +353,7 @@ def test_colliding_labels_raise_unless_qualified(
 ) -> None:
     unqualified = options.model_copy(update={"on_collision": "error"})
     outcome = _outcome(model, unqualified)
-    if outcome[0] == "error":
-        return
+    assume(outcome[0] != "error")
     # Every label was the term's own: qualifying changes nothing.
     assert (
         _outcome(model, options.model_copy(update={"on_collision": "qualify"}))
@@ -383,8 +382,7 @@ def test_narrowing_never_adds_a_type(
         base.model_copy(update={"classes": tuple(pick(roots)[:1])}),
     ]
     wide = _outcome(model, base)
-    if wide[0] == "error":
-        return
+    assume(wide[0] != "error")
     wide_iris = {spec.iri for spec in wide[1].entity_types}
     for options in narrower:
         narrow = _outcome(model, options)
@@ -401,8 +399,7 @@ def test_pattern_ends_fit_the_domain_and_range_in_effect(
 ) -> None:
     model = data.draw(models(symmetric=symmetric))
     outcome = _outcome(model, options)
-    if outcome[0] == "error":
-        return
+    assume(outcome[0] != "error")
     document, report = outcome[1], outcome[2]
     up = _closed(
         {c.iri: set(c.parents) for c in model.classes}, _both_ways(model.classes)

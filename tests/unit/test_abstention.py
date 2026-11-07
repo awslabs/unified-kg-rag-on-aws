@@ -207,6 +207,28 @@ def test_the_stream_filter_holds_back_at_most_the_lookahead() -> None:
     assert MarkerStreamFilter().feed("Vendor") == "Vendor"
 
 
+@pytest.mark.parametrize("size", [1, 7, 200])
+def test_a_marker_counts_only_within_the_lookahead(size: int) -> None:
+    # The token ending on the lookahead's last character is a marker; one
+    # more character of decoration before it and it is not, for the stream
+    # (whatever its chunks) and the whole answer alike.
+    token = "[NO_ANSWER]"
+    inside = " " * (MARKER_LOOKAHEAD - len(token)) + token + " 정보가 없습니다."
+    outside = " " + inside
+    assert split_marker(inside) == (True, "정보가 없습니다.")
+    assert split_marker(outside) == (False, outside)
+    assert _streamed(inside, size) == (True, "정보가 없습니다.")
+    assert _streamed(outside, size) == (False, outside)
+
+
+def test_the_stream_decides_on_the_lookahead_s_last_character() -> None:
+    marker = MarkerStreamFilter()
+    held = [marker.feed(" ") for _ in range(MARKER_LOOKAHEAD - 1)]
+    assert set(held) == {""}
+    assert marker.feed(" ") == " " * MARKER_LOOKAHEAD
+    assert marker.marked is False
+
+
 # --- the chain -------------------------------------------------------------
 
 
