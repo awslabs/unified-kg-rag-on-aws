@@ -1,5 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import argparse
 import os
 import signal
@@ -8,7 +10,8 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 from rich.panel import Panel
@@ -42,6 +45,7 @@ from unified_kg_rag.application.cli.display import (
     markup_safe,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.lazy import lazy_names
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     missing_extras_error,
@@ -52,10 +56,6 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import namespace_name, suffix_arg
 from unified_kg_rag.application.config import load_cli_dotenv, resolve_relative_paths
-from unified_kg_rag.application.ingestion.pipeline import (
-    DataIngestionPipeline,
-    run_token_usage,
-)
 from unified_kg_rag.domain.ingestion.methodologies import writes_graph_store
 from unified_kg_rag.domain.models import (
     Config,
@@ -80,7 +80,30 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
+if TYPE_CHECKING:
+    from unified_kg_rag.application.ingestion.pipeline import (
+        DataIngestionPipeline,
+        run_token_usage,
+        unneeded_stage_error,
+    )
+
 logger = get_logger(__name__)
+
+
+def _pipeline_module() -> ModuleType:
+    from unified_kg_rag.application.ingestion import pipeline
+
+    return pipeline
+
+
+# Imported on first use: --help and a refused command line load no pipeline.
+__getattr__, _load_pipeline = lazy_names(
+    globals(),
+    dict.fromkeys(
+        ("DataIngestionPipeline", "run_token_usage", "unneeded_stage_error"),
+        _pipeline_module,
+    ),
+)
 
 
 def _pipeline_id_arg(value: str) -> str | None:
@@ -110,6 +133,7 @@ _FALSE = frozenset({"", "0", "false", "no"})
 
 def _stage_name_arg(value: str) -> str:
     """A pipeline stage name, case-insensitive; unknown names are a usage error."""
+    _load_pipeline()
     try:
         normalized = DataIngestionPipeline.normalize_stage_name(value)
     except ConfigurationError as e:
@@ -375,6 +399,7 @@ class CommandLineInterface:
 
 class IngestionPipelineRunner:
     def __init__(self, args: argparse.Namespace):
+        _load_pipeline()
         self.args = args
         with exit_on_config_error():
             self.config = apply_namespace_arguments(
@@ -525,7 +550,7 @@ class IngestionPipelineRunner:
                 )
             # Before any model call: a listed stage no selected methodology
             # needs would pay for what no query reads.
-            if error := DataIngestionPipeline.unneeded_stage_error(
+            if error := unneeded_stage_error(
                 self.config, [all_stages[name] for name in sorted(enabled_stages_set)]
             ):
                 usage_error(error, error_type=ConfigurationError.__name__)

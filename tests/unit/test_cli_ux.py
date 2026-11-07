@@ -627,3 +627,38 @@ def test_comparison_and_statistics_tables_never_cut_a_metric_name(
     text = out.getvalue()
     assert text.count(name) == 2
     assert "…" not in text
+
+
+# --- --help loads no chain or pipeline ---------------------------------
+
+
+def test_help_loads_neither_the_chain_nor_the_pipeline() -> None:
+    # run-rag and run-ingestion --help took 4 s of CPU (of 11-14 s on a busy
+    # host) importing LangChain, the strategies and the stores they never
+    # use; a test still patching the names keeps working (lazy.lazy_names).
+    import subprocess
+    import sys
+
+    script = (
+        "import sys\n"
+        "from unified_kg_rag.application.cli import (\n"
+        "    run_ingestion_pipeline, run_prompt_tuning, run_rag_chain)\n"
+        "run_rag_chain.CommandLineInterface._setup_arguments().format_help()\n"
+        "run_ingestion_pipeline.CommandLineInterface._setup_arguments().format_help()\n"
+        "run_prompt_tuning._build_parser().format_help()\n"
+        "heavy = ['unified_kg_rag.application.retrieval.rag_chain',\n"
+        "         'unified_kg_rag.application.ingestion.pipeline',\n"
+        "         'unified_kg_rag.application.prompts.tuner', 'langchain_core']\n"
+        "print([m for m in heavy if m in sys.modules])\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=100
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "[]"
+    # The names stay attributes of the modules, loaded on first access.
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    assert run_ingestion_pipeline.DataIngestionPipeline is DataIngestionPipeline
+    with pytest.raises(AttributeError, match="no attribute 'nope'"):
+        run_ingestion_pipeline.nope  # noqa: B018

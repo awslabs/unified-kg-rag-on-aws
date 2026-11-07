@@ -929,6 +929,9 @@ From a `main` checkout (formats and keys no release had):
   ingested on the store (#PR).
 - `run-eval`'s comparison and statistics tables fold a long metric name or value onto the next line instead of
   cutting it ("answer_match/answer_contai…") (#PR).
+- `run-rag`, `run-ingestion` and `run-prompt-tuning` load the chain, the pipeline and the tuner on first use, so
+  `--help` and a refused command line import none of them: about 1 s of CPU instead of 2-4 s (`run-eval` and
+  `prepare-benchmark` are unchanged) (#PR).
 - Every CLI takes `--log-level` (over `logging.level`) and `--version`; with `--output-format text` the console logs
   are plain lines unless `logging.log_format` is set (they were JSON records between the CLI's own output whenever
   stdout was not a terminal; the CDK tasks set `structured` and keep them), and `prepare-benchmark assertions` logs

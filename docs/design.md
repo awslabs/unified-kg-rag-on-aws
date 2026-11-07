@@ -1035,7 +1035,7 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   translation, gleaning). A stage `--enabled-stages` names that no selected
   methodology needs (and its config section allows) is refused by
   `run-ingestion` before any model call (exit 2,
-  `DataIngestionPipeline.unneeded_stage_error`): it would pay for an artifact
+  `pipeline.unneeded_stage_error`): it would pay for an artifact
   the build record does not list. A library `stages_enabled` map, where
   switching one stage off leaves every other listed, runs it with a WARNING.
 - **Build record.** `IndexBuildRecord` gains `artifacts` (what the namespace

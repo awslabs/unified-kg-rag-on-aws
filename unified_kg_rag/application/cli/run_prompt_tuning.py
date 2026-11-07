@@ -14,11 +14,11 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.adapters.source_files.locations import resolve_source_path
 from unified_kg_rag.application.cli.config_args import (
     add_config_arguments,
@@ -40,6 +40,7 @@ from unified_kg_rag.application.cli.conventions import (
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.lazy import lazy_names
 from unified_kg_rag.application.cli.preflight import missing_extras_error
 from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
@@ -47,14 +48,35 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.application.prompts.tuner import PromptTuner, SchemaDraft
 from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
 from unified_kg_rag.domain.ingestion.corpus_language import corpus_source_language
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.utils import event_loop
 
+if TYPE_CHECKING:
+    from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+    from unified_kg_rag.application.prompts.tuner import PromptTuner, SchemaDraft
+
 logger = get_logger(__name__)
+
+
+def _parser_module() -> ModuleType:
+    from unified_kg_rag.adapters.ingestion import parser
+
+    return parser
+
+
+def _tuner_module() -> ModuleType:
+    from unified_kg_rag.application.prompts import tuner
+
+    return tuner
+
+
+# Imported on first use: --help and a refused command line load neither.
+__getattr__, _load_tuner = lazy_names(
+    globals(), {"ParserFactory": _parser_module, "PromptTuner": _tuner_module}
+)
 
 # Read as-is: plain text needs no loader (and .md would otherwise require the
 # optional `unstructured` package). Every other format goes through the same
@@ -67,6 +89,7 @@ def load_corpus_texts(
 ) -> list[str]:
     """Read up to ``max_docs`` documents from ``source_dir`` as text."""
     config = config or Config()
+    _load_tuner()
     supported = _TEXT_SUFFIXES | set(ParserFactory.get_supported_extensions())
     texts: list[str] = []
     for path in sorted(source_dir.rglob("*")):
@@ -275,6 +298,7 @@ def main() -> int:
             usage_error(error)
         setup_cli_logging(config, args)
         # Loads the schema source: a broken one fails before any model call.
+        _load_tuner()
         tuner = PromptTuner(config)
 
         texts = load_corpus_texts(args.source_directory, args.max_docs, config)

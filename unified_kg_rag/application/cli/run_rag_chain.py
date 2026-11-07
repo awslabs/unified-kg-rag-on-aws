@@ -1,5 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import argparse
 import asyncio
 import os
@@ -8,7 +10,8 @@ import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
 from rich.panel import Panel
 
@@ -44,6 +47,7 @@ from unified_kg_rag.application.cli.display import (
     terminal_safe,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.lazy import lazy_names
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     missing_extras_error,
@@ -59,10 +63,6 @@ from unified_kg_rag.application.cli.query_args import (
     query_suffix,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.application.retrieval.rag_chain import (
-    GraphRAGChain,
-    RAGInput,
-)
 from unified_kg_rag.domain.models import SearchStrategy
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
@@ -77,7 +77,25 @@ from unified_kg_rag.shared import (
 )
 from unified_kg_rag.shared.utils import event_loop
 
+if TYPE_CHECKING:
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        GraphRAGChain,
+        RAGInput,
+    )
+
 logger = get_logger(__name__)
+
+
+def _chain_module() -> ModuleType:
+    from unified_kg_rag.application.retrieval import rag_chain
+
+    return rag_chain
+
+
+# Imported on first use: --help and a refused command line load no chain.
+__getattr__, _load_chain = lazy_names(
+    globals(), {"GraphRAGChain": _chain_module, "RAGInput": _chain_module}
+)
 
 # --metrics-sink cloudwatch: query_latency_ms of each answered query, per
 # Environment and per Environment and Strategy (the CDK stack's
@@ -268,6 +286,7 @@ class CommandLineInterface:
             InvalidFilterError: A value its field's type cannot take.
         """
         filters = dict(item.split(":", 1) for item in filter_args or [])
+        _load_chain()
         return GraphRAGChain.typed_filter_values(filters) or {}
 
     @staticmethod
@@ -402,6 +421,7 @@ _ARGUMENT_COMMANDS = frozenset({"set-filter"})
 
 class RAGChainRunner:
     def __init__(self, args: argparse.Namespace) -> None:
+        _load_chain()
         self.args = args
         with exit_on_config_error():
             self.config = apply_provider_arguments(
@@ -610,6 +630,7 @@ class RAGChainRunner:
         filters: dict[str, Any] | None,
     ) -> RAGInput:
         """A query with the command line's search settings."""
+        _load_chain()
         return RAGInput(
             query=query,
             suffix=query_suffix(self.args, self.config),

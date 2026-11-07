@@ -601,42 +601,6 @@ class DataIngestionPipeline:
             )
         return True
 
-    @classmethod
-    def unneeded_stage_error(
-        cls, config: Config, stages: Iterable[PipelineStageType]
-    ) -> str | None:
-        """Why a run of ``config`` refuses ``stages``, the ones a caller named
-        (``run-ingestion --enabled-stages``), or ``None``: a named stage that
-        would run (its config section allows it) though no selected
-        methodology needs it pays for an artifact the build record does not
-        list, so no strategy could read it. The message names the
-        methodology that reads it (``summary_tree``: ``raptor``)."""
-        needed = selected_stages(config)
-        for stage in stages:
-            if stage in needed or not cls.CONFIG_ENABLED.get(stage, lambda _: True)(
-                config
-            ):
-                continue
-            selected = [m.value for m in config.effective_methodologies]
-            readers = [
-                m.value
-                for m in Methodology
-                if stage in stages_for(METHODOLOGY_PROFILES[m].required)
-            ]
-            how = "leave the stage out of --enabled-stages"
-            if readers:
-                flag = ",".join([*selected, readers[0]])
-                how = (
-                    f"add {' or '.join(readers)} to indexing.methodologies "
-                    f"(run-ingestion --methodologies {flag}), or {how}"
-                )
-            return (
-                f"Stage '{stage.value}' is in --enabled-stages, but no selected "
-                "methodology needs it (indexing.methodologies: "
-                f"{', '.join(selected)}), so nothing it builds would be read: {how}."
-            )
-        return None
-
     def close(self) -> None:
         """Release backend clients owned by the pipeline's stages.
 
@@ -2321,3 +2285,39 @@ class DataIngestionPipeline:
                 exc_info=True,
             )
             return False
+
+
+def unneeded_stage_error(
+    config: Config, stages: Iterable[PipelineStageType]
+) -> str | None:
+    """Why a run of ``config`` refuses ``stages``, the ones a caller named
+    (``run-ingestion --enabled-stages``), or ``None``: a named stage that
+    would run (its config section allows it) though no selected
+    methodology needs it pays for an artifact the build record does not
+    list, so no strategy could read it. The message names the
+    methodology that reads it (``summary_tree``: ``raptor``)."""
+    needed = selected_stages(config)
+    for stage in stages:
+        if stage in needed or not DataIngestionPipeline.CONFIG_ENABLED.get(
+            stage, lambda _: True
+        )(config):
+            continue
+        selected = [m.value for m in config.effective_methodologies]
+        readers = [
+            m.value
+            for m in Methodology
+            if stage in stages_for(METHODOLOGY_PROFILES[m].required)
+        ]
+        how = "leave the stage out of --enabled-stages"
+        if readers:
+            flag = ",".join([*selected, readers[0]])
+            how = (
+                f"add {' or '.join(readers)} to indexing.methodologies "
+                f"(run-ingestion --methodologies {flag}), or {how}"
+            )
+        return (
+            f"Stage '{stage.value}' is in --enabled-stages, but no selected "
+            "methodology needs it (indexing.methodologies: "
+            f"{', '.join(selected)}), so nothing it builds would be read: {how}."
+        )
+    return None

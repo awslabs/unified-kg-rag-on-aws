@@ -241,9 +241,9 @@ def test_a_listed_stage_no_selected_methodology_needs_is_refused() -> None:
     # It would pay for what no query reads (community reports for a
     # lightrag-only namespace, a tree the build record does not list):
     # run-ingestion refuses the stages it names before any model call.
-    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+    from unified_kg_rag.application.ingestion.pipeline import unneeded_stage_error
 
-    refused = DataIngestionPipeline.unneeded_stage_error
+    refused = unneeded_stage_error
     message = refused(_config(L), [S.GRAPH_EXTRACTION, S.COMMUNITY_DETECTION])
     assert message is not None
     assert "Stage 'community_detection'" in message
