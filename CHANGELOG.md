@@ -549,9 +549,9 @@ From a `main` checkout (formats and keys no release had):
   state-machine run builds the profile (#603). The build record names the artifacts and methodologies a namespace
   holds; a query whose strategy reads what the namespace does not hold fails before any model call, naming what it
   holds and what adding the methodology costs (for `raptor`, the tree alone, once `indexing.methodologies` names it)
-  (#609, #PR); `run-eval` refuses one before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only
+  (#609, #619); `run-eval` refuses one before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only
   among the strategies it serves. A failed read of the record serves that query by the config and is not cached
-  (#PR). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()` are public (#PR).
+  (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()` are public (#619).
   Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
@@ -806,16 +806,16 @@ From a `main` checkout (formats and keys no release had):
   when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617).
 - Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
   (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
-  `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#PR).
+  `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).
 
 ### Changed
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
-  alone before), after the edges between two retrieved entities (#PR).
+  alone before), after the edges between two retrieved entities (#619).
 - The fixed reply to a query retrieval found nothing for (and to a decline that left no text) is written in the
   question's language, one sentence per supported language told by its script and function words (English, the
   0.2.3 reply, or the index language when they do not tell); evaluation counts a decline by `metadata.abstained`
-  alone, no longer by the English text (#PR).
+  alone, no longer by the English text (#619).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
@@ -942,7 +942,7 @@ Bugs present in 0.2.3.
 
 Queries and retrieval.
 - A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
-  went negative past the 100th document (#PR).
+  went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
   top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal
   hybrid weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530).
@@ -960,10 +960,10 @@ Queries and retrieval.
   Hangul and Kana words by character bigrams (#567).
 - A query is translated only when ingestion translates or the caller asks (`RAGInput.target_language`), and its
   entities and keywords are extracted in the index language even when the caller asks for another: only the text
-  units carry the requested language, so they matched no entity, relationship or report (#567, #583, #PR).
+  units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).
 - DRIFT (primer, actions, HyDE), iterative's controller and global search's map points write in the index language
   (`source_language` with translation disabled), not always `target_language` nor a requested language, whose
-  follow-up queries found no entity (#613, #PR);
+  follow-up queries found no entity (#613, #619);
   query entities a model separates with `、`, `，` or `；` (or one per line) are split into entities, not read as
   one; global search reads a relevance rating past a scale written as `10점 만점에`, `10点満点中` or `满分10分`;
   LightRAG's raw-query fallback counts a CJK or Hangul character as 4 against
