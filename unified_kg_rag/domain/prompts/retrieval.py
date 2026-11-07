@@ -173,9 +173,9 @@ language as the user's query say which fact the context is missing."""
 QUERY_RESULT_INSTRUCTIONS = """
 
 GRAPH QUERY RESULT:
-The context opens with a graph query result, computed by code over the whole knowledge graph. Use its counts,
-lists, groups, values and yes/no as stated; never recount or re-rank them from the passages, which are only a few
-examples. When the result says "at least" or that it is a subset, say so in the answer. Answer in the language of
+The context opens with a graph query result, computed by code over every match in the knowledge graph (within the
+request's filters). Use its counts, lists, groups, values and yes/no as stated; never recount or re-rank them from
+the passages, which are only a few examples. When the result says "at least" or that it is a subset, say so in the answer. Answer in the language of
 the user's query."""
 
 

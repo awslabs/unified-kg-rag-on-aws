@@ -2905,7 +2905,12 @@ the model-written plan text the output guardrail screens).
    `attr.<key>` (extracted attributes) and `seed.<key>` (seed properties,
    decoded from their JSON), with up to `max_example_values` sampled values
    of a low-cardinality string key. No entity names: mentions are linked by
-   code. `schema_source: both` merges in the declared extraction schema
+   code. The profile is read without the caller's filters, so a filtered
+   query's schema shows no sampled value (it could be an excluded
+   document's), and stored names are written on one line without angle
+   brackets, which could close the prompt's data tags. A strategy keeps at
+   most 256 suffixes' profiles (least recently used dropped). `schema_source:
+   both` merges in the declared extraction schema
    (`processing.graph_extraction` inline; a `schema_source` schema reaches
    the planner through what it stored).
 2. *Plan*: one call, model role `graph_query` (default tier, ceiling
@@ -2913,9 +2918,12 @@ the model-written plan text the output guardrail screens).
    (`custom_prompts.graph_query_system`/`_human`) with the schema text
    (capped at `max_schema_tokens` by the configured token counter, least
    frequent entries cut first), the grammar, nine neutral few-shot plans
-   (one of them unanswerable) and the question in `<question>` tags marked as data. String values and
-   mentions are written as the question writes them, in the query language
-   (`query_language`). The plan also lists the question's entity names and
+   (one of them unanswerable) and the question in `<question>` tags marked
+   as data. Mentions are written as the question writes them (the query
+   language, `query_language`), the string values of conditions as the data
+   writes them (the index language), and a text or order comparison is
+   allowed only on a property of one value kind (`contains` on strings
+   alone: Gremlin fails a substring test of a number). The plan also lists the question's entity names and
    themes (`entities`, `keywords`), which the fallback strategy reads in
    place of the query extraction it would otherwise need.
 3. *Validate* (`validate_plan`): names must be ones the profile lists
@@ -2928,9 +2936,15 @@ the model-written plan text the output guardrail screens).
    configured analyzers + kNN, the request's `search_type`) on the entities
    index under the caller's filters, restricted to the node's types: the
    hits whose `compact_name_key` equals the mention's (Han, Hangul and Kana
-   spacing and legal forms do not matter, as for `local`'s seeds), else the
-   top `link_candidates` above `link_min_score`. A mention linking nothing
-   ends in the fallback (`unlinked_mention`).
+   spacing and legal forms do not matter, as for `local`'s seeds); else
+   the top `link_candidates` of a **lexical** (BM25) search of the name,
+   above `link_min_score`. A kNN search returns its nearest entities for
+   any text, so without a name match or a shared word a name links
+   nothing and the query falls back (`unlinked_mention`): an existence
+   question about an entity the data does not name is never answered from
+   a lookalike. The linked entities' names are written into the plan's
+   description (`named "Acme" = "Acme Supplies"`), so the answer sees what
+   was counted.
 5. *Compile, check, execute* (`GraphQueryPort.aexecute`), below.
 6. *Post-process*: under a document filter, every vertex bound to a node
    (and every edge of a returned path, through the relationships index
@@ -2944,7 +2958,11 @@ the model-written plan text the output guardrail screens).
    per returned vertex (the graph projection, with `source_kinds`, `iri` and
    the entities-index document's filters, so `seed_provenance` applies);
    relationship results for a path's edges (the relationships-index
-   documents when built); and the supporting passages, fused by RRF from
+   documents when built); for an answer that names no entity (a count, an
+   aggregate, a yes, groups by a property) the first `rows_in_context`
+   matches by rank instead, read by a second bounded `tuples` request (or
+   from the scan), so it still cites entities and passages; and the
+   supporting passages, fused by RRF from
    two buckets: the text units the returned items cite, by how many cite
    each, and a hybrid text-unit search of the question restricted to them,
    reranked like `local`'s, at most `supporting_chunks`. Buckets:
@@ -2952,9 +2970,10 @@ the model-written plan text the output guardrail screens).
    `structured_relationships`, `structured_text_units`,
    `structured_text_hits` (and `structured_fallback` under `augment`).
 8. *Answer*: the usual answer prompt (concise), with one instruction added
-   when the context holds a query result: its numbers are computed over the
-   whole graph, used as stated, never recounted from passages, and "at
-   least" when it is marked truncated.
+   when the context holds a query result: its numbers are computed by code
+   over every match in the graph (within the request's filters), used as
+   stated, never recounted from passages, and "at least" when it is marked
+   truncated.
 
 **Semantics (one definition, four executors).** A *match* is a walk
 `w_0 … w_m` over the label's vertices whose vertices are pairwise distinct;
@@ -2985,13 +3004,18 @@ The store answers one of four operations (`plan_operation`):
 | `tuples` | distinct bindings of the named nodes, by the first node's `rank` (desc) then the ids, `limit + 1`, with one property value per row when asked | `rows`, `exists`, `aggregate` |
 | `paths` | the walks, shortest first, `limit + 1` | `path` |
 
-Under a document filter or a seed-property condition (which the store
-cannot evaluate: vertices hold no document filters and seed properties are
-one JSON string) every plan runs as `tuples` (or `paths`) of all nodes, at
-most `max_scan_rows` (5,000), checked and aggregated in code: past the cap
-the result is marked `truncated`, and a count reads "at least N" in the
-context and in `metadata.structured`. Without either the store aggregates
-and counts are exact. The reference executor
+Every store cuts its page in the same order (groups by count, in the
+plan's `order`, then by key; tuples by the first node's `rank`, then the
+ids; paths by length), so a page shorter than the matches still holds the
+plan's exact top: the group counts and the top rows are exact whenever the
+plan's `limit` fits the page (`max_scan_rows`), and the answer says when
+more matched. Under a document filter or a seed-property condition (which
+the store cannot evaluate: vertices hold no document filters and seed
+properties are one JSON string) every plan runs as `tuples` (or `paths`)
+of all nodes, at most `max_scan_rows` (5,000), checked and aggregated in
+code: past the cap the result is marked `truncated`, and a count reads "at
+least N" in the context and in `metadata.structured`. Without either the
+store aggregates and counts are exact. The reference executor
 (`domain/retrieval/graph_query.py`, in the package because the benchmark
 generator computes its gold answers with it) implements the same
 operations over a `PropertyGraph`, and the conformance suite
@@ -3021,19 +3045,28 @@ internals. Layers, each independent of the next:
    variable-length hop is a `union` of fixed-length chains (each step
    label-checked), linked ids are a `has("id", within(...))` on `L`
    vertices, values travel as bytecode arguments. SQL: every `vertices`
-   and `edges` alias carries `label = ?` bound to `L`, property keys are
-   bound parameters matched through `json_each` (no JSON path or identifier
-   is ever built from a plan value), and the SQL text holds no quote at all.
+   and `edges` alias carries `label = ?` bound to `L`, each node's and
+   edge's constraints are the domain's own predicates run as functions
+   registered for that statement (`kg_node`, `kg_edge`, `kg_key`,
+   `kg_rank`, `kg_sortable`), so no JSON path or identifier is ever built
+   from a plan value, and the SQL text holds no quote at all.
 4. *Static checker* (`adapters/graph_query/checks.py`, independent of the
    compiler): Gremlin bytecode, nested traversals included, uses only
    allowlisted steps, starts with `V` followed by `hasLabel(L)` (an `E()`
    start is refused), has `hasLabel(L)` right after every vertex step and
-   no other label, and its only source instruction is `OptionsStrategy`
-   with `evaluationTimeout`. SQL starts with `SELECT` or `WITH`, holds no
-   `;`, quote, comment or write/administration keyword, references only
-   `vertices`, `edges`, `json_each` and its own CTEs, and binds `L` at
-   every alias's `label = ?`. A failure is a bug: logged at ERROR, raised
-   as `GraphQueryCompileError`, never sent.
+   no other label, takes arguments of the allowed types only (scalars,
+   predicates, the ordering tokens, nested traversals: no lambda, no `T`
+   token, no `~` key), and its only source instruction is
+   `OptionsStrategy` with `evaluationTimeout`. SQL starts with `SELECT` or
+   `WITH`, holds no `;`, quote, comment, numbered placeholder, `OR`, comma
+   join, recursive CTE or write/administration keyword, references only
+   `vertices`, `edges` and its own CTEs, calls only the registered
+   functions and `count`, and binds `L` at every alias's `label = ?`.
+   Behind it the read-only connection installs a SQLite authorizer for the
+   statement: `SELECT`, reads of `vertices` and `edges`, the registered
+   functions; everything else (a schema table, recursion, another
+   statement) is denied. A failure is a bug: logged at ERROR, raised as
+   `GraphQueryCompileError`, never sent.
 5. *Execution limits* (adapters): Gremlin `g.with_("evaluationTimeout",
    ms)` with `ms = min(structured.store_timeout_seconds,
    search.store_timeout_seconds)`, so the server stops the traversal when
@@ -3074,17 +3107,18 @@ outright leaves the fallback the raw question (as `local` without an
 entity focus). Fatal store errors still fail the query, as in every
 strategy. `mode: augment` runs the fallback beside the graph query once the
 plan is in, and fuses both: the query result first, then the fallback's
-sections; it costs the fallback's calls on every query. The filter keys
-are those of the indexes `structured` reads (entities, text units,
-relationships) and of the graph, which `local` and `mix` read too (with
-`naive` or `tree` as the fallback, a key only the entities index or the
-graph declares is not applied by the fallback), and its reserved keys are
-the fallback's.
+sections; it costs the fallback's calls on every query. A filter must be
+one both paths apply: the chain checks the keys against the indexes
+`structured` reads (entities, text units, relationships) and the graph,
+and against the fallback that would run on the namespace
+(`BaseSearchStrategy.filter_delegates`; with the namespace unknown, the
+configured fallback, `local` and `mix`), so a key `naive` or `tree` would
+drop is refused, naming the fallback.
 
 **Metadata.** `RAGOutput.metadata["structured"]`: `status` (`answered`,
 `fallback`, `failed`), `reason`, `mode`, `fallback_strategy`, `plan` (the
 validated plan), `plan_description`, `operation`, `row_count`,
-`truncated`, `exact`, `linked` (mention to entity ids), `repairs`,
+`truncated`, `exact`, `linked` (mention to entity ids), `linked_names`, `repairs`,
 `backend`, `schema_cut`, `elapsed_ms` per step and `usage` (the planner's calls); the
 compiled query only as a digest (`compiled_digest`), its text at DEBUG.
 Spans `kg_rag.graph_query.plan` and `kg_rag.graph_query.execute` carry the
@@ -4124,7 +4158,10 @@ vendors and of buyers), the top supplier and the top three (left out when
 the cut ties), the vendor between a named buyer and a named product (a
 two-hop chain, kept when one vendor matches), the buyer two named vendors
 share (a two-hop path, kept when unique), yes/no supply (balanced), the
-largest and smallest employee count, and text-only controls. The gold
+largest and smallest employee count, questions about vendors no data
+names (`absent_entity`: no, or 0), Korean and Japanese forms of two
+templates, and text-only controls; `--size large` makes the seed-filtered
+counts scan past `max_scan_rows`. The gold
 answer of every graph template is computed by the reference executor
 (§6.6) over the generated graph from the template's plan
 (`metadata.gold_plan`), so the generator and the strategy share one

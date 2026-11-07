@@ -13,6 +13,7 @@ within a token budget, cutting the least frequent entries first.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -189,7 +190,14 @@ class GraphQueryPlanPrompt(BasePrompt):
     """
 
     prompt_key = "graph_query"
-    input_variables = ["query", "schema", "target_language", "max_hops", "feedback"]
+    input_variables = [
+        "query",
+        "schema",
+        "target_language",
+        "data_language",
+        "max_hops",
+        "feedback",
+    ]
     output_variables = ["nodes", "edges", "returns", "unanswerable"]
 
     system_prompt_template = (
@@ -224,7 +232,8 @@ RULES
 - Prefer a mention for a named entity over a condition on its name.
 - A count asks for count or count_distinct, a ranking for group_count with an order and a limit, a superlative
   value for aggregate, a yes/no question for exists, a connection between two named entities for path.
-- Write string values and mentions in the language and spelling of the question and the data ({target_language}).
+- Write mentions as the question writes them (it is in {target_language}). Write the string values of conditions
+  in the language and spelling of the data ({data_language}): the schema's sampled values show how it writes them.
 - Respond with the JSON object only (the first character is {{ and the last is }}).
 
 FORMAT
@@ -266,15 +275,27 @@ Write a corrected plan."""
 # --- the schema text -------------------------------------------------------------
 
 
-def _property_line(prop: PropertyProfile) -> str:
+_TAGS = re.compile(r"[<>]")
+_SPACE = re.compile(r"\s+")
+
+
+def _safe(text: str, limit: int = 120) -> str:
+    """A stored name or description as schema text: one line, without the
+    angle brackets that could close the prompt's data tags, capped."""
+    cleaned = _SPACE.sub(" ", _TAGS.sub(" ", text)).strip()
+    return cleaned if len(cleaned) <= limit else cleaned[:limit] + "…"
+
+
+def _property_line(prop: PropertyProfile, with_examples: bool = True) -> str:
     kinds = "/".join(prop.kinds) or "any"
-    line = f"- {prop.name}: {kinds}"
+    line = f"- {_safe(prop.name)}: {kinds}"
     if prop.multi:
         line += ", several values"
-    if prop.examples:
-        line += "; e.g. " + ", ".join(
-            json.dumps(v, ensure_ascii=False) for v in prop.examples
-        )
+    # A value that holds an angle bracket is not shown: it could close the
+    # prompt's data tags.
+    shown = [v for v in prop.examples if not (isinstance(v, str) and _TAGS.search(v))]
+    if shown and with_examples:
+        line += "; e.g. " + ", ".join(json.dumps(v, ensure_ascii=False) for v in shown)
     return line
 
 
@@ -287,6 +308,7 @@ def schema_text(
     max_edge_types: int = 50,
     max_patterns: int = 100,
     max_properties: int = 30,
+    with_examples: bool = True,
 ) -> tuple[str, bool]:
     """``profile`` as the planner's schema text, at most ``max_tokens``
     (``count_tokens``) long, and whether entries were cut for it: the least
@@ -313,24 +335,25 @@ def schema_text(
     def render() -> str:
         parts = ["ENTITY TYPES (count; description):"]
         parts += [
-            f"- {t.label} ({t.count})"
-            + (f": {t.description[:120]}" if t.description else "")
+            f"- {_safe(t.label)} ({t.count})"
+            + (f": {_safe(t.description)}" if t.description else "")
             for t in types
         ] or ["- (none)"]
         parts.append("RELATIONSHIP TYPES (count; description):")
         parts += [
-            f"- {t.label} ({t.count})"
-            + (f": {t.description[:120]}" if t.description else "")
+            f"- {_safe(t.label)} ({t.count})"
+            + (f": {_safe(t.description)}" if t.description else "")
             for t in edges
         ] or ["- (none)"]
         if patterns:
             parts.append("OBSERVED PATTERNS (source -relationship-> target: count):")
             parts += [
-                f"- {labels[p.source]} -{edge_labels[p.edge]}-> {labels[p.target]}: {p.count}"
+                f"- {_safe(labels[p.source])} -{_safe(edge_labels[p.edge])}-> "
+                f"{_safe(labels[p.target])}: {p.count}"
                 for p in patterns
             ]
         parts.append("PROPERTIES (name: kind; sampled values):")
-        parts += [_property_line(p) for p in [*core, *others]]
+        parts += [_property_line(p, with_examples) for p in [*core, *others]]
         if profile.sampled:
             parts.append(
                 f"(Observed in a sample of {profile.sample_size} entities: a "

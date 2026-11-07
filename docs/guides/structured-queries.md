@@ -43,8 +43,7 @@ model call. It runs on all three graph stores: Neptune, a Gremlin Server
 | What is the largest number of employees of a vendor? | the `max` of `seed.employees` over the vendors |
 
 A plan is one chain of up to four nodes. A node names entity types, a name
-the question gives (linked to the stored entities by a hybrid entity search,
-spacing and legal forms aside, so `가나다상사` finds `가나다 상사`) and
+the question gives and
 conditions on properties: the core ones (`name`, `type`, `rank`,
 `confidence`, `in_schema`, `iri`, `type_iri`, `source_kinds`,
 `description`), extracted attributes as `attr.<key>` and seed properties as
@@ -54,7 +53,17 @@ profile of what the graph holds (types and relationships with their counts,
 the observed patterns, the properties with up to `max_example_values`
 sampled values of a low-cardinality string property); it never sees entity
 names. A plan naming a type, relationship or property the schema does not
-list is refused, and the planner is called once more with the refusal.
+list is refused, and the planner is called once more with the refusal; so
+is a substring or order comparison on a property that holds values of
+several kinds. Under a filter the schema shows no sampled value.
+
+A name in the plan links to the stored entities whose name it is
+(spacing and legal forms aside, so `가나다상사` finds `가나다 상사`) among
+the hits of a hybrid entity search, else to the best hits of a lexical
+search for it. A name no entity shares a word with links nothing, and the
+query falls back (`unlinked_mention`): "Does Zorblax Industries supply
+Acme?" is not answered from a lookalike. The context shows which entities
+each name linked to.
 
 ## When no plan answers
 
@@ -76,18 +85,24 @@ extraction call. A fallback the namespace does not serve gives way to
 `local`, then `mix`. Under `augment` the fallback runs beside the graph query
 on every query and both contexts are fused, the query result first: more
 recall on questions that mix counts and text, at the fallback's cost on every
-query.
+query. A filter must be one both apply: the keys are checked against the
+fallback that would run too, so a key `naive` or `tree` would drop is
+refused before any model call, naming the fallback.
 
 `RAGOutput.metadata["structured"]` says what happened: `status`
 (`answered`, `fallback`, `failed`), `reason`, `fallback_strategy`, the
 validated `plan`, `plan_description`, `operation`, `row_count`,
-`truncated`, `exact`, `linked` (each name's entity ids), `repairs`,
+`truncated`, `exact`, `linked` and `linked_names` (each name's entities),
+`repairs`,
 `backend`, `elapsed_ms` per step and `usage` (the planner's calls).
 
 ## Exact answers, filters and seed properties
 
 Without a document filter or a seed-property condition the graph store
-computes counts and groups over every match: they are exact. Two kinds of
+computes counts and groups over every match: they are exact, and a ranking
+or a list keeps the exact top, since every store cuts its page in the
+plan's order. A count, an aggregate or a yes still cites the first matches
+by rank as entities, with their passages. Two kinds of
 conditions cannot be evaluated inside the graph: document filters
 (`attr_<key>`, `attributes.filters.<key>`; graph vertices hold none) and
 seed properties (one JSON string per vertex). With either, the store

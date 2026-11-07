@@ -472,6 +472,15 @@ class BaseSearchStrategy(ABC):
         intersected with the caller's values instead (``scope_filters``)."""
         return frozenset()
 
+    def filter_delegates(
+        self, strategy: SearchStrategy, artifacts: Collection[IndexArtifact] | None
+    ) -> tuple[SearchStrategy, ...]:
+        """The strategies that may run ``strategy``'s query in its place on
+        a namespace holding ``artifacts`` (``None``: unknown), whose filter
+        keys ``GraphRAGChain`` checks too, so a filter one of them would drop
+        is refused. None by default; ``structured`` names its fallback."""
+        return ()
+
     def filtered_retrievers(
         self, strategy: SearchStrategy
     ) -> list[BaseGraphRAGRetriever]:

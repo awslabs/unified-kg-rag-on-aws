@@ -4747,7 +4747,9 @@ class StructuredSearchConfig(BaseModel):
         le=200,
         description=(
             "Rows, groups or paths written into the query result's context "
-            "section, and entities given their own section."
+            "section, and entities given their own section; for an answer "
+            "that names none (a count, an aggregate), the first matches by "
+            "rank read as its evidence."
         ),
     )
     max_scan_rows: int = Field(
@@ -4840,16 +4842,18 @@ class StructuredSearchConfig(BaseModel):
         ge=1,
         le=20,
         description=(
-            "Entities a name in the question links to at most when no "
-            "entity has its name (by compact_name_key): the best hits of a "
-            "hybrid entity search under the caller's filters and the node's "
-            "types."
+            "Entities a name in the question links to at most when no entity "
+            "has its name (by compact_name_key) among a hybrid entity search's "
+            "hits: the best hits of a lexical (BM25) search for it, under the "
+            "caller's filters and the node's types. A name no entity shares a "
+            "word with links nothing (the query falls back): a vector search "
+            "returns its nearest entities for any text."
         ),
     )
     link_min_score: float = Field(
         default=0.0,
         ge=0.0,
-        description="Search score a linked entity needs at least (0: any hit).",
+        description="Lexical score a linked entity needs above 0 at least (0: any lexical hit).",
     )
     supporting_chunks: int = Field(
         default=5,

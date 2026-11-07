@@ -42,6 +42,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchResult,
     SearchStrategy,
+    SearchType,
 )
 from unified_kg_rag.domain.models.methodology import (
     Methodology,
@@ -159,11 +160,18 @@ class _Documents:
                 (len(words & set(d.content.lower().replace(":", " ").split())), d)
                 for d in hits
             ]
-            hits = [
-                d.model_copy(update={"score": float(n)})
-                for n, d in sorted(scored, key=lambda x: -x[0])
-                if n
-            ]
+            ranked = sorted(scored, key=lambda x: -x[0])
+            if query.search_type is SearchType.LEXICAL:
+                # BM25: only what shares a word.
+                hits = [
+                    d.model_copy(update={"score": float(n)}) for n, d in ranked if n
+                ]
+            else:
+                # kNN (and so hybrid) ranks every document for any text: the
+                # nearest come back whether or not they are the entity.
+                hits = [
+                    d.model_copy(update={"score": float(n) + 0.1}) for n, d in ranked
+                ]
         return hits[: query.top_k * query.retrieval_multiplier]
 
 
@@ -305,7 +313,16 @@ def test_the_filter_contract() -> None:
     strategy, *_ = _strategy(_Planner({}))
     prefixes = strategy.filtered_index_prefixes(SearchStrategy.STRUCTURED)
     assert set(prefixes) == {ENTITIES, RELATIONSHIPS, TEXT_UNITS}
-    assert strategy.reserved_filter_keys(SearchStrategy.STRUCTURED) == {"community_ids"}
+    # Its fallback's filter keys are checked too: the one that runs on the
+    # namespace, or, unknown, every one that may.
+    light = required_artifacts_of([Methodology.LIGHTRAG])
+    assert strategy.filter_delegates(SearchStrategy.STRUCTURED, light) == (
+        SearchStrategy.MIX,
+    )
+    assert strategy.filter_delegates(SearchStrategy.STRUCTURED, None) == (
+        SearchStrategy.LOCAL,
+        SearchStrategy.MIX,
+    )
 
 
 # --- answers -----------------------------------------------------------------------
@@ -322,11 +339,15 @@ async def test_a_count_is_answered_from_the_graph() -> None:
     assert structured["operation"] == "count" and structured["exact"]
     assert structured["row_count"] == 6
     table = _table(result)
-    assert "Result (computed over the whole graph):\n6" in table.content
+    assert "within the request's filters):\n6" in table.content
     assert table.metadata["plan"]["returns"]["kind"] == "count"
     assert not fallback.queries
     # One store operation, scoped to the query's suffix; never a label.
-    assert [r.suffix for r in graph.requests] == [None]
+    # The count, then its evidence (the first matches by rank).
+    assert [(r.operation, r.suffix) for r in graph.requests] == [
+        ("count", None),
+        ("tuples", None),
+    ]
     assert "Entity-" not in json.dumps(graph.requests[0].model_dump(mode="json"))
     # The planner read the schema and the question as data.
     system, human = planner.calls[0]
@@ -544,7 +565,7 @@ async def test_mentions_link_through_the_hybrid_entity_search_in_any_script() ->
     assert result.metadata["structured"]["linked"] == {"x": ["v3"]}
     names = _table(result).content
     assert "株式会社サクラ" in names and "Hooli Retail" in names
-    assert "(Korean)" in planner.calls[0][0]
+    assert "(it is in Korean)" in planner.calls[0][0]
     link = next(c for c in documents.calls if c.query == "가나다상사")
     assert link.index_prefixes == [ENTITIES]
     assert link.search_type.value == "hybrid"
@@ -587,7 +608,7 @@ async def test_the_planner_writes_in_the_query_language() -> None:
     await strategy.asearch(
         _query(metadata={"search_strategy": "structured", "query_language": "Japanese"})
     )
-    assert "(Japanese)" in planner.calls[0][0]
+    assert "(it is in Japanese)" in planner.calls[0][0]
 
 
 async def test_the_profile_is_read_once_per_suffix_and_ttl() -> None:
@@ -670,3 +691,115 @@ async def test_the_declared_schema_alone_still_lists_the_core_properties() -> No
     assert result.metadata["structured"]["status"] == "answered"
     assert graph.describes == []  # no profile read
     assert "\n3" in _table(result).content
+
+
+@pytest.mark.parametrize("absent", ["Zorblax Industries", "존재하지않는회사"])
+async def test_a_name_no_entity_has_links_nothing(absent: str) -> None:
+    """A vector search returns its nearest entities for any name: without a
+    name match or a lexical hit the mention links nothing, so an existence
+    question about an absent entity falls back instead of answering yes."""
+    plan = _with(
+        {
+            "nodes": [
+                {"var": "a", "mention": absent},
+                {"var": "b", "mention": "Umbrella Buyer"},
+            ],
+            "edges": [{"direction": "both", "hops": [1, 2]}],
+            "returns": {"kind": "exists"},
+        }
+    )
+    strategy, graph, documents, fallback = _strategy(_Planner(plan))
+    result = await strategy.asearch(_query(f"Is {absent} connected to Umbrella Buyer?"))
+    structured = result.metadata["structured"]
+    assert (structured["status"], structured["reason"]) == (
+        "fallback",
+        "unlinked_mention",
+    )
+    assert graph.requests == [] and fallback.queries
+    # The hybrid search did return candidates: the lexical check refused them.
+    hybrid = [
+        c
+        for c in documents.calls
+        if c.query == absent and c.search_type is SearchType.HYBRID
+    ]
+    assert hybrid
+    assert any(
+        c.search_type is SearchType.LEXICAL
+        for c in documents.calls
+        if c.query == absent
+    )
+
+
+async def test_the_linked_names_are_shown_to_the_answer() -> None:
+    plan = _with(
+        {
+            "nodes": [
+                {"var": "x", "mention": "Acme"},
+                {"var": "b", "types": ["BUYER"]},
+            ],
+            "edges": [{"types": ["SUPPLIES"]}],
+            "returns": {"kind": "count"},
+        }
+    )
+    strategy, *_ = _strategy(_Planner(plan))
+    result = await strategy.asearch(_query("How many buyers does Acme supply?"))
+    structured = result.metadata["structured"]
+    # No exact name: the lexical hit (Acme Supplies) is the link.
+    assert structured["linked_names"] == {"x": ["Acme Supplies"]}
+    assert 'named "Acme" = "Acme Supplies"' in _table(result).content
+
+
+@pytest.mark.parametrize(
+    "name", ["count_supply_pairs", "types_by_count", "max_rank_of_buyers"]
+)
+async def test_a_count_cites_matches_as_evidence(name: str) -> None:
+    """A count, groups by a property and an aggregate name no entity: the
+    first matches by rank (a second bounded request) are cited, with their
+    passages."""
+    strategy, graph, *_ = _strategy(_Planner(_with(CONFORMANCE_PLANS[name])))
+    result = await strategy.asearch(_query())
+    assert result.metadata["structured"]["status"] == "answered"
+    entities = [r for r in result.results if r.retriever_type == "entity"]
+    passages = [r for r in result.results if r.retriever_type == "text"]
+    assert entities and passages
+    assert graph.requests[-1].operation == "tuples"
+    if name != "max_rank_of_buyers":  # the aggregate's own rows serve
+        assert graph.requests[-1].limit == Config().search.structured.rows_in_context
+    assert _table(result).metadata["entity_ids"]
+
+
+async def test_under_filters_no_stored_value_reaches_the_planner() -> None:
+    """The profile is read without the caller's filters: its sampled values
+    may be an excluded document's, so a filtered query's schema shows none."""
+    planner = _Planner(_with(CONFORMANCE_PLANS["count_supply_pairs"]))
+    strategy, *_ = _strategy(planner)
+    await strategy.asearch(_query())
+    assert '"Norland"' in planner.calls[0][1]
+    await strategy.asearch(_query(filters={"attr_category": "ops"}))
+    assert '"Norland"' not in planner.calls[1][1]
+    assert "seed.country: string" in planner.calls[1][1]
+
+
+async def test_the_profile_cache_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unified_kg_rag.adapters.search_strategies import structured_search
+
+    monkeypatch.setattr(structured_search, "_MAX_PROFILES", 2)
+    planner = _Planner(_with(CONFORMANCE_PLANS["count_supply_pairs"]))
+    strategy, graph, *_ = _strategy(planner)
+    for suffix in ("a", "b", "c", "a"):
+        await strategy.asearch(_query(suffix=suffix))
+    # "a" was dropped for "c", so it is read again.
+    assert graph.describes == ["a", "b", "c", "a"]
+    assert list(strategy._profiles) == ["c", "a"]
+
+
+async def test_values_are_asked_in_the_data_language() -> None:
+    config = Config(processing={"translation": {"enabled": False}})
+    planner = _Planner(_with(CONFORMANCE_PLANS["count_supply_pairs"]))
+    strategy, *_ = _strategy(planner, config=config)
+    await strategy.asearch(
+        _query(metadata={"search_strategy": "structured", "query_language": "Korean"})
+    )
+    system = planner.calls[0][0]
+    assert "(it is in Korean)" in system
+    assert "the language and spelling of the data (" in system
