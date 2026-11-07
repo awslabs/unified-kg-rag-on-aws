@@ -133,6 +133,7 @@ PAIRS = [
     (FakeGraphQueryRetriever, BaseGraphRAGRetriever),
     (FakeGraphQueryRetriever, GraphQueryPort),
     (NeptuneRetriever, GraphQueryPort),
+    (SQLiteGraphRetriever, GraphQueryPort),
 ]
 
 

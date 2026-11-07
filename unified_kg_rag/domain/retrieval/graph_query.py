@@ -128,7 +128,7 @@ _EXAMPLE_MAX_CHARS = 60
 _NUMERIC_OPS = frozenset({"gt", "gte", "lt", "lte"})
 
 VertexMap = Mapping[str, Sequence[Any]]
-VertexPredicate = Callable[[VertexMap], bool]
+VertexPredicate = Callable[[Any], bool]
 EdgePredicate = Callable[[Mapping[str, Any]], bool]
 
 

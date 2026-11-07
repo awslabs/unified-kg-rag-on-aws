@@ -10,13 +10,16 @@ from ``GraphExpansionRetriever``, so both backends rank the same graph alike.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any, ClassVar
 
+from unified_kg_rag.adapters.graph_query.sqlite import SQLiteQuery
 from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphStore, VertexFilter
 from unified_kg_rag.adapters.retrieval.base import seed_shares
 from unified_kg_rag.adapters.retrievers.graph_expansion import (
     GraphExpansionRetriever,
     edge_kinds_pass,
+    edge_predicate,
     edge_source_kinds,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
@@ -26,6 +29,12 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 )
 from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
 from unified_kg_rag.domain.models import Config, GraphEdge, SearchQuery
+from unified_kg_rag.domain.models.graph_query import (
+    GraphProfile,
+    GraphQueryRequest,
+    GraphQueryResult,
+)
+from unified_kg_rag.domain.retrieval.graph_query import build_profile
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import safe_float_parse
 
@@ -179,3 +188,70 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
         ]
         # aneighbourhood_edges keeps each vertex's first per_vertex.
         return [edge for edge in edges if edge_kinds_pass(edge, kinds)]
+
+    # --- GraphQueryPort (the structured strategy, docs/design.md §6.6) -----
+
+    async def adescribe(
+        self,
+        suffix: str | None,
+        *,
+        sample_vertices: int,
+        edges_per_vertex: int,
+        max_examples: int,
+    ) -> GraphProfile:
+        label = self._get_label(self._neptune_config.entity_label_prefix, suffix)
+        vertices, edges = await asyncio.to_thread(
+            self._store.sample_profile, label, sample_vertices, edges_per_vertex
+        )
+        return build_profile(
+            vertices,
+            edges,
+            sampled=len(vertices) >= sample_vertices,
+            max_examples=max_examples,
+        )
+
+    async def aexecute(self, request: GraphQueryRequest) -> GraphQueryResult:
+        started = time.monotonic()
+        label = self._get_label(
+            self._neptune_config.entity_label_prefix, request.suffix
+        )
+        filters = self._scope_filters_to_label(label, request.filters)
+        query = SQLiteQuery(
+            request,
+            label,
+            vertex_ok=vertex_filter(filters),
+            edge_ok=edge_predicate(filters),
+        )
+        logger.debug("Structured query SQL: %s", query.sql)
+        rows = await asyncio.to_thread(
+            self._store.query_read_only,
+            query.sql,
+            query.params,
+            functions=query.functions(),
+            timeout_seconds=min(
+                request.timeout_seconds, self._config.search.store_timeout_seconds
+            ),
+        )
+        fields = query.decode(rows)
+        ids: dict[str, None] = {}
+        for row in fields.get("rows", ()):
+            ids.update(dict.fromkeys(row.values()))
+        for path in fields.get("paths", ()):
+            ids.update(dict.fromkeys(path.vertex_ids))
+        if request.operation == "group" and request.group_key is None:
+            ids.update(dict.fromkeys(str(g.key) for g in fields.get("groups", ())))
+        vertices = (
+            await asyncio.to_thread(
+                self._store.read_vertex_maps, label, list(ids), request.hydrate
+            )
+            if ids and request.hydrate
+            else {}
+        )
+        return GraphQueryResult(
+            operation=request.operation,
+            vertices=vertices,
+            backend="sqlite",
+            compiled_digest=query.digest,
+            elapsed_ms=(time.monotonic() - started) * 1000,
+            **fields,
+        )

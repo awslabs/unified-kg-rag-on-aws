@@ -29,7 +29,7 @@ import itertools
 import json
 import time
 from abc import abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, ClassVar
 
 from unified_kg_rag.adapters.retrieval.base import (
@@ -112,6 +112,27 @@ def edge_kinds_pass(edge: GraphEdge, rule: tuple[list[str], bool] | None) -> boo
     if not edge.source_kinds:
         return without
     return encoded_source_kinds(edge.source_kinds) in encodings
+
+
+def edge_predicate(
+    filters: dict[str, Any] | None,
+) -> Callable[[Mapping[str, Any]], bool] | None:
+    """An ``edge_kinds_filter`` rule as a predicate on one edge's stored
+    properties (``source_kinds`` a JSON list string); ``None`` without a
+    ``source_kinds`` filter. The structured queries of the embedded graph
+    and the reference executor's fake apply it to every edge of a walk."""
+    rule = edge_kinds_filter(filters)
+    if rule is None:
+        return None
+    encodings, without = rule
+
+    def keep(props: Mapping[str, Any]) -> bool:
+        kinds = edge_source_kinds(props.get(SOURCE_KINDS_FIELD))
+        if not kinds:
+            return without
+        return encoded_source_kinds(kinds) in encodings
+
+    return keep
 
 
 class GraphExpansionRetriever(BaseGraphRAGRetriever):

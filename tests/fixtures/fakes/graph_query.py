@@ -12,18 +12,15 @@ such a graph, so a test can index through the fake and query it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from typing import Any
+from collections.abc import Mapping
 
 from tests.fixtures.fakes.retrievers import FakeRetriever
 from tests.fixtures.fakes.stores import FakeGraphStore
 from unified_kg_rag.adapters.retrievers.graph_expansion import (
     GraphExpansionRetriever,
-    edge_kinds_filter,
-    edge_source_kinds,
+    edge_predicate,
 )
 from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import vertex_filter
-from unified_kg_rag.domain.ingestion.seed_graph import encoded_source_kinds
 from unified_kg_rag.domain.models import Constants
 from unified_kg_rag.domain.models.graph_query import (
     GraphEdgeRecord,
@@ -59,25 +56,6 @@ def graph_of(store: FakeGraphStore, suffix: str | None = None) -> PropertyGraph:
         if s == scope
     ]
     return PropertyGraph(vertices=vertices, edges=edges)
-
-
-def edge_predicate(
-    filters: Mapping[str, Any] | None,
-) -> Callable[[Mapping[str, Any]], bool] | None:
-    """The caller's ``source_kinds`` rule on one edge's stored properties,
-    as the graph retrievers apply it."""
-    rule = edge_kinds_filter(dict(filters or {}))
-    if rule is None:
-        return None
-    encodings, without = rule
-
-    def keep(props: Mapping[str, Any]) -> bool:
-        kinds = edge_source_kinds(props.get("source_kinds"))
-        if not kinds:
-            return without
-        return encoded_source_kinds(kinds) in encodings
-
-    return keep
 
 
 class FakeGraphQueryRetriever(FakeRetriever):

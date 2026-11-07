@@ -20,12 +20,8 @@ from tests.fixtures.graph_query import (
     property_graph,
     validated,
 )
-from unified_kg_rag.adapters.retrievers.graph_expansion import (
-    edge_kinds_filter,
-    edge_source_kinds,
-)
+from unified_kg_rag.adapters.retrievers.graph_expansion import edge_predicate
 from unified_kg_rag.adapters.retrievers.sqlite_graph_retriever import vertex_filter
-from unified_kg_rag.domain.ingestion.seed_graph import encoded_source_kinds
 from unified_kg_rag.domain.models.graph_query import (
     GraphQueryPlan,
     GraphQueryRequest,
@@ -489,15 +485,9 @@ def test_the_caller_filters_apply_to_bound_vertices_and_every_edge() -> None:
     plan = validated(CONFORMANCE_PLANS["count_supply_pairs"])
     graph = procurement_graph()
     filters = {"source_kinds": "document"}
-    rule = edge_kinds_filter(filters)
     keep = vertex_filter(filters)
-
-    def edge_ok(props: dict) -> bool:
-        kinds = edge_source_kinds(props.get("source_kinds"))
-        if rule is None:
-            return True
-        encodings, without = rule
-        return without if not kinds else encoded_source_kinds(kinds) in encodings
+    edge_ok = edge_predicate(filters)
+    assert edge_ok is not None
 
     request = GraphQueryRequest(plan=plan, operation="count", vars=plan.vars)
     # The seed-only edge v3 -> b1 is left out.
