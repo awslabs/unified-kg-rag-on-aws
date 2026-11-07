@@ -588,6 +588,22 @@ async def test_rag_a_strategy_the_namespace_cannot_serve_is_a_usage_error(
     )
 
 
+async def test_rag_a_query_time_configuration_error_is_a_usage_error(
+    config, mocker
+) -> None:
+    # An embedding dimension the index does not hold surfaces at query time
+    # as a ConfigurationError: the configuration to fix (exit 2), not 1.
+    from unified_kg_rag.shared import ConfigurationError
+
+    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
+    runner = run_rag_chain.RAGChainRunner(_rag_parser().parse_args(["-q", "hi"]))
+    runner.rag_chain = mocker.AsyncMock()
+    runner.rag_chain.ainvoke.side_effect = ConfigurationError("dimension 64 != 32")
+    with pytest.raises(SystemExit) as exit_info:
+        await runner._run_query(run_rag_chain.RAGInput(query="hi"))
+    assert exit_info.value.code == 2
+
+
 def test_rag_parse_filters_types_boolean_and_numeric_fields() -> None:
     # Every value was a string: in_schema:false matched nothing on the
     # graph stores, where the Python API's False matched.

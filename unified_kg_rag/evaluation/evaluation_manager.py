@@ -68,8 +68,8 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.exceptions import (
+    IndexNotFoundError,
     InvalidFilterError,
-    MethodologyNotIndexedError,
 )
 from unified_kg_rag.shared.usage import (
     UsageMeter,
@@ -680,7 +680,10 @@ class EvaluationManager:
         store connections and the models' first calls. Its question is no
         dataset question, so it fills no extraction cache entry they read;
         it uses no conversation memory. A failure is logged, not raised,
-        but a ``MethodologyNotIndexedError``: every query would fail."""
+        but one every query would meet too: a ``ConfigurationError`` (a
+        ``MethodologyNotIndexedError``, an embedding dimension the index
+        does not hold) or an ``IndexNotFoundError`` (nothing ingested under
+        the suffix), so the run stops before answering the dataset."""
         inputs = {
             key: query.metadata[key] for key in _WARM_UP_KEYS if key in query.metadata
         }
@@ -688,8 +691,9 @@ class EvaluationManager:
             await self.rag_chain.ainvoke(
                 {**inputs, "query": _WARM_UP_QUESTION, "use_memory": False}
             )
-        except MethodologyNotIndexedError:
-            # The namespace serves no query of this strategy: fail fast.
+        except (ConfigurationError, IndexNotFoundError):
+            # The namespace or the settings serve no query of this run: fail
+            # fast.
             raise
         except Exception as e:  # noqa: BLE001 - a warm-up is best-effort
             logger.warning(

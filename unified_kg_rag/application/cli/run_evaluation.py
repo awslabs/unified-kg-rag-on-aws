@@ -125,6 +125,7 @@ from unified_kg_rag.shared import (
     ConfigurationError,
     DataProcessingError,
     EvaluationException,
+    IndexNotFoundError,
     MethodologyNotIndexedError,
     get_logger,
     observability,
@@ -1909,7 +1910,9 @@ def main() -> None:
         logger.error("Invalid evaluation dataset: %s", e)
         sys.exit(EXIT_USAGE)
 
-    except ConfigurationError as e:
+    except (ConfigurationError, IndexNotFoundError) as e:
+        # A setting or a namespace no query of the run can be answered
+        # with (the warm-up raises it): a usage error, before the dataset.
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         logger.error("Evaluation configuration error: %s", e)
         sys.exit(EXIT_USAGE)
