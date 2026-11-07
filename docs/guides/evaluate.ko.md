@@ -195,6 +195,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   `candidate_win_rate`는 `position_consistency`, 그리고 답변 길이 구간별 승률(`length`)과 함께
   읽으세요. LLM 판정 모델은 긴 답변을 선호하므로, 길이 비율이 커질수록 승률이 오르면 품질이
   아니라 길이의 효과입니다. `--pairwise-mode differential`은 두 답변이 다른 부분만 판정합니다(아래).
+  첫 번째 반복의 답변을 판정하며, `--pairwise-repeats all`은 모든 반복을 판정합니다(호출 수는
+  `--repeats`배). 이때 질의마다 반복의 점수를 먼저 평균한 뒤 질의끼리 평균합니다.
 - **비용과 지연 시간.** `cost.strategies.<s>`와 `cost.deltas_vs_baseline`은 답변의 질의당
   호출, 토큰, 지연 시간을 지표처럼 짝지어 보여 줍니다. 실패한 답변은 실패하기 전까지 쓴
   만큼 셉니다.

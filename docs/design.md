@@ -3200,7 +3200,10 @@ choices:
   over the compared strategies only, every other metric, and the cost
   measures, with Bonferroni-level intervals; ten unadjusted metrics would
   show a "supported" difference on noise in about 40% of A/A runs. Gates
-  can read the adjusted statistics.
+  can read the adjusted statistics. The pairwise judge reads the first
+  repeat by default (`evaluation.pairwise_repeats: all` judges every
+  repeat, clustered by query: the repeats of a query are averaged first and
+  its interval resamples queries).
 - **Cost is measured, not estimated.** `shared/usage.py` keeps contextvar
   scopes (one per ingestion stage, per query, per `run-eval` run and answer
   attempt) that a

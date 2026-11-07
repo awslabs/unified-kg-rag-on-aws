@@ -6036,6 +6036,19 @@ class EvaluationConfig(BaseModel):
             "Both modes report win rates per answer-length bucket."
         ),
     )
+    pairwise_repeats: Literal["first", "all"] = Field(
+        default="first",
+        description=(
+            "Which repeats the run-eval --pairwise-judge judge reads "
+            "(run-eval --pairwise-repeats overrides it). 'first' (default) "
+            "judges the first repeat's answers: one judged pair per query and "
+            "strategy (two judge calls, both orders; three in the differential "
+            "mode). 'all' judges repeat r against repeat r for every repeat, "
+            "so the win rate also averages the answers' run-to-run variance, "
+            "at that cost times --repeats; each query's repeats are averaged "
+            "before the queries, and its interval resamples queries."
+        ),
+    )
     assertion_trials: int = Field(
         default=3,
         ge=1,

@@ -222,7 +222,10 @@ How to read it:
   next to `position_consistency` and the win rates per answer-length bucket
   (`length`): LLM judges prefer the longer answer, so a win rate that rises
   with the length ratio is length, not quality. `--pairwise-mode
-  differential` judges only what differs between the answers (below).
+  differential` judges only what differs between the answers (below). It
+  judges the first repeat's answers; `--pairwise-repeats all` judges every
+  repeat (its calls times `--repeats`), averaging each query's repeats
+  before the queries.
 - **Cost and latency.** `cost.strategies.<s>` and `cost.deltas_vs_baseline`
   give the answers' calls, tokens and latency per query, paired like the
   metrics; a failed answer counts with what it spent before failing.

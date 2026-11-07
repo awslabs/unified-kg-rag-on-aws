@@ -1339,6 +1339,55 @@ async def test_eval_runner_runs_the_pairwise_judge(config, mocker, tmp_path) -> 
     assert comparison["pairwise_vs_baseline"] == {"mix": judged}
 
 
+@pytest.mark.parametrize("repeats", ["first", "all"])
+async def test_eval_runner_judges_the_repeats_asked_for(
+    config, mocker, tmp_path, repeats: str
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = []
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    judge = mocker.patch.object(run_evaluation, "PairwiseJudge")
+    judged = {
+        "judged": 2,
+        "failed": 0,
+        "candidate_errors": 0,
+        "baseline_errors": 0,
+        "criteria": {},
+    }
+    judge.return_value.acompare = mocker.AsyncMock(return_value=judged)
+    judge.return_value.acompare_repeats = mocker.AsyncMock(return_value=judged)
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
+    args = _eval_parser().parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(tmp_path / "out"),
+            "--search-strategy",
+            "local,mix",
+            "--repeats",
+            "3",
+            "--pairwise-judge",
+            "--pairwise-repeats",
+            repeats,
+        ]
+    )
+    assert (
+        await run_evaluation.EvaluationRunner(args, _StrategyChain(), config).run() == 0
+    )
+    if repeats == "first":
+        judge.return_value.acompare_repeats.assert_not_awaited()
+        baseline, candidate = judge.return_value.acompare.await_args.args
+        assert [r.generated_answer for r in candidate] == ["Buyer"]
+        return
+    judge.return_value.acompare.assert_not_awaited()
+    baselines, candidates = judge.return_value.acompare_repeats.await_args.args
+    assert [[r.generated_answer for r in run] for run in baselines] == [["Vendor"]] * 3
+    assert [[r.generated_answer for r in run] for run in candidates] == [["Buyer"]] * 3
+
+
 def test_eval_runner_logs_the_judge_it_falls_back_to(config, caplog, tmp_path) -> None:
     import logging
 

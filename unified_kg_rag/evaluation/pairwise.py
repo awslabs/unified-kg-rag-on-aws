@@ -348,24 +348,60 @@ class PairwiseJudge:
         ``failed`` counts the pairs the judge could not decide (its calls
         failed); ``run-eval`` holds it to ``--max-failure-rate``.
         """
-        by_id = {r.query_id: r for r in baseline}
-        pairs = [(by_id[r.query_id], r) for r in candidate if r.query_id in by_id]
+        return await self.acompare_repeats([baseline], [candidate])
+
+    async def acompare_repeats(
+        self,
+        baselines: Sequence[list[EvaluationResult]],
+        candidates: Sequence[list[EvaluationResult]],
+    ) -> dict[str, Any]:
+        """``acompare`` over repeats: repeat r of the candidate against
+        repeat r of the baseline, for as many repeats as both have
+        (``repeats``). With one repeat it is ``acompare``.
+
+        The pairs of one query are clustered: the win rate averages each
+        query's scores over its decided repeats first, then over the
+        queries, and its interval resamples queries (a cluster bootstrap),
+        so judging three repeats is not read as three times the queries.
+        The counts (wins, ties, ``judged``, ``failed``, the error counts)
+        are over every pair; ``per_query`` lists each query's outcomes in
+        repeat order (``None`` where that repeat's pair was not decided),
+        and the ``length`` and ``differential`` entries are keyed
+        ``<query_id>#<repeat>``.
+        """
+        repeats = min(len(baselines), len(candidates))
+        keyed = repeats > 1
+        # (pair key, query id, baseline result, candidate result)
+        pairs: list[tuple[str, str, EvaluationResult, EvaluationResult]] = []
+        for index in range(repeats):
+            by_id = {r.query_id: r for r in baselines[index]}
+            pairs.extend(
+                (
+                    f"{r.query_id}#{index + 1}" if keyed else r.query_id,
+                    r.query_id,
+                    by_id[r.query_id],
+                    r,
+                )
+                for r in candidates[index]
+                if r.query_id in by_id
+            )
+        query_of = {key: qid for key, qid, _, _ in pairs}
         outcomes: dict[str, dict[str, str]] = {}
         errors: Counter[str] = Counter()
-        to_judge: list[tuple[EvaluationResult, EvaluationResult]] = []
-        for base, cand in pairs:
+        to_judge: list[tuple[str, EvaluationResult, EvaluationResult]] = []
+        for key, _, base, cand in pairs:
             if _unanswerable(base) or _unanswerable(cand):
                 errors["unanswerable_skipped"] += 1
                 continue
             base_ok, cand_ok = _answered(base), _answered(cand)
             if base_ok and cand_ok:
-                to_judge.append((base, cand))
+                to_judge.append((key, base, cand))
             elif base_ok:
                 errors["candidate_errors"] += 1
-                outcomes[cand.query_id] = dict.fromkeys(self.criteria, "baseline")
+                outcomes[key] = dict.fromkeys(self.criteria, "baseline")
             elif cand_ok:
                 errors["baseline_errors"] += 1
-                outcomes[cand.query_id] = dict.fromkeys(self.criteria, "candidate")
+                outcomes[key] = dict.fromkeys(self.criteria, "candidate")
             else:
                 errors["both_errors"] += 1
         # The judge calls nest under one span instead of each starting a root
@@ -374,25 +410,23 @@ class PairwiseJudge:
             "kg_rag.evaluate", evaluator="pairwise_judge", items=len(to_judge)
         ):
             judged = await asyncio.gather(
-                *(self._safe_judge(b, c) for b, c in to_judge)
+                *(self._safe_judge(b, c) for _, b, c in to_judge)
             )
         agreements: list[dict[str, bool]] = []
-        judged_ids: list[str] = []
+        judged_keys: list[str] = []
         lengths: dict[str, dict[str, Any]] = {}
         splits: dict[str, dict[str, Any]] = {}
-        for (base, cand), verdict in zip(to_judge, judged, strict=True):
+        for (key, base, cand), verdict in zip(to_judge, judged, strict=True):
             if verdict is None:
                 continue
             outcome, agreed, split = verdict
-            outcomes[cand.query_id] = outcome
-            judged_ids.append(cand.query_id)
+            outcomes[key] = outcome
+            judged_keys.append(key)
             if agreed is not None:
                 agreements.append(agreed)
-            lengths[cand.query_id] = answer_lengths(
-                base.generated_answer, cand.generated_answer
-            )
+            lengths[key] = answer_lengths(base.generated_answer, cand.generated_answer)
             if split is not None:
-                lengths[cand.query_id].update(
+                lengths[key].update(
                     {
                         f"{side}_unique_tokens": estimate_token_count(
                             "\n".join(split[side])
@@ -400,18 +434,23 @@ class PairwiseJudge:
                         for side in ("baseline", "candidate")
                     }
                 )
-                lengths[cand.query_id]["shared_tokens"] = estimate_token_count(
+                lengths[key]["shared_tokens"] = estimate_token_count(
                     "\n".join(split["shared"])
                 )
-                splits[cand.query_id] = split
-        decided = list(outcomes.values())
+                splits[key] = split
         criteria: dict[str, Any] = {}
         for criterion in self.criteria:
-            counts = Counter(o[criterion] for o in decided)
-            scores = [_SCORES[o[criterion]] for o in decided]
-            # Ties split evenly, as the papers report win rates.
+            counts = Counter(o[criterion] for o in outcomes.values())
+            # Ties split evenly, as the papers report win rates; each
+            # query's repeats averaged first (one score per query).
+            by_query: dict[str, list[float]] = {}
+            for key, outcome in outcomes.items():
+                by_query.setdefault(query_of[key], []).append(
+                    _SCORES[outcome[criterion]]
+                )
+            scores = [float(np.mean(v)) for v in by_query.values()]
             rate, low, high = None, None, None
-            if judged_ids:
+            if judged_keys:
                 rate = float(sum(scores) / len(scores))
                 low, high = bootstrap_ci(scores, **_BOOTSTRAP)
             criteria[criterion] = {
@@ -440,10 +479,20 @@ class PairwiseJudge:
                 "verdicts; most ties are position bias, not equal answers.",
                 consistency * 100,
             )
+        per_query: dict[str, Any]
+        if keyed:
+            per_query = {
+                qid: [outcomes.get(f"{qid}#{index + 1}") for index in range(repeats)]
+                for qid in sorted(set(query_of.values()))
+                if any(f"{qid}#{index + 1}" in outcomes for index in range(repeats))
+            }
+        else:
+            per_query = dict(sorted(outcomes.items()))
         result: dict[str, Any] = {
             "mode": self.mode,
+            "repeats": repeats,
             "pairs": len(pairs),
-            "judged": len(judged_ids),
+            "judged": len(judged_keys),
             "failed": sum(v is None for v in judged),
             "candidate_errors": errors["candidate_errors"],
             "baseline_errors": errors["baseline_errors"],
@@ -452,15 +501,15 @@ class PairwiseJudge:
             "position_consistency": consistency,
             "bootstrap": dict(_BOOTSTRAP),
             "criteria": criteria,
-            "per_query": dict(sorted(outcomes.items())),
+            "per_query": per_query,
             # Judged pairs only: a pair decided by a failed answer has no
             # length to compare.
             "length": length_summary(
-                lengths, {q: outcomes[q] for q in judged_ids}, self.criteria
+                lengths, {k: outcomes[k] for k in judged_keys}, self.criteria
             ),
         }
         if self.mode == "differential":
-            result["identical_pairs"] = len(judged_ids) - len(agreements)
+            result["identical_pairs"] = len(judged_keys) - len(agreements)
             result["differential"] = {"per_query": dict(sorted(splits.items()))}
         return result
 

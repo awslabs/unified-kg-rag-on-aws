@@ -297,6 +297,53 @@ class TestPairwiseJudge:
         assert out["position_consistency"] == 0.25
         assert out["bootstrap"] == {"resamples": 2000, "confidence": 0.95, "seed": 0}
 
+    def test_every_repeat_is_judged_and_clustered_by_query(self, mocker) -> None:
+        # Before, only the first repeat's answers were judged. Query "a" wins
+        # comprehensiveness in both repeats, "b" in one, "c" in none: the
+        # win rate averages each query's repeats first (1, 0.5, 0), and its
+        # interval resamples the three queries, not the six pairs.
+        judge = self._judge(mocker)
+        baselines = [
+            [_result("a", "short"), _result("b", "short"), _result("c", "detailed")],
+            [_result("a", "short"), _result("b", "detailed"), _result("c", "detailed")],
+        ]
+        candidates = [
+            [_result("a", "detailed"), _result("b", "detailed"), _result("c", "x")],
+            [_result("a", "detailed"), _result("b", "y"), _result("c", "z")],
+        ]
+        out = asyncio.run(judge.acompare_repeats(baselines, candidates))
+        assert (out["repeats"], out["pairs"], out["judged"]) == (2, 6, 6)
+        assert len(judge.chain.calls) == 12  # six pairs, both orders
+        comprehensiveness = out["criteria"]["comprehensiveness"]
+        assert comprehensiveness["candidate_wins"] == 3
+        assert comprehensiveness["baseline_wins"] == 3
+        assert comprehensiveness["candidate_win_rate"] == 0.5
+        low, high = bootstrap_ci(
+            [1.0, 0.5, 0.0], resamples=2000, confidence=0.95, seed=0
+        )
+        assert (comprehensiveness["ci_low"], comprehensiveness["ci_high"]) == (
+            low,
+            high,
+        )
+        assert out["per_query"]["b"] == [
+            {**dict.fromkeys(pairwise.CRITERIA, "tie"), "comprehensiveness": c}
+            for c in ("candidate", "baseline")
+        ]
+        assert set(out["length"]["per_query"]) == {
+            f"{q}#{r}" for q in "abc" for r in (1, 2)
+        }
+
+    def test_one_repeat_judges_as_acompare(self, mocker) -> None:
+        judge = self._judge(mocker)
+        baseline = [_result(q, "short") for q in "ab"]
+        candidate = [_result("a", "detailed"), _result("b", "x")]
+        one = asyncio.run(judge.acompare_repeats([baseline], [candidate]))
+        assert one == asyncio.run(judge.acompare(baseline, candidate))
+        assert one["repeats"] == 1 and set(one["per_query"]) == {"a", "b"}
+        # Repeats beyond the shorter side's count are not judged.
+        out = asyncio.run(judge.acompare_repeats([baseline] * 2, [candidate]))
+        assert out["repeats"] == 1
+
     def test_no_win_rate_when_the_judge_decided_nothing(self, mocker) -> None:
         # Before, a failed candidate answer alone gave a win rate of 0.0 even
         # though every judge call failed.

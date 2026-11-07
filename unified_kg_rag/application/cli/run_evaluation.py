@@ -485,6 +485,16 @@ class CommandLineInterface:
             ),
         )
         parser.add_argument(
+            "--pairwise-repeats",
+            choices=["first", "all"],
+            help=(
+                "Which repeats --pairwise-judge judges (default: "
+                "evaluation.pairwise_repeats, 'first'): the first repeat's "
+                "answers, or 'all', repeat r against repeat r (the judge's "
+                "calls times --repeats; each query's repeats averaged first)"
+            ),
+        )
+        parser.add_argument(
             "--closed-book",
             action="store_true",
             help=(
@@ -1574,10 +1584,21 @@ class EvaluationRunner:
                     else self.providers
                 ),
             )
+            every_repeat = (
+                getattr(self.args, "pairwise_repeats", None)
+                or self.config.evaluation.pairwise_repeats
+            ) == "all"
             with usage_scope() as judging:
                 comparison["pairwise_vs_baseline"] = {
-                    strategy: await judge.acompare(
-                        runs[label][0][1], runs[strategy][0][1]
+                    strategy: (
+                        await judge.acompare_repeats(
+                            [results for _, results in runs[label]],
+                            [results for _, results in runs[strategy]],
+                        )
+                        if every_repeat
+                        else await judge.acompare(
+                            runs[label][0][1], runs[strategy][0][1]
+                        )
                     )
                     for strategy, label in pairs.items()
                 }

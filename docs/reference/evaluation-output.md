@@ -232,7 +232,12 @@ strategies, or `--repeats`) saves every run's files and adds
   empowerment and directness (plus LightRAG's `overall` with
   `evaluation.pairwise_overall: true`), using `models.roles.evaluation`
   (prompt: `custom_prompts.pairwise_comparison_*`) on the first repeat's
-  answers. Each pair is judged in both orders and a criterion counts as a
+  answers, or with `evaluation.pairwise_repeats: all` (`--pairwise-repeats
+  all`) on every repeat, repeat r against repeat r (`repeats` counts them;
+  the judge's calls times the repeats): each query's repeats are averaged
+  before the queries, the interval resamples queries (a cluster bootstrap),
+  the counts are over every pair, `per_query` lists each query's outcomes
+  per repeat, and `length.per_query` is keyed `<query_id>#<repeat>`. Each pair is judged in both orders and a criterion counts as a
   win only when both agree; `position_consistency` (overall and per
   criterion) is the share of judged pairs whose two orders agreed, and a
   value under 0.5 is warned about: such a judge decides by position, and its

@@ -500,6 +500,9 @@ From a `main` checkout (formats and keys no release had):
   `adjusted_ci_low`/`adjusted_ci_high`. Ten unadjusted metrics showed a difference on noise in about 40% of A/A
   comparisons; on simulated A/A comparisons the adjusted family's rate stays near 5%. `--fail-if` reads the four new
   statistics, and the tables print `Holm p` (#PR).
+- `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
+  repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
+  rate's interval resamples queries. The default still judges the first repeat (#PR).
 - RAPTOR summary tree, opt-in (#599; on multi-hop questions it answered within the noise of `naive`,
   [evidence](docs/concepts/defaults-and-evidence.md#raptor-summary-tree)): the `raptor` methodology adds a
   `summary_tree` ingestion stage after indexing that clusters the stored text units by their vectors (numpy k-means
