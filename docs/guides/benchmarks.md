@@ -140,7 +140,8 @@ It writes `seed/structural.jsonl` (a [JSONL seed graph](../reference/seed-graph-
 of every node with its `country`, `founded` and `employees` properties and
 every `SUPPLIES` and `MAKES` edge), `corpus/` (one document per vendor and
 buyer, stating part of those edges, the products and the chief executive),
-`structural-config.yaml` (the extraction schema and the seed graph entry)
+`structural-config.yaml` (the extraction schema, the seed graph entry and
+`evaluation.answer_span: extracted`)
 and `eval_data.json`. `--size small` writes 8 vendors and up to 4 questions
 a template, `medium` 40 vendors and up to 25 (about 200 questions; templates
 whose answer would tie or be ambiguous in a world are left out for it), and
@@ -159,15 +160,17 @@ reads it: a count or maximum (`metadata.answer_type: number`) by the first
 number the answer states, so "Three vendors supply it. Two of them are
 local." is 3, not a match of the gold 2; the top three
 (`answer_type: set`, `metadata.answer_items`) by all three names in any
-order or layout, a numbered list too; and an absent-vendor question
+order or layout, a numbered list too, and no other vendor
+(`metadata.answer_candidates` lists them all); and an absent-vendor question
 (`metadata.decline_is_correct`) counts a declined answer as right
 ([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match)).
 `category` is the template, so the
 per-category scores break the comparison down by question shape; the
 control questions carry their document as `reference_sources`.
 
-Score with `answer_match` (containment is the headline; EM and F1 with
-`evaluation.answer_span: extracted`). The run summary's
+Score with `answer_match` (containment is the headline; EM and F1 on the
+extracted span, which `structural-config.yaml` sets: one fast-model call
+per scored answer). The run summary's
 `structured_statistics` reports the structured arm's plan validity, repair
 and fallback rates by reason, and truncation
 ([Evaluation output](../reference/evaluation-output.md#run-summary)); the

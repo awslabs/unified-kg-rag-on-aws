@@ -13,7 +13,8 @@ buyers, products, countries) and writes it as
   same facts and some facts only text states (each vendor's chief
   executive);
 - ``structural-config.yaml``: the extraction schema and the seed graph
-  entry to ingest them with;
+  entry to ingest them with, and ``evaluation.answer_span: extracted`` to
+  score them with;
 - ``eval_data.json``: questions in the ``run-eval`` format.
 
 The questions come from templates: counts by relationship and by a seed
@@ -216,6 +217,8 @@ class _Question:
     # "set" with ``items``) and whether a decline is the right answer.
     answer_type: str | None = None
     items: list[str] = field(default_factory=list)
+    # The names a set answer picks ``items`` from (``answer_candidates``).
+    candidates: list[str] = field(default_factory=list)
     decline_is_correct: bool = False
 
 
@@ -410,6 +413,8 @@ def _top_three(gold: _Gold, rng: random.Random) -> list[_Question]:
                 plan,
                 answer_type="set",
                 items=list(names),
+                # Every vendor: one of another country is a wrong pick too.
+                candidates=sorted(n.name for n in gold.world.of_type("VENDOR")),
             )
         )
     return out
@@ -826,6 +831,10 @@ processing:
       kind: jsonl
       path: seed/structural.jsonl
       description_properties: [country]
+# Exact match and token F1 on the answer's short span (one fast-model call
+# per scored answer), not on the whole answer.
+evaluation:
+  answer_span: extracted
 """
 
 
@@ -879,6 +888,7 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
                 **({"gold_plan": q.plan} if q.plan is not None else {}),
                 **({"answer_type": q.answer_type} if q.answer_type else {}),
                 **({"answer_items": q.items} if q.items else {}),
+                **({"answer_candidates": q.candidates} if q.candidates else {}),
                 **({"decline_is_correct": True} if q.decline_is_correct else {}),
             },
         }

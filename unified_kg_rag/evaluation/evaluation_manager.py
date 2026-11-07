@@ -82,6 +82,7 @@ from unified_kg_rag.shared.usage import (
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 from .answer_match_evaluator import (
+    ANSWER_CANDIDATES_KEY,
     ANSWER_ITEMS_KEY,
     ANSWER_TYPE_KEY,
     ANSWER_TYPES,
@@ -492,6 +493,16 @@ class EvaluationManager:
             raise EvaluationException(
                 f"{where}: 'metadata.{ANSWER_ITEMS_KEY}' must be a non-empty list "
                 "of strings with answer_type 'set'."
+            )
+        candidates = item_metadata.get(ANSWER_CANDIDATES_KEY)
+        if candidates is not None and not (
+            answer_type == "set"
+            and isinstance(candidates, list)
+            and all(isinstance(c, str) and c.strip() for c in candidates)
+        ):
+            raise EvaluationException(
+                f"{where}: 'metadata.{ANSWER_CANDIDATES_KEY}' must be a list of "
+                "strings, with answer_type 'set'."
             )
 
         final_metadata = {**base_metadata, **item_metadata}

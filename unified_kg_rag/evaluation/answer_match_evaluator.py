@@ -43,7 +43,10 @@ records the span mode (``answer_span``) and the text scored
   ("세 곳") or a Han numeral before one ("三社"), so "Three vendors ... Two
   of them ..." is 3, not a match of the gold 2. One whose ``answer_type``
   is ``set`` scores 1.0 when every one of its ``metadata.answer_items``
-  appears in the answer, in any order or layout.
+  appears in the answer, in any order or layout; with
+  ``metadata.answer_candidates`` (the names it could pick from) the
+  candidates the answer names must be exactly those items, so listing every
+  candidate is no match.
 - ``exact_match``: 1.0 if the normalized span equals the normalized reference.
 - ``token_f1``: harmonic mean of token precision/recall (multiset overlap).
   Under ``default`` the tokens are script-aware
@@ -137,10 +140,13 @@ ABSTAINED_KEY = "abstained"
 # Dataset metadata that says how a gold answer is matched (structural
 # benchmarks): ``answer_type`` "number" (the answer's leading number against
 # the gold's), "set" (every one of ``answer_items`` in the answer, in any
-# order or layout); ``decline_is_correct``, a question about something the
+# order or layout; with ``answer_candidates``, the names the answer could
+# pick from, the ones it states must be exactly ``answer_items``);
+# ``decline_is_correct``, a question about something the
 # data does not hold, where a decline is the right answer.
 ANSWER_TYPE_KEY = "answer_type"
 ANSWER_ITEMS_KEY = "answer_items"
+ANSWER_CANDIDATES_KEY = "answer_candidates"
 DECLINE_IS_CORRECT_KEY = "decline_is_correct"
 ANSWER_TYPES = frozenset({"number", "set"})
 
@@ -262,11 +268,25 @@ def number_matches(prediction: str, reference: str) -> float:
     return float(leading_number(prediction) == gold)
 
 
-def items_contained(prediction: str, items: list[str]) -> float:
+def items_contained(
+    prediction: str, items: list[str], candidates: list[str] | None = None
+) -> float:
     """1.0 when every one of ``items`` appears in ``prediction`` as a phrase
     (``text_matching.phrase_in_text``), in any order and layout (a comma
-    list, a numbered list, one per line)."""
-    return float(bool(items) and all(phrase_in_text(i, prediction) for i in items))
+    list, a numbered list, one per line). With ``candidates`` (the names
+    the answer could pick from, ``items`` among them) the names it states
+    must be ``items`` exactly: listing every candidate, or one more than
+    the gold, scores 0. A candidate found only inside a longer one it
+    states ("Acme" in "Acme Works") is not one it names."""
+    if not items:
+        return 0.0
+    if not candidates:
+        return float(all(phrase_in_text(i, prediction) for i in items))
+    named = {c for c in {*candidates, *items} if phrase_in_text(c, prediction)}
+    named = {
+        c for c in named if not any(c != o and phrase_in_text(c, o) for o in named)
+    }
+    return float(named == set(items))
 
 
 def first_answer_line(answer: str) -> str:
@@ -505,8 +525,17 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
             return max(number_matches(read, ref) for ref in references)
         if kind == "set":
             items = result.metadata.get(ANSWER_ITEMS_KEY)
+            candidates = result.metadata.get(ANSWER_CANDIDATES_KEY)
             if isinstance(items, list) and items:
-                return items_contained(answer, [str(i) for i in items])
+                return items_contained(
+                    answer,
+                    [str(i) for i in items],
+                    (
+                        [str(c) for c in candidates]
+                        if isinstance(candidates, list)
+                        else None
+                    ),
+                )
         return max(answer_contains(answer, ref) for ref in references)
 
     def _score(
