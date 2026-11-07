@@ -66,7 +66,7 @@ resumes after the last valid one:
 
 With the doc-status registry on, a run re-indexes only new and changed
 documents and removes deleted ones. Stage list and flags:
-[Ingestion](../guides/ingest.md#the-13-pipeline-stages); internals:
+[Ingestion](../guides/ingest.md#pipeline-stages); internals:
 [Design Doc §4](../design.md#4-ingestion-pipeline) and
 [§5](../design.md#5-incremental-indexing).
 

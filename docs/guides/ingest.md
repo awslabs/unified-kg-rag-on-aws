@@ -13,6 +13,8 @@ Which indexes a run writes, and which documents it may delete, follow from its
 index suffix and source scope ([Scopes and namespaces](../concepts/scopes-and-namespaces.md)).
 A Korean or mixed-language corpus: [Multilingual corpora](./multilingual.md).
 
+<a id="pipeline-stages"></a>
+
 ## The 13 pipeline stages
 
 In run order; `--enabled-stages` / `--resume-from-stage` take the **names**

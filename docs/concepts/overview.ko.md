@@ -53,7 +53,7 @@ HippoRAG 2(엔티티와 패시지에 대한 개인화 PageRank), 그리고 선�
    군집화하고 레벨마다 요약하며, `tree` 전략이 검색합니다.
 
 문서 상태 레지스트리를 켜면 새 문서와 바뀐 문서만 다시 인덱싱하고 지운 문서는 제거합니다.
-단계 목록과 플래그는 [수집](../guides/ingest.ko.md#파이프라인-단계-13개), 내부 구조는
+단계 목록과 플래그는 [수집](../guides/ingest.ko.md#파이프라인-단계), 내부 구조는
 [설계 문서 §4](../design.md#4-ingestion-pipeline)와 [§5](../design.md#5-incremental-indexing)(영문)에
 있습니다.
 
