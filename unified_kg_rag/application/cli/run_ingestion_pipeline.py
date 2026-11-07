@@ -301,6 +301,15 @@ class CommandLineInterface:
             "stops (exit 1) before it writes when stdin is not one",
         )
         parser.add_argument(
+            "--confirm-integrity",
+            action="store_true",
+            help="Answer yes to the question of a run that resumes a "
+            "--pipeline-id whose inputs changed since its stages ran (or "
+            "whose cache is incomplete): continue, recomputing those stages; "
+            "nothing else. Without it (or --yes), the question is asked on "
+            "the terminal, and the run stops (exit 1) when stdin is not one",
+        )
+        parser.add_argument(
             "--continue-on-error",
             action="store_true",
             help="Keep going when a stage fails. When an artifact stage "
@@ -705,7 +714,16 @@ class IngestionPipelineRunner:
                     "[yellow]The inputs changed since these stages ran, or the "
                     "cache is incomplete; a resume without --resume-from-stage recomputes them.[/yellow]"
                 )
-                if not self._confirm("Continue despite integrity issues?"):
+                if getattr(self.args, "confirm_integrity", False):
+                    console.print(
+                        "Continue despite integrity issues? "
+                        "[dim](--confirm-integrity)[/dim]"
+                    )
+                elif not self._ask(
+                    "Continue despite integrity issues?",
+                    "--confirm-integrity",
+                    getattr(self.args, "yes", False),
+                ):
                     console.print("[yellow]Pipeline execution cancelled.[/yellow]")
                     return False
         return True
