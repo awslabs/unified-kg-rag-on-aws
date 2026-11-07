@@ -192,29 +192,43 @@ def bootstrap_ci(
     deltas: Sequence[float], *, resamples: int, confidence: float, seed: int
 ) -> tuple[float, float]:
     """Percentile CI of the mean of ``deltas`` (queries resampled)."""
-    data = np.asarray(deltas, dtype=float)
-    if data.size == 1:
-        return float(data[0]), float(data[0])
-    rng = np.random.default_rng(seed)
-    rows = max(1, _BOOTSTRAP_CHUNK_VALUES // data.size)
-    if resamples <= rows:
-        means = data[rng.integers(0, data.size, size=(resamples, data.size))].mean(
-            axis=1
-        )
-    else:
-        means = np.concatenate(
-            [
-                data[
-                    rng.integers(
-                        0, data.size, size=(min(rows, resamples - start), data.size)
-                    )
-                ].mean(axis=1)
-                for start in range(0, resamples, rows)
-            ]
-        )
+    return bootstrap_cis(
+        [deltas], resamples=resamples, confidence=confidence, seed=seed
+    )[0]
+
+
+def bootstrap_cis(
+    samples: Sequence[Sequence[float]],
+    *,
+    resamples: int,
+    confidence: float,
+    seed: int,
+) -> list[tuple[float, float]]:
+    """``bootstrap_ci`` of each of ``samples``, the same intervals faster:
+    samples of one size draw the same resampled indices from the seed, so
+    each chunk of them is drawn once for all of that size (drawing them is
+    most of the cost)."""
+    out: list[tuple[float, float] | None] = [None] * len(samples)
+    by_size: dict[int, list[int]] = defaultdict(list)
+    arrays = [np.asarray(sample, dtype=float) for sample in samples]
+    for index, data in enumerate(arrays):
+        if data.size == 1:
+            out[index] = (float(data[0]), float(data[0]))
+        else:
+            by_size[data.size].append(index)
     tail = (1.0 - confidence) / 2 * 100
-    low, high = np.percentile(means, [tail, 100 - tail])
-    return float(low), float(high)
+    for size, members in by_size.items():
+        rng = np.random.default_rng(seed)
+        rows = max(1, _BOOTSTRAP_CHUNK_VALUES // size)
+        means: dict[int, list[np.ndarray]] = {i: [] for i in members}
+        for start in range(0, resamples, rows):
+            drawn = rng.integers(0, size, size=(min(rows, resamples - start), size))
+            for i in members:
+                means[i].append(arrays[i][drawn].mean(axis=1))
+        for i in members:
+            low, high = np.percentile(np.concatenate(means[i]), [tail, 100 - tail])
+            out[i] = (float(low), float(high))
+    return [interval for interval in out if interval is not None]
 
 
 # Resamples per test a family of m tests at level alpha needs: at least
@@ -253,26 +267,57 @@ def sign_flip_p_value(deltas: Sequence[float], *, resamples: int, seed: int) -> 
     sign. Unlike the percentile bootstrap it holds its level on few pairs
     (five wins of five: p = 0.0625, the exact sign test).
     """
-    data = np.asarray(deltas, dtype=float)
-    nonzero = data[data != 0]
-    if nonzero.size == 0:
-        return 1.0
-    observed = abs(float(nonzero.sum()))
-    # Float sums of the same values in another order differ in the last bits.
-    tolerance = 1e-9 * max(1.0, float(np.abs(nonzero).sum()))
-    if 2**nonzero.size <= resamples:
-        patterns = (
-            (np.arange(2**nonzero.size)[:, None] >> np.arange(nonzero.size)) & 1
-        ) * 2.0 - 1.0
-        sums = np.abs(patterns @ nonzero)
-        return float(np.count_nonzero(sums >= observed - tolerance) / sums.size)
-    rng = np.random.default_rng(seed)
-    hits = 0
-    for start in range(0, resamples, _SIGN_FLIP_CHUNK):
-        rows = min(_SIGN_FLIP_CHUNK, resamples - start)
-        signs = rng.choice((-1.0, 1.0), size=(rows, nonzero.size))
-        hits += int(np.count_nonzero(np.abs(signs @ nonzero) >= observed - tolerance))
-    return (1 + hits) / (1 + resamples)
+    return sign_flip_p_values([deltas], resamples=resamples, seed=seed)[0]
+
+
+def sign_flip_p_values(
+    samples: Sequence[Sequence[float]], *, resamples: int, seed: int
+) -> list[float]:
+    """``sign_flip_p_value`` of each of ``samples``, the same p-values
+    faster: samples with as many non-zero deltas draw the same sign
+    patterns from the seed, so each chunk of them is drawn once for all of
+    them (drawing them is most of the cost)."""
+    out: list[float] = [1.0] * len(samples)
+    by_size: dict[int, list[int]] = defaultdict(list)
+    nonzeros: list[np.ndarray] = []
+    observed: list[float] = []
+    tolerances: list[float] = []
+    for index, sample in enumerate(samples):
+        data = np.asarray(sample, dtype=float)
+        nonzero = data[data != 0]
+        nonzeros.append(nonzero)
+        observed.append(abs(float(nonzero.sum())))
+        # Float sums of the same values in another order differ in the
+        # last bits.
+        tolerances.append(1e-9 * max(1.0, float(np.abs(nonzero).sum())))
+        if nonzero.size == 0:
+            continue
+        if 2**nonzero.size <= resamples:
+            patterns = (
+                (np.arange(2**nonzero.size)[:, None] >> np.arange(nonzero.size)) & 1
+            ) * 2.0 - 1.0
+            sums = np.abs(patterns @ nonzero)
+            out[index] = float(
+                np.count_nonzero(sums >= observed[index] - tolerances[index])
+                / sums.size
+            )
+        else:
+            by_size[nonzero.size].append(index)
+    for size, members in by_size.items():
+        rng = np.random.default_rng(seed)
+        hits = dict.fromkeys(members, 0)
+        for start in range(0, resamples, _SIGN_FLIP_CHUNK):
+            rows = min(_SIGN_FLIP_CHUNK, resamples - start)
+            signs = rng.choice((-1.0, 1.0), size=(rows, size))
+            for i in members:
+                hits[i] += int(
+                    np.count_nonzero(
+                        np.abs(signs @ nonzeros[i]) >= observed[i] - tolerances[i]
+                    )
+                )
+        for i in members:
+            out[i] = (1 + hits[i]) / (1 + resamples)
+    return out
 
 
 def holm_adjusted(p_values: Sequence[float]) -> list[float]:
@@ -1206,23 +1251,28 @@ def adjust_for_multiplicity(
             continue
         level = 1.0 - alpha / len(members)
         scaled = family_resamples(resamples, len(members), alpha)
-        for delta in members:
-            # Only a p-value under alpha can reject once adjusted (Holm's
-            # never falls below the raw one): those are read again from
-            # enough sign patterns that the Monte Carlo floor is no bound.
-            if scaled > resamples and float(delta["p_value"]) < alpha:
-                delta["p_value"] = sign_flip_p_value(
-                    list(delta["per_query"].values()), resamples=scaled, seed=seed
-                )
-                delta["p_value_resamples"] = scaled
+        # Only a p-value under alpha can reject once adjusted (Holm's never
+        # falls below the raw one): those are read again from enough sign
+        # patterns that the Monte Carlo floor is no bound.
+        reread = [
+            d for d in members if scaled > resamples and float(d["p_value"]) < alpha
+        ]
+        p_values = sign_flip_p_values(
+            [list(d["per_query"].values()) for d in reread],
+            resamples=scaled,
+            seed=seed,
+        )
+        for delta, p_value in zip(reread, p_values, strict=True):
+            delta["p_value"] = p_value
+            delta["p_value_resamples"] = scaled
         adjusted = holm_adjusted([float(d["p_value"]) for d in members])
-        for delta, value in zip(members, adjusted, strict=True):
-            low, high = bootstrap_ci(
-                list(delta["per_query"].values()),
-                resamples=scaled,
-                confidence=level,
-                seed=seed,
-            )
+        intervals = bootstrap_cis(
+            [list(d["per_query"].values()) for d in members],
+            resamples=scaled,
+            confidence=level,
+            seed=seed,
+        )
+        for delta, value, (low, high) in zip(members, adjusted, intervals, strict=True):
             delta.update(
                 family=name,
                 adjusted_p_value=value,
