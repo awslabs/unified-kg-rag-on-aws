@@ -51,7 +51,7 @@ cannot leave its setting at the default:
                                        even when the domain spans 2 AZs)
   opensearch_master_instance "m6g.large.search"  dedicated master type when
                                        opensearch_count > 1 (8 GiB Graviton; sized
-                                       for <=10 nodes / 10K shards on OS 2.13)
+                                       for <=30 nodes / 15K shards on OS 2.17+)
   opensearch_nori_package False        associate the AWS-provided analysis-nori
                                        plugin package of the domain's engine
                                        version (a custom resource; each change

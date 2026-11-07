@@ -283,3 +283,61 @@ def test_nori_failed_dissociation_names_the_cause(aws: _Clients) -> None:
     _domain_packages(aws, "DISSOCIATION_FAILED", ErrorMessage="index uses nori")
     with pytest.raises(nori_package.PackageError, match="index uses nori"):
         nori_package.is_complete(_nori_event("Delete"), None)
+
+
+def test_nori_engine_upgrade_completes_on_the_package_the_upgrade_carried(
+    aws: _Clients,
+) -> None:
+    # An engine upgrade upgrades an associated optional plugin with the
+    # domain. The resource's update then resolves the new version's package
+    # (a new physical id), finds it active without associating it again, and
+    # the cleanup of the old version's package finds nothing to dissociate.
+    upgraded, old = "G219000000", "G213000000"
+    filters = [*_FILTERS[:2], {"Name": "EngineVersion", "Value": ["OpenSearch_2.19"]}]
+    aws.stub("opensearch").add_response(
+        "describe_packages",
+        {
+            "PackageDetailsList": [
+                {
+                    "PackageID": upgraded,
+                    "PackageName": "analysis-nori",
+                    "PackageType": "ZIP-PLUGIN",
+                    "EngineVersion": "OpenSearch_2.19",
+                }
+            ]
+        },
+        {"Filters": filters},
+    )
+    update = _event(
+        "Update",
+        DomainName=_DOMAIN,
+        EngineVersion="OpenSearch_2.19",
+        PackageName="analysis-nori",
+        physical_id=old,
+    )
+    created = nori_package.on_event(update, None)
+    assert created["PhysicalResourceId"] == upgraded
+
+    listing = {
+        "DomainPackageDetailsList": [
+            {"PackageID": upgraded, "DomainPackageStatus": "ACTIVE"}
+        ]
+    }
+    aws.stub("opensearch").add_response(
+        "list_packages_for_domain", listing, {"DomainName": _DOMAIN}
+    )
+    # No associate_package: the Stubber fails on an unexpected call.
+    assert nori_package.is_complete({**update, **created}, None) == {"IsComplete": True}
+
+    _stack_status(aws, nori_package.UPDATE_CLEANUP)
+    aws.stub("opensearch").add_response(
+        "list_packages_for_domain", listing, {"DomainName": _DOMAIN}
+    )
+    cleanup = _event(
+        "Delete",
+        DomainName=_DOMAIN,
+        EngineVersion="OpenSearch_2.13",
+        PackageName="analysis-nori",
+        physical_id=old,
+    )
+    assert nori_package.is_complete(cleanup, None) == {"IsComplete": True}

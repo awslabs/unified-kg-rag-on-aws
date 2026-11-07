@@ -42,9 +42,9 @@ component.
   VPC (or one connected to it through a VPN, peering or a tunnel), with
   security groups that let it reach Neptune's port and the OpenSearch
   domain. A host outside the VPC cannot connect.
-- **OpenSearch.** Tested on OpenSearch 2.13, the version the CDK domain
-  runs. The opt-in on-disk vector keys need 2.17 or later, and faiss with
-  the default `cosinesimil` space 2.19
+- **OpenSearch.** Tested on OpenSearch 2.19, the version the CDK domain
+  runs, and on 2.13. The opt-in on-disk vector keys need 2.17 or later, and
+  faiss with the default `cosinesimil` space 2.19
   ([Operator Runbook: On-disk vector storage](../operations.md#on-disk-vector-storage)).
 - **Neptune.** The CDK app does not pin an engine version (a new cluster
   starts on Neptune's default); the client is `gremlinpython` below 3.8, so

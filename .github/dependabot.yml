@@ -120,10 +120,10 @@ updates:
         update-types: ["minor", "patch"]
     ignore:
       # The stack stands in for the deployed stores, so it follows their
-      # engines: OpenSearch 2.13 (iac/stacks/storage_stack.py
+      # engines: OpenSearch 2.19 (iac/stacks/storage_stack.py
       # OPENSEARCH_VERSION) and Neptune's TinkerPop 3.7 line (as gremlinpython
       # above). Move these with the deployed engines, not on their own.
       - dependency-name: "opensearchproject/opensearch"
-        versions: [">=2.14.0"]
+        versions: [">=2.20.0"]
       - dependency-name: "tinkerpop/gremlin-server"
         versions: [">=3.8.0"]

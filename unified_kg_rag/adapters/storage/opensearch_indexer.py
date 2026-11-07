@@ -327,8 +327,9 @@ def _creation_refused(
     elif _UNKNOWN_STORAGE_KEY.search(str(e)):
         hint = (
             "indexing.opensearch.vector_mode and compression_level need "
-            "OpenSearch 2.17 or later (the CDK domain runs 2.13): upgrade the "
-            "domain (docs/operations.md, Upgrading OpenSearch) or unset them."
+            "OpenSearch 2.17 or later (a CDK domain still on 2.13 upgrades to "
+            "2.19 on its next deploy): upgrade the domain (docs/operations.md, "
+            "Upgrading OpenSearch) or unset them."
         )
     else:
         hint = (

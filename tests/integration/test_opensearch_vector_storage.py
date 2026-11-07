@@ -3,11 +3,12 @@
 """``indexing.opensearch.vector_mode`` / ``compression_level`` on a real
 OpenSearch (``LOCAL_STORES=1``).
 
-On the ``docker/compose.local.yaml`` cluster (2.13, as the CDK domain) the
-creation probe refuses the keys and names the 2.17 requirement. On 2.17 or
-later (an OpenSearch published on ``LOCAL_STORES_OPENSEARCH_PORT``, e.g.
-``docker run -p 127.0.0.1:19200:9200 -e discovery.type=single-node -e
-DISABLE_SECURITY_PLUGIN=true opensearchproject/opensearch:2.19.3``) the
+On a cluster before 2.17 (an OpenSearch published on
+``LOCAL_STORES_OPENSEARCH_PORT``, e.g. ``docker run -p 127.0.0.1:19200:9200
+-e discovery.type=single-node -e DISABLE_SECURITY_PLUGIN=true
+opensearchproject/opensearch:2.13.0``) the creation probe refuses the keys
+and names the 2.17 requirement. On 2.17 or later (the
+``docker/compose.local.yaml`` cluster runs 2.19, as the CDK domain) the
 probe passes, and a synthetic set of ``VECTOR_STORAGE_VECTORS`` vectors
 (default 50,000, about 6 minutes) measures each storage's recall@10 against
 exact search and its k-NN native memory; ``-s`` prints them.
@@ -91,6 +92,17 @@ def test_the_creation_probe_follows_the_cluster_version(
     )
     # The default takes every version.
     _indexer(_config(), client).check_index_creation("default")
+
+
+def test_faiss_cosine_follows_the_cluster_version(client: OpenSearchClient) -> None:
+    # faiss HNSW takes the cosinesimil space from OpenSearch 2.19; before,
+    # the probe refuses it, naming the space type, before any model call.
+    indexer = _indexer(_config(engine="faiss"), client)
+    if _version(client) < (2, 19):
+        with pytest.raises(ConfigurationError, match="cosinesimil"):
+            indexer.check_index_creation("default")
+    else:
+        indexer.check_index_creation("default")
 
 
 def _vectors(count: int) -> tuple[np.ndarray, np.ndarray]:

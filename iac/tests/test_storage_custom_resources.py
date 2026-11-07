@@ -128,7 +128,7 @@ def test_nori_package_names_the_domain_and_its_engine_version(
     _, resource = _only(storage, _NORI)
     props = resource["Properties"]
     assert props["DomainName"] == {"Ref": domain_id}
-    assert props["EngineVersion"] == OPENSEARCH_VERSION.version == "OpenSearch_2.13"
+    assert props["EngineVersion"] == OPENSEARCH_VERSION.version == "OpenSearch_2.19"
     assert props["PackageName"] == "analysis-nori"
     # After the domain and everything it configures: an engine upgrade
     # finishes before the new version's package is looked up.

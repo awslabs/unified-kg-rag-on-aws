@@ -44,10 +44,12 @@ CACHE_EXPIRY_PREFIXES = ("pipeline-runs/",)
 NONCURRENT_VERSION_DAYS = 30
 CHECKPOINT_NONCURRENT_DAYS = 1
 
-# The domain's engine version. A change upgrades the domain in place
-# (enable_version_upgrade); with opensearch_nori_package the Nori package of
-# the new version is associated after the upgrade.
-OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_13
+# The domain's engine version: 2.19, the last 2.x line (3.x is reached only
+# from it; docs/design.md 8.4). A change upgrades the domain in place
+# (enable_version_upgrade), so a domain deployed on 2.13 upgrades on its
+# next deploy; with opensearch_nori_package the Nori package of the new
+# version is resolved after the upgrade.
+OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_19
 
 # DeploymentConfig.neptune_parameter_group_family -> the construct's family
 # (ParameterGroupFamily has no constructor from a name).

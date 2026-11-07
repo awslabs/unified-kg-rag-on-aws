@@ -1746,12 +1746,14 @@ def _misspelled_setting(config: Config) -> None:
     config.indexing.opensearch.index_settings = {"max_result_windw": 20_000}
 
 
-def _faiss_cosine(config: Config) -> None:
-    # faiss HNSW takes cosinesimil only from OpenSearch 2.19.
+def _lucene_ivf(config: Config) -> None:
+    # lucene has no ivf method on any OpenSearch version (faiss with
+    # cosinesimil, refused before 2.19, is checked per version in
+    # test_opensearch_vector_storage.py).
     config.indexing.opensearch.vector_search = {
         **config.indexing.opensearch.vector_search,
-        "engine": "faiss",
-        "space_type": "cosinesimil",
+        "engine": "lucene",
+        "name": "ivf",
     }
 
 
@@ -1766,7 +1768,7 @@ def _missing_analyzer(config: Config) -> None:
         (_misspelled_setting, "max_result_windw"),
         # The probe index had no fields: these passed it and failed the
         # first index creation after extraction.
-        (_faiss_cosine, "cosinesimil"),
+        (_lucene_ivf, "ivf"),
         (_missing_analyzer, "no_such_analyzer"),
     ],
     ids=["setting", "vector-method", "analyzer"],

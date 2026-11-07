@@ -212,7 +212,7 @@ def test_opensearch_version_change_upgrades_in_place(env_name: str) -> None:
     template = _storage_template({"env_name": env_name})
     (domain,) = template.find_resources("AWS::OpenSearchService::Domain").values()
     assert domain["UpdatePolicy"] == {"EnableVersionUpgrade": True}
-    assert domain["Properties"]["EngineVersion"] == "OpenSearch_2.13"
+    assert domain["Properties"]["EngineVersion"] == "OpenSearch_2.19"
 
 
 def _cache_rules(template: Template) -> dict[str, dict[str, Any]]:

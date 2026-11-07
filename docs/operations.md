@@ -365,13 +365,29 @@ share it.
 
 ### Upgrading OpenSearch
 
-The CDK domain runs OpenSearch 2.13 and carries the CloudFormation
+The CDK domain runs OpenSearch 2.19 and carries the CloudFormation
 `EnableVersionUpgrade` update policy, so a changed engine version upgrades
 the domain in place: same endpoint, same indices, no reindex. Without the
 policy CloudFormation would replace the domain with a new, empty one.
-OpenSearch Service upgrades 2.13 to 2.19 in one step, as a blue/green
-deployment (every shard copied; latency and rejections may rise until it
-ends, from minutes to hours). An upgrade cannot be paused or rolled back.
+
+**A domain deployed on 2.13 upgrades to 2.19 on its next deploy of
+`GraphRagStorage`** (any `cdk deploy` that includes it, `--all` too).
+OpenSearch Service upgrades 2.13 to 2.19 in one step: it checks the domain,
+takes its own snapshot, then runs a blue/green deployment that copies every
+shard to new nodes. That takes from 15 minutes to several hours, growing
+with the data. Queries and ingestion keep working meanwhile, with higher
+latency and possibly rejected requests. The application needs no change:
+its defaults behave the same on both versions, and no index is rebuilt.
+
+**Rollback limits.** A running upgrade cannot be paused or cancelled, and
+a completed one cannot be undone: there is no downgrade. If the upgrade
+itself fails, the service restores the domain from its pre-upgrade
+snapshot and the stack update fails with the domain on 2.13. After a
+completed upgrade the only way back to 2.13 is restoring a manual snapshot
+on a new 2.13 domain, outside the stack (a new endpoint for
+`UKR__AWS__OPENSEARCH__ENDPOINT`). For the same reason a rollback of the
+upgrading stack update cannot return the domain to 2.13, so upgrade with a
+stack update that changes nothing else.
 
 1. Stop ingestion (no `RUNNING` execution) and plan for slower queries.
 2. Take a manual snapshot: the way back to 2.13 is restoring it on a new
@@ -380,23 +396,33 @@ ends, from minutes to hours). An upgrade cannot be paused or rolled back.
    The hourly automated snapshots stay with the domain.
 3. Run the eligibility check:
    `aws opensearch upgrade-domain --domain-name <domain> --target-version OpenSearch_2.19 --perform-check-only`,
-   then `aws opensearch get-upgrade-status --domain-name <domain>`. With the
-   optional Nori package associated, also check that a Nori package for 2.19
-   exists (`aws opensearch describe-packages --filters
-   Name=PackageName,Value=analysis-nori Name=EngineVersion,Value=OpenSearch_2.19`):
-   optional plugins are version-specific.
-4. Set `OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_19` in
-   `iac/stacks/storage_stack.py` (and the local image in
-   `docker/compose.local.yaml`, so local runs test the same engine), then
-   `cdk diff GraphRagStorage`: the only change must be the domain's
-   `EngineVersion`, with no replacement, and with `opensearch_nori_package`
-   the `EngineVersion` of its `Custom::OpenSearchNoriPackage`. Deploy with
-   `cdk deploy GraphRagStorage`. The package resource updates after the
-   domain: it associates the 2.19 package unless the upgrade already did,
-   and the update's cleanup dissociates the 2.13 one if it is still there
-   ([Korean with Nori](#korean-with-nori)).
-5. When the stack update completes, run a query and one incremental
-   ingestion before the next large run.
+   then `aws opensearch get-upgrade-status --domain-name <domain>`
+   (`SUCCEEDED` for the `PRE_UPGRADE_CHECK` step). It fails on red
+   indices, disk use over 90%, JVM memory pressure over 75% or a running
+   snapshot. With the optional Nori package associated, also check that the
+   region offers a Nori package for 2.19 (`aws opensearch describe-packages
+   --filters Name=PackageName,Value=analysis-nori
+   Name=EngineVersion,Value=OpenSearch_2.19`): the service upgrades an
+   associated plugin with the domain, and an upgrade whose target lacks it
+   fails.
+4. `cdk diff GraphRagStorage` with the deploy's usual `-c` flags: the only
+   change must be the domain's `EngineVersion` (2.13 to 2.19), with no
+   replacement, and with `opensearch_nori_package` the `EngineVersion` of
+   its `Custom::OpenSearchNoriPackage`. Anything else, deploy first on its
+   own. Then `cdk deploy GraphRagStorage`. The package resource updates
+   after the domain: it finds the 2.19 package the upgrade associated (or
+   associates it), and the update's cleanup dissociates the 2.13 one only
+   if it is still listed ([Korean with Nori](#korean-with-nori)).
+5. When the stack update completes, check that `aws opensearch
+   describe-domain --domain-name <domain> --query
+   DomainStatus.EngineVersion` reports `OpenSearch_2.19`, then run a query
+   and one incremental ingestion before the next large run.
+
+**To stay on 2.13 for now**, set `OPENSEARCH_VERSION =
+opensearch.EngineVersion.OPENSEARCH_2_13` in `iac/stacks/storage_stack.py`
+before deploying; the application supports both. OpenSearch 3.x is reached
+only from 2.19 and is a major version with breaking changes; this stack
+does not target it yet.
 
 ### Maintenance windows
 
@@ -597,9 +623,11 @@ indexing:
   ([Defaults and evidence: On-disk vector recall](./concepts/defaults-and-evidence.md#on-disk-vector-recall)):
   measure recall on your own corpus before choosing a level.
 - **Version.** The keys need OpenSearch 2.17 or later, and faiss with the
-  default `cosinesimil` space 2.19. The CDK domain runs 2.13 until upgraded
-  ([Upgrading OpenSearch](#upgrading-opensearch)); there the probe before the
-  first model call refuses the run and names the 2.17 requirement.
+  default `cosinesimil` space 2.19. The CDK domain runs 2.19; a domain
+  deployed on 2.13 runs it until its next deploy upgrades it
+  ([Upgrading OpenSearch](#upgrading-opensearch)), and until then the probe
+  before the first model call refuses the run and names the 2.17
+  requirement.
   Combinations no version takes (lucene 2x, faiss 4x, `on_disk` with 1x,
   lucene `on_disk` without a level, another engine, method or space type)
   fail at config load.

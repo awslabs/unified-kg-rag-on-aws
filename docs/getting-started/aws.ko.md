@@ -38,8 +38,8 @@ Python, uv, Bedrock 액세스 권한이 있는 AWS 자격 증명, 그리고 아�
   연결을 받으므로 CLI는 그 VPC 안의 호스트(또는 VPN, 피어링, 터널로 연결된 호스트)에서
   실행하고, 보안 그룹이 Neptune 포트와 OpenSearch 도메인으로 가는 연결을 허용해야 합니다.
   VPC 밖의 호스트는 연결할 수 없습니다.
-- **OpenSearch.** CDK 도메인이 쓰는 OpenSearch 2.13에서 테스트했습니다. 선택 기능인 온디스크
-  벡터 키는 2.17 이상, 기본 `cosinesimil` 공간을 쓰는 faiss는 2.19가 필요합니다
+- **OpenSearch.** CDK 도메인이 쓰는 OpenSearch 2.19와 2.13에서 테스트했습니다. 선택 기능인
+  온디스크 벡터 키는 2.17 이상, 기본 `cosinesimil` 공간을 쓰는 faiss는 2.19가 필요합니다
   ([운영 런북: 온디스크 벡터 저장](../operations.md#on-disk-vector-storage), 영문).
 - **Neptune.** CDK 앱은 엔진 버전을 고정하지 않습니다(새 클러스터는 Neptune 기본 버전으로
   시작). 클라이언트가 3.8 미만의 `gremlinpython`이므로 엔진도 TinkerPop 3.8 미만이어야
