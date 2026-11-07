@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import importlib.util
-from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +10,10 @@ from unified_kg_rag.adapters.ingestion.document_converter import (
     convert_langchain_to_document,
 )
 from unified_kg_rag.adapters.ingestion.file_loaders import (
+    DOCX_INSTALL_HINT,
     CsvFileLoader,
+    DocxFileLoader,
+    HtmlFileLoader,
     PdfFileLoader,
     TextFileLoader,
     UnstructuredPartitionLoader,
@@ -23,37 +25,27 @@ from unified_kg_rag.shared.exceptions import causes
 
 logger = get_logger(__name__)
 
-# UnstructuredPartitionLoader imports fine but raises at .load() time if the
-# heavy optional `unstructured` package is absent (it is not a runtime
-# dependency). Detect it once so .md/.html/.htm are only advertised as
-# supported when they can actually be parsed — instead of failing mid-ingestion
-# with "No module named 'unstructured'".
+# Markdown and HTML are read in the core install (Markdown as written, HTML
+# through the standard library's parser); with the optional `unstructured`
+# extra installed, its partitioners read them instead (the richer parser:
+# Markdown rendered to its text, HTML elements by their layout). Detected once:
+# its loader imports fine without the package and would fail at .load().
 _UNSTRUCTURED_AVAILABLE = importlib.util.find_spec("unstructured") is not None
-# The formats the optional extra adds, and how to install it.
-UNSTRUCTURED_EXTENSIONS = frozenset({".htm", ".html", ".markdown", ".md"})
-UNSTRUCTURED_INSTALL_HINT = (
-    "install the optional 'unstructured' extra: "
-    "`uv sync --extra unstructured` or "
-    "`pip install -e '.[unstructured]'` in a source checkout (the "
-    "docker/Dockerfile image: build with "
-    '`--build-arg UV_EXTRAS="--extra unstructured"`, which also installs the '
-    "spaCy model unstructured would otherwise download from GitHub at the "
-    "first file, out of reach of a private VPC)"
+# .docx needs the optional `docx` extra (python-docx), registered only when it
+# is importable; without it a .docx is skipped naming the extra.
+_DOCX_AVAILABLE = importlib.util.find_spec("docx") is not None
+# The formats an optional extra adds that this install cannot read, and how
+# to install the extra.
+MISSING_EXTRA_FORMATS: dict[str, str] = (
+    {} if _DOCX_AVAILABLE else {".docx": DOCX_INSTALL_HINT}
 )
 
 
-class BaseParser(ABC):
-    def __init__(self, config: Config) -> None:
-        self.config = config
+class FileParser:
+    """Parses one source file into a ``Document`` with a registered loader
+    (``ParserFactory``), retrying a decode error of a text format with the
+    encoding charset-normalizer detects."""
 
-    @abstractmethod
-    def parse_file(
-        self, file_path: str | Path, index_value: str | None = None
-    ) -> Document:
-        pass
-
-
-class FileParser(BaseParser):
     def __init__(
         self,
         config: Config,
@@ -61,7 +53,7 @@ class FileParser(BaseParser):
         loader_kwargs: dict[str, Any] | None = None,
         file_type_name: str = "file",
     ):
-        super().__init__(config)
+        self.config = config
         self.loader_class = loader_class
         self.loader_kwargs = loader_kwargs or {}
         self.file_type_name = file_type_name
@@ -136,7 +128,12 @@ class FileParser(BaseParser):
 # Detection runs only after a decode error, so a file that decodes keeps the
 # text it always had (charset-normalizer is a declared dependency, reused in
 # ``Document._read_text_autodetect`` for one consistent detection path).
-_ENCODING_AWARE_LOADERS = (CsvFileLoader, JsonTextLoader, TextFileLoader)
+_ENCODING_AWARE_LOADERS = (
+    CsvFileLoader,
+    HtmlFileLoader,
+    JsonTextLoader,
+    TextFileLoader,
+)
 
 
 class ParserFactory:
@@ -151,13 +148,19 @@ class ParserFactory:
     # Loaders with no heavy optional deps — always available.
     _loader_configs: dict[str, tuple[type[BaseLoader], dict[str, Any], str]] = {
         ".csv": (CsvFileLoader, {}, "CSV"),
+        ".htm": (HtmlFileLoader, {}, "HTML"),
+        ".html": (HtmlFileLoader, {}, "HTML"),
         # Stdlib-only: LangChain's JSONLoader needs the optional `jq` package.
         ".json": (JsonTextLoader, {}, "JSON"),
+        ".markdown": (TextFileLoader, {}, "Markdown"),
+        ".md": (TextFileLoader, {}, "Markdown"),
         ".pdf": (PdfFileLoader, {}, "PDF"),
         ".txt": (TextFileLoader, {}, "Text"),
     }
-    # Markdown/HTML need the optional `unstructured` package; register them only
-    # when it is importable so the supported-format list matches runtime reality.
+    if _DOCX_AVAILABLE:
+        _loader_configs[".docx"] = (DocxFileLoader, {}, "Word")
+    # The richer Markdown/HTML parser, in place of the core ones, when the
+    # optional `unstructured` package is importable.
     if _UNSTRUCTURED_AVAILABLE:
         _loader_configs.update(
             {
@@ -226,13 +229,13 @@ class ParserFactory:
         )
 
     @classmethod
-    def create_parser(cls, file_path: str | Path, config: Config) -> BaseParser:
+    def create_parser(cls, file_path: str | Path, config: Config) -> FileParser:
         extension = Path(file_path).suffix.lower()
 
         if extension not in cls._loader_configs:
             hint = ""
-            if extension in UNSTRUCTURED_EXTENSIONS:
-                hint = f"; to parse it, {UNSTRUCTURED_INSTALL_HINT}"
+            if extension in MISSING_EXTRA_FORMATS:
+                hint = f"; to parse it, {MISSING_EXTRA_FORMATS[extension]}"
             raise DataProcessingError(f"Unsupported file type: '{extension}'{hint}")
 
         loader_class, loader_kwargs, file_type_name = cls._loader_configs[extension]

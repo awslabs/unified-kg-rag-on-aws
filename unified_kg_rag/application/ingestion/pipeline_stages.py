@@ -30,8 +30,7 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import (
 )
 from unified_kg_rag.adapters.ingestion.loader import DirectoryLoader
 from unified_kg_rag.adapters.ingestion.parser import (
-    UNSTRUCTURED_EXTENSIONS,
-    UNSTRUCTURED_INSTALL_HINT,
+    MISSING_EXTRA_FORMATS,
     ParserFactory,
 )
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
@@ -911,13 +910,12 @@ class DocumentParsingStage(PipelineStage):
                 skipped_files.append(str(file_path))
 
         if skipped:
-            optional = sorted(s for s in skipped if s in UNSTRUCTURED_EXTENSIONS)
-            others = sorted(s for s in skipped if s not in UNSTRUCTURED_EXTENSIONS)
-            remedies = []
-            if optional:
-                remedies.append(
-                    f"for {', '.join(optional)}, {UNSTRUCTURED_INSTALL_HINT}"
-                )
+            others = sorted(s for s in skipped if s not in MISSING_EXTRA_FORMATS)
+            remedies = [
+                f"for {suffix}, {MISSING_EXTRA_FORMATS[suffix]}"
+                for suffix in sorted(skipped)
+                if suffix in MISSING_EXTRA_FORMATS
+            ]
             if others:
                 remedies.append(
                     f"for {', '.join(others)}, convert them to a supported "

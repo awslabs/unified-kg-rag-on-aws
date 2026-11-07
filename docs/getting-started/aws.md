@@ -97,25 +97,26 @@ without one, the command that needs it stops with exit `2`, naming it:
   LLM-free evaluators need no extra.
 - **`viz`**: pyvis for `run-visualization`'s interactive graph ([Visualization](../guides/visualize.md)); the static charts need no extra.
 
-**Markdown and HTML** need the `unstructured` extra
+**Markdown and HTML** are parsed without an extra: Markdown as written, HTML
+through the standard library's parser. The `unstructured` extra is the richer
+parser of both and reads them in place of the core readers when installed
 (`uv sync --extra unstructured`; it requires `unstructured>=0.24.1`, which
-fixes URL-partitioning SSRF and unescaped markup). Without it, only `.pdf`,
-`.txt`, `.csv` and `.json` are parsed and ingestion skips `.md` / `.html` files with one warning
-per extension.
+fixes URL-partitioning SSRF and unescaped markup). **Word** (`.docx`) files
+need the `docx` extra (`uv sync --extra docx`); without it ingestion skips
+them with one warning naming the extra. See
+[source formats](../troubleshooting.md#which-source-formats-are-read).
 
-The extra tokenizes with a spaCy model (`en_core_web_sm`) that it downloads
-from GitHub at the first Markdown or HTML file. Without network access,
-install it beforehand, once, where the network is reachable:
+The `unstructured` extra tokenizes with a spaCy model (`en_core_web_sm`) that
+it downloads from GitHub at the first Markdown or HTML file. Without network
+access, install it beforehand, once, where the network is reachable:
 `python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')"`.
 Otherwise the first such file waits up to 120 s and fails, and every later
 one of the run fails at once with the same error.
 
-The deployed image (`docker/Dockerfile`) leaves the extra out (it adds about
-200 MB), so a Step Functions ingest skips `.md` / `.html` files with a
-warning, and a corpus of only such files fails with "No supported source
-files found in '<dir>'": convert the files, or build with
-`--build-arg UV_EXTRAS="--extra unstructured"`, which also installs the spaCy
-model in the image (a task in the private VPC cannot download it). The image's
+The deployed image (`docker/Dockerfile`) installs neither extra (`unstructured`
+adds about 200 MB): build with `--build-arg UV_EXTRAS="--extra docx"` to read
+Word files, or `"--extra unstructured"`, which also installs the spaCy model
+in the image (a task in the private VPC cannot download it). The image's
 `docker/config.yaml` holds no endpoints; the CDK task definitions inject them.
 
 **OWL/RDFS ontologies** as the extraction schema need the `ontology` extra

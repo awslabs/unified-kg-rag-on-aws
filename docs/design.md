@@ -389,7 +389,7 @@ can re-derive what it touches (§5).
 
 | # | Stage | Module | Notes |
 |---|---|---|---|
-| 1 | Document parsing | `parser.py` (`ParserFactory`) | PDF/TXT/CSV/JSON (+ MD/HTML with the `unstructured` extra) |
+| 1 | Document parsing | `parser.py` (`ParserFactory`) | PDF/TXT/CSV/JSON/MD/HTML (the `unstructured` extra, when installed, reads MD/HTML in place of the core readers; DOCX with the `docx` extra) |
 | 2 | Document loading | `loader.py` | optional MinHash deduplication; the incremental diff |
 | 3 | Chunking | `chunker.py` | intelligent (LLM boundaries, default) or simple |
 | 4 | Translation | `translator.py` | optional; skipped when source = target language |

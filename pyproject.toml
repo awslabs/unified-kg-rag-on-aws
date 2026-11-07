@@ -98,9 +98,10 @@ prepare-benchmark = "unified_kg_rag.application.cli.launch:prepare_benchmark"
 run-mcp-server = "unified_kg_rag.application.cli.launch:run_mcp_server"
 
 [project.optional-dependencies]
-# Optional: enables .md/.markdown/.html/.htm source parsing (heavy transitive
-# deps, so not installed by default). The ParserFactory registers those formats
-# only when this is importable; .txt/.csv/.json/.pdf work without it.
+# Optional: the richer Markdown and HTML parser (heavy transitive deps, so not
+# installed by default). The core install reads .md/.markdown as written and
+# .html/.htm through the standard library's HTML parser; with this importable,
+# the ParserFactory reads them with unstructured's partitioners instead.
 unstructured = [
     # Not imported here: unstructured pulls in numba, which pulls in llvmlite.
     "llvmlite>=0.48.0",
@@ -139,6 +140,12 @@ eval = [
     # community 0.4, so it cannot coexist with LangChain 1.x. Every ragas that
     # can requires datasets>=4.0.0.
     "ragas>=0.4.3,<0.5.0",
+]
+# Optional: Word (.docx) source files. The ParserFactory registers .docx only
+# when python-docx is importable; without it a .docx is skipped with a WARNING
+# naming this extra.
+docx = [
+    "python-docx>=1.1.2",
 ]
 # Optional: the pyvis interactive graph of `run-visualization`. The core
 # package does not import it; the interactive renderer fails fast naming this

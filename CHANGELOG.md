@@ -56,7 +56,7 @@ stored is read again: follow *Upgrading* in order.
 - Python 3.11 or 3.12 is required (`>=3.11, <3.13`); 3.10 is dropped (#430).
 - A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 83 packages, 937 to 335 MB on
   Linux. Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis,
-  for the `interactive` renderer), `local`, `otel`, `unstructured` (Markdown and HTML), `ontology` (rdflib). A
+  for the `interactive` renderer), `local`, `otel`, `unstructured` (the richer Markdown and HTML parser), `docx` (Word files), `ontology` (rdflib). A
   feature whose extra is missing fails naming it: the CLIs exit 2 before any work, the library raises
   `ConfigurationError` (also under `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer
   need no extra; the container image installs `eval` (#467, #472, #520, #576).
@@ -312,8 +312,10 @@ See [`iac/README.md`](iac/README.md).
 ### Upgrading
 From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
 [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
-1. Install on Python 3.11 or 3.12 with the extras you use (`eval`, `viz`, `local`, `otel`, `unstructured`,
-   `ontology`). A CLI whose configuration needs a missing extra exits 2 at start-up naming it (#472).
+1. Install on Python 3.11 or 3.12 with the extras you use (`eval`, `viz`, `local`, `otel`, `unstructured`, `docx`,
+   `ontology`). A CLI whose configuration needs a missing extra exits 2 at start-up naming it (#472). Markdown and
+   HTML files indexed with `unstructured` keep their text and ids only with that extra installed: without it the core
+   readers write other text, so the next incremental run re-extracts those files as changed documents (#(PR)).
 2. Load your config once and fix what it reports: unknown keys (*Configuration* lists the 0.2.3 ones), moved keys
    (the load names the replacement) and removed keys (a WARNING names it). Rename environment variables to
    `UKR__...`.
@@ -1014,9 +1016,12 @@ From a `main` checkout (formats and keys no release had):
 - The `graph_analysis` stage computes no centrality (#248); `run-visualization` computes it only for a renderer that
   reads it (`BaseRenderer.needs_centrality`) (#563).
 - The parser uses its own loaders on langchain-core (same text and ids; a 4,000-page PDF loads in about 1 s);
-  `ParserFactory.register_loader` takes any `BaseLoader` (#460, #471). Markdown and HTML need the `unstructured`
-  extra; an image built with `UV_EXTRAS="--extra unstructured"` installs its spaCy model, and an offline run without
-  it fails at once naming the install command (#534).
+  `ParserFactory.register_loader` takes any `BaseLoader` (#460, #471). Markdown and HTML are read without an
+  extra: Markdown as written, HTML through the standard library's parser (one paragraph per block element, no script
+  or style); the `unstructured` extra, when installed, reads both in its place, its image installs its spaCy model,
+  and an offline run without that model fails at once naming the install command (#534, #(PR)). Word (`.docx`) files
+  are read with the new `docx` extra (python-docx); without it they are skipped with a WARNING naming the extra
+  (#(PR)).
 - Gleaning refines each text unit's own record and a correction changes only what that unit says (#322).
 - `graph_aware`'s `retrieved_entity_coverage` and `retrieved_relationship_coverage` match by entity key (case, CJK
   spacing, quotes and legal forms ignored), not as a phrase inside a name, and count same-key expectations once

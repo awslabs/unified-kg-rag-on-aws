@@ -20,8 +20,9 @@ A Korean or mixed-language corpus: [Multilingual corpora](./multilingual.md).
 In run order; `--enabled-stages` / `--resume-from-stage` take the **names**
 (case-insensitive):
 
-1. **`document_parsing`**: text per format (`.pdf`, `.txt`, `.csv`, `.json`;
-   `.md`/`.html` with the `unstructured` extra).
+1. **`document_parsing`**: text per format (`.pdf`, `.txt`, `.csv`, `.json`,
+   `.md`, `.html`; `.docx` with the `docx` extra), see
+   [source formats](../troubleshooting.md#which-source-formats-are-read).
 2. **`document_loading`**: the run's corpus (MinHash dedup, incremental
    filter); without `document_parsing`, pre-parsed `Document` `.json` files.
 3. **`text_chunking`**: text units (`processing.chunking`).

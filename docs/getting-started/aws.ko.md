@@ -89,23 +89,23 @@ extra가 없으면 해당 명령이 extra 이름을 알려 주고 종료 코드 
   extra가 필요 없습니다.
 - **`viz`**: `run-visualization`의 대화형 그래프용 pyvis([Visualization](../guides/visualize.md), 영문). 정적 차트는 추가 패키지 없이 동작합니다.
 
-**Markdown과 HTML**을 파싱하려면 `unstructured` extra가 필요합니다
-(`uv sync --extra unstructured`. URL 분할의 SSRF와 마크업 미이스케이프 문제를
-고친 `unstructured>=0.24.1`을 요구함). extra가 없으면 `.pdf`, `.txt`, `.csv`,
-`.json`만 파싱하며, 수집은 `.md` / `.html` 파일을
-건너뛰고 확장자마다 경고를 한 번 남깁니다.
+**Markdown과 HTML**은 추가 패키지 없이 파싱합니다. Markdown은 쓰인 그대로, HTML은 표준
+라이브러리 파서로 읽습니다. `unstructured` extra는 둘을 더 정교하게 파싱하며, 설치되어 있으면 기본
+리더 대신 사용됩니다(`uv sync --extra unstructured`. URL 분할의 SSRF와 마크업 미이스케이프 문제를
+고친 `unstructured>=0.24.1`을 요구함). **Word**(`.docx`) 파일에는 `docx` extra가 필요하며
+(`uv sync --extra docx`), 없으면 수집은 이 파일을 건너뛰고 extra 이름을 담은 경고를 한 번 남깁니다.
+[원본 형식](../troubleshooting.md#which-source-formats-are-read)(영문)을 참고하세요.
 
-이 extra는 spaCy 모델(`en_core_web_sm`)로 토큰을 나누며, 첫 Markdown·HTML 파일을 읽을 때
+`unstructured` extra는 spaCy 모델(`en_core_web_sm`)로 토큰을 나누며, 첫 Markdown·HTML 파일을 읽을 때
 GitHub에서 이 모델을 내려받습니다. 네트워크에 접근할 수 없는 환경이라면 네트워크가 되는 곳에서
 한 번 미리 설치하세요:
 `python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')"`.
 설치하지 않으면 첫 파일은 최대 120초를 기다린 뒤 실패하고, 같은 실행의 나머지 파일은 같은
 오류로 바로 실패합니다.
 
-배포용 이미지(`docker/Dockerfile`)에는 이 extra가 빠져 있으므로(약 200MB 증가) Step
-Functions로 수집하면 `.md` / `.html` 파일은 경고와 함께 건너뛰고, 이런 파일만 있으면
-"No supported source files found in '<dir>'"로 실패합니다. 파일을 변환하거나
-`--build-arg UV_EXTRAS="--extra unstructured"`로 빌드하세요. 이렇게 빌드하면 이미지에 spaCy 모델도 설치됩니다(프라이빗 VPC의 태스크는 모델을 내려받을 수 없음).
+배포용 이미지(`docker/Dockerfile`)에는 두 extra 모두 빠져 있습니다(`unstructured`는 약 200MB 증가).
+Word 파일을 읽으려면 `--build-arg UV_EXTRAS="--extra docx"`로, `unstructured`를 쓰려면
+`"--extra unstructured"`로 빌드하세요. 후자는 이미지에 spaCy 모델도 설치합니다(프라이빗 VPC의 태스크는 모델을 내려받을 수 없음).
 이미지의 `docker/config.yaml`에는 엔드포인트가 없으며 CDK 태스크 정의(task definition)가 주입합니다.
 
 **OWL/RDFS 온톨로지**를 추출 스키마로 쓰려면 `ontology` extra가 필요합니다

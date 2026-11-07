@@ -40,7 +40,7 @@ HippoRAG 2(엔티티와 패시지에 대한 개인화 PageRank), 그리고 선�
 수집은 체크포인트를 남기는 13단계 파이프라인이며, 다시 실행하면 마지막으로 유효한 단계
 다음부터 이어 갑니다.
 
-1. 문서를 파싱하고(PDF, TXT, CSV, JSON. Markdown과 HTML은 `unstructured` 추가 패키지 필요)
+1. 문서를 파싱하고(PDF, TXT, CSV, JSON, Markdown, HTML. Word는 `docx` 추가 패키지 필요)
    이번 실행의 코퍼스를 불러옵니다.
 2. 텍스트를 텍스트 단위로 나누고, 필요하면 번역합니다.
 3. 텍스트 단위마다 엔티티와 관계를 추출하고, 첫 추출에서 빠진 것을 글리닝(gleaning)으로
@@ -218,8 +218,9 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   `graph.community_detection.report_generation.enabled: false`이면 커뮤니티는 탐지하지만 리포트는
   쓰지 않습니다. `local`은 리포트 섹션 없이 답하고, 리포트를 읽는 `global`과 `drift`는 이 스위치를
   알려 주는 메시지와 함께 거절됩니다.
-- **Markdown과 HTML**에는 `unstructured` extra가 필요하며, 컨테이너 이미지에는 기본으로
-  빠져 있습니다([Troubleshooting](../troubleshooting.md#why-are-my-markdown-or-html-files-not-indexed), 영문).
+- **Markdown과 HTML**은 기본 설치에서 텍스트로 읽습니다(Markdown은 쓰인 그대로, HTML은 표준
+  라이브러리 파서로). `unstructured` extra는 둘을 더 정교하게 파싱하고, Word(`.docx`)에는 `docx`
+  extra가 필요합니다. 컨테이너 이미지에는 둘 다 기본으로 빠져 있습니다([Troubleshooting](../troubleshooting.md#which-source-formats-are-read), 영문).
 - **증분 인덱싱은 전체 구축의 근사치입니다**([재구축 신호](../guides/incremental.ko.md#재구축-신호)). 증분 실행은 다시 군집화하지 않고 커뮤니티를
   덧붙이며, 엔티티가 현재 이름의 id를 받은 뒤에도 저장된 커뮤니티와 리포트에는 이전
   id가 남습니다. 둘 다 전체 재구축(`indexing.reset: true`)으로 갱신됩니다. DynamoDB에서는

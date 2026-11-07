@@ -20,8 +20,8 @@
 실행 순서대로이며, `--enabled-stages` / `--resume-from-stage`에는 단계 **이름**(대소문자
 무관)을 씁니다.
 
-1. **`document_parsing`**: 형식별 텍스트 추출(`.pdf`, `.txt`, `.csv`, `.json`.
-   `unstructured` extra가 있으면 `.md`/`.html`도).
+1. **`document_parsing`**: 형식별 텍스트 추출(`.pdf`, `.txt`, `.csv`, `.json`,
+   `.md`, `.html`. `docx` extra가 있으면 `.docx`도). [원본 형식](../troubleshooting.md#which-source-formats-are-read)(영문) 참고.
 2. **`document_loading`**: 이번 실행의 코퍼스 구성(MinHash 중복 제거, 증분 필터).
    `document_parsing`을 끄면 미리 파싱된 `Document` `.json` 파일을 읽음.
 3. **`text_chunking`**: 텍스트 단위로 분할(`processing.chunking`).

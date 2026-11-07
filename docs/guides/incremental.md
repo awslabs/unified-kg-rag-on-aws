@@ -209,7 +209,7 @@ index suffix and its corpus source
 - **Never let corpus files expire or disappear**: the next run removes their
   content. A file the run cannot read keeps it: one that fails to parse or
   load, and one skipped because no loader reads its type (an optional extra
-  such as `unstructured` not installed or dropped from the image, a loader
+  such as `docx` not installed or dropped from the image, a loader
   plugin not imported; `Skipping N file(s) ... of a type no loader reads ...`,
   `total_files_skipped`). Such a file is reported as `failed` and keeps its
   indexed content until a run reads it again. On the CDK stack, keep the
