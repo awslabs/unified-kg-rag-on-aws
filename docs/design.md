@@ -1081,7 +1081,17 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
 - **Removing a methodology** stops maintaining its artifacts: the next run
   of the namespace records them gone (one with nothing to index narrows the
   stored record to what it builds, `_record_removed_artifacts`), and its
-  strategies fail fast.
+  strategies fail fast. The record is the namespace's, not a source
+  scope's: a run that would drop a methodology (`dropped_methodologies`)
+  while the registry holds other source scopes' documents in the namespace
+  (`other_source_scopes`, less those the run retires) is refused before any
+  model call (`ConfigurationError`, exit 2), for corpus runs and
+  `insert_documents`/`delete_documents` alike, since adding it back needs
+  the rebuild that is refused there. The record names the source scopes it
+  holds (`source_scopes`: the run's and the others its diff read, a
+  reset's alone; None without the registry or in an earlier version's
+  record), so a query's refusal advises a re-run over the one scope's
+  corpus, or a namespace of its own or a reset for several.
   Nothing is deleted: a reset with the remaining methodologies replaces the
   community-reports index with an empty one and drops the graph's community
   vertices (the rebuild sweep, §5.2). A run creates no vector index of an
