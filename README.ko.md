@@ -100,7 +100,7 @@ UKR__LOGGING__LEVEL=WARNING uv run run-rag --backend local --search-strategy mix
 | GraphRAG(커뮤니티 요약) | `local`, `global`, `drift`, `simple` | 코퍼스 전체에 걸친 주제 질문(`global`, `drift`)과 특정 엔티티에 대한 질문(`local`) |
 | LightRAG(이중 레벨 키워드) | `mix`, `hybrid`, `naive` | 키워드 중심 조회, 그리고 청크만 읽는 빠른 기준선(`naive`) |
 | HippoRAG 2(개인화 PageRank) | `ppr` | 가장 적은 비용의 멀티홉 질문. 질의당 LLM 호출 한 번 |
-| RAPTOR(요약 트리, 선택 사항) | `tree` | 그래프 추출 없는 저렴한 인덱스. 멀티홉 질문에서는 `naive`와 오차 범위 안에서 같았습니다([근거](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree)(영문)) |
+| RAPTOR(요약 트리, 선택 사항) | `tree` | 그래프 추출 없는 저렴한 인덱스. 멀티홉 질문에서는 `naive`보다 나았고 그래프 전략보다 낮았습니다([근거](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree)(영문)) |
 
 `iterative`는 `mix`나 `local`을 감싸, 멀티홉 질문의 연결 엔티티에 대해 정해진 횟수만큼 후속 검색을 더 합니다. 기본값인 `auto`에서는 LLM 라우터가 질의마다 `search.auto_routable_strategies`(기본값 `local`, `mix`, `global`, `iterative`) 중 하나를 고릅니다. 어떤 전략을 언제 쓰는지는 [검색](./docs/concepts/retrieval.ko.md#검색-전략-선택), 계층 구조·알고리즘·데이터 모델은 [설계 문서](./docs/design.md)(영문)에 있습니다.
 

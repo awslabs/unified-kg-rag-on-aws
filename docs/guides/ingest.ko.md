@@ -179,8 +179,8 @@ indexing:
 군집화하고 군집마다 요약(`models.roles.summary_tree`, default 티어)한 뒤, 요약을 다시
 군집화하고 요약하는 일을 `indexing.summary_tree.max_levels`(5) 레벨까지 반복해 `tree`
 전략이 쓰는 별도 인덱스에 씁니다([검색](../concepts/retrieval.ko.md#검색-전략-선택)).
-선택 사항입니다. 멀티홉 질문에서는 `naive`와 오차 범위 안의 답을 냈습니다
-([근거](../concepts/defaults-and-evidence.md#raptor-summary-tree), 영문).
+선택 사항입니다. 멀티홉 질문에서는 `naive`보다 나았지만 그래프 전략보다 크게 낮았고, 한 코퍼스에서
+1회 반복한 결과입니다([근거](../concepts/defaults-and-evidence.md#raptor-summary-tree), 영문).
 
 ```yaml
 indexing:

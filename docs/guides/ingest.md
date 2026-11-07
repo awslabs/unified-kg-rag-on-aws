@@ -209,8 +209,8 @@ text units are clustered by their vectors, each cluster is summarized
 clustered and summarized again, up to `indexing.summary_tree.max_levels`
 (5), and the tree is written into its own index for the `tree` strategy
 ([Retrieval](../concepts/retrieval.md#search-strategies--when-to-use-which)).
-Opt-in: on multi-hop questions it answered within the noise of `naive`
-([evidence](../concepts/defaults-and-evidence.md#raptor-summary-tree)).
+Opt-in: on multi-hop questions it answered better than `naive` but well
+below the graph strategies, in one repeat on one corpus ([evidence](../concepts/defaults-and-evidence.md#raptor-summary-tree)).
 
 ```yaml
 indexing:

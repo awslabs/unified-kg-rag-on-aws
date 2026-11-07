@@ -2418,9 +2418,10 @@ embedding space, each cluster is summarized by a model, the summaries are
 clustered and summarized again, and a query searches every level at once
 (RAPTOR's "collapsed tree"). It is opt-in: `raptor` is not in the default
 `indexing.methodologies`, so no default ingestion builds a tree, and
-`search.auto_routable_strategies` refuses `tree`, because on MuSiQue's
-multi-hop questions it answered within the noise of `naive`, well below
-`mix` and `local`, and slower than `naive`
+`search.auto_routable_strategies` refuses `tree`: on MuSiQue's multi-hop
+questions it answered better than `naive` (+8 points of `answer_contains`,
+one repeat on one corpus) but well below `mix` and `local`, and slower than
+`naive`
 ([Defaults and evidence](concepts/defaults-and-evidence.md#raptor-summary-tree)).
 The published evidence is mixed too:
 RAPTOR leads on specific QA in one unified benchmark (Zhou et al., arXiv

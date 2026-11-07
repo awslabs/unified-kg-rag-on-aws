@@ -100,7 +100,7 @@ Ingestion is a resumable 13-stage pipeline: parse, chunk, extract entities and r
 | GraphRAG (community summaries) | `local`, `global`, `drift`, `simple` | Thematic questions over the whole corpus (`global`, `drift`) and questions about specific entities (`local`) |
 | LightRAG (dual-level keywords) | `mix`, `hybrid`, `naive` | Keyword-driven lookups, and a fast chunk-only baseline (`naive`) |
 | HippoRAG 2 (Personalized PageRank) | `ppr` | Multi-hop questions at the lowest cost: one LLM call a query |
-| RAPTOR (summary tree, opt-in) | `tree` | A cheap index without graph extraction; on multi-hop questions it answered within the noise of `naive` ([evidence](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree)) |
+| RAPTOR (summary tree, opt-in) | `tree` | A cheap index without graph extraction; on multi-hop questions it answered better than `naive`, below the graph strategies ([evidence](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree)) |
 
 `iterative` wraps `mix` or `local` with bounded follow-up rounds on the bridge entities of a multi-hop question. `auto`, the default, lets an LLM router pick one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `iterative`). [Retrieval](./docs/concepts/retrieval.md#search-strategies--when-to-use-which) explains when to use which strategy, and the [Design Doc](./docs/design.md) the layers, algorithms and data model.
 
