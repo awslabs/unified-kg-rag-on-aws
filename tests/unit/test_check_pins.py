@@ -113,3 +113,15 @@ def test_the_workflow_runs_the_script_weekly_and_files_one_issue() -> None:
     runs = " ".join(step.get("run", "") for step in job["steps"])
     assert "scripts/check_pins.py --report" in runs
     assert "gh issue edit" in runs and "gh issue create" in runs
+
+
+def test_only_the_pinned_sources_are_fetched() -> None:
+    # The network lookups read three fixed URLs; anything else is refused
+    # before a request is built, so the fetch cannot be pointed elsewhere.
+    with pytest.raises(ValueError, match="not one of the pinned sources"):
+        check_pins._get_json("https://example.com/latest")
+    assert check_pins._ALLOWED_URLS == {
+        check_pins.UV_RELEASES,
+        check_pins.ADOT_RELEASES,
+        check_pins.CDK_CLI_LATEST,
+    }

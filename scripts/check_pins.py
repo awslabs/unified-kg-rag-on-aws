@@ -190,14 +190,20 @@ def _image_digest(ref: str) -> str:
     return str(digest)
 
 
+_ALLOWED_URLS = frozenset({UV_RELEASES, ADOT_RELEASES, CDK_CLI_LATEST})
+
+
 def _get_json(url: str) -> dict[str, object]:
+    if url not in _ALLOWED_URLS:
+        raise ValueError(f"refusing to fetch {url!r}: not one of the pinned sources")
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     token = os.environ.get("GITHUB_TOKEN")
     if token and url.startswith("https://api.github.com/"):
         request.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected - only the allowlisted https URLs
+    with urllib.request.urlopen(  # nosec B310 - only the allowlisted https URLs
         request, timeout=60
-    ) as response:  # nosec B310 - constant https URLs
+    ) as response:
         data: dict[str, object] = json.load(response)
     return data
 
