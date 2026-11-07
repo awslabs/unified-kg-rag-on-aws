@@ -1081,8 +1081,9 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   holds `graphrag` for `local` (as before profiles), the two are refused
   naming that switch, and a WARNING at load says so.
   `GraphRAGChain` reads the namespace's build record through the document
-  retriever (`aread_build_record`, cached per suffix for
-  `methodology_check.HELD_TTL_SECONDS`, read again before a refusal) and derives what it
+  retriever (`GraphRAGChain.aread_build_record`, cached per suffix for
+  `methodology_check.HELD_TTL_SECONDS`, read again before a refusal; a
+  failed read falls back to the config for that query only, uncached) and derives what it
   holds (`held_artifacts`, and the methodologies whose required artifacts
   they are, `methodologies_holding`; when there is no record or it predates
   profiles, every methodology whose required artifacts a run of the config

@@ -50,7 +50,6 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     LLMUsage,
     ModelRole,
-    RetrieverRole,
     SearchStrategy,
     model_id_value,
 )
@@ -289,9 +288,7 @@ class EvaluationManager:
         """
         if not isinstance(rag_chain, GraphRAGChain):
             return None
-        return TextUnitFileResolver(
-            config, lambda: rag_chain._get_retriever(RetrieverRole.DOCUMENT)
-        )
+        return TextUnitFileResolver(config, rag_chain.document_retriever)
 
     def _initialize_evaluators(self) -> None:
         """Build every enabled evaluator; fail fast unless ignore_errors.
@@ -1377,15 +1374,10 @@ class EvaluationManager:
                 for q in queries
             }
         )
-        try:
-            retriever = self.rag_chain._get_retriever(RetrieverRole.DOCUMENT)
-        except Exception as e:  # noqa: BLE001 - the manifest entry is optional
-            logger.warning("Could not read the index build records: %s", e)
-            return dict.fromkeys(suffixes)
         builds: dict[str, dict[str, Any] | None] = {}
         for suffix in suffixes:
             try:
-                builds[suffix] = await retriever.aread_build_record(suffix)
+                builds[suffix] = await self.rag_chain.aread_build_record(suffix)
             except Exception as e:  # noqa: BLE001 - the manifest entry is optional
                 logger.warning(
                     "Could not read the build record of suffix '%s': %s", suffix, e

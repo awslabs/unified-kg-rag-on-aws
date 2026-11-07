@@ -1185,6 +1185,24 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             self, strategy, suffix
         )
 
+    async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """The build record ingestion wrote on the index namespace of
+        ``suffix`` (``VectorIndexer.record_build``: what it built, under which
+        settings), read through the document retriever the answers come
+        from. ``None`` when it records none (built before build records, or a
+        backend without index metadata); a store error raises."""
+        return await self._get_retriever(RetrieverRole.DOCUMENT).aread_build_record(
+            suffix
+        )
+
+    def document_retriever(self) -> BaseGraphRAGRetriever:
+        """The retriever bound to the document role (an injected
+        ``retriever_builders`` backend included): the indexes the answers are
+        retrieved from, for a caller that reads them directly, as
+        ``run-eval`` resolves text-unit ids to their files. The chain owns
+        it: ``close``/``aclose`` release it."""
+        return self._get_retriever(RetrieverRole.DOCUMENT)
+
     def check_filter_keys(
         self, filters: dict[str, Any] | None, strategy: SearchStrategy
     ) -> None:

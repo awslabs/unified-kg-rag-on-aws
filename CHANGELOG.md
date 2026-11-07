@@ -549,8 +549,10 @@ From a `main` checkout (formats and keys no release had):
   makes no report call. On the CDK stack the `methodologies` context key sets it on both task definitions, so every
   state-machine run builds the profile (#603). The build record names the artifacts and methodologies a namespace
   holds; a query whose strategy reads what the namespace does not hold fails before any model call, naming what it
-  holds and what adding the methodology costs (for `raptor`, the tree alone) (#609); `run-eval` refuses one
-  before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only among the strategies it serves.
+  holds and what adding the methodology costs (for `raptor`, the tree alone, once `indexing.methodologies` names it)
+  (#609, #PR); `run-eval` refuses one before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only
+  among the strategies it serves. A failed read of the record serves that query by the config and is not cached
+  (#PR). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()` are public (#PR).
   Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
