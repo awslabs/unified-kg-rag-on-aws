@@ -1324,11 +1324,16 @@ async def test_eval_runner_compares_strategies_pairwise(
     if order == "sequential":
         assert chain.strategies == ["local"] * 9 + ["mix"] * 9 + ["auto"] * 9
     else:
-        # The warm-ups first, then each query by every run, the runs'
-        # order reversed on every other query (ABBA).
-        runs = ["local", "local", "mix", "mix", "auto", "auto"]
-        assert chain.strategies == ["local", "mix", "auto"] + [
-            s for j in range(4) for s in (runs if j % 2 == 0 else runs[::-1])
+        # The warm-ups first, then each query by every run: each repeat's
+        # runs in order, reversed on every other query (ABBA) and on every
+        # other repeat.
+        strategies = ["local", "mix", "auto"]
+        runs = strategies * 2
+        assert chain.strategies == strategies + [
+            s
+            for j in range(4)
+            for g in range(2)
+            for s in (strategies if (j + g) % 2 == 0 else strategies[::-1])
         ]
         questions = chain.questions[3:]
         assert questions == [q for q in sorted(set(questions)) for _ in runs]

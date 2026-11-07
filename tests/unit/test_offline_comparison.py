@@ -506,6 +506,7 @@ def _save(
     started: datetime,
     scoring: dict[str, Any] | None = None,
     answer_model: str = "m-a",
+    manifest: dict[str, Any] | None = None,
 ) -> None:
     """Write a run's files as EvaluationManager.save_results names them."""
     directory.mkdir(parents=True, exist_ok=True)
@@ -522,6 +523,7 @@ def _save(
             "answer_scoring": scoring or _SCORING,
             "dataset": {"content_sha256": "d" * 64},
             "models": {"answer_generation": answer_model},
+            **(manifest or {}),
         },
     )
     for kind, data in (
@@ -1423,3 +1425,28 @@ def test_runs_saved_before_script_aware_tokens_are_not_compared() -> None:
         )
         == []
     )
+
+
+def test_interleaved_repeats_reload_in_repeat_order(tmp_path: Path) -> None:
+    # The interleaved runs of an invocation share their start time; the
+    # files' stamps are random, so a rebuilt comparison paired repeat 1 of
+    # one strategy with repeat 2 of another. The manifest's repeat orders
+    # them.
+    saved = tmp_path / "runs"
+    for repeat, stamp in (
+        (1, "20260101_090000_ffffffff"),
+        (2, "20260101_090000_00000000"),
+    ):
+        _save(
+            saved,
+            "local",
+            _run({"q1": float(repeat)}, "local"),
+            stamp=stamp,
+            order=["local"],
+            started=_T0,
+            manifest={"run_id": "r1", "repeat": repeat},
+        )
+    runs = load_saved_runs([saved])
+    assert [r.manifest["repeat"] for r in runs] == [1, 2]
+    assert [r.results[0].query_id for r in runs] == ["q1", "q1"]
+    assert [r.reports[0].metrics[0].value for r in runs] == [1.0, 2.0]

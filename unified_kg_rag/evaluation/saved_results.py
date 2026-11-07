@@ -64,9 +64,17 @@ class SavedRun(BaseModel):
     def run(self) -> Run:
         return self.reports, self.results
 
-    def _sort_key(self) -> tuple[datetime | None, str]:
+    def _sort_key(self) -> tuple[datetime, int, str]:
+        # The interleaved runs of one invocation share their start time:
+        # the repeat the manifest records orders them (0: saved before it
+        # was recorded), then the file's stamp.
         start = self.summary.evaluation_start_time if self.summary else None
-        return (start or datetime.min, self.stamp)
+        repeat = (self.manifest or {}).get("repeat")
+        return (
+            start or datetime.min,
+            repeat if isinstance(repeat, int) else 0,
+            self.stamp,
+        )
 
 
 def result_files(paths: Iterable[Path]) -> list[Path]:

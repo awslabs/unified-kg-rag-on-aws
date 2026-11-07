@@ -349,3 +349,47 @@ class TestInFlightExtractions:
         )
         assert chain.model.calls == 2
         assert [type(r) for r in results].count(tuple) == 1
+
+
+class _OrderChain:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def ainvoke(self, inputs: dict[str, Any], config: Any = None) -> Any:
+        self.calls.append((inputs["query"], inputs["search_strategy"]))
+        return {"answer": "x", "sources": [], "metadata": {}}
+
+
+async def test_an_odd_dataset_is_balanced_over_two_repeats(eval_config) -> None:
+    # ABBA over pairs of queries left an odd-sized dataset's last query
+    # unbalanced (one strategy first on 2 of 3 queries). Reversed per repeat
+    # too, every query's positions balance with two repeats.
+    from unified_kg_rag.domain.models import EvaluationQuery
+    from unified_kg_rag.evaluation.evaluation_manager import (
+        AnswerArm,
+        EvaluationManager,
+    )
+
+    chain = _OrderChain()
+    eval_config.processing.max_concurrency = 1
+    manager = EvaluationManager(eval_config, rag_chain=chain)
+    queries = [EvaluationQuery(query_id=f"q{i}", question=f"Q{i}") for i in range(3)]
+    arms = [
+        AnswerArm(
+            manager=manager,
+            queries=[
+                q.model_copy(update={"metadata": {"search_strategy": strategy}})
+                for q in queries
+            ],
+            attributes={"eval.strategy": strategy, "eval.repeat": repeat},
+        )
+        for strategy in ("local", "mix")
+        for repeat in (1, 2)
+    ]
+    await EvaluationManager.answer_interleaved(arms, show_progress=False)
+    for i in range(3):
+        asked = [s for q, s in chain.calls if q == f"Q{i}"]
+        positions = {
+            s: sum(p for p, t in enumerate(asked) if t == s) for s in ("local", "mix")
+        }
+        assert positions["local"] == positions["mix"], (i, asked)

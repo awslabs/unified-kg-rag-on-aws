@@ -660,7 +660,9 @@ class EvaluationManager:
         well as the strategy (an A/A pair of one configuration differed by
         up to 6 s). Here every query is answered by every run before the
         next query starts, the runs' order alternating (ABBA: forward on
-        even queries, reversed on odd ones), in one batch under the first
+        even queries, reversed on odd ones, and the other way round for
+        every other repeat, ``attributes["eval.repeat"]``, so an even number
+        of repeats balances each query), in one batch under the first
         run's ``processing.max_concurrency``: each query's answers start
         close together and no run is systematically first. The queries of
         every arm pair by position (one dataset). Returns per arm its
@@ -713,12 +715,20 @@ class EvaluationManager:
             raise EvaluationException(
                 "the interleaved runs must answer the same number of queries"
             )
-        # (arm, query index) in answer order: every arm per query, forward on
-        # even queries and reversed on odd ones.
+        # (arm, query index) in answer order: every arm per query, the arms
+        # of each repeat (``eval.repeat``) forward on even queries and
+        # reversed on odd ones, and the other way round on every other
+        # repeat. ABBA over pairs of queries left an odd-sized dataset one
+        # query unbalanced; reversed per repeat too, an even number of
+        # repeats balances every query.
+        repeats: dict[Any, list[int]] = {}
+        for a, arm in enumerate(arms):
+            repeats.setdefault(arm.attributes.get("eval.repeat", 1), []).append(a)
         order = [
             (a, j)
             for j in range(count)
-            for a in (range(len(arms)) if j % 2 == 0 else reversed(range(len(arms))))
+            for g, members in enumerate(repeats.values())
+            for a in (members if (j + g) % 2 == 0 else reversed(members))
         ]
         # Per answer (keyed by its input, which every attempt receives), the
         # usage of the attempts that raised and the time from its first

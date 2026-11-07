@@ -1552,6 +1552,10 @@ class EvaluationRunner:
             # the comparison warns on latency deltas across runs not
             # answered interleaved together.
             summary.run_manifest["run_id"] = self.run_id
+            # Which repeat it is: the interleaved runs share a start time,
+            # so a comparison rebuilt from the files pairs repeat r with
+            # repeat r by this, not by the files' random stamps.
+            summary.run_manifest["repeat"] = repeat
             if context.run_order is not None:
                 summary.run_manifest["run_order"] = context.run_order
             if context.repeat_extractions is not None:
