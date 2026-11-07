@@ -7,6 +7,7 @@ from .lightrag_search import LightRAGSearchStrategy
 from .local_search import LocalSearchStrategy
 from .ppr_search import PPRSearchStrategy
 from .simple_search import SimpleSearchStrategy
+from .structured_search import StructuredSearchStrategy
 from .tree_search import TreeSearchStrategy
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "LocalSearchStrategy",
     "PPRSearchStrategy",
     "SimpleSearchStrategy",
+    "StructuredSearchStrategy",
     "TreeSearchStrategy",
 ]

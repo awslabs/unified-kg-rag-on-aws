@@ -77,7 +77,7 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 | `--mode` | `rag` | Set the execution mode: 'rag' for full generation, 'search' for retrieval only (a single --query only; --interactive always generates). |
 | `--conversation-id` | — | Name the conversation. Memory is kept in this process only: it carries over between --interactive turns, not between separate run-rag invocations. |
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
-| `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`, `iterative`, `ppr`, `tree`. |
+| `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`, `iterative`, `ppr`, `tree`, `structured`. |
 | `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
 | `--top-k` | `10` | Set the maximum number of search results (times --retrieval-multiplier; default 10). |
 | `--retrieval-multiplier` | `1` | Widen the search N times: each index and graph expansion fetches up to top-k x N candidates and the fused list keeps up to top-k x N for the reranker and the context budget, at the cost of larger searches (default 1). |

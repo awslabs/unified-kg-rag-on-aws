@@ -1465,6 +1465,15 @@ never from a request field. To isolate tenants in the infrastructure:
   not read needs its own cluster (one deployment or `env_name` per tenant).
 - Bedrock and the guardrail are shared and hold no tenant data.
 
+The `structured` strategy needs no other grant: its graph queries are
+reads (`neptune-db:ReadDataViaQuery`), compiled by code, scoped to the
+query's suffix label and checked before they are sent
+([guide](./guides/structured-queries.md#safety)). Each carries a
+server-side `evaluationTimeout` (`search.structured.store_timeout_seconds`,
+10 s, never past `search.store_timeout_seconds`); Neptune also applies its
+cluster's `neptune_query_timeout` (120 s by default), and with the lab-mode
+`StrictTimeoutValidation` refuses a per-query timeout above it.
+
 ## Observability
 
 Tracing is set up in [Observability](./guides/observability.md) (enable

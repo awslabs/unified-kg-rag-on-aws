@@ -617,6 +617,23 @@ From a `main` checkout (formats and keys no release had):
   `allowed_hosts`) mount the same server in a host's application; neither changes the chain given. Under
   `processing.ignore_errors` the error answer names its error in `metadata.error_type`. Guide:
   [MCP server](docs/guides/mcp.md).
+- Structured graph queries, opt-in and unmeasured (#PR): the `structured` search strategy answers counts, rankings,
+  lists, paths between two named entities and seed-entity properties from a query the graph store runs. One planner
+  call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`; `search.output_ceilings.graph_query`)
+  writes the question as a closed JSON plan over the graph's schema profile (declared types plus a sampled profile of
+  what the suffix holds), never query text; code validates it (one repair call with the refusal), links the names it
+  mentions through the hybrid entity search, compiles it to Gremlin bytecode (Neptune, Gremlin Server) or
+  parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled form against a
+  read-step allowlist and runs it read-only under a server-side time limit. The result table, the entities and paths
+  it names (with seed provenance) and their passages are fused (buckets `structured_query_result`,
+  `structured_entities`, `structured_relationships`, `structured_text_units`, `structured_text_hits`); counts are
+  exact unless a document filter or seed-property condition makes code check up to `max_scan_rows` matches ("at
+  least N" past it). Without a structured answer the query runs `search.structured.fallback_strategy` (`local`) and
+  records why in `metadata["structured"]`; `mode: augment` runs it beside the graph query. Served by every
+  namespace holding the graph, on every graph store; `auto` routes to it only once it is in
+  `search.auto_routable_strategies`. `GraphQueryPort` is exported for custom graph backends, and
+  `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md §6.6,
+  [guide](docs/guides/structured-queries.md)).
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
   after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
   mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index

@@ -128,6 +128,7 @@ from unified_kg_rag.domain.prompts.retrieval import (
     CITATION_INSTRUCTIONS,
     DECLINE_INSTRUCTIONS,
     HEDGE_INSTRUCTIONS,
+    QUERY_RESULT_INSTRUCTIONS,
     describe_routable_strategies,
 )
 from unified_kg_rag.domain.retrieval.abstention import (
@@ -268,6 +269,41 @@ def _model_texts(iterative: dict[str, Any]) -> list[tuple[str, str]]:
                 items = item if isinstance(item, list) else [item]
                 found.extend((field_name, v) for v in items if isinstance(v, str) and v)
     return found
+
+
+# The search metadata of the structured strategy, whose plan (model output:
+# its names, values, entities and keywords) and plan description are
+# returned with the search results and written into its query result.
+_STRUCTURED_KEY = "structured"
+_STRUCTURED_MODEL_TEXT = ("plan", "plan_description")
+
+
+def _string_leaves(value: Any) -> list[str]:
+    """Every non-empty string inside ``value`` (dicts and lists walked)."""
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, dict):
+        return [s for item in value.values() for s in _string_leaves(item)]
+    if isinstance(value, list | tuple):
+        return [s for item in value for s in _string_leaves(item)]
+    return []
+
+
+def _replace_leaves(value: Any, screened: dict[str, str | None]) -> Any:
+    """``value`` with each string replaced by its screened text (a refused
+    one emptied, or left out of its list)."""
+    if isinstance(value, str):
+        text = screened.get(value, value)
+        return "" if text is None else text
+    if isinstance(value, dict):
+        return {k: _replace_leaves(v, screened) for k, v in value.items()}
+    if isinstance(value, list):
+        return [
+            _replace_leaves(v, screened)
+            for v in value
+            if not (isinstance(v, str) and screened.get(v, v) is None)
+        ]
+    return value
 
 
 def _replace_model_texts(
@@ -1541,8 +1577,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     def _answer_instructions(self, state: dict[str, Any]) -> str:
         """The text appended to the answer's system prompt: the citation
-        instructions of a numbered context (``search.citations``), then the
-        ``search.abstention`` text ("" with both off)."""
+        instructions of a numbered context (``search.citations``), the graph
+        query result's instruction when the context holds one (the
+        structured strategy), then the ``search.abstention`` text ("" with
+        all off)."""
         parts = []
         optimized: OptimizedContext | None = state.get("optimized_context")
         if optimized is not None and any(
@@ -1551,11 +1589,24 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             parts.append(CITATION_INSTRUCTIONS)
         if self._declines_insufficient(state):
             return "".join([*parts, DECLINE_INSTRUCTIONS])
+        if self._holds_query_result(state):
+            parts.append(QUERY_RESULT_INSTRUCTIONS)
         if self.config.search.abstention.mode == "mark":
             parts.append(ABSTENTION_INSTRUCTIONS)
         if self._context_insufficient(state):
             parts.append(HEDGE_INSTRUCTIONS)
         return "".join(parts)
+
+    @staticmethod
+    def _holds_query_result(state: dict[str, Any]) -> bool:
+        """Whether the answer's context holds a graph query result."""
+        optimized: OptimizedContext | None = state.get("optimized_context")
+        if optimized is not None:
+            return any(
+                s.section_type is SectionType.QUERY_RESULT for s in optimized.sections
+            )
+        results = getattr(state.get("search_results"), "results", None) or []
+        return any(r.retriever_type == SectionType.QUERY_RESULT.value for r in results)
 
     def _reads_marker(self, state: dict[str, Any]) -> bool:
         """Whether this answer is checked for the [NO_ANSWER] token: the
@@ -2380,6 +2431,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         questions, ``_ITERATIVE_MODEL_TEXT``) screened as a synthesized
         result is: masked, or left out when refused. One check reads them
         all; only when it intervenes is each checked on its own."""
+        search_results = await self._screen_structured_metadata(search_results, records)
         iterative = search_results.metadata.get(_ITERATIVE_KEY)
         if not isinstance(iterative, dict):
             return search_results
@@ -2406,6 +2458,74 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     **search_results.metadata,
                     _ITERATIVE_KEY: _replace_model_texts(iterative, screened),
                 }
+            }
+        )
+
+    async def _screen_structured_metadata(
+        self, search_results: SearchResult, records: list[dict[str, Any]]
+    ) -> SearchResult:
+        """``search_results`` with the structured strategy's model-written
+        plan text screened as a synthesized result is, in its metadata and
+        in the query result that renders it: masked, or removed when
+        refused. One check reads them all; only when it intervenes is each
+        checked on its own."""
+        structured = search_results.metadata.get(_STRUCTURED_KEY)
+        if not isinstance(structured, dict):
+            return search_results
+        texts = list(
+            dict.fromkeys(
+                text
+                for key in _STRUCTURED_MODEL_TEXT
+                for text in _string_leaves(structured.get(key))
+            )
+        )
+        if not texts:
+            return search_results
+        assert self.guard is not None
+        verdict = await self.guard.acheck("\n".join(texts), GuardSource.OUTPUT)
+        if not verdict.intervened:
+            return search_results
+        screened: dict[str, str | None] = {}
+        for text in texts:
+            one = await self.guard.acheck(text, GuardSource.OUTPUT)
+            if one.intervened:
+                records.append(_guard_record(GuardSource.OUTPUT, one))
+            screened[text] = (
+                None
+                if one.intervened and one.action is GuardAction.BLOCKED
+                else (one.text if one.intervened else text)
+            )
+        changed = {t: r for t, r in screened.items() if r != t}
+        results = []
+        for result in search_results.results:
+            if result.retriever_type != SectionType.QUERY_RESULT.value:
+                results.append(result)
+                continue
+            content = result.content
+            # Longest first, so a text inside a longer one is not cut first.
+            for text in sorted(changed, key=len, reverse=True):
+                content = content.replace(text, changed[text] or "[removed]")
+            results.append(
+                result.model_copy(
+                    update={
+                        "content": content,
+                        "metadata": _replace_leaves(result.metadata, screened),
+                    }
+                )
+            )
+        return search_results.model_copy(
+            update={
+                "results": results,
+                "metadata": {
+                    **search_results.metadata,
+                    _STRUCTURED_KEY: {
+                        **structured,
+                        **{
+                            key: _replace_leaves(structured.get(key), screened)
+                            for key in _STRUCTURED_MODEL_TEXT
+                        },
+                    },
+                },
             }
         )
 

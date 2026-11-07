@@ -76,6 +76,9 @@ class SearchStrategy(str, Enum):
     # RAPTOR's summary tree (the raptor methodology): text units and every
     # level of summaries, fused (search.tree_search).
     TREE = "tree"
+    # A graph query the model plans as JSON and code compiles, checks and
+    # runs read-only (search.structured; opt-in, not routable by default).
+    STRUCTURED = "structured"
 
 
 class SearchType(str, Enum):

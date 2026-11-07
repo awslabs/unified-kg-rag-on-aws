@@ -5,7 +5,8 @@
 A query picks a strategy of one of four methodologies, GraphRAG
 (community-summary), LightRAG (dual-level keyword), HippoRAG 2
 (Personalized PageRank) or RAPTOR (summary tree, opt-in), or the
-`iterative` wrapper, or lets `auto` (the default) route it. Every strategy runs in
+`iterative` wrapper or the opt-in `structured` graph query, or lets `auto`
+(the default) route it. Every strategy runs in
 one chain over the same indexes: query processing, retrieval, fusion and
 rerank, then the context budget and the answer; every answer returns the
 sources the answer model actually saw. This page explains the strategies and
@@ -79,6 +80,12 @@ significant difference ([evidence](./defaults-and-evidence.md#lightrag-chunk-pic
 | Strategy | Use when | How it works |
 |---|---|---|
 | `tree` | A cheap index without graph extraction (`[raptor]`), or a comparison with RAPTOR; on multi-hop questions it answered better than `naive` (+8 points of `answer_contains`, one repeat), well below the graph strategies ([evidence](./defaults-and-evidence.md#raptor-summary-tree)) | Needs a namespace built with `raptor` in `indexing.methodologies`: after indexing, the text units are clustered by their vectors and each cluster summarized (`models.roles.summary_tree`), level by level, in the index language. A query fuses by RRF a BM25 + kNN search of the text units, one of every level of summaries (RAPTOR's collapsed tree) and, where the namespace also holds the entities index, the summaries and passages citing the entities the raw query finds (no model call); the cross-encoder reranks passages and summaries together, at most `max_nodes_per_level` (3) summaries of a level are kept, and each brings `expand_children` (2) of its own passages, so the answer cites original text. A summary is reported as a source with its lineage (`text_unit_ids`, `child_ids`). Costs a `naive` query plus a few searches and the summaries' context, and is slower. Selected explicitly only: `auto` does not route to it (one repeat on one corpus, where the graph strategies won by more), except on a `raptor`-only namespace, where `auto` falls back to it ([design](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)). |
+
+**Structured graph queries (opt-in, unmeasured):**
+
+| Strategy | Use when | How it works |
+|---|---|---|
+| `structured` | Counting, ranking or listing entities by type, relationship and property; paths between two named entities; properties of seed entities | One planner call (`models.roles.graph_query`) writes the question as a JSON plan over the graph's types, relationships and properties (never query text); code validates it against the graph's profile (one repair call with the refusal), links the names it mentions through the hybrid entity search, compiles it to Gremlin or SQL scoped to the query's suffix, checks the compiled form and runs it read-only. The result table, the entities and paths it names and the passages they cite (fused with a hybrid passage search among them) reach the answer, which uses the result as computed. Counts are exact unless a document filter or seed-property condition makes code check up to `max_scan_rows` matches ("at least N" past the cap). Without a structured answer the query runs `search.structured.fallback_strategy` (`local`) and records why; `mode: augment` runs it beside the graph query. Served wherever the graph is (`graphrag`, `lightrag`, `hipporag`); on every graph store. Not routed by `auto` until added to `search.auto_routable_strategies` ([guide](../guides/structured-queries.md), [design](../design.md#66-structured-graph-queries-structured-opt-in)). |
 
 ## Hybrid scoring and rerank
 

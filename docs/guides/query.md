@@ -24,6 +24,10 @@ run-rag --query "How does entity X relate to Y?" \
 # Retrieval only, JSON output
 run-rag --query "..." --mode search --output-format json --config-path config.yaml
 
+# A graph query for counts, rankings and paths (opt-in)
+run-rag --query "How many vendors supply buyers in Norland?" \
+  --search-strategy structured --config-path config.yaml
+
 # HippoRAG 2 PageRank (opt-in; auto never routes to it)
 run-rag --query "Where was the founder of the company that acquired X born?" \
   --search-strategy ppr --config-path config.yaml
@@ -333,6 +337,24 @@ search:
 
 How it works and how it differs from RAPTOR's own code:
 [design](../design.md#65-raptor-summary-tree-raptor-tree-opt-in).
+
+## Structured graph queries (opt-in)
+
+`--search-strategy structured` answers counts, rankings, lists, paths
+between two named entities and seed-entity properties from a query the
+graph store runs: a model writes the question as a JSON plan (never query
+text), code checks it and runs it read-only within the query's suffix, and
+the answer reads the result table, the entities it names and their
+passages. Without a structured answer the query runs
+`search.structured.fallback_strategy` (`local`); `metadata["structured"]`
+says what happened. Opt-in and unmeasured: `auto` routes to it only once it
+is in `search.auto_routable_strategies`. The guide:
+[Structured graph queries](./structured-queries.md).
+
+```bash
+run-rag --query "Which vendor supplies the most buyers?" \
+  --search-strategy structured --config-path config.yaml
+```
 
 ## Interactive mode & conversation memory
 

@@ -1264,3 +1264,117 @@ def reference_execute(
         for w in walks
     ]
     return aggregate_bindings(plan, bindings, graph.vertices, paths=paths)
+
+
+# --- the answer as context ------------------------------------------------------------
+
+
+def answer_vertex_ids(plan: ValidatedPlan, answer: QueryAnswer) -> list[str]:
+    """The vertices an answer names, in its order: each row's, each group
+    of vertices', each path's."""
+    ids: dict[str, None] = {}
+    for row in answer.rows:
+        ids.update(dict.fromkeys(row[v] for v in plan.returns.vars if v in row))
+    if plan.returns.kind == "group_count" and plan.returns.group_prop is None:
+        ids.update(dict.fromkeys(str(g.key) for g in answer.groups))
+    for path in answer.paths:
+        ids.update(dict.fromkeys(path.vertex_ids))
+    return list(ids)
+
+
+def _vertex_label(vertex_id: str, vertices: Mapping[str, VertexMap]) -> str:
+    vertex = vertices.get(vertex_id) or {}
+    name = next(iter(vertex.get("name") or ()), vertex_id)
+    kind = next(iter(vertex.get("type") or ()), None)
+    return f"{name} ({kind})" if kind else str(name)
+
+
+def _shown_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    text = str(value)
+    return text if len(text) <= 200 else text[:200] + "…"
+
+
+def render_answer(
+    plan: ValidatedPlan,
+    answer: QueryAnswer,
+    vertices: Mapping[str, VertexMap],
+    *,
+    linked: Mapping[str, Sequence[str]] | None = None,
+    max_lines: int = 50,
+) -> str:
+    """The query result's context section, written by code: the plan, the
+    answer (a count, groups, rows, a value, yes/no or paths, at most
+    ``max_lines`` of them) and whether it is complete."""
+    r = plan.returns
+    lines = [f"Graph query: {describe_plan(plan, linked)}"]
+    scope = (
+        "computed over the whole graph"
+        if not answer.truncated
+        else "TRUNCATED: computed over the first matches only"
+    )
+    lines.append(f"Result ({scope}):")
+    if r.kind in ("count", "count_distinct"):
+        count = answer.count or 0
+        lines.append(f"{'at least ' if answer.truncated else ''}{count}")
+    elif r.kind == "exists":
+        if answer.exists:
+            lines.append("yes")
+        else:
+            lines.append(
+                "no match among the matches checked" if answer.truncated else "no"
+            )
+    elif r.kind == "aggregate":
+        assert r.aggregate_prop is not None
+        value = "none" if answer.value is None else _shown_value(answer.value)
+        lines.append(
+            f"{r.aggregate_fn} of {r.aggregate_var}.{r.aggregate_prop.name}: "
+            f"{value} (over {answer.value_count} values)"
+        )
+    elif r.kind == "group_count":
+        key_name = r.group_prop.name if r.group_prop else r.group_var
+        counted = f"distinct {r.vars[0]}" if len(r.vars) == 1 else "matches"
+        lines.append(f"{key_name} | {counted}")
+        for group in answer.groups[:max_lines]:
+            key = (
+                _vertex_label(str(group.key), vertices)
+                if r.group_prop is None
+                else _shown_value(group.key)
+            )
+            bound = "at least " if answer.truncated else ""
+            lines.append(f"{key} | {bound}{group.count}")
+    elif r.kind == "path":
+        for index, path in enumerate(answer.paths[:max_lines], start=1):
+            text = _vertex_label(path.vertex_ids[0], vertices)
+            for step, edge in enumerate(path.edges):
+                here, there = path.vertex_ids[step], path.vertex_ids[step + 1]
+                arrow = (
+                    f" -[{edge.type}]-> "
+                    if edge.source_id == here
+                    else f" <-[{edge.type}]- "
+                )
+                text += arrow + _vertex_label(there, vertices)
+            lines.append(f"{index}. {text}")
+    else:
+        for index, row in enumerate(answer.rows[:max_lines], start=1):
+            parts = []
+            for var in r.vars:
+                vertex = vertices.get(row[var]) or {}
+                shown = [
+                    f"{prop.name}: "
+                    + ", ".join(_shown_value(v) for v in property_values(vertex, prop))
+                    for prop in r.properties
+                    if property_values(vertex, prop)
+                ]
+                text = f"{var} = {_vertex_label(row[var], vertices)}"
+                if shown:
+                    text += "; " + "; ".join(shown)
+                parts.append(text)
+            lines.append(f"{index}. " + ", ".join(parts))
+    listed = max(len(answer.rows), len(answer.groups), len(answer.paths))
+    if listed > max_lines:
+        lines.append(f"... and {listed - max_lines} more")
+    return "\n".join(lines)

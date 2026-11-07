@@ -164,10 +164,11 @@ unified_kg_rag/
 │  ├─ observability/    #   OpenTelemetry tracer, exporters, LangChain callback
 │  ├─ storage/          #   Neptune/OpenSearch/SQLite-graph indexers (write-side port implementations)
 │  ├─ retrievers/       #   Neptune/OpenSearch/SQLite-graph retrievers
+│  ├─ graph_query/      #   structured-query compilers (Gremlin, SQL) and their static checkers
 │  ├─ doc_status/       #   DynamoDB/SQLite document-status registries (DocStatusPort)
 │  ├─ guardrail/        #   Bedrock ApplyGuardrail (ContentGuardPort)
 │  ├─ search_strategies/#   simple/local/global/drift + lightrag(mix/hybrid/naive) + ppr
-│  │                    #   + tree + iterative (wraps mix or local)
+│  │                    #   + tree + structured + iterative (wraps mix or local)
 │  ├─ retrieval/        #   abstract retriever/strategy bases, strategy_registry, hybrid scorer,
 │  │                    #   token/memory managers, ppr_ranking (PageRank over the stores)
 │  ├─ ingestion/        #   LLM/IO coupled: chunker, *_extractor, loader, parser,
@@ -232,6 +233,7 @@ unified_kg_rag/
 | `GraphIndexer` (write) | `ports/indexer.py` | `adapters/storage/neptune_indexer.py`; local `sqlite_graph_indexer.py` | One contract for full builds and deltas (`upsert_*` / `delete_by_id`) |
 | `VectorIndexer` (write) | `ports/indexer.py` | `adapters/storage/opensearch_indexer.py` (on OpenSearch, or on the embedded engine through `SearchEngineClient`) | Same |
 | `BaseGraphRAGRetriever` (read) | `adapters/retrieval/base.py` | `adapters/retrievers/{neptune,opensearch,sqlite_graph}_retriever.py` | Retrieval adapters |
+| `GraphQueryPort` (read) | `ports/graph_query.py` (`Protocol`) | `adapters/retrievers/{neptune,sqlite_graph}_retriever.py`; `FakeGraphQueryRetriever` for tests | Structured queries over one suffix's graph (§6.6) |
 | Model factories, token counter | `ports/model_factory.py` (`ModelFactoryPort`, `TokenCounterPort`, the `*ModelInfo` records) | `adapters/aws/bedrock.py`, `bedrock_models.py`, `token_counter.py`; local `adapters/local/{models,embeddings,rerank,token_counter}.py` | Carried by one `Providers` bundle (§15) |
 
 The read-side bases (`BaseGraphRAGRetriever`, `BaseSearchStrategy`) and
@@ -2910,8 +2912,8 @@ the model-written plan text the output guardrail screens).
    `search.output_ceilings.graph_query`), prompt `GraphQueryPlanPrompt`
    (`custom_prompts.graph_query_system`/`_human`) with the schema text
    (capped at `max_schema_tokens` by the configured token counter, least
-   frequent entries cut first), the grammar, eight neutral few-shot plans
-   and the question in `<question>` tags marked as data. String values and
+   frequent entries cut first), the grammar, nine neutral few-shot plans
+   (one of them unanswerable) and the question in `<question>` tags marked as data. String values and
    mentions are written as the question writes them, in the query language
    (`query_language`). The plan also lists the question's entity names and
    themes (`entities`, `keywords`), which the fallback strategy reads in
@@ -3074,14 +3076,16 @@ strategy. `mode: augment` runs the fallback beside the graph query once the
 plan is in, and fuses both: the query result first, then the fallback's
 sections; it costs the fallback's calls on every query. The filter keys
 are those of the indexes `structured` reads (entities, text units,
-relationships), which every fallback reads too, and its reserved keys are
+relationships) and of the graph, which `local` and `mix` read too (with
+`naive` or `tree` as the fallback, a key only the entities index or the
+graph declares is not applied by the fallback), and its reserved keys are
 the fallback's.
 
 **Metadata.** `RAGOutput.metadata["structured"]`: `status` (`answered`,
 `fallback`, `failed`), `reason`, `mode`, `fallback_strategy`, `plan` (the
 validated plan), `plan_description`, `operation`, `row_count`,
 `truncated`, `exact`, `linked` (mention to entity ids), `repairs`,
-`backend`, `elapsed_ms` per step and `usage` (the planner's calls); the
+`backend`, `schema_cut`, `elapsed_ms` per step and `usage` (the planner's calls); the
 compiled query only as a digest (`compiled_digest`), its text at DEBUG.
 Spans `kg_rag.graph_query.plan` and `kg_rag.graph_query.execute` carry the
 status, operation, row count, truncation and backend, never the question.
@@ -4750,6 +4754,7 @@ dispatch edit. The ports, their default adapters and the local ones (the
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` (`LocalTokenCounter`: estimate or tiktoken; follows the LLM kind) | `Providers(token_counter_factory=...)` |
 | `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`; the incremental lookups (`GraphIndexer.find_ids_citing` / `find_relationship_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records` / `prune_text_unit_communities`) default to "cannot tell" (`None`: nothing is found through them, the merge reads every name) and to deleting nothing; the extraction-record store (`VectorIndexer.read_extraction_records` / `write_extraction_records` / `stored_extraction_record_keys`, by record key) defaults to keeping none (`{}`: every text unit is extracted, nothing is stored), and `stored_extraction_record_keys` to the keys `read_extraction_records` returns; `VectorIndexer.check_index_creation(suffix, rebuild=)` (called once per run before the first model call, for the indices the run will create: all of them on a `rebuild` (full build or reset), the missing ones otherwise; raises `StoreRequestRejectedError` for settings the store refuses) defaults to accepting them; `VectorIndexer.read_vector_copies` defaults to `{}` (every item an incremental run touches is written in full); `VectorIndexer.describe_indices` / `scan_items` (`run-describe`, §5.8) default to `None`, a store that cannot be described or exported; `GraphIndexer.read_entities` / `read_relationships` default to `[]`, so without overrides the delta merge overwrites the stored descriptions, lineage (`text_unit_ids`) and weights; `GraphIndexer.begin_rebuild` / `end_rebuild` (in-place full build, §5.2) default to `False` (the full build clears each label first); `initialize()` (no-op by default) / `clear()` return `None` and raise a typed store error (`StoreConnectionError`, `StoreConfigurationError`, ...) on failure: a returned `False` is ignored; an `in_process = True` attribute (on the indexer and on the registry) says the store is embedded in this process, and only when all three say so does a stopped run release its lease at once (absent: remote) | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server; `sqlite`: `OpenSearchIndexer` on `SQLiteSearchEngine` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)` (a new instance per call; its caller closes it), `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` (borrowed: never closed by the pipeline) or `IndexingManager(vector_indexer=..., graph_indexer=...)` (closed by `IndexingManager.close()`; §8.2) |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve`; a document retriever must honour `SearchQuery.exclude` (leave out what it matches before the page is cut: the filtered walk's edge pages rely on it); `aindex_limits(prefix, suffix)` (the hits one search returns, the values one `terms` clause takes) defaults to the configured `index_settings`, so a backend whose live limits can be smaller overrides it; the strategies size every list they send by it (fetches by id in batches of `IndexLimits.id_batch_size`, walk frontiers and exclusions by `max_terms_count`, at most `search.max_concurrency` batches at once), so `aretrieve` may cut a search to its limits and need not batch; `filter_fields()` declares the filter keys the retriever applies (`None`, the default, accepts every key) and `filter_fields_for(prefixes)` those of the indexes a strategy filters (`BaseSearchStrategy.filtered_index_prefixes`), by default `filter_fields()`; `GraphRAGChain` rejects a caller key none of a strategy's `filtered_retrievers` declares, checking a custom retriever against the union of its keys | `OpenSearchRetriever` / `NeptuneRetriever` (`sqlite`: `OpenSearchRetriever` on `SQLiteSearchEngine` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
+| `GraphQueryPort` (`ports/graph_query.py`, `Protocol`, on the GRAPH retriever) | `adescribe(suffix, *, sample_vertices, edges_per_vertex, max_examples)` returning a `GraphProfile` (`domain.retrieval.graph_query.build_profile` of a sample) and `aexecute(request)` answering a `GraphQueryRequest`'s operation (`count`, `group`, `tuples`, `paths`) with the §6.6 semantics: the label derived from `request.suffix` by the retriever, the walk's vertices distinct, results over distinct `id` tuples, at most `limit + 1` rows, `truncated` past it, the `hydrate` properties of every vertex named; read-only, checked before it is sent, bounded by `timeout_seconds`; a store refusal or time limit raises `GraphQueryExecutionError`. Only the `structured` strategy calls it; without it that strategy fails at construction (`ConfigurationError`). Pass `tests/integration/test_graph_query_conformance.py` | `NeptuneRetriever` (Neptune, Gremlin Server), `SQLiteGraphRetriever` | the GRAPH retriever builder |
 | `ContentGuardPort` (`ports/guardrail.py`, `Protocol`) | `async acheck(text, source, *, grounding=None)` returning a `GuardVerdict` (`none` / `masked` / `blocked`, the text to continue with, and `grounding`, a `GroundingCheck`, when a `GroundingContext` was given); raises when it cannot decide. `grounding` is passed only while `aws.bedrock.guardrail.contextual_grounding.enabled` is set | `BedrockGuardrail` (built when `aws.bedrock.guardrail.identifier` is set) | `GraphRAGChain(guard=...)` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_namespace` / `diff` (which must take `extraction_fingerprint` and fill `DocumentDelta.quarantined_unchanged`), `record_fits`, the write lease (`try_acquire_lease` / `lease_holder` / `release_lease`) a scope's last extraction settings (`get_extraction_settings` / `put_extraction_settings`) and the schema annotations a namespace's stores hold (`get_annotation_digest` / `put_annotation_digest`), all called directly; a record's namespace is the `<namespace>#` prefix of its `doc_id` (`doc_id_namespace`), and `diff` with a scope reads only that namespace. A subclass inherits `get_many` / `put_many` / `record_fits` defaults (one record per call, no size limit) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); pass `tests/integration/test_doc_status_conformance.py` |
 

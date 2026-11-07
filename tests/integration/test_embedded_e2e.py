@@ -112,6 +112,15 @@ def _respond(system: str, human: str) -> str:
         )
     if "You control the retrieval" in system:
         return json.dumps({"sufficient": True, "known_facts": [ANSWER]})
+    if "You translate a question into a query plan" in system:
+        # The structured strategy's planner: the entity the question names.
+        return json.dumps(
+            {
+                "nodes": [{"var": "x", "mention": "Depot"}],
+                "returns": {"kind": "rows"},
+                "entities": ["Depot"],
+            }
+        )
     if "precision relevance evaluator" in system:
         return "9"
     if "search convergence analyst" in system:
@@ -285,9 +294,17 @@ def _ask_every_strategy(
         assert usage["by_role"].get("rerank", {}).get("llm_calls", 0) == 0
         assert server.answers > answers_before, strategy
         assert out.search_results.results, strategy
-        # Cited: the sources are stored artifacts.
-        cited = {source["source"] for source in out.sources}
+        # Cited: the sources are stored artifacts (and the structured
+        # strategy's query result, computed from them).
+        cited = {
+            source["source"]
+            for source in out.sources
+            if source["metadata"].get("section_type") != "query_result"
+        }
         assert cited and cited <= stored_ids, strategy
+        if strategy is SearchStrategy.STRUCTURED:
+            assert out.metadata["structured"]["status"] == "answered"
+            assert out.metadata["structured"]["linked"]["x"]
         # AUTO is routed by the model's answer ("local").
         expected = "local" if strategy is SearchStrategy.AUTO else strategy.value
         assert out.metadata["search_strategy"] == expected

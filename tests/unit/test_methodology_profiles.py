@@ -890,7 +890,7 @@ async def test_a_query_reads_what_the_namespace_holds_before_refusing() -> None:
     assert "namespace 'tenant-a' does not hold" in message
     assert (
         "holds lightrag, hipporag; its strategies: simple, mix, hybrid, naive, "
-        "iterative, ppr, or auto" in message
+        "iterative, ppr, structured, or auto" in message
     )
     # Cached per suffix; a refusal read the record again first.
     assert records.reads == 3
