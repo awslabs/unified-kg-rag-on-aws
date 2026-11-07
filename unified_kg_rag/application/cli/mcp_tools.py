@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from unified_kg_rag.application.retrieval import graph_lookup
 from unified_kg_rag.application.retrieval.rag_chain import (
+    ConversationTurn,
     GraphRAGChain,
     RAGInput,
     RAGOutput,
@@ -66,6 +67,10 @@ _T = TypeVar("_T")
 MAX_TEXT_UNIT_IDS = 20
 # Filter keys one call may give.
 MAX_FILTER_KEYS = 20
+# A graph query result (``query_result``) is its table: a record keeps it
+# whole up to this many characters (or ``mcp.max_text_chars``, if more), as
+# the console shows it.
+MAX_TABLE_CHARS = 6000
 # Of a record's stored fields, the scalars it reports in ``attributes``.
 _ATTRIBUTE_KEYS = (
     "rank",
@@ -106,19 +111,24 @@ class SupportingContent(BaseModel):
 
     rank: int = Field(description="1 for the best-ranked record")
     kind: str = Field(
-        description="text, entity, relationship, community, claim or summary"
+        description="text, entity, relationship, community, claim, summary or "
+        "query_result (a structured graph query's result table)"
     )
     chunk_id: str | None = Field(
         default=None, description="The chunk (text unit) id, for a text record"
     )
     name: str | None = Field(
         default=None,
-        description="The entity's or report's name, a relationship as 'A -> B'",
+        description="The entity's or report's name, a relationship as 'A -> B', "
+        "a query_result's plan description",
     )
     type: str | None = Field(
         default=None, description="The entity's or relationship's type"
     )
-    text: str = Field(description="The content, cut to mcp.max_text_chars")
+    text: str = Field(
+        description="The content, cut to mcp.max_text_chars (a query_result's "
+        f"table to {MAX_TABLE_CHARS}, or mcp.max_text_chars if more)"
+    )
     text_truncated: bool = Field(
         default=False, description="The text was cut (here or by the context budget)"
     )
@@ -142,7 +152,8 @@ class SupportingContent(BaseModel):
     entities: list[EntityRef] = Field(
         default_factory=list,
         description="The entity itself, a relationship's or claim's endpoints, "
-        "or the entities of this response that cite this chunk",
+        "the entities a query_result returns, or the entities of this response "
+        "that cite this chunk",
     )
     provenance: dict[str, Any] | None = Field(
         default=None,
@@ -346,9 +357,26 @@ def _record(
 ) -> SupportingContent:
     """One record from a result's content and stored metadata (only the
     whitelisted fields; never a file path or an embedding)."""
-    text, cut = _cut(content or "", max_text_chars)
+    text, cut = _cut(
+        content or "",
+        (
+            max(max_text_chars, MAX_TABLE_CHARS)
+            if kind == "query_result"
+            else max_text_chars
+        ),
+    )
     unit_ids = _ids(metadata.get("text_unit_ids"))
-    document_ids = _ids(metadata.get("document_ids") or metadata.get("document_id"))
+    attributes_held = metadata.get("attributes")
+    # A text unit stores its document id in its attributes.
+    document_ids = _ids(
+        metadata.get("document_ids")
+        or metadata.get("document_id")
+        or (
+            attributes_held.get("document_id")
+            if isinstance(attributes_held, Mapping)
+            else None
+        )
+    )
     attributes = {
         key: metadata[key]
         for key in _ATTRIBUTE_KEYS
@@ -389,6 +417,9 @@ def _record(
         ]
     elif kind == "community":
         name = _str(metadata.get("name"))
+    elif kind == "query_result":
+        name = _str(metadata.get("plan_description")) or _str(metadata.get("operation"))
+        entities = [EntityRef(id=i) for i in _ids(metadata.get("entity_ids"))]
     if kind == "text" and chunk_id is None:
         chunk_id = item_id
     file_name = graph_lookup.file_name(dict(metadata)) if kind == "text" else None
@@ -530,6 +561,42 @@ class KnowledgeGraphTools:
             raise ToolArgumentError(f"{name} must be between {low} and {high}.")
         return value
 
+    @property
+    def max_history_turns(self) -> int:
+        """The turns a ``kg_answer`` history may hold: the chain's follow-up
+        rewrite reads no more (``memory.max_messages_per_conversation``)."""
+        return self.chain.config.memory.max_messages_per_conversation
+
+    def _history(
+        self, history: list[ConversationTurn] | list[dict[str, Any]] | None
+    ) -> list[ConversationTurn] | None:
+        """``history`` as the chain's turns, refused past
+        ``max_history_turns`` turns or a turn past ``mcp.max_response_chars``
+        (the longest answer this server returns)."""
+        if not history:
+            return None
+        if len(history) > self.max_history_turns:
+            raise ToolArgumentError(
+                f"history holds at most {self.max_history_turns} turns."
+            )
+        turns: list[ConversationTurn] = []
+        for turn in history:
+            try:
+                parsed = ConversationTurn.model_validate(
+                    turn.model_dump() if isinstance(turn, BaseModel) else turn
+                )
+            except ValueError:
+                raise ToolArgumentError(
+                    "Each history turn is {role: user or assistant, content}."
+                ) from None
+            if len(parsed.content) > self.settings.max_response_chars:
+                raise ToolArgumentError(
+                    "A history turn is longer than "
+                    f"{self.settings.max_response_chars} characters."
+                )
+            turns.append(parsed)
+        return turns
+
     def _text(self, name: str, value: str | None) -> str:
         text = (value or "").strip()
         if not text:
@@ -661,6 +728,7 @@ class KnowledgeGraphTools:
         top_k: int | None,
         filters: dict[str, Any] | None,
         namespace: str | None,
+        history: list[ConversationTurn] | None = None,
     ) -> RAGInput:
         try:
             kind = SearchType(search_type)
@@ -675,8 +743,10 @@ class KnowledgeGraphTools:
             search_type=kind,
             top_k=self._bounded("top_k", top_k, 1, self.settings.max_top_k, 10),
             filters=self._filters(filters),
-            # Stateless: no caller reaches another caller's history.
+            # Stateless: no caller reaches another caller's history; a
+            # caller passes its own conversation as history.
             use_memory=False,
+            history=history,
         )
 
     def _from_result(self, rank: int, result: RetrievalResult) -> SupportingContent:
@@ -784,13 +854,22 @@ class KnowledgeGraphTools:
         top_k: int | None = None,
         filters: dict[str, Any] | None = None,
         namespace: str | None = None,
+        history: list[ConversationTurn] | list[dict[str, Any]] | None = None,
     ) -> AnswerToolResult:
         """``kg_answer``: the chain's answer to ``query`` with the sources
-        the answer model saw."""
+        the answer model saw. ``history`` is the caller's conversation so
+        far, oldest turn first (``RAGInput.history``): a follow-up such as
+        "and its price?" is rewritten from it into a standalone question."""
 
         async def run() -> AnswerToolResult:
             rag_input = self._rag_input(
-                query, strategy, search_type, top_k, filters, namespace
+                query,
+                strategy,
+                search_type,
+                top_k,
+                filters,
+                namespace,
+                self._history(history),
             )
             output = await self.chain.ainvoke(rag_input)
             self._checked(output)
@@ -819,7 +898,12 @@ class KnowledgeGraphTools:
 
         return await self._call(
             "kg_answer",
-            {"query": query, "strategy": strategy, "filters": filters},
+            {
+                "query": query,
+                "strategy": strategy,
+                "filters": filters,
+                "history_turns": len(history or []),
+            },
             run,
         )
 

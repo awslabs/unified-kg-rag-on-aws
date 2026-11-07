@@ -46,7 +46,7 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | 도구 | 하는 일 | 모델 호출 |
 |---|---|---|
 | `kg_search` | 검색만 합니다. 질의(어느 언어든)에 대한 근거 콘텐츠를 순위대로 돌려주며, `strategy`, `search_type`, `top_k`, `filters`는 `run-rag --mode search`와 같습니다 | 전략의 질의 처리, 질의 임베딩, 재순위화 |
-| `kg_answer` | RAG 답변 전체, 답변 모델이 본 출처, `usage`, 답변 거절 필드(`abstained`, `abstention_reason`) | 위의 호출과 답변 생성 |
+| `kg_answer` | RAG 답변 전체, 답변 모델이 본 출처, `usage`, 답변 거절 필드(`abstained`, `abstention_reason`). 후속 질문이면 지금까지의 대화를 `history`로 넘깁니다(아래 참고) | 위의 호출, `history`가 있으면 후속 질문 재작성, 답변 생성 |
 | `kg_get_entity` | `id`, `iri`, `name`으로 엔터티를 찾습니다(이름은 먼저 정확히 일치하는 것을, 없으면 가장 비슷한 이름을 찾고 `match: search`로 표시) | 없음 |
 | `kg_neighbors` | 한 엔터티에서 `max_hops` 안에 있는 엔터티와 그 사이의 관계 | 없음 |
 | `kg_describe_schema` | 네임스페이스가 가진 방법론과 전략, 마지막 빌드, 추출 스키마의 타입과 패턴, 필터 키, 서버 한도 | 없음 |
@@ -63,12 +63,12 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 
 | 필드 | 내용 |
 |---|---|
-| `rank`, `kind`, `score` | 순위(1이 가장 높음), 항목 종류(`text`, `entity`, `relationship`, `community`, `claim`, `summary`), 관련도 점수 |
-| `chunk_id`, `text`, `text_truncated` | 텍스트 레코드의 청크(텍스트 유닛) id, `mcp.max_text_chars`로 자른 텍스트 |
-| `source_id`, `name`, `type` | 저장된 항목의 id, 엔터티나 리포트의 이름(관계는 `A -> B`), 엔터티나 관계의 타입 |
+| `rank`, `kind`, `score` | 순위(1이 가장 높음), 항목 종류(`text`, `entity`, `relationship`, `community`, `claim`, `summary`, [구조화 그래프 질의](./structured-queries.ko.md)의 결과 표는 `query_result`), 관련도 점수 |
+| `chunk_id`, `text`, `text_truncated` | 텍스트 레코드의 청크(텍스트 유닛) id, `mcp.max_text_chars`로 자른 텍스트(`query_result`의 표는 콘솔처럼 6000자까지, `mcp.max_text_chars`가 더 크면 그만큼) |
+| `source_id`, `name`, `type` | 저장된 항목의 id, 엔터티나 리포트의 이름(관계는 `A -> B`, `query_result`는 계획 설명), 엔터티나 관계의 타입 |
 | `document_id`, `document_name`, `documents` | 원본 문서. 저장된 경우 id, 파일 이름(경로는 절대 아님). 그래프 항목은 추출된 청크들의 파일 이름 |
 | `text_unit_ids` | 그래프 항목이 추출된 청크(처음 20개) |
-| `entities` | 참조(`id`, `name`, `type`, `iri`). 엔터티 자신, 관계나 클레임의 양 끝, 또는 같은 응답에서 이 청크를 인용하는 엔터티 |
+| `entities` | 참조(`id`, `name`, `type`, `iri`). 엔터티 자신, 관계나 클레임의 양 끝, `query_result`가 돌려준 엔터티(id), 또는 같은 응답에서 이 청크를 인용하는 엔터티 |
 | `provenance`, `synthesized` | 시드 그래프 출처(`kind`, `seed_graphs`, `iri`). 글로벌 검색의 핵심 요점처럼 모델이 쓴 텍스트면 `true` |
 | `attributes` | 종류별 스칼라 값: `rank`, `weight`, `in_schema`, `type_iri`, `predicate_iri`, `hops` |
 | `citation`, `cited` | `kg_answer`만: 답변 컨텍스트가 레코드에 붙인 `[n]` 표식과 답변이 그것을 인용했는지([인용](./query.ko.md#인용)). 모델이 쓴 레코드와 `kg_search`에서는 `null` |
@@ -102,7 +102,11 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 모든 호출은 `search.query_timeout_seconds`(기본 180초) 안에서 실행되고, 넘으면 시간
 초과 메시지로 실패합니다. 호출 슬롯을 기다린 시간도 여기에 포함됩니다. 응답의 레코드는
 `mcp.max_response_chars`로 제한되지만 MCP 메시지는 결과를 두 번(구조화된 콘텐츠와 그 JSON
-텍스트) 담으므로 실제 메시지는 그 2~4배까지 될 수 있습니다. 도구는 대화 메모리를 유지하지 않습니다. 모든 키는
+텍스트) 담으므로 실제 메시지는 그 2~4배까지 될 수 있습니다. 도구는 대화 메모리를 유지하지 않습니다. 후속
+질문이면 `kg_answer`에 지금까지의 대화를 `history`로 넘깁니다. `{role: user | assistant, content}`
+턴의 목록을 오래된 것부터 넘기며(최대 `memory.max_messages_per_conversation`턴, 턴마다
+`mcp.max_response_chars`자까지), 후속 질문 재작성이 이를 `RAGInput.history`로 읽습니다
+([호출자가 넘기는 대화 이력](./query.ko.md#호출자가-넘기는-대화-이력)). 질의처럼 입력 가드레일이 검사합니다. 모든 키는
 [설정 레퍼런스](../reference/configuration.md#mcp)(영문)에 있습니다.
 
 ## HTTP와 원격 배포

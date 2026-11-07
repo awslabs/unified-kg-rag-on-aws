@@ -625,7 +625,10 @@ From a `main` checkout (formats and keys no release had):
   `kg_neighbors`, `kg_describe_schema`), each annotated read-only, over stdio or stateless streamable HTTP (loopback
   by default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
-  seed-graph provenance). The namespace is fixed at start (`--suffix`, else `index_value`) unless
+  seed-graph provenance; a text record's document id as its text unit stores it; a structured query's
+  `query_result` with its table up to 6000 characters and the entities it returned). `kg_answer` takes the caller's
+  conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the server keeps
+  none). The namespace is fixed at start (`--suffix`, else `index_value`) unless
   `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the `mcp.max_*` bounds limit what a call
   may ask and costs (`mcp.strategies` binds the chain's new `allowed_strategies`: `auto` routes, and falls back, only
   within it, and is refused before any model call when the namespace serves none of it); every call runs under
@@ -665,6 +668,36 @@ From a `main` checkout (formats and keys no release had):
   scan cap, each graph gold answer computed by the reference executor from its plan (`metadata.gold_plan`). `run-eval`
   keeps each answer's `structured` record and reports `structured_statistics` (status, fallback reasons, valid-plan,
   repair, truncation and exact rates), per arm under a comparison
+  call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`; `search.output_ceilings.graph_query`)
+  writes the question as a closed JSON plan over the graph's schema profile (declared types plus a sampled profile of
+  what the suffix holds), never query text; code validates it (one repair call with the refusal), links the names it
+  mentions through the hybrid entity search (a name without a name match needs a lexical hit, so an absent
+  entity links nothing and falls back), compiles it to Gremlin bytecode (Neptune, Gremlin Server) or
+  parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled form against a
+  read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer, and runs it
+  read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and top rows
+  are exact. The result table, the entities and paths
+  it names (with seed provenance) and their passages are fused (buckets `structured_query_result`,
+  `structured_entities`, `structured_relationships`, `structured_text_units`, `structured_text_hits`), the table
+  numbered `[n]` like any evidence section and its citation naming the documents of its evidence rows; counts are
+  exact unless a document filter or seed-property condition makes code check up to `max_scan_rows` matches ("at
+  least N" past it), and a count or an aggregate cites its first matches as entities. Filter keys are checked
+  against the fallback that would run too. Without a structured answer the query runs `search.structured.fallback_strategy` (`local`) and
+  records why in `metadata["structured"]`; `mode: augment` runs it beside the graph query. Served by every
+  namespace holding the graph, on every graph store; `auto` routes to it only once it is in
+  `search.auto_routable_strategies`. With the output guardrail on, the model-written plan text is screened wherever
+  it is returned: the search and answer metadata, the result table and the query-result source the console, MCP and
+  `run-rag` JSON show. `GraphQueryPort` is exported for custom graph backends, and
+  `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md §6.6,
+  [guide](docs/guides/structured-queries.md)).
+- `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed, procurement
+  world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`, `MAKES`), a
+  document per vendor and buyer (part of those facts, and a chief executive only text states), the schema and seed
+  config, and `eval_data.json` with count, ranking, two-hop, shared-buyer, yes/no, numeric and text-only control
+  templates (`category`), absent-entity negatives, Korean and Japanese variants and a `large` size past the scan cap,
+  each graph gold answer computed by the reference executor from its plan
+  (`metadata.gold_plan`). `run-eval` keeps each answer's `structured` record and reports `structured_statistics`
+  (status, fallback reasons, valid-plan, repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)).
 - A local web console, opt-in (the `console` extra, `run-console`; #631): ask with a strategy picker (and how `auto`
   chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources they

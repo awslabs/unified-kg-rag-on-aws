@@ -649,6 +649,25 @@ async def test_an_answer_citing_a_key_point_names_its_reports_documents(
     assert "synthesized_key_points_1" not in [s["source"] for s in out.sources]
 
 
+async def test_a_source_names_the_document_its_text_unit_stores(
+    config: Config,
+) -> None:
+    # Regression: a text unit stores its document id in its attributes
+    # (attributes.document_id); the reported source named none.
+    passage = RetrievalResult(
+        content="倉庫は部品を保管する。",
+        score=0.9,
+        source="tu-1",
+        retriever_type="text",
+        metadata={"id": "tu-1", "attributes": {"document_id": "doc-ja"}},
+    )
+    chain, _, _ = _chain(config, "倉庫が保管する［１］。", hits=[passage])
+    out = await chain.ainvoke(_query())
+    (source,) = out.sources
+    assert source["metadata"]["document_ids"] == ["doc-ja"]
+    assert out.citations[0].document_id == "doc-ja"
+
+
 async def test_a_filtered_query_never_names_a_document_its_filters_exclude(
     config: Config,
 ) -> None:

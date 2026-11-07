@@ -309,6 +309,16 @@ def _replace_leaves(value: Any, screened: dict[str, str | None]) -> Any:
     return value
 
 
+def _replace_texts(content: str, screened: dict[str, str | None]) -> str:
+    """``content`` with each screened text that changed replaced by its
+    screened form (a refused one by ``[removed]``), longest first, so a text
+    inside a longer one is not cut first."""
+    changed = {t: r for t, r in screened.items() if r != t}
+    for text in sorted(changed, key=len, reverse=True):
+        content = content.replace(text, changed[text] or "[removed]")
+    return content
+
+
 def _replace_model_texts(
     iterative: dict[str, Any], screened: dict[str, str | None]
 ) -> dict[str, Any]:
@@ -1915,7 +1925,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         evidence gets no ``provenance`` key.
         """
         metadata = strip_embedding_fields(result.metadata or {})
-        raw_doc_ids = metadata.get("document_ids") or metadata.get("document_id")
+        attributes = metadata.get("attributes")
+        # A text unit stores its document id in its attributes.
+        raw_doc_ids = (
+            metadata.get("document_ids")
+            or metadata.get("document_id")
+            or (attributes.get("document_id") if isinstance(attributes, dict) else None)
+        )
         document_ids = (
             [str(d) for d in raw_doc_ids]
             if isinstance(raw_doc_ids, list | tuple | set)
@@ -2262,14 +2278,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         )
                     elif screened:
                         self._mark_citations(output)
+                plan_texts: dict[str, str | None] = {}
                 output.search_results = await self._screen_synthesized(
-                    output.search_results, guard_records
+                    output.search_results, guard_records, plan_texts=plan_texts
                 )
-                if isinstance(output, RAGOutput) and _ITERATIVE_KEY in output.metadata:
-                    # The answer's copy of the search metadata, screened too.
-                    output.metadata[_ITERATIVE_KEY] = (
-                        output.search_results.metadata.get(_ITERATIVE_KEY)
-                    )
+                if isinstance(output, RAGOutput):
+                    self._refresh_screened_copies(output, plan_texts)
                 if guard_records:
                     output.metadata["guardrail"] = guard_records
                 if isinstance(output, RAGOutput):
@@ -2303,6 +2317,37 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         finally:
             _GROUNDING_CAPTURE.reset(capture_token)
             reset_contextvars(**tokens)
+
+    @staticmethod
+    def _refresh_screened_copies(
+        output: RAGOutput, plan_texts: dict[str, str | None]
+    ) -> None:
+        """Give ``output`` the screened model text of its search results
+        where it holds copies made before the screening: its metadata's
+        ``iterative`` and ``structured`` (``_format_output_step`` copies the
+        search metadata) and the reported query-result sources, whose text
+        and metadata render the structured plan (``plan_texts``: each plan
+        text and what the guardrail made of it)."""
+        for key in (_ITERATIVE_KEY, _STRUCTURED_KEY):
+            if key in output.metadata:
+                output.metadata[key] = output.search_results.metadata.get(key)
+        if not any(text != screened for text, screened in plan_texts.items()):
+            return
+        output.sources = [
+            (
+                {
+                    **source,
+                    "content": _replace_texts(
+                        str(source.get("content") or ""), plan_texts
+                    ),
+                    "metadata": _replace_leaves(source.get("metadata"), plan_texts),
+                }
+                if (source.get("metadata") or {}).get("section_type")
+                == SectionType.QUERY_RESULT.value
+                else source
+            )
+            for source in output.sources
+        ]
 
     @staticmethod
     def _mark_citations(output: RAGOutput) -> None:
@@ -2469,7 +2514,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return verdict
 
     async def _screen_synthesized(
-        self, search_results: SearchResult, records: list[dict[str, Any]]
+        self,
+        search_results: SearchResult,
+        records: list[dict[str, Any]],
+        *,
+        plan_texts: dict[str, str | None] | None = None,
     ) -> SearchResult:
         """``search_results`` with each model-written result (``synthesized``:
         DRIFT's intermediate answers, global search's key points or summary)
@@ -2478,10 +2527,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         They are returned with the search results (``ainvoke`` and
         ``asearch``), so with ``check_output`` they must not reach the caller
         unscreened. Retrieved results are corpus text and pass as they are.
+        ``plan_texts`` receives the structured plan's texts and what the
+        guardrail made of each (``_screen_structured_metadata``).
         """
         if not self._screen_outputs:
             return search_results
-        search_results = await self._screen_model_metadata(search_results, records)
+        search_results = await self._screen_model_metadata(
+            search_results, records, plan_texts=plan_texts
+        )
         if not any(self._is_synthesized(r.metadata) for r in search_results.results):
             return search_results
         assert self.guard is not None
@@ -2502,14 +2555,20 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
     async def _screen_model_metadata(
-        self, search_results: SearchResult, records: list[dict[str, Any]]
+        self,
+        search_results: SearchResult,
+        records: list[dict[str, Any]],
+        *,
+        plan_texts: dict[str, str | None] | None = None,
     ) -> SearchResult:
         """``search_results`` with the model-written text of its metadata
         (``iterative``'s follow-up queries, bridge entities and step
         questions, ``_ITERATIVE_MODEL_TEXT``) screened as a synthesized
         result is: masked, or left out when refused. One check reads them
         all; only when it intervenes is each checked on its own."""
-        search_results = await self._screen_structured_metadata(search_results, records)
+        search_results = await self._screen_structured_metadata(
+            search_results, records, plan_texts=plan_texts
+        )
         iterative = search_results.metadata.get(_ITERATIVE_KEY)
         if not isinstance(iterative, dict):
             return search_results
@@ -2540,13 +2599,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
     async def _screen_structured_metadata(
-        self, search_results: SearchResult, records: list[dict[str, Any]]
+        self,
+        search_results: SearchResult,
+        records: list[dict[str, Any]],
+        *,
+        plan_texts: dict[str, str | None] | None = None,
     ) -> SearchResult:
         """``search_results`` with the structured strategy's model-written
         plan text screened as a synthesized result is, in its metadata and
         in the query result that renders it: masked, or removed when
         refused. One check reads them all; only when it intervenes is each
-        checked on its own."""
+        checked on its own, and ``plan_texts`` receives each text's
+        screened form (``None``: refused)."""
         structured = search_results.metadata.get(_STRUCTURED_KEY)
         if not isinstance(structured, dict):
             return search_results
@@ -2573,20 +2637,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 if one.intervened and one.action is GuardAction.BLOCKED
                 else (one.text if one.intervened else text)
             )
-        changed = {t: r for t, r in screened.items() if r != t}
+        if plan_texts is not None:
+            plan_texts.update(screened)
         results = []
         for result in search_results.results:
             if result.retriever_type != SectionType.QUERY_RESULT.value:
                 results.append(result)
                 continue
-            content = result.content
-            # Longest first, so a text inside a longer one is not cut first.
-            for text in sorted(changed, key=len, reverse=True):
-                content = content.replace(text, changed[text] or "[removed]")
             results.append(
                 result.model_copy(
                     update={
-                        "content": content,
+                        "content": _replace_texts(result.content, screened),
                         "metadata": _replace_leaves(result.metadata, screened),
                     }
                 )

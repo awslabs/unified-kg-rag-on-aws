@@ -3085,7 +3085,10 @@ internals. Layers, each independent of the next:
    chains and local stores have no such layer, which is why 1 to 5 exist.
 7. *Output*: the output guardrail screens the model-written plan text
    returned in `metadata.structured` and in the query-result section (as it
-   screens `iterative`'s follow-up queries); errors name the plan field,
+   screens `iterative`'s follow-up queries), and the chain gives the same
+   screened text to the copies made before the screening: the answer's
+   `metadata.structured` and `metadata.iterative` and the query-result
+   source's text and metadata (`_refresh_screened_copies`); errors name the plan field,
    not store internals.
 
 Why a plan cannot leave its suffix: the label is no plan value; every
@@ -3472,7 +3475,7 @@ writes memory; no tool takes an index name, an endpoint or a file path.
 | Tool | Runs | Model calls | Returns |
 |---|---|---|---|
 | `kg_search` | `GraphRAGChain.asearch` | those of the strategy's query processing (the `auto` router, query entities or keywords), the query embedding, the rerank | ranked supporting-content records |
-| `kg_answer` | `GraphRAGChain.ainvoke` | the above plus the answer | the answer, its sources as records, `usage`, `abstained`/`abstention_reason`, `blocked`, the strategy run |
+| `kg_answer` | `GraphRAGChain.ainvoke` (with the caller's `history`, if given) | the above plus the follow-up rewrite (with a `history`) and the answer | the answer, its sources as records, `usage`, `abstained`/`abstention_reason`, `blocked`, the strategy run |
 | `kg_get_entity` | the entities index by `id`, `iri` or exact `name.keyword`; without an exact match, a lexical search of `name` | none | up to `limit` entities, how they matched |
 | `kg_neighbors` | the graph walk from one entity (`max_hops`, the configured per-hop budget) and its incident relationships | none | the neighbours (hop distance, path) and the relationships with their text units and documents |
 | `kg_describe_schema` | the namespace's build record and held artifacts, the resolved extraction schema | none (a schema source may read its file or S3 object once) | held methodologies, the strategies they serve, the build, entity and relationship types and patterns, the filter keys |
@@ -3490,9 +3493,19 @@ come from, resolved in one fetch by id), `text_unit_ids`, `entities` (each
 for a relationship, and for a chunk the entities of the same response that
 cite it), `provenance` (a seed graph's `kind`, `seed_graphs` and `iri`, as
 in `RAGOutput.sources`) and `synthesized` (model-written, such as global
-search's key points; `kg_answer` never cites one, as the chain does not).
-A `kg_answer` record also carries its `citation` (the `[n]` marker of §7.1)
-and `cited` (whether the answer uses it).
+search's key points: a `kg_search` record only, since the chain cites a
+key point by its reports' lineage but never reports it as a source). A
+`query_result` record (the structured strategy's table, §6.6) keeps its
+table up to 6000 characters, as the console shows it, names its plan
+description and lists the entities it returned. A text record's
+`document_id` is read where the text unit stores it
+(`attributes.document_id`), as `RAGOutput.sources` reads it. A
+`kg_answer` record also carries its `citation` (the `[n]` marker of §7.1)
+and `cited` (whether the answer uses it). `kg_answer` takes the caller's
+conversation as an optional `history` (at most
+`memory.max_messages_per_conversation` turns of up to
+`mcp.max_response_chars` characters), passed as `RAGInput.history` (§7.2):
+the server stays stateless.
 
 **Layer placement.** The server is a driving adapter in the entry-point
 layer, next to the other CLIs (§2.1): `application/cli/mcp_tools.py` holds

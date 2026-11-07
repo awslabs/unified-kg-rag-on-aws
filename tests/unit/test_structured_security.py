@@ -296,3 +296,85 @@ async def test_the_model_written_plan_is_screened_as_an_output() -> None:
     assert screened.results[0].metadata["plan"]["entities"] == []
     assert records
     await chain.aclose()
+
+
+class _PlannedResult:
+    """A strategy returning the structured strategy's result for a plan."""
+
+    def __init__(self, result: SearchResult) -> None:
+        self.result = result
+
+    async def asearch(self, query: SearchQuery, config: Any = None) -> SearchResult:
+        return self.result.model_copy(deep=True)
+
+
+@pytest.mark.parametrize(
+    ("secret", "masked"),
+    [
+        ("Secret Depot", "{NAME} Depot"),
+        ("Secret 창고", "{NAME} 창고"),
+        ("Secret 倉庫", "{NAME} 倉庫"),
+    ],
+    ids=["en", "ko", "ja"],
+)
+async def test_no_copy_of_the_plan_reaches_the_caller_unscreened(
+    secret: str, masked: str
+) -> None:
+    # Regression: the plan text was screened in the search results only;
+    # the answer's metadata["structured"] (copied before the screening) and
+    # the query-result source (its excerpt and plan_description, shown by
+    # the console, MCP kg_answer and run-rag's JSON) kept the masked name
+    # and the refused entity.
+    config = Config()
+    config.aws.bedrock.guardrail.identifier = "test-guardrail"
+    config.providers.rerank.kind = "none"
+    chain = GraphRAGChain(
+        config=config,
+        model_factory=ScriptedLLMFactory(lambda _s, _h: "The depot holds 3 items [1]."),
+        retriever_builders={
+            "document": lambda: _Documents(),
+            "graph": lambda: _Documents(),
+        },
+        guard=_MaskingGuard(),  # type: ignore[arg-type]
+    )
+    plan = {"nodes": [{"var": "x", "mention": secret}], "entities": ["Forbidden Co"]}
+    description = f'Match (x, named "{secret}" (1 linked)).'
+    table = RetrievalResult(
+        content=f"Graph query: {description}\nRows: 3",
+        score=1.0,
+        source="graph-query",
+        retriever_type="query_result",
+        metadata={"plan": plan, "plan_description": description, "row_count": 3},
+    )
+    planned = SearchResult(
+        query=SearchQuery(query="q"),
+        results=[table],
+        total_results=1,
+        search_strategy="structured_search",
+        processing_time=0.0,
+        metadata={
+            "structured": {
+                "status": "answered",
+                "plan": plan,
+                "plan_description": description,
+            }
+        },
+    )
+    chain._get_strategy_instance = lambda strategy: _PlannedResult(planned)  # type: ignore[method-assign]
+    out = await chain.ainvoke(
+        {
+            "query": "How many items does the depot hold?",
+            "search_strategy": SearchStrategy.SIMPLE,
+            "enable_query_processing": False,
+        }
+    )
+    dumped = out.model_dump_json()
+    assert secret not in dumped and json.dumps(secret)[1:-1] not in dumped
+    assert "Forbidden" not in dumped
+    assert out.metadata["structured"]["plan"]["nodes"][0]["mention"] == masked
+    (source,) = out.sources
+    assert masked in source["content"]
+    assert masked in source["metadata"]["plan_description"]
+    assert source["metadata"]["plan"]["entities"] == []
+    assert source["metadata"]["row_count"] == 3
+    await chain.aclose()
