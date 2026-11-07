@@ -938,6 +938,8 @@ From a `main` checkout (formats and keys no release had):
 Bugs present in 0.2.3.
 
 Queries and retrieval.
+- A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
+  went negative past the 100th document (#PR).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
   top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal
   hybrid weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530).

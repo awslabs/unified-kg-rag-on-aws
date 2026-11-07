@@ -112,7 +112,14 @@ class SearchQuery(BaseModel):
     )
     index_prefixes: str | list[str] | None = Field(
         default=None,
-        description="Target OpenSearch index aliases (text_units, entities, community_reports)",
+        description=(
+            "The indexes to search, by their configured prefix "
+            "(indexing.opensearch.*_index_prefix: text units, entities, "
+            "relationships, community reports, claims...), not their names: "
+            "the retriever names each for suffix (store_name, "
+            "'<prefix>-<suffix>'), on OpenSearch and the embedded store "
+            "alike. None: every index the retriever reads."
+        ),
     )
     suffix: str | None = Field(
         default=None, description="Suffix for multi-tenant or versioned indices"
