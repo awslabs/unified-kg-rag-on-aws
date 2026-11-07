@@ -297,13 +297,18 @@ def test_cancelling_an_async_batch_cancels_its_items() -> None:
     # whole dataset in the background.
     calls = Counter()
 
-    async def work(item: dict) -> int:
-        calls["started"] += 1
-        await asyncio.sleep(0.5)
-        calls["finished"] += 1
-        return item["i"]
-
     async def main() -> None:
+        both_started = asyncio.Event()
+        never = asyncio.Event()
+
+        async def work(item: dict) -> int:
+            calls["started"] += 1
+            if calls["started"] == 2:
+                both_started.set()
+            await never.wait()  # only a cancellation ends it
+            calls["finished"] += 1
+            return item["i"]
+
         processor = BatchProcessor(max_concurrency=2)
         task = asyncio.create_task(
             processor.aexecute_with_fallback(
@@ -314,11 +319,12 @@ def test_cancelling_an_async_batch_cancels_its_items() -> None:
                 show_progress=False,
             )
         )
-        await asyncio.sleep(0.1)
+        # Cancelled once both slots run an item, not after a guessed delay.
+        await asyncio.wait_for(both_started.wait(), timeout=5)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        await asyncio.sleep(0.8)
+        # A surviving item would still be waiting: none is.
         assert len(asyncio.all_tasks()) == 1  # only main
 
     asyncio.run(main())

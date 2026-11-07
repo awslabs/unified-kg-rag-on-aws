@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -77,6 +78,43 @@ async def test_evaluator_without_either_scoring_method_fails_loudly(
     )
     with pytest.raises(NotImplementedError):
         await evaluator.aevaluate_single(query, result, "")
+
+
+async def test_cancelling_an_evaluator_batch_cancels_its_queries(
+    config: Config,
+) -> None:
+    # Before, the per-query judge tasks (awaited through as_completed) kept
+    # running after the evaluation was cancelled.
+    started: list[str] = []
+    finished: list[str] = []
+    running = asyncio.Event()
+    never = asyncio.Event()
+
+    class _Slow(BaseGraphRAGEvaluator):
+        async def aevaluate_single(self, query, result, ground_truth, **kwargs):
+            started.append(query.query_id)
+            running.set()
+            await never.wait()  # only a cancellation ends it
+            finished.append(query.query_id)
+
+    evaluator = _Slow(config, EvaluatorType.RAGAS, show_progress=False)
+    queries = [EvaluationQuery(query_id=f"q{i}", question="?") for i in range(4)]
+    results = [
+        EvaluationResult(
+            query_id=q.query_id, question="?", generated_answer="a", ground_truth=""
+        )
+        for q in queries
+    ]
+    task = asyncio.create_task(
+        evaluator.aevaluate_batch(queries, results, [""] * len(queries))
+    )
+    # Cancelled once a query is being scored (not vacuously before any).
+    await asyncio.wait_for(running.wait(), timeout=5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert started and finished == []
+    assert asyncio.all_tasks() == {asyncio.current_task()}
 
 
 def test_evaluator_subclass_without_a_scoring_method_fails_at_definition() -> None:

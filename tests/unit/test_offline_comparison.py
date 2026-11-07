@@ -362,6 +362,54 @@ class TestGates:
         )
         assert gate_breaches(enough, gates) == []
 
+    @staticmethod
+    def _per_strategy_baselines(**baseline_mix: Any) -> dict[str, Any]:
+        """A --baseline-results comparison: mix pairs with baseline:mix, not
+        with the first baseline (``baseline``), which is clean."""
+        delta = {"pairs": 20, "mean_delta": 0.0, "ci_low": -0.1, "ci_high": 0.1}
+        clean = {"answers_without_usage": 0, "failed_answers": 0}
+        return {
+            "baseline": "baseline:local",
+            "baselines": {"local": "baseline:local", "mix": "baseline:mix"},
+            "strategies": {
+                "baseline:local": {"failed_metrics": {}},
+                "baseline:mix": {
+                    "failed_metrics": baseline_mix.pop("failed_metrics", {})
+                },
+                "mix": {"failed_metrics": {}},
+            },
+            "deltas_vs_baseline": {"mix": {"answer_match/token_f1": dict(delta)}},
+            "cost": {
+                "strategies": {
+                    "baseline:local": dict(clean),
+                    "baseline:mix": {**clean, **baseline_mix},
+                    "mix": dict(clean),
+                },
+                "deltas_vs_baseline": {"mix": {"usage/total_tokens": dict(delta)}},
+            },
+        }
+
+    def test_each_check_reads_the_strategys_own_baseline(self) -> None:
+        # Each check read the strategy's baseline from "baselines", falling
+        # back to the first one; reading the first one always passed here.
+        tokens = [parse_gate("usage/total_tokens:mean_delta>1000")]
+        f1 = [parse_gate("answer_match/token_f1:ci_high<-0.5")]
+        unmeasured = self._per_strategy_baselines(answers_without_usage=3)
+        (breach,) = gate_breaches(unmeasured, tokens)
+        assert "answers without a value of 'usage/total_tokens' (baseline:mix 3)" in (
+            breach
+        )
+        failed = self._per_strategy_baselines(failed_answers=2)
+        (breach,) = gate_breaches(failed, tokens)
+        assert "failed answers differ (baseline:mix 2, mix 0)" in breach
+        scored = self._per_strategy_baselines(
+            failed_metrics={"answer_match/token_f1": 2}
+        )
+        (breach,) = gate_breaches(scored, f1)
+        assert "different numbers of answers (baseline:mix 2, mix 0)" in breach
+        clean = self._per_strategy_baselines()
+        assert gate_breaches(clean, [*tokens, *f1]) == []
+
 
 def _judged(
     scores: dict[str, float | None],
