@@ -1094,11 +1094,10 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         if settings.supporting_chunks:
             quota[SectionType.TEXT.value] = settings.supporting_chunks
         if FALLBACK_BUCKET in buckets:
-            # The fallback's own sections keep their own quotas' width.
-            for type_, (multiple, floor) in self.TYPE_QUOTA.items():
-                quota[type_.value] = max(
-                    quota.get(type_.value, 0), max(int(multiple * query.top_k), floor)
-                )
+            # The fallback's own sections keep their own quotas' width
+            # (search.local_search.type_quota).
+            for type_, slots in self._per_type_quota(query.top_k).items():
+                quota[type_] = max(quota.get(type_, 0), slots)
         return await self._fuse_and_rerank(
             buckets,
             rerank_trace=rerank,
