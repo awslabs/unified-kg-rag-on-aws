@@ -1,0 +1,164 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""A community report's findings cite the records they rest on.
+
+The report prompt numbers the entities and relationships it packs and asks,
+as MS GraphRAG's does (``prompts/index/community_report.py``), for evidence
+only and a ``[Data: Entities (...); Relationships (...)]`` reference per
+finding. The references leave the prose and are kept, as record ids, on the
+finding, in every report language.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
+from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
+from unified_kg_rag.domain.ingestion.report_references import split_data_references
+from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
+from unified_kg_rag.domain.prompts import CommunityReportPrompt
+
+pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("text", "prose", "cited"),
+    [
+        (
+            "Vendor supplies Buyer [Data: Entities (1, 3); Relationships (2)].",
+            "Vendor supplies Buyer.",
+            {"entities": [1, 3], "relationships": [2]},
+        ),
+        (
+            "Vendor ships late [Data: Entities (1, 2, 3, 4, 5, +more), "
+            "Claims (7)] and pays [data: relationships (4, 4)]",
+            "Vendor ships late and pays",
+            {"entities": [1, 2, 3, 4, 5], "relationships": [4]},
+        ),
+        (
+            "벤더는 구매자에게 부품을 공급한다 [Data: Entities (2); Relationships (1)]",
+            "벤더는 구매자에게 부품을 공급한다",
+            {"entities": [2], "relationships": [1]},
+        ),
+        # Full-width punctuation a model writing Japanese or Chinese may use.
+        (
+            "供給者は買い手に部品を納入する［Data：Entities（1，2）；Relationships（3）］。",
+            "供給者は買い手に部品を納入する。",
+            {"entities": [1, 2], "relationships": [3]},
+        ),
+        ("供应商向买方交付零件。", "供应商向买方交付零件。", {}),
+    ],
+)
+def test_references_are_split_from_the_prose(
+    text: str, prose: str, cited: dict[str, list[int]]
+) -> None:
+    assert split_data_references(text) == (prose, cited)
+
+
+def _detector() -> CommunityDetector:
+    config = Config()
+    config.graph.community_detection.report_generation.enabled = False
+    detector = CommunityDetector(config, show_progress=False)
+    detector.graph = GraphBuilder(
+        [
+            Entity(id="v", name="벤더", type="ORG", description="부품 공급사"),
+            Entity(id="b", name="Buyer", type="ORG", description="Buys parts"),
+            Entity(id="p", name="部品", type="PRODUCT", description="Parts"),
+        ],
+        [
+            Relationship(id="r-vb", source_id="v", target_id="b", type="SUPPLIES"),
+            Relationship(id="r-vp", source_id="v", target_id="p", type="MAKES"),
+        ],
+        [],
+    ).build()
+    return detector
+
+
+def _community() -> Community:
+    return Community(
+        id="c0",
+        name="Level 0 Community c0",
+        level="0",
+        parent="",
+        children=[],
+        entity_ids=["v", "b", "p"],
+        text_unit_ids=[],
+        size=3,
+    )
+
+
+def test_the_packed_input_is_numbered_in_packing_order() -> None:
+    detector = _detector()
+    report_input = detector._prepare_report_input(_community())
+    (chain_input,) = detector._create_report_chain_inputs([report_input])
+    entity_lines = chain_input["entities"].splitlines()
+    relationship_lines = chain_input["relationships"].splitlines()
+    assert [line.split("]")[0] for line in entity_lines] == ["- [1", "- [2", "- [3"]
+    assert [line.split("]")[0] for line in relationship_lines] == ["- [1", "- [2"]
+    for number, entity in enumerate(report_input["entities"], 1):
+        assert entity_lines[number - 1].startswith(f"- [{number}] {entity['name']} (")
+    # The relationship's id is what a reference resolves to; it is not in
+    # the prompt.
+    assert {r["id"] for r in report_input["relationships"]} == {"r-vb", "r-vp"}
+    assert "r-vb" not in chain_input["relationships"]
+
+
+def test_findings_keep_the_records_they_cite() -> None:
+    detector = _detector()
+    community = _community()
+    report_input = detector._prepare_report_input(community)
+    entities = [e["id"] for e in report_input["entities"]]
+    relationships = [r["id"] for r in report_input["relationships"]]
+    result: dict[str, Any] = {
+        "community_name": "벤더 공급망",
+        "summary": "벤더가 구매자에게 부품을 공급한다.",
+        "rating": "6",
+        "rating_explanation": "공급 관계가 중심이다.",
+        "findings": {
+            "finding": [
+                {
+                    "summary": "벤더가 중심이다",
+                    "explanation": "벤더는 구매자와 부품을 잇는다 "
+                    "[Data: Entities (1, 2, 9); Relationships (2, 1, +more)].",
+                },
+                {
+                    "summary": "部品の供給 [Data: Entities (3)]",
+                    "explanation": "部品は供給される［Data：Relationships（2）］。",
+                },
+                {"summary": "근거 없는 요약", "explanation": "참조가 없다."},
+            ]
+        },
+    }
+    report = detector._create_community_report(
+        community, result, {}, report_input=report_input
+    )
+    first, second, third = report.findings
+    # Number 9 is not in the input: dropped.
+    assert first.entity_ids == entities[:2]
+    assert first.relationship_ids == [relationships[1], relationships[0]]
+    assert first.explanation == "벤더는 구매자와 부품을 잇는다."
+    assert second.summary == "部品の供給"
+    assert second.entity_ids == [entities[2]]
+    assert second.relationship_ids == [relationships[1]]
+    assert second.explanation == "部品は供給される。"
+    assert (third.entity_ids, third.relationship_ids) == ([], [])
+    # The input's numbers mean nothing outside it: not in the searched text.
+    assert "Data" not in report.full_content
+
+
+def test_the_prompt_asks_for_evidence_and_references_only() -> None:
+    system = CommunityReportPrompt.system_prompt_template
+    human = CommunityReportPrompt.human_prompt_template
+    assert (
+        "Do not include information where the supporting evidence for it is not "
+        "provided" in system
+    )
+    assert "[Data: Entities (1, 3); Relationships (2, 7)]" in system
+    assert "+more" in system
+    # The reference syntax stays ASCII whatever the report language.
+    assert "[Data: ...] references keep their exact ASCII form" in human
+    for speculative in ("strategic", "actionable", "quantified", "opportunities"):
+        assert speculative not in (system + human).lower()

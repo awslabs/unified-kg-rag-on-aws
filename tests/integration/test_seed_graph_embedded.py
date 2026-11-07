@@ -671,7 +671,7 @@ def test_a_seed_added_beside_documents_reports_their_community(
         return [
             line
             for prompt in harness.server.prompts[start:]
-            for line in prompt.split("\n")
+            for line in map(_unnumbered, prompt.split("\n"))
             if line.startswith("- Vendor (")
         ]
 
@@ -701,12 +701,18 @@ def test_a_seed_added_beside_documents_reports_their_community(
     assert all(line.split(": ", 1)[1] for line in report_lines(built))
 
 
+def _unnumbered(line: str) -> str:
+    """A report prompt's input line without its number (``- [3] ``), which
+    follows the packing order, not the entity."""
+    return re.sub(r"^- \[\d+\] ", "- ", line)
+
+
 def _vendor_entries(harness: _Harness, start: int = 0) -> list[str]:
     """Vendor's entries in the report prompts since ``start``: its entity
     line and the description lines that follow it."""
     entries = []
     for prompt in harness.server.prompts[start:]:
-        lines = prompt.split("\n")
+        lines = [_unnumbered(line) for line in prompt.split("\n")]
         for i, line in enumerate(lines):
             if line.startswith("- Vendor ("):
                 entry = [line]
@@ -748,7 +754,7 @@ def _entity_lines(harness: _Harness, name: str, start: int = 0) -> list[str]:
     return [
         line
         for prompt in harness.server.prompts[start:]
-        for line in prompt.split("\n")
+        for line in map(_unnumbered, prompt.split("\n"))
         if line.startswith(f"- {name} (") or line.startswith(f"- {name}:")
     ]
 

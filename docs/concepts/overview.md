@@ -180,12 +180,13 @@ purpose:
   GraphRAG groups relationships by source and target (`extract_graph.py`),
   and LightRAG keys an edge by its sorted endpoint pair (`operate.py`)
   ([Design §4.2](../design.md#42-graph-identity-and-merging-stages-5-7)).
-- **Community hierarchy.** Level 0 is one Leiden partition of the whole
-  graph, coarser levels partition the graph of communities, and a community
-  over 20 members is split again; only components smaller than
-  `min_community_size` get no community. MS GraphRAG runs hierarchical
-  Leiden with `max_cluster_size` 10 and, by default (`use_lcc`), clusters
-  only the largest connected component (`config/defaults.py`)
+- **Community hierarchy.** One Leiden partition of the whole graph, whose
+  communities over 20 members are split again and stay the parents of
+  their pieces (MS GraphRAG's hierarchical Leiden); coarser levels above it
+  partition the graph of communities. Only components smaller than
+  `min_community_size` get no community. MS GraphRAG stops at the first
+  partition, with `max_cluster_size` 10 and, by default (`use_lcc`), only
+  the largest connected component (`config/defaults.py`)
   ([Design §4.3](../design.md#43-communities-stages-10-11)).
 - **Gleaning.** Three rounds by default against MS GraphRAG's one
   (`max_gleanings`), and a text unit is re-asked only while its last answer

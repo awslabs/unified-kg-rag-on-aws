@@ -161,7 +161,12 @@ the XML format the parser reads (and, for extraction, the verbatim
 `unified_kg_rag/domain/prompts/graph_extraction.py`. An override of these two
 that drops a tag the parser reads (`<entities>`, `<relationships>`,
 `<source_text>`; `<community_name>`, `<summary>`, `<rating>`,
-`<rating_explanation>`, `<findings>`) logs a warning naming the tags.
+`<rating_explanation>`, `<findings>`) logs a warning naming the tags. The
+built-in `community_report` prompt also numbers the entities and
+relationships it is given and asks each finding for
+`[Data: Entities (...); Relationships (...)]` references, which the report
+keeps as the cited record ids; an override without that rule still works,
+with findings that cite nothing.
 
 ### Prompts without an override
 
