@@ -420,19 +420,6 @@ A knowledge graph imported as virtual documents of the corpus.
 
 Graph analysis configuration
 
-### `graph.analysis`
-
-Graph analysis configuration
-
-#### `graph.analysis.statistics`
-
-Graph-level statistics configuration
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `calculate_average_clustering` | boolean | `false` | Calculate the average clustering coefficient (graph_metrics.average_clustering): about 10 s on a graph of 80,000 entities, and no stage reads it |
-| `calculate_diameter` | boolean | `false` | Calculate graph diameter (computationally expensive; only on a connected graph) |
-
 ### `graph.community_detection`
 
 Community detection configuration
@@ -447,9 +434,9 @@ Community detection configuration
 | `extra_forced_iterations` | integer (≥ 0) | `2` | Additional optimization iterations after convergence (MS GraphRAG runs 0). |
 | `max_cluster_size` | integer (≥ 2) | `20` | Maximum members per community before it is split: entities at level 0, child communities above. A larger Leiden community is re-partitioned on its own subgraph, recursively, until every piece fits or Leiden finds no finer split, and stays the parent of its pieces (as in MS GraphRAG's hierarchical Leiden). Without the bound, modularity's resolution limit grows communities with the corpus beyond what one report's max_report_context_tokens can describe (or a parent's roll-up can summarize). MS GraphRAG's default is 10 with a larger report budget; 20 typically keeps a leaf's entities and relationships, or a parent's child summaries, within the default 4000-token report context. |
 | `min_community_size` | integer (≥ 1) | `3` | Minimum entities per level-0 community: a smaller one merges into the neighbour it shares the most edge weight with, unless that would exceed max_cluster_size. A connected component of fewer entities (an isolated entity, a pair) has no neighbour and gets no community or report. 1 = cluster every component. |
-| `auto_resolution` | boolean | `false` | Sweep auto_resolution_candidates at every hierarchy level and keep the most modular resolution; otherwise resolution is used. Off by default: maximizing modularity on the coarse upper-level graphs picks low resolutions that merge unrelated communities, which cost global search accuracy in testing. |
-| `auto_resolution_candidates` | list[number] | `[0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0]` | Resolution values swept when auto_resolution is enabled; the one maximizing modularity is chosen. Each must be above 0. |
-| `auto_resolution_max_nodes` | integer (≥ 1) | `10000` | Skip the auto_resolution sweep (which runs one full Leiden partition + modularity computation per candidate, ~10x the base cost, at every hierarchy level) when the graph exceeds this many nodes, and use the fixed `resolution` instead. Prevents the sweep from dominating the analysis phase on large graphs. Raise to force the sweep on bigger graphs. |
+| `auto_resolution` | boolean | `false` | Deprecated, to be removed. Sweep auto_resolution_candidates at every hierarchy level and keep the most modular resolution; otherwise resolution is used. Off by default: maximizing modularity on the coarse upper-level graphs picks low resolutions that merge unrelated communities, which cost global search accuracy in testing. |
+| `auto_resolution_candidates` | list[number] | `[0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0]` | Deprecated, to be removed. Resolution values swept when auto_resolution is enabled; the one maximizing modularity is chosen. Each must be above 0. |
+| `auto_resolution_max_nodes` | integer (≥ 1) | `10000` | Deprecated, to be removed. Skip the auto_resolution sweep (which runs one full Leiden partition + modularity computation per candidate, ~10x the base cost, at every hierarchy level) when the graph exceeds this many nodes, and use the fixed `resolution` instead. Prevents the sweep from dominating the analysis phase on large graphs. Raise to force the sweep on bigger graphs. |
 
 #### `graph.community_detection.report_generation`
 
@@ -1182,9 +1169,11 @@ These keys, and any key under them, load with a WARNING and are ignored.
 | `graph.visualization.centrality.eigenvector_max_iter` | the visualization computes degree, betweenness and PageRank centrality; closeness and eigenvector centrality were never displayed |
 | `graph.visualization.centrality.eigenvector_tol` | the visualization computes degree, betweenness and PageRank centrality; closeness and eigenvector centrality were never displayed |
 | `search.reranking.enabled` | providers.rerank.kind picks the reranker, so reranking stays on; set providers.rerank.kind: none to turn it off |
-| `graph.analysis.statistics.calculate_density` | density, the average clustering coefficient and the connected components are always computed |
-| `graph.analysis.statistics.calculate_clustering` | density, the average clustering coefficient and the connected components are always computed |
-| `graph.analysis.statistics.calculate_components` | density, the average clustering coefficient and the connected components are always computed |
+| `graph.analysis.statistics.calculate_density` | the graph_analysis stage computes the density and the connected components; no stage read the average clustering coefficient or the diameter, which are no longer computed |
+| `graph.analysis.statistics.calculate_clustering` | the graph_analysis stage computes the density and the connected components; no stage read the average clustering coefficient or the diameter, which are no longer computed |
+| `graph.analysis.statistics.calculate_components` | the graph_analysis stage computes the density and the connected components; no stage read the average clustering coefficient or the diameter, which are no longer computed |
+| `graph.analysis.statistics.calculate_average_clustering` | the graph_analysis stage computes the density and the connected components; no stage read the average clustering coefficient or the diameter, which are no longer computed |
+| `graph.analysis.statistics.calculate_diameter` | the graph_analysis stage computes the density and the connected components; no stage read the average clustering coefficient or the diameter, which are no longer computed |
 | `fixing` | output fixing is always on (the default before); models.roles.fixing picks its model |
 | `evaluation.warm_up_query` | run-eval always answers one untimed, unscored warm-up query per strategy and run (the default before) |
 | `evaluation.langchain_metrics` | the langchain evaluator is removed; ragas' answer_correctness (evaluation.ragas_metrics) scores correctness against the answer |

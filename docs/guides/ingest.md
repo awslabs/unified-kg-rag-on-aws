@@ -33,7 +33,7 @@ In run order; `--enabled-stages` / `--resume-from-stage` take the **names**
    variants; similar names with `processing.fuzzy_entity_resolution`).
 8. **`claim_extraction`** (optional, off by default): factual claims.
 9. **`claim_resolution`** (optional): dedupes the claims.
-10. **`graph_analysis`**: builds the graph, logs `graph.analysis.statistics`.
+10. **`graph_analysis`**: builds the graph, logs its size, density and connected components.
 11. **`community_detection`**: Leiden clustering and LLM community reports
     (only when `indexing.methodologies` selects `graphrag`).
 12. **`indexing`**: writes to OpenSearch and Neptune (and the registry when

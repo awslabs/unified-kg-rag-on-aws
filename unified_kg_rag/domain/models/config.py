@@ -740,10 +740,17 @@ REMOVED_KEYS: dict[str, str] = {
     ),
     **{
         f"graph.analysis.statistics.{key}": (
-            "density, the average clustering coefficient and the connected "
-            "components are always computed"
+            "the graph_analysis stage computes the density and the connected "
+            "components; no stage read the average clustering coefficient or "
+            "the diameter, which are no longer computed"
         )
-        for key in ("calculate_density", "calculate_clustering", "calculate_components")
+        for key in (
+            "calculate_density",
+            "calculate_clustering",
+            "calculate_components",
+            "calculate_average_clustering",
+            "calculate_diameter",
+        )
     },
     "fixing": (
         "output fixing is always on (the default before); models.roles.fixing "
@@ -2448,34 +2455,6 @@ class CentralityConfig(BaseModel):
     )
 
 
-class StatisticsConfig(BaseModel):
-    """Graph-level statistics: density and the connected components are
-    always computed; the others on request."""
-
-    calculate_average_clustering: bool = Field(
-        default=False,
-        description=(
-            "Calculate the average clustering coefficient (graph_metrics."
-            "average_clustering): about 10 s on a graph of 80,000 entities, "
-            "and no stage reads it"
-        ),
-    )
-    calculate_diameter: bool = Field(
-        default=False,
-        description=(
-            "Calculate graph diameter (computationally expensive; only on a "
-            "connected graph)"
-        ),
-    )
-
-
-class GraphAnalysisConfig(BaseModel):
-    statistics: StatisticsConfig = Field(
-        default_factory=StatisticsConfig,
-        description="Graph-level statistics configuration",
-    )
-
-
 class ReportGenerationConfig(BaseModel):
     enabled: bool = Field(
         default=True,
@@ -2518,6 +2497,28 @@ class ReportGenerationConfig(BaseModel):
         "context instead. Reports are then generated level by level, the "
         "finest first (a level waits for the one below); false generates "
         "every level at once and only cuts the context.",
+    )
+
+
+# The modularity sweep's settings, deprecated: maximizing modularity on the
+# coarse upper levels merges unrelated communities (accuracy loss in testing).
+_AUTO_RESOLUTION_KEYS = (
+    "auto_resolution",
+    "auto_resolution_candidates",
+    "auto_resolution_max_nodes",
+)
+
+
+@functools.cache
+def _warn_auto_resolution(keys: tuple[str, ...]) -> None:
+    """Warn once per set of keys: a config is validated several times per
+    load."""
+    _logger.warning(
+        "graph.community_detection.%s %s deprecated and will be removed: the "
+        "modularity sweep merges unrelated communities on the upper levels. "
+        "It still applies; set graph.community_detection.resolution instead.",
+        " / ".join(keys),
+        "is" if len(keys) == 1 else "are",
     )
 
 
@@ -2593,8 +2594,9 @@ class CommunityDetectionConfig(BaseModel):
     auto_resolution: bool = Field(
         default=False,
         description=(
-            "Sweep auto_resolution_candidates at every hierarchy level and "
-            "keep the most modular resolution; otherwise resolution is used. "
+            "Deprecated, to be removed. Sweep auto_resolution_candidates at "
+            "every hierarchy level and keep the most modular resolution; "
+            "otherwise resolution is used. "
             "Off by default: maximizing modularity on the coarse upper-level "
             "graphs picks low resolutions that merge unrelated communities, "
             "which cost global search accuracy in testing."
@@ -2602,19 +2604,31 @@ class CommunityDetectionConfig(BaseModel):
     )
     auto_resolution_candidates: list[PositiveFloat] = Field(
         default_factory=lambda: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0],
-        description="Resolution values swept when auto_resolution is enabled; the "
-        "one maximizing modularity is chosen. Each must be above 0.",
+        description="Deprecated, to be removed. Resolution values swept when "
+        "auto_resolution is enabled; the one maximizing modularity is chosen. "
+        "Each must be above 0.",
     )
     auto_resolution_max_nodes: int = Field(
         default=10000,
         ge=1,
-        description="Skip the auto_resolution sweep (which runs one full Leiden "
+        description="Deprecated, to be removed. Skip the auto_resolution sweep "
+        "(which runs one full Leiden "
         "partition + modularity computation per candidate, ~10x the base cost, "
         "at every hierarchy level) when the graph exceeds this many nodes, and "
         "use the fixed `resolution` instead. Prevents the sweep from dominating "
         "the analysis phase on large graphs. Raise to force the sweep on bigger "
         "graphs.",
     )
+
+    @model_validator(mode="after")
+    def _warn_auto_resolution_deprecated(self) -> "CommunityDetectionConfig":
+        given = tuple(
+            name for name in _AUTO_RESOLUTION_KEYS if name in self.model_fields_set
+        )
+        if given:
+            _warn_auto_resolution(given)
+        return self
+
     report_generation: ReportGenerationConfig = Field(
         default_factory=ReportGenerationConfig,
         description="Community report generation configuration",
@@ -2696,9 +2710,6 @@ class VisualizationConfig(BaseModel):
 
 
 class GraphConfig(BaseModel):
-    analysis: GraphAnalysisConfig = Field(
-        default_factory=GraphAnalysisConfig, description="Graph analysis configuration"
-    )
     community_detection: CommunityDetectionConfig = Field(
         default_factory=CommunityDetectionConfig,
         description="Community detection configuration",

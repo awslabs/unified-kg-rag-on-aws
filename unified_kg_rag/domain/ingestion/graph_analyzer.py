@@ -39,14 +39,6 @@ class GraphStatistics(BaseModel):
         default=None,
         description="Graph density: ratio of actual edges to possible edges (0-1)",
     )
-    average_clustering: float | None = Field(
-        default=None,
-        description="Average clustering coefficient: measures the degree to which nodes cluster together",
-    )
-    diameter: int | None = Field(
-        default=None,
-        description="Graph diameter: longest shortest path between any two nodes",
-    )
     num_connected_components: int | None = Field(
         default=None, description="Number of connected components in the graph"
     )
@@ -58,7 +50,6 @@ class GraphStatistics(BaseModel):
 class GraphAnalyzer:
     def __init__(self, config: Config, graph: nx.Graph | None = None) -> None:
         self.config = config
-        self.analysis_config = config.graph.analysis
         # Centrality only sizes and plots the visualization's nodes.
         self.centrality_config = config.graph.visualization.centrality
         self._graph = graph
@@ -234,12 +225,6 @@ class GraphAnalyzer:
             nx.density,
             lambda r: setattr(stats, "density", r),
         )
-        if self.analysis_config.statistics.calculate_average_clustering:
-            self._compute_metric(
-                "average_clustering",
-                nx.average_clustering,
-                lambda r: setattr(stats, "average_clustering", r),
-            )
         self._compute_metric(
             "connected_components",
             lambda g: (
@@ -247,15 +232,6 @@ class GraphAnalyzer:
             ),
             lambda result: self._update_component_stats(result, stats),
         )
-        if (
-            stats.num_connected_components == 1
-            and self.analysis_config.statistics.calculate_diameter
-        ):
-            self._compute_metric(
-                "diameter",
-                nx.diameter,
-                lambda r: setattr(stats, "diameter", r),
-            )
 
     def _compute_metric(
         self,

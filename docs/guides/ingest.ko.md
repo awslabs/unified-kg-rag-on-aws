@@ -33,7 +33,7 @@
    `processing.fuzzy_entity_resolution`이면 비슷한 이름도).
 8. **`claim_extraction`**(선택, 기본은 꺼짐): 사실 주장 추출.
 9. **`claim_resolution`**(선택): 주장 중복 제거.
-10. **`graph_analysis`**: 그래프를 만들고 `graph.analysis.statistics`를 기록.
+10. **`graph_analysis`**: 그래프를 만들고 크기, 밀도, 연결 요소를 기록.
 11. **`community_detection`**: Leiden 군집화와 LLM 커뮤니티 리포트(`indexing.methodologies`에
     `graphrag`가 있을 때만).
 12. **`indexing`**: OpenSearch와 Neptune에 씀(켜져 있으면 레지스트리에도).

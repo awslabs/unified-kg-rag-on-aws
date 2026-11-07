@@ -502,8 +502,8 @@ From a `main` checkout (formats and keys no release had):
   later builds reuse them. A graph with entities without relationships may lose its top community
   level at its next clustering (its reports go, no call is added, global search's `community_depth` cuts one level
   higher). A document with a paragraph longer than a chunk is cut otherwise when it is next chunked (a reset or an
-  edit), and those chunks are extracted again. `graph_metrics.average_clustering` is empty unless
-  `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
+  edit), and those chunks are extracted again. `graph_metrics` no longer holds
+  `average_clustering` or `diameter`. A summary tree of more than 100,000 text units
   now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`. The tree
   stored before stays in the build record, so `tree` keeps serving the text units it covers (#612).
 - #620 run directories: `run-eval` results land in `<outputs>/run_<timestamp>_<id>/`; scripts that read
@@ -1004,8 +1004,9 @@ From a `main` checkout (formats and keys no release had):
   overridable (`custom_prompts.text_translation_*`, `custom_prompts.text_chunking_*`) (#608).
 - The splitter cuts a paragraph longer than a chunk after a Latin or Korean sentence end (".", "!", "?" or "…"
   before a space) before it falls back to its last space (#608).
-- `graph.analysis.statistics.calculate_average_clustering` (off): the `graph_analysis` stage no longer computes the
-  average clustering coefficient by default (about 10 s at 80,000 entities, read by no stage) (#608).
+- The `graph_analysis` stage no longer computes the average clustering coefficient (about 10 s at 80,000 entities)
+  or the diameter, which no stage read: `graph.analysis.statistics.calculate_average_clustering` and
+  `calculate_diameter` load with a WARNING and are ignored (#608, #(PR)).
 - Embedding requests in flight are bounded by `processing.max_concurrency` too (at most 16 as before) (#608).
 - Stage cache keys cover the whole configuration and the package version (#332).
 - `BatchProcessor` runs one pool of `processing.max_concurrency` items, connection pools follow the concurrency, and
@@ -1055,6 +1056,10 @@ From a `main` checkout (formats and keys no release had):
   uses an S3 Bucket Key (#617).
 
 ### Deprecated
+- `graph.community_detection.auto_resolution`, `auto_resolution_candidates` and `auto_resolution_max_nodes` log a
+  deprecation WARNING when set and will be removed: maximizing modularity on the coarse upper levels merges unrelated
+  communities (it lost global search accuracy in testing, which is why it has been off by default since #141). They
+  still apply; set `graph.community_detection.resolution` instead (#(PR)).
 
 ### Fixed
 Bugs present in 0.2.3.

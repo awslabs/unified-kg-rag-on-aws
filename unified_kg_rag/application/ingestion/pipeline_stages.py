@@ -1805,8 +1805,6 @@ class GraphAnalysisStage(_VisualizationExport, PipelineStage):
                 "num_nodes": graph_stats.num_nodes,
                 "num_edges": graph_stats.num_edges,
                 "density": graph_stats.density,
-                "average_clustering": graph_stats.average_clustering,
-                "diameter": graph_stats.diameter,
                 "num_connected_components": graph_stats.num_connected_components,
                 "largest_component_size": graph_stats.largest_component_size,
             },

@@ -326,7 +326,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "processing.max_concurrency": _neutral(_THROUGHPUT),
     "processing.io_workers": _neutral(_THROUGHPUT),
     # --- the corpus-wide stages --------------------------------------------
-    "graph.analysis": _neutral("shapes graph statistics, which no later stage reads"),
     **_keyed_at(
         _P.COMMUNITY_DETECTION,
         "graph.community_detection",
