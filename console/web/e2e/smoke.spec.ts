@@ -28,6 +28,13 @@ test("ask, follow the trail into the graph, visit every page", async ({ page, ba
   await page.getByRole("button", { name: "Ask", exact: true }).click();
   await expect(page.locator(".answer-meta").first()).toBeVisible({ timeout: 60_000 });
   await expect(page.locator(".answer-text").first()).toContainText("Umbra Freight");
+  // The answer's [n] opens the source it cites in the trace.
+  const cite = page.locator(".answer-text .cite-link").first();
+  await expect(cite).toBeVisible();
+  const marker = (await cite.textContent()) ?? "";
+  await cite.click();
+  await expect(page.locator(".source.open .marker")).toHaveText(marker);
+  await expect(page.locator(".citations-list li").first()).toBeVisible();
   await page.locator('.source[data-kind="entity"] > button').first().click();
   await expect(page.getByText("Stated in passages")).toBeVisible();
   await page.getByRole("button", { name: "Show in the graph" }).click();
