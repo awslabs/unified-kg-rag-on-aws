@@ -178,7 +178,7 @@ from unified_kg_rag.shared.utils import (
     strip_embedding_fields,
     text_digest,
 )
-from unified_kg_rag.shared.utils.concurrency import discard, settle
+from unified_kg_rag.shared.utils.concurrency import discard, gather_bounded, settle
 
 logger = get_logger(__name__)
 
@@ -2548,23 +2548,41 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         They are returned with the search results (``ainvoke`` and
         ``asearch``), so with ``check_output`` they must not reach the caller
         unscreened. Retrieved results are corpus text and pass as they are.
-        ``plan_texts`` receives the structured plan's texts and what the
-        guardrail made of each (``_screen_structured_metadata``).
+        One check reads them all; only when it intervenes is each checked on
+        its own, ``search.max_concurrency`` at a time (a check per key point,
+        one after another, added a guardrail round trip per point to every
+        global query). ``plan_texts`` receives the structured plan's texts
+        and what the guardrail made of each (``_screen_structured_metadata``).
         """
         if not self._screen_outputs:
             return search_results
         search_results = await self._screen_model_metadata(
             search_results, records, plan_texts=plan_texts
         )
-        if not any(self._is_synthesized(r.metadata) for r in search_results.results):
+        written = [
+            result.content
+            for result in search_results.results
+            if self._is_synthesized(result.metadata) and result.content
+        ]
+        if not written:
             return search_results
         assert self.guard is not None
+        guard = self.guard
+        joined = await guard.acheck("\n\n".join(written), GuardSource.OUTPUT)
+        if not joined.intervened:
+            return search_results
+        verdicts = iter(
+            await gather_bounded(
+                self.config.search.max_concurrency,
+                (guard.acheck(text, GuardSource.OUTPUT) for text in written),
+            )
+        )
         kept: list[RetrievalResult] = []
         for result in search_results.results:
             if not self._is_synthesized(result.metadata) or not result.content:
                 kept.append(result)
                 continue
-            verdict = await self.guard.acheck(result.content, GuardSource.OUTPUT)
+            verdict = next(verdicts)
             if not verdict.intervened:
                 kept.append(result)
                 continue

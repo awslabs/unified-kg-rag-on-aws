@@ -879,7 +879,8 @@ From a `main` checkout (formats and keys no release had):
   `SeedSourceOptions`, `SeedGraph`, `SeedNode`, `SeedEdge`, `SeedGraphError` (#498, #500, #510, #513).
 - Guardrail: the opt-in contextual grounding check `aws.bedrock.guardrail.contextual_grounding` (CDK `-c
   guardrail_contextual_grounding=true`; `GroundingCheck.blocked`); with `check_output`, model-written search results
-  (DRIFT's intermediate answers, global key points) are screened too; interventions name word lists
+  (DRIFT's intermediate answers, global key points) are screened too, in one check, then one per result
+  (`search.max_concurrency` at a time) only when it intervenes; interventions name word lists
   (`wordPolicy:customWords`, `wordPolicy:PROFANITY`) (#462, #471, #567, #583). See
   [guardrail](docs/guides/guardrail.md).
 - Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284).

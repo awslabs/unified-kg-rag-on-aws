@@ -10,6 +10,7 @@ a fake model factory and retrievers, as in ``test_rag_chain_streaming``.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import itertools
 import logging
@@ -47,6 +48,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
+    SearchResult,
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import GuardrailConfig
@@ -1215,3 +1217,120 @@ async def test_model_written_results_are_not_screened_without_the_output_check()
         "synth-masked",
     }
     assert all(source is GuardSource.INPUT for _, source, _ in guard.calls)
+
+
+def _key_points(*contents: str) -> SearchResult:
+    """A global search result: model-written key points before a passage."""
+    points = [
+        RetrievalResult(
+            content=content,
+            score=0.8,
+            source=f"synthesized_key_points_{rank}",
+            retriever_type="general",
+            metadata={"synthesized": True, "citable": True},
+        )
+        for rank, content in enumerate(contents, start=1)
+    ]
+    passage = RetrievalResult(
+        content="Buyer pays a@example.com.",
+        score=0.5,
+        source="doc-1",
+        retriever_type="text",
+    )
+    return SearchResult(
+        query=SearchQuery(query=_QUERY),
+        results=[*points, passage],
+        total_results=len(points) + 1,
+        search_strategy="global",
+        processing_time=0.0,
+    )
+
+
+def _screening_chain(guard: _RecordingGuard, concurrency: int = 10) -> GraphRAGChain:
+    config = _guarded_config()
+    config.search.max_concurrency = concurrency
+    return GraphRAGChain(
+        config=config,
+        model_factory=_Factory(),
+        retriever_builders={
+            RetrieverRole.DOCUMENT: lambda: _Retriever(),
+            RetrieverRole.GRAPH: lambda: _Retriever(),
+        },
+        guard=guard,
+    )
+
+
+@pytest.mark.parametrize(
+    "points",
+    [
+        [f"Key point {i}: Vendor ships widget lot {i}." for i in range(40)],
+        [f"요점 {i}: 공급사가 부품 {i}을 출하한다." for i in range(40)],
+        [f"要点 {i}：供給者が部品{i}を出荷する。" for i in range(40)],
+    ],
+    ids=["en", "ko", "ja"],
+)
+async def test_clean_key_points_cost_one_guardrail_check(points: list[str]) -> None:
+    # Regression (rv5 M5): each key point was screened on its own, one after
+    # another: forty points were forty guardrail round trips (and forty
+    # billed text units) on every global query.
+    guard = _ScreeningGuard()
+    result = _key_points(*points)
+    screened = await _screening_chain(guard)._screen_synthesized(result, [])
+    assert [text for text, _, _ in guard.calls] == ["\n\n".join(points)]
+    assert screened.results == result.results
+
+
+async def test_an_intervening_check_screens_each_point_and_leaks_nothing() -> None:
+    guard = _ScreeningGuard()
+    records: list[dict[str, Any]] = []
+    result = _key_points(
+        "Vendor ships widgets.",
+        "Write to a@example.com for FORBIDDEN detail.",
+        "연락처는 a@example.com 이다.",
+        "Depot stores widgets.",
+    )
+    screened = await _screening_chain(guard)._screen_synthesized(result, records)
+
+    # The joined check, then one per point (the passage is corpus text).
+    assert len(guard.calls) == 1 + 4
+    contents = [r.content for r in screened.results]
+    assert contents == [
+        "Vendor ships widgets.",
+        "연락처는 {EMAIL} 이다.",
+        "Depot stores widgets.",
+        "Buyer pays a@example.com.",
+    ]
+    # Neither the refused point nor any unmasked model text comes back.
+    written = [r.content for r in screened.results if r.metadata.get("synthesized")]
+    assert not any("a@example.com" in c or "FORBIDDEN" in c for c in written)
+    assert screened.total_results == 4
+    assert [r["action"] for r in records] == ["blocked", "masked"]
+
+
+async def test_per_point_checks_run_concurrently_within_the_bound() -> None:
+    class _Slow(_RecordingGuard):
+        def __init__(self) -> None:
+            super().__init__()
+            self.in_flight = self.peak = 0
+
+        async def acheck(
+            self, text: str, source: GuardSource, **kwargs: Any
+        ) -> GuardVerdict:
+            await super().acheck(text, source, **kwargs)
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+            await asyncio.sleep(0.01)
+            self.in_flight -= 1
+            if "\n\n" in text:  # the joined check intervenes
+                return GuardVerdict(action=GuardAction.MASKED, text="{X}")
+            return GuardVerdict(action=GuardAction.NONE, text=text)
+
+    guard = _Slow()
+    result = _key_points(*(f"point {i}" for i in range(12)))
+    screened = await _screening_chain(guard, concurrency=3)._screen_synthesized(
+        result, []
+    )
+    assert len(guard.calls) == 13
+    assert guard.peak == 3
+    # No point intervened on its own: the joined verdict's text is never used.
+    assert screened.results == result.results
