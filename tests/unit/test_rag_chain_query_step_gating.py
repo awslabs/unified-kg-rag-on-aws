@@ -20,19 +20,21 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
 from unified_kg_rag.application.retrieval.rag_chain import (
-    EntityExtractionPrompt,
     GraphRAGChain,
-    KeywordsExtractionPrompt,
     ProcessedQuery,
     RAGInput,
     StrategySelectionPrompt,
-    TranslationPrompt,
 )
 from unified_kg_rag.domain.models import (
     Config,
     SearchQuery,
     SearchResult,
     SearchStrategy,
+)
+from unified_kg_rag.domain.prompts import (
+    EntityExtractionPrompt,
+    KeywordsExtractionPrompt,
+    TranslationPrompt,
 )
 
 pytestmark = pytest.mark.unit
@@ -199,8 +201,12 @@ async def test_prompts_get_language_names_not_codes(
             "resolved_strategy": SearchStrategy.LOCAL,
         }
     )
-    languages = {inputs["target_language"] for _, inputs in factory.calls}
-    assert languages == {expected}
+    languages = {cls: inputs["target_language"] for cls, inputs in factory.calls}
+    # The translation goes into the requested language; the entities are
+    # extracted in the index language (English here) whatever it is.
+    assert languages.get(TranslationPrompt, expected) == expected
+    assert (TranslationPrompt in languages) is (requested is not None)
+    assert languages[EntityExtractionPrompt] == "English"
 
 
 async def test_keyword_failure_propagates_without_ignore_errors(

@@ -15,12 +15,15 @@ import asyncio
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
+from unified_kg_rag.application.retrieval import query_processing
 from unified_kg_rag.application.retrieval.rag_chain import (
-    EntityExtractionPrompt,
     GraphRAGChain,
-    TranslationPrompt,
 )
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.prompts import (
+    EntityExtractionPrompt,
+    TranslationPrompt,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -98,10 +101,12 @@ async def test_disabled_translation_skips_the_query_translation(
         # Disabled: the index keeps the source text and entity names, so the
         # extractions run in the source language, not the unused target.
         (False, None, "English"),
-        # A caller-requested language still wins.
-        (False, "ja", "Japanese"),
+        # A requested language is the translation's only: the entity,
+        # relationship and report indexes hold the index language alone.
+        (False, "ja", "English"),
         # Enabled: the index is in the target language.
         (True, None, "Korean"),
+        (True, "ja", "Korean"),
     ],
 )
 async def test_query_extractions_use_the_language_the_index_was_built_in(
@@ -135,8 +140,14 @@ async def test_query_extractions_use_the_language_the_index_was_built_in(
     await asyncio.gather(*tasks.values())
 
     assert seen["entities"] == seen["keywords"] == expected
-    # Translation runs only when the stage ran or a language was requested.
+    # Translation runs only when the stage ran or a language was requested,
+    # into the requested language (the text units carry it).
     assert ("translation" in seen) is (enabled or requested is not None)
+    if requested:
+        assert seen["translation"] == "Japanese"
+    # A strategy's own prompts (DRIFT follow-ups, iterative's controller)
+    # search the indexes too: the index language.
+    assert query_processing.query_language(chain, inputs) == expected
 
 
 async def test_translation_refusal_falls_back_to_original(config: Config) -> None:

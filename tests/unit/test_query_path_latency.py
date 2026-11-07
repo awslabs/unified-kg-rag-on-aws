@@ -34,13 +34,15 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     _LEFTOVER_EXTRACTIONS,
     AnswerGenerationPrompt,
     ComprehensiveAnswerPrompt,
-    EntityExtractionPrompt,
     GraphRAGChain,
-    KeywordsExtractionPrompt,
     StrategySelectionPrompt,
-    TranslationPrompt,
 )
 from unified_kg_rag.domain.models import Config, LanguageModelId, SearchStrategy
+from unified_kg_rag.domain.prompts import (
+    EntityExtractionPrompt,
+    KeywordsExtractionPrompt,
+    TranslationPrompt,
+)
 from unified_kg_rag.ports.model_factory import ceiled_output_tokens
 from unified_kg_rag.shared.utils.concurrency import discard
 
@@ -297,7 +299,12 @@ async def test_comparison_arms_search_with_the_same_keywords() -> None:
     assert hybrid["processed_query"].ll_keywords == ["Vendor"]
 
 
-async def test_the_cache_is_keyed_by_the_target_language() -> None:
+async def test_the_cache_is_keyed_by_the_extraction_language() -> None:
+    chain = GraphRAGChain(config=_config())
+    key = chain._extraction_key(EntityExtractionPrompt, QUESTION, "English")
+    assert key != chain._extraction_key(EntityExtractionPrompt, QUESTION, "Korean")
+    # A requested language is the translation's only: the entities are
+    # extracted in the index language once, then served from the cache.
     factory = _Factory()
     chain = _chain(_config(), factory)
     await _route(chain, "local")
@@ -305,7 +312,7 @@ async def test_the_cache_is_keyed_by_the_target_language() -> None:
     languages = [
         i["target_language"] for c, i in factory.calls if c is EntityExtractionPrompt
     ]
-    assert languages == ["English", "Korean"]
+    assert languages == ["English"]
 
 
 def test_the_cache_is_keyed_by_the_prompt_text() -> None:

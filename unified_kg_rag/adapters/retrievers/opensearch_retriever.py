@@ -171,12 +171,6 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     # repeated queries. Bounded LRU: entries are only reused for identical
     # text; 256 x a 1024-dim vector is ~2 MB.
     QUERY_EMBEDDING_CACHE_SIZE: ClassVar[int] = 256
-    # Hits each search of a hybrid query fetches (at least) for the min-max
-    # normalization ``_fuse`` applies before it cuts to ``size``. Normalized
-    # over only the ``size`` hits returned, a hit's fused score, and so the
-    # ranking, depended on how many hits were asked for: the top 4 of a
-    # 4-hit and a 40-hit query shared 75% of their hits.
-    HYBRID_NORMALIZATION_WINDOW: ClassVar[int] = 50
     # Window cuts remembered for the once-per-query warning (_log_window_cut).
     _WINDOW_CUTS_REMEMBERED: ClassVar[int] = 1024
 
@@ -1100,8 +1094,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         last-indexed match), which skewed every fused score of the index.
         Fused here, each search is normalized over exactly the hits it
         returned, on OpenSearch and the embedded engine alike. Both fetch
-        ``HYBRID_NORMALIZATION_WINDOW`` hits at least, so the normalization
-        range does not depend on ``size``; ``_fuse`` cuts to ``size``.
+        ``search.hybrid.normalization_window`` hits at least, so the
+        normalization range does not depend on ``size`` (normalized over only
+        the ``size`` hits returned, the top 4 of a 4-hit and a 40-hit query
+        shared 75% of their hits); ``_fuse`` cuts to ``size``.
         """
         filters = self._build_filter_clauses(query.filters)
         # The exclusions sit beside the filters, in their bool: a bool of
@@ -1114,7 +1110,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             lexical = {"bool": {"must": [lexical], **scope}}
         if query_vector is not None and search_type != SearchType.LEXICAL:
             if search_type != SearchType.VECTOR:
-                size = min(max(size, self.HYBRID_NORMALIZATION_WINDOW), window)
+                size = min(
+                    max(size, self._config.search.hybrid.normalization_window),
+                    window,
+                )
             knn = self._search_body(
                 self._build_vector_query(
                     query_vector, self._knn_k(size), vector_fields, filters, must_not

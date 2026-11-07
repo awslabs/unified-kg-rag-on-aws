@@ -628,8 +628,9 @@ Hybrid search configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `lexical_weight` | number (≥ 0.0, ≤ 1.0) | `0.5` | Weight of the lexical side of a hybrid search. A hybrid search runs a lexical and a kNN search on each index, each fetching at least 50 hits, min-max normalizes each over its hits, takes their weighted mean (lexical_weight, vector_weight) and keeps the requested number, so the ranking does not depend on how many hits a query asks for. |
+| `lexical_weight` | number (≥ 0.0, ≤ 1.0) | `0.5` | Weight of the lexical side of a hybrid search. A hybrid search runs a lexical and a kNN search on each index, each fetching at least normalization_window hits, min-max normalizes each over its hits, takes their weighted mean (lexical_weight, vector_weight) and keeps the requested number, so the ranking does not depend on how many hits a query asks for. |
 | `vector_weight` | number (≥ 0.0, ≤ 1.0) | `0.5` | Weight for vector search results |
+| `normalization_window` | integer (≥ 1) | `50` | Hits each side of a hybrid search fetches at least (capped by the index's max_result_window) for the min-max normalization before the cut to the requested number: normalized over only the hits returned, a hit's fused score, and so the ranking, depended on how many were asked for. A larger window costs store work per search. Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
 
 ### `search.fusion`
 
@@ -680,6 +681,24 @@ Local search configuration
 | `report_selection` | `"membership"` \| `"similarity"` | `"similarity"` | How local search (and each DRIFT follow-up) picks its community reports. 'membership' (MS GraphRAG local's, on leaf communities where upstream takes each entity's community at its community_level cut): the reports of the level-0 (leaf) communities the graph-expanded entities belong to, most matched entities first, then by report rank; when no expanded entity names a community (under a document filter, whose walk reads the entities index, or when graph expansion failed), or when a community_id or level filter admits none of those communities, the 'similarity' reports instead. Search metadata records which one ran (report_selection; DRIFT counts its follow-ups by each). 'similarity': the reports most similar to the joined query entities, which always fill the report slots. The default: on 200 MuSiQue questions (two repeats), membership scored exact match 4.0 points (95% CI -7.75 to -0.25) and token F1 4.1 points (-7.7 to -0.6) lower, for about 0.5% fewer tokens. |
 | `text_unit_ranking` | `"support"` \| `"ppr"` | `"ppr"` | How local search orders the text units of its expanded entities before the text quota cuts them (DRIFT's follow-up local searches: search.drift_search.text_unit_ranking). 'ppr' (the default): HippoRAG 2's Personalized PageRank over the expanded entities, their relationships and their text units, seeded by the seed entities (hit score over the text units cited), the endpoints of the question's ppr_seed_relationships relationship hits (kNN) and its search.ppr_search.passage_seed_top_k text-unit hits (BM25 + vector, weighted by passage_node_weight), which it ranks too; the PageRank settings are search.ppr_search's. 'support': by how many expanded entities cite a unit, then the best citing entity's score. ppr is the default because it answered multi-hop questions better than support (the measurement: docs/concepts/defaults-and-evidence.md#local-ppr-ranking). Costs a text-unit search, a relationship search, an edge read and a query embedding a query. See docs/design.md §6.4. |
 | `ppr_seed_relationships` | integer (≥ 0) | `5` | text_unit_ranking: ppr only: also seed the PageRank with the endpoints of the question's this many relationships-index hits (HippoRAG 2's query-to-fact seeding, under search.ppr_search.fact_search_type), each adding the mean score of its hits to the entity's own seed score before the division by the text units it cites; an endpoint the expansion did not reach is read from the entities index. 0 = off (the measured setting is 5). Needs indexing.opensearch.build_relationship_vector_index. |
+| `entity_candidates_per_focus` | integer (≥ 1) | `2` | Entities-index hits fetched per query entity, among which its exact name match is looked for (else its top hit seeds, under seed_score_ratio). Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
+
+#### `search.local_search.type_quota`
+
+Fusion slots reserved per section type, max(multiplier * top_k, floor), in local search and the strategies built on it (DRIFT's follow-ups, ppr, iterative's rounds); search.token_manager.type_budgets sets what the context then holds of each. Only the entity and relationship floors follow MS GraphRAG; the rest are unmeasured choices.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `text_multiplier` | number (≥ 0.0) | `2.0` | Text-unit (chunk) slots as a multiple of top_k. Unmeasured choice. |
+| `text_floor` | integer (≥ 1) | `20` | Minimum text-unit slots whatever top_k. Unmeasured choice. |
+| `entity_multiplier` | number (≥ 0.0) | `1.0` | Entity slots as a multiple of top_k. Unmeasured choice. |
+| `entity_floor` | integer (≥ 1) | `10` | Minimum entity slots (MS GraphRAG local's top_k_entities). |
+| `relationship_multiplier` | number (≥ 0.0) | `1.0` | Relationship slots as a multiple of top_k (also caps local search's bridge relationships). Unmeasured choice. |
+| `relationship_floor` | integer (≥ 1) | `10` | Minimum relationship slots (MS GraphRAG local's top_k_relationships). |
+| `community_multiplier` | number (≥ 0.0) | `0.5` | Community report slots as a multiple of top_k. Unmeasured choice. |
+| `community_floor` | integer (≥ 1) | `2` | Minimum community report slots. Unmeasured choice. |
+| `claim_multiplier` | number (≥ 0.0) | `0.5` | Claim slots as a multiple of top_k. Unmeasured choice. |
+| `claim_floor` | integer (≥ 1) | `2` | Minimum claim slots. Unmeasured choice. |
 
 ### `search.drift_search`
 
@@ -718,6 +737,7 @@ Iterative bridge follow-up search configuration (opt-in)
 | `decompose` | boolean | `false` | Instead of the controller loop, one models.roles.query_controller call writes the question as a chain of single-hop steps (a later step refers to an earlier answer as #1, #2, ...), and each step is answered in order by one call over its own text-unit search; the steps' passages join round 0's candidates. KAG-style decomposition, an alternative to the controller loop with the same caps: at most max_rounds + 2 fast-model calls. |
 | `round_top_k` | integer (≥ 1, ≤ 50) | `5` | Text units each follow-up query (and each decomposition step) retrieves by the request's search_type (BM25 + vector by default). The base rerun of a follow-up round keeps the query's top_k. |
 | `max_next_queries` | integer (≥ 0, ≤ 5) | `2` | Follow-up queries the controller may ask for in one round, each naming a bridge entity; a query already searched is not searched again. 0 follows the bridge entities alone. |
+| `max_bridge_entities` | integer (≥ 0) | `5` | Bridge entities one round follows at most (the controller's bridge_entities beyond them are dropped, so a controller that lists many does not multiply the round's lookups); one already followed is not followed again. 0 follows the follow-up queries alone. Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
 | `controller_context_tokens` | integer \| null (≥ 256) | `null` | Token budget of the context each controller call (and each decomposition step) reads: the round's candidates packed as the answer's context is, cut to this. null (the default) packs them to the answer's budget (the request's max_tokens, else search.token_manager.max_context_tokens), so the controller judges the context the answer reads; a smaller value saves fast-model input tokens, but with large chunks the controller then reads only the first of the passages the answer gets. The answer itself always gets its full budget. |
 
 ### `search.ppr_search`
@@ -1143,7 +1163,6 @@ These keys, and any key under them, load with a WARNING and are ignored.
 | `graph.visualization.embeddings` | ingestion no longer renders visualizations; run-visualization renders the visualization_data.json it writes (graph.visualization.export_data), with a spring layout |
 | `indexing.opensearch.persist_embedding_cache` | the persisted S3 embedding cache is gone; an incremental run (providers.doc_status.enabled) embeds only the documents it re-indexes |
 | `indexing.opensearch.embedding_cache_s3_key` | the persisted S3 embedding cache is gone; an incremental run (providers.doc_status.enabled) embeds only the documents it re-indexes |
-| `search.local_search.type_quota` | the fusion slots local search and DRIFT reserve per section type are fixed (BaseSearchStrategy.TYPE_QUOTA); search.token_manager.type_budgets sets each type's share of the context |
 | `cache.chunking` | a stage-cache entry of more than 1,000 items or 50 MB is always written in chunk files |
 | `search.lightrag_search.structured_keyword_output` | keyword extraction parses the model's text answer; the structured output pilot was removed before any release |
 | `search.global_search.reduce_with_llm` | global search runs no reduce call: the ranked key points go to the answer model as one context section (0.2.3 reduced them with map_reduce_model_id by default) |

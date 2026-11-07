@@ -23,6 +23,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 from unified_kg_rag.domain.ingestion.cache_keys import answer_settings
 from unified_kg_rag.domain.models import (
     Config,
+    LanguageCode,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -40,6 +41,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     MarkerStreamFilter,
     split_marker,
 )
+from unified_kg_rag.domain.retrieval.no_context import NO_CONTEXT_ANSWERS
 from unified_kg_rag.ports.guardrail import GuardAction, GuardSource, GuardVerdict
 
 pytestmark = pytest.mark.unit
@@ -510,3 +512,32 @@ def test_the_defaults_leave_the_answer_settings_hash_unchanged() -> None:
     config = Config()
     config.search.abstention.mode = "mark"
     assert answer_settings(config)["search.abstention.mode"] == "mark"
+
+
+@pytest.mark.parametrize(
+    ("question", "language"),
+    [
+        ("누가 구매자에게 공급합니까?", LanguageCode.KO),
+        ("誰がバイヤーに供給していますか?", LanguageCode.JA),
+        ("谁向买方供货?", LanguageCode.ZH),
+        ("Wer beliefert den Käufer?", LanguageCode.DE),
+    ],
+)
+async def test_the_fixed_replies_are_in_the_question_s_language(
+    config: Config, question: str, language: LanguageCode
+) -> None:
+    # The answer prompt answers in the query's language; the fixed replies
+    # of a query no model answered do too, and stay flagged.
+    chain, systems = _chain(config, _declining, empty=True)
+    out = await chain.ainvoke(_query(question))
+    assert out.answer == NO_CONTEXT_ANSWERS[language]
+    assert out.metadata["abstained"] is True and systems == []
+    chunks = [chunk async for chunk in chain.astream(_query(question))]
+    assert "".join(chunks) == NO_CONTEXT_ANSWERS[language]
+    # The insufficient-context policy declines in it as well.
+    config.search.abstention.on_insufficient = "abstain"
+    chain, _ = _chain(config, lambda _s: "Vendor supplies Buyer.")
+    _flag_insufficient(chain)
+    out = await chain.ainvoke(_query(question))
+    assert out.answer == NO_CONTEXT_ANSWERS[language]
+    assert out.metadata["abstention_reason"] == "insufficient_context"

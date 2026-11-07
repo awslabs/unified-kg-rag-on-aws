@@ -17,7 +17,11 @@ rather than as a separate, reduced path:
   keeping at least one chunk, or by similarity to the query —
   LightRAG's ``_find_related_text_unit_from_entities``/``_from_relations``,
   ``kg_chunk_pick_method``); ``mix`` additionally blends the naive chunk
-  retrieval, deduplicating the cited chunks against it (``_merge_chunks``),
+  retrieval, deduplicating the cited chunks against it (``_merge_chunks``).
+  Unlike upstream only the hits cite chunks (not the endpoints and incident
+  edges the expansion adds), an item whose chunks an earlier one took takes
+  no polling position, and the naive chunks are excluded before the polling
+  rather than at the merge (docs/design.md §6.2),
 - everything is fused and reranked via the shared :class:`HybridScorer`
   (BM25 lexical + vector semantic + graph + RRF + Bedrock rerank).
 

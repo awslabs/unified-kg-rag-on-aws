@@ -729,6 +729,25 @@ class TestRerankDegradation:
         assert stage.status == "failed"
         assert _BoomModel.top_n == 5  # restored in finally
 
+    def test_a_reranker_without_scores_keeps_positive_rank_scores(self) -> None:
+        # A reranker that orders without relevance_score: the fallback score
+        # stays positive and decreasing past the 100th document.
+        scorer = _scorer()
+
+        class _OrderOnly:
+            top_n = 150
+
+            def compress_documents(self, documents, query):  # noqa: ANN001
+                return list(reversed(documents))
+
+        scorer.rerank_model = _OrderOnly()
+        results = [_r(f"doc {n}", 1.0 - n / 1000, str(n)) for n in range(150)]
+        out, stage = scorer._apply_bedrock_reranking(results, query="q", scope="all")
+        scores = [r.score for r in out]
+        assert len(scores) == 150 and all(score > 0 for score in scores)
+        assert scores == sorted(scores, reverse=True) and len(set(scores)) == 150
+        assert scores[0] == 1.0 and scores[1] == 0.5
+
 
 class TestRerankBeforeDiversity:
     """Fusion runs fuse -> rerank -> MMR -> quota.

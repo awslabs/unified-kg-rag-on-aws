@@ -98,8 +98,9 @@ _FILTERS = {
 
 
 def _four_text_slots(strategy: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    quota = {**strategy.TYPE_QUOTA, SectionType.TEXT: (0.0, 4)}
-    monkeypatch.setattr(strategy, "TYPE_QUOTA", quota)
+    quota = strategy.config.search.local_search.type_quota
+    monkeypatch.setattr(quota, "text_multiplier", 0.0)
+    monkeypatch.setattr(quota, "text_floor", 4)
 
 
 @pytest.mark.parametrize("kind", list(_FILTERS))

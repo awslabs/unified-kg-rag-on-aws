@@ -88,6 +88,7 @@ from unified_kg_rag.application.retrieval import (
     methodology_check,
     query_processing,
 )
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_FILTER_KEY,
@@ -98,8 +99,8 @@ from unified_kg_rag.domain.models import (
     Config,
     Constants,
     IndexArtifact,
+    LanguageCode,
     Methodology,
-    ModelRole,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -112,11 +113,8 @@ from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     BasePrompt,
     ComprehensiveAnswerPrompt,
-    EntityExtractionPrompt,
-    KeywordsExtractionPrompt,
     QueryRewritePrompt,
     StrategySelectionPrompt,
-    TranslationPrompt,
 )
 from unified_kg_rag.domain.prompts.retrieval import (
     ABSTENTION_INSTRUCTIONS,
@@ -134,6 +132,11 @@ from unified_kg_rag.domain.retrieval.abstention import (
     split_marker,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
+from unified_kg_rag.domain.retrieval.no_context import (
+    NO_CONTEXT_ANSWERS,
+    is_no_context_answer,
+    no_context_answer,
+)
 from unified_kg_rag.ports.guardrail import (
     ContentGuardPort,
     GroundingContext,
@@ -221,14 +224,13 @@ def seed_provenance(metadata: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-# Fixed reply when retrieval produced no context; the output metadata then
-# carries ``abstained=True`` (``abstention_reason: no_context``) so evaluation
-# can tell it from a real answer. Also the answer of a declined answer that
-# was only the [NO_ANSWER] token (search.abstention.strip_marker).
-NO_CONTEXT_ANSWER = (
-    "I could not find relevant information in the available data to answer "
-    "this question."
-)
+# The fixed reply when retrieval produced no context is no_context_answer's,
+# in the query's language (NO_CONTEXT_ANSWER, the English one, is kept for
+# importers); the output metadata then carries ``abstained=True``
+# (``abstention_reason: no_context``) so evaluation can tell it from a real
+# answer. Also the answer of a declined answer that was only the [NO_ANSWER]
+# token (search.abstention.strip_marker).
+NO_CONTEXT_ANSWER = NO_CONTEXT_ANSWERS[LanguageCode.EN]
 
 # The search metadata of iterative search and its model-written text: the
 # follow-up queries searched (``searched``), and each verdict's bridge
@@ -888,23 +890,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         parser: BaseOutputParser[Any],
         **kwargs: Any,
     ) -> Runnable[Any, Any]:
-        model_id_map: dict[type[BasePrompt], str] = {
-            EntityExtractionPrompt: self.config.model_id(ModelRole.ENTITY_EXTRACTION),
-            KeywordsExtractionPrompt: self.config.model_id(ModelRole.ENTITY_EXTRACTION),
-            TranslationPrompt: self.config.model_id(ModelRole.QUERY_TRANSLATION),
-            StrategySelectionPrompt: self.config.model_id(ModelRole.STRATEGY_SELECTION),
-            QueryRewritePrompt: self.config.model_id(ModelRole.QUERY_REWRITE),
-            AnswerGenerationPrompt: self.config.model_id(ModelRole.ANSWER_GENERATION),
-            ComprehensiveAnswerPrompt: self.config.model_id(
-                ModelRole.ANSWER_GENERATION
-            ),
-        }
-        model_id = model_id_map.get(prompt_class)
-        if model_id is None:
+        role = prompt_class.model_role
+        if role is None:
             raise ValueError(
-                f"No model id configured for prompt {prompt_class.__name__}; "
-                f"add it to _get_chain_for_prompt's model_id_map."
+                f"No model role declared for prompt {prompt_class.__name__}; "
+                "set its model_role."
             )
+        model_id = self.config.model_id(role)
         # Built once per chain: setup_chain builds the model and its boto
         # clients, so building per query paid that (and fresh connection
         # pools) on every request. Parsers are stateless; one of each type.
@@ -1185,6 +1177,24 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             self, strategy, suffix
         )
 
+    async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
+        """The build record ingestion wrote on the index namespace of
+        ``suffix`` (``VectorIndexer.record_build``: what it built, under which
+        settings), read through the document retriever the answers come
+        from. ``None`` when it records none (built before build records, or a
+        backend without index metadata); a store error raises."""
+        return await self._get_retriever(RetrieverRole.DOCUMENT).aread_build_record(
+            suffix
+        )
+
+    def document_retriever(self) -> BaseGraphRAGRetriever:
+        """The retriever bound to the document role (an injected
+        ``retriever_builders`` backend included): the indexes the answers are
+        retrieved from, for a caller that reads them directly, as
+        ``run-eval`` resolves text-unit ids to their files. The chain owns
+        it: ``close``/``aclose`` release it."""
+        return self._get_retriever(RetrieverRole.DOCUMENT)
+
     def check_filter_keys(
         self, filters: dict[str, Any] | None, strategy: SearchStrategy
     ) -> None:
@@ -1427,7 +1437,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # produced nothing, so generating anyway invites a confident hallucination
         # with no supporting sources. Short-circuit to an explicit "cannot answer".
         if self._context_is_empty(state):
-            return RunnableLambda(lambda _: NO_CONTEXT_ANSWER)
+            return RunnableLambda(lambda s: self._no_context_answer(s))
 
         enable_thinking = state.get("enable_thinking", False)
         # Only passed when set, so the default answer chain (and its cache
@@ -1489,6 +1499,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         context = str(state.get("context") or "").strip()
         return not context or context == EMPTY_CONTEXT_PLACEHOLDER
 
+    def _no_context_answer(self, state: dict[str, Any]) -> str:
+        """The fixed decline, in the language of the question (the index
+        language when the question does not tell), as the answer prompt
+        writes in the query's language."""
+        return no_context_answer(self._question(state), index_language(self.config))
+
     def _abstention_step(self, state: dict[str, Any]) -> dict[str, Any]:
         """Set ``state["abstention_reason"]`` (``None`` for an answer) and
         strip the [NO_ANSWER] token per ``search.abstention.strip_marker``."""
@@ -1499,12 +1515,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if self._reads_marker(state):
             marked, rest = split_marker(str(state.get("answer") or ""))
             if marked and self.config.search.abstention.strip_marker:
-                state["answer"] = rest or NO_CONTEXT_ANSWER
+                state["answer"] = rest or self._no_context_answer(state)
         if self._declines_insufficient(state):
             # Declined by policy, whatever the model wrote: an answer it gave
             # instead of the decline is not shown.
             if not marked:
-                state["answer"] = NO_CONTEXT_ANSWER
+                state["answer"] = self._no_context_answer(state)
             state["abstention_reason"] = REASON_INSUFFICIENT_CONTEXT
         else:
             state["abstention_reason"] = REASON_MARKER if marked else None
@@ -1587,7 +1603,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         }
         reason = state.get("abstention_reason")
         if reason is None and GraphRAGChain._context_is_empty(state):
-            # The answer step returned the fixed NO_CONTEXT_ANSWER.
+            # The answer step returned the fixed no-context reply.
             reason = REASON_NO_CONTEXT
         if reason is not None:
             # A declined answer keeps its sources: the model saw them.
@@ -2058,7 +2074,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         ``grounding`` (the question and context the answer was generated
         from) goes with it.
         """
-        if not self._screen_outputs or not answer or answer == NO_CONTEXT_ANSWER:
+        if not self._screen_outputs or not answer or is_no_context_answer(answer):
             return GuardVerdict(action=GuardAction.NONE, text=answer)
         assert self.guard is not None
         if self._ground_outputs:

@@ -1081,8 +1081,9 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   holds `graphrag` for `local` (as before profiles), the two are refused
   naming that switch, and a WARNING at load says so.
   `GraphRAGChain` reads the namespace's build record through the document
-  retriever (`aread_build_record`, cached per suffix for
-  `methodology_check.HELD_TTL_SECONDS`, read again before a refusal) and derives what it
+  retriever (`GraphRAGChain.aread_build_record`, cached per suffix for
+  `methodology_check.HELD_TTL_SECONDS`, read again before a refusal; a
+  failed read falls back to the config for that query only, uncached) and derives what it
   holds (`held_artifacts`, and the methodologies whose required artifacts
   they are, `methodologies_holding`; when there is no record or it predates
   profiles, every methodology whose required artifacts a run of the config
@@ -1687,7 +1688,11 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   `search.local_search.include_bridge_relationships` (default on), the
   relationships incident to the expanded entities are fetched too, edges
   between two retrieved entities first: they carry the hops of a multi-hop
-  chain the relationship vector query rarely matches. With claims on,
+  chain the relationship vector query rarely matches. The others follow MS
+  GraphRAG local's `_filter_relationships` order: by how many retrieved
+  entities their outside endpoint links ("links"), then by rank (here rank,
+  weight, then id); upstream's budget of `top_k_relationships` per selected
+  entity is the relationship quota here. With claims on,
   matching claims are injected (MS GraphRAG covariates). The section lookups
   run concurrently with the entity chain. The community reports are, by
   default (`search.local_search.report_selection: similarity`), those most
@@ -1887,6 +1892,24 @@ order made the weighted pick depend on how the graph was built. `weight`
 stays the default because the two measured no significant difference
 (§9.1).
 
+Two deliberate differences in which chunks are followed, both in the
+measured setup (§9.1, "LightRAG chunk picking"):
+
+- *What cites them.* Upstream follows the chunks of its merged, truncated
+  lists: the entities include the relationship hits' endpoints (its global
+  side) and the relationships the entity hits' incident edges (its local
+  side). Here only the entity hits and the relationship hits cite chunks;
+  the endpoints and incident edges reach the context as entities and
+  relationships of their own, not as more chunk lineages, which keeps the
+  cited chunks to the items the keywords matched.
+- *Duplicates.* Upstream's polling keeps an item whose chunks all went to an
+  earlier item (an empty list still takes a position, lowering the
+  positions after it) and drops the chunks mix's naive search also found
+  only at its round-robin merge, so their slots are lost. Here an item left
+  without chunks takes no position, and the naive stream's chunks are left
+  out before the polling, so the slots go to chunks the context does not
+  already hold.
+
 The independent queries run concurrently, then the expansions, then the cited
 chunks. Short queries without keywords use the raw query as low-level
 keywords (`raw_query_fallback_max_len`). Upstream LightRAG has no multi-hop
@@ -1952,8 +1975,9 @@ through the strategy registry, so there is no dispatch on the base:
    as a keyword, or search no entity past `raw_query_fallback_max_len`). A
    query already searched (case-folded) or
    a bridge already followed (`compact_name_key`, so `동부 창고` and `동부창고` are one) is
-   not searched again, a round follows at most five bridge entities (the
-   most follow-up queries a round may ask for), and the controller is shown the searched list: the
+   not searched again, a round follows at most five bridge entities
+   (`search.iterative_search.max_bridge_entities`, the most follow-up
+   queries a round may ask for), and the controller is shown the searched list: the
    redundant searches ReaRAG (arXiv 2503.21729) reports for open-ended
    search agents, which run on until their iteration limit, are what the
    caps and the dedupe prevent.
@@ -1969,7 +1993,7 @@ through the strategy registry, so there is no dispatch on the base:
    part of the measured ranking, so the two concurrent searches are kept. The base's rerank types (`text` for both bases) are reranked
    against the question and the follow-up queries joined, and each section
    type keeps the larger of round 0's count of it and the type quota
-   (`TYPE_QUOTA`), so a round-0 item leaves only when a new one outranks
+   (`search.local_search.type_quota`), so a round-0 item leaves only when a new one outranks
    it. Back to 2 while rounds remain (`max_rounds`, 2); the last round is
    judged too, so the final verdict is known.
 5. *Answer.* The chain packs the final candidates into the usual token
@@ -2007,8 +2031,9 @@ the settings in `search.iterative_search`.
 
 **Languages.** The chain passes the query's language in
 `SearchQuery.metadata["query_language"]` (`query_processing.query_language`:
-the requested language, else the index's, which is the source language when
-translation is off and the target language when it is on); the controller,
+the index language, which is the source language when translation is off
+and the target language when it is on, whatever language the query
+requested); the controller,
 decomposition and step prompts write their queries and bridge names in it,
 names as the context writes them. Nothing in the strategy parses text but
 JSON and `#n`; dedupe uses case folding and `compact_name_key`, which drops
@@ -2206,7 +2231,10 @@ answer-level result (§9.1) showed it better than the earlier order.
    the graph keep their score (an endpoint the stores did not return takes
    no slot); an entity hit is scored the same way. A passage seed scores
    `passage_node_weight` (0.05) times its hit score min-max normalized over
-   the passage seeds (all 1 when they tie). Normalized to sum 1.
+   the passage seeds (all 1 when they tie), so the lowest-scored seed resets
+   with 0 and gains mass only through the graph: HippoRAG's lowest passage
+   is the worst of the whole corpus, here it is the last of hits that
+   matched (a deliberate difference, below). Normalized to sum 1.
 6. *PPR* (`personalized_pagerank`): power iteration of
    `p = (1 - d) r + d (p P + (p · dangling) r)`, damping `d` = `damping`
    (0.5, the probability of following an edge), at most `max_iterations`
@@ -2360,7 +2388,7 @@ at HippoRAG commit `d5c8329`. The deliberate differences:
 | PPR over the whole graph | over a bounded neighbourhood of the seeds (`max_hops`, the expansion budget, `max_edges_per_vertex`) | a query reads a few store requests, not the corpus; the mass past `h` hops is at most `d^(h+1)` |
 | Recognition memory: an LLM filters the top facts | no filter | no query-time LLM call; the facts are fused hybrid hits |
 | Facts by dense similarity to triple embeddings, min-max over all facts | the top relationships-index hits by kNN (`fact_search_type`, lexical or hybrid on request), scores relative to the best | the relationship descriptions are the facts this index holds; the top `fact_top_k` alone are searched |
-| Passage weights from a dense score of every passage | the top `passage_seed_top_k` hybrid hits, min-max over them | a bounded search; hybrid like every strategy here |
+| Passage weights from a dense score of every passage | the top `passage_seed_top_k` hybrid hits, min-max over them (the last hit resets with 0) | a bounded search; hybrid like every strategy here. Kept unfloored: the parity tests compare these weights with the original's on the same scores, and no run measured a floor |
 | PPR order alone ranks the passages | the PPR order and the passage hits are two fusion buckets, then the optional rerank | the hybrid fusion every strategy shares; `fusion_weights: {ppr_seed_text_units: 0}` and `rerank: false` come closest to the original |
 | Synonymy edges between similar phrases | none | not a merge substitute: entity resolution (§4.2) joins only names with the same compact key, and similar names only with `processing.fuzzy_entity_resolution` (off by default), so near-synonyms stay separate entities linked only through shared passages; synonymy edges (kNN over entity name embeddings) are unmeasured |
 | Fact edge weight: the triples between two phrases | 1 per stored relationship (merged over its text units) | one relationship per pair and type after merging |
@@ -2878,20 +2906,28 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   is disabled or a no-op, unless the caller asks for a language
   (`RAGInput.target_language`). Its entities and keywords are extracted in
   the language the index was built in: `source_language` when the stage is
-  disabled, `target_language` otherwise.
+  disabled, `target_language` otherwise, also when the query requests
+  another language. The requested language is the translation's only: the
+  text units carry one `translated_text_<language>` field per additional
+  target, which their lexical search reads, but the entity, relationship,
+  report and claim indexes hold the index language alone, so an entity or
+  keyword in the requested language would match neither their BM25 nor
+  their `compact_name_key` seeds. The answer prompt writes in the query's
+  language.
 - **One index language.** `cache_keys.index_language(config)` is the one
   rule: `target_language` when translation runs, else `source_language`.
   Extraction, gleaning, description summaries, community reports (the
   report prompt names it) and the summary tree write in it, the text units
   are embedded in it, and the graph indexes' text fields are analyzed for it
-  (`OpenSearchIndexer.language`). The chain records the query's language in
-  `SearchQuery.metadata["query_language"]` (the requested one, else the
-  index language); a strategy's own prompts (DRIFT's primer and actions,
-  global's map points, iterative's controller) read it through
-  `BaseSearchStrategy.query_language`, falling back to the index language.
-  DRIFT's HyDE writes in the index language whatever was requested: its
-  hypothetical report only searches the community reports, which are
-  written in it.
+  (`OpenSearchIndexer.language`). The chain records the language a
+  strategy's own prompts write in as `SearchQuery.metadata["query_language"]`:
+  the index language, whatever was requested, since their output either
+  searches the indexes (DRIFT's and iterative's follow-up queries) or is
+  context for the answer model, which answers in the query's language
+  (DRIFT's intermediate answers, global's map points). DRIFT's primer and
+  actions, global's map points and iterative's controller read it through
+  `BaseSearchStrategy.query_language`, falling back to the index language;
+  DRIFT's HyDE writes in the index language too.
   The extraction-record and answer fingerprints key the index language
   under their earlier `target_language` field, so a translated index keeps
   its records. Where the translation settings do not say it (translation
@@ -3261,7 +3297,10 @@ about 19 paragraphs a question.
 
 **Decline marker** (`search.abstention`, applied by `GraphRAGChain`). The
 chain already answered an empty context with a fixed reply
-(`metadata.abstained`), but a model that declines in its own words was
+(`metadata.abstained`; `domain/retrieval/no_context.py`, one sentence per
+`LanguageCode`, picked by the question's script and, among the Latin-script
+languages, by disjoint function-word lists; the index language, else
+English, when they do not tell), but a model that declines in its own words was
 invisible to evaluation. With `mode: mark` the answer step appends
 `ABSTENTION_INSTRUCTIONS` (`domain/prompts/retrieval.py`) to the system
 prompt of whichever answer prompt runs (concise, comprehensive or a

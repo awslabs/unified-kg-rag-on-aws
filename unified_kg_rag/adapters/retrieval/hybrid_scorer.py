@@ -595,9 +595,10 @@ class HybridScorer:
 
                     if original_result:
                         reranked_result = original_result.model_copy()
-                        new_score = doc.metadata.get(
-                            "relevance_score", 1.0 - (i * 0.01)
-                        )
+                        # A reranker that returns no score: rank order,
+                        # positive and decreasing at any length (1 - i/100
+                        # went negative past the 100th document).
+                        new_score = doc.metadata.get("relevance_score", 1.0 / (i + 1))
                         reranked_result.score = new_score
                         reranked_result.metadata = (
                             dict(reranked_result.metadata)

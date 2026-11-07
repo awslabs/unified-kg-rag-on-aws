@@ -178,7 +178,6 @@ def test_the_removed_ingestion_rendering_keys_load_with_a_warning(
 _REMOVED_SETTINGS = [
     ("indexing.opensearch.persist_embedding_cache", None, True),
     ("indexing.opensearch.embedding_cache_s3_key", None, "embedding-cache/cache.json"),
-    ("search.local_search.type_quota", "text_floor", 4),
     ("cache.chunking", "chunk_size", 500),
     ("graph.visualization.embeddings", "model_id", "amazon.titan-embed-text-v2:0"),
     ("search.lightrag_search.structured_keyword_output", None, True),

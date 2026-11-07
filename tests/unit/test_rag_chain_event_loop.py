@@ -421,6 +421,47 @@ def test_prompt_chains_are_built_once_per_prompt_model_and_flags(mocker) -> None
     assert setup.call_count == 3
 
 
+def test_each_prompt_runs_the_model_of_its_declared_role(mocker) -> None:
+    from unified_kg_rag.domain.prompts import (
+        ComprehensiveAnswerPrompt,
+        EntityExtractionPrompt,
+        KeywordsExtractionPrompt,
+        QueryRewritePrompt,
+        TranslationPrompt,
+    )
+    from unified_kg_rag.domain.prompts.base import BasePrompt
+
+    setup = mocker.patch.object(
+        rag_chain_module, "setup_chain", side_effect=lambda **_: object()
+    )
+    roles = {
+        AnswerGenerationPrompt: "answer_generation",
+        ComprehensiveAnswerPrompt: "answer_generation",
+        EntityExtractionPrompt: "entity_extraction",
+        KeywordsExtractionPrompt: "entity_extraction",
+        QueryRewritePrompt: "query_rewrite",
+        StrategySelectionPrompt: "strategy_selection",
+        TranslationPrompt: "query_translation",
+    }
+    config = Config(models={"roles": {role: f"m-{role}" for role in roles.values()}})
+    chain = GraphRAGChain(
+        config=config, providers=Providers(config, boto_session=MagicMock())
+    )
+    try:
+        for prompt in roles:
+            chain._get_chain_for_prompt(prompt, StrOutputParser())
+
+        class _Undeclared(BasePrompt):
+            input_variables = ["query"]
+
+        with pytest.raises(ValueError, match="model_role"):
+            chain._get_chain_for_prompt(_Undeclared, StrOutputParser())
+    finally:
+        chain.close()
+    models = [call.kwargs["model_id"] for call in setup.call_args_list]
+    assert models == [f"m-{role}" for role in roles.values()]
+
+
 def test_close_fails_sync_calls_in_flight_instead_of_hanging() -> None:
     # Regression: close() stopped the loop with the sync calls of other threads
     # still pending on it, so each of them waited forever for its result.

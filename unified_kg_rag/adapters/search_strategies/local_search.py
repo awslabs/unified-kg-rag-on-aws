@@ -47,9 +47,6 @@ logger = get_logger(__name__)
 class LocalSearchStrategy(PPRRankingMixin):
     methodology = Methodology.GRAPHRAG
 
-    # Entities-index hits fetched per focus entity, among which its exact
-    # name match is looked for (``_find_candidate_entities``).
-    ENTITY_CANDIDATES_PER_FOCUS: ClassVar[int] = 2
     # The section types reranked against the query. DRIFT, whose follow-up
     # queries are local searches, clears it and reranks their evidence once.
     rerank_types: frozenset[str] = frozenset({SectionType.TEXT.value})
@@ -431,12 +428,11 @@ class LocalSearchStrategy(PPRRankingMixin):
             if not query.query:
                 return []
             return await self._entity_hits(query, query.query, query.top_k)
+        # Hits per focus entity among which its exact name is looked for.
+        per_focus_hits = self.config.search.local_search.entity_candidates_per_focus
         per_focus = await gather_bounded(
             self.config.search.max_concurrency,
-            (
-                self._entity_hits(query, name, self.ENTITY_CANDIDATES_PER_FOCUS)
-                for name in focus
-            ),
+            (self._entity_hits(query, name, per_focus_hits) for name in focus),
         )
         hybrid = self.config.search.hybrid
         return self.focus_seeds(

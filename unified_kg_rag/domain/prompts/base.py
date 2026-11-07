@@ -16,7 +16,11 @@ from typing import TYPE_CHECKING, ClassVar
 from unified_kg_rag.domain.ingestion.chunk_length import max_chars
 
 if TYPE_CHECKING:
-    from unified_kg_rag.domain.models.config import Config, CustomPromptConfig
+    from unified_kg_rag.domain.models.config import (
+        Config,
+        CustomPromptConfig,
+        ModelRole,
+    )
 
 # Output-floor arithmetic for the long-output ingestion prompts. Bedrock
 # reserves input + max_tokens against the tokens-per-minute quota when a request
@@ -123,6 +127,9 @@ class BasePrompt:
     # maximum), so a prompt with a long output is never truncated by a cap
     # sized for short answers. Thinking tokens count toward it.
     min_output_tokens: ClassVar[int] = 0
+    # The model role (``models.roles``) whose model runs this prompt where
+    # the caller picks it by prompt (``GraphRAGChain._get_chain_for_prompt``).
+    model_role: ClassVar["ModelRole | None"] = None
     # Prompts whose answer is parsed as XML split the built-in system prompt
     # into a domain-adaptable persona (``system_preamble``) and the rules and
     # output format the parser relies on (``output_rules``); prompt tuning

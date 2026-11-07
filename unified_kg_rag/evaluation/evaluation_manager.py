@@ -33,7 +33,6 @@ from unified_kg_rag.application.bootstrap import (
     resolve_extraction_schema,
 )
 from unified_kg_rag.application.retrieval.rag_chain import (
-    NO_CONTEXT_ANSWER,
     GraphRAGChain,
     RAGInput,
     RAGOutput,
@@ -50,7 +49,6 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     LLMUsage,
     ModelRole,
-    RetrieverRole,
     SearchStrategy,
     model_id_value,
 )
@@ -289,9 +287,7 @@ class EvaluationManager:
         """
         if not isinstance(rag_chain, GraphRAGChain):
             return None
-        return TextUnitFileResolver(
-            config, lambda: rag_chain._get_retriever(RetrieverRole.DOCUMENT)
-        )
+        return TextUnitFileResolver(config, rag_chain.document_retriever)
 
     def _initialize_evaluators(self) -> None:
         """Build every enabled evaluator; fail fast unless ignore_errors.
@@ -746,10 +742,10 @@ class EvaluationManager:
     def _is_abstention(answer: Any, rag_metadata: Any) -> bool:
         """True for a declined answer: the chain's ``abstained`` flag (the
         no-context reply, a ``[NO_ANSWER]`` decline, the insufficient-context
-        policy), or the exact no-context text."""
-        if isinstance(rag_metadata, dict) and rag_metadata.get("abstained"):
-            return True
-        return isinstance(answer, str) and answer.strip() == NO_CONTEXT_ANSWER
+        policy). The reply's text is not read: it is in the query's
+        language, and an answer that happens to read the same is no
+        decline."""
+        return isinstance(rag_metadata, dict) and bool(rag_metadata.get("abstained"))
 
     @staticmethod
     def _decline_details(rag_metadata: Any) -> dict[str, Any]:
@@ -1377,15 +1373,10 @@ class EvaluationManager:
                 for q in queries
             }
         )
-        try:
-            retriever = self.rag_chain._get_retriever(RetrieverRole.DOCUMENT)
-        except Exception as e:  # noqa: BLE001 - the manifest entry is optional
-            logger.warning("Could not read the index build records: %s", e)
-            return dict.fromkeys(suffixes)
         builds: dict[str, dict[str, Any] | None] = {}
         for suffix in suffixes:
             try:
-                builds[suffix] = await retriever.aread_build_record(suffix)
+                builds[suffix] = await self.rag_chain.aread_build_record(suffix)
             except Exception as e:  # noqa: BLE001 - the manifest entry is optional
                 logger.warning(
                     "Could not read the build record of suffix '%s': %s", suffix, e

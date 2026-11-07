@@ -17,7 +17,6 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
-from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
     Config,
@@ -147,6 +146,39 @@ async def test_bridge_edges_come_first_and_edges_dedupe_by_id(
     ]
 
 
+async def test_out_of_network_edges_follow_upstream_links_then_rank(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # MS GraphRAG local orders the out-of-network edges by how many selected
+    # entities their outside endpoint links ("links"), then by rank: bank
+    # links vendor and buyer, carrier vendor alone, so bank's two edges come
+    # before carrier's higher-ranked one.
+    monkeypatch.setitem(
+        _EDGES,
+        "source_id",
+        [
+            _edge("r-carrier", "vendor", "carrier", 9.0),
+            _edge("r-bank-vendor", "vendor", "bank", 3.0),
+            _edge("r-bridge", "vendor", "buyer", 1.0),
+        ],
+    )
+    monkeypatch.setitem(
+        _EDGES, "target_id", [_edge("r-bank-buyer", "bank", "buyer", 2.0)]
+    )
+    strategy, _, _ = _make_strategy(config)
+
+    edges = await strategy._fetch_incident_relationships(
+        SearchQuery(query="q"), ["vendor", "buyer"], bridge_first=True
+    )
+
+    assert [e.source for e in edges] == [
+        "r-bridge",
+        "r-bank-vendor",
+        "r-bank-buyer",
+        "r-carrier",
+    ]
+
+
 async def test_an_edge_the_caller_holds_is_not_fetched_again(
     config: Config,
 ) -> None:
@@ -257,9 +289,9 @@ async def test_bridge_stream_is_capped_at_the_relationship_quota(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config.indexing.opensearch.build_relationship_vector_index = True
+    quota = config.search.local_search.type_quota
+    quota.relationship_multiplier, quota.relationship_floor = 0.1, 2
     strategy, _, captured = _make_strategy(config)
-    quota = {**strategy.TYPE_QUOTA, SectionType.RELATIONSHIP: (0.1, 2)}
-    monkeypatch.setattr(strategy, "TYPE_QUOTA", quota)
 
     await strategy.asearch(SearchQuery(query="q", entity_focus=["Vendor"], top_k=5))
 

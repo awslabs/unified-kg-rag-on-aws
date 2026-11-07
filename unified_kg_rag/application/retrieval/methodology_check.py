@@ -5,8 +5,9 @@ a strategy that reads another (docs/design.md#46-methodology-profiles).
 
 ``GraphRAGChain`` reads the namespace's build record through its document
 retriever (``aread_build_record``) before any model call of a query, keeps
-what it holds per suffix for ``HELD_TTL_SECONDS`` and reads it again before
-refusing, so a methodology added meanwhile is found. The functions take the
+what it holds per suffix for ``HELD_TTL_SECONDS`` (a failed read is not
+kept) and reads it again before refusing, so a methodology added meanwhile
+is found. The functions take the
 chain they check for, like ``filter_validation``.
 """
 
@@ -27,7 +28,6 @@ from unified_kg_rag.domain.models import (
     Constants,
     IndexArtifact,
     Methodology,
-    RetrieverRole,
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.methodology import (
@@ -69,13 +69,14 @@ async def namespace_artifacts(
         cached = chain._held_artifacts.get(key)
     if cached is not None and not refresh and now - cached[0] < HELD_TTL_SECONDS:
         return cached[1]
-    record = None
     try:
-        retriever = chain._get_retriever(RetrieverRole.DOCUMENT)
-        record = await retriever.aread_build_record(suffix)
+        record = await chain.aread_build_record(suffix)
     except Exception as e:  # noqa: BLE001 - the record is optional
-        # The query meets a store error itself; the config stands in here.
+        # The query meets a store error itself; the config stands in here,
+        # for this query only: a cached fallback would refuse (or serve)
+        # by the config for HELD_TTL_SECONDS after the store recovered.
         logger.debug("Reading the build record of '%s' failed: %s", key, e)
+        return held_artifacts(None, chain.config)
     held = held_artifacts(record, chain.config)
     with chain._cache_lock:
         chain._held_artifacts[key] = (now, held)
@@ -167,9 +168,8 @@ def not_indexed_message(
     if methodology is Methodology.RAPTOR:
         # The tree is built from the stored text units: no rebuild.
         how = (
-            "re-run ingestion, or run-ingestion --enabled-stages summary_tree: "
-            "the summary tree is built from the stored text units, with no "
-            "re-extraction."
+            "re-run ingestion: the summary tree is built from the stored text "
+            "units, with no re-extraction."
         )
     elif set(held) <= {Methodology.RAPTOR}:
         # Nothing extracted yet: the graph costs a first build.

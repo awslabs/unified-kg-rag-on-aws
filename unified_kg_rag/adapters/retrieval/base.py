@@ -419,25 +419,6 @@ class BaseSearchStrategy(ABC):
     # Section types that take the context budget other types leave unused
     # before the rest share it (``TokenManager.optimize_context``).
     spare_context_budget_first: ClassVar[tuple[SectionType, ...]] = ()
-    # Fusion slots reserved per section type in local search and DRIFT, as
-    # (multiple of the query's top_k, floor): max(multiple * top_k, floor).
-    # Without them one type (usually entities, which arrive with many
-    # near-tie fusion scores) takes the whole flat top_k cut and crowds out
-    # the chunks that carry the answer; MS GraphRAG's local search assembles
-    # per-section budgets the same way (top_k_entities and
-    # top_k_relationships 10). The floor keeps enough of each type at a small
-    # top_k. What the context then holds of each type is
-    # search.token_manager.type_budgets. Only the entity and relationship
-    # floors follow upstream; the text, community and claim values are
-    # unmeasured choices (no A/B in docs/concepts/defaults-and-evidence.md),
-    # so a change needs one.
-    TYPE_QUOTA: ClassVar[dict[SectionType, tuple[float, int]]] = {
-        SectionType.TEXT: (2.0, 20),
-        SectionType.ENTITY: (1.0, 10),
-        SectionType.RELATIONSHIP: (1.0, 10),
-        SectionType.COMMUNITY: (0.5, 2),
-        SectionType.CLAIM: (0.5, 2),
-    }
 
     def __init__(
         self,
@@ -463,8 +444,9 @@ class BaseSearchStrategy(ABC):
     def query_language(self, query: SearchQuery) -> str:
         """The language (its name, ``"Korean"``) the strategy's own prompts
         write in (follow-up queries, intermediate answers, map points): the
-        query's ``query_language``, which the chain sets (the requested
-        language, else the index's), else the index language
+        query's ``query_language``, which the chain sets to the index
+        language whatever answer language was requested
+        (``query_processing.query_language``), else the index language
         (``index_language``), so its searches match the indexed text."""
         language = query.metadata.get("query_language")
         if isinstance(language, str) and language:
@@ -926,16 +908,14 @@ class BaseSearchStrategy(ABC):
         }
 
     def _per_type_quota(self, top_k: int) -> dict[str, int]:
-        """Reserved fusion slots per section type for ``top_k`` (``TYPE_QUOTA``).
+        """Reserved fusion slots per section type for ``top_k``
+        (``search.local_search.type_quota``).
 
-        Shared by local search and DRIFT (whose iterations are local searches,
-        as in MS GraphRAG) so one flat top_k cut cannot let a single section
-        type crowd out the others.
+        Shared by local search, DRIFT (whose iterations are local searches,
+        as in MS GraphRAG), ppr and iterative, so one flat top_k cut cannot
+        let a single section type crowd out the others.
         """
-        return {
-            section_type.value: max(int(multiple * top_k), floor)
-            for section_type, (multiple, floor) in self.TYPE_QUOTA.items()
-        }
+        return self.config.search.local_search.type_quota.slots(top_k)
 
     async def _expand_via_graph(
         self,
@@ -1442,20 +1422,41 @@ class BaseSearchStrategy(ABC):
         for twice. With ``bridge_first`` the edges whose BOTH endpoints are in
         ``entity_ids`` — the bridges that connect two retrieved entities,
         i.e. the hops of a multi-hop chain — come before edges that leave the
-        set.
+        set, and of those, the edges whose outside endpoint links more of
+        the set come first (MS GraphRAG local's ``_filter_relationships``:
+        its out-of-network "links" count, then the rank).
         """
         edges, _ = await self._incident_relationships(query, entity_ids)
         known = {self._relationship_identity(r) for r in known_relationships or []}
         edges = [e for e in edges if self._relationship_identity(e) not in known]
         if bridge_first:
             in_set = set(entity_ids)
+
+            def ends(edge: RetrievalResult) -> tuple[str, str]:
+                metadata = edge.metadata or {}
+                return str(metadata.get("source_id")), str(metadata.get("target_id"))
+
+            # An outside entity's links: the entities of the set it shares an
+            # edge with (upstream counts the distinct other endpoints of its
+            # out-of-network edges, which are those).
+            links: dict[str, set[str]] = {}
+            for edge in edges:
+                source, target = ends(edge)
+                if (source in in_set) != (target in in_set):
+                    inside, outside = (
+                        (source, target) if source in in_set else (target, source)
+                    )
+                    links.setdefault(outside, set()).add(inside)
+
+            def order(edge: RetrievalResult) -> tuple[bool, int]:
+                source, target = ends(edge)
+                if source in in_set and target in in_set:
+                    return False, 0
+                outside = target if source in in_set else source
+                return True, -len(links.get(outside, ()))
+
             # Stable: each group keeps the (rank, weight, id) order.
-            edges.sort(
-                key=lambda r: not (
-                    str((r.metadata or {}).get("source_id")) in in_set
-                    and str((r.metadata or {}).get("target_id")) in in_set
-                )
-            )
+            edges.sort(key=order)
         return edges
 
     async def _incident_relationships(

@@ -401,8 +401,17 @@ def test_hybrid_is_a_lexical_and_a_knn_search(retriever) -> None:
     assert "multi_match" in lexical["query"]
     assert knn["query"]["knn"]["name_embedding"]["vector"] == [0.1]
     # Both fetch the normalization window; the fusion cuts to size.
-    window = OpenSearchRetriever.HYBRID_NORMALIZATION_WINDOW
-    assert lexical["size"] == knn["size"] == window
+    window = retriever._config.search.hybrid.normalization_window
+    assert lexical["size"] == knn["size"] == window == 50
+
+
+def test_the_normalization_window_is_configured(retriever) -> None:
+    retriever._config.search.hybrid.normalization_window = 120
+    lexical, knn = _bodies(retriever, SearchQuery(query="alice"), [0.1])
+    assert lexical["size"] == knn["size"] == 120
+    # A size above the window is fetched as asked.
+    lexical, knn = _bodies(retriever, SearchQuery(query="alice"), [0.1], size=150)
+    assert lexical["size"] == knn["size"] == 150
 
 
 def test_hybrid_filters_reach_both_searches(retriever) -> None:

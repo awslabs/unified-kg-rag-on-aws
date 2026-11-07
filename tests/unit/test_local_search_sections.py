@@ -28,6 +28,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
 )
+from unified_kg_rag.domain.models.config import removed_keys
 from unified_kg_rag.shared.exceptions import IndexNotFoundError
 
 pytestmark = pytest.mark.unit
@@ -151,6 +152,28 @@ def test_per_type_quota_is_a_multiple_of_top_k_with_a_floor(config: Config) -> N
         "community": 20,
         "claim": 20,
     }
+
+
+def test_per_type_quota_is_search_local_search_type_quota(config: Config) -> None:
+    quota = config.search.local_search.type_quota
+    quota.text_multiplier, quota.text_floor = 4.0, 30
+    quota.claim_multiplier = 0.0
+    strategy, _, _ = _make_strategy(config)
+
+    assert strategy._per_type_quota(top_k=10) == {
+        "text": 40,
+        "entity": 10,
+        "relationship": 10,
+        "community": 5,
+        "claim": 2,
+    }
+    assert strategy._per_type_quota(top_k=5)["text"] == 30
+    # A config file sets it as before its removal, no longer a removed key.
+    data = {"search": {"local_search": {"type_quota": {"text_floor": 4}}}}
+    assert removed_keys(data) == []
+    assert (
+        Config.model_validate(data).search.local_search.type_quota.slots(1)["text"] == 4
+    )
 
 
 def test_per_type_quota_floors_hold_at_a_tiny_top_k(config: Config) -> None:

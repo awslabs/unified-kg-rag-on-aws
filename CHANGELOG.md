@@ -115,8 +115,7 @@ stored is read again: follow *Upgrading* in order.
 - Removed settings that change behaviour where you had set them (each loads with a WARNING):
   `search.reranking.enabled: false` no longer turns reranking off (set `providers.rerank.kind: none`);
   `search.fusion.method: weighted` fuses by RRF (weighted fusion is gone); `fixing.enabled: false` no longer stops
-  output fixing; `search.local_search.type_quota` is the constant `BaseSearchStrategy.TYPE_QUOTA` (the mix is
-  `search.token_manager.type_budgets`); `cache.chunking` (an entry over 1,000 items or 50 MB is always chunked);
+  output fixing; `cache.chunking` (an entry over 1,000 items or 50 MB is always chunked);
   `indexing.opensearch.persist_embedding_cache` (the S3 embedding cache is gone: an incremental run embeds only its
   delta) (#344, #468, #577).
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
@@ -549,8 +548,10 @@ From a `main` checkout (formats and keys no release had):
   makes no report call. On the CDK stack the `methodologies` context key sets it on both task definitions, so every
   state-machine run builds the profile (#603). The build record names the artifacts and methodologies a namespace
   holds; a query whose strategy reads what the namespace does not hold fails before any model call, naming what it
-  holds and what adding the methodology costs (for `raptor`, the tree alone) (#609); `run-eval` refuses one
-  before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only among the strategies it serves.
+  holds and what adding the methodology costs (for `raptor`, the tree alone, once `indexing.methodologies` names it)
+  (#609, #619); `run-eval` refuses one before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only
+  among the strategies it serves. A failed read of the record serves that query by the config and is not cached
+  (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()` are public (#619).
   Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
@@ -803,8 +804,18 @@ From a `main` checkout (formats and keys no release had):
   `log_retention_days` (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot
   the instances after the deploy (#617). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue
   when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617).
+- Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
+  (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
+  `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).
 
 ### Changed
+- Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
+  its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
+  alone before), after the edges between two retrieved entities (#619).
+- The fixed reply to a query retrieval found nothing for (and to a decline that left no text) is written in the
+  question's language, one sentence per supported language told by its script and function words (English, the
+  0.2.3 reply, or the index language when they do not tell); evaluation counts a decline by `metadata.abstained`
+  alone, no longer by the English text (#619).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
@@ -930,6 +941,8 @@ From a `main` checkout (formats and keys no release had):
 Bugs present in 0.2.3.
 
 Queries and retrieval.
+- A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
+  went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
   top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal
   hybrid weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530).
@@ -945,11 +958,12 @@ Queries and retrieval.
   (#176, #218).
 - Korean BM25 recall, CJK fuzziness and NFC normalization in retrieval (#175, #177); MMR diversity compares Han,
   Hangul and Kana words by character bigrams (#567).
-- A query is translated, and its entities and keywords extracted in `target_language`, only when ingestion
-  translates or the caller asks (`RAGInput.target_language`) (#567, #583).
-- DRIFT (primer, actions) and global search's map points write in the query's language, the index language when
-  none is requested (`source_language` with translation disabled), not always `target_language`, and DRIFT's HyDE
-  expansion in the index language, the community reports' it searches, whatever language is requested (#613);
+- A query is translated only when ingestion translates or the caller asks (`RAGInput.target_language`), and its
+  entities and keywords are extracted in the index language even when the caller asks for another: only the text
+  units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).
+- DRIFT (primer, actions, HyDE), iterative's controller and global search's map points write in the index language
+  (`source_language` with translation disabled), not always `target_language` nor a requested language, whose
+  follow-up queries found no entity (#613, #619);
   query entities a model separates with `、`, `，` or `；` (or one per line) are split into entities, not read as
   one; global search reads a relevance rating past a scale written as `10점 만점에`, `10点満点中` or `满分10分`;
   LightRAG's raw-query fallback counts a CJK or Hangul character as 4 against

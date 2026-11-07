@@ -872,6 +872,47 @@ async def test_without_a_readable_record_the_config_stands_in() -> None:
     assert chain.built == []
 
 
+async def test_a_failed_record_read_is_not_cached() -> None:
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    # The store fails once: the config (graphrag included) stands in for
+    # that query only, and the next one reads the record (no graphrag).
+    records = _Records(RuntimeError("store down"))  # type: ignore[arg-type]
+    chain = _chain(Config(), records)
+    assert G in await chain.acheck_methodology(SearchStrategy.MIX)
+    records.record = _record(*LIGHT).model_dump(mode="json")
+    assert await chain.acheck_methodology(SearchStrategy.MIX) == (L, H)
+    assert records.reads == 2
+    with pytest.raises(MethodologyNotIndexedError):
+        await chain.acheck_methodology(SearchStrategy.GLOBAL)
+
+
+async def test_held_artifacts_are_cached_per_suffix() -> None:
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    class _PerSuffix(_Records):
+        def __init__(self, records: dict[str | None, dict]) -> None:
+            super().__init__(None)
+            self.records = records
+
+        async def aread_build_record(self, suffix: str | None) -> dict | None:
+            self.reads += 1
+            return self.records[suffix]
+
+    records = _PerSuffix(
+        {
+            "tenant-a": _record(*FULL).model_dump(mode="json"),
+            "tenant-b": _record(*LIGHT).model_dump(mode="json"),
+        }
+    )
+    chain = _chain(Config(), records)
+    assert G in await chain.acheck_methodology(SearchStrategy.GLOBAL, "tenant-a")
+    # tenant-b's own record, not tenant-a's cached one, decides.
+    with pytest.raises(MethodologyNotIndexedError, match="'tenant-b'"):
+        await chain.acheck_methodology(SearchStrategy.GLOBAL, "tenant-b")
+    assert G in await chain.acheck_methodology(SearchStrategy.GLOBAL, "tenant-a")
+
+
 async def test_naive_and_simple_are_served_where_their_indexes_are_held() -> None:
     from unified_kg_rag.shared import MethodologyNotIndexedError
 
@@ -902,7 +943,11 @@ async def test_the_refusal_says_what_adding_the_methodology_costs() -> None:
     # raptor: the tree is built from the stored text units, no rebuild.
     with pytest.raises(MethodologyNotIndexedError) as refused:
         await _chain(Config(), light).acheck_methodology(SearchStrategy.TREE)
-    assert "--enabled-stages summary_tree" in str(refused.value)
+    # The tree is added through indexing.methodologies: a stage list alone
+    # builds a tree the build record does not name, which stays refused.
+    assert "include it in indexing.methodologies" in str(refused.value)
+    assert "no re-extraction" in str(refused.value)
+    assert "--enabled-stages" not in str(refused.value)
     assert "rebuilt" not in str(refused.value)
     # A graph methodology on a raptor-only namespace extracts every unit.
     with pytest.raises(MethodologyNotIndexedError) as refused:

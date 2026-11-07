@@ -51,7 +51,9 @@ scored/failed/skipped counts (`metric_outcomes`), plus:
   actually used, which varies under `auto`), `category`, `difficulty` and
   `source_type` (the retrieval metrics per source section type).
 - `abstention_statistics`: how often the chain declined (`abstained`: its
-  fixed no-context reply "I could not find relevant information…", and under
+  fixed no-context reply, "I could not find relevant information…" or its
+version in the question's language, read from `metadata.abstained`, never
+from the text, and under
   `search.abstention.mode: mark` an answer starting with `[NO_ANSWER]` or one
   declined by the insufficient-context policy): `completed` (results whose
   answer generation did not fail, declines included) = `abstained`

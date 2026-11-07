@@ -59,6 +59,7 @@ def _bare_strategy(
                 seed_score_ratio=0.6,
                 report_selection="similarity",
                 text_unit_ranking="support",
+                entity_candidates_per_focus=3,
             ),
             hybrid=SimpleNamespace(lexical_weight=0.5, vector_weight=0.5),
             max_concurrency=4,
@@ -285,9 +286,8 @@ async def test_find_candidate_entities_looks_each_focus_entity_up_alone() -> Non
     # never the joined names.
     assert _sources(out) == ["e1", "e2"]
     assert [q.query for q in retriever.queries] == ["Alice", "Bob"]
-    assert {q.top_k for q in retriever.queries} == {
-        LocalSearchStrategy.ENTITY_CANDIDATES_PER_FOCUS
-    }
+    # search.local_search.entity_candidates_per_focus (3 here, 2 by default).
+    assert {q.top_k for q in retriever.queries} == {3}
     assert {tuple(q.index_prefixes or ()) for q in retriever.queries} == {("entities",)}
 
 

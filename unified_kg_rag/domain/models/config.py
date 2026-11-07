@@ -701,11 +701,6 @@ REMOVED_KEYS: dict[str, str] = {
         )
         for key in ("persist_embedding_cache", "embedding_cache_s3_key")
     },
-    "search.local_search.type_quota": (
-        "the fusion slots local search and DRIFT reserve per section type are "
-        "fixed (BaseSearchStrategy.TYPE_QUOTA); search.token_manager."
-        "type_budgets sets each type's share of the context"
-    ),
     "cache.chunking": (
         "a stage-cache entry of more than 1,000 items or 50 MB is always "
         "written in chunk files"
@@ -3611,17 +3606,31 @@ class HybridConfig(BaseModel):
             "Weight of the lexical side of a "
             "hybrid search. A hybrid search runs "
             "a lexical and a kNN search on each "
-            "index, each fetching at least 50 "
-            "hits, min-max normalizes each over "
-            "its hits, takes their weighted mean "
-            "(lexical_weight, vector_weight) and "
-            "keeps the requested number, so the "
-            "ranking does not depend on how many "
-            "hits a query asks for."
+            "index, each fetching at least "
+            "normalization_window hits, min-max "
+            "normalizes each over its hits, takes "
+            "their weighted mean (lexical_weight, "
+            "vector_weight) and keeps the "
+            "requested number, so the ranking "
+            "does not depend on how many hits a "
+            "query asks for."
         ),
     )
     vector_weight: float = Field(
         default=0.5, ge=0.0, le=1.0, description="Weight for vector search results"
+    )
+    normalization_window: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "Hits each side of a hybrid search fetches at least (capped by "
+            "the index's max_result_window) for the min-max normalization "
+            "before the cut to the requested number: normalized over only "
+            "the hits returned, a hit's fused score, and so the ranking, "
+            "depended on how many were asked for. A larger window costs "
+            "store work per search. Unmeasured choice (no A/B in "
+            "docs/concepts/defaults-and-evidence.md)."
+        ),
     )
 
     @model_validator(mode="after")
@@ -3907,6 +3916,88 @@ class GlobalSearchConfig(BaseModel):
     )
 
 
+class TypeQuotaConfig(BaseModel):
+    """Fusion slots reserved per section type, ``max(multiplier * top_k,
+    floor)``, in local search and the strategies built on it (DRIFT's
+    follow-up local searches, ppr, iterative's rounds).
+
+    Without them one type (usually entities, which arrive with many near-tie
+    fusion scores) takes the whole flat top_k cut and crowds out the chunks
+    that carry the answer; MS GraphRAG's local search assembles per-section
+    budgets the same way (top_k_entities and top_k_relationships 10). What
+    the context then holds of each type is search.token_manager.type_budgets.
+    Only the entity and relationship floors follow upstream; the text,
+    community and claim values are unmeasured choices (no A/B in
+    docs/concepts/defaults-and-evidence.md).
+    """
+
+    text_multiplier: float = Field(
+        default=2.0,
+        ge=0.0,
+        description="Text-unit (chunk) slots as a multiple of top_k. "
+        "Unmeasured choice.",
+    )
+    text_floor: int = Field(
+        default=20,
+        ge=1,
+        description="Minimum text-unit slots whatever top_k. Unmeasured choice.",
+    )
+    entity_multiplier: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Entity slots as a multiple of top_k. Unmeasured choice.",
+    )
+    entity_floor: int = Field(
+        default=10,
+        ge=1,
+        description="Minimum entity slots (MS GraphRAG local's top_k_entities).",
+    )
+    relationship_multiplier: float = Field(
+        default=1.0,
+        ge=0.0,
+        description="Relationship slots as a multiple of top_k (also caps local "
+        "search's bridge relationships). Unmeasured choice.",
+    )
+    relationship_floor: int = Field(
+        default=10,
+        ge=1,
+        description="Minimum relationship slots (MS GraphRAG local's "
+        "top_k_relationships).",
+    )
+    community_multiplier: float = Field(
+        default=0.5,
+        ge=0.0,
+        description="Community report slots as a multiple of top_k. "
+        "Unmeasured choice.",
+    )
+    community_floor: int = Field(
+        default=2,
+        ge=1,
+        description="Minimum community report slots. Unmeasured choice.",
+    )
+    claim_multiplier: float = Field(
+        default=0.5,
+        ge=0.0,
+        description="Claim slots as a multiple of top_k. Unmeasured choice.",
+    )
+    claim_floor: int = Field(
+        default=2,
+        ge=1,
+        description="Minimum claim slots. Unmeasured choice.",
+    )
+
+    def slots(self, top_k: int) -> dict[str, int]:
+        """Reserved slots per section type (its value, ``"text"``) for
+        ``top_k``."""
+        return {
+            kind: max(
+                int(getattr(self, f"{kind}_multiplier") * top_k),
+                getattr(self, f"{kind}_floor"),
+            )
+            for kind in ("text", "entity", "relationship", "community", "claim")
+        }
+
+
 class LocalSearchConfig(BaseModel):
     entity_frequency_threshold: int = Field(
         default=20,
@@ -4006,6 +4097,27 @@ class LocalSearchConfig(BaseModel):
             "the text units it cites; an endpoint the expansion did not reach "
             "is read from the entities index. 0 = off (the measured setting "
             "is 5). Needs indexing.opensearch.build_relationship_vector_index."
+        ),
+    )
+    entity_candidates_per_focus: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "Entities-index hits fetched per query entity, among which its "
+            "exact name match is looked for (else its top hit seeds, under "
+            "seed_score_ratio). Unmeasured choice (no A/B in "
+            "docs/concepts/defaults-and-evidence.md)."
+        ),
+    )
+    type_quota: TypeQuotaConfig = Field(
+        default_factory=TypeQuotaConfig,
+        description=(
+            "Fusion slots reserved per section type, max(multiplier * top_k, "
+            "floor), in local search and the strategies built on it (DRIFT's "
+            "follow-ups, ppr, iterative's rounds); "
+            "search.token_manager.type_budgets sets what the context then "
+            "holds of each. Only the entity and relationship floors follow MS "
+            "GraphRAG; the rest are unmeasured choices."
         ),
     )
 
@@ -4346,6 +4458,18 @@ class IterativeSearchConfig(BaseModel):
             "Follow-up queries the controller may ask for in one round, each "
             "naming a bridge entity; a query already searched is not searched "
             "again. 0 follows the bridge entities alone."
+        ),
+    )
+    max_bridge_entities: int = Field(
+        default=5,
+        ge=0,
+        description=(
+            "Bridge entities one round follows at most (the controller's "
+            "bridge_entities beyond them are dropped, so a controller that "
+            "lists many does not multiply the round's lookups); one already "
+            "followed is not followed again. 0 follows the follow-up queries "
+            "alone. Unmeasured choice (no A/B in "
+            "docs/concepts/defaults-and-evidence.md)."
         ),
     )
     controller_context_tokens: int | None = Field(

@@ -36,7 +36,6 @@ import pytest
 
 from tests.fixtures.store_backends import StoreHarness, open_harness
 from unified_kg_rag.adapters.local.search_engine.analyzers import get_analyzer
-from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -274,7 +273,7 @@ def test_hybrid_normalizes_each_search_over_its_own_hits(tmp_path: Path) -> None
         found = {
             h.kind: _search(h, SearchType.HYBRID, ["widget"], size)[0] for h in pair
         }
-        window = max(size, OpenSearchRetriever.HYBRID_NORMALIZATION_WINDOW)
+        window = max(size, pair[1].config.search.hybrid.normalization_window)
         lexical, vector = (
             _search(pair[1], search_type, ["widget"], window)[0]
             for search_type in (SearchType.LEXICAL, SearchType.VECTOR)
