@@ -238,6 +238,17 @@ class PipelineStateManager:
                 e,
             )
             return
+        if not isinstance(persisted, dict) or not isinstance(
+            persisted.get("stage_results", []), list
+        ):
+            # Valid JSON but no run's record (an array, say): every save of
+            # the run, a --force-rebuild's included, failed on it.
+            logger.warning(
+                "Existing metadata '%s' is not a pipeline record (treating as "
+                "fresh)",
+                metadata_path,
+            )
+            return
 
         persisted_results: list[PipelineStageResult] = []
         for raw in persisted.get("stage_results", []):

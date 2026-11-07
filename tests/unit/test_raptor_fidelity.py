@@ -126,6 +126,7 @@ def _sampled(cases: list[dict[str, Any]], sample: tuple[str, ...]) -> list[Any]:
 # --- clustering, by agreement -------------------------------------------------
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "case",
     [c for c in UPSTREAM["clustering"] if c["case"] in _SAMPLED_CLUSTERINGS],

@@ -186,3 +186,41 @@ def test_a_stopped_stage_does_not_repeat_its_answered_model_calls(
     # not asked again.
     assert len(set(extraction_prompts)) == 2
     assert extraction_prompts.count(answered_first) == 1
+
+
+def test_a_stop_wrapped_in_a_setup_error_ends_the_run_as_a_stop(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A stop raised inside code that wraps what it raises (a pydantic
+    # validator, say) reached the run as a plain error before the namespace
+    # lease was taken: it ended as a crash (exit 1) instead of a stop
+    # (128 + SIGTERM) that a rerun resumes.
+    harness = _Harness(tmp_path, monkeypatch)
+    original = pipeline_module.DataIngestionPipeline._validate_retired_scopes
+    stop = {"on": True}
+
+    def validate(pipeline, source_directory):  # type: ignore[no-untyped-def]
+        if stop["on"]:
+            try:
+                os.kill(os.getpid(), signal.SIGTERM)
+            except KeyboardInterrupt as e:
+                raise ValueError("validation failed") from e
+            raise AssertionError("SIGTERM did not stop the run")
+        return original(pipeline, source_directory)
+
+    monkeypatch.setattr(
+        pipeline_module.DataIngestionPipeline, "_validate_retired_scopes", validate
+    )
+    assert harness.run("--pipeline-id", "p1") == 128 + signal.SIGTERM
+    assert harness.llm_calls == 0
+    assert not harness.graph.ids("entities")
+    # The CLI restored the handler it replaced.
+    assert not callable(signal.getsignal(signal.SIGTERM))
+
+    stop["on"] = False
+    assert harness.run("--pipeline-id", "p1") == 0
+    statuses = {
+        r["stage_name"]: r["status"] for r in harness.metadata("p1")["stage_results"]
+    }
+    assert set(statuses.values()) == {"completed"}
+    assert harness.graph.ids("entities")

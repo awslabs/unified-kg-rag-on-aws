@@ -184,7 +184,9 @@ def random_seeds(
         variants = sorted(
             {v for n in chosen for v in (n.upper(), n.lower())} - {*chosen}
         )
-        chosen += draw(st.lists(st.sampled_from(variants), max_size=2, unique=True))
+        # A caseless script (Hangul, kana, Han) has no other spelling.
+        if variants:
+            chosen += draw(st.lists(st.sampled_from(variants), max_size=2, unique=True))
     nodes = tuple(
         SeedNode(
             id=_node_id(name),

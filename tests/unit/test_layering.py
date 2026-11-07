@@ -523,6 +523,7 @@ def violations(root: Path = _PACKAGE_ROOT) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+@pytest.mark.slow
 def test_imports_follow_the_layer_rules() -> None:
     found = violations()
     assert not found, "layer rule violated:\n" + "\n".join(found)
@@ -914,6 +915,7 @@ def _loaded_by(modules: list[str]) -> dict[str, list[str]]:
     return dict(json.loads(result.stdout.strip().splitlines()[-1]))
 
 
+@pytest.mark.slow
 def test_injected_modules_load_no_store_backend() -> None:
     """The runtime side of the static rules: what a clean interpreter has
     loaded after importing each module that has its backends injected. The

@@ -845,6 +845,7 @@ def test_a_large_seed_converts_in_linear_time() -> None:
     assert large / small < _SCALING_BOUND, f"{small:.2f} s -> {large:.2f} s"
 
 
+@pytest.mark.slow
 def test_a_hub_over_the_unit_limit_fails_naming_it() -> None:
     # A node's card (it and its outgoing edges) stays in one shard: more
     # shards cannot split a hub, a larger max_items_per_unit can.

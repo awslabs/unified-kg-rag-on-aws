@@ -39,9 +39,11 @@ types the seeds too.
 from __future__ import annotations
 
 import hashlib
+import tempfile
 import uuid
 from collections.abc import Callable, Sequence
 from functools import cache
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -54,6 +56,7 @@ import unified_kg_rag.adapters.ingestion.graph_extractor as extractor_module
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.fixtures.incremental_runs import edge_state, entity_state
+from tests.fixtures.property_stores import Stores, property_stores
 from tests.fixtures.seed_graphs import (
     EX,
     Seed,
@@ -101,7 +104,18 @@ from unified_kg_rag.shared.exceptions import SeedGraphError
 pytestmark = pytest.mark.property
 
 _PATHS = ["/corpus/a.txt", "/corpus/b.txt", "/corpus/c.txt"]
-_NAMES = ["Vendor", "Vendor Inc", "Depot", "Carrier", "Buyer"]
+# Korean and Japanese names too: the resolver matches "(주)벤더" with "벤더" by
+# their legal form, as "Vendor Inc" with "Vendor".
+_NAMES = [
+    "Vendor",
+    "Vendor Inc",
+    "Depot",
+    "Carrier",
+    "Buyer",
+    "벤더",
+    "(주)벤더",
+    "ベンダー株式会社",
+]
 _TYPE = "RELATED_TO"
 
 # Edge = (source name, target name, strength). A text unit = (the entity
@@ -243,6 +257,13 @@ def _graph_state(graph: FakeGraphStore):
     )
 
 
+def _stores_state(stores: Stores):
+    return (
+        {e.id: entity_state(e) for e in stores.entities()},
+        {r.id: edge_state(r) for r in stores.relationships()},
+    )
+
+
 def _expected_state(
     corpus: dict[str, Any], extract: Callable[[dict[str, Any]], Any] = _extract
 ):
@@ -286,20 +307,11 @@ def _run(
     )
 
 
-@pytest.mark.slow
-# 300 examples take seconds alone and over 120 s (the default timeout) on a
-# loaded runner: the timeout leaves margin for that, not for a hang.
-@pytest.mark.timeout(600)
-@settings(
-    max_examples=300,
-    deadline=None,
-    suppress_health_check=[HealthCheck.too_slow],
-)
-@given(rounds=st.lists(_round, min_size=1, max_size=5))
-# a.txt lists Vendor; b.txt names it only inside its Vendor -> Depot edge.
-# Deleting a.txt must keep Vendor (citing b.txt's unit) and b.txt's edge.
-@example(
-    rounds=[
+# The rounds every store backend runs first. a.txt lists Vendor; b.txt
+# names it only inside its Vendor -> Depot edge. Deleting a.txt must keep
+# Vendor (citing b.txt's unit) and b.txt's edge.
+_ROUND_EXAMPLES: list[list[dict[str, Any]]] = [
+    [
         {
             _PATHS[0]: [(["Vendor", "Buyer"], [("Vendor", "Buyer", 1)], [])],
             _PATHS[1]: [(["Depot"], [("Vendor", "Depot", 2)], [])],
@@ -310,11 +322,9 @@ def _run(
             _PATHS[1]: [(["Depot"], [("Vendor", "Depot", 2)], [])],
             _PATHS[2]: None,
         },
-    ]
-)
-# The same, but gleaning (not extraction) adds b.txt's Vendor -> Depot edge.
-@example(
-    rounds=[
+    ],
+    # The same, but gleaning (not extraction) adds b.txt's Vendor -> Depot edge.
+    [
         {
             _PATHS[0]: [(["Vendor"], [], [])],
             _PATHS[1]: [(["Depot"], [], [("Vendor", "Depot", 2)])],
@@ -325,13 +335,11 @@ def _run(
             _PATHS[1]: [(["Depot"], [], [("Vendor", "Depot", 2)])],
             _PATHS[2]: None,
         },
-    ]
-)
-# "Vendor Inc", named only inside b.txt's edge, merged into the "Vendor" it
-# lists; c.txt lists "Vendor Inc" with another type, so a full build keeps it
-# apart, with b.txt's edge to it. The stored "Vendor" must split.
-@example(
-    rounds=[
+    ],
+    # "Vendor Inc", named only inside b.txt's edge, merged into the "Vendor" it
+    # lists; c.txt lists "Vendor Inc" with another type, so a full build keeps it
+    # apart, with b.txt's edge to it. The stored "Vendor" must split.
+    [
         {
             _PATHS[0]: None,
             _PATHS[1]: [(["Vendor"], [], [("Depot", "Vendor Inc", 1)])],
@@ -342,12 +350,10 @@ def _run(
             _PATHS[1]: [(["Vendor"], [], [("Depot", "Vendor Inc", 1)])],
             _PATHS[2]: [(["Vendor"], [], []), (["Vendor Inc"], [], [])],
         },
-    ]
-)
-# The same split, where the delta's own merge of the two spellings gives the
-# delta edge other per-unit strengths than a full build.
-@example(
-    rounds=[
+    ],
+    # The same split, where the delta's own merge of the two spellings gives the
+    # delta edge other per-unit strengths than a full build.
+    [
         {
             _PATHS[0]: None,
             _PATHS[1]: [
@@ -365,25 +371,128 @@ def _run(
                 (["Vendor Inc"], [], []),
             ],
         },
-    ]
-)
-def test_incremental_rounds_match_a_full_build(rounds) -> None:
-    config = Config()
-    graph = FakeGraphStore()
-    vector = FakeVectorStore(opensearch_config=config.indexing.opensearch)
-    manager = IndexingManager(config=config, vector_indexer=vector, graph_indexer=graph)
+    ],
+    # An edge only a.txt states, between entities b.txt keeps: deleting
+    # a.txt must delete the edge itself (no vertex drop takes it along).
+    [
+        {
+            _PATHS[0]: [(["Vendor", "Depot"], [("Vendor", "Depot", 2)], [])],
+            _PATHS[1]: [(["Vendor", "Depot"], [], [])],
+            _PATHS[2]: None,
+        },
+        {
+            _PATHS[0]: None,
+            _PATHS[1]: [(["Vendor", "Depot"], [], [])],
+            _PATHS[2]: None,
+        },
+    ],
+]
+
+
+def _round_examples(test: Callable[..., None]) -> Callable[..., None]:
+    for rounds in reversed(_ROUND_EXAMPLES):
+        test = example(rounds=rounds)(test)
+    return test
+
+
+def _check_rounds(stores: Stores, rounds: list[dict[str, Any]]) -> None:
+    manager = IndexingManager(
+        config=stores.config,
+        vector_indexer=stores.vector,
+        graph_indexer=stores.graph,
+    )
     inc = IncrementalIndexer(FakeDocStatusStore(), manager)
 
     for state in rounds:
         corpus = {path: content for path, content in state.items() if content}
         _run(inc, corpus)
 
-        assert _graph_state(graph) == _expected_state(corpus)
-        expected_entities, _ = _expected_state(corpus)
+        expected_entities, expected_edges = _expected_state(corpus)
+        assert _stores_state(stores) == (expected_entities, expected_edges)
         assert {
-            e.id: entity_state(e) for e in vector.data.get("entities", {}).values()
+            e.id: entity_state(e) for e in stores.vector_entities()
         } == expected_entities
-        assert vector.ids("relationships") == set(_expected_state(corpus)[1])
+        assert stores.vector_ids("relationships") == set(expected_edges)
+
+
+@pytest.mark.slow
+# 300 examples take seconds alone and over 120 s (the default timeout) on a
+# loaded runner: the timeout leaves margin for that, not for a hang.
+@pytest.mark.timeout(600)
+@settings(
+    max_examples=300,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+@given(rounds=st.lists(_round, min_size=1, max_size=5))
+@_round_examples
+def test_incremental_rounds_match_a_full_build(rounds) -> None:
+    with property_stores("fake") as stores:
+        _check_rounds(stores, rounds)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+# The same rounds on the embedded SQLite stores: the fakes model the
+# stores' write semantics, these are the stores. Fewer examples (each opens
+# two database files).
+@settings(
+    max_examples=40,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+@given(rounds=st.lists(_round, min_size=1, max_size=4))
+@_round_examples
+def test_incremental_rounds_match_a_full_build_on_sqlite(rounds) -> None:
+    with property_stores("sqlite") as stores:
+        _check_rounds(stores, rounds)
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(
+    max_examples=25,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+@given(
+    rounds_a=st.lists(_round, min_size=1, max_size=3),
+    rounds_b=st.lists(_round, min_size=1, max_size=3),
+)
+def test_two_namespaces_over_one_store_converge_apart(rounds_a, rounds_b) -> None:
+    # Two namespaces (additional_suffix) in the same SQLite files, each with
+    # its own registry, indexed in turns from corpora of the same names: the
+    # entity and edge ids collide, and each namespace must still hold what
+    # a full build of its own corpus holds.
+    with tempfile.TemporaryDirectory(prefix="ukr-prop-") as root:
+        with (
+            property_stores("sqlite", root=Path(root), additional_suffix="ns-a") as a,
+            property_stores("sqlite", root=Path(root), additional_suffix="ns-b") as b,
+        ):
+            runs = [
+                (a, IncrementalIndexer(FakeDocStatusStore(), _manager(a))),
+                (b, IncrementalIndexer(FakeDocStatusStore(), _manager(b))),
+            ]
+            for step in range(max(len(rounds_a), len(rounds_b))):
+                for (_stores, inc), rounds in zip(
+                    runs, (rounds_a, rounds_b), strict=True
+                ):
+                    state = rounds[min(step, len(rounds) - 1)]
+                    corpus = {path: c for path, c in state.items() if c}
+                    _run(inc, corpus)
+                for (stores, _), rounds in zip(runs, (rounds_a, rounds_b), strict=True):
+                    state = rounds[min(step, len(rounds) - 1)]
+                    corpus = {path: c for path, c in state.items() if c}
+                    assert _stores_state(stores) == _expected_state(corpus)
+                    assert stores.vector_ids("relationships") == set(
+                        _expected_state(corpus)[1]
+                    )
+
+
+def _manager(stores: Stores) -> IndexingManager:
+    return IndexingManager(
+        config=stores.config, vector_indexer=stores.vector, graph_indexer=stores.graph
+    )
 
 
 # --- strict extraction schema ---------------------------------------------------

@@ -146,6 +146,7 @@ def _sequence(tmp: Path, reuse: bool, follow: dict[str, str]) -> dict[str, list]
     return stores.state()
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "follow",
     [
@@ -163,6 +164,7 @@ def test_a_pipeline_run_again_after_a_failed_commit_matches_a_new_one(
     assert reused == fresh
 
 
+@pytest.mark.slow
 def test_a_reused_pipeline_finishes_a_killed_commit_from_its_note(
     tmp_path: Path,
 ) -> None:

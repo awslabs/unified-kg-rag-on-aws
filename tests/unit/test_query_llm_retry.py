@@ -21,6 +21,7 @@ from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
+from tests.fixtures.fakes.retrievers import StaticRetriever, hit
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.llm.chain_factory import (
     TransientRetryRunnable,
@@ -37,9 +38,7 @@ from unified_kg_rag.domain.models import (
     Config,
     LanguageModelId,
     ModelPurpose,
-    RetrievalResult,
     RetrieverRole,
-    SearchQuery,
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import RetryConfig, TransientRetryConfig
@@ -281,22 +280,11 @@ def test_non_bedrock_factory_gets_no_chain_retry() -> None:
 # --- end-to-end through GraphRAGChain -------------------------------------
 
 
-class _FakeRetriever:
-    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-        return [
-            RetrievalResult(
-                content="Vendor ships parts to Buyer under the supply agreement.",
-                score=0.9,
-                source="doc-1",
-                retriever_type="document",
-                metadata={"id": "doc-1", "text_unit_ids": []},
-            )
-        ]
-
-
 def _rag_chain(model: _ScriptedModel) -> GraphRAGChain:
     config = _config()
-    retriever = _FakeRetriever()
+    retriever = StaticRetriever(
+        [hit("Vendor ships parts to Buyer under the supply agreement.")]
+    )
     chain = GraphRAGChain(
         config=config,
         model_factory=_FakeBedrockFactory(model, config),

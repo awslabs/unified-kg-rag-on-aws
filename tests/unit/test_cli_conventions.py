@@ -544,6 +544,7 @@ def test_a_sigterm_after_main_returned_ends_the_process_with_143(
     assert json.loads(capsys.readouterr().out) == {"ok": True}
 
 
+@pytest.mark.slow
 def test_importing_the_clis_leaves_asyncio_unpatched() -> None:
     # run-rag and run-eval applied nest_asyncio at import, which patched the
     # event-loop class for the whole process: asyncio.run reused one loop,

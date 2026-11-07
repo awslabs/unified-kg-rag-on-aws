@@ -23,26 +23,13 @@ import pytest
 from gremlin_python.process.translator import Translator
 from gremlin_python.structure.graph import Graph
 
+from tests.fixtures.fakes.gremlin import RecordingTraversal
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.domain.models import Config, SearchQuery
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]
-
-
-class RecordingTraversal:
-    """Chainable fake recording (step_name, args) for each step received."""
-
-    def __init__(self, calls: list[tuple]) -> None:
-        self._calls = calls
-
-    def __getattr__(self, name: str):
-        def _step(*args, **kwargs):
-            self._calls.append((name, args))
-            return self
-
-        return _step
 
 
 @pytest.fixture
@@ -64,7 +51,7 @@ def retriever(config: Config) -> NeptuneRetriever:
 
 def test_apply_filters_none_is_noop(retriever) -> None:
     calls: list[tuple] = []
-    t = RecordingTraversal(calls)
+    t = RecordingTraversal(calls, with_args=True)
     out = retriever._apply_filters(t, None)
     assert out is t
     assert calls == []
@@ -72,14 +59,18 @@ def test_apply_filters_none_is_noop(retriever) -> None:
 
 def test_apply_filters_skips_id_key(retriever) -> None:
     calls: list[tuple] = []
-    retriever._apply_filters(RecordingTraversal(calls), {"id": ["a", "b"]})
+    retriever._apply_filters(
+        RecordingTraversal(calls, with_args=True), {"id": ["a", "b"]}
+    )
     # The reserved "id" key is handled as seeds elsewhere, not as a has() filter.
     assert calls == []
 
 
 def test_apply_filters_list_uses_within(retriever) -> None:
     calls: list[tuple] = []
-    retriever._apply_filters(RecordingTraversal(calls), {"type": ["PERSON", "ORG"]})
+    retriever._apply_filters(
+        RecordingTraversal(calls, with_args=True), {"type": ["PERSON", "ORG"]}
+    )
     has_calls = [c for c in calls if c[0] == "has"]
     assert len(has_calls) == 1
     key, predicate = has_calls[0][1]
@@ -90,14 +81,18 @@ def test_apply_filters_list_uses_within(retriever) -> None:
 
 def test_apply_filters_scalar_uses_equality(retriever) -> None:
     calls: list[tuple] = []
-    retriever._apply_filters(RecordingTraversal(calls), {"type": "PERSON"})
+    retriever._apply_filters(
+        RecordingTraversal(calls, with_args=True), {"type": "PERSON"}
+    )
     has_calls = [c for c in calls if c[0] == "has"]
     assert has_calls[0][1] == ("type", "PERSON")
 
 
 def test_apply_filters_dict_range_operators(retriever) -> None:
     calls: list[tuple] = []
-    retriever._apply_filters(RecordingTraversal(calls), {"rank": {"gte": 5}})
+    retriever._apply_filters(
+        RecordingTraversal(calls, with_args=True), {"rank": {"gte": 5}}
+    )
     has_calls = [c for c in calls if c[0] == "has"]
     assert len(has_calls) == 1
     key, predicate = has_calls[0][1]
@@ -107,7 +102,9 @@ def test_apply_filters_dict_range_operators(retriever) -> None:
 
 def test_apply_filters_dict_ignores_unknown_operator(retriever) -> None:
     calls: list[tuple] = []
-    retriever._apply_filters(RecordingTraversal(calls), {"rank": {"bogus": 5}})
+    retriever._apply_filters(
+        RecordingTraversal(calls, with_args=True), {"rank": {"bogus": 5}}
+    )
     assert [c for c in calls if c[0] == "has"] == []
 
 
@@ -118,7 +115,7 @@ def test_apply_filters_dict_ignores_unknown_operator(retriever) -> None:
 
 def test_with_projection_shape(retriever) -> None:
     calls: list[tuple] = []
-    retriever._with_projection(RecordingTraversal(calls))
+    retriever._with_projection(RecordingTraversal(calls, with_args=True))
     project_calls = [c for c in calls if c[0] == "project"]
     assert project_calls
     assert project_calls[0][1] == ("node", "path", "node_type")
@@ -327,9 +324,9 @@ def test_projection_reads_the_entity_type(retriever, mocker) -> None:
     anonymous: list[tuple] = []
     mocker.patch(
         "unified_kg_rag.adapters.retrievers.neptune_retriever.__",
-        RecordingTraversal(anonymous),
+        RecordingTraversal(anonymous, with_args=True),
     )
-    retriever._with_projection(RecordingTraversal([]))
+    retriever._with_projection(RecordingTraversal([], with_args=True))
     value_map_args = [c[1] for c in anonymous if c[0] == "value_map"]
     assert "type" in value_map_args[0]
 
@@ -445,9 +442,9 @@ def test_projection_reads_the_rank_the_indexer_writes(retriever, mocker) -> None
     anonymous: list[tuple] = []
     mocker.patch(
         "unified_kg_rag.adapters.retrievers.neptune_retriever.__",
-        RecordingTraversal(anonymous),
+        RecordingTraversal(anonymous, with_args=True),
     )
-    retriever._with_projection(RecordingTraversal(calls))
+    retriever._with_projection(RecordingTraversal(calls, with_args=True))
     value_map_args = [c[1] for c in anonymous if c[0] == "value_map"]
     assert "rank" in value_map_args[0]
     assert "importance" not in value_map_args[0]
@@ -457,7 +454,9 @@ def test_projection_with_degree_counts_edges(retriever) -> None:
     # Regression: bothE().count() also counted an older build's MemberOf
     # edges to communities; the degree counts edges to entities only.
     calls: list[tuple] = []
-    retriever._with_projection(RecordingTraversal(calls), degree_label="Entity-default")
+    retriever._with_projection(
+        RecordingTraversal(calls, with_args=True), degree_label="Entity-default"
+    )
     degree = [c for c in calls if c[0] == "by"][-1][1][0]
     assert str(degree) == "[['both'], ['hasLabel', 'Entity-default'], ['count']]"
     assert [c for c in calls if c[0] == "project"][0][1] == (

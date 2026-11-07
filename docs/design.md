@@ -3786,7 +3786,9 @@ by default**.
 - **Port-based fakes** (`tests/fixtures/fakes/`) implement the stores and the
   registry in memory; `moto` covers the DynamoDB and S3 adapters.
 - **Property tests** (hypothesis) cover merge laws, incremental-versus-full
-  convergence (under a `strict` extraction schema too), interrupted runs,
+  convergence (under a `strict` extraction schema too, on the fakes and on
+  the embedded SQLite stores, and for two namespaces sharing one store),
+  interrupted runs,
   fusion monotonicity, MinHash and token-estimate equivalence, and the
   extraction schema (`strict` keeps a subset of `align`, the per-unit check
   is idempotent and order-free, `schema_key` is its own key); `tests/integration/test_doc_status_conformance.py` checks the
@@ -3799,6 +3801,12 @@ by default**.
   and Neptune and OpenSearch Service (`-m aws`); `test_store_parity.py`
   checks that SQLite and an OpenSearch container rank a synthetic corpus alike
   (same lexical and hybrid top 10, kNN recall@10 ≥ 0.98).
+- **End to end**: `test_embedded_e2e.py` ingests, updates incrementally and
+  asks every strategy on each store backend (SQLite; the containers in the
+  CI `local-stores` job); `test_ingestion_crash.py` SIGKILLs an ingestion
+  process mid-indexing and checks the lease takeover and the converged
+  rerun; `test_local_quickstart.py` runs the bash blocks of
+  `docs/getting-started/local.md` as written against a fake Ollama.
 - **Markers**: `unit`, `integration`, `property`, `aws` (real AWS, excluded in
   CI), `slow`, `perf` and `weekly` (both deselected by default and run by the
   weekly workflows). Run `uv run pytest --cov=unified_kg_rag`.

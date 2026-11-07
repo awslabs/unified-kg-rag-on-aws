@@ -1112,6 +1112,8 @@ Ingestion and incremental indexing.
   the registry off rebuilds; `--force-rebuild` writes its outputs; `--resume-from-stage` ignores case; generated ids
   no longer collide; a cached output that no longer validates is a miss (#223, #248, #259, #564).
 - `--continue-on-error` records crashed documents `FAILED`, not `PROCESSED` (#223).
+- A `pipeline_metadata.json` holding valid JSON but no run's record (an array, say) no longer fails every save of
+  the run: `--force-rebuild` replaces it (#621).
 - `run-ingestion --s3-sync` keeps a stopped task's finished stages, its checkpoints no longer expire after a day,
   and a SIGTERM no longer hangs it; the CDK tasks run under an init process (#316, #326, #433).
 - A retried Step Functions execution resumes at the failed stage (#223).

@@ -36,6 +36,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.ports.indexer import VectorIndexer
+from unified_kg_rag.shared.exceptions import NamespaceLeaseError
 
 pytestmark = pytest.mark.integration
 
@@ -167,6 +168,113 @@ def test_a_failed_write_keeps_the_old_tree(
         indexer.opensearch_config.summary_nodes_index_prefix, None
     )
     assert len(client.get_aliases_by_index(f"{alias}-*")) == 1
+
+
+def _index_count(harness: StoreHarness) -> int:
+    indexer = harness.vector_indexer
+    alias = indexer._get_name(
+        indexer.opensearch_config.summary_nodes_index_prefix, None
+    )
+    return len(indexer.opensearch_client.get_aliases_by_index(f"{alias}-*"))
+
+
+@pytest.mark.parametrize("error", [RuntimeError, NamespaceLeaseError])
+def test_a_failed_alias_swap_keeps_the_old_tree(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    # Every node written, then the swap fails: the nodes are failed items
+    # and the unswapped index is dropped. A lost lease is raised instead:
+    # the run must stop writing.
+    indexer = harness.vector_indexer
+    _tree(harness, [_node("n1", 1, ["u000", "u001"], ["u000", "u001"])])
+
+    def refuse(*_: Any, **__: Any) -> None:
+        raise error("alias swap refused")
+
+    monkeypatch.setattr(indexer, "_update_alias", refuse)
+    nodes = [
+        _node("n8", 1, ["u000", "u002"], ["u000", "u002"]),
+        _node("n9", 1, ["u001", "u003"], ["u001", "u003"]),
+    ]
+    vectors = {n.id: [0.1] * harness.embedding_factory.dimensions for n in nodes}
+    if error is NamespaceLeaseError:
+        with pytest.raises(NamespaceLeaseError):
+            indexer.write_summary_tree(nodes, vectors, None, {})
+        monkeypatch.undo()
+        return
+    stats = indexer.write_summary_tree(nodes, vectors, None, {})
+    monkeypatch.undo()
+
+    assert (stats.failed_items, sorted(stats.failed_ids)) == (2, ["n8", "n9"])
+    assert "alias swap refused" in " ".join(stats.errors)
+    assert [n["id"] for n in indexer.read_summary_nodes(None, fields=[])] == ["n1"]
+    assert _index_count(harness) == 1
+
+
+def _citing(indexer: Any) -> Any:
+    return indexer.delete_summary_nodes_citing(["u000"], "default")
+
+
+def _outside(indexer: Any) -> Any:
+    return indexer.delete_summary_nodes_outside(["u002"], "default")
+
+
+def _whole(indexer: Any) -> Any:
+    return indexer.delete_summary_tree("default")
+
+
+@pytest.mark.parametrize(
+    ("delete", "read", "named"),
+    [
+        (_citing, "find_documents", "Deleting stale summary nodes failed"),
+        (_outside, "_scan", "Deleting stale summary nodes failed"),
+        (_whole, "get_aliases_by_index", "Deleting the summary tree failed"),
+    ],
+    ids=["citing", "outside", "whole-tree"],
+)
+@pytest.mark.parametrize("error", [RuntimeError, NamespaceLeaseError])
+def test_a_failed_summary_deletion_read_deletes_nothing(
+    harness: StoreHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    delete: Any,
+    read: str,
+    named: str,
+    error: type[Exception],
+) -> None:
+    # The read that finds what to delete fails: one failed item (the caller
+    # keeps its registry rows and retries), the tree as it was; a lost lease
+    # is raised.
+    indexer = harness.vector_indexer
+    _tree(
+        harness,
+        [
+            _node("n1", 1, ["u000", "u001"], ["u000", "u001"]),
+            _node("n2", 2, ["n1"], ["u000", "u001"]),
+        ],
+    )
+    target = indexer.opensearch_client if read == "get_aliases_by_index" else indexer
+    original = getattr(target, read)
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise error("search timed out")
+
+    monkeypatch.setattr(target, read, fail)
+    if error is NamespaceLeaseError:
+        with pytest.raises(NamespaceLeaseError):
+            delete(indexer)
+        monkeypatch.undo()  # the teardown reads the aliases too
+        return
+    stats = delete(indexer)
+    monkeypatch.setattr(target, read, original)
+
+    assert (stats.total_items, stats.failed_items) == (1, 1)
+    assert named in " ".join(stats.errors)
+    left = {n["id"] for n in indexer.read_summary_nodes(None, fields=[])}
+    assert left == {"n1", "n2"}
+    assert _index_count(harness) == 1
+    # Read again, the deletion goes through.
+    assert delete(indexer).failed_items == 0
+    assert indexer.read_summary_nodes(None, fields=[]) == []
 
 
 def test_removed_text_takes_its_summaries_and_every_node_above(

@@ -42,6 +42,7 @@ from unified_kg_rag.domain.models.methodology import (
     DEFAULT_METHODOLOGIES,
     METHODOLOGY_PROFILES,
     UNBUILT_ARTIFACTS,
+    artifact_switches,
     methodologies_holding,
 )
 from unified_kg_rag.domain.retrieval import index_prefixes
@@ -534,13 +535,49 @@ async def test_ppr_seeds_entities_where_the_namespace_holds_no_facts() -> None:
     )
 
 
-def test_the_switch_table_names_boolean_settings() -> None:
-    assert {s.key: s.artifacts for s in ARTIFACT_SWITCHES} == {
-        "graph.community_detection.enabled": {A.COMMUNITIES, A.COMMUNITY_REPORTS},
-        "graph.community_detection.report_generation.enabled": {A.COMMUNITY_REPORTS},
-        "indexing.opensearch.build_relationship_vector_index": {A.RELATIONSHIP_VECTORS},
-        "processing.claim_extraction.enabled": {A.CLAIMS},
-    }
+@pytest.mark.parametrize(
+    ("setting", "gone"),
+    [
+        (
+            {"graph": {"community_detection": {"enabled": False}}},
+            {A.COMMUNITIES, A.COMMUNITY_REPORTS},
+        ),
+        (
+            {
+                "graph": {
+                    "community_detection": {"report_generation": {"enabled": False}}
+                }
+            },
+            {A.COMMUNITY_REPORTS},
+        ),
+        (
+            {"indexing": {"opensearch": {"build_relationship_vector_index": False}}},
+            {A.RELATIONSHIP_VECTORS},
+        ),
+        ({"processing": {"claim_extraction": {"enabled": False}}}, {A.CLAIMS}),
+    ],
+    ids=["communities", "reports", "relationship-vectors", "claims"],
+)
+def test_a_switch_set_false_builds_none_of_its_artifacts(
+    setting: dict, gone: set
+) -> None:
+    # As a user sets it: the run builds every artifact but the switch's, and
+    # a message about those artifacts names the setting.
+    claims_on = {"processing": {"claim_extraction": {"enabled": True}}}
+    on = mp.artifacts_to_build(Config.model_validate(claims_on))
+    off = mp.artifacts_to_build(Config.model_validate(merge_over(claims_on, setting)))
+    assert on - off == gone
+    assert off <= on
+    assert _dotted(setting) in artifact_switches(gone)
+
+
+def _dotted(setting: dict) -> str:
+    """The dotted key of a one-key nested setting."""
+    ((name, value),) = setting.items()
+    return f"{name}.{_dotted(value)}" if isinstance(value, dict) else name
+
+
+def test_every_switch_is_a_boolean_setting() -> None:
     config = Config()
     for switch in ARTIFACT_SWITCHES:
         assert isinstance(config._switch_on(switch.key), bool), switch.key

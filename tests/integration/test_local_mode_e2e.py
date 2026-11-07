@@ -23,6 +23,7 @@ import pytest
 
 from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.model_servers import FakeOllama
+from tests.fixtures.fakes.rerank import FakeCrossEncoder
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.integration.test_ingestion_stages import _respond
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
@@ -57,16 +58,6 @@ pytestmark = pytest.mark.integration
 
 DIM = 32
 ANSWER = "Vendor supplies widgets to Buyer, and Depot stores them."
-
-
-class FakeCrossEncoder:
-    def __init__(self, model_id: str, **_: Any) -> None:
-        self.model_id = model_id
-        self.calls = 0
-
-    def predict(self, pairs: list[tuple[str, str]], **_: Any) -> list[float]:
-        self.calls += 1
-        return [float("Depot" in passage) for _, passage in pairs]
 
 
 class StoreRetriever:

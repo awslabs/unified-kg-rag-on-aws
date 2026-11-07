@@ -1742,6 +1742,69 @@ def test_graph_expansion_does_not_depend_on_the_edge_write_order(
     assert x.endswith("Path: S2 -> X"), x
 
 
+def test_graph_expansion_and_edges_stay_in_their_suffix(
+    graph_harness: StoreHarness,
+) -> None:
+    # Content-hash ids collide across suffixes (tenants): the same entity and
+    # relationship ids in two suffixes, linked differently. An expansion or
+    # a neighbourhood read in one suffix must neither return the other's
+    # entities nor walk its edges (only the SQLite store was tested).
+    h = graph_harness
+    other = h.suffix("tenant")
+
+    def scoped(items: list[Any], suffix: str) -> list[Any]:
+        for item in items:
+            item.attributes = {**(item.attributes or {}), "index": suffix}
+        return items
+
+    def graph(suffix: str, edges: list[tuple[str, str, str]]) -> None:
+        ids = sorted({end for _, a, b in edges for end in (a, b)})
+        entities = [
+            Entity(id=i, name=i.upper(), type="ORG", rank=1, description=suffix)
+            for i in ids
+        ]
+        relationships = [
+            Relationship(id=rel, source_id=a, target_id=b, description=f"{a} {b}")
+            for rel, a, b in edges
+        ]
+        stats = h.graph_indexer.upsert_entities(scoped(entities, suffix))
+        assert stats.failed_items == 0, stats.errors
+        stats = h.graph_indexer.upsert_relationships(scoped(relationships, suffix))
+        assert stats.failed_items == 0, stats.errors
+
+    # The same relationship id r1 links hub to a1 here and to b1 there.
+    graph(_SUFFIX, [("r1", "hub", "a1"), ("r2", "hub", "a2")])
+    graph(other, [("r1", "hub", "b1"), ("r3", "b1", "far")])
+
+    mine, theirs = _graph_retrieve(
+        h,
+        SearchQuery(query="", suffix=_SUFFIX, top_k=20, filters={"id": ["hub"]}),
+        SearchQuery(query="", suffix=other, top_k=20, filters={"id": ["hub"]}),
+    )
+    assert {r.source for r in mine} == {"hub", "a1", "a2"}
+    assert {r.source for r in theirs} == {"hub", "b1", "far"}
+
+    async def edges(suffix: str) -> Any:
+        assert h.graph_retriever is not None
+        retriever = h.graph_retriever()
+        try:
+            return await retriever.aneighbourhood_edges(
+                ["hub", "a1", "a2", "b1", "far"],
+                SearchQuery(query="", suffix=suffix),
+                per_vertex=50,
+            )
+        finally:
+            await retriever.aclose()
+
+    def pairs(suffix: str) -> set[tuple[str, str, str]]:
+        found = asyncio.run(edges(suffix))
+        assert found is not None
+        return {(e.id, e.source_id, e.target_id) for e in found}
+
+    assert pairs(_SUFFIX) == {("r1", "hub", "a1"), ("r2", "hub", "a2")}
+    assert pairs(other) == {("r1", "hub", "b1"), ("r3", "b1", "far")}
+
+
 # --- neighbourhood edges (the PageRank graph, docs/design.md §6.4) -----------
 
 

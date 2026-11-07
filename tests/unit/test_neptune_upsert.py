@@ -14,23 +14,10 @@ from __future__ import annotations
 
 import pytest
 
+from tests.fixtures.fakes.gremlin import RecordingTraversal
 from unified_kg_rag.domain.models import Config, Relationship
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]
-
-
-class RecordingTraversal:
-    """Chainable fake that records every step name it receives."""
-
-    def __init__(self, calls: list[str]) -> None:
-        self._calls = calls
-
-    def __getattr__(self, name: str):
-        def _step(*args, **kwargs):
-            self._calls.append(name)
-            return self
-
-        return _step
 
 
 def _stored_ends(op: str, rels: list[Relationship]) -> list[str] | None:

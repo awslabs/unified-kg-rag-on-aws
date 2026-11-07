@@ -636,3 +636,46 @@ def test_a_rerun_stopped_before_it_asked_again_does_not_replay_the_response(
     assert harness.run("--pipeline-id", "p1") == 0
     assert "Depot stores widgets for Vendor." in calls[asked:]
     assert {r.status for r in all_records(harness.registry)} == {DocStatus.PROCESSED}
+
+
+@pytest.mark.parametrize(
+    "content",
+    ['{"pipeline_id": "p1", "status": ', "[]", '{"stage_results": 1}'],
+    ids=["truncated", "array", "stage-results-not-a-list"],
+)
+def test_a_corrupt_metadata_file_fails_the_rerun_and_force_rebuild_recovers(
+    harness: _Harness, content: str
+) -> None:
+    assert harness.run("--pipeline-id", "p1") == 0
+    path = harness.tmp_path / "cache" / "p1" / "pipeline_metadata.json"
+    path.write_text(content, encoding="utf-8")
+    calls = harness.llm_calls
+
+    # Resuming from it fails before any stage runs, and keeps the file (the
+    # evidence) as it was; --verify-metadata says so too.
+    assert harness.run("--pipeline-id", "p1") == 1
+    assert harness.llm_calls == calls
+    assert path.read_text(encoding="utf-8") == content
+    assert harness.run("--pipeline-id", "p1", "--verify-metadata") == 1
+
+    # A rebuild ignores it and writes a valid one.
+    assert harness.run("--pipeline-id", "p1", "--force-rebuild") == 0
+    statuses = {
+        r["stage_name"]: r["status"] for r in harness.metadata("p1")["stage_results"]
+    }
+    assert set(statuses.values()) == {"completed"}
+    assert harness.run("--pipeline-id", "p1", "--verify-metadata") == 0
+
+
+def test_an_empty_metadata_file_starts_the_run_anew(harness: _Harness) -> None:
+    # An empty file holds no run to resume: the rerun is a new run of the id.
+    path = harness.tmp_path / "cache" / "p1" / "pipeline_metadata.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("", encoding="utf-8")
+
+    assert harness.run("--pipeline-id", "p1") == 0
+    statuses = {
+        r["stage_name"]: r["status"] for r in harness.metadata("p1")["stage_results"]
+    }
+    assert set(statuses.values()) == {"completed"}
+    assert harness.graph.ids("entities")
