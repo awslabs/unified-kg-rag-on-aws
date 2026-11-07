@@ -72,6 +72,11 @@ Corpus = dict[str, Content | Document]
 
 _TYPE = "RELATED_TO"
 
+# The statuses a unit's claims state, picked by the unit (``_claim_status``):
+# units of one claim disagree, so a build holds true, false, disputed and
+# unknown claims, and a model's off-vocabulary words ("true.", "Suspected").
+_STATUSES = ("TRUE", "TRUE", "true.", "FALSE", "UNKNOWN", "Suspected")
+
 # Where a run can be interrupted, in the order the indexing stage reaches them.
 POINTS = (
     "after_write_ahead",
@@ -94,6 +99,12 @@ def _unit_id(path: str, index: int, unit: list[tuple[str, str, int]]) -> str:
     # Lowercase hex, as the chunker's ids are: they sort before every seed
     # unit id ("sg-..."), so records merge documents first.
     return str(uuid.UUID(digest[:32]))
+
+
+def _claim_status(where: str) -> str:
+    """The status the claims of the unit at ``where`` state."""
+    digest = hashlib.sha256(where.encode()).digest()
+    return _STATUSES[digest[0] % len(_STATUSES)]
 
 
 def document(path: str, content: Content | Document) -> Document:
@@ -127,7 +138,8 @@ def _unit_records(
     """One unit's text unit, record and claims. Each statement carries the
     unit's own text, so removing a unit must remove what it said: an edge's
     name endpoints are listed with a type that follows the strength's parity
-    (types are voted on), and a strength-3 edge also states a claim. The
+    (types are voted on), and a strength-3 edge also states a claim, with
+    a status the unit picks (``_claim_status``: units disagree). The
     statements are checked against the schema as extraction checks them
     (``conformance``: a strict one drops the off-schema ones)."""
     unit_id = _unit_id(path, index, unit)
@@ -175,7 +187,7 @@ def _unit_records(
                     object_id="",
                     object_name=target,
                     type="RATES",
-                    status="TRUE",
+                    status=_claim_status(where),
                     description=f"{source} rates {target} in {where}",
                     source_text=f"{source} rated {target} ({where})",
                     text_unit_ids=[unit_id],
@@ -266,6 +278,7 @@ def edge_state(rel: Relationship) -> tuple[Any, ...]:
 def claim_state(claim: Claim) -> tuple[Any, ...]:
     return (
         claim.subject_id,
+        claim.status,
         _lines(claim.description),
         _lines(claim.source_text),
         frozenset(claim.text_unit_ids or []),
