@@ -294,7 +294,7 @@ def _ask_every_strategy(
 
 
 def _render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: Path) -> int:
-    """Run ``run-visualization --backend local`` on ``data``; its exit code."""
+    """Run ``run-visualization`` on ``data``; its exit code."""
     config_path = tmp_path / "viz.yaml"
     config_path.write_text(
         yaml.safe_dump({"logging": {"log_to_file": False}}), encoding="utf-8"
@@ -310,8 +310,6 @@ def _render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: Path) -> int:
             str(tmp_path / "rendered"),
             "--config-path",
             str(config_path),
-            "--backend",
-            "local",
         ],
     )
     return int(run_visualization.main())
@@ -452,7 +450,7 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     cited = {name for rank in results[0].retrieved_source_ids for name in rank}
     assert cited == {"logistics.txt", "freight.txt"}
 
-    # run-visualization renders the exported graph under --backend local; on
+    # run-visualization renders the exported graph; on
     # an install without the viz extra it stops with exit 2 instead.
     data = viz / "visualization_data.json"
     assert data.is_file()

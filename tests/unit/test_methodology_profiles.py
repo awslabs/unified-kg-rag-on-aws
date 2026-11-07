@@ -41,7 +41,6 @@ from unified_kg_rag.domain.models.methodology import (
     ARTIFACT_SWITCHES,
     DEFAULT_METHODOLOGIES,
     METHODOLOGY_PROFILES,
-    UNBUILT_ARTIFACTS,
     artifact_switches,
     methodologies_holding,
 )
@@ -75,9 +74,6 @@ def _held(record, config: Config) -> tuple[Methodology, ...]:
 
 def test_every_buildable_artifact_has_its_stages() -> None:
     for artifact in A:
-        if artifact in UNBUILT_ARTIFACTS:
-            assert artifact not in mp.ARTIFACT_STAGES
-            continue
         assert mp.ARTIFACT_STAGES[artifact], artifact
         assert mp.ARTIFACT_PRODUCERS[artifact] in mp.ARTIFACT_STAGES[artifact]
     assert set(mp.STAGE_DEPENDENCIES) == set(S)

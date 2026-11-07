@@ -242,12 +242,11 @@ NO_CONTEXT_ANSWER = NO_CONTEXT_ANSWERS[LanguageCode.EN]
 
 # The search metadata of iterative search and its model-written text: the
 # follow-up queries searched (``searched``), and each verdict's bridge
-# entities and follow-up queries and each decomposition step's question.
+# entities and follow-up queries.
 _ITERATIVE_KEY = "iterative"
 _ITERATIVE_MODEL_TEXT: dict[str, tuple[str, ...]] = {
     "searched": (),
     "verdicts": ("bridge_entities", "next_queries"),
-    "steps": ("question",),
 }
 
 

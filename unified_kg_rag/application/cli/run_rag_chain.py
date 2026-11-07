@@ -23,6 +23,7 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_USAGE,
     ArgumentParser,
     add_output_format_argument,
+    add_removed_flag,
     exits_on_sigterm,
     failed,
     interruptible,
@@ -50,7 +51,6 @@ from unified_kg_rag.application.cli.provider_args import (
 from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
     query_suffix,
-    warn_deprecated_query_arguments,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.retrieval.rag_chain import (
@@ -198,12 +198,11 @@ class CommandLineInterface:
             "carries over between --interactive turns, not between separate "
             "run-rag invocations",
         )
-        parser.add_argument(
+        add_removed_flag(
+            parser,
             "--use-memory",
-            action="store_true",
-            help="Enable conversation memory, kept in this process only "
-            "(auto-enabled in interactive mode; a single --query starts with no "
-            "history)",
+            "an --interactive session always keeps its conversation memory, "
+            "and a single --query starts with no history",
         )
         add_query_arguments(parser)
         parser.add_argument(
@@ -298,7 +297,6 @@ class RAGChainRunner:
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)
         setup_logging(self.config, stream=sys.stderr if self.json_output else None)
-        warn_deprecated_query_arguments(args)
         self.metrics_sink = self._build_metrics_sink()
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable[..., Any]] = {
@@ -363,10 +361,9 @@ class RAGChainRunner:
             if self.args.interactive:
                 await self._interactive_mode()
             else:
-                if self.args.use_memory or self.args.conversation_id:
+                if self.args.conversation_id:
                     logger.warning(
-                        "--use-memory / --conversation-id have no effect on a "
-                        "single --query: conversation memory is kept in the "
+                        "--conversation-id has no effect on a single --query: conversation memory is kept in the "
                         "process only, so this query starts with no history "
                         "and its turn is not kept for a later run-rag. Use "
                         "--interactive for multi-turn conversations."
@@ -374,7 +371,7 @@ class RAGChainRunner:
                 rag_input = self._rag_input(
                     self.args.query,
                     conversation_id=self.args.conversation_id,
-                    use_memory=self.args.use_memory,
+                    use_memory=False,
                     filters=self._parse_filters(self.args.filters),
                 )
 
@@ -503,7 +500,6 @@ class RAGChainRunner:
         return RAGInput(
             query=query,
             suffix=query_suffix(self.args, self.config),
-            enable_thinking=self.args.enable_thinking,
             search_strategy=self.args.search_strategy,
             search_type=self.args.search_type,
             conversation_id=conversation_id,
@@ -579,7 +575,7 @@ class RAGChainRunner:
             f"[dim]Search Type:[/dim] {self.args.search_type}",
             f"[dim]Top K Results:[/dim] {self.args.top_k}",
             f"[dim]Retrieval Multiplier:[/dim] {self.args.retrieval_multiplier}",
-            f"[dim]Use Memory:[/dim] {self.args.use_memory or self.args.interactive}",
+            f"[dim]Use Memory:[/dim] {self.args.interactive}",
             f"[dim]Query Processing:[/dim] {not self.args.disable_query_processing}",
             f"[dim]Verbose Output:[/dim] {self.args.verbose}",
             self._get_suffix_display(),

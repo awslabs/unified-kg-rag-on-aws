@@ -1,0 +1,227 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""``DataIngestionPipeline.insert_documents`` / ``delete_documents`` on the
+embedded stores (no container, no AWS): documents given from memory go
+through the same incremental path as a corpus run, and the scope's other
+documents are kept instead of deleted."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tests.fixtures.doc_status_records import all_records
+from tests.fixtures.fakes.model_servers import FakeOllama
+from tests.integration import test_embedded_e2e as embedded
+from tests.integration.test_embedded_e2e import (
+    ANSWER,
+    DIM,
+    FakeCrossEncoder,
+    _config,
+    _entity_names,
+    _errors,
+    _providers,
+    _respond,
+    _stored,
+    _stored_texts,
+)
+from unified_kg_rag import DocumentNotFoundError, InputDocument
+from unified_kg_rag.application.ingestion import pipeline_stages as ps
+from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.domain.models import (
+    Config,
+    DocStatus,
+    PipelineConfig,
+    PipelineContext,
+    PipelineStageStatus,
+    PipelineStageType,
+)
+from unified_kg_rag.shared.exceptions import ConfigurationError
+
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
+
+# The fixture that patches every AWS client to fail.
+no_aws = embedded.no_aws
+
+
+@pytest.fixture
+def setup(tmp_path: Path) -> Iterator[tuple[Config, Any, DataIngestionPipeline]]:
+    config = _config(tmp_path / "stores", tmp_path / "viz")
+    providers = _providers(
+        config, FakeOllama(_respond, ANSWER, DIM), FakeCrossEncoder("rerank")
+    )
+    pipeline = DataIngestionPipeline(
+        config,
+        PipelineConfig(
+            stages_enabled=dict.fromkeys(PipelineStageType, True),
+            local_directory=tmp_path / "cache",
+        ),
+        providers=providers,
+    )
+    for stage in pipeline.stages:
+        if isinstance(stage, ps.GraphResolutionStage):
+            stage.resolver.entity_resolver.use_process_pool = False
+            stage.resolver.relationship_resolver.use_process_pool = False
+    yield config, providers, pipeline
+    pipeline.close()
+
+
+def _records(providers: Any) -> dict[str, DocStatus]:
+    return {r.file_path: r.status for r in all_records(providers.build_doc_status())}
+
+
+def _ok(context: PipelineContext) -> PipelineContext:
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    return context
+
+
+def _unit_filters(config: Config, providers: Any) -> dict[str, Any]:
+    prefix = config.indexing.opensearch.text_units_index_prefix
+    return {
+        hit["_source"]["text"]
+        .strip(): hit["_source"]
+        .get("attributes", {})
+        .get("filters")
+        for hit in _stored(config, providers, prefix)
+    }
+
+
+def test_documents_from_memory_are_added_updated_and_deleted(setup) -> None:
+    config, providers, pipeline = setup
+
+    # Added: Korean text, filters, a nested id.
+    first = _ok(
+        pipeline.insert_documents(
+            [
+                InputDocument(
+                    id="contracts/supply.txt",
+                    text="Vendor supplies widgets to Buyer. 공급자는 납품한다.",
+                    filters={"category": "contract", "year": 2024},
+                ),
+                {"id": "ticket-1", "text": "Depot stores widgets for Vendor."},
+            ]
+        )
+    )
+    assert _records(providers) == {
+        "contracts/supply.txt": DocStatus.PROCESSED,
+        "ticket-1": DocStatus.PROCESSED,
+    }
+    assert _entity_names(providers) == {"Vendor", "Buyer", "Depot"}
+    filters = _unit_filters(config, providers)
+    assert filters["Vendor supplies widgets to Buyer. 공급자는 납품한다."] == {
+        "category": "contract",
+        "year": 2024,
+    }
+    assert set(first.incremental_delta.new) and not first.incremental_delta.kept
+
+    # Another insert keeps what it does not name (a corpus run deletes it).
+    second = _ok(
+        pipeline.insert_documents(
+            [InputDocument(id="ticket-2", text="Carrier ships widgets for Buyer.")]
+        )
+    )
+    assert len(second.incremental_delta.kept) == 2
+    assert second.incremental_delta.deleted == []
+    assert set(_records(providers)) == {"contracts/supply.txt", "ticket-1", "ticket-2"}
+    assert _entity_names(providers) == {"Vendor", "Buyer", "Depot", "Carrier"}
+
+    # Updated: the same id with other text is changed, re-extracted.
+    third = _ok(
+        pipeline.insert_documents(
+            [InputDocument(id="ticket-1", text="Depot stores gadgets for Buyer.")]
+        )
+    )
+    assert len(third.incremental_delta.changed) == 1
+    assert "Depot stores gadgets for Buyer." in _stored_texts(config, providers)
+    assert "Depot stores widgets for Vendor." not in _stored_texts(config, providers)
+
+    # Deleted by id: only what it alone stated goes.
+    fourth = _ok(pipeline.delete_documents(["ticket-2"]))
+    assert len(fourth.incremental_delta.deleted) == 1
+    assert set(_records(providers)) == {"contracts/supply.txt", "ticket-1"}
+    assert _entity_names(providers) == {"Vendor", "Buyer", "Depot"}
+    assert "Carrier ships widgets for Buyer." not in _stored_texts(config, providers)
+
+    # Unknown ids are refused before anything is written.
+    with pytest.raises(DocumentNotFoundError, match="'ticket-9'"):
+        pipeline.delete_documents(["ticket-9", "ticket-1"])
+    assert set(_records(providers)) == {"contracts/supply.txt", "ticket-1"}
+    # The pipeline's own settings are left as they were.
+    assert config.processing.document_parsing.source_scope is None
+    assert any(isinstance(s, ps.DocumentParsingStage) for s in pipeline.stages)
+
+
+def test_scopes_keep_their_documents_apart(setup, tmp_path: Path) -> None:
+    config, providers, pipeline = setup
+    _ok(pipeline.insert_documents([{"id": "a", "text": "Vendor supplies Buyer."}]))
+    _ok(
+        pipeline.insert_documents(
+            [{"id": "a", "text": "Depot stores widgets for Carrier."}],
+            source_scope="crm",
+        )
+    )
+    scopes = sorted(r.scope for r in all_records(providers.build_doc_status()))
+    assert (
+        len(scopes) == 2 and scopes[0].endswith("|api") and scopes[1].endswith("|crm")
+    )
+    # Deleting a from crm leaves the api scope's a.
+    _ok(pipeline.delete_documents(["a"], source_scope="crm"))
+    assert _stored_texts(config, providers) == {"Vendor supplies Buyer."}
+    # A corpus directory still runs as before, in its own scope.
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "notes.txt").write_text("Carrier works with Depot.")
+    _ok(pipeline.run(corpus))
+    assert sorted(_records(providers)) == ["a", "notes.txt"]
+
+
+def test_the_registry_is_required(tmp_path: Path) -> None:
+    config = _config(tmp_path / "stores", tmp_path / "viz")
+    config.providers.doc_status.enabled = False
+    providers = _providers(
+        config, FakeOllama(_respond, ANSWER, DIM), FakeCrossEncoder("rerank")
+    )
+    pipeline = DataIngestionPipeline(
+        config, PipelineConfig(local_directory=tmp_path / "cache"), providers=providers
+    )
+    try:
+        for call in (
+            lambda: pipeline.insert_documents([{"id": "a", "text": "Vendor."}]),
+            lambda: pipeline.delete_documents(["a"]),
+        ):
+            with pytest.raises(ConfigurationError, match="doc-status registry"):
+                call()
+    finally:
+        pipeline.close()
+
+
+@pytest.mark.parametrize(
+    ("given", "match"),
+    [
+        ([], "at least one document"),
+        ([{"id": "a", "text": "x"}, {"id": "a", "text": "y"}], "more than once"),
+        ([{"id": "../escape", "text": "x"}], "relative path"),
+        ([{"id": "/abs", "text": "x"}], "relative path"),
+        ([{"id": "a", "text": "   "}], "text is empty"),
+        ([{"id": "a", "text": "x", "filters": {"a.b": 1}}], "filter key"),
+        ([{"id": "a", "text": "x", "filters": {"seed_graph": 1}}], "filter key"),
+        ([{"id": "a", "text": "x", "metadata": {"filters": {}}}], "set by ingestion"),
+    ],
+)
+def test_invalid_documents_are_refused_before_a_run(
+    setup, given: list[dict[str, Any]], match: str
+) -> None:
+    _, providers, pipeline = setup
+    with pytest.raises(ValueError, match=match):
+        pipeline.insert_documents(given)
+    assert _records(providers) == {}
+
+
+def test_a_reset_cannot_run_document_changes(setup) -> None:
+    config, _, pipeline = setup
+    config.indexing.reset = True
+    with pytest.raises(ConfigurationError, match="cannot reset"):
+        pipeline.insert_documents([{"id": "a", "text": "Vendor."}])

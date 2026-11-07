@@ -48,6 +48,7 @@ from unified_kg_rag.domain.ingestion.community_drift import (
     measure_community_drift,
 )
 from unified_kg_rag.domain.ingestion.delta_detector import (
+    DocumentChanges,
     assign_registry_source,
     detect_delta,
     document_doc_id,
@@ -103,6 +104,7 @@ from unified_kg_rag.shared import (
     ConfirmationDeclinedError,
     DataProcessingError,
     DocStatusRegistryError,
+    DocumentNotFoundError,
     NamespaceLeaseError,
     PipelineStageError,
     get_logger,
@@ -1637,6 +1639,7 @@ def filter_to_delta(
     confirm: Callable[[str], bool] | None = None,
     confirm_deletions: Callable[[str], bool] | None = None,
     guard_reset_deletions: bool = False,
+    deletions: Sequence[str] | None = None,
 ) -> tuple[list[Document], int]:
     """Keep only new/changed documents per the DynamoDB doc-status registry.
 
@@ -1651,8 +1654,16 @@ def filter_to_delta(
     (``guard_reset_deletions``): a rebuild deletes every stored document of
     the scope gone from the corpus, and the user asked for no reset.
 
+    ``deletions`` makes the run a set of document changes
+    (``DataIngestionPipeline.insert_documents`` / ``delete_documents``): its
+    documents are added or updated, the documents of the scope with these
+    relative paths (ids) are deleted, and the scope's other documents are
+    kept (``DocumentChanges``); no mass deletion is asked, the caller named
+    them. Such a run cannot reset.
+
     Raises :class:`DocStatusRegistryError` when the registry cannot be
-    read. There is no safe fallback: without a delta the indexing stage
+    read, and :class:`DocumentNotFoundError` when a deletion names a
+    document the scope does not hold. There is no safe fallback: without a delta the indexing stage
     takes the full-rebuild path, which replaces the suffix's live index
     content with this run's documents and never records them, so other
     scopes' documents would be lost and every later run would rebuild.
@@ -1660,6 +1671,24 @@ def filter_to_delta(
     scope, namespace, source_scope, failed_doc_ids = run_registry_scope(
         config, source_directory, unread_source_files(context)
     )
+    changes = (
+        None
+        if deletions is None
+        else DocumentChanges(
+            delete={
+                compute_doc_id(given, namespace, source_scope): given
+                for given in deletions
+            }
+        )
+    )
+    if changes is not None and config.indexing.reset:
+        raise ConfigurationError(
+            "This run would rebuild the index namespace from its documents "
+            "alone (indexing.reset, or a methodology of indexing.methodologies "
+            "the namespace does not hold yet, which a rebuild adds): a run of "
+            "document changes (insert_documents, delete_documents) cannot; "
+            "run the whole corpus with DataIngestionPipeline.run instead"
+        )
     # Fails before any registry read or write when the run would retire
     # its own scope.
     retired = retired_scope_groups(
@@ -1733,8 +1762,9 @@ def filter_to_delta(
             max_attempts=config.indexing.max_document_attempts,
             retired_scopes=retired,
             extraction_fingerprint=extraction,
+            changes=changes,
         )
-    except (DocStatusRegistryError, ConfigurationError):
+    except (DocStatusRegistryError, ConfigurationError, DocumentNotFoundError):
         raise
     except Exception as e:
         raise DocStatusRegistryError(
@@ -1767,15 +1797,17 @@ def filter_to_delta(
             source_directory,
             confirm,
             confirm_deletions,
+            deletions=deletions,
         )
     # Before any write, under the stored spelling of the scope.
     if seeds_only:
         _refuse_seeds_over_documents(
             _seed_scope_records(store, delta, scope), source_scope
         )
-    _confirm_mass_deletion(
-        delta, config.indexing.max_deletion_share, source_scope, confirm_deletions
-    )
+    if changes is None:
+        _confirm_mass_deletion(
+            delta, config.indexing.max_deletion_share, source_scope, confirm_deletions
+        )
     _warn_about_a_shared_seed(doc_status, documents, delta, namespace, scope)
     context.incremental_delta = delta
     context.incremental_fingerprints = fingerprints
@@ -2132,6 +2164,7 @@ def delta_still_applies(
             *delta.deferred,
             *delta.quarantined,
             *delta.failed,
+            *delta.kept,
         }
         moved = {*fresh.new, *fresh.changed, *fresh.deleted} - known
         if moved:

@@ -39,7 +39,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
-from unified_kg_rag.ports.indexer import StoredAnnotation
+from unified_kg_rag.ports.indexer import STORED_ITEM_KINDS, StoredAnnotation
 from unified_kg_rag.shared import ConfigurationError, NamespaceLeaseError
 from unified_kg_rag.shared.exceptions import GraphRAGException
 
@@ -2016,3 +2016,53 @@ def test_a_build_record_reads_back_what_the_namespace_holds(
                 await retriever.aclose()
 
         assert asyncio.run(read()) == stored
+
+
+def test_scan_items_streams_each_kind_in_id_order_without_vectors(
+    harness: StoreHarness,
+) -> None:
+    _write(harness, "text_units", "index", _text_units())
+    _write(harness, "entities", "index", _entities())
+    indexer = harness.vector_indexer
+
+    pages = indexer.scan_items("entities", "default", page_size=2)
+    assert pages is not None
+    first = next(pages)
+    # One page at a time: the second is read only when asked for.
+    assert [item["id"] for item in first] == ["e-buyer", "e-depot"]
+    assert [item["id"] for page in pages for item in page] == ["e-vendor"]
+    vendor = next(
+        item
+        for page in indexer.scan_items("entities", "default")
+        for item in page
+        if item["id"] == "e-vendor"
+    )
+    assert vendor["name"] == "Vendor"
+    assert vendor["text_unit_ids"] == ["t1", "t2"]
+    assert not [key for key in vendor if key.endswith("_embedding")]
+    units = [i for p in indexer.scan_items("text_units", "default") for i in p]
+    assert [u["id"] for u in units] == ["t1", "t2"]
+    assert units[0]["text"].startswith("Vendor supplies widgets")
+    # A kind without an index yields nothing.
+    assert list(indexer.scan_items("claims", "default")) == []
+    assert list(indexer.scan_items("entities", "no_such_suffix")) == []
+
+
+def test_describe_indices_counts_each_live_index(harness: StoreHarness) -> None:
+    _write(harness, "text_units", "index", _text_units())
+    _write(harness, "entities", "index", _entities())
+
+    described = {
+        entry["kind"]: entry
+        for entry in harness.vector_indexer.describe_indices("default")
+    }
+
+    assert set(described) == set(STORED_ITEM_KINDS)
+    assert described["text_units"]["documents"] == 2
+    assert described["entities"]["documents"] == 3
+    assert described["claims"]["index"] is None
+    if INDEX_ADMIN in harness.capabilities:
+        # The embedding settings the index was built with.
+        meta = described["entities"]["meta"]
+        assert isinstance(meta["embedding_dimension"], int)
+        assert "embedding_model_id" in meta

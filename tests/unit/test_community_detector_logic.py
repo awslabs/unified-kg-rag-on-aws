@@ -2089,3 +2089,39 @@ def test_auto_resolution_candidates_must_be_positive(candidate: float) -> None:
     # Leiden takes a resolution above 0; the sweep would fail on each level.
     with pytest.raises(ValidationError, match="greater than 0"):
         CommunityDetectionConfig(auto_resolution_candidates=[1.0, candidate])
+
+
+@pytest.mark.parametrize(
+    ("settings", "named"),
+    [
+        ({"auto_resolution": True}, "auto_resolution is deprecated"),
+        (
+            {"auto_resolution_candidates": [0.5], "auto_resolution_max_nodes": 10},
+            "auto_resolution_candidates / auto_resolution_max_nodes are deprecated",
+        ),
+    ],
+    ids=["switch", "tuning"],
+)
+def test_the_auto_resolution_keys_warn_that_they_are_deprecated(
+    settings: dict[str, Any], named: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    from unified_kg_rag.domain.models import config as config_module
+
+    config_module._warn_auto_resolution.cache_clear()
+    with caplog.at_level(logging.WARNING):
+        loaded = CommunityDetectionConfig(**settings)
+        CommunityDetectionConfig(**settings)  # validated again: one warning
+    warned = [r.getMessage() for r in caplog.records if "deprecated" in r.getMessage()]
+    assert len(warned) == 1 and named in warned[0]
+    # It still applies.
+    for name, value in settings.items():
+        assert getattr(loaded, name) == value
+
+
+def test_the_auto_resolution_defaults_do_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        CommunityDetectionConfig()
+        Config()
+    assert not [r for r in caplog.records if "auto_resolution" in r.getMessage()]

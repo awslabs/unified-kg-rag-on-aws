@@ -200,6 +200,10 @@ and `runs_since_clustering`; no alarm watches them
 A run only diffs, and treats as deleted, the documents of its own scope: its
 index suffix and its corpus source
 ([Scopes and namespaces: Source scope](../concepts/scopes-and-namespaces.md#source-scope)).
+From Python, `DataIngestionPipeline.insert_documents` and `delete_documents`
+run documents given from memory as named changes instead: what a call
+names is added, updated or deleted, and the scope's other documents are
+kept ([Python library: Documents from memory](./python-library.md#documents-from-memory)).
 
 ### Keep the corpus in place
 
@@ -209,7 +213,7 @@ index suffix and its corpus source
 - **Never let corpus files expire or disappear**: the next run removes their
   content. A file the run cannot read keeps it: one that fails to parse or
   load, and one skipped because no loader reads its type (an optional extra
-  such as `unstructured` not installed or dropped from the image, a loader
+  such as `docx` not installed or dropped from the image, a loader
   plugin not imported; `Skipping N file(s) ... of a type no loader reads ...`,
   `total_files_skipped`). Such a file is reported as `failed` and keeps its
   indexed content until a run reads it again. On the CDK stack, keep the

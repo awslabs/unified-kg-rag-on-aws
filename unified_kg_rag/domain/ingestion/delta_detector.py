@@ -42,6 +42,7 @@ local source directories of the run's namespace so the run can warn.
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Iterable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple, Protocol
 
@@ -71,10 +72,16 @@ from unified_kg_rag.domain.models import (
     DocumentDelta,
     settings_changed,
 )
-from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.domain.retrieval.store_names import index_suffix
+from unified_kg_rag.shared import (
+    ConfigurationError,
+    DocumentNotFoundError,
+    get_logger,
+)
 
 __all__ = [
     "DocStatusReader",
+    "DocumentChanges",
     "assign_document_identity",
     "assign_registry_source",
     "compute_content_hash",
@@ -117,13 +124,13 @@ def compute_content_hash(document: Document) -> str:
 
 
 def _document_suffix(document: Document) -> str | None:
-    """The ``index`` metadata value the document's artifacts inherit."""
-    value = document.metadata.get(Constants.INDEX.value)
-    if isinstance(value, str) and value:
-        return value
-    if isinstance(value, (list, tuple)) and value:
-        return str(value[0])
-    return None
+    """The index suffix the document's artifacts inherit from its ``index``
+    metadata, by the stores' own rule (``index_suffix``).
+
+    Raises:
+        ConfigurationError: The value is no safe name, which no store takes.
+    """
+    return index_suffix(document.metadata.get(Constants.INDEX.value))
 
 
 def assign_document_identity(
@@ -247,6 +254,7 @@ def detect_delta(
     retired_scopes: Iterable[str | RetiredScope] = (),
     extraction_fingerprint: str | None = None,
     max_attempts: int | None = None,
+    changes: DocumentChanges | None = None,
 ) -> tuple[DocumentDelta, dict[str, str]]:
     """Classify ``documents`` against the persisted registry.
 
@@ -277,6 +285,10 @@ def detect_delta(
             it died alone, else the run processes half of the suspects and
             defers the other new and changed documents
             (``attempts.plan_attempts``). ``None`` retries without limit.
+        changes: The run is a set of document changes
+            (:class:`DocumentChanges`), not a corpus: the stored documents
+            of the scope it does not hold are ``kept`` (and ``unchanged``),
+            and only those ``changes.delete`` names are ``deleted``.
 
     Returns:
         The :class:`DocumentDelta` plus the ``{doc_id: content_hash}``
@@ -286,6 +298,8 @@ def detect_delta(
     Raises:
         ConfigurationError: ``retired_scopes`` holds the run's own ``scope``,
             or is given without one.
+        DocumentNotFoundError: ``changes.delete`` names a document the
+            scope does not hold, or one ``documents`` holds.
     """
     retired = _groups(retired_scopes)
     if retired and (scope is None or any(scope in g.scopes for g in retired)):
@@ -297,6 +311,8 @@ def detect_delta(
     delta = doc_status.diff(
         fingerprints, scope=scope, extraction_fingerprint=extraction_fingerprint
     )
+    if changes is not None:
+        _apply_changes(delta, changes)
     seeds = {document_doc_id(d) for d in documents if is_seed_document(d)}
     # The records of seed graph shards the corpus no longer has: a seed graph
     # taken out of processing.seed_graphs, or resharded.
@@ -367,6 +383,40 @@ def detect_delta(
             len(delta.settings_changed),
         )
     return delta, fingerprints
+
+
+@dataclass(frozen=True)
+class DocumentChanges:
+    """A run that names its changes instead of reading a whole corpus
+    (``DataIngestionPipeline.insert_documents`` / ``delete_documents``): its
+    documents are added or updated, the documents ``delete`` names (registry
+    doc id -> the caller's id) are deleted, and every other stored document
+    of the scope is kept."""
+
+    delete: Mapping[str, str] = field(default_factory=dict)
+
+
+def _apply_changes(delta: DocumentDelta, changes: DocumentChanges) -> None:
+    """Keep what a run of ``changes`` does not name (see ``detect_delta``).
+
+    Raises:
+        DocumentNotFoundError: A document to delete is not stored in the
+            scope, or is also one the run adds.
+    """
+    absent = set(delta.deleted)
+    missing = sorted(
+        given for doc_id, given in changes.delete.items() if doc_id not in absent
+    )
+    if missing:
+        raise DocumentNotFoundError(
+            f"No document {', '.join(map(repr, missing[:10]))}"
+            + (f" (and {len(missing) - 10} more)" if len(missing) > 10 else "")
+            + " in the doc-status registry for this index namespace and source "
+            "scope: nothing was deleted"
+        )
+    delta.kept = [doc_id for doc_id in delta.deleted if doc_id not in changes.delete]
+    delta.deleted = [doc_id for doc_id in delta.deleted if doc_id in changes.delete]
+    delta.unchanged.extend(delta.kept)
 
 
 class RetiredScope(NamedTuple):

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from typing import Any, Literal
 
 from unified_kg_rag.adapters.storage.neptune_codec import (
@@ -36,11 +36,13 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 )
 from unified_kg_rag.domain.models import Claim, Config, Constants, IndexBuildRecord
 from unified_kg_rag.ports.indexer import (
+    STORED_ITEM_KINDS,
     AnnotatedKind,
     BaseIndexer,
     IndexingStats,
     SchemaAnnotation,
     StoredAnnotation,
+    StoredItemKind,
 )
 
 # The claim fields the OpenSearch claims index stores (``_prepare_claim_doc``).
@@ -562,6 +564,49 @@ class FakeVectorStore(_Recorder):
     def read_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         record = self.builds.get(suffix or Constants.DEFAULT_SUFFIX.value)
         return record.model_dump(mode="json") if record is not None else None
+
+    def _of_suffix(self, kind: str, suffix: str | None) -> list[Any]:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        return sorted(
+            (
+                item
+                for item in self.data.get(kind, {}).values()
+                if BaseIndexer.get_suffix(item) == wanted
+            ),
+            key=lambda item: str(item.id),
+        )
+
+    def describe_indices(self, suffix: str | None) -> list[dict[str, Any]]:
+        # One "index" per kind that holds an item of the suffix.
+        name = suffix or Constants.DEFAULT_SUFFIX.value
+        described = []
+        for kind in STORED_ITEM_KINDS:
+            items = self._of_suffix(kind, suffix)
+            described.append(
+                {
+                    "kind": kind,
+                    "alias": f"{kind}-{name}",
+                    "index": f"{kind}-{name}" if items else None,
+                    "documents": len(items) if items else None,
+                    "meta": {},
+                }
+            )
+        return described
+
+    def scan_items(
+        self,
+        kind: StoredItemKind,
+        suffix: str | None,
+        *,
+        page_size: int | None = None,
+    ) -> Iterator[list[dict[str, Any]]]:
+        items = [
+            item.model_dump(mode="json", exclude_none=True)
+            for item in self._of_suffix(kind, suffix)
+        ]
+        size = page_size or 10_000
+        for start in range(0, len(items), size):
+            yield items[start : start + size]
 
     def initialize(self) -> None:
         return None

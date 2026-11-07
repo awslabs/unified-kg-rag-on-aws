@@ -15,7 +15,10 @@ import logging
 import networkx as nx
 import pytest
 
-from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
+from unified_kg_rag.domain.ingestion.graph_analyzer import (
+    GraphAnalyzer,
+    GraphStatistics,
+)
 from unified_kg_rag.domain.models import Config
 
 pytestmark = pytest.mark.unit
@@ -167,36 +170,14 @@ class TestStatistics:
         stats = GraphAnalyzer(Config(), graph=_triangle_graph()).get_graph_statistics()
         assert stats.density == pytest.approx(1.0)
         assert stats.num_connected_components == 1
-        assert stats.average_clustering is None  # opt-in
-        assert stats.diameter is None  # opt-in
-
-    def test_average_clustering_only_when_enabled(self) -> None:
-        config = Config()
-        config.graph.analysis.statistics.calculate_average_clustering = True
-        stats = GraphAnalyzer(config, graph=_triangle_graph()).get_graph_statistics()
-        assert stats.average_clustering == pytest.approx(1.0)
-
-    def test_diameter_only_when_enabled_and_connected(self) -> None:
-        config = Config()
-        config.graph.analysis.statistics.calculate_diameter = True
-        # path a-b-c has diameter 2.
-        g = nx.Graph()
-        g.add_edge("a", "b")
-        g.add_edge("b", "c")
-        analyzer = GraphAnalyzer(config, graph=g)
-        stats = analyzer.get_graph_statistics()
-        assert stats.diameter == 2
-
-    def test_diameter_skipped_when_disconnected(self) -> None:
-        config = Config()
-        config.graph.analysis.statistics.calculate_diameter = True
-        g = nx.Graph()
-        g.add_edge("a", "b")
-        g.add_edge("c", "d")
-        analyzer = GraphAnalyzer(config, graph=g)
-        stats = analyzer.get_graph_statistics()
-        # >1 component -> diameter computation is skipped, stays None.
-        assert stats.diameter is None
+        # No stage read the clustering coefficient or the diameter.
+        assert set(GraphStatistics.model_fields) == {
+            "num_nodes",
+            "num_edges",
+            "density",
+            "num_connected_components",
+            "largest_component_size",
+        }
 
     def test_statistics_are_cached(self) -> None:
         analyzer = GraphAnalyzer(Config(), graph=_triangle_graph())

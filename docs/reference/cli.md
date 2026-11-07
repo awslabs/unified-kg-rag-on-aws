@@ -24,6 +24,7 @@ the [Configuration Reference](./configuration.md).
 - [`run-rag`](#run-rag)
 - [`run-eval`](#run-eval)
 - [`run-visualization`](#run-visualization)
+- [`run-describe`](#run-describe)
 - [`run-prompt-tuning`](#run-prompt-tuning)
 - [`prepare-benchmark`](#prepare-benchmark)
 - [`run-mcp-server`](#run-mcp-server)
@@ -70,9 +71,7 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 | `--interactive`, `-i` | off | Launch interactive chat mode for continuous conversation (always 'rag' mode, memory on; not with --output-format json). |
 | `--mode` | `rag` | Set the execution mode: 'rag' for full generation, 'search' for retrieval only (a single --query only; --interactive always generates). |
 | `--conversation-id` | — | Name the conversation. Memory is kept in this process only: it carries over between --interactive turns, not between separate run-rag invocations. |
-| `--use-memory` | off | Enable conversation memory, kept in this process only (auto-enabled in interactive mode; a single --query starts with no history). |
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
-| `--enable-thinking` | off | (deprecated) Enable thinking mode for language model reasoning. No-op for models that always reason (Claude 4.7+ / 5.x, the defaults, and OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
 | `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`, `iterative`, `ppr`, `tree`. |
 | `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
 | `--top-k` | `10` | Set the maximum number of search results. |
@@ -101,7 +100,6 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 | `--judge-model` `MODEL_ID` | — | Model of the LLM judges for this run (models.roles.evaluation): the pairwise judge and the ragas/assertion evaluators. |
 | `--output-directory` | — | Directory to save evaluation results (default: evaluation.outputs_directory), in a subdirectory of its own per run-eval invocation, run_<timestamp>_<id> (evaluation.run_subdirectories). Accepts a local path or an s3://bucket/prefix/ URI (results are uploaded after the run; a failed upload exits non-zero). |
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
-| `--enable-thinking` | off | (deprecated) Enable thinking mode for language model reasoning. No-op for models that always reason (Claude 4.7+ / 5.x, the defaults, and OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
 | `--search-strategy` | `auto` | Search strategy, or a comma-separated list (e.g. local,mix,global) to answer the same queries with each and compare them pairwise against the first. Give the flag once: a second one is a usage error. |
 | `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
 | `--top-k` | `10` | Set the maximum number of search results. |
@@ -125,13 +123,30 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 
 Render graph visualizations from exported data (no ingestion).
 
-Guide: [Visualization](../guides/visualize.md). Also takes the [provider flags](#provider-flags).
+Guide: [Visualization](../guides/visualize.md).
 
 | Flag | Default | Description |
 |---|---|---|
 | `--data-path` | required | Path to exported visualization-data JSON. |
 | `--output-directory` | `visualization_outputs` | Directory to write visualization files. |
 | `--renderers` `RENDERER` | `interactive`, `static` | Renderers to run. Available: interactive, static. |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+
+## `run-describe`
+
+Describe an index namespace (methodologies, servable strategies, indices, build record, registry) and optionally export its graph.
+
+Guide: [Inspect and export](../guides/inspect.md). Also takes the [provider flags](#provider-flags).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--suffix` | — | Index suffix to describe (default: the config's processing.document_parsing.index_value, else 'default'). |
+| `--output-path` | — | Also export the namespace's graph to this file (entities, relationships, communities, claims, with the text units and documents they cite). |
+| `--export-format` | `jsonl` | Export format: jsonl (one record per line, every stored field but the vectors) or graphml (entities as nodes, relationships as edges, communities as nodes linked to their parent). |
+| `--max-items` | — | Export at most this many items of each kind (default: all). |
+| `--include-text` | off | Export each text unit's text too (jsonl only). |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
@@ -200,7 +215,7 @@ Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider
 
 ## Provider flags
 
-Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`, `run-prompt-tuning`, `prepare-benchmark`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
+Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-describe`, `run-prompt-tuning`, `prepare-benchmark`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
 
 | Flag | Default | Description |
 |---|---|---|

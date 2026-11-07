@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """AWS-free tests of iterative bridge follow-up search.
 
-The strategy is built for real on a fake provider bundle: the controller,
-decomposition and step chains run on a scripted chat model, the reranker
+The strategy is built for real on a fake provider bundle: the controller
+chain runs on a scripted chat model, the reranker
 orders passages by the words they share with its query, and the base
 strategy's searches are stubs recording the queries they get, so the tests
 see what each round asks and how the rounds' candidates are fused.
@@ -41,6 +41,7 @@ from unified_kg_rag.adapters.search_strategies.lightrag_search import (
 from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
 )
+from unified_kg_rag.application.config import unknown_keys
 from unified_kg_rag.application.retrieval import query_processing
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
@@ -53,7 +54,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
-from unified_kg_rag.domain.models.methodology import required_artifacts_of
+from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -178,8 +179,6 @@ class _Script:
 
     KINDS = {
         "controller": "You control the retrieval",
-        "decomposition": "You plan the retrieval",
-        "step": "You answer one step",
     }
 
     def __init__(self, **replies: list[Any]) -> None:
@@ -677,176 +676,23 @@ async def test_dense_script_bridges_and_queries_are_followed_once(
     assert result.metadata["iterative"]["stop_reason"] == "no_follow_up"
 
 
-# --- decomposition ---------------------------------------------------------------
-
-
-STEPS = ["Which firm does Vendor hire?", "Which depot does #1 rent?", "Where is #2?"]
-
-
-def _step_hits(texts: dict[str, list[RetrievalResult]]) -> _Documents:
-    return _Documents(texts)
-
-
-async def test_decomposition_answers_each_step_in_order() -> None:
-    script = _Script(
-        decomposition=[{"steps": STEPS}],
-        step=[{"answer": "Carrier"}, {"answer": "Depot"}, {"answer": "Harbor"}],
-    )
-    documents = _step_hits({"Where is Depot?": [HARBOR]})
-    strategy, _, later, _, reranks = _strategy(
-        script, decompose=True, documents=documents
-    )
-
-    result = await strategy.asearch(_query())
-
-    resolved = ["Which firm does Vendor hire?", "Which depot does Carrier rent?"]
-    resolved.append("Where is Depot?")
-    assert [c.query for c in documents.calls] == resolved
-    assert [q.query for q in later.queries] == resolved
-    assert [q.entity_focus for q in later.queries] == [[], ["Carrier"], ["Depot"]]
-    assert all(q.filters == FILTERS for q in later.queries + documents.calls)
-    # Each step read its own passages, and the overall question.
-    _, human = script.calls["step"][2]
-    assert "Depot is located in Harbor." in human and QUESTION in human
-    assert script.calls["controller"] == []
-    assert "Depot is located in Harbor." in _contents(result)
-    assert reranks.model.queries == ["\n".join([QUESTION, *resolved])]
-    meta = result.metadata["iterative"]
-    assert (meta["mode"], meta["rounds"], meta["stop_reason"]) == (
-        "decompose",
-        3,
-        "steps_done",
-    )
-    assert meta["llm_calls"] == 4
-    assert [s["answered"] for s in meta["steps"]] == [True, True, True]
-    assert "context_sufficient" not in result.metadata
-
-
-async def test_an_unanswered_last_step_says_the_context_is_insufficient() -> None:
-    script = _Script(
-        decomposition=[{"steps": STEPS[:2]}],
-        step=[{"answer": "Carrier"}, {"answer": ""}],
-    )
-    strategy, *_ = _strategy(script, decompose=True)
-
-    result = await strategy.asearch(_query())
-
-    assert result.metadata["context_sufficient"] is False
-
-
-async def test_decomposition_is_capped_at_max_rounds_plus_one_steps() -> None:
-    script = _Script(
-        decomposition=[{"steps": [f"step {i}" for i in range(6)]}],
-        step=[{"answer": "x"}],
-    )
-    strategy, _, later, _, _ = _strategy(script, decompose=True, max_rounds=1)
-
-    result = await strategy.asearch(_query())
-
-    assert [q.query for q in later.queries] == ["step 0", "step 1"]
-    assert result.metadata["iterative"]["llm_calls"] == 3
-
-
-async def test_a_step_refers_to_an_unanswered_step_by_its_question() -> None:
-    script = _Script(
-        decomposition=[{"steps": ["누가 창고를 빌리나?", "#1의 창고는 어디에 있나?"]}],
-        step=[{"answer": ""}, {"answer": "남항"}],
-    )
-    strategy, _, later, _, _ = _strategy(script, decompose=True)
-
-    await strategy.asearch(_query())
-
-    assert later.queries[1].query == "(누가 창고를 빌리나?)의 창고는 어디에 있나?"
-    assert later.queries[1].entity_focus == []
-
-
-async def test_a_korean_step_answer_seeds_the_next_step() -> None:
-    script = _Script(
-        decomposition=[{"steps": ["한빛상사가 맡긴 운송사는?", "#1의 창고는?"]}],
-        step=[{"answer": "바다운송"}, {"answer": "동부창고"}],
-    )
-    strategy, _, later, _, _ = _strategy(script, decompose=True)
-
-    await strategy.asearch(_query(metadata={"query_language": "Korean"}))
-
-    assert later.queries[1].query == "바다운송의 창고는?"
-    assert later.queries[1].entity_focus == ["바다운송"]
-    ((system, _),) = script.calls["decomposition"]
-    assert "in Korean, the language of the indexed corpus" in system
+# --- removed settings ------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "reply", ["no plan", json.dumps({"steps": []})], ids=["prose", "empty"]
+    "section",
+    [
+        {"search": {"iterative_search": {"decompose": True}}},
+        {"custom_prompts": {"query_decomposition_system": "plan"}},
+        {"custom_prompts": {"decomposition_step_human": "answer"}},
+    ],
+    ids=["decompose", "decomposition_prompt", "step_prompt"],
 )
-async def test_an_unreadable_plan_answers_from_round_zero(reply: str) -> None:
-    strategy, _, later, _, _ = _strategy(_Script(decomposition=[reply]), decompose=True)
-
-    result = await strategy.asearch(_query())
-
-    assert result.results == ROUND_0 and later.queries == []
-    assert result.metadata["iterative"]["degraded"] == "decomposition_unparsed"
-
-
-async def test_a_failed_step_keeps_what_the_steps_before_it_found() -> None:
-    script = _Script(
-        decomposition=[{"steps": STEPS}],
-        step=[{"answer": "Carrier"}, RuntimeError("throttled")],
-    )
-    strategy, *_ = _strategy(script, decompose=True)
-
-    result = await strategy.asearch(_query())
-
-    meta = result.metadata["iterative"]
-    assert (meta["rounds"], meta["degraded"]) == (2, "step_failed")
-    assert result.metadata["degraded_error"] == "RuntimeError"
-    assert "context_sufficient" not in result.metadata
-
-
-async def test_no_step_is_planned_without_time_for_the_answer() -> None:
-    config = Config()
-    config.search.model_timeout_seconds = 60.0
-    script = _Script(decomposition=[{"steps": STEPS}], step=[{"answer": "x"}])
-    strategy, _, later, _, _ = _strategy(script, config=config, decompose=True)
-
-    with retry_deadline(time.monotonic() + 30.0):
-        result = await strategy.asearch(_query())
-
-    assert script.calls["decomposition"] == [] and later.queries == []
-    assert result.results == ROUND_0
-    meta = result.metadata["iterative"]
-    assert (meta["stop_reason"], meta["llm_calls"]) == ("deadline", 0)
-
-
-async def test_the_deadline_ends_the_steps_and_keeps_what_they_found() -> None:
-    config = Config()
-    config.search.model_timeout_seconds = 1.0
-    script = _Script(
-        decomposition=[{"steps": STEPS}],
-        step=[{"answer": "Carrier"}, {"answer": "Depot"}, {"answer": "Harbor"}],
-    )
-    strategy, _, later, _, _ = _strategy(script, config=config, decompose=True)
-    search = later.asearch
-
-    async def slow_after_the_first_step(query: SearchQuery, config: Any = None) -> Any:
-        if later.queries:
-            later.delay = 30.0
-        return await search(query, config)
-
-    strategy.follow_up.asearch = slow_after_the_first_step  # type: ignore[method-assign]
-
-    started = time.monotonic()
-    # 2 s are left for the steps once the answer's 1 s is set aside.
-    with retry_deadline(time.monotonic() + 3.0):
-        result = await strategy.asearch(_query())
-
-    assert time.monotonic() - started < 10
-    assert later.cancelled and len(later.queries) == 2
-    meta = result.metadata["iterative"]
-    assert (meta["rounds"], meta["stop_reason"]) == (1, "deadline")
-    assert [s["question"] for s in meta["steps"]] == [STEPS[0]]
-    # The first step's candidates were fused in, not dropped for round 0's.
-    assert "Depot is located in Harbor." in _contents(result)
-    assert "context_sufficient" not in result.metadata
+def test_the_decomposition_settings_are_unknown_keys(section: dict[str, Any]) -> None:
+    # The decomposition mode measured no better than the controller loop
+    # and was removed before a release: its keys fail the load.
+    (key,) = unknown_keys(section, Config)
+    assert "decompos" in key
 
 
 # --- the base it wraps -----------------------------------------------------------
@@ -929,70 +775,24 @@ async def test_a_round_without_a_new_bridge_reruns_only_what_it_seeds(
     assert (meta["rounds"], meta["stop_reason"]) == (2, "sufficient")
 
 
-@pytest.mark.parametrize(
-    ("steps", "answer", "low", "high"),
-    [
-        (STEPS[:2], "Carrier", ["Vendor"], ["storage"]),
-        (
-            ["한빛상사가 맡긴 운송사는?", "#1의 창고는?"],
-            "바다운송",
-            ["한빛상사"],
-            ["물류"],
-        ),
-        (
-            ["東邦商事が委託した運送会社は?", "#1の倉庫は?"],
-            "海運",
-            ["東邦商事"],
-            ["物流"],
-        ),
-    ],
-    ids=["en", "ko", "ja"],
-)
-async def test_a_mix_step_without_a_bridge_keeps_the_question_keywords(
-    steps: list[str], answer: str, low: list[str], high: list[str]
-) -> None:
-    script = _Script(
-        decomposition=[{"steps": steps}],
-        step=[{"answer": answer}, {"answer": "x"}],
-    )
-    strategy, _, later, _, _ = _strategy(script, base="mix", decompose=True)
-
-    await strategy.asearch(_query(hl_keywords=high, ll_keywords=low))
-
-    keywords = [(q.ll_keywords, q.hl_keywords) for q in later.queries]
-    assert keywords == [(low, high), ([answer], [])]
+LONG_QUERY = "Which logistics firm does Vendor hire for its freight shipments?"
 
 
-LONG_STEP = "Which logistics firm does Vendor hire for its freight shipments?"
-
-
-@pytest.mark.parametrize(
-    ("decompose", "script"),
-    [
-        (True, _Script(decomposition=[{"steps": [LONG_STEP]}], step=[{"answer": ""}])),
-        (
-            False,
-            _Script(
-                controller=[
-                    _verdict(False, ["Depot"], [FOLLOW_UP]),
-                    _verdict(False, ["Depot"], [LONG_STEP]),
-                    SUFFICIENT,
-                ]
-            ),
-        ),
-    ],
-    ids=["decompose", "controller"],
-)
 async def test_a_mix_round_never_runs_without_keywords(
-    decompose: bool, script: _Script, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     # The follow-up rounds run the real mix search: without a bridge they
     # used to rerun it with no keyword at all, so it fell back to the search
     # text as a keyword or, over 50 characters, searched no entity.
-    documents = _Documents()
-    strategy, *_ = _strategy(
-        script, base="mix", decompose=decompose, documents=documents
+    script = _Script(
+        controller=[
+            _verdict(False, ["Depot"], [FOLLOW_UP]),
+            _verdict(False, ["Depot"], [LONG_QUERY]),
+            SUFFICIENT,
+        ]
     )
+    documents = _Documents()
+    strategy, *_ = _strategy(script, base="mix", documents=documents)
     del strategy.follow_up.asearch  # the real mix search, not the stub
 
     with caplog.at_level("WARNING"):
@@ -1006,10 +806,9 @@ async def test_a_mix_round_never_runs_without_keywords(
         for c in documents.calls
         if c.index_prefixes == [Config().indexing.opensearch.entities_index_prefix]
     ]
-    # The graph search is seeded: by the question's keywords for the step
-    # without a bridge, by the bridge in the controller's round 1, and
-    # not rerun in its round 2, which names no new bridge.
-    assert entity_searches == (["Vendor, storage site"] if decompose else ["Depot"])
+    # The graph search is seeded by the bridge in round 1, and not rerun in
+    # round 2, which names no new bridge.
+    assert entity_searches == ["Depot"]
     assert all(c.filters == FILTERS for c in documents.calls)
 
 
@@ -1035,7 +834,9 @@ def test_auto_routes_to_iterative_where_its_base_is_held(
     config.search.iterative_search.base = base  # type: ignore[assignment]
 
     # What a default run of each held methodology builds.
-    built = required_artifacts_of(Methodology(m) for m in held)
+    built = frozenset().union(
+        *(METHODOLOGY_PROFILES[Methodology(m)].required for m in held)
+    )
     if "graphrag" in held:
         built |= {IndexArtifact.COMMUNITY_REPORTS}
     offered = routable_strategies(config, built)
@@ -1153,7 +954,6 @@ async def test_the_model_written_follow_ups_are_screened_as_outputs() -> None:
                 "next_queries": ["Where is Secret Depot?"],
             }
         ],
-        steps=[{"step": 1, "question": "Forbidden step", "answered": True}],
     )
 
     screened = await chain._screen_synthesized(result, records)
@@ -1162,9 +962,8 @@ async def test_the_model_written_follow_ups_are_screened_as_outputs() -> None:
     assert meta["searched"] == ["Where is {NAME} Depot?"]
     assert meta["verdicts"][0]["bridge_entities"] == ["{NAME} Depot", "Harbor"]
     assert meta["verdicts"][0]["next_queries"] == ["Where is {NAME} Depot?"]
-    assert meta["steps"][0] == {"step": 1, "question": "", "answered": True}
     assert meta["rounds"] == 1
-    assert len(records) == 4  # one per intervening string
+    assert len(records) == 3  # one per intervening string
     # The caller's result is left as it was.
     assert result.metadata["iterative"]["searched"][0] == "Where is Secret Depot?"
 

@@ -6,7 +6,9 @@ The names exported here are the package's public API; everything else is
 internal and may change in any release. Two groups:
 
 - **Using the framework**: load a :class:`Config` (:func:`get_config`),
-  ingest a corpus (:class:`DataIngestionPipeline`, :class:`PipelineConfig`),
+  ingest a corpus (:class:`DataIngestionPipeline`, :class:`PipelineConfig`;
+  documents from memory as :class:`InputDocument`), inspect and export what
+  an index namespace holds (:func:`describe_namespace`, :func:`export_graph`),
   query it (:class:`GraphRAGChain` with :class:`RAGInput`, answering with a
   :class:`RAGOutput` and its :class:`Citation` records or, from ``search``, a
   :class:`SearchOutput`) and evaluate it (:class:`EvaluationManager`), or
@@ -64,6 +66,9 @@ _EXPORTS: dict[str, str] = {
     "PipelineContext": "unified_kg_rag.domain.models",
     "PipelineStageStatus": "unified_kg_rag.domain.models",
     "PipelineStageType": "unified_kg_rag.domain.models",
+    "InputDocument": "unified_kg_rag.domain.models",
+    "describe_namespace": "unified_kg_rag.application.storage.inspection",
+    "export_graph": "unified_kg_rag.application.storage.inspection",
     # DataIngestionPipeline(metrics_sink=...)
     "MetricsSink": "unified_kg_rag.shared.metrics",
     # Querying
@@ -97,6 +102,7 @@ _EXPORTS: dict[str, str] = {
     "InvalidFilterError": "unified_kg_rag.shared.exceptions",
     "MethodologyNotIndexedError": "unified_kg_rag.shared.exceptions",
     "IndexNotFoundError": "unified_kg_rag.shared.exceptions",
+    "DocumentNotFoundError": "unified_kg_rag.shared.exceptions",
     "StoreConnectionError": "unified_kg_rag.shared.exceptions",
     "QueryTimeoutError": "unified_kg_rag.shared.exceptions",
     "PipelineInterrupted": "unified_kg_rag.shared.exceptions",
@@ -189,10 +195,15 @@ if TYPE_CHECKING:
         RAGOutput,
         SearchOutput,
     )
+    from unified_kg_rag.application.storage.inspection import (
+        describe_namespace,
+        export_graph,
+    )
     from unified_kg_rag.domain.models import (
         Citation,
         CitedDocument,
         Config,
+        InputDocument,
         Methodology,
         ModelPurpose,
         ModelRole,
@@ -226,6 +237,7 @@ if TYPE_CHECKING:
     from unified_kg_rag.shared.exceptions import (
         ConfigurationError,
         ConfirmationDeclinedError,
+        DocumentNotFoundError,
         GraphRAGException,
         IndexNotFoundError,
         InvalidFilterError,

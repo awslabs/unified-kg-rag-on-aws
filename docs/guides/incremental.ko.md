@@ -165,6 +165,9 @@ against the 10 it clustered, 16.3x (max_community_growth: 1.5). ...
 
 실행은 자기 범위, 즉 인덱스 접미사와 코퍼스 소스에 속한 문서만 비교하고 삭제 대상으로
 봅니다([범위와 네임스페이스: 소스 범위](../concepts/scopes-and-namespaces.ko.md#소스-범위)).
+Python에서 `DataIngestionPipeline.insert_documents`와 `delete_documents`는 메모리에 있는
+문서를 이름을 붙인 변경으로 실행합니다. 호출이 지정한 문서만 추가·갱신·삭제하고, 같은 범위의
+다른 문서는 그대로 둡니다([Python library: Documents from memory](./python-library.md#documents-from-memory), 영문).
 
 ### 코퍼스를 제자리에 두기
 
@@ -172,7 +175,7 @@ against the 10 it clustered, 16.3x (max_community_growth: 1.5). ...
   옮기면 이전 범위의 내용이 인덱스에 남습니다([코퍼스 옮기기](#코퍼스-옮기기)).
 - **코퍼스 파일이 만료되거나 사라지지 않게 하세요.** 다음 실행이 그 내용을 지웁니다.
   실행이 읽지 못한 파일은 내용을 유지합니다. 파싱이나 로딩에 실패한 파일과, 그 형식을 읽는
-  로더가 없어 건너뛴 파일(`unstructured` 같은 선택 extra를 설치하지 않았거나 이미지에서
+  로더가 없어 건너뛴 파일(`docx` 같은 선택 extra를 설치하지 않았거나 이미지에서
   뺀 경우, 로더 플러그인을 가져오지 않은 경우. `Skipping N file(s) ... of a type no loader
   reads ...`, `total_files_skipped`)입니다. 이런 파일은 `failed`로 보고되며, 다음 실행에서
   다시 읽을 때까지 인덱싱된 내용을 유지합니다. CDK 스택에서는 코퍼스를 만료되는

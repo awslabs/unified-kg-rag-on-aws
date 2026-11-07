@@ -30,8 +30,8 @@ ALLOWED = {
     "certifi": "MPL-2.0 (weak, file-level copyleft), unmodified",
     "orjson": "MPL-2.0 AND (Apache-2.0 OR MIT), unmodified",
     "tqdm": "MPL-2.0 AND MIT, unmodified",
-    "nvidia-": "NVIDIA CUDA runtime libraries, pulled in by torch in [local]",
-    "cuda-": "NVIDIA CUDA toolkit metapackage, pulled in by torch in [local]",
+    "nvidia-": "NVIDIA CUDA runtime libraries, pulled in by torch in [cross-encoder]",
+    "cuda-": "NVIDIA CUDA toolkit metapackage, pulled in by torch in [cross-encoder]",
 }
 
 

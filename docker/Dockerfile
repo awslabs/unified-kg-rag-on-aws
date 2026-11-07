@@ -26,9 +26,11 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Optional extras, added to `eval`. The default image parses .pdf/.txt/.csv/.json
-# only. Markdown and HTML need the `unstructured` extra, which adds ~30 packages
-# (spaCy, thinc, pypdfium2, ...) and about 200 MB, so it is opt-in:
+# Optional extras, added to `eval`. The default image parses
+# .pdf/.txt/.csv/.json/.md/.html; Word (.docx) needs the small `docx` extra
+# (--extra docx). The `unstructured` extra, the richer Markdown and HTML
+# parser, adds ~30 packages (spaCy, thinc, pypdfium2, ...) and about 200 MB,
+# so it is opt-in:
 #   docker build --build-arg UV_EXTRAS="--extra unstructured" -f docker/Dockerfile .
 # With it the build also installs the spaCy model unstructured tokenizes with
 # (en_core_web_sm, ~13 MB, below): unstructured would otherwise download it

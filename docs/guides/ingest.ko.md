@@ -20,8 +20,8 @@
 실행 순서대로이며, `--enabled-stages` / `--resume-from-stage`에는 단계 **이름**(대소문자
 무관)을 씁니다.
 
-1. **`document_parsing`**: 형식별 텍스트 추출(`.pdf`, `.txt`, `.csv`, `.json`.
-   `unstructured` extra가 있으면 `.md`/`.html`도).
+1. **`document_parsing`**: 형식별 텍스트 추출(`.pdf`, `.txt`, `.csv`, `.json`,
+   `.md`, `.html`. `docx` extra가 있으면 `.docx`도). [원본 형식](../troubleshooting.md#which-source-formats-are-read)(영문) 참고.
 2. **`document_loading`**: 이번 실행의 코퍼스 구성(MinHash 중복 제거, 증분 필터).
    `document_parsing`을 끄면 미리 파싱된 `Document` `.json` 파일을 읽음.
 3. **`text_chunking`**: 텍스트 단위로 분할(`processing.chunking`).
@@ -33,7 +33,7 @@
    `processing.fuzzy_entity_resolution`이면 비슷한 이름도).
 8. **`claim_extraction`**(선택, 기본은 꺼짐): 사실 주장 추출.
 9. **`claim_resolution`**(선택): 주장 중복 제거.
-10. **`graph_analysis`**: 그래프를 만들고 `graph.analysis.statistics`를 기록.
+10. **`graph_analysis`**: 그래프를 만들고 크기, 밀도, 연결 요소를 기록.
 11. **`community_detection`**: Leiden 군집화와 LLM 커뮤니티 리포트(`indexing.methodologies`에
     `graphrag`가 있을 때만).
 12. **`indexing`**: OpenSearch와 Neptune에 씀(켜져 있으면 레지스트리에도).

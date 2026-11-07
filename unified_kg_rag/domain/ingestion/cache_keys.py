@@ -326,7 +326,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "processing.max_concurrency": _neutral(_THROUGHPUT),
     "processing.io_workers": _neutral(_THROUGHPUT),
     # --- the corpus-wide stages --------------------------------------------
-    "graph.analysis": _neutral("shapes graph statistics, which no later stage reads"),
     **_keyed_at(
         _P.COMMUNITY_DETECTION,
         "graph.community_detection",
@@ -413,10 +412,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "custom_prompts.drift_action_human": _QUERY_PROMPT,
     "custom_prompts.iterative_controller_system": _QUERY_PROMPT,
     "custom_prompts.iterative_controller_human": _QUERY_PROMPT,
-    "custom_prompts.query_decomposition_system": _QUERY_PROMPT,
-    "custom_prompts.query_decomposition_human": _QUERY_PROMPT,
-    "custom_prompts.decomposition_step_system": _QUERY_PROMPT,
-    "custom_prompts.decomposition_step_human": _QUERY_PROMPT,
     "custom_prompts.query_rewrite_system": _QUERY_PROMPT,
     "custom_prompts.query_rewrite_human": _QUERY_PROMPT,
     "custom_prompts.strategy_selection_system": _QUERY_PROMPT,

@@ -25,6 +25,8 @@ VIZ_INSTALLED = _installed("pyvis")
 ONTOLOGY_INSTALLED = _installed("rdflib")
 # The MCP SDK of run-mcp-server (the mcp extra).
 MCP_INSTALLED = _installed("mcp")
+# The Word loader's package (the docx extra).
+DOCX_INSTALLED = _installed("docx")
 
 requires_eval = pytest.mark.skipif(
     not EVAL_INSTALLED, reason="needs the eval extra (uv sync --extra eval)"
@@ -37,4 +39,7 @@ requires_ontology = pytest.mark.skipif(
 )
 requires_mcp = pytest.mark.skipif(
     not MCP_INSTALLED, reason="needs the mcp extra (uv sync --extra mcp)"
+)
+requires_docx = pytest.mark.skipif(
+    not DOCX_INSTALLED, reason="needs the docx extra (uv sync --extra docx)"
 )

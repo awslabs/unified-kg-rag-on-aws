@@ -106,7 +106,7 @@ custom_prompts:
 `comprehensive_answer`(`search.answer_prompt_style`이 `comprehensive`인 전략의 답변,
 기본값은 `global`), `query_rewrite`, `entity_extraction`,
 `drift_hyde`, `drift_primer`, `drift_action`, `iterative_controller`,
-`query_decomposition`, `decomposition_step`, `strategy_selection`,
+`strategy_selection`,
 `keywords_extraction`, `global_map`, `pairwise_comparison`(`--pairwise-judge` 판정
 모델. JSON 판정 형식은 유지하고, `evaluation.pairwise_overall`이면 `overall` 판정도 포함),
 `answer_span_extraction`(`evaluation.answer_span: extracted`의 구간 추출기),

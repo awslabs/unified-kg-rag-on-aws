@@ -87,7 +87,7 @@ and `hybrid`) and `reason`.
 |---|---|
 | `applied` | The rerank model reordered the candidates. |
 | `disabled` | `providers.rerank.kind: none`. |
-| `unavailable` | The rerank model could not be built (initialization failed, logged at ERROR, or the cross-encoder's `[local]` extra is missing). |
+| `unavailable` | The rerank model could not be built (initialization failed, logged at ERROR, or the cross-encoder's `[cross-encoder]` extra is missing). |
 | `skipped` | Nothing to rerank: no candidates, none of a rerank-eligible type, or no query text. |
 | `failed` | The call raised (denied `bedrock:Rerank`, a region without the model, an unreachable endpoint) or returned nothing usable; the fused order was kept. |
 
@@ -248,14 +248,13 @@ search:
     max_rounds: 2        # follow-up rounds after the first search
     max_next_queries: 2  # follow-up queries per round
     round_top_k: 5       # passages each follow-up query retrieves
-    decompose: false     # true: split the question into steps instead
 models:
   roles:
     query_controller: fast   # the controller's model (default: the fast tier)
 ```
 
-- **Cost.** At most `max_rounds + 1` controller calls on the fast tier
-  (`max_rounds + 2` with `decompose`), a base search and a rerank per round;
+- **Cost.** At most `max_rounds + 1` controller calls on the fast tier,
+  a base search and a rerank per round;
   the answer is generated once. `metadata["iterative"]` reports the rounds,
   why they stopped (`stop_reason`: `sufficient`, `max_rounds`,
   `no_follow_up`, `deadline`, or a degraded step), each verdict, the
@@ -342,8 +341,9 @@ Conversation memory lives in the process (`MemoryManager`, limits in the
   it). Chains share it only through one `MemoryManager(config)` passed as
   `memory_manager=`.
 - Separate `run-rag --query` invocations start with no history, so
-  `--use-memory` and `--conversation-id` do nothing there (`run-rag` logs a
-  WARNING); use `--interactive` for multi-turn from the CLI.
+  `--conversation-id` does nothing there (`run-rag` logs a WARNING); use
+  `--interactive`, which always keeps the session's memory, for multi-turn
+  from the CLI.
 - A follow-up is rewritten from the history as a standalone question before
   retrieval (one `models.roles.query_rewrite` call per turn with history;
   prompt key `query_rewrite`), so "what about its suppliers?" names the

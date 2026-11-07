@@ -138,8 +138,8 @@ class RerankProviderConfig(BaseModel):
     kind: ProviderKind = Field(
         default=BEDROCK,
         description=(
-            "Reranker: bedrock | cross_encoder (sentence-transformers, [local] "
-            "extra) | none (keep the fused order). With none, or a cross-encoder "
+            "Reranker: bedrock | cross_encoder (sentence-transformers, "
+            "[cross-encoder] extra) | none (keep the fused order). With none, or a cross-encoder "
             "that cannot load, queries run unreranked, logged once and visible "
             "as kg_rag.rerank_enabled=false on the fusion span."
         ),

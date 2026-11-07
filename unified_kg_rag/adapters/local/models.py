@@ -48,16 +48,17 @@ logger = get_logger(__name__)
 PLACEHOLDER_API_KEY = "not-needed"  # pragma: allowlist secret
 
 
-def import_optional(module: str, kind: str) -> Any:
-    """Import a ``[local]``-extra module, failing with the remedy if absent."""
+def import_optional(module: str, kind: str, extra: str = "local") -> Any:
+    """Import a module of an optional extra (``[local]`` unless ``extra``
+    names another), failing with the remedy if absent."""
     try:
         # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import - literal module names
         return importlib.import_module(module)
     except ImportError as e:
         raise ConfigurationError(
             f"Provider kind '{kind}' needs '{module}', which is not installed. "
-            "Install the local extra: uv sync --extra local (or pip install -e "
-            "'.[local]' in a source checkout)."
+            f"Install the {extra} extra: uv sync --extra {extra} (or pip install "
+            f"-e '.[{extra}]' in a source checkout)."
         ) from e
 
 

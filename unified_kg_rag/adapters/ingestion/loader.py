@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import time
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import as_completed
 from functools import partial
 from pathlib import Path
 
@@ -15,6 +15,7 @@ from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.utils import default_max_workers
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
+    process_pool,
     shut_down_after,
 )
 
@@ -225,7 +226,7 @@ class DirectoryLoader:
         )
 
         with shut_down_after(
-            ProcessPoolExecutor(max_workers=self.max_workers)
+            process_pool(self.max_workers, preload=(__name__,))
         ) as executor:
             tasks = {
                 executor.submit(compute_func, (i, doc.page_content)): i

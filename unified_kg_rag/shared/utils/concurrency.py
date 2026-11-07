@@ -1,7 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Thread pools that keep the submitter's ``contextvars``, and asyncio tasks
-cancelled with the block that awaits them."""
+"""Thread pools that keep the submitter's ``contextvars``, process pools that
+never fork a threaded process, and asyncio tasks cancelled with the block
+that awaits them."""
 
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import asyncio
 import contextvars
 import functools
 import inspect
+import multiprocessing
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -17,7 +19,12 @@ from collections.abc import (
     Iterator,
     Sequence,
 )
-from concurrent.futures import Executor, Future, ThreadPoolExecutor
+from concurrent.futures import (
+    Executor,
+    Future,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+)
 from contextlib import asynccontextmanager, contextmanager
 from types import TracebackType
 from typing import Any, Literal, ParamSpec, TypeVar
@@ -111,6 +118,58 @@ async def settle(tasks: Sequence[asyncio.Future[Any]], within: float | None) -> 
     if tasks:
         await asyncio.wait(tasks, timeout=within)
     await discard(tasks)
+
+
+# The modules the forkserver imports when it starts (process_pool's
+# ``preload``), so each worker it forks has them already.
+_FORKSERVER_PRELOAD: list[str] = []
+
+
+def process_pool(
+    max_workers: int | None,
+    *,
+    initializer: Callable[..., object] | None = None,
+    initargs: tuple[Any, ...] = (),
+    preload: Sequence[str] = (),
+) -> ProcessPoolExecutor:
+    """A ``ProcessPoolExecutor`` whose workers start from the ``forkserver``
+    (``spawn`` where the platform has none, as on Windows), never by
+    forking this process.
+
+    A run is multi-threaded by the time it starts a pool (the event loop's
+    I/O threads, the store and model clients' connection pools, logging),
+    and ``fork`` copies only the calling thread: a lock another thread held
+    stays held in the child, which then hangs (Python 3.12 warns of it, and
+    3.14 no longer forks by default on Linux). A forkserver worker starts
+    from a clean single-threaded process instead. So what crosses into it
+    is pickled: the task callable and its arguments, and ``initializer``
+    and ``initargs``, must be picklable (module-level functions, not
+    lambdas or closures). A worker imports the main module as
+    ``__mp_main__``: a script that runs ingestion must keep its entry
+    behind ``if __name__ == "__main__":`` (the console scripts do).
+
+    ``preload`` names the modules the tasks live in: the forkserver imports
+    them once, when it starts (the first pool of the process), and every
+    worker forked from it has them, so a pool does not pay their import per
+    worker (seconds for the ingestion modules).
+    """
+    method = (
+        "forkserver"
+        if "forkserver" in multiprocessing.get_all_start_methods()
+        else "spawn"
+    )
+    context = multiprocessing.get_context(method)
+    if method == "forkserver" and preload:
+        # Read when the server starts; a pool after that finds its modules
+        # there if an earlier one named them, else imports them per worker.
+        _FORKSERVER_PRELOAD.extend(m for m in preload if m not in _FORKSERVER_PRELOAD)
+        context.set_forkserver_preload(list(_FORKSERVER_PRELOAD))
+    return ProcessPoolExecutor(
+        max_workers=max_workers,
+        mp_context=context,
+        initializer=initializer,
+        initargs=initargs,
+    )
 
 
 @contextmanager

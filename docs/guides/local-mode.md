@@ -45,7 +45,8 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   not checked against the model at start): a wrong value fails at the first
   vector write or search.
 - **Reranking.** The cross-encoder downloads its model from Hugging Face on
-  the first query. Without the `[local]` extra (or with `kind: none`) queries
+  the first query. Without the `cross-encoder` extra (`uv sync --extra local --extra
+  cross-encoder`; it pulls in PyTorch), or with `kind: none`, queries
   keep the fused order, logged once and reported as
   `metadata.rerank.status` `unavailable` (`disabled` for `kind: none`).
 - **Embedded stores.** Each `sqlite` store is one file created on first use
@@ -102,13 +103,13 @@ a local disk, not NFS, SMB or Amazon EFS
 
 ## Provider flags
 
-`run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning` and
-`run-visualization` take the provider flags (`--backend`, `--llm-provider`,
+`run-ingestion`, `run-rag`, `run-eval` and `run-prompt-tuning` take the
+provider flags (`--backend`, `--llm-provider`,
 `--llm-model`, `--embedding-provider`, `--embedding-model`,
 `--embedding-dimension`, `--rerank-provider`, `--model-base-url`). Each
 overrides its key of the loaded config, a key the file sets included; an
-omitted flag leaves the config as it is (`run-visualization` calls no model
-or store and only accepts them). The keys each flag sets are in the
+omitted flag leaves the config as it is. `run-visualization` calls no model
+or store and takes none of them. The keys each flag sets are in the
 [CLI Reference](../reference/cli.md#provider-flags).
 
 ## Local stores in containers

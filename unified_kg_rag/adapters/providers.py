@@ -294,8 +294,8 @@ class Providers:
 # imports another provider's dependencies (a local run loads no boto3).
 
 # The model server clients come from the [local] extra; the cross-encoder
-# reranker and the tiktoken counter degrade without it, so only these kinds
-# declare it.
+# reranker (its own [cross-encoder] extra) and the tiktoken counter degrade
+# without theirs, so only these kinds declare it.
 _LOCAL_EXTRA = (
     "the local extra: uv sync --extra local (or pip install -e '.[local]' in "
     "a source checkout)"

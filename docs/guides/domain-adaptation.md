@@ -123,7 +123,7 @@ translation), `answer_generation`, `comprehensive_answer` (the answer of
 the strategies `search.answer_prompt_style` sets to `comprehensive`, `global`
 by default), `query_rewrite`, `entity_extraction`,
 `drift_hyde`, `drift_primer`, `drift_action`, `iterative_controller`,
-`query_decomposition`, `decomposition_step`, `strategy_selection`,
+`strategy_selection`,
 `keywords_extraction`, `global_map`, `pairwise_comparison` (the
 `--pairwise-judge` judge; keep its JSON verdict format, with an `overall`
 verdict under `evaluation.pairwise_overall`), `answer_span_extraction` (the

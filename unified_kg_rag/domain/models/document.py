@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -304,6 +305,13 @@ class DocumentDelta(BaseModel):
         "of killing it (``domain.ingestion.attempts.plan_attempts``). Neither "
         "processed nor deleted; their records are left as they are",
     )
+    kept: list[str] = Field(
+        default_factory=list,
+        description="Doc ids of the run's scope absent from a run of document "
+        "changes (``DataIngestionPipeline.insert_documents`` / "
+        "``delete_documents``), which names what it adds, updates and deletes: "
+        "kept as stored, and also in ``unchanged``",
+    )
     retired: list[str] = Field(
         default_factory=list,
         description="The ``deleted`` doc ids of retired source scopes "
@@ -397,6 +405,120 @@ class DocumentDelta(BaseModel):
     def to_process(self) -> list[str]:
         """Doc ids requiring (re)indexing this run: new + changed."""
         return self.new + self.changed
+
+
+# A document filter key: one OpenSearch field name segment (attr_<key>), so
+# no dot; letters of any script, digits, "_" and "-".
+_FILTER_KEY = re.compile(r"[\w-]{1,128}")
+# The filter every seed graph item carries (SEED_GRAPH_FILTER_KEY).
+_RESERVED_FILTER_KEYS = frozenset({"seed_graph"})
+# The metadata keys ingestion sets on a document (its index, filters,
+# identity and loader fields).
+_RESERVED_METADATA_KEYS = frozenset(
+    {
+        "file_extension",
+        "file_size",
+        "filters",
+        "index",
+        "registry_namespace",
+        "registry_source",
+        "relative_path",
+        "source_directory",
+    }
+)
+FilterValue = str | int | float | bool
+
+
+class InputDocument(BaseModel):
+    """A document given from memory to ``DataIngestionPipeline.insert_documents``.
+
+    ``id`` is the document's key in its source scope, as a relative path is
+    for a corpus directory: inserting the same id again updates it, and
+    ``delete_documents`` removes it by it. ``filters`` are its document
+    attributes (queries filter on ``attr_<key>``), ``metadata`` is kept on
+    the document as given.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(
+        min_length=1,
+        max_length=512,
+        description="Key of the document in its source scope: a relative path "
+        "('contracts/2024-07.txt', 'ticket-1832'), without '..', a leading "
+        "'/' or empty segments",
+    )
+    text: str = Field(description="The document's plain text")
+    file_name: str | None = Field(
+        default=None,
+        description="Name the document is cited by; the last segment of id "
+        "when unset",
+    )
+    filters: dict[str, FilterValue | list[FilterValue]] = Field(
+        default_factory=dict,
+        description="Document attributes a query filters on as attr_<key>",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Other metadata, stored on the document as given",
+    )
+
+    @field_validator("id")
+    @classmethod
+    def _check_id(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if (
+            value != value.strip()
+            or "\\" in value
+            or any(ord(c) < 32 for c in value)
+            or path.is_absolute()
+            or value.endswith("/")
+            or "//" in value
+            or any(part in ("", ".", "..") for part in value.split("/"))
+        ):
+            raise ValueError(
+                f"document id {value!r} must be a relative path: no '..', '.', "
+                "leading or trailing '/', empty segment, backslash or control "
+                "character, and no surrounding whitespace"
+            )
+        return value
+
+    @field_validator("text")
+    @classmethod
+    def _check_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("document text is empty")
+        return value
+
+    @field_validator("filters")
+    @classmethod
+    def _check_filters(
+        cls, value: dict[str, FilterValue | list[FilterValue]]
+    ) -> dict[str, FilterValue | list[FilterValue]]:
+        for key in value:
+            if not _FILTER_KEY.fullmatch(key) or key in _RESERVED_FILTER_KEYS:
+                raise ValueError(
+                    f"filter key {key!r}: letters, digits, '_' and '-' only "
+                    f"(no '.'), at most 128, and not {sorted(_RESERVED_FILTER_KEYS)}"
+                )
+        return value
+
+    @field_validator("metadata")
+    @classmethod
+    def _check_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        reserved = sorted(_RESERVED_METADATA_KEYS & value.keys())
+        if reserved:
+            raise ValueError(
+                f"metadata keys {reserved} are set by ingestion (document "
+                "attributes go in filters)"
+            )
+        return value
+
+    @property
+    def cited_name(self) -> str:
+        """The name the document is cited by (``file_name``, else the last
+        segment of ``id``)."""
+        return self.file_name or PurePosixPath(self.id).name
 
 
 class Document(BaseModel):

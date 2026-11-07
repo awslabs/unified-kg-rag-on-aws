@@ -49,8 +49,8 @@ registry rather than by editing dispatch code
 Ingestion is a resumable pipeline of 13 checkpointed stages; a re-run
 resumes after the last valid one:
 
-1. Parse the documents (PDF, TXT, CSV, JSON; Markdown and HTML with the
-   `unstructured` extra) and load the run's corpus.
+1. Parse the documents (PDF, TXT, CSV, JSON, Markdown, HTML; Word with the
+   `docx` extra) and load the run's corpus.
 2. Chunk the text into text units, and optionally translate them.
 3. Extract entities and relationships per text unit, glean what the first
    pass missed, and resolve name variants into one entity.
@@ -255,9 +255,11 @@ purpose:
   communities are still detected but no report is written: `local` answers
   without its report section, while `global` and `drift`, which read the
   reports, are refused with a message naming that switch.
-- **Markdown and HTML** need the `unstructured` extra, which the container
-  image leaves out by default
-  ([Troubleshooting](../troubleshooting.md#why-are-my-markdown-or-html-files-not-indexed)).
+- **Markdown and HTML** are read as text in a core install (Markdown as
+  written, HTML through the standard library's parser); the `unstructured`
+  extra is the richer parser of both, and Word (`.docx`) needs the `docx`
+  extra; the container image installs neither by default
+  ([Troubleshooting](../troubleshooting.md#which-source-formats-are-read)).
 - **Incremental indexing approximates** a full build
   ([Rebuild signals](../guides/incremental.md#rebuild-signals)): delta runs append communities
   instead of re-clustering, and stored communities and reports keep an

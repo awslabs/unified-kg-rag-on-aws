@@ -80,7 +80,7 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 |---|---|
 | `applied` | 재순위화 모델이 후보 순서를 바꿨습니다. |
 | `disabled` | `providers.rerank.kind: none`. |
-| `unavailable` | 재순위화 모델을 만들 수 없습니다(초기화 실패는 ERROR로 기록, 또는 크로스 인코더의 `[local]` extra 미설치). |
+| `unavailable` | 재순위화 모델을 만들 수 없습니다(초기화 실패는 ERROR로 기록, 또는 크로스 인코더의 `[cross-encoder]` extra 미설치). |
 | `skipped` | 재순위화할 대상이 없습니다: 후보 없음, 재순위화 대상 유형의 결과 없음, 질의 텍스트 없음. |
 | `failed` | 호출이 예외를 냈거나(`bedrock:Rerank` 거부, 모델이 없는 리전, 연결할 수 없는 엔드포인트) 쓸 수 있는 결과를 돌려주지 않아 융합 순서를 유지했습니다. |
 
@@ -222,14 +222,12 @@ search:
     max_rounds: 2        # 첫 검색 뒤의 후속 라운드 수
     max_next_queries: 2  # 라운드마다 후속 질의 수
     round_top_k: 5       # 후속 질의마다 가져오는 구절 수
-    decompose: false     # true면 대신 질문을 단계로 나눔
 models:
   roles:
     query_controller: fast   # 컨트롤러 모델(기본값: fast 등급)
 ```
 
-- **비용.** fast 등급 컨트롤러 호출이 최대 `max_rounds + 1`번(`decompose`이면
-  `max_rounds + 2`번)이고, 라운드마다 기본 검색과 재순위화가 한 번씩 더 듭니다. 답변은 한 번만
+- **비용.** fast 등급 컨트롤러 호출이 최대 `max_rounds + 1`번이고, 라운드마다 기본 검색과 재순위화가 한 번씩 더 듭니다. 답변은 한 번만
   생성합니다. `metadata["iterative"]`에 라운드 수, 멈춘 이유(`stop_reason`: `sufficient`,
   `max_rounds`, `no_follow_up`, `deadline` 또는 대체 동작으로 넘어간(degraded) 단계), 판정마다의 결과, 후속 질의와
   라운드의 모델 사용량이 기록됩니다.
@@ -303,9 +301,9 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
   `conversation_id`를 다시 쓰는 `GraphRAGChain` 하나의 호출 사이에서 이어집니다(다른
   테넌트나 사용자의 턴은 섞이지 않음). 체인끼리는 같은 `MemoryManager(config)`를
   `memory_manager=`로 넘겨야만 공유합니다.
-- `run-rag --query`를 따로 실행하면 매번 이력 없이 시작하므로 `--use-memory`와
-  `--conversation-id`가 효과가 없습니다(`run-rag`가 WARNING을 남김). CLI에서 여러 턴을
-  이어 가려면 `--interactive`를 쓰세요.
+- `run-rag --query`를 따로 실행하면 매번 이력 없이 시작하므로 `--conversation-id`가
+  효과가 없습니다(`run-rag`가 WARNING을 남김). CLI에서 여러 턴을 이어 가려면 세션의
+  메모리를 늘 유지하는 `--interactive`를 쓰세요.
 - 검색 전에 후속 질문을 대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
   `models.roles.query_rewrite` 호출 한 번, 프롬프트 키 `query_rewrite`). 그래서 "그 회사의
   공급업체는?"도 앞선 턴의 엔티티 이름이 들어간 질문이 됩니다. 재작성은 최근

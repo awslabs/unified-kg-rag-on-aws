@@ -95,6 +95,10 @@ def run_prompt_tuning() -> Any:
     return _run("run_prompt_tuning")
 
 
+def run_describe() -> Any:
+    return _run("run_describe")
+
+
 def prepare_benchmark() -> Any:
     return _run("prepare_benchmark")
 

@@ -20,8 +20,9 @@ A Korean or mixed-language corpus: [Multilingual corpora](./multilingual.md).
 In run order; `--enabled-stages` / `--resume-from-stage` take the **names**
 (case-insensitive):
 
-1. **`document_parsing`**: text per format (`.pdf`, `.txt`, `.csv`, `.json`;
-   `.md`/`.html` with the `unstructured` extra).
+1. **`document_parsing`**: text per format (`.pdf`, `.txt`, `.csv`, `.json`,
+   `.md`, `.html`; `.docx` with the `docx` extra), see
+   [source formats](../troubleshooting.md#which-source-formats-are-read).
 2. **`document_loading`**: the run's corpus (MinHash dedup, incremental
    filter); without `document_parsing`, pre-parsed `Document` `.json` files.
 3. **`text_chunking`**: text units (`processing.chunking`).
@@ -33,7 +34,7 @@ In run order; `--enabled-stages` / `--resume-from-stage` take the **names**
    variants; similar names with `processing.fuzzy_entity_resolution`).
 8. **`claim_extraction`** (optional, off by default): factual claims.
 9. **`claim_resolution`** (optional): dedupes the claims.
-10. **`graph_analysis`**: builds the graph, logs `graph.analysis.statistics`.
+10. **`graph_analysis`**: builds the graph, logs its size, density and connected components.
 11. **`community_detection`**: Leiden clustering and LLM community reports
     (only when `indexing.methodologies` selects `graphrag`).
 12. **`indexing`**: writes to OpenSearch and Neptune (and the registry when

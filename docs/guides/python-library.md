@@ -57,6 +57,55 @@ finally:
   answering and returns a `SearchOutput` (`search_results`,
   `processed_query`, `metadata`).
 
+## Documents from memory
+
+With the doc-status registry on (`providers.doc_status.enabled: true`), a
+pipeline adds, updates and deletes documents given from memory through the
+same incremental path as `run`: each call is one run (namespace lease,
+stage cache, commit), and it names its changes, so the source scope's other
+documents are kept (a run over a directory deletes what the directory
+lacks).
+
+```python
+from unified_kg_rag import DataIngestionPipeline, InputDocument, PipelineConfig
+
+pipeline = DataIngestionPipeline(config, PipelineConfig())
+try:
+    pipeline.insert_documents([
+        InputDocument(id="contracts/2024-07.txt", text="...", filters={"category": "contract"}),
+        {"id": "ticket-1832", "text": "...", "metadata": {"author": "support"}},
+    ])
+    pipeline.insert_documents([{"id": "ticket-1832", "text": "edited ..."}])  # re-extracted
+    pipeline.delete_documents(["contracts/2024-07.txt"])
+finally:
+    pipeline.close()
+```
+
+- An `id` is the document's key in its source scope, as a relative path
+  is in a corpus directory (no `..`, no leading `/`); sources cite the
+  document by `file_name`, else the id's last segment. `filters` are its
+  document attributes (queries filter on `attr_<key>`).
+- The documents belong to the source scope `"api"` unless `source_scope=`
+  names another; a directory corpus's documents are deleted by their
+  relative paths with `source_scope=` its scope (its `source_scope`, or
+  its absolute directory).
+- Both return the run's `PipelineContext`; `incremental_delta` lists what
+  was new, changed, deleted and `kept`. `delete_documents` raises
+  `DocumentNotFoundError`, before any write, for an id the registry does
+  not hold in the scope. Without the registry, or with `indexing.reset`,
+  both raise `ConfigurationError`: a full build of the given documents
+  would replace the rest of the namespace.
+
+## Inspect and export a namespace
+
+`describe_namespace(config, suffix)` returns what an index namespace holds
+(methodologies, servable strategies, indices with their item counts and
+embedding model, the build record, the registry's records by status), and
+`export_graph(config, path, suffix=..., format="jsonl" | "graphml")`
+streams its graph with the provenance of every item to a file; both read
+the stores only. `run-describe` prints them
+([Inspect and export](./inspect.md)).
+
 ## Results and errors
 
 - A failed stage sets the returned `PipelineContext`'s `status` to `FAILED`
@@ -64,7 +113,8 @@ finally:
 - The errors to tell apart are exported from the package root:
   `ConfigurationError` (a setting to fix; `StoreRequestRejectedError` among
   them), `InvalidFilterError`, `IndexNotFoundError`, `StoreConnectionError`,
-  `QueryTimeoutError`, `NamespaceLeaseError`, `PipelineExecutionError` and
+  `QueryTimeoutError`, `NamespaceLeaseError`, `DocumentNotFoundError`,
+  `PipelineExecutionError` and
   `PipelineInterrupted` (a `KeyboardInterrupt`); all but the last are
   `GraphRAGException`s. `DataIngestionPipeline(...)` raises `SeedGraphError`
   (a `ConfigurationError`) for a seed graph it cannot import.

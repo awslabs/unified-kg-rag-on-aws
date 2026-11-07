@@ -2,22 +2,32 @@
 # SPDX-License-Identifier: Apache-2.0
 """ParserFactory format support + optional-dependency gating.
 
-Regression: .md/.html were advertised as supported but their loaders need the
-optional `unstructured` package, which is absent from the data-plane image —
-so a .md source failed mid-ingestion with "No module named 'unstructured'"
-(found during incremental-indexing E2E). The factory now registers those
-formats only when `unstructured` is importable.
+Markdown and HTML parse in the core install (the data-plane image once could
+not read a .md at all: its loader needed the optional `unstructured`); the
+unstructured extra, when installed, is the richer parser of both. .docx
+needs the docx extra and is registered only with it.
 """
 
 from __future__ import annotations
 
 # Imported here, not first inside the 10 s test below: pypdf's first import
 # takes seconds on a loaded runner (one pytest-xdist worker imports it there).
+import sys
+
 import pypdf  # noqa: F401
 import pytest
 
+from tests.fixtures.extras import DOCX_INSTALLED
+from unified_kg_rag.adapters.ingestion.file_loaders import (
+    DocxFileLoader,
+    HtmlFileLoader,
+    TextFileLoader,
+    UnstructuredPartitionLoader,
+)
 from unified_kg_rag.adapters.ingestion.parser import (
     _UNSTRUCTURED_AVAILABLE,
+    MISSING_EXTRA_FORMATS,
+    FileParser,
     ParserFactory,
 )
 from unified_kg_rag.domain.models import Config
@@ -32,26 +42,53 @@ def test_core_formats_always_supported() -> None:
     assert {".txt", ".csv", ".json", ".pdf"} <= exts
 
 
-def test_markdown_gated_on_unstructured() -> None:
+def test_markdown_and_html_need_no_extra() -> None:
     exts = set(ParserFactory.get_supported_extensions())
-    if _UNSTRUCTURED_AVAILABLE:
-        assert {".md", ".markdown", ".html", ".htm"} <= exts
-    else:
-        # Must NOT advertise formats it cannot actually parse.
-        assert not ({".md", ".markdown", ".html", ".htm"} & exts)
+    assert {".md", ".markdown", ".html", ".htm"} <= exts
+    configs = ParserFactory._loader_configs
+    # unstructured, when installed, is the richer parser and takes them over.
+    expected = (
+        (UnstructuredPartitionLoader, UnstructuredPartitionLoader)
+        if _UNSTRUCTURED_AVAILABLE
+        else (TextFileLoader, HtmlFileLoader)
+    )
+    assert (configs[".md"][0], configs[".html"][0]) == expected
 
 
-def test_unsupported_type_raises() -> None:
-    with pytest.raises(DataProcessingError, match="Unsupported file type"):
-        ParserFactory.create_parser("data.xyz", Config())
+def test_docx_follows_its_extra() -> None:
+    exts = set(ParserFactory.get_supported_extensions())
+    if DOCX_INSTALLED:
+        assert ".docx" in exts and ".docx" not in MISSING_EXTRA_FORMATS
+        return
+    assert ".docx" not in exts
+    with pytest.raises(DataProcessingError, match="extra docx"):
+        ParserFactory.create_parser("report.docx", Config())
 
 
-@pytest.mark.skipif(
-    _UNSTRUCTURED_AVAILABLE, reason="unstructured installed; .md is supported"
-)
-def test_markdown_error_hints_at_optional_dep() -> None:
-    with pytest.raises(DataProcessingError, match="unstructured"):
-        ParserFactory.create_parser("notes.md", Config())
+def test_a_docx_without_its_extra_fails_naming_it(tmp_path, monkeypatch) -> None:
+    # The loader itself, registered by hand on an install without python-docx.
+    monkeypatch.setitem(sys.modules, "docx", None)
+    path = tmp_path / "report.docx"
+    path.write_bytes(b"PK")
+    parser = FileParser(Config(), DocxFileLoader, {}, "Word")
+    with pytest.raises(DataProcessingError, match="uv sync --extra docx"):
+        parser.parse_file(path)
+
+
+@pytest.mark.skipif(_UNSTRUCTURED_AVAILABLE, reason="unstructured reads .md")
+def test_core_markdown_is_read_as_written(tmp_path) -> None:
+    path = tmp_path / "terms.md"
+    path.write_text("# 공급 조건\n\n**공급자**는 납품한다.\n", encoding="utf-8")
+    doc = ParserFactory.create_parser(path, Config()).parse_file(path)
+    assert doc.page_content == "# 공급 조건\n\n**공급자**는 납품한다.\n"
+
+
+@pytest.mark.skipif(_UNSTRUCTURED_AVAILABLE, reason="unstructured reads .html")
+def test_core_html_retries_a_non_utf8_file(tmp_path) -> None:
+    path = tmp_path / "terms.html"
+    path.write_bytes("<p>공급자는 구매자에게 물품을 납품한다.</p>".encode("cp949"))
+    doc = ParserFactory.create_parser(path, Config()).parse_file(path)
+    assert doc.page_content == "공급자는 구매자에게 물품을 납품한다."
 
 
 def test_core_parser_constructs() -> None:

@@ -234,7 +234,7 @@ def test_round_one_recovers_the_last_hop_passage(tmp_path: Path, language: str) 
         calls_before = len(server.chat_models)
         out = _ask(rag, chain, SearchStrategy.ITERATIVE)
         iterative = out.metadata["iterative"]
-        assert (iterative["base"], iterative["mode"]) == ("local", "controller")
+        assert iterative["base"] == "local"
         assert (iterative["rounds"], iterative["stop_reason"]) == (1, "sufficient")
         assert iterative["searched"] == [chain.follow_up]
         assert [v["sufficient"] for v in iterative["verdicts"]] == [False, True]

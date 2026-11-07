@@ -56,10 +56,11 @@ stored is read again: follow *Upgrading* in order.
 - Python 3.11 or 3.12 is required (`>=3.11, <3.13`); 3.10 is dropped (#430).
 - A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 83 packages, 937 to 335 MB on
   Linux. Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis,
-  for the `interactive` renderer), `local`, `otel`, `unstructured` (Markdown and HTML), `ontology` (rdflib). A
-  feature whose extra is missing fails naming it: the CLIs exit 2 before any work, the library raises
-  `ConfigurationError` (also under `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer
-  need no extra; the container image installs `eval` (#467, #472, #520, #576).
+  for the `interactive` renderer), `local`, `cross-encoder` (the local reranker, with PyTorch), `otel`,
+  `unstructured` (the richer Markdown and HTML parser), `docx` (Word files), `ontology` (rdflib). A feature whose
+  extra is missing fails naming it: the CLIs exit 2 before any work, the library raises `ConfigurationError` (also
+  under `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer need no extra; the container
+  image installs `eval` (#467, #472, #520, #576).
 - No longer dependencies: `graspologic` (Leiden runs on `graspologic-native`), `bokeh` (with `contourpy`, `tornado`,
   `xyzservices`), `umap-learn`, `scikit-learn`, `nest-asyncio`; `langchain` comes only with `eval` (#225, #226,
   #465, #520, #576). Security floors follow the package that pulls the pinned one in: `pillow` in `eval`, `llvmlite`
@@ -193,6 +194,11 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   `--source-directory`. An abbreviated flag is rejected (exit 2) (#333).
 - `run-ingestion --repair-metadata` is removed (it repaired nothing): use `--verify-metadata` and `--force-rebuild`
   or a new `--pipeline-id` (#248).
+- `run-rag --use-memory` is removed (an `--interactive` session always keeps its memory and a single `--query` has
+  none), and `run-rag` / `run-eval --enable-thinking` (the default Claude 5.x models always reason: tune their depth
+  with `aws.bedrock.default_effort` / `fast_effort`; from Python, `RAGInput.enable_thinking` still turns thinking on
+  for a model that opts in). Either flag fails with exit 2 saying so; run-eval results no longer record
+  `enable_thinking` (#(PR)).
 - Exit codes: `2` for a usage or configuration error before any work (also one met while running), `1` for a failed
   run, `130` for Ctrl-C, `143` for SIGTERM (#333, #344).
 - `--output-format json` prints one JSON document on stdout (a status document on failure, argparse errors included)
@@ -307,8 +313,10 @@ See [`iac/README.md`](iac/README.md).
 ### Upgrading
 From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
 [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
-1. Install on Python 3.11 or 3.12 with the extras you use (`eval`, `viz`, `local`, `otel`, `unstructured`,
-   `ontology`). A CLI whose configuration needs a missing extra exits 2 at start-up naming it (#472).
+1. Install on Python 3.11 or 3.12 with the extras you use (`eval`, `viz`, `local`, `otel`, `unstructured`, `docx`,
+   `ontology`). A CLI whose configuration needs a missing extra exits 2 at start-up naming it (#472). Markdown and
+   HTML files indexed with `unstructured` keep their text and ids only with that extra installed: without it the core
+   readers write other text, so the next incremental run re-extracts those files as changed documents (#(PR)).
 2. Load your config once and fix what it reports: unknown keys (*Configuration* lists the 0.2.3 ones), moved keys
    (the load names the replacement) and removed keys (a WARNING names it). Rename environment variables to
    `UKR__...`.
@@ -369,6 +377,13 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     scores, with the `eval` extra; a `--fail-if ragas/...` gate fails without it. The `langchain` evaluator is removed
     (a config naming it, or `evaluation.langchain_metrics`, loads with a WARNING and without it): gate on
     `ragas/answer_correctness` instead of `langchain/correctness` (#620). `graph_aware` coverage matches by entity
+    A Python script that runs ingestion (`DataIngestionPipeline`, `DirectoryLoader.deduplicate_documents`, the
+    graph resolver) must keep its entry point behind `if __name__ == "__main__":`: the deduplication and fuzzy
+    matching worker processes now start from a forkserver, which imports the main module, instead of forking a
+    process that runs threads (a lock another thread held could hang the worker). The console scripts and a
+    notebook need nothing; what a custom pool task gets must pickle (#(PR)).
+14. Evaluation: list `langchain` in `evaluation.enabled_evaluators` to keep its scores (a `--fail-if langchain/...`
+    gate fails without it; leaving it out saves two judge calls per query). `graph_aware` coverage matches by entity
     key and can read lower than before on the same answers: run baselines again before comparing. Re-render static
     charts to get the SVG pages (#563, #576).
 
@@ -497,8 +512,8 @@ From a `main` checkout (formats and keys no release had):
   later builds reuse them. A graph with entities without relationships may lose its top community
   level at its next clustering (its reports go, no call is added, global search's `community_depth` cuts one level
   higher). A document with a paragraph longer than a chunk is cut otherwise when it is next chunked (a reset or an
-  edit), and those chunks are extracted again. `graph_metrics.average_clustering` is empty unless
-  `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
+  edit), and those chunks are extracted again. `graph_metrics` no longer holds
+  `average_clustering` or `diameter`. A summary tree of more than 100,000 text units
   now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`. The tree
   stored before stays in the build record, so `tree` keeps serving the text units it covers (#612).
 - #620 run directories: `run-eval` results land in `<outputs>/run_<timestamp>_<id>/`; scripts that read
@@ -672,8 +687,20 @@ From a `main` checkout (formats and keys no release had):
   §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the
-  `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). See [local
+  `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). The cross-encoder is
+  its own `cross-encoder` extra, since it pulls in PyTorch (the CUDA build on Linux, several GB): `local` alone runs
+  with reranking off, logged once; `local` declares `httpx`, which its adapters import (#(PR)). See [local
   mode](docs/guides/local-mode.md).
+- Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
+  adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
+  each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
+  doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
+  (#(PR)). See [Python library](docs/guides/python-library.md#documents-from-memory).
+- `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
+  strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
+  its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
+  (`--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#(PR)). See
+  [inspect and export](docs/guides/inspect.md).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,
@@ -777,16 +804,15 @@ From a `main` checkout (formats and keys no release had):
   bridge entities and follow-up queries that seed up to `max_rounds` (2) more base searches and text-unit searches
   under the same filters; the rounds are fused (buckets `iterative_round_<n>`, `iterative_round_<n>_text`) and
   reranked, and the answer is generated once. A `mix` round that names no new bridge entity runs its text searches
-  alone, and a decomposition step without one keeps the question's keywords, where `mix` reran with no keyword
-  (falling back to the search text, or no entity search past `raw_query_fallback_max_len`) (#598). Over `mix` it
+  alone, where `mix` reran with no keyword (falling back to the search text, or no entity search past `raw_query_fallback_max_len`) (#598). Over `mix` it
   answered multi-hop questions significantly better than `mix`, at more than twice the p95 latency
-  ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)). `decompose: true` splits the
-  question into steps instead (KAG-style). `metadata["context_sufficient"]: false` reports a final insufficient
-  verdict, `metadata["iterative"]` the rounds and their model usage; new `custom_prompts.iterative_controller_*`,
-  `query_decomposition_*` and `decomposition_step_*` (#594). The controller reads the context packed to the
+  ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)); a KAG-style decomposition into
+  steps measured no better than the loop and is not offered (#(PR)). `metadata["context_sufficient"]: false` reports
+  a final insufficient verdict, `metadata["iterative"]` the rounds and their model usage; new
+  `custom_prompts.iterative_controller_*` (#594). The controller reads the context packed to the
   answer's budget (`controller_context_tokens: null`; a smaller cap left it the first passages of long chunks), a
   round follows at most five bridge entities, a deadline that cancels the round an insufficient verdict started
-  reports it (`insufficiency_reason: deadline`), and the follow-up queries, bridge entities and step questions in
+  reports it (`insufficiency_reason: deadline`), and the follow-up queries and bridge entities in
   `metadata["iterative"]` are screened by the output guardrail with `check_output` (#607). See
   [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
@@ -933,6 +959,9 @@ From a `main` checkout (formats and keys no release had):
   `run-eval --evaluators a,b` picks the evaluators of one run; `ragas` and `assertion` are opt-in. The `langchain`
   evaluator is removed; its `correctness` repeated `ragas`' `answer_correctness`. The `eval` extra keeps
   `langchain-openai` as the security floor of the copy ragas depends on (#620).
+- The document deduplication and fuzzy entity matching worker processes start from a forkserver (`spawn` where
+  the platform has none) instead of forking the run, whose I/O and client-pool threads may hold a lock the forked
+  worker would wait on forever; see *Upgrading* for scripts (#(PR)).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
@@ -1000,8 +1029,9 @@ From a `main` checkout (formats and keys no release had):
   overridable (`custom_prompts.text_translation_*`, `custom_prompts.text_chunking_*`) (#608).
 - The splitter cuts a paragraph longer than a chunk after a Latin or Korean sentence end (".", "!", "?" or "…"
   before a space) before it falls back to its last space (#608).
-- `graph.analysis.statistics.calculate_average_clustering` (off): the `graph_analysis` stage no longer computes the
-  average clustering coefficient by default (about 10 s at 80,000 entities, read by no stage) (#608).
+- The `graph_analysis` stage no longer computes the average clustering coefficient (about 10 s at 80,000 entities)
+  or the diameter, which no stage read: `graph.analysis.statistics.calculate_average_clustering` and
+  `calculate_diameter` load with a WARNING and are ignored (#608, #(PR)).
 - Embedding requests in flight are bounded by `processing.max_concurrency` too (at most 16 as before) (#608).
 - Stage cache keys cover the whole configuration and the package version (#332).
 - `BatchProcessor` runs one pool of `processing.max_concurrency` items, connection pools follow the concurrency, and
@@ -1009,9 +1039,12 @@ From a `main` checkout (formats and keys no release had):
 - The `graph_analysis` stage computes no centrality (#248); `run-visualization` computes it only for a renderer that
   reads it (`BaseRenderer.needs_centrality`) (#563).
 - The parser uses its own loaders on langchain-core (same text and ids; a 4,000-page PDF loads in about 1 s);
-  `ParserFactory.register_loader` takes any `BaseLoader` (#460, #471). Markdown and HTML need the `unstructured`
-  extra; an image built with `UV_EXTRAS="--extra unstructured"` installs its spaCy model, and an offline run without
-  it fails at once naming the install command (#534).
+  `ParserFactory.register_loader` takes any `BaseLoader` (#460, #471). Markdown and HTML are read without an
+  extra: Markdown as written, HTML through the standard library's parser (one paragraph per block element, no script
+  or style); the `unstructured` extra, when installed, reads both in its place, its image installs its spaCy model,
+  and an offline run without that model fails at once naming the install command (#534, #(PR)). Word (`.docx`) files
+  are read with the new `docx` extra (python-docx); without it they are skipped with a WARNING naming the extra
+  (#(PR)).
 - Gleaning refines each text unit's own record and a correction changes only what that unit says (#322).
 - `graph_aware`'s `retrieved_entity_coverage` and `retrieved_relationship_coverage` match by entity key (case, CJK
   spacing, quotes and legal forms ignored), not as a phrase inside a name, and count same-key expectations once
@@ -1051,9 +1084,10 @@ From a `main` checkout (formats and keys no release had):
   uses an S3 Bucket Key (#617).
 
 ### Deprecated
-- `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and will be removed: the default Claude 5.x
-  models always reason, so tune their depth with `aws.bedrock.default_effort` / `fast_effort`. It still turns
-  thinking on for models that opt in (#577).
+- `graph.community_detection.auto_resolution`, `auto_resolution_candidates` and `auto_resolution_max_nodes` log a
+  deprecation WARNING when set and will be removed: maximizing modularity on the coarse upper levels merges unrelated
+  communities (it lost global search accuracy in testing, which is why it has been off by default since #141). They
+  still apply; set `graph.community_detection.resolution` instead (#(PR)).
 
 ### Fixed
 Bugs present in 0.2.3.
@@ -1129,6 +1163,9 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- A document's doc-status registry namespace and its artifacts' index suffix follow one rule
+  (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
+  fails the loading stage naming it instead of keying the document's record under a namespace no index has (#(PR)).
 - One index language (`index_language`: `target_language` when translation runs, else `source_language`) for every
   component: with translation disabled, extraction, gleaning, description summaries and community reports were
   written in `target_language` and the graph indexes analyzed for it while the text units, the summary tree and the

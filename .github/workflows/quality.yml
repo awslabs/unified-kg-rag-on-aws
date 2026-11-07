@@ -68,13 +68,13 @@ jobs:
 
       - name: Sync dependencies
         # --locked: fail if uv.lock is stale relative to pyproject.toml.
-        run: uv sync --locked --extra otel --extra eval --extra viz --extra ontology --extra mcp
+        run: uv sync --locked --extra otel --extra eval --extra viz --extra ontology --extra mcp --extra docx
 
-      - name: Check the eval, viz, ontology and mcp extras are importable
+      - name: Check the eval, viz, ontology, mcp and docx extras are importable
         # The tests that need them skip themselves without them
         # (tests/fixtures/extras.py), which would let this job pass without
         # running them.
-        run: uv run --frozen python -c "import datasets, langchain_openai, mcp, pandas, pyvis, ragas, rdflib"
+        run: uv run --frozen python -c "import datasets, docx, langchain_openai, mcp, pandas, pyvis, ragas, rdflib"
 
       - name: Ruff (lint)
         run: uv run ruff check unified_kg_rag tests iac scripts
@@ -154,7 +154,7 @@ jobs:
       - name: Check the extras are absent
         run: >-
           uv run --frozen --no-dev --group test python -c "import importlib.util as u, sys;
-          present = [m for m in ('datasets', 'langchain',
+          present = [m for m in ('datasets', 'docx', 'langchain',
           'langchain_community', 'langchain_openai', 'langgraph', 'mcp',
           'pandas', 'pyvis', 'ragas', 'rdflib')
           if u.find_spec(m)]; sys.exit(f'installed: {present}' if present else 0)"

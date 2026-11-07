@@ -407,7 +407,7 @@ last-hop supporting paragraph reached the answer context.
 |---|---|---|---|
 | `iterative` over `mix` (the default base, controller loop) against `mix` | `answer_contains` +12.5 points [+7.5, +18.0] (27 wins, 2 losses), token F1 +5.2 [+0.2, +10.1], EM +4.0 [-0.5, +8.5] n.s. | recall@5 +13.9 points, supporting paragraphs in the context +13.3, last hop in the context +21.5 (43 wins, 0 losses) | p50 6.8 s to 16.1 s, p95 11.1 s to 27.4 s; $0.0553 to $0.0571 a query (+$0.002) |
 | `iterative` over `local` against `local` | `answer_contains` +10.0 [+5.5, +15.0], token F1 +5.7 [+0.4, +10.7], EM +7.5 [+2.0, +13.5] | recall@5 +14.0, last hop in the context +23.0 | p95 13.5 s to 32.1 s; $0.0392 to $0.0400 a query |
-| `decompose: true` over `mix` against the controller loop | token F1 -0.6 n.s., `answer_contains` -2.5 n.s. | recall@5 +2.7 n.s. | +$0.0009 a query, latency the same |
+| A KAG-style decomposition (removed) over `mix` against the controller loop | token F1 -0.6 n.s., `answer_contains` -2.5 n.s. | recall@5 +2.7 n.s. | +$0.0009 a query, latency the same |
 
 The gain comes from the questions whose base context lacked a supporting
 paragraph (89 of 200: token F1 +13.6, `answer_contains` +29.2); where the
@@ -419,8 +419,8 @@ question; the answers were no longer.
 So `auto` may route to `iterative` (`search.auto_routable_strategies`),
 whose router entry keeps it to questions that chain facts through an
 entity they do not name, but no strategy defaults to it: it adds about 10 s to
-the median query. `decompose` stays off, costing more for no gain over
-the loop.
+the median query. The decomposition arm cost more for no gain over the
+loop, so it was removed.
 
 This run did not measure whether the router leaves single-hop and
 sensemaking questions to the other strategies (the second run below did).

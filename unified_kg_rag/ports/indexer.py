@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,12 +19,33 @@ from unified_kg_rag.domain.models import (
     Relationship,
     SummaryNode,
     TextUnit,
-    validate_safe_name,
 )
-from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
-from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.domain.retrieval.store_names import (
+    graph_label,
+    index_suffix,
+    store_name,
+)
+from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
+
+# The kinds of item ``VectorIndexer.scan_items`` pages through, one index each.
+StoredItemKind = Literal[
+    "text_units",
+    "entities",
+    "relationships",
+    "claims",
+    "community_reports",
+    "summary_nodes",
+]
+STORED_ITEM_KINDS: tuple[StoredItemKind, ...] = (
+    "text_units",
+    "entities",
+    "relationships",
+    "claims",
+    "community_reports",
+    "summary_nodes",
+)
 
 
 class IndexingStats(BaseModel):
@@ -162,20 +183,8 @@ class BaseIndexer(ABC):
         if not hasattr(item, "attributes") or not isinstance(item.attributes, dict):
             return Constants.DEFAULT_SUFFIX.value
 
-        index_value = item.attributes.get(Constants.INDEX.value)
-        suffix = None
-
-        if isinstance(index_value, str) and index_value:
-            suffix = index_value
-        elif isinstance(index_value, (list | tuple)) and index_value:
-            suffix = str(index_value[0])
-        else:
-            return Constants.DEFAULT_SUFFIX.value
-
-        try:
-            return validate_safe_name(suffix, "index suffix")
-        except ValueError as e:
-            raise ConfigurationError(str(e)) from e
+        suffix = index_suffix(item.attributes.get(Constants.INDEX.value))
+        return suffix or Constants.DEFAULT_SUFFIX.value
 
     def _get_name(
         self, base: str, suffix: str | None, add_timestamp: bool = False
@@ -592,6 +601,31 @@ class VectorIndexer(BaseIndexer):
         indices (an ``IndexBuildRecord`` dump), read before a run to tell
         what the namespace holds. ``None`` when there is none or it cannot
         be read (logged). Default: ``None`` (no index metadata)."""
+        return None
+
+    def describe_indices(self, suffix: str | None) -> list[dict[str, Any]] | None:
+        """One entry per index of ``suffix``, in ``STORED_ITEM_KINDS`` order:
+        ``kind``, ``alias``, ``index`` (the live index, ``None`` without
+        one), ``documents`` (how many it holds) and ``meta`` (its ``_meta``:
+        the embedding model and dimension, the build record). ``None`` (the
+        default) when the backend keeps no index metadata. Raises when a
+        read fails."""
+        return None
+
+    def scan_items(
+        self,
+        kind: StoredItemKind,
+        suffix: str | None,
+        *,
+        page_size: int | None = None,
+    ) -> Iterator[list[dict[str, Any]]] | None:
+        """The stored items of ``kind`` of ``suffix`` (their stored fields
+        and ``id``, no vector), in id order, one page at a time
+        (``page_size`` at most, the index's window otherwise): a page is
+        read only once the one before it is consumed, so a caller streams
+        the namespace. Yields nothing without a live index; ``None`` (the
+        default) when the backend cannot page its items. Raises when a read
+        fails."""
         return None
 
     # --- the summary tree (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in) -----------------------------

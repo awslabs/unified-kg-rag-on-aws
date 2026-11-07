@@ -33,12 +33,10 @@ from .evaluation import EvaluationMetricType, EvaluatorType
 from .methodology import (
     DEFAULT_METHODOLOGIES,
     METHODOLOGY_PROFILES,
-    UNBUILT_ARTIFACTS,
     IndexArtifact,
     Methodology,
     artifact_switches,
     artifacts_of,
-    available_methodologies,
     buildable,
     switched_off_artifacts,
 )
@@ -415,7 +413,7 @@ _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
     ModelRole.QUERY_CONTROLLER: (
         "fast",
         "judges whether iterative search's context answers the question and "
-        "names the follow-up queries, or decomposes it into steps",
+        "names the follow-up queries",
     ),
     ModelRole.EVALUATION: ("default", "judges answers in run-eval"),
     ModelRole.ANSWER_SPAN: (
@@ -742,10 +740,17 @@ REMOVED_KEYS: dict[str, str] = {
     ),
     **{
         f"graph.analysis.statistics.{key}": (
-            "density, the average clustering coefficient and the connected "
-            "components are always computed"
+            "the graph_analysis stage computes the density and the connected "
+            "components; no stage read the average clustering coefficient or "
+            "the diameter, which are no longer computed"
         )
-        for key in ("calculate_density", "calculate_clustering", "calculate_components")
+        for key in (
+            "calculate_density",
+            "calculate_clustering",
+            "calculate_components",
+            "calculate_average_clustering",
+            "calculate_diameter",
+        )
     },
     "fixing": (
         "output fixing is always on (the default before); models.roles.fixing "
@@ -2450,34 +2455,6 @@ class CentralityConfig(BaseModel):
     )
 
 
-class StatisticsConfig(BaseModel):
-    """Graph-level statistics: density and the connected components are
-    always computed; the others on request."""
-
-    calculate_average_clustering: bool = Field(
-        default=False,
-        description=(
-            "Calculate the average clustering coefficient (graph_metrics."
-            "average_clustering): about 10 s on a graph of 80,000 entities, "
-            "and no stage reads it"
-        ),
-    )
-    calculate_diameter: bool = Field(
-        default=False,
-        description=(
-            "Calculate graph diameter (computationally expensive; only on a "
-            "connected graph)"
-        ),
-    )
-
-
-class GraphAnalysisConfig(BaseModel):
-    statistics: StatisticsConfig = Field(
-        default_factory=StatisticsConfig,
-        description="Graph-level statistics configuration",
-    )
-
-
 class ReportGenerationConfig(BaseModel):
     enabled: bool = Field(
         default=True,
@@ -2520,6 +2497,28 @@ class ReportGenerationConfig(BaseModel):
         "context instead. Reports are then generated level by level, the "
         "finest first (a level waits for the one below); false generates "
         "every level at once and only cuts the context.",
+    )
+
+
+# The modularity sweep's settings, deprecated: maximizing modularity on the
+# coarse upper levels merges unrelated communities (accuracy loss in testing).
+_AUTO_RESOLUTION_KEYS = (
+    "auto_resolution",
+    "auto_resolution_candidates",
+    "auto_resolution_max_nodes",
+)
+
+
+@functools.cache
+def _warn_auto_resolution(keys: tuple[str, ...]) -> None:
+    """Warn once per set of keys: a config is validated several times per
+    load."""
+    _logger.warning(
+        "graph.community_detection.%s %s deprecated and will be removed: the "
+        "modularity sweep merges unrelated communities on the upper levels. "
+        "It still applies; set graph.community_detection.resolution instead.",
+        " / ".join(keys),
+        "is" if len(keys) == 1 else "are",
     )
 
 
@@ -2595,8 +2594,9 @@ class CommunityDetectionConfig(BaseModel):
     auto_resolution: bool = Field(
         default=False,
         description=(
-            "Sweep auto_resolution_candidates at every hierarchy level and "
-            "keep the most modular resolution; otherwise resolution is used. "
+            "Deprecated, to be removed. Sweep auto_resolution_candidates at "
+            "every hierarchy level and keep the most modular resolution; "
+            "otherwise resolution is used. "
             "Off by default: maximizing modularity on the coarse upper-level "
             "graphs picks low resolutions that merge unrelated communities, "
             "which cost global search accuracy in testing."
@@ -2604,19 +2604,31 @@ class CommunityDetectionConfig(BaseModel):
     )
     auto_resolution_candidates: list[PositiveFloat] = Field(
         default_factory=lambda: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0],
-        description="Resolution values swept when auto_resolution is enabled; the "
-        "one maximizing modularity is chosen. Each must be above 0.",
+        description="Deprecated, to be removed. Resolution values swept when "
+        "auto_resolution is enabled; the one maximizing modularity is chosen. "
+        "Each must be above 0.",
     )
     auto_resolution_max_nodes: int = Field(
         default=10000,
         ge=1,
-        description="Skip the auto_resolution sweep (which runs one full Leiden "
+        description="Deprecated, to be removed. Skip the auto_resolution sweep "
+        "(which runs one full Leiden "
         "partition + modularity computation per candidate, ~10x the base cost, "
         "at every hierarchy level) when the graph exceeds this many nodes, and "
         "use the fixed `resolution` instead. Prevents the sweep from dominating "
         "the analysis phase on large graphs. Raise to force the sweep on bigger "
         "graphs.",
     )
+
+    @model_validator(mode="after")
+    def _warn_auto_resolution_deprecated(self) -> "CommunityDetectionConfig":
+        given = tuple(
+            name for name in _AUTO_RESOLUTION_KEYS if name in self.model_fields_set
+        )
+        if given:
+            _warn_auto_resolution(given)
+        return self
+
     report_generation: ReportGenerationConfig = Field(
         default_factory=ReportGenerationConfig,
         description="Community report generation configuration",
@@ -2698,9 +2710,6 @@ class VisualizationConfig(BaseModel):
 
 
 class GraphConfig(BaseModel):
-    analysis: GraphAnalysisConfig = Field(
-        default_factory=GraphAnalysisConfig, description="Graph analysis configuration"
-    )
     community_detection: CommunityDetectionConfig = Field(
         default_factory=CommunityDetectionConfig,
         description="Community detection configuration",
@@ -3296,12 +3305,6 @@ class SummaryTreeConfig(BaseModel):
         description="PCA dimensions the vectors are reduced to before "
         "clustering (RAPTOR's reduction_dimension; PCA replaces its UMAP).",
     )
-    bic_grid: Literal["bounded", "upstream"] = Field(
-        default="bounded",
-        description="gmm only: the cluster counts BIC compares. bounded: at "
-        "most 8 values around n / target_children; upstream: 1 to 49, as "
-        "RAPTOR's code (slow on large levels).",
-    )
     max_levels: int = Field(
         default=5,
         ge=1,
@@ -3562,27 +3565,13 @@ class IndexingConfig(BaseModel):
         if not isinstance(value, list | tuple):
             return value
         known = {m.value: m for m in Methodology}
-        available = available_methodologies()
-        names = ", ".join(m.value for m in available)
+        names = ", ".join(known)
         selected: list[Methodology] = []
         for item in value:
             name = item.value if isinstance(item, Methodology) else item
             methodology = known.get(str(name).strip().lower())
             if methodology is None:
                 raise ValueError(f"unknown methodology {name!r}; valid: {names}")
-            if methodology not in available:
-                raise ValueError(
-                    f"methodology {methodology.value!r} is not available in this "
-                    "version (no ingestion stage builds its "
-                    + ", ".join(
-                        sorted(
-                            a.value
-                            for a in METHODOLOGY_PROFILES[methodology].required
-                            & UNBUILT_ARTIFACTS
-                        )
-                    )
-                    + f"); valid: {names}"
-                )
             if methodology not in selected:
                 selected.append(methodology)
         return selected
@@ -4410,8 +4399,6 @@ class IterativeSearchConfig(BaseModel):
     the new candidates with the earlier rounds' (RRF), reranks them against
     the question and the follow-up queries and repacks them under the same
     token budget. The answer model answers once, from the final context.
-    With ``decompose`` a single call writes the question as a chain of steps
-    instead, each answered in order over its own text-unit search.
     """
 
     base: Literal["local", "mix"] = Field(
@@ -4431,20 +4418,7 @@ class IterativeSearchConfig(BaseModel):
             "Follow-up rounds after round 0 at most. The controller judges the "
             "context after every round, the last one included, so a query "
             "makes at most max_rounds + 1 controller calls and max_rounds + 1 "
-            "base searches; the answer model is called once. With decompose, "
-            "the most steps the question is split into is max_rounds + 1."
-        ),
-    )
-    decompose: bool = Field(
-        default=False,
-        description=(
-            "Instead of the controller loop, one models.roles.query_controller "
-            "call writes the question as a chain of single-hop steps (a later "
-            "step refers to an earlier answer as #1, #2, ...), and each step is "
-            "answered in order by one call over its own text-unit search; the "
-            "steps' passages join round 0's candidates. KAG-style "
-            "decomposition, an alternative to the controller loop with the "
-            "same caps: at most max_rounds + 2 fast-model calls."
+            "base searches; the answer model is called once."
         ),
     )
     round_top_k: int = Field(
@@ -4452,8 +4426,7 @@ class IterativeSearchConfig(BaseModel):
         ge=1,
         le=50,
         description=(
-            "Text units each follow-up query (and each decomposition step) "
-            "retrieves by the request's search_type (BM25 + vector by "
+            "Text units each follow-up query retrieves by the request's search_type (BM25 + vector by "
             "default). The base rerun of a follow-up round keeps the query's "
             "top_k."
         ),
@@ -4484,8 +4457,7 @@ class IterativeSearchConfig(BaseModel):
         default=None,
         ge=256,
         description=(
-            "Token budget of the context each controller call (and each "
-            "decomposition step) reads: the round's candidates packed as the "
+            "Token budget of the context each controller call reads: the round's candidates packed as the "
             "answer's context is, cut to this. null (the default) packs them "
             "to the answer's budget (the request's max_tokens, else "
             "search.token_manager.max_context_tokens), so the controller "
@@ -5613,27 +5585,6 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for iterative search's controller",
     )
-    query_decomposition_system: str | None = Field(
-        default=None,
-        description="Custom system prompt for iterative search's decomposition "
-        "of the question into single-hop steps (search.iterative_search."
-        "decompose)",
-    )
-    query_decomposition_human: str | None = Field(
-        default=None,
-        description="Custom human prompt for iterative search's decomposition "
-        "of the question into single-hop steps",
-    )
-    decomposition_step_system: str | None = Field(
-        default=None,
-        description="Custom system prompt for answering one decomposition step "
-        "from its passages",
-    )
-    decomposition_step_human: str | None = Field(
-        default=None,
-        description="Custom human prompt for answering one decomposition step "
-        "from its passages",
-    )
     drift_action_system: str | None = Field(
         default=None,
         description="Custom system prompt for answering a DRIFT follow-up query "
@@ -5753,7 +5704,6 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "corpus_profile": frozenset({"corpus_sample"}),
     "description_summarization": frozenset({"descriptions"}),
     "tree_summary": frozenset({"passages"}),
-    "decomposition_step": frozenset({"query", "context"}),
     "drift_action": frozenset({"query", "context"}),
     "drift_hyde": frozenset({"query"}),
     "drift_primer": frozenset({"query", "community_reports"}),
@@ -5766,7 +5716,6 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "pairwise_comparison": frozenset({"query", "answer1", "answer2"}),
     "pairwise_differential": frozenset({"query", "shared", "unique1", "unique2"}),
     "pairwise_overlap": frozenset({"query", "answer1", "answer2"}),
-    "query_decomposition": frozenset({"query"}),
     "query_rewrite": frozenset({"query", "conversation_history"}),
     "strategy_selection": frozenset({"query", "strategies"}),
 }

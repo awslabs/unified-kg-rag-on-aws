@@ -91,7 +91,7 @@ Reranking provider
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `kind` | string (min length 1) | `"bedrock"` | Reranker: bedrock \| cross_encoder (sentence-transformers, [local] extra) \| none (keep the fused order). With none, or a cross-encoder that cannot load, queries run unreranked, logged once and visible as kg_rag.rerank_enabled=false on the fusion span. |
+| `kind` | string (min length 1) | `"bedrock"` | Reranker: bedrock \| cross_encoder (sentence-transformers, [cross-encoder] extra) \| none (keep the fused order). With none, or a cross-encoder that cannot load, queries run unreranked, logged once and visible as kg_rag.rerank_enabled=false on the fusion span. |
 | `device` | string \| null | `null` | Torch device for the cross-encoder (null lets it choose). |
 | `max_length` | integer (≥ 16) | `512` | Longest query + passage pair the cross-encoder scores, in tokens. |
 | `batch_size` | integer (≥ 1) | `16` | Pairs scored per cross-encoder batch. |
@@ -159,7 +159,7 @@ Per-role overrides: a model id or a tier name per role.
 | `global_map` | string \| null (min length 1) | `null` | Model that answers from each report batch (global map): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `drift_primer` | string \| null (min length 1) | `null` | Model that writes DRIFT's primer and follow-ups: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `drift_action` | string \| null (min length 1) | `null` | Model that answers each DRIFT follow-up: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
-| `query_controller` | string \| null (min length 1) | `null` | Model that judges whether iterative search's context answers the question and names the follow-up queries, or decomposes it into steps: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `query_controller` | string \| null (min length 1) | `null` | Model that judges whether iterative search's context answers the question and names the follow-up queries: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `evaluation` | string \| null (min length 1) | `null` | Model of the run-eval LLM judges (the ragas and assertion evaluators and --pairwise-judge): a model id, or a tier name ('default' / 'fast'). null = anthropic.claude-opus-5-5 on Bedrock, a model other than the default answer model; when the answer model is that model, the default tier's model or else Claude Sonnet 5.5, whichever is not (run-eval logs the choice at INFO): a judge favours its own answers (measured on 50 global questions: Sonnet 5.5 judging its own answers against Opus 5.5's shifted the directness win rate by -0.27 [-0.38, -0.16] against a GPT-5.5 judge). It costs about twice the default tier per token (on-demand, us-west-2, 2026-11: $4 / $20 per million input / output tokens against $2 / $10). With another provider, null runs it on the 'default' tier. 'default' restores the judge of earlier versions, the answer model (run-eval warns when a configured judge is the answer model). |
 | `answer_span` | string \| null (min length 1) | `null` | Model that extracts the short answer span run-eval scores exact match and token F1 on (evaluation.answer_span: extracted): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `pairwise_overlap` | string \| null (min length 1) | `null` | Model that splits two answers into shared and unique statements for run-eval --pairwise-mode differential: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
@@ -420,19 +420,6 @@ A knowledge graph imported as virtual documents of the corpus.
 
 Graph analysis configuration
 
-### `graph.analysis`
-
-Graph analysis configuration
-
-#### `graph.analysis.statistics`
-
-Graph-level statistics configuration
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `calculate_average_clustering` | boolean | `false` | Calculate the average clustering coefficient (graph_metrics.average_clustering): about 10 s on a graph of 80,000 entities, and no stage reads it |
-| `calculate_diameter` | boolean | `false` | Calculate graph diameter (computationally expensive; only on a connected graph) |
-
 ### `graph.community_detection`
 
 Community detection configuration
@@ -447,9 +434,9 @@ Community detection configuration
 | `extra_forced_iterations` | integer (≥ 0) | `2` | Additional optimization iterations after convergence (MS GraphRAG runs 0). |
 | `max_cluster_size` | integer (≥ 2) | `20` | Maximum members per community before it is split: entities at level 0, child communities above. A larger Leiden community is re-partitioned on its own subgraph, recursively, until every piece fits or Leiden finds no finer split, and stays the parent of its pieces (as in MS GraphRAG's hierarchical Leiden). Without the bound, modularity's resolution limit grows communities with the corpus beyond what one report's max_report_context_tokens can describe (or a parent's roll-up can summarize). MS GraphRAG's default is 10 with a larger report budget; 20 typically keeps a leaf's entities and relationships, or a parent's child summaries, within the default 4000-token report context. |
 | `min_community_size` | integer (≥ 1) | `3` | Minimum entities per level-0 community: a smaller one merges into the neighbour it shares the most edge weight with, unless that would exceed max_cluster_size. A connected component of fewer entities (an isolated entity, a pair) has no neighbour and gets no community or report. 1 = cluster every component. |
-| `auto_resolution` | boolean | `false` | Sweep auto_resolution_candidates at every hierarchy level and keep the most modular resolution; otherwise resolution is used. Off by default: maximizing modularity on the coarse upper-level graphs picks low resolutions that merge unrelated communities, which cost global search accuracy in testing. |
-| `auto_resolution_candidates` | list[number] | `[0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0]` | Resolution values swept when auto_resolution is enabled; the one maximizing modularity is chosen. Each must be above 0. |
-| `auto_resolution_max_nodes` | integer (≥ 1) | `10000` | Skip the auto_resolution sweep (which runs one full Leiden partition + modularity computation per candidate, ~10x the base cost, at every hierarchy level) when the graph exceeds this many nodes, and use the fixed `resolution` instead. Prevents the sweep from dominating the analysis phase on large graphs. Raise to force the sweep on bigger graphs. |
+| `auto_resolution` | boolean | `false` | Deprecated, to be removed. Sweep auto_resolution_candidates at every hierarchy level and keep the most modular resolution; otherwise resolution is used. Off by default: maximizing modularity on the coarse upper-level graphs picks low resolutions that merge unrelated communities, which cost global search accuracy in testing. |
+| `auto_resolution_candidates` | list[number] | `[0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0]` | Deprecated, to be removed. Resolution values swept when auto_resolution is enabled; the one maximizing modularity is chosen. Each must be above 0. |
+| `auto_resolution_max_nodes` | integer (≥ 1) | `10000` | Deprecated, to be removed. Skip the auto_resolution sweep (which runs one full Leiden partition + modularity computation per candidate, ~10x the base cost, at every hierarchy level) when the graph exceeds this many nodes, and use the fixed `resolution` instead. Prevents the sweep from dominating the analysis phase on large graphs. Raise to force the sweep on bigger graphs. |
 
 #### `graph.community_detection.report_generation`
 
@@ -594,7 +581,6 @@ RAPTOR's summary tree over the stored text units, which the tree strategy search
 | `target_children` | integer (≥ 2, ≤ 50) | `6` | Children per summary node aimed at (kmeans' k, and the centre of gmm's bounded BIC grid). RAPTOR's trees average 6.7. |
 | `soft_threshold` | number (> 0.0, < 1.0) | `0.1` | gmm only: a node joins every cluster whose posterior exceeds this (RAPTOR's threshold), its likeliest one when none does. |
 | `reduction_dims` | integer (≥ 2, ≤ 100) | `10` | PCA dimensions the vectors are reduced to before clustering (RAPTOR's reduction_dimension; PCA replaces its UMAP). |
-| `bic_grid` | `"bounded"` \| `"upstream"` | `"bounded"` | gmm only: the cluster counts BIC compares. bounded: at most 8 values around n / target_children; upstream: 1 to 49, as RAPTOR's code (slow on large levels). |
 | `max_levels` | integer (≥ 1, ≤ 10) | `5` | Summary levels above the text units at most (RAPTOR's num_layers). |
 | `min_nodes_to_cluster` | integer (≥ 2) | `11` | A level of at most this many nodes is not clustered again: its nodes are the roots (RAPTOR's reduction_dimension + 1). |
 | `min_level_shrink` | number (≥ 0.0, < 1.0) | `0.2` | Stop when the next level would hold more than (1 - this) of the current one's nodes: no structure is left to summarize. 0 never stops for it (RAPTOR's behaviour). |
@@ -733,12 +719,11 @@ Iterative bridge follow-up search configuration (opt-in)
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `base` | `"local"` \| `"mix"` | `"mix"` | The strategy round 0 runs and each follow-up round reruns, seeded with the bridge entities: local (its query entities) or mix (its low-level keywords). iterative reads the query extraction, the indexes and the context packing of this strategy. |
-| `max_rounds` | integer (≥ 1, ≤ 5) | `2` | Follow-up rounds after round 0 at most. The controller judges the context after every round, the last one included, so a query makes at most max_rounds + 1 controller calls and max_rounds + 1 base searches; the answer model is called once. With decompose, the most steps the question is split into is max_rounds + 1. |
-| `decompose` | boolean | `false` | Instead of the controller loop, one models.roles.query_controller call writes the question as a chain of single-hop steps (a later step refers to an earlier answer as #1, #2, ...), and each step is answered in order by one call over its own text-unit search; the steps' passages join round 0's candidates. KAG-style decomposition, an alternative to the controller loop with the same caps: at most max_rounds + 2 fast-model calls. |
-| `round_top_k` | integer (≥ 1, ≤ 50) | `5` | Text units each follow-up query (and each decomposition step) retrieves by the request's search_type (BM25 + vector by default). The base rerun of a follow-up round keeps the query's top_k. |
+| `max_rounds` | integer (≥ 1, ≤ 5) | `2` | Follow-up rounds after round 0 at most. The controller judges the context after every round, the last one included, so a query makes at most max_rounds + 1 controller calls and max_rounds + 1 base searches; the answer model is called once. |
+| `round_top_k` | integer (≥ 1, ≤ 50) | `5` | Text units each follow-up query retrieves by the request's search_type (BM25 + vector by default). The base rerun of a follow-up round keeps the query's top_k. |
 | `max_next_queries` | integer (≥ 0, ≤ 5) | `2` | Follow-up queries the controller may ask for in one round, each naming a bridge entity; a query already searched is not searched again. 0 follows the bridge entities alone. |
 | `max_bridge_entities` | integer (≥ 0) | `5` | Bridge entities one round follows at most (the controller's bridge_entities beyond them are dropped, so a controller that lists many does not multiply the round's lookups); one already followed is not followed again. 0 follows the follow-up queries alone. Unmeasured choice (no A/B in docs/concepts/defaults-and-evidence.md). |
-| `controller_context_tokens` | integer \| null (≥ 256) | `null` | Token budget of the context each controller call (and each decomposition step) reads: the round's candidates packed as the answer's context is, cut to this. null (the default) packs them to the answer's budget (the request's max_tokens, else search.token_manager.max_context_tokens), so the controller judges the context the answer reads; a smaller value saves fast-model input tokens, but with large chunks the controller then reads only the first of the passages the answer gets. The answer itself always gets its full budget. |
+| `controller_context_tokens` | integer \| null (≥ 256) | `null` | Token budget of the context each controller call reads: the round's candidates packed as the answer's context is, cut to this. null (the default) packs them to the answer's budget (the request's max_tokens, else search.token_manager.max_context_tokens), so the controller judges the context the answer reads; a smaller value saves fast-model input tokens, but with large chunks the controller then reads only the first of the passages the answer gets. The answer itself always gets its full budget. |
 
 ### `search.ppr_search`
 
@@ -986,10 +971,6 @@ Custom prompt configuration
 | `drift_hyde_human` | string \| null | `null` | Custom human prompt for the DRIFT query expansion (HyDE) |
 | `iterative_controller_system` | string \| null | `null` | Custom system prompt for iterative search's controller, which judges whether the context answers the question and names the bridge entities and follow-up queries |
 | `iterative_controller_human` | string \| null | `null` | Custom human prompt for iterative search's controller |
-| `query_decomposition_system` | string \| null | `null` | Custom system prompt for iterative search's decomposition of the question into single-hop steps (search.iterative_search.decompose) |
-| `query_decomposition_human` | string \| null | `null` | Custom human prompt for iterative search's decomposition of the question into single-hop steps |
-| `decomposition_step_system` | string \| null | `null` | Custom system prompt for answering one decomposition step from its passages |
-| `decomposition_step_human` | string \| null | `null` | Custom human prompt for answering one decomposition step from its passages |
 | `drift_action_system` | string \| null | `null` | Custom system prompt for answering a DRIFT follow-up query from its local-search context |
 | `drift_action_human` | string \| null | `null` | Custom human prompt for answering a DRIFT follow-up query from its local-search context |
 | `query_rewrite_system` | string \| null | `null` | Custom system prompt for rewriting a follow-up message as a standalone question from the conversation history |
@@ -1188,9 +1169,11 @@ These keys, and any key under them, load with a WARNING and are ignored.
 | `graph.visualization.centrality.eigenvector_max_iter` | the visualization computes degree, betweenness and PageRank centrality; closeness and eigenvector centrality were never displayed |
 | `graph.visualization.centrality.eigenvector_tol` | the visualization computes degree, betweenness and PageRank centrality; closeness and eigenvector centrality were never displayed |
 | `search.reranking.enabled` | providers.rerank.kind picks the reranker, so reranking stays on; set providers.rerank.kind: none to turn it off |
-| `graph.analysis.statistics.calculate_density` | density, the average clustering coefficient and the connected components are always computed |
-| `graph.analysis.statistics.calculate_clustering` | density, the average clustering coefficient and the connected components are always computed |
-| `graph.analysis.statistics.calculate_components` | density, the average clustering coefficient and the connected components are always computed |
+| `graph.analysis.statistics.calculate_density` | the graph_analysis stage computes the density and the connected components; no stage read the average clustering coefficient or the diameter, which are no longer computed |
+| `graph.analysis.statistics.calculate_clustering` | the graph_analysis stage computes the density and the connected components; no stage read the average clustering coefficient or the diameter, which are no longer computed |
+| `graph.analysis.statistics.calculate_components` | the graph_analysis stage computes the density and the connected components; no stage read the average clustering coefficient or the diameter, which are no longer computed |
+| `graph.analysis.statistics.calculate_average_clustering` | the graph_analysis stage computes the density and the connected components; no stage read the average clustering coefficient or the diameter, which are no longer computed |
+| `graph.analysis.statistics.calculate_diameter` | the graph_analysis stage computes the density and the connected components; no stage read the average clustering coefficient or the diameter, which are no longer computed |
 | `fixing` | output fixing is always on (the default before); models.roles.fixing picks its model |
 | `evaluation.warm_up_query` | run-eval always answers one untimed, unscored warm-up query per strategy and run (the default before) |
 | `evaluation.langchain_metrics` | the langchain evaluator is removed; ragas' answer_correctness (evaluation.ragas_metrics) scores correctness against the answer |

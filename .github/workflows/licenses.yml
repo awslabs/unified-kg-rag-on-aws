@@ -2,7 +2,7 @@ name: licenses
 
 # Dependency license check (every extra's runtime dependencies). Runs only when
 # the dependency set changes: syncing every extra pulls the CUDA build of torch
-# from the [local] extra, which is too heavy for every PR.
+# from the [cross-encoder] extra, which is too heavy for every PR.
 
 on:
   push:

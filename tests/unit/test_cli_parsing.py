@@ -61,7 +61,7 @@ def test_rag_parser_defaults() -> None:
     assert args.top_k == 10
     assert args.retrieval_multiplier == 1
     assert args.output_format == "text"
-    assert args.use_memory is False
+    assert not hasattr(args, "use_memory")
     assert args.disable_query_processing is False
 
 
@@ -162,25 +162,28 @@ def test_rag_runner_accepts_query(config, mocker) -> None:
     assert runner.args.query == "hi"
 
 
-@pytest.mark.parametrize("given", [True, False])
-def test_enable_thinking_still_works_but_warns_it_is_deprecated(
-    config, mocker, caplog: pytest.LogCaptureFixture, given: bool
+@pytest.mark.parametrize(
+    ("cli", "flag", "says"),
+    [
+        ("run-rag", "--enable-thinking", "default_effort"),
+        ("run-eval", "--enable-thinking", "default_effort"),
+        ("run-rag", "--use-memory", "--interactive"),
+    ],
+)
+def test_a_removed_flag_is_a_usage_error_saying_why(
+    cli: str, flag: str, says: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # A no-op for the default Claude 5.x models: kept for the models that opt
-    # in, with a WARNING each time it is used.
-    mocker.patch.object(run_rag_chain, "load_cli_config", return_value=config)
-    mocker.patch.object(run_rag_chain, "setup_logging")
-    argv = ["-q", "hi", *(["--enable-thinking"] if given else [])]
-    args = _rag_parser().parse_args(argv)
-    with caplog.at_level("WARNING"):
-        run_rag_chain.RAGChainRunner(args)
-    assert args.enable_thinking is given
-    warned = [
-        r for r in caplog.records if "--enable-thinking is deprecated" in r.message
-    ]
-    assert len(warned) == (1 if given else 0)
-    help_text = _rag_parser().format_help()
-    assert "(deprecated)" in " ".join(help_text.split())
+    build, required = (
+        (_rag_parser, ["-q", "hi"])
+        if cli == "run-rag"
+        else (_eval_parser, ["--data-path", "e.json"])
+    )
+    with pytest.raises(SystemExit) as stopped:
+        build().parse_args([*required, flag])
+    assert stopped.value.code == 2
+    err = capsys.readouterr().err
+    assert f"{flag} was removed" in err and says in err
+    assert flag not in build().format_help()
 
 
 def test_rag_runner_json_mode_routes_decorations_and_logs_to_stderr(
@@ -293,8 +296,8 @@ def test_rag_runner_suffix_line_names_the_additional_suffix(
 
 @pytest.mark.parametrize(
     "flags",
-    [["--use-memory"], ["--conversation-id", "s1"]],
-    ids=["use-memory", "conversation-id"],
+    [["--conversation-id", "s1"]],
+    ids=["conversation-id"],
 )
 async def test_rag_runner_warns_that_a_single_query_has_no_memory(
     store_config, mocker, flags: list[str]

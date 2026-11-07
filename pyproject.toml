@@ -94,13 +94,15 @@ run-rag = "unified_kg_rag.application.cli.launch:run_rag"
 run-eval = "unified_kg_rag.application.cli.launch:run_eval"
 run-visualization = "unified_kg_rag.application.cli.launch:run_visualization"
 run-prompt-tuning = "unified_kg_rag.application.cli.launch:run_prompt_tuning"
+run-describe = "unified_kg_rag.application.cli.launch:run_describe"
 prepare-benchmark = "unified_kg_rag.application.cli.launch:prepare_benchmark"
 run-mcp-server = "unified_kg_rag.application.cli.launch:run_mcp_server"
 
 [project.optional-dependencies]
-# Optional: enables .md/.markdown/.html/.htm source parsing (heavy transitive
-# deps, so not installed by default). The ParserFactory registers those formats
-# only when this is importable; .txt/.csv/.json/.pdf work without it.
+# Optional: the richer Markdown and HTML parser (heavy transitive deps, so not
+# installed by default). The core install reads .md/.markdown as written and
+# .html/.htm through the standard library's HTML parser; with this importable,
+# the ParserFactory reads them with unstructured's partitioners instead.
 unstructured = [
     # Not imported here: unstructured pulls in numba, which pulls in llvmlite.
     "llvmlite>=0.48.0",
@@ -140,6 +142,12 @@ eval = [
     # can requires datasets>=4.0.0.
     "ragas>=0.4.3,<0.5.0",
 ]
+# Optional: Word (.docx) source files. The ParserFactory registers .docx only
+# when python-docx is importable; without it a .docx is skipped with a WARNING
+# naming this extra.
+docx = [
+    "python-docx>=1.1.2",
+]
 # Optional: the pyvis interactive graph of `run-visualization`. The core
 # package does not import it; the interactive renderer fails fast naming this
 # extra when it is missing. The static charts need no extra.
@@ -170,19 +178,25 @@ mcp = [
     "mcp>=2.3.0,<3",
 ]
 # Optional: local mode (`backend: local` / `providers.*.kind`). OpenAI-compatible
-# servers (vLLM, llama.cpp, LM Studio) and Ollama for the LLM and embeddings,
-# tiktoken for `providers.llm.tokenizer: tiktoken`, and a sentence-transformers
-# cross-encoder for `providers.rerank.kind: cross_encoder` (pulls in PyTorch;
-# without it reranking is skipped with a warning), and the Porter stemmer of
-# the embedded SQLite vector store's `english` analyzer (without it that
-# analyzer does not stem, with a warning). The core package imports none of
-# these; the local adapters load them only when their kind is selected.
+# servers (vLLM, llama.cpp, LM Studio) and Ollama for the LLM and embeddings
+# (and httpx, which the local adapters import to give each event loop its own
+# client), tiktoken for `providers.llm.tokenizer: tiktoken`, and the Porter
+# stemmer of the embedded SQLite vector store's `english` analyzer (without it
+# that analyzer does not stem, with a warning). The core package imports none
+# of these; the local adapters load them only when their kind is selected.
 local = [
+    "httpx>=0.28.1",
     "langchain-ollama>=1.0.0,<2.0.0",
     "langchain-openai>=1.1.14,<2.0.0",
-    "sentence-transformers>=5.1.0",
     "snowballstemmer>=2.2",
     "tiktoken>=0.12.0",
+]
+# Optional: the sentence-transformers cross-encoder of
+# `providers.rerank.kind: cross_encoder`, the local preset's reranker. It pulls
+# in PyTorch (the CUDA build on Linux, several GB), so it is its own extra:
+# without it local mode runs with reranking off (the fused order), logged once.
+cross-encoder = [
+    "sentence-transformers>=5.1.0",
 ]
 
 [tool.uv]

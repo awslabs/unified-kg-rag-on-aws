@@ -95,6 +95,23 @@ def test_free_form_dict_fields_are_not_walked() -> None:
     assert unknown_keys(data, Config) == []
 
 
+def test_a_section_left_with_only_removed_keys_still_names_a_typo() -> None:
+    # graph.analysis has no setting left: its removed keys warn, a key that
+    # never existed under it is still unknown.
+    data = {
+        "graph": {
+            "analysis": {
+                "statistics": {"calculate_diameter": True, "calculate_diamter": True},
+                "other": 1,
+            }
+        }
+    }
+    assert unknown_keys(data, Config) == [
+        "graph.analysis.statistics.calculate_diamter",
+        "graph.analysis.other",
+    ]
+
+
 def test_a_misspelled_renderer_setting_is_an_unknown_key() -> None:
     # The renderer settings were free-form dicts: a typo such as max_node
     # left the cap at its default without a word.
@@ -194,6 +211,8 @@ _REMOVED_SETTINGS = [
     ("graph.analysis.statistics.calculate_density", None, False),
     ("graph.analysis.statistics.calculate_clustering", None, False),
     ("graph.analysis.statistics.calculate_components", None, False),
+    ("graph.analysis.statistics.calculate_average_clustering", None, True),
+    ("graph.analysis.statistics.calculate_diameter", None, True),
     ("fixing", "enabled", False),
     ("evaluation.warm_up_query", None, False),
 ]

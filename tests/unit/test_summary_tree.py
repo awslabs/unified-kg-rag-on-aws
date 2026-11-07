@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from tests.fixtures.collapsed_tree import collapsed_tree_reference
+from unified_kg_rag.application.config import unknown_keys
 from unified_kg_rag.domain.ingestion.summary_tree import (
     Cluster,
     Leaf,
@@ -30,7 +31,7 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     summary_input_key,
     uniform_filters,
 )
-from unified_kg_rag.domain.models.config import SummaryTreeConfig
+from unified_kg_rag.domain.models.config import Config, SummaryTreeConfig
 
 pytestmark = pytest.mark.unit
 
@@ -98,7 +99,9 @@ def test_settings_follow_the_config() -> None:
     assert not settings.summarize_single
     # One source: the config's fields and defaults.
     assert TreeSettings() == TreeSettings.from_config(SummaryTreeConfig())
-    names = {f.name for f in dataclasses.fields(TreeSettings)} - {"summarize_single"}
+    # The fidelity-only switches are the settings no config key sets.
+    internal = {"summarize_single", "bic_grid"}
+    names = {f.name for f in dataclasses.fields(TreeSettings)} - internal
     assert names <= set(SummaryTreeConfig.model_fields)
 
 
@@ -152,6 +155,13 @@ def test_bic_grids() -> None:
     assert len(bounded) <= 8 and 10 in bounded
     assert min(bounded) == 5 and max(bounded) == 20
     assert all(k >= 2 for k in bic_candidates(1000, TreeSettings(), 1, split=True))
+
+
+def test_the_bic_grid_is_not_a_config_key() -> None:
+    # Internal: "upstream" exists only to compare with RAPTOR's code.
+    data = {"indexing": {"summary_tree": {"bic_grid": "upstream"}}}
+    assert unknown_keys(data, Config) == ["indexing.summary_tree.bic_grid"]
+    assert TreeSettings.from_config(SummaryTreeConfig()).bic_grid == "bounded"
 
 
 def test_soft_labels_keep_every_point() -> None:

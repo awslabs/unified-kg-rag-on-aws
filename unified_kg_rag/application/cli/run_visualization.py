@@ -48,10 +48,6 @@ from unified_kg_rag.application.cli.conventions import (
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
-from unified_kg_rag.application.cli.provider_args import (
-    add_provider_arguments,
-    apply_provider_arguments,
-)
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.domain.ingestion.graph_analyzer import (
     CentralityMetrics,
@@ -260,9 +256,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     add_config_arguments(parser)
     add_output_format_argument(parser)
-    # Accepted like on the other CLIs, so one command line (and a config of
-    # either backend) serves them all; rendering makes no model call.
-    add_provider_arguments(parser)
     return parser
 
 
@@ -273,7 +266,7 @@ def main() -> int:
     as_json = json_output(args)
     try:
         with exit_on_config_error():
-            config = apply_provider_arguments(load_cli_config(args), args)
+            config = load_cli_config(args)
         if not args.data_path.is_file():
             usage_error(f"visualization data not found: '{args.data_path}'")
         setup_logging(config, stream=sys.stderr if as_json else None)

@@ -21,11 +21,11 @@ import yaml
 from pydantic import SecretStr
 
 from unified_kg_rag.application.cli import (
+    run_describe,
     run_evaluation,
     run_ingestion_pipeline,
     run_prompt_tuning,
     run_rag_chain,
-    run_visualization,
 )
 from unified_kg_rag.application.cli.provider_args import apply_provider_arguments
 from unified_kg_rag.application.config import AWS_ENV_FALLBACKS, ConfigLoader, _env_path
@@ -103,7 +103,7 @@ _PARSERS = {
         ["--data-path", "eval.json"],
     ),
     "run-prompt-tuning": (run_prompt_tuning._build_parser, ["--source-directory", "s"]),
-    "run-visualization": (run_visualization._build_parser, ["--data-path", "v.json"]),
+    "run-describe": (run_describe._build_parser, []),
 }
 
 # Every combination of the provider flags (None = flag omitted).

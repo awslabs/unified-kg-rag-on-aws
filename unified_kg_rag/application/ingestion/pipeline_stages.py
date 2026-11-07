@@ -30,8 +30,7 @@ from unified_kg_rag.adapters.ingestion.graph_extractor import (
 )
 from unified_kg_rag.adapters.ingestion.loader import DirectoryLoader
 from unified_kg_rag.adapters.ingestion.parser import (
-    UNSTRUCTURED_EXTENSIONS,
-    UNSTRUCTURED_INSTALL_HINT,
+    MISSING_EXTRA_FORMATS,
     ParserFactory,
 )
 from unified_kg_rag.adapters.ingestion.translator import TextUnitTranslator
@@ -90,6 +89,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
 )
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.document_identity import (
+    RELATIVE_PATH_KEY,
     config_registry_namespace,
     store_namespace_tag,
 )
@@ -484,6 +484,7 @@ class DocumentLoadingStage(_RegistryStage):
     confirm: Callable[[str], bool] | None = None
     confirm_deletions: Callable[[str], bool] | None = None
     rebuild_for_artifacts: Callable[[], bool] | None = None
+    deletions: Callable[[], Sequence[str] | None] | None = None
 
     def __init__(
         self,
@@ -495,6 +496,7 @@ class DocumentLoadingStage(_RegistryStage):
         confirm: Callable[[str], bool] | None = None,
         confirm_deletions: Callable[[str], bool] | None = None,
         rebuild_for_artifacts: Callable[[], bool] | None = None,
+        deletions: Callable[[], Sequence[str] | None] | None = None,
     ):
         super().__init__(PipelineStageType.DOCUMENT_LOADING, config, providers)
         # The run's seed graphs (bootstrap.load_seed_graphs): their shards
@@ -511,6 +513,9 @@ class DocumentLoadingStage(_RegistryStage):
         # artifact the namespace lacks (not the user's): its deletions are
         # asked like an incremental run's.
         self.rebuild_for_artifacts = rebuild_for_artifacts
+        # The ids a run of document changes deletes (DataIngestionPipeline.
+        # insert_documents / delete_documents); None for a corpus run.
+        self.deletions = deletions
         # Without parsing, the directory holds pre-parsed Document JSON.
         # Deduplication runs in this stage, after document identity is
         # assigned, so an incremental run can prefer indexed documents.
@@ -554,6 +559,10 @@ class DocumentLoadingStage(_RegistryStage):
                     self.config.indexing.additional_suffix,
                     store_namespace_tag(self.config.indexing),
                 )
+                if self.deletions is not None:
+                    # Documents given from memory, staged in a temporary
+                    # directory: their path is their id.
+                    document.file_path = document.metadata[RELATIVE_PATH_KEY]
             failed_files = self.loader.failed_files
             context.failed_source_files = list(failed_files)
             context.skipped_source_files = []
@@ -735,6 +744,7 @@ class DocumentLoadingStage(_RegistryStage):
             guard_reset_deletions=(
                 self.rebuild_for_artifacts is not None and self.rebuild_for_artifacts()
             ),
+            deletions=self.deletions() if self.deletions is not None else None,
         )
 
     @staticmethod
@@ -911,13 +921,12 @@ class DocumentParsingStage(PipelineStage):
                 skipped_files.append(str(file_path))
 
         if skipped:
-            optional = sorted(s for s in skipped if s in UNSTRUCTURED_EXTENSIONS)
-            others = sorted(s for s in skipped if s not in UNSTRUCTURED_EXTENSIONS)
-            remedies = []
-            if optional:
-                remedies.append(
-                    f"for {', '.join(optional)}, {UNSTRUCTURED_INSTALL_HINT}"
-                )
+            others = sorted(s for s in skipped if s not in MISSING_EXTRA_FORMATS)
+            remedies = [
+                f"for {suffix}, {MISSING_EXTRA_FORMATS[suffix]}"
+                for suffix in sorted(skipped)
+                if suffix in MISSING_EXTRA_FORMATS
+            ]
             if others:
                 remedies.append(
                     f"for {', '.join(others)}, convert them to a supported "
@@ -1805,8 +1814,6 @@ class GraphAnalysisStage(_VisualizationExport, PipelineStage):
                 "num_nodes": graph_stats.num_nodes,
                 "num_edges": graph_stats.num_edges,
                 "density": graph_stats.density,
-                "average_clustering": graph_stats.average_clustering,
-                "diameter": graph_stats.diameter,
                 "num_connected_components": graph_stats.num_connected_components,
                 "largest_component_size": graph_stats.largest_component_size,
             },

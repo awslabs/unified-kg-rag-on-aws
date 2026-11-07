@@ -55,11 +55,27 @@ def unknown_keys(data: Any, model: type[BaseModel], prefix: str = "") -> list[st
         field = model.model_fields.get(key)
         if field is None:
             if path not in MOVED_KEYS and path not in REMOVED_KEYS:
-                found.append(path)
+                found.extend(_unknown_in_gone_section(path, value))
             continue
         nested = _nested_model(field.annotation)
         if nested is not None:
             found.extend(unknown_keys(value, nested, f"{path}."))
+    return found
+
+
+def _unknown_in_gone_section(path: str, value: Any) -> list[str]:
+    """The unknown keys at ``path``, a key no model defines: none of a
+    section that only holds moved or removed keys (``graph.analysis``,
+    whose last settings went) but the keys in it that are neither, else
+    ``path`` itself."""
+    gone = [*MOVED_KEYS, *REMOVED_KEYS]
+    if not isinstance(value, dict) or not any(k.startswith(f"{path}.") for k in gone):
+        return [path]
+    found: list[str] = []
+    for key, inner in value.items():
+        inner_path = f"{path}.{key}"
+        if inner_path not in MOVED_KEYS and inner_path not in REMOVED_KEYS:
+            found.extend(_unknown_in_gone_section(inner_path, inner))
     return found
 
 

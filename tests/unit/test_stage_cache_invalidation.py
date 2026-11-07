@@ -235,7 +235,7 @@ class TestFingerprintScope:
         ) != stage_input_fingerprint(changed, PipelineStageType.COMMUNITY_DETECTION)
 
     def test_graph_analysis_knobs_change_no_stage_key(self) -> None:
-        # Centrality and statistics settings shape only values no later stage
+        # Centrality settings shape only values no later stage
         # reads, so changing them must not discard the community reports
         # (LLM output) or the indexing cache.
         baseline = Config()
@@ -244,10 +244,6 @@ class TestFingerprintScope:
         changed.graph.visualization.centrality.calculate_betweenness = (
             not baseline.graph.visualization.centrality.calculate_betweenness
         )
-        changed.graph.analysis.statistics.calculate_diameter = (
-            not baseline.graph.analysis.statistics.calculate_diameter
-        )
-        assert changed.graph.analysis != baseline.graph.analysis
 
         for stage in (
             PipelineStageType.GRAPH_ANALYSIS,

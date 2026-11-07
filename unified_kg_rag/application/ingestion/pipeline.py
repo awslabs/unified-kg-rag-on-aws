@@ -5,9 +5,12 @@ from __future__ import annotations
 import functools
 import secrets
 import signal
+import tempfile
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+import unicodedata
+from collections import Counter
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -75,7 +78,12 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
     stage_cache_key,
 )
 from unified_kg_rag.domain.ingestion.delta_detector import retired_scope_groups
-from unified_kg_rag.domain.ingestion.document_identity import config_registry_namespace
+from unified_kg_rag.domain.ingestion.document_identity import (
+    compute_doc_id,
+    compute_document_id,
+    compute_text_hash,
+    config_registry_namespace,
+)
 from unified_kg_rag.domain.ingestion.methodologies import (
     SWITCHABLE_STAGES,
     missing_artifacts,
@@ -87,6 +95,9 @@ from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
 from unified_kg_rag.domain.models import (
     CacheStrategy,
     Config,
+    Constants,
+    Document,
+    InputDocument,
     PipelineConfig,
     PipelineContext,
     PipelineMetrics,
@@ -100,6 +111,7 @@ from unified_kg_rag.shared import (
     CacheSyncError,
     ConfigurationError,
     ConfirmationDeclinedError,
+    DocumentNotFoundError,
     NamespaceLeaseError,
     PipelineExecutionError,
     PipelineInterrupted,
@@ -291,6 +303,11 @@ class DataIngestionPipeline:
     # The run rebuilds the namespace to add an artifact it lacks
     # (_rebuild_for_added_artifacts): indexing.reset is set for it alone.
     _reset_for_run: bool = False
+    # The ids a run of document changes deletes (insert_documents,
+    # delete_documents: an empty tuple deletes none); None for a corpus run.
+    _deletions: tuple[str, ...] | None = None
+    # The source scope documents given from memory belong to by default.
+    API_SOURCE_SCOPE = "api"
     _checkpointing: bool = False
     _stop_signal: int | None = None
 
@@ -476,6 +493,7 @@ class DataIngestionPipeline:
                 "confirm": self._confirm,
                 "confirm_deletions": self._confirm_deletions,
                 "rebuild_for_artifacts": lambda: self._reset_for_run,
+                "deletions": lambda: self._deletions,
             },
             # --force-rebuild re-extracts every unit (and refreshes the
             # extraction store) instead of reusing the stored records, asks
@@ -652,6 +670,195 @@ class DataIngestionPipeline:
             if context.status == PipelineStageStatus.FAILED:
                 span.set_error(f"pipeline '{context.pipeline_id}' failed")
             return context
+
+    def insert_documents(
+        self,
+        documents: Iterable[InputDocument | Mapping[str, Any]],
+        *,
+        source_scope: str = API_SOURCE_SCOPE,
+        pipeline_id: str | None = None,
+    ) -> PipelineContext:
+        """Add or update documents given from memory, through the same
+        incremental path as :meth:`run`: a document whose id is new to
+        ``source_scope`` is added, one whose text or extraction settings
+        changed is extracted again and merged into the stored graph, and
+        every other stored document of the scope is kept as it is (a run
+        over a directory would delete what the directory lacks).
+
+        Args:
+            documents: :class:`InputDocument` s, or mappings of their fields
+                (``id``, ``text``, ``filters``, ``metadata``, ``file_name``).
+                An ``id`` is the document's key in the scope, as a relative
+                path is in a corpus directory.
+            source_scope: The registry source scope the documents belong to
+                (``processing.document_parsing.source_scope`` for this run);
+                ``"api"`` by default. A directory corpus's scope is its
+                ``source_scope`` or its absolute directory.
+            pipeline_id: As for :meth:`run`; a new one by default.
+
+        Returns:
+            The run's context, as from :meth:`run`.
+
+        Raises:
+            ConfigurationError: The doc-status registry is off (without it a
+                run is a full build of its documents, which would replace
+                every other document of the index namespace), the run would
+                rebuild the namespace (``indexing.reset``), or
+                ``document_loading`` is not an enabled stage.
+            ValueError: No document, a repeated id, or an invalid document
+                (``pydantic.ValidationError``).
+            DocumentNotFoundError, NamespaceLeaseError,
+            ConfirmationDeclinedError, StoreConnectionError,
+            PipelineExecutionError: As for :meth:`run`.
+        """
+        given = [
+            d if isinstance(d, InputDocument) else InputDocument.model_validate(d)
+            for d in documents
+        ]
+        if not given:
+            raise ValueError("insert_documents needs at least one document")
+        counts = Counter(d.id for d in given)
+        repeated = sorted(name for name, count in counts.items() if count > 1)
+        if repeated:
+            raise ValueError(f"document ids given more than once: {repeated[:10]}")
+        return self._run_changes(given, (), source_scope, pipeline_id)
+
+    def delete_documents(
+        self,
+        ids: Iterable[str],
+        *,
+        source_scope: str = API_SOURCE_SCOPE,
+        pipeline_id: str | None = None,
+    ) -> PipelineContext:
+        """Delete documents by id from ``source_scope``, through the same
+        incremental path as :meth:`run`: what only their text units stated
+        is removed from the stores, what another document still states is
+        kept, and their registry records go. Every other document of the
+        scope is kept. For a directory corpus, the ids are the files'
+        relative paths and ``source_scope`` its scope.
+
+        Raises:
+            DocumentNotFoundError: An id the registry does not hold for the
+                index namespace and ``source_scope`` (nothing is deleted).
+            ConfigurationError, ValueError, NamespaceLeaseError,
+            StoreConnectionError, PipelineExecutionError: As for
+                :meth:`insert_documents`.
+        """
+        names = list(dict.fromkeys(ids))
+        if not names:
+            raise ValueError("delete_documents needs at least one id")
+        for name in names:
+            # The id rule of insert_documents (a relative path).
+            InputDocument(id=name, text="-")
+        self._check_changes_run(source_scope)
+        # Before the run takes the lease: the loading stage checks again
+        # under it (detect_delta).
+        namespace = config_registry_namespace(
+            self.config.indexing, self.config.processing.document_parsing.index_value
+        )
+        doc_ids = {
+            compute_doc_id(name, namespace, source_scope): name for name in names
+        }
+        registry = self._doc_status or self.providers.build_doc_status()
+        held = registry.get_many(list(doc_ids))
+        missing = [name for doc_id, name in doc_ids.items() if doc_id not in held]
+        if missing:
+            raise DocumentNotFoundError(
+                f"No document {', '.join(map(repr, missing[:10]))}"
+                + (f" (and {len(missing) - 10} more)" if len(missing) > 10 else "")
+                + f" in the doc-status registry for index namespace {namespace!r} "
+                f"and source scope {source_scope!r}: nothing was deleted"
+            )
+        return self._run_changes([], tuple(names), source_scope, pipeline_id)
+
+    def _run_changes(
+        self,
+        documents: Sequence[InputDocument],
+        deletions: tuple[str, ...],
+        source_scope: str,
+        pipeline_id: str | None,
+    ) -> PipelineContext:
+        """Run ``documents`` and ``deletions`` as a set of document changes
+        of ``source_scope`` (see ``incremental.filter_to_delta``): staged as
+        pre-parsed ``Document`` JSON in a temporary directory, read by the
+        loading stage without the parsing stage."""
+        self._check_changes_run(source_scope)
+        parsing = self.config.processing.document_parsing
+        indexing = self.config.indexing
+        saved = (
+            parsing.source_scope,
+            indexing.retire_source_scopes,
+            self.stages,
+            self.source_directory,
+        )
+        with tempfile.TemporaryDirectory(prefix="ukr-changes-") as staging:
+            root = Path(staging)
+            for number, document in enumerate(documents):
+                self._stage_document(document, root, number)
+            parsing.source_scope = source_scope
+            indexing.retire_source_scopes = []
+            # The staged documents are parsed already: the loading stage
+            # reads them as a corpus of Document JSON.
+            self.stages = [
+                stage
+                for stage in self.stages
+                if not isinstance(stage, DocumentParsingStage)
+            ]
+            self._deletions = deletions
+            try:
+                return self.run(root, pipeline_id=pipeline_id)
+            finally:
+                self._deletions = None
+                (
+                    parsing.source_scope,
+                    indexing.retire_source_scopes,
+                    self.stages,
+                    self.source_directory,
+                ) = saved
+
+    def _check_changes_run(self, source_scope: str) -> None:
+        """Refuse a run of document changes this pipeline cannot run (see
+        :meth:`insert_documents`)."""
+        if not isinstance(source_scope, str) or not source_scope.strip():
+            raise ValueError("source_scope must be a non-empty string")
+        if not self.providers.doc_status_enabled:
+            raise ConfigurationError(
+                "insert_documents and delete_documents need the doc-status "
+                "registry (providers.doc_status.enabled: true): without it a "
+                "run is a full build of its documents, which would replace "
+                "every other document of the index namespace"
+            )
+        if self.config.indexing.reset:
+            raise ConfigurationError(
+                "indexing.reset rebuilds the namespace from the run's documents "
+                "alone: insert_documents and delete_documents cannot reset"
+            )
+        if not any(isinstance(s, DocumentLoadingStage) for s in self.stages):
+            raise ConfigurationError(
+                "insert_documents and delete_documents need the "
+                "document_loading stage (pipeline_config.stages_enabled)"
+            )
+
+    def _stage_document(self, given: InputDocument, root: Path, number: int) -> None:
+        """Write ``given`` under ``root`` as the ``Document`` the parsing
+        stage would have made of it: NFC text without a byte-order mark, the
+        run's index value, its filters; its ``file_path`` is ``root/<id>``,
+        so its relative path, and registry key, is its id."""
+        text = unicodedata.normalize("NFC", given.text).lstrip("\ufeff")
+        metadata: dict[str, Any] = dict(given.metadata)
+        if given.filters:
+            metadata[Constants.FILTERS.value] = dict(given.filters)
+        if (
+            index_value := self.config.processing.document_parsing.index_value
+        ) is not None:
+            metadata[Constants.INDEX.value] = index_value
+        Document(
+            document_id=compute_document_id(given.id, compute_text_hash(text)),
+            file_name=given.cited_name,
+            file_path=str(root.joinpath(*given.id.split("/"))),
+            page_content=text,
+            metadata=metadata,
+        ).to_json_file(root / f"{number:06d}.json")
 
     def _run(
         self,
@@ -1226,6 +1433,7 @@ class DataIngestionPipeline:
                     confirm=stage.confirm,
                     confirm_deletions=stage.confirm_deletions,
                     rebuild_for_artifacts=stage.rebuild_for_artifacts,
+                    deletions=stage.deletions,
                 )
 
     def _set_corpus_fingerprint(self, source_directory: Path) -> None:

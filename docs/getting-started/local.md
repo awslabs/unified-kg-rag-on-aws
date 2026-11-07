@@ -26,10 +26,13 @@ ollama pull qwen2.5:7b-instruct
 ollama pull bge-m3
 ```
 
-- **CPU-only PyTorch.** On Linux `uv sync --extra local` installs the locked
-  CUDA build (several GB). For the CPU build run `uv sync` then
-  `uv pip install --torch-backend cpu -e '.[local]'` (a later plain `uv sync`
-  removes it).
+- **Reranking.** The local preset reranks with a cross-encoder, which needs
+  the `cross-encoder` extra: `uv sync --extra local --extra cross-encoder`.
+  Without it queries keep the fused order (logged once). On Linux that extra
+  installs the locked CUDA build of PyTorch (several GB); for the CPU build
+  run `uv sync --extra local` then
+  `uv pip install --torch-backend cpu -e '.[local,cross-encoder]'` (a later
+  plain `uv sync` removes it).
 
 ## Ingest a sample corpus
 
@@ -85,10 +88,11 @@ with their scores) and the retrieval metrics. The commands log every step at `IN
 them with `UKR__LOGGING__LEVEL=WARNING` to keep only warnings and the
 result.
 
-The first query downloads the default rerank model, the cross-encoder
-`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`, from Hugging Face, so it needs
-internet access once and takes longer; later queries use the cached copy.
-Offline, download it beforehand or set `providers.rerank.kind: none`
+With the `cross-encoder` extra, the first query downloads the default rerank
+model, the cross-encoder `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`, from
+Hugging Face, so it needs internet access once and takes longer; later
+queries use the cached copy. Offline, download it beforehand or set
+`providers.rerank.kind: none`
 ([Local mode](../guides/local-mode.md)).
 
 Without `--search-strategy`, an LLM router picks a strategy per query

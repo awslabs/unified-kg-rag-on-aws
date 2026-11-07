@@ -832,6 +832,14 @@ def _stopped_once_running(block: Any, total: int) -> None:
         signal.signal(signal.SIGALRM, previous)
 
 
+def _recording_pool(
+    max_workers: int | None, *, preload: Any = (), **kwargs: Any
+) -> _RecordingProcessPool:
+    """``process_pool`` with a :class:`_RecordingProcessPool` (its own fork
+    server context, so ``preload`` is not needed)."""
+    return _RecordingProcessPool(max_workers=max_workers, **kwargs)
+
+
 def _assert_queued_tasks_cancelled(workers: int) -> None:
     import gc
 
@@ -862,7 +870,7 @@ def test_a_stop_cancels_the_queued_tasks_of_the_resolver_process_pool(
     from unified_kg_rag.domain.ingestion import graph_resolver
 
     monkeypatch.setattr(graph_resolver, "find_all_matches_for_entity_task", slow_match)
-    monkeypatch.setattr(graph_resolver, "ProcessPoolExecutor", _RecordingProcessPool)
+    monkeypatch.setattr(graph_resolver, "process_pool", _recording_pool)
     resolver = graph_resolver.EntityResolver(Config(), 2, True)
 
     def resolve() -> None:
@@ -881,7 +889,7 @@ def test_a_stop_cancels_the_queued_tasks_of_the_dedup_process_pool(
     from unified_kg_rag.domain.models import Document
 
     monkeypatch.setattr(loader_mod, "compute_minhash", slow_minhash)
-    monkeypatch.setattr(loader_mod, "ProcessPoolExecutor", _RecordingProcessPool)
+    monkeypatch.setattr(loader_mod, "process_pool", _recording_pool)
     loader = loader_mod.DirectoryLoader(tmp_path)
     loader.max_workers = 2
     docs = [

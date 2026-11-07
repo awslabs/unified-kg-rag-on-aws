@@ -389,7 +389,7 @@ can re-derive what it touches (§5).
 
 | # | Stage | Module | Notes |
 |---|---|---|---|
-| 1 | Document parsing | `parser.py` (`ParserFactory`) | PDF/TXT/CSV/JSON (+ MD/HTML with the `unstructured` extra) |
+| 1 | Document parsing | `parser.py` (`ParserFactory`) | PDF/TXT/CSV/JSON/MD/HTML (the `unstructured` extra, when installed, reads MD/HTML in place of the core readers; DOCX with the `docx` extra) |
 | 2 | Document loading | `loader.py` | optional MinHash deduplication; the incremental diff |
 | 3 | Chunking | `chunker.py` | intelligent (LLM boundaries, default) or simple |
 | 4 | Translation | `translator.py` | optional; skipped when source = target language |
@@ -1573,6 +1573,46 @@ before its request is sent. A run that indexes nothing (an empty delta)
 writes no build record and no extraction settings, so it writes nothing but
 its lease.
 
+### 5.7 Document changes from memory
+
+`DataIngestionPipeline.insert_documents(documents)` and
+`delete_documents(ids)` run named changes of one source scope (`"api"` by
+default) through the incremental path above, so a service can keep a
+namespace current without a corpus directory. Each call stages its
+documents as pre-parsed `Document` JSON in a temporary directory, with
+`file_path` `<root>/<id>` so the id is the document's relative path and
+registry key (`compute_doc_id(id, namespace, scope)`), sets
+`document_parsing.source_scope` for the call and runs the pipeline without
+the parsing stage (the loading stage reads the staged JSON). The loading
+stage hands `filter_to_delta` the ids to delete (none for an insert):
+`detect_delta` then moves the scope's stored documents the call does not
+hold from `deleted` to `kept` (and `unchanged`: downstream, a kept document
+is an unchanged one, so the graph stages treat the run as an incremental
+delta, never as a full build), deletes only the named ones and refuses one
+the scope does not hold (`DocumentNotFoundError`); no mass-deletion
+question is asked, since the caller named them. A call needs the registry
+(without it every run is a full build of its documents) and refuses
+`indexing.reset`, or a run the pipeline would rebuild to add a methodology:
+either would rebuild the namespace from the call's documents alone. The
+staged document's `file_path` becomes its id after identity is assigned,
+so its text units name the id, not the temporary directory.
+
+### 5.8 Inspection and export
+
+`application/storage/inspection.py` reads a namespace through two
+`VectorIndexer` methods with "cannot" defaults: `describe_indices(suffix)`
+(each index's live index, item count and `_meta`) and
+`scan_items(kind, suffix, page_size=)`, a generator of pages in id order
+without vector fields (search-after on `id`, one page read per page
+consumed). `describe_namespace` joins them with the build record's
+artifacts (`held_artifacts`), the strategies they serve
+(`methodology_check.servable_strategies`, `routable_strategies`) and the
+registry's records; `export_graph` writes text units first, keeping a map
+of text unit id to document `file_path`, then entities, relationships,
+community reports and claims, each with the documents of the text units it
+cites, as JSON Lines or GraphML, so memory holds one page and that map.
+`run-describe` is the CLI.
+
 ---
 
 <a id="6-retrieval-two-methodologies"></a>
@@ -2007,18 +2047,6 @@ through the strategy registry, so there is no dispatch on the base:
    budget and the answer model answers once (the chain's answer step,
    output guardrail, grounding check and sources, unchanged).
 
-`decompose: true` replaces 2-4 with one KAG-style pass: one call
-(`QueryDecompositionPrompt`) writes at most `max_rounds + 1` single-hop
-steps in MuSiQue's notation (`#1` is step 1's answer); each step, with its
-references replaced by the earlier answers (an unanswered one by its
-question), runs one follow-up round (the step's answers are its bridge
-entities; a step without one, step 1 always, keeps the question's own
-keywords on `mix`, since the step's answer reads only its own round) and is
-answered from those candidates by one call
-(`DecompositionStepPrompt`, an empty answer when they state none). The steps'
-candidates are fused with round 0's once, as in 4. The step answers are not
-passed to the answer model: it reads retrieved evidence only.
-
 **Layers.** The strategy is an adapter (`adapters/search_strategies/`),
 registered with `@register_strategy(SearchStrategy.ITERATIVE,
 wraps=...)`. `StrategySpec.wraps` names, per config, the strategy a wrapper
@@ -2033,17 +2061,15 @@ strategy should be read through `wrapped_strategy()` too. Its
 filter checks delegate to the base (`filtered_index_prefixes`,
 `filtered_retrievers`, `reserved_filter_keys`). The prompts are in
 `domain/prompts/retrieval.py` (overridable as `custom_prompts.
-iterative_controller_*`, `query_decomposition_*`, `decomposition_step_*`),
-the settings in `search.iterative_search`.
+iterative_controller_*`), the settings in `search.iterative_search`.
 
 **Languages.** The chain passes the query's language in
 `SearchQuery.metadata["query_language"]` (`query_processing.query_language`:
 the index language, which is the source language when translation is off
 and the target language when it is on, whatever language the query
-requested); the controller,
-decomposition and step prompts write their queries and bridge names in it,
-names as the context writes them. Nothing in the strategy parses text but
-JSON and `#n`; dedupe uses case folding and `compact_name_key`, which drops
+requested); the controller prompt writes its queries and bridge names in
+it, names as the context writes them. Nothing in the strategy parses text
+but JSON; dedupe uses case folding and `compact_name_key`, which drops
 spaces next to Han, Hangul and Kana. The text searches go through the
 configured analyzers (the embedded engine's bigrams for dense scripts).
 
@@ -2073,9 +2099,9 @@ bounds it.
 
 | Event | Outcome |
 |---|---|
-| Controller or step call raises a fatal error (no model access) | The query fails, as in every strategy |
+| Controller call raises a fatal error (no model access) | The query fails, as in every strategy |
 | Any other failed call (throttled past its retries) | The rounds stop; the answer reads the earlier rounds' candidates; `degraded` names the step and `degraded_error` the error type |
-| Unreadable controller JSON (no `sufficient`), or a plan with no steps | As above, without `degraded_error` (`controller_unparsed`, `decomposition_unparsed`) |
+| Unreadable controller JSON (no `sufficient`) | As above, without `degraded_error` (`controller_unparsed`) |
 | A store request of a round fails | Degrades that sub-search to nothing (`_safe_aretrieve`), as in the base; fatal store errors fail the query |
 | Deadline reached | The round in flight is cancelled (`deadline`); after an insufficient verdict on what is returned, `context_sufficient = False` |
 | Insufficient after the round cap, or nothing new to search | `SearchResult.metadata["context_sufficient"] = False`, `insufficiency_reason` = the stop reason |
@@ -2083,25 +2109,23 @@ bounds it.
 **Contract: `context_sufficient`** (`domain/retrieval/abstention.py`). Set (to `False`, absent otherwise)
 only on a positive verdict: the controller's last verdict was insufficient
 and no further round could run (`max_rounds` reached, no new lead, or the
-deadline cancelling the round that verdict started), or, with `decompose`,
-the last step found no answer. A degraded run, or one whose deadline came
+deadline cancelling the round that verdict started). A degraded run, or one whose deadline came
 before the controller judged what it returns, never sets it, its verdict
 being unknown. The strategy does not abstain;
 `search.abstention.on_insufficient` (§9.2) reads the flag in the answer
 step. `metadata["iterative"]` records the base,
-mode, rounds, `stop_reason`, round 0's own rerank outcome (`rerank` is the
+rounds, `stop_reason`, round 0's own rerank outcome (`rerank` is the
 last fusion's), the searched queries, each verdict (sufficient,
-bridge entities, queries, the number of known facts), the steps, the
+bridge entities, queries, the number of known facts), the
 results added over round 0, and the rounds' own model calls and tokens
 (`usage`, by model, rerank requests included; the query's
-`metadata["usage"]` counts them too). The follow-up queries, bridge
-entities and step questions there are model-written: with
+`metadata["usage"]` counts them too). The follow-up queries and bridge
+entities there are model-written: with
 `check_output` the chain screens them as it screens synthesized results
 (one check over them all; only when it intervenes each on its own,
 masked or left out).
 
-**Cost.** Per query at most `max_rounds + 1` controller calls (3), or
-`max_rounds + 2` decomposition and step calls (4), on the fast tier;
+**Cost.** Per query at most `max_rounds + 1` controller calls (3) on the fast tier;
 `max_rounds` reruns of the base search without rerank, up to
 `max_rounds * max_next_queries` text searches, and one rerank call per
 round. At the 2026-11 list prices ([Defaults and
@@ -2123,11 +2147,11 @@ algorithm; their published settings are compared instead):
 
 | | IRCoT (Trivedi et al., ACL 2023, arXiv 2212.10509) | KAG (Liang et al., arXiv 2409.13731) | `iterative` |
 |---|---|---|---|
-| Loop | Interleaves one chain-of-thought sentence with one retrieval: the first query is the question, each later one the last generated sentence (code: `query_source="question_or_last_generated_sentence"`) | Logical-form planner splits the question into sub-queries with operators (Retrieval, Sort, Math, Deduce, Output) linked by variables; each answered by graph retrieval, falling back to hybrid chunk and subgraph retrieval below a threshold; a Judge decides answerability, SupplyQuery writes a supplementary question (reflection, adopted from ReSP) | Controller loop: a sufficiency verdict, then follow-up queries and bridge entities; `decompose`: natural-language steps with `#n` references, no operators |
+| Loop | Interleaves one chain-of-thought sentence with one retrieval: the first query is the question, each later one the last generated sentence (code: `query_source="question_or_last_generated_sentence"`) | Logical-form planner splits the question into sub-queries with operators (Retrieval, Sort, Math, Deduce, Output) linked by variables; each answered by graph retrieval, falling back to hybrid chunk and subgraph retrieval below a threshold; a Judge decides answerability, SupplyQuery writes a supplementary question (reflection, adopted from ReSP) | Controller loop: a sufficiency verdict, then follow-up queries and bridge entities; no planner (a KAG-style natural-language decomposition was measured no better than the loop, n.s., and removed) |
 | Query per step | Last CoT sentence | Sub-query or supplementary question | Controller-written queries naming the bridge entities, plus the bridge entities as graph seeds |
 | Retrieval per step | BM25 (Elasticsearch), K paragraphs, K tuned over {2, 4, 6, 8} (configs default 6) | Graph, then hybrid | The full base search (BM25 + kNN + graph walk for local; mix's dual-level streams) plus `round_top_k` (5) text units, fused by RRF and reranked |
 | Collection cap | 15 paragraphs (`global_max_num_paras`) | — | The answer's token budget, each section type at round 0's share |
-| Steps cap | 8 in the paper (footnote 4), 10 in the code default (`max_num_sentences`) | Reflection n = 3 rounds (`ref3`; benchmark configs `max_iteration: 3`) | `max_rounds` 2 follow-up rounds (3 retrieval rounds, as `ref3`); `decompose`: 3 steps |
+| Steps cap | 8 in the paper (footnote 4), 10 in the code default (`max_num_sentences`) | Reflection n = 3 rounds (`ref3`; benchmark configs `max_iteration: 3`) | `max_rounds` 2 follow-up rounds (3 retrieval rounds, as `ref3`) |
 | Stop | The sentence says "answer is", or the cap | Judge says answered, or the cap | Controller says sufficient, nothing new to search, the cap, or the deadline |
 | Final answer | A separate reader always (reading the CoT's own answer scored lower: MuSiQue F1 30.8 vs 24.9, Flan-T5-XXL) | Generator over the sub-answers | The answer model once, from retrieved evidence only |
 | Models | Flan-T5 (base to XXL), GPT-3 code-davinci-002 | DeepSeek-V2 (baselines mixed backbones) | Controller on the fast tier (Haiku 5.5), answer on the default tier |
@@ -2542,11 +2566,13 @@ flip a tie):
   then a local one inside each global cluster larger than `dims + 1`
   (local PCA of the members' vectors in place of upstream's local UMAP);
   each mixture is EM with full covariances (regularization 1e-6) started
-  from k-means, k chosen by BIC over `bic_grid` (`bounded`, the default: at
-  most 8 values from half to twice the expected count, `sqrt(n /
-  target_children)` for the global mixture and `members / target_children`
-  for each local one, so the two multiply to about `n / target_children`;
-  `upstream`: 1..49 as upstream's `max_clusters` 50), and a node joins every cluster whose
+  from k-means, k chosen by BIC over at most 8 values from half to twice
+  the expected count, `sqrt(n / target_children)` for the global mixture
+  and `members / target_children` for each local one, so the two multiply
+  to about `n / target_children` (upstream compares 1..49, its
+  `max_clusters` 50, which is slow on large levels;
+  `TreeSettings.bic_grid = "upstream"` restores it for the fidelity tests
+  only), and a node joins every cluster whose
   posterior exceeds `soft_threshold` (0.1, upstream's `threshold`), its best
   one when none does. Soft membership makes the tree a DAG; lineage is a
   union.
@@ -4042,7 +4068,7 @@ This section is the single reference for extending the framework. Extensions com
 - **Plugins**, which live in your own package and import only from `unified_kg_rag` (§2.5): backends through the provider registry or constructor injection, and renderers, parsers, schema sources and seed sources through their registries. None needs a change to the framework's code.
 - **In-tree changes**, made in a fork or contributed upstream: a search strategy and an evaluator. `register_strategy` is keyed by the closed `SearchStrategy` enum, which `RAGInput.search_strategy`, `--search-strategy` and `search.auto_routable_strategies` validate against, so a new strategy adds an enum member; an evaluator adds an `EvaluatorType` member and a branch in `EvaluationManager._resolve_evaluator_class`. The registry still keeps the chain's dispatch code unchanged.
 
-- **New search strategy** (in-tree): Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. Set the class attribute `methodology` (a `Methodology`: the one whose index artifacts it reads, §4.6) so a query on a namespace that does not hold it is refused before any model call and `auto` routes to it only where it is held; a new methodology adds a `Methodology` member, its `METHODOLOGY_PROFILES` entry (required and optional `IndexArtifact`s) and, for an artifact no stage builds yet, the stage, its `ARTIFACT_STAGES`/`ARTIFACT_PRODUCERS` entries and its removal from `UNBUILT_ARTIFACTS` (`domain/ingestion/methodologies.py`; a corpus-wide artifact also joins `CORPUS_WIDE_ARTIFACTS`). A strategy that runs another one's search (as `iterative` runs `local` or `mix`) passes `wraps=` a function of the config naming it: the chain then extracts what that one reads and packs its context as that one does (`wrapped_strategy`), the wrapper builds its base through `get_strategy_spec(...).strategy_class`, not by name, and it declares no `methodology` of its own: it reads the wrapped one's (`strategy_registry.strategy_methodology`). Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it. Regenerate the references (the new member is a `--search-strategy` choice and a config value): `uv run python scripts/gen_cli_reference.py` and `uv run python scripts/gen_config_reference.py`. A minimal strategy, a document search fused and reranked like `simple` (`adapters/search_strategies/simple_search.py` is the full version, with the index gates):
+- **New search strategy** (in-tree): Add a `SearchStrategy` enum member (`domain/models/retrieval.py`; the CLI choices follow it) + subclass `BaseSearchStrategy` + `@register_strategy(SearchStrategy.X, required_roles=(...), query_inputs=frozenset({QueryInput.ENTITIES}))` + export from `adapters/search_strategies/__init__.py` + an entry in `STRATEGY_ROUTING_GUIDE` (`domain/prompts/retrieval.py`; a unit test requires one for every strategy but `auto`). `query_inputs` declares the query-side LLM extractions it reads (`ENTITIES` for `entity_focus`, `DUAL_KEYWORDS` for `hl_keywords`/`ll_keywords`); the chain skips the rest. Set the class attribute `methodology` (a `Methodology`: the one whose index artifacts it reads, §4.6) so a query on a namespace that does not hold it is refused before any model call and `auto` routes to it only where it is held; a new methodology adds a `Methodology` member, its `METHODOLOGY_PROFILES` entry (required and optional `IndexArtifact`s) and, for an artifact no stage builds yet, the stage and its `ARTIFACT_STAGES`/`ARTIFACT_PRODUCERS` entries (`domain/ingestion/methodologies.py`; a corpus-wide artifact also joins `CORPUS_WIDE_ARTIFACTS`). A strategy that runs another one's search (as `iterative` runs `local` or `mix`) passes `wraps=` a function of the config naming it: the chain then extracts what that one reads and packs its context as that one does (`wrapped_strategy`), the wrapper builds its base through `get_strategy_spec(...).strategy_class`, not by name, and it declares no `methodology` of its own: it reads the wrapped one's (`strategy_registry.strategy_methodology`). Fetch by id through `BaseSearchStrategy._fetch_by_ids` (batched by the live limits), and cut or batch any other list filter (`terms`) to the live `max_terms_count` from `aindex_limits` of the index it reads: a longer list is refused (`InvalidFilterError`). Override `filtered_index_prefixes` with the indexes it searches with the caller's filters, so a filter key none of them declares is refused instead of dropped (the default checks every index), and `filtered_retrievers` with the retrievers it applies them to (the default: every one it holds; `mix` and `hybrid` leave out the graph without graph expansion); build each sub-search's filters with `_scoped_filters`, which keeps the caller's and intersects a key both set (`id`/`source_id`/`target_id`: the scope's values the caller allows; the chain refuses a range on them); `reserved_filter_keys` names the keys it scopes by with values a caller value cannot be intersected with (`global`: its cut ranges or browse from the roots, and the multi-valued `community_ids`, where a text unit in a caller's community and a scope's one passes both filters but the two lists may not intersect), which the chain refuses. No edit to `rag_chain`; add it to `search.auto_routable_strategies` if `auto` may pick it. Regenerate the references (the new member is a `--search-strategy` choice and a config value): `uv run python scripts/gen_cli_reference.py` and `uv run python scripts/gen_config_reference.py`. A minimal strategy, a document search fused and reranked like `simple` (`adapters/search_strategies/simple_search.py` is the full version, with the index gates):
 
   ```python
   # unified_kg_rag/adapters/search_strategies/keyword_search.py
@@ -4417,7 +4443,7 @@ dispatch edit. The ports, their default adapters and the local ones (the
 |---|---|---|---|
 | `LLMFactoryPort` / `EmbeddingFactoryPort` / `RerankFactoryPort` (`ports/model_factory.py`, `Protocol`) | `get_model()` / `get_model_info()` returning a LangChain-compatible model; optional LLM-factory hooks: `is_transient_error(exc)` (which errors the ingestion batches retry; default `adapters.llm.retry.looks_transient`: network errors, HTTP 408/429/5xx), `is_item_error(exc)` (which errors count against a document, `indexing.max_document_failures`; default `looks_like_item_error`: HTTP 400/413/422 other than a rejected model or setting, read from `status_code` or `response.status_code`) and `transient_retry` (a `TransientRetryConfig`: with `is_transient_error`, query chains are retried under it) | `BedrockLanguageModelFactory` / `BedrockEmbeddingModelFactory` / `BedrockRerankModelFactory` (`openai_compatible`, `ollama`; `cross_encoder`, `none`) | `providers=` (below) on `GraphRAGChain`, `DataIngestionPipeline`, `EvaluationManager`; `GraphRAGChain(model_factory=...)` is an LLM-only bundle |
 | `TokenCounterPort` (`ports/model_factory.py`, `Protocol`) | `count_tokens()` / `truncate_to_token_limit()` | `BedrockTokenCounter` (`LocalTokenCounter`: estimate or tiktoken; follows the LLM kind) | `Providers(token_counter_factory=...)` |
-| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`; the incremental lookups (`GraphIndexer.find_ids_citing` / `find_relationship_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records` / `prune_text_unit_communities`) default to "cannot tell" (`None`: nothing is found through them, the merge reads every name) and to deleting nothing; the extraction-record store (`VectorIndexer.read_extraction_records` / `write_extraction_records` / `stored_extraction_record_keys`, by record key) defaults to keeping none (`{}`: every text unit is extracted, nothing is stored), and `stored_extraction_record_keys` to the keys `read_extraction_records` returns; `VectorIndexer.check_index_creation(suffix, rebuild=)` (called once per run before the first model call, for the indices the run will create: all of them on a `rebuild` (full build or reset), the missing ones otherwise; raises `StoreRequestRejectedError` for settings the store refuses) defaults to accepting them; `VectorIndexer.read_vector_copies` defaults to `{}` (every item an incremental run touches is written in full); `GraphIndexer.read_entities` / `read_relationships` default to `[]`, so without overrides the delta merge overwrites the stored descriptions, lineage (`text_unit_ids`) and weights; `GraphIndexer.begin_rebuild` / `end_rebuild` (in-place full build, §5.2) default to `False` (the full build clears each label first); `initialize()` (no-op by default) / `clear()` return `None` and raise a typed store error (`StoreConnectionError`, `StoreConfigurationError`, ...) on failure: a returned `False` is ignored; an `in_process = True` attribute (on the indexer and on the registry) says the store is embedded in this process, and only when all three say so does a stopped run release its lease at once (absent: remote) | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server; `sqlite`: `OpenSearchIndexer` on `SQLiteSearchEngine` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)` (a new instance per call; its caller closes it), `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` (borrowed: never closed by the pipeline) or `IndexingManager(vector_indexer=..., graph_indexer=...)` (closed by `IndexingManager.close()`; §8.2) |
+| `VectorIndexer` / `GraphIndexer` (`ports/indexer.py`, ABC) | `index_*` / `upsert_*` / `delete_by_id`; the incremental lookups (`GraphIndexer.find_ids_citing` / `find_relationship_ids_citing` / `find_entity_ids_by_name_key`, `VectorIndexer.find_documents` / `delete_extraction_records` / `retain_extraction_records` / `prune_text_unit_communities`) default to "cannot tell" (`None`: nothing is found through them, the merge reads every name) and to deleting nothing; the extraction-record store (`VectorIndexer.read_extraction_records` / `write_extraction_records` / `stored_extraction_record_keys`, by record key) defaults to keeping none (`{}`: every text unit is extracted, nothing is stored), and `stored_extraction_record_keys` to the keys `read_extraction_records` returns; `VectorIndexer.check_index_creation(suffix, rebuild=)` (called once per run before the first model call, for the indices the run will create: all of them on a `rebuild` (full build or reset), the missing ones otherwise; raises `StoreRequestRejectedError` for settings the store refuses) defaults to accepting them; `VectorIndexer.read_vector_copies` defaults to `{}` (every item an incremental run touches is written in full); `VectorIndexer.describe_indices` / `scan_items` (`run-describe`, §5.8) default to `None`, a store that cannot be described or exported; `GraphIndexer.read_entities` / `read_relationships` default to `[]`, so without overrides the delta merge overwrites the stored descriptions, lineage (`text_unit_ids`) and weights; `GraphIndexer.begin_rebuild` / `end_rebuild` (in-place full build, §5.2) default to `False` (the full build clears each label first); `initialize()` (no-op by default) / `clear()` return `None` and raise a typed store error (`StoreConnectionError`, `StoreConfigurationError`, ...) on failure: a returned `False` is ignored; an `in_process = True` attribute (on the indexer and on the registry) says the store is embedded in this process, and only when all three say so does a stopped run release its lease at once (absent: remote) | `OpenSearchIndexer` / `NeptuneIndexer` (`gremlin`: the same adapter on Gremlin Server; `sqlite`: `OpenSearchIndexer` on `SQLiteSearchEngine` / `SQLiteGraphIndexer`) | `Providers(vector_indexer_factory=..., graph_indexer_factory=...)` (a new instance per call; its caller closes it), `DataIngestionPipeline(..., vector_indexer=..., graph_indexer=...)` (borrowed: never closed by the pipeline) or `IndexingManager(vector_indexer=..., graph_indexer=...)` (closed by `IndexingManager.close()`; §8.2) |
 | retriever (role-keyed builder) | `BaseGraphRAGRetriever.aretrieve`; a document retriever must honour `SearchQuery.exclude` (leave out what it matches before the page is cut: the filtered walk's edge pages rely on it); `aindex_limits(prefix, suffix)` (the hits one search returns, the values one `terms` clause takes) defaults to the configured `index_settings`, so a backend whose live limits can be smaller overrides it; the strategies size every list they send by it (fetches by id in batches of `IndexLimits.id_batch_size`, walk frontiers and exclusions by `max_terms_count`, at most `search.max_concurrency` batches at once), so `aretrieve` may cut a search to its limits and need not batch; `filter_fields()` declares the filter keys the retriever applies (`None`, the default, accepts every key) and `filter_fields_for(prefixes)` those of the indexes a strategy filters (`BaseSearchStrategy.filtered_index_prefixes`), by default `filter_fields()`; `GraphRAGChain` rejects a caller key none of a strategy's `filtered_retrievers` declares, checking a custom retriever against the union of its keys | `OpenSearchRetriever` / `NeptuneRetriever` (`sqlite`: `OpenSearchRetriever` on `SQLiteSearchEngine` / `SQLiteGraphRetriever`) | `Providers(retriever_builders=...)` or `GraphRAGChain(retriever_builders={RetrieverRole.GRAPH: lambda: MyGraphRetriever(...)})` |
 | `ContentGuardPort` (`ports/guardrail.py`, `Protocol`) | `async acheck(text, source, *, grounding=None)` returning a `GuardVerdict` (`none` / `masked` / `blocked`, the text to continue with, and `grounding`, a `GroundingCheck`, when a `GroundingContext` was given); raises when it cannot decide. `grounding` is passed only while `aws.bedrock.guardrail.contextual_grounding.enabled` is set | `BedrockGuardrail` (built when `aws.bedrock.guardrail.identifier` is set) | `GraphRAGChain(guard=...)` |
 | `DocStatusPort` (`ports/doc_status.py`, `Protocol`) | `get` / `get_many` / `put` / `put_many` / `delete` / `list_namespace` / `diff` (which must take `extraction_fingerprint` and fill `DocumentDelta.quarantined_unchanged`), `record_fits`, the write lease (`try_acquire_lease` / `lease_holder` / `release_lease`) a scope's last extraction settings (`get_extraction_settings` / `put_extraction_settings`) and the schema annotations a namespace's stores hold (`get_annotation_digest` / `put_annotation_digest`), all called directly; a record's namespace is the `<namespace>#` prefix of its `doc_id` (`doc_id_namespace`), and `diff` with a scope reads only that namespace. A subclass inherits `get_many` / `put_many` / `record_fits` defaults (one record per call, no size limit) | `DynamoDBDocStatusStore` (`SQLiteDocStatusStore`) | `Providers(doc_status=...)` or `DataIngestionPipeline(..., doc_status=...)` (either turns incremental indexing on); pass `tests/integration/test_doc_status_conformance.py` |
