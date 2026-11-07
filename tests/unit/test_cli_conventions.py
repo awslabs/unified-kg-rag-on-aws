@@ -24,6 +24,7 @@ from unified_kg_rag.application.cli import (
     prepare_benchmark,
     run_evaluation,
     run_ingestion_pipeline,
+    run_mcp_server,
     run_prompt_tuning,
     run_rag_chain,
     run_visualization,
@@ -81,6 +82,9 @@ PARSERS: dict[str, Callable[[], argparse.ArgumentParser]] = {
     "run-prompt-tuning": run_prompt_tuning._build_parser,
     "prepare-benchmark": prepare_benchmark._parser,
 }
+# run-mcp-server has no --output-format: its stdout is the MCP stream
+# (test_the_mcp_server_offers_no_json_output); the other rules hold.
+ALL_PARSERS = {**PARSERS, "run-mcp-server": run_mcp_server.build_parser}
 
 # The file and directory flags any CLI may have: an input corpus directory,
 # an input data file (and prepare-benchmark's second one, the MuSiQue full
@@ -101,9 +105,9 @@ def _options(parser: argparse.ArgumentParser) -> list[str]:
     return [o for action in parser._actions for o in action.option_strings]
 
 
-@pytest.mark.parametrize("cli", PARSERS)
+@pytest.mark.parametrize("cli", ALL_PARSERS)
 def test_file_flags_follow_one_naming_scheme(cli: str) -> None:
-    options = _options(PARSERS[cli]())
+    options = _options(ALL_PARSERS[cli]())
     file_like = [o for o in options if re.search(r"-(dir|directory|path)$", o)]
     assert set(file_like) <= FILE_FLAGS, f"{cli}: {sorted(set(file_like) - FILE_FLAGS)}"
     for legacy in ("--output", "--source", "--output-dir", "--target-directory"):
@@ -117,10 +121,15 @@ def test_every_cli_offers_json_output(cli: str) -> None:
     assert (action.default, list(action.choices or [])) == ("text", ["text", "json"])
 
 
-@pytest.mark.parametrize("cli", PARSERS)
+@pytest.mark.parametrize("cli", ALL_PARSERS)
 def test_flag_abbreviations_are_rejected(cli: str) -> None:
     # A prefix such as --output-dir must not silently match a longer flag.
-    assert PARSERS[cli]().allow_abbrev is False
+    assert ALL_PARSERS[cli]().allow_abbrev is False
+
+
+def test_the_mcp_server_offers_no_json_output() -> None:
+    # Over stdio its stdout carries the protocol's messages only.
+    assert "--output-format" not in _options(run_mcp_server.build_parser())
 
 
 def test_sigterm_exits_143_through_finally_blocks() -> None:
@@ -693,6 +702,7 @@ def test_a_launchers_blas_default_does_not_outlive_the_test() -> None:
         ("run_visualization", "run_visualization"),
         ("run_prompt_tuning", "run_prompt_tuning"),
         ("prepare_benchmark", "prepare_benchmark"),
+        ("run_mcp_server", "run_mcp_server"),
     ],
 )
 def test_each_launcher_entry_runs_its_own_cli(
@@ -720,7 +730,12 @@ def test_each_launcher_entry_runs_its_own_cli(
 
 @pytest.mark.parametrize(
     ("entry", "one_thread"),
-    [("run_eval", True), ("run_rag", True), ("run_ingestion", False)],
+    [
+        ("run_eval", True),
+        ("run_rag", True),
+        ("run_mcp_server", True),
+        ("run_ingestion", False),
+    ],
 )
 def test_query_launchers_default_blas_to_one_thread_before_any_import(
     monkeypatch: pytest.MonkeyPatch, entry: str, one_thread: bool
@@ -811,6 +826,7 @@ def test_a_printed_json_result_is_not_followed_by_a_status(capsys, monkeypatch) 
         run_visualization.main,
         run_prompt_tuning.main,
         prepare_benchmark.main,
+        run_mcp_server.main,
     ],
 )
 def test_every_cli_main_handles_sigterm(main: Callable[..., object]) -> None:

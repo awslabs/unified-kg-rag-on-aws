@@ -68,13 +68,13 @@ jobs:
 
       - name: Sync dependencies
         # --locked: fail if uv.lock is stale relative to pyproject.toml.
-        run: uv sync --locked --extra otel --extra eval --extra viz --extra ontology
+        run: uv sync --locked --extra otel --extra eval --extra viz --extra ontology --extra mcp
 
-      - name: Check the eval, viz and ontology extras are importable
+      - name: Check the eval, viz, ontology and mcp extras are importable
         # The tests that need them skip themselves without them
         # (tests/fixtures/extras.py), which would let this job pass without
         # running them.
-        run: uv run --frozen python -c "import datasets, langchain_openai, pandas, pyvis, ragas, rdflib"
+        run: uv run --frozen python -c "import datasets, langchain_openai, mcp, pandas, pyvis, ragas, rdflib"
 
       - name: Ruff (lint)
         run: uv run ruff check unified_kg_rag tests iac scripts
@@ -129,11 +129,11 @@ jobs:
           if-no-files-found: ignore
 
   core-install:
-    # The default install has neither the eval, the viz nor the ontology
-    # extra: check the public API, the CLIs and the embedded end-to-end runs
-    # (a JSONL seed graph's too) and the static charts work without them, and
-    # that run-eval, the interactive renderer, an owl schema source and an rdf
-    # seed source fail naming the extra instead.
+    # The default install has neither the eval, the viz, the ontology nor the
+    # mcp extra: check the public API, the CLIs and the embedded end-to-end
+    # runs (a JSONL seed graph's too) and the static charts work without them,
+    # and that run-eval, the interactive renderer, an owl schema source, an rdf
+    # seed source and run-mcp-server fail naming the extra instead.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -155,8 +155,8 @@ jobs:
         run: >-
           uv run --frozen --no-dev --group test python -c "import importlib.util as u, sys;
           present = [m for m in ('datasets', 'langchain',
-          'langchain_community', 'langchain_openai', 'langgraph', 'pandas',
-          'pyvis', 'ragas', 'rdflib')
+          'langchain_community', 'langchain_openai', 'langgraph', 'mcp',
+          'pandas', 'pyvis', 'ragas', 'rdflib')
           if u.find_spec(m)]; sys.exit(f'installed: {present}' if present else 0)"
 
       - name: Public API, extra errors and embedded end to end
@@ -167,6 +167,8 @@ jobs:
           tests/unit/test_visualization_cli.py
           tests/unit/test_static_renderer.py
           tests/unit/test_layering.py
+          tests/unit/test_mcp_server_cli.py
+          tests/unit/test_mcp_tools.py
           tests/unit/test_owl_schema_source.py
           tests/unit/test_seed_sources.py
           tests/unit/test_rdf_seed_source.py

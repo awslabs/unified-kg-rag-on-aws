@@ -9,7 +9,9 @@ internal and may change in any release. Two groups:
   ingest a corpus (:class:`DataIngestionPipeline`, :class:`PipelineConfig`),
   query it (:class:`GraphRAGChain` with :class:`RAGInput`, answering with a
   :class:`RAGOutput` or, from ``search``, a :class:`SearchOutput`) and
-  evaluate it (:class:`EvaluationManager`).
+  evaluate it (:class:`EvaluationManager`), or serve it to agents as
+  read-only MCP tools (:func:`build_mcp_server`, :func:`build_mcp_app`,
+  the ``mcp`` extra).
 - **Extending it**: the ports a backend implements, the :class:`Providers`
   bundle that injects them, and the registries for providers, search
   strategies, parsers, renderers, extraction-schema sources and seed graph
@@ -76,6 +78,9 @@ _EXPORTS: dict[str, str] = {
     "Methodology": "unified_kg_rag.domain.models",
     "MemoryManager": "unified_kg_rag.adapters.retrieval.memory_manager",
     "ConversationKey": "unified_kg_rag.adapters.retrieval.memory_manager",
+    # Serving an index to agents (the mcp extra)
+    "build_mcp_server": "unified_kg_rag.application.cli.mcp_server",
+    "build_mcp_app": "unified_kg_rag.application.cli.mcp_server",
     # Evaluation
     "EvaluationManager": "unified_kg_rag.evaluation.evaluation_manager",
     # Errors
@@ -166,6 +171,10 @@ if TYPE_CHECKING:
         register_seed_source,
     )
     from unified_kg_rag.application.bootstrap import build_providers
+    from unified_kg_rag.application.cli.mcp_server import (
+        build_mcp_app,
+        build_mcp_server,
+    )
     from unified_kg_rag.application.config import get_config
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
     from unified_kg_rag.application.retrieval.rag_chain import (

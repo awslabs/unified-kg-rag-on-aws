@@ -474,6 +474,29 @@ From a `main` checkout (formats and keys no release had):
   cluster bottom-up in the index language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps
   the rebuilt tree into its own index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children
   are unchanged reuses its summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
+- A read-only MCP (Model Context Protocol) server, opt-in through the new `mcp` extra and the `run-mcp-server` console
+  script (#616): five tools serve one index namespace to agents (`kg_search`, `kg_answer`, `kg_get_entity`,
+  `kg_neighbors`, `kg_describe_schema`), each annotated read-only, over stdio or stateless streamable HTTP (loopback by
+  default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
+  chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
+  seed-graph provenance). The namespace is fixed at start (`--suffix`, else `index_value`) unless
+  `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the `mcp.max_*` bounds limit what a call
+  may ask and costs (`mcp.strategies` binds the chain's new `allowed_strategies`: `auto` routes, and falls back, only
+  within it, and is refused before any model call when the namespace serves none of it); every call runs under
+  `search.query_timeout_seconds` and returns its model `usage`. The graph
+  tools read the stores through the chain's retrievers and make no model call; they look names, IRIs and ids up in
+  NFC (and a name again in NFKC), as search composes a query. Over HTTP only POST is served (405 otherwise), and on
+  any loopback address the `Host` and `Origin` headers must name it or a loopback name (421/403). `build_mcp_server`
+  and `build_mcp_app` (package root; the latter the stateless ASGI application, its `Host`/`Origin` checks on with
+  `allowed_hosts`) mount the same server in a host's application; neither changes the chain given. Under
+  `processing.ignore_errors` the error answer names its error in `metadata.error_type`. Guide:
+  [MCP server](docs/guides/mcp.md).
+- RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
+  after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
+  mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index
+  language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps the rebuilt tree into its own
+  index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children are unchanged reuses its
+  summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
   (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, and one still over the budget
   keeps its whole sentences within it (#601). `run-ingestion --enabled-stages summary_tree` builds the tree under the
   pipeline id that built the namespace even after an upgrade changed the earlier stages' cache keys, running none of

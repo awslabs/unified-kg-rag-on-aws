@@ -95,6 +95,7 @@ run-eval = "unified_kg_rag.application.cli.launch:run_eval"
 run-visualization = "unified_kg_rag.application.cli.launch:run_visualization"
 run-prompt-tuning = "unified_kg_rag.application.cli.launch:run_prompt_tuning"
 prepare-benchmark = "unified_kg_rag.application.cli.launch:prepare_benchmark"
+run-mcp-server = "unified_kg_rag.application.cli.launch:run_mcp_server"
 
 [project.optional-dependencies]
 # Optional: enables .md/.markdown/.html/.htm source parsing (heavy transitive
@@ -161,6 +162,13 @@ otel = [
 # the extraction schema. The core package imports none of it.
 ontology = [
     "rdflib>=7.6.0,<8",
+]
+# Optional: the read-only MCP (Model Context Protocol) server of
+# `run-mcp-server`, which serves an index to agents as tools over stdio or
+# streamable HTTP. The core package imports none of it; the server fails fast
+# naming this extra when it is missing.
+mcp = [
+    "mcp>=2.3.0,<3",
 ]
 # Optional: local mode (`backend: local` / `providers.*.kind`). OpenAI-compatible
 # servers (vLLM, llama.cpp, LM Studio) and Ollama for the LLM and embeddings,
@@ -297,6 +305,10 @@ module = [
     "ragas.*",
     # [ontology] extra only.
     "rdflib.*",
+    # [mcp] extra only.
+    "mcp.*",
+    "mcp_types.*",
+    "uvicorn.*",
     "snowballstemmer",
     "datasets.*",
     "lxml.*",

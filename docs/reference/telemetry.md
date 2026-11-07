@@ -11,7 +11,8 @@ usage it counts with tracing on or off.
 | `kg_rag.ingestion.run` | root | Status `ERROR` when the run failed |
 | `kg_rag.ingestion.stage` | run | One per stage: input/output counts, status, the stage's numeric metrics as `kg_rag.stage.<metric>`, `error.type` and the exception when it crashed |
 | `kg_rag.batch` | stage, or root for `run-eval` answer generation | Item and failure counts; in `run-eval` the run's `kg_rag.eval.strategy` and `kg_rag.eval.repeat` (1-based), as on every span of the run |
-| `kg_rag.query` | root, or the `run-eval` batch | `session.id`, `user.id`, `kg_rag.blocked`; with `capture_content` the redacted query as `input.value` and (outside `stream` / `astream`) the answer as `output.value` |
+| `kg_rag.mcp.tool` | root | One per MCP tool call (`run-mcp-server`): `mcp.tool.name`, `kg_rag.records`; with `capture_content` the redacted arguments as `input.value`. A `kg_search` or `kg_answer` call's `kg_rag.query` span nests under it |
+| `kg_rag.query` | root, the `run-eval` batch, or an MCP tool call | `session.id`, `user.id`, `kg_rag.blocked`; with `capture_content` the redacted query as `input.value` and (outside `stream` / `astream`) the answer as `output.value` |
 | `kg_rag.strategy` | query | `kg_rag.rerank_status` for the whole query |
 | `kg_rag.retrieve` | strategy | Hits per result type, up to 50 source ids |
 | `kg_rag.fusion` | strategy | In/out counts, the step's `kg_rag.rerank_status` |

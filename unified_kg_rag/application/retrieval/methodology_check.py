@@ -202,3 +202,16 @@ def _reads(
         return serves(strategy, artifacts, config)
     methodology = strategy_methodology(strategy, config)
     return methodology is not None and methodology in methodologies_holding(artifacts)
+
+
+def servable_strategies(
+    artifacts: frozenset[IndexArtifact], config: Config
+) -> list[SearchStrategy]:
+    """The strategies a namespace holding ``artifacts`` serves, ``auto``
+    first when any other is (it routes among them)."""
+    served = [
+        s
+        for s in SearchStrategy
+        if s is not SearchStrategy.AUTO and _reads(s, artifacts, config)
+    ]
+    return [SearchStrategy.AUTO, *served] if served else []
