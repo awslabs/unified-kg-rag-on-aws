@@ -577,8 +577,11 @@ From a `main` checkout (formats and keys no release had):
   advance (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared
   strategies only, every other metric, and the cost measures, each delta with `adjusted_p_value` and a simultaneous
   `adjusted_ci_low`/`adjusted_ci_high`. On simulated A/A comparisons ten unadjusted metrics showed a difference on
-  noise in 30-40% of them, the Holm-adjusted family in about 5% or fewer. `--fail-if` reads the four new statistics,
-  and the tables print `Holm p` (#620).
+  noise in 30-40% of them, the Holm-adjusted family in about 5% or fewer. Each family reads at least 20 x tests /
+  alpha resamples (`multiplicity.families.<f>.resamples`; `evaluation.resamples` sets the base, 2,000): the Monte
+  Carlo p-value is never below 1 / (1 + resamples), so with a fixed 2,000 a family of 100 or more tests (15 strategies
+  x 7 metrics) could not reject at 0.05 however large the difference, and its simultaneous intervals read their tails
+  from a fraction of one resample. `--fail-if` reads the four new statistics, and the tables print `Holm p` (#620).
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
   rate's interval resamples queries. The default still judges the first repeat (#620).
@@ -600,7 +603,11 @@ From a `main` checkout (formats and keys no release had):
   document converter keeps where each PDF page starts and text units store `page_start` / `page_end`, `relative_path`
   and `document_id` in their attributes (ids and texts unchanged). `run-rag` prints the cited sources and its JSON
   output carries every citation. The retrieval evaluator adds `citation_precision` and `citation_recall` against
-  `reference_sources` ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
+  `reference_sources`, each cited citation weighted by its files (a graph section of ten lineage files counts a tenth
+  per reference file, not 1 when any matches), and `citation_precision_passages` over the cited passages alone; the
+  run manifest records `citations.enabled` and the scoring, and a comparison warns when its runs differ in either. The
+  pairwise judge, `graph_aware`'s answer coverage and `answer_length` read the answers without their markers, as
+  `answer_match` does ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
 - `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the
   follow-up rewrite reads where it reads memory otherwise, bounded to `memory.max_messages_per_conversation` turns
   and `memory.max_history_tokens` (4,000, estimated) and screened by the input guardrail like the query (a masked
@@ -656,7 +663,11 @@ From a `main` checkout (formats and keys no release had):
   scan cap, each graph gold answer computed by the reference executor from its plan (`metadata.gold_plan`). `run-eval`
   keeps each answer's `structured` record and reports `structured_statistics` (status, fallback reasons, valid-plan,
   repair, truncation and exact rates), per arm under a comparison
-  ([guide](docs/guides/benchmarks.md#structural-benchmark)).
+  ([guide](docs/guides/benchmarks.md#structural-benchmark)). Its items say how `answer_match` reads them:
+  `metadata.answer_type: number` compares the answer's leading number (digits, English words, Korean native and Han
+  numerals before a counter such as 곳, 군데, 가지, 개사 or 社), `set` needs every one of `metadata.answer_items` in any
+  layout, and `metadata.decline_is_correct` scores a decline of an absent vendor as right; the localized counts carry
+  3곳 / 세 곳 and 3社 / 三社 aliases.
 - A local web console, opt-in (the `console` extra, `run-console`; #631): ask with a strategy picker (and how `auto`
   chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources they
   cite, follow-ups sent with the page's conversation (`RAGInput.history`), and each source the answer read on a
@@ -880,12 +891,13 @@ From a `main` checkout (formats and keys no release had):
   more than twice the p95 latency ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)); a
   KAG-style decomposition into steps measured no better than the loop and is not offered (#628).
   `metadata["context_sufficient"]: false` reports a final insufficient verdict, `metadata["iterative"]` the rounds and
-  their model usage; new `custom_prompts.iterative_controller_*` (#594). The controller reads the context packed to
-  the answer's budget (`controller_context_tokens: null`; a smaller cap left it the first passages of long chunks), a
-  round follows at most five bridge entities, a deadline that cancels the round an insufficient verdict started
-  reports it (`insufficiency_reason: deadline`), and the follow-up queries and bridge entities in
-  `metadata["iterative"]` are screened by the output guardrail with `check_output` (#607). See
-  [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
+  their model usage, `run-eval` reports `iterative_statistics` (rounds histogram and mean, stop reasons, the share
+  stopped at `max_rounds`, degraded runs) per run and comparison arm; new `custom_prompts.iterative_controller_*`
+  (#594). The controller reads the context packed to the answer's budget (`controller_context_tokens: null`; a smaller
+  cap left it the first passages of long chunks), a round follows at most five bridge entities, a deadline that
+  cancels the round an insufficient verdict started reports it (`insufficiency_reason: deadline`), and the follow-up
+  queries and bridge entities in `metadata["iterative"]` are screened by the output guardrail with `check_output`
+  (#607). See [query](docs/guides/query.md#follow-up-rounds-for-multi-hop-questions).
 - LLM usage accounting, tracing or not: calls, input and output tokens, prompt-cache reads and writes, resent and
   failed requests and cache hits per model role and id, in `RAGOutput` / `SearchOutput.metadata["usage"]`,
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
@@ -948,10 +960,21 @@ From a `main` checkout (formats and keys no release had):
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and
   Markdown; a failed answer counts with what it spent (#526, #529, #533).
 - `run-eval --from-results` rebuilds or finishes a comparison from saved runs without answer calls and
-  `--baseline-results` compares with an earlier run; `--fail-if <measure>:<stat><op><value>` gates exit 1 and fails
-  on fewer than 10 paired queries, on metrics an evaluator could not compute (`failed_metrics`), or on a cost
-  measure when the arms failed different numbers of answers. It warns when pooled runs differ in a query flag, the
+  `--baseline-results` compares with an earlier run; `--fail-if <measure>:<stat><op><value>` gates exit 1 and fails on
+  fewer than 10 paired queries, on metrics an evaluator could not compute (`failed_metrics`), or on a cost measure
+  when the arms failed different numbers of answers. It warns when pooled runs differ in a query flag, the
   configuration, the commit, the index or the answer model (#526, #529, #541, #563).
+- `run-eval --from-results ... --rescore [DATASET]` scores the saved answers again with this run's evaluators
+  (`--evaluators`, the span and normalization, the judges) and compares the re-scored runs, saved in this run's
+  directory; DATASET's golds and metadata replace the saved ones by query id. The run manifest records the judges'
+  `judge_effort` and, with an extracted span, its model and effort in `answer_scoring` (runs without them are warned
+  about, not refused).
+- `run-eval --arm NAME=overlay.yaml[,suffix=SUFFIX]` (repeatable): a configuration arm answers the dataset with the
+  run's config under a YAML overlay (validated like a config file; the run's `evaluation` section is kept), as a chain
+  and evaluation manager of its own, with every `--search-strategy`, interleaved with the base runs. Its runs
+  (`<strategy>@NAME`) are compared with the same strategy's base run and Holm-adjusted with the other deltas; the
+  manifest records the overlay's path and sha256 and the comparison order, which `--from-results` keeps. An empty
+  overlay is an A/A arm, the noise floor. See [evaluation](docs/guides/evaluate.md#configuration-arms).
 - The `run-eval` judge defaults to Opus 5.5 on Bedrock (a judge judging its own answers shifted directness by
   -0.27): when the answer model, or the model that wrote re-judged answers, is Opus 5.5, an unset judge falls back
   to the default tier or Sonnet 5.5; a configured judge that is the answer model is kept with a warning. The CDK
@@ -986,12 +1009,14 @@ From a `main` checkout (formats and keys no release had):
   another dimension than `models.embedding.dimension`, naming the setting, where every vector write failed at the
   indexing stage after the extraction was paid for (one embedding call per run) (#629).
 - `run-rag --suffix` that nothing was ingested under (a typo) exits 2, not 1, and the message lists the suffixes
-  ingested on the store (#629).
+  ingested on the store (#629); so does a query-time `ConfigurationError` (an embedding dimension the index does not
+  hold). `run-eval` stops (exit 2) when its warm-up query meets either, instead of answering the whole dataset with
+  every query failing alike.
 - `run-eval`'s comparison and statistics tables fold a long metric name or value onto the next line instead of
   cutting it ("answer_match/answer_contai…") (#629).
 - `run-rag`, `run-ingestion` and `run-prompt-tuning` load the chain, the pipeline and the tuner on first use, so
-  `--help` and a refused command line import none of them: about 1 s of CPU instead of 2-4 s (`run-eval` and
-  `prepare-benchmark` are unchanged) (#629).
+  `--help` and a refused command line import none of them: about 1 s of CPU instead of 2-4 s (#629); `run-eval` and
+  `prepare-benchmark` too, whose evaluation package exports its names on first use.
 - Every CLI takes `--log-level` (over `logging.level`) and `--version`; with `--output-format text` the console logs
   are plain lines unless `logging.log_format` is set (they were JSON records between the CLI's own output whenever
   stdout was not a terminal; the CDK tasks set `structured` and keep them), and `prepare-benchmark assertions` logs
@@ -1062,8 +1087,11 @@ From a `main` checkout (formats and keys no release had):
   comparison whose runs were not answered interleaved in one invocation (sequential, `--from-results` of several,
   `--baseline-results`) warns that its latency deltas measure time too. Each repeat extracts the query's entities and
   keywords again (`--repeat-extractions resample`, `evaluation.repeat_extractions`), so `repeat_stdev` includes the
-  extraction's variance; `reuse` keeps one extraction for every repeat. Run manifests record `run_id`, `run_order`
-  and `repeat_extractions` (#620).
+  extraction's variance; `reuse` keeps one extraction for every repeat. The runs of one repeat share each query's
+  extraction while it is in flight (the first pays, the others count a cache hit), so they retrieve on the same
+  keywords; the order is also reversed on every other repeat, so an even `--repeats` balances an odd-sized dataset's
+  every query. Run manifests record `run_id`, `run_order`, `repeat_extractions` and `repeat`, by which
+  `--from-results` pairs the repeats (they share a start time) (#620).
 - `run-eval` scores with the three LLM-free evaluators by default (`answer_match`, `retrieval`, `graph_aware`): a
   core install no longer exits 2 for want of the `eval` extra, and a run calls no judge unless asked.
   `run-eval --evaluators a,b` picks the evaluators of one run; `ragas` and `assertion` are opt-in. The `langchain`

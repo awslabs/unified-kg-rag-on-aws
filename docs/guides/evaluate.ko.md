@@ -86,6 +86,12 @@ a,b`), LLM이 필요 없는 세 개가 기본으로 켜져 있고 데이터셋 �
   환각)이며, 검토자를 위한 `source`를 붙일 수 있습니다. 답변과 같은 언어로 쓰세요.
 - 항목별 `metadata`(예: `search_strategy`)는 그 질문에 한해 CLI 기본값보다 우선합니다.
   `id`는 `query_id`로 써도 됩니다.
+- `metadata.answer_type`은 `answer_match`가 구조가 있는 정답을 읽는 방식을 정합니다.
+  `number`는 답변이 처음 말한 수(숫자, 수 단어, 단위 앞의 고유어·한자 수사: `세 곳`,
+  `三社`)를 정답의 수와 비교하고, `set`은 `metadata.answer_items`(문자열 목록)의 항목이
+  순서나 형식과 관계없이 모두 답변에 있어야 맞습니다. `metadata.decline_is_correct: true`는
+  데이터에 없는 대상을 묻는 질문에서 답변 거절을 정답으로 채점합니다. `prepare-benchmark
+  structural`이 이 필드를 씁니다([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match), 영문).
 - 코퍼스로 답할 수 없는 질문에는 `"metadata": {"answerable": false}`를 지정하세요. 어떤
   평가기로도 채점하지 않고 `abstention_statistics`
   ([Run summary](../reference/evaluation-output.md#run-summary), 영문,
@@ -182,7 +188,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   (`--primary-metric`, `evaluation.primary_metric`. 답변을 채점하면 기본값은
   `answer_match/answer_contains`). 주 지표의 차이는 비교한 전략 수만큼만 보정합니다. 나머지
   지표는 보조 지표로 모두 묶어 Holm 방법으로 보정하고(비용 측정값은 비용끼리), `adjusted_p_value`가
-  0.05보다 작으면 여러 차이를 함께 읽어도 남는 차이입니다. 표에는 `Holm p`로 나옵니다. 차이의
+  0.05보다 작으면 여러 차이를 함께 읽어도 남는 차이입니다. 표에는 `Holm p`로 나옵니다(묶음마다
+  크기에 맞춰 몬테카를로 재표본을 최소 20 x 검정 수 / 0.05개 뽑으므로 전략과 비교군이 많아도
+  기각할 수 있습니다. 기본 재표본 수는 `evaluation.resamples`, 2,000). 차이의
   크기는 `ci_low`/`ci_high`(보정 전)나 `adjusted_ci_low`/`adjusted_ci_high`(묶음 전체에 대한
   동시 구간)로 읽으세요. 지표 열 개를 보정 없이 읽으면 같은 설정끼리 비교해도 30-40%의 비교에서
   우연히 차이가 나타납니다. 이진 지표를 짝지어 비교하면 두 전략의 결과가 갈린 질의만 정보가
@@ -204,7 +212,8 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   만큼 셉니다.
 - **실행 순서.** 기본값은 번갈아 답하기입니다(`--run-order interleaved`,
   `evaluation.run_order`). 질의 하나를 모든 전략과 반복이 답한 뒤 다음 질의로 넘어가며,
-  질의마다 실행 순서를 뒤집습니다. 그래서 실행 도중 느려지는 서비스나 앞선 실행이 데운
+  질의마다 실행 순서를 뒤집고, 반복마다 한 번 더 뒤집습니다(`--repeats`가 짝수이면 질의
+  수가 홀수여도 모든 질의의 순서가 균형을 이룹니다). 그래서 실행 도중 느려지는 서비스나 앞선 실행이 데운
   캐시가 지연 시간 차이로 나타나지 않습니다(같은 설정의 두 실행을 차례로 답하면 질의당
   0.5-5.8초 차이가 났습니다). `--run-order sequential`은 실행을 하나씩 차례로 답하고,
   도중에 멈추면 끝난 실행을 남기며, 지연 시간 차이가 시간의 영향도 잰다고 경고합니다.
@@ -212,7 +221,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 - **반복.** 반복마다 질의의 엔티티와 키워드를 다시 추출하므로
   (`--repeat-extractions resample`, `evaluation.repeat_extractions`) `repeat_stdev`에 추출의
   변동도 들어갑니다. 질의와 반복마다 빠른 모델 추출 호출이 한 번씩 듭니다. 한 반복 안의
-  전략들은 추출을 공유하므로 같은 키워드로 검색을 비교합니다. `reuse`는 모든 반복에서
+  전략과 비교군은 추출을 공유하므로 같은 키워드로 검색을 비교합니다. 같은 질문을 동시에
+  추출하면 진행 중인 호출을 함께 씁니다(먼저 시작한 쪽이 호출 비용을 내고 나머지는 캐시
+  적중으로 셉니다. ABBA 순서라 비용을 내는 쪽이 번갈아 바뀝니다). `reuse`는 모든 반복에서
   한 번만 추출합니다(이전 동작).
 
 모든 필드, 실패와 0점 채우기 규칙, 경고, 비용에 세는 항목은
@@ -246,6 +257,35 @@ evaluation:
 호출(`failed_calls`), 예열 질의는 가격에 들어가지 않으므로 CloudWatch 호출 수와 청구액이 조금
 더 많을 수 있습니다(측정 결과:
 [Usage records against the bill](../concepts/defaults-and-evidence.md#usage-records-against-the-bill), 영문).
+
+## 구성 비교군
+
+`--arm NAME=overlay.yaml`은 전략뿐 아니라 구성을 비교합니다. 비교군(arm)은 실행 구성에
+오버레이(구성 위에 병합하는 YAML 매핑)를 덮은 구성으로 같은 데이터셋에 답하며, 자체 체인으로
+모든 `--search-strategy`를 실행하고 기본 실행과 번갈아 답합니다. 비교군을 늘리려면 플래그를
+여러 번 지정하세요. `,suffix=SUFFIX`를 붙이면 그 비교군은 다른 인덱스 네임스페이스(예: 다른
+설정으로 수집한 것)를 질의합니다.
+
+```bash
+# 재순위화 끄기와 켜기, 그리고 잡음 수준을 재는 A/A 복사본.
+printf 'providers:\n  rerank:\n    kind: none\n' > norerank.yaml
+: > aa.yaml
+run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
+  --arm norerank=norerank.yaml --arm aa=aa.yaml --config-path config.yaml
+```
+
+- 비교군의 실행은 파일과 비교 결과에서 `<strategy>@NAME`(`local@norerank`)으로 표시되며, 같은
+  전략의 기본 실행과 짝지어 비교하므로 그 차이는 오버레이의 효과입니다. 기본 전략들은 평소처럼
+  첫 번째 전략과 비교합니다. Holm 보정은 비교군의 차이를 전략의 차이와 함께 보정합니다.
+- 오버레이는 구성 파일처럼 검증합니다(`--allow-unknown-keys`가 없으면 알 수 없는 키에서
+  종료 코드 2로 멈춤). 모든 비교군은 기본 실행과 같은 방식으로 채점하므로 오버레이의
+  `evaluation` 섹션은 경고와 함께 무시합니다.
+- 실행 매니페스트는 비교군 실행마다 `arm`(이름, 오버레이 경로와 sha256, suffix)과
+  `compared_runs`를 기록하므로 `--from-results`가 같은 짝을 다시 만듭니다. 비교군끼리
+  `search.citations.enabled`가 다르면 답변 프롬프트도 다르다고 경고합니다.
+- 빈 오버레이(위의 `aa.yaml`)는 A/A 비교군입니다. 그 차이가 이 데이터셋과 반복 횟수에서 지표마다의
+  잡음 수준입니다.
+- 비교군 하나는 전략 하나만큼(답변과 워밍업) 들며, 나열한 전략 수만큼 곱해집니다.
 
 ## 단언문, 길이 통제, 클로즈드북 기준선
 
@@ -315,6 +355,10 @@ run-eval --from-results out/ --output-directory out/
 # 저장한 답변을 다른 판정 모델로 다시 판정(답변 호출 없음).
 run-eval --from-results out/ --pairwise-judge --judge-model <judge-model-id>
 
+# 저장한 답변을 이 버전의 평가기(와 새로 만든 데이터셋의 정답)로 다시 채점해
+# --output-directory에 새 실행으로 저장.
+run-eval --from-results out/ --rescore new_eval.json --output-directory rescored/
+
 # CI: 이전 실행과 비교해 뒷받침되는 성능 저하가 있으면 실패.
 run-eval --data-path eval.json --search-strategy local \
   --baseline-results ci/previous/ --output-directory ci/current/ \
@@ -329,6 +373,11 @@ run-eval --data-path eval.json --search-strategy local \
   결과 파일을 나열하고, 그래도 합치려면 `--pool-runs`를 주세요(무엇이 섞였는지 경고합니다).
 - **다시 판정하기.** `--from-results`와 `--pairwise-judge`를 함께 쓰면 저장한 답변을 다시
   판정합니다. `--judge-model`은 그 실행의 판정 모델을 정합니다.
+- **다시 채점하기.** `--rescore`는 저장된 점수로 비교하는 대신 저장한 답변을 이 실행의
+  평가기(`--evaluators`, `evaluation.answer_span`, 인용 지표, 다시 호출하는 판정 모델)로 다시
+  채점합니다. 정답은 답변과 함께 저장된 것을 쓰고, `--rescore DATASET`이면 그 데이터셋의
+  정답을 질의 ID로 짝지어 씁니다(질문이 같아야 함). 다시 채점한 실행은 이 실행의 디렉터리에
+  저장하며, 매니페스트는 답변한 실행의 내용을 유지하고 다시 채점한 기록(`rescored`)을 더합니다.
 - **기준 실행.** `--baseline-results`는 각 전략을 이전 실행의 같은 전략(`baseline:<strategy>`)과
   비교합니다. 기준 실행은 같은 `--repeats`로 만드세요. 실행마다 하위 디렉터리에 따로
   저장되며, 한 전략을 여러 번 실행한 결과가 든 기준 디렉터리는 `--from-results`처럼

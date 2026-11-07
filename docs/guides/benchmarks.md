@@ -152,8 +152,17 @@ in Korean and Japanese (`multilingual_ko`, `multilingual_ja`, with `예` /
 `아니요` and `はい` / `いいえ` as yes/no; `metadata.language`).
 Each graph question's gold answer is computed by the reference executor over
 the generated graph from the template's plan (`metadata.gold_plan`); a
-number has its digit and word forms as `answer_aliases`, and the top three
-every order of the three names. `category` is the template, so the
+number has its digit and word forms as `answer_aliases` (the Korean and
+Japanese counts `3곳` / `세 곳` and `3社` / `三社` too), and the top three
+every order of the three names. Each item also says how `answer_match`
+reads it: a count or maximum (`metadata.answer_type: number`) by the first
+number the answer states, so "Three vendors supply it. Two of them are
+local." is 3, not a match of the gold 2; the top three
+(`answer_type: set`, `metadata.answer_items`) by all three names in any
+order or layout, a numbered list too; and an absent-vendor question
+(`metadata.decline_is_correct`) counts a declined answer as right
+([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match)).
+`category` is the template, so the
 per-category scores break the comparison down by question shape; the
 control questions carry their document as `reference_sources`.
 
