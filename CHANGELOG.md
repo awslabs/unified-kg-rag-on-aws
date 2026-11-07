@@ -378,6 +378,9 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    `GraphRagSecurity` stack (CDK metadata only) with `aws cloudformation delete-stack`; dry-run the TLS policy
    change (`aws opensearch update-domain-config ... --dry-run`) to see whether it runs blue/green; in a
    `removal_destroy` environment copy the `CacheAccessLogs` logs you need, as the bucket is deleted (#566, #583).
+   With `opensearch_count` above 1, also pass `-c opensearch_master_instance=r6g.large.search` (and keep it on later
+   deploys): 0.2.3's dedicated masters ran the data node type, the default is now `m6g.large.search`, and changing
+   them is a blue/green deployment (every shard copied, slower for hours on a large domain).
 9. OpenSearch 2.19: put back `OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_19` and upgrade the domain
    as the runbook's [Upgrading OpenSearch](docs/operations.md#upgrading-opensearch) says: stop ingestion, take a
    manual snapshot (the only way back to 2.13), run the eligibility check, and deploy `GraphRagStorage` once `cdk
@@ -393,7 +396,13 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     to keep the containers (#273). Its reranker needs the `cross-encoder` extra: with `local` alone queries run
     with reranking off (#628).
 13. After the rebuild succeeds: delete the old registry table, the OpenSearch pipeline 0.2.3 wrote (`DELETE
-    _search/pipeline/graphrag-hybrid-search-pipeline`) and `s3://<bucket>/embedding-cache/` if you used it.
+    _search/pipeline/graphrag-hybrid-search-pipeline`) and `s3://<bucket>/embedding-cache/` if you used it. Delete
+    the three log groups 0.2.3 created that the stacks no longer manage (CloudFormation retains them, also with
+    `removal_destroy`): the VPC flow-log group (logical id `VpcFlowLogsLogGroup...` in `GraphRagNetwork`, with
+    `vpc_flow_logs`) and the OpenSearch slow-search and slow-index log groups (`OpenSearchSlowSearchLogs...` and
+    `OpenSearchSlowIndexLogs...` in `GraphRagStorage`; `GraphRag<Env>...` outside `dev`), after copying what you
+    keep: `aws logs describe-log-groups --log-group-name-prefix GraphRagNetwork-VpcFlowLogsLogGroup` (and
+    `GraphRagStorage-OpenSearchSlow`) names them, `aws logs delete-log-group --log-group-name <name>` deletes each.
 14. Scripts: update the renamed flags, exit codes and JSON output, `.States.PrepPhase` to `.States.Ingest` and
     `$.last_phase` to `$.task`, `indexing_results` keys to `vector_*` / `graph_*`, and read `run-eval` results from
     the run directory the JSON output's `output_directory` names (#328, #333, #584, #620).
@@ -1067,8 +1076,8 @@ From a `main` checkout (formats and keys no release had):
   `log_retention_days` (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot
   the instances after the deploy (#617). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue
   when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617); it also
-  checks the Trivy image and the Dockerfile's apt pins, and builds and scans the image, so a fix released after the
-  last pull request lands in the same issue. Dependabot also moves the console's npm lock.
+  checks the Trivy image and the Dockerfile's apt pins, and builds and scans the image with the opt-in extras, so a
+  fix released after the last pull request (or a build that broke) lands in the same issue. Dependabot also moves the console's npm lock.
 - Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
   (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).

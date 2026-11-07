@@ -5,8 +5,9 @@
 Branches that each add entries and then rebase leave the section damaged in
 ways a reader trusts and a reviewer misses: a ``(#PR)`` placeholder the
 landing script never filled, two *Upgrading* steps with one number (an old
-and a new version of the same instruction), the same passage kept twice by a
-conflict resolution, and an extra the install instructions do not name.
+and a new version of the same instruction), a "step N" reference past the
+last step (left by a step removed or merged), the same passage kept twice by
+a conflict resolution, and an extra the install instructions do not name.
 """
 
 from __future__ import annotations
@@ -45,6 +46,18 @@ def _placeholders(section: str) -> list[str]:
 
 def _step_numbers(upgrading: str) -> list[int]:
     return [int(n) for n in re.findall(r"^(\d+)\. ", upgrading, re.M)]
+
+
+def _step_references(section: str) -> list[int]:
+    """Every step number a "step N" or "steps N-M" names, across line
+    breaks."""
+    text = " ".join(section.split())
+    return [
+        int(n)
+        for match in re.finditer(r"\bsteps?\s+(\d+)(?:\s*-\s*(\d+))?", text, re.I)
+        for n in match.groups()
+        if n
+    ]
 
 
 def _repeated_passages(section: str) -> list[tuple[int, int, str]]:
@@ -86,6 +99,13 @@ def test_the_upgrading_steps_are_numbered_once_each_in_order() -> None:
     assert steps == list(range(1, len(steps) + 1)), steps
 
 
+def test_every_step_reference_names_a_step() -> None:
+    last = max(_step_numbers(_subsection(SECTION, "Upgrading")))
+    references = _step_references(SECTION)
+    assert references, "no step reference found"
+    assert [n for n in references if not 1 <= n <= last] == []
+
+
 def test_no_passage_is_repeated() -> None:
     repeats = _repeated_passages(SECTION)
     assert not repeats, repeats[:3]
@@ -120,6 +140,12 @@ def test_the_placeholder_scan(line: str, flagged: bool) -> None:
 def test_the_step_scan_sees_a_repeated_number() -> None:
     text = "1. one\n   more\n2. two\n2. two again\n3. three\n"
     assert _step_numbers(text) == [1, 2, 2, 3]
+
+
+def test_the_step_reference_scan() -> None:
+    text = "delete it in step\n   13); follows steps 6-9 above; Step 2 first"
+    assert _step_references(text) == [13, 6, 9, 2]
+    assert _step_references("a two-step upgrade, 3 steps") == []
 
 
 def test_the_repeat_scan() -> None:
