@@ -4,6 +4,10 @@
 
 from __future__ import annotations
 
+import os
+import subprocess  # nosec B404 - runs this interpreter on a fixed script
+import sys
+
 import pytest
 
 # Importing the package triggers @register_strategy on every strategy module.
@@ -19,7 +23,7 @@ from unified_kg_rag.adapters.search_strategies import (
     LocalSearchStrategy,
     SimpleSearchStrategy,
 )
-from unified_kg_rag.domain.models import RetrieverRole, SearchStrategy
+from unified_kg_rag.domain.models import Config, RetrieverRole, SearchStrategy
 
 pytestmark = pytest.mark.unit
 
@@ -96,3 +100,29 @@ def test_strategy_spec_default_roles() -> None:
         RetrieverRole.DOCUMENT,
         RetrieverRole.GRAPH,
     }
+
+
+def test_a_lookup_in_a_fresh_process_finds_the_built_in_strategies() -> None:
+    # The strategies register when their package is imported; an entry point
+    # that imported none (run-describe) found no strategy at all.
+    script = (
+        "import sys\n"
+        "from unified_kg_rag.adapters.retrieval import strategy_registry as r\n"
+        "from unified_kg_rag.domain.models import Config, SearchStrategy\n"
+        "assert 'unified_kg_rag.adapters.search_strategies' not in sys.modules\n"
+        "print(r.routable_strategies(Config())[0].value)\n"
+        "print(r.get_strategy_spec(SearchStrategy.MIX).strategy_class.__name__)\n"
+    )
+    found = subprocess.run(  # nosec B603 - this interpreter, a fixed script
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+        env={**os.environ, "AWS_EC2_METADATA_DISABLED": "true"},
+    )
+    assert found.returncode == 0, found.stderr[-2000:]
+    assert found.stdout.split() == [
+        Config().search.auto_routable_strategies[0].value,
+        "LightRAGSearchStrategy",
+    ]

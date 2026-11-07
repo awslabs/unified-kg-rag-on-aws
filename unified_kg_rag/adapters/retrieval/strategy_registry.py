@@ -142,12 +142,24 @@ def register_strategy(
     return decorator
 
 
+def _register_built_in_strategies() -> None:
+    """Import the built-in strategies, which registers them (once per process).
+
+    A lookup reads the registry, and the classes fill it when their package
+    is imported: an entry point that imported none (``run-describe``)
+    found no strategy at all. The import is deferred because that package
+    imports this module.
+    """
+    import unified_kg_rag.adapters.search_strategies  # noqa: F401
+
+
 def get_strategy_spec(strategy: SearchStrategy) -> StrategySpec:
     """Look up the registration record for ``strategy``.
 
     Raises:
         ValueError: If no strategy is registered for ``strategy``.
     """
+    _register_built_in_strategies()
     try:
         return _REGISTRY[strategy]
     except KeyError:
@@ -240,6 +252,7 @@ def routable_strategies(
         MethodologyNotIndexedError: No registered strategy reads a held
             methodology.
     """
+    _register_built_in_strategies()
     holding = frozenset(artifacts_to_build(config) if artifacts is None else artifacts)
     held = methodologies_holding(holding)
     configured = config.search.auto_routable_strategies
