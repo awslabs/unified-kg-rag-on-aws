@@ -194,7 +194,8 @@ indexing:
   run of the namespace, one with an unchanged corpus too, records them gone
   and its strategies are refused from then on.
   Nothing is deleted. To delete them, run once with `indexing.reset: true`
-  and the remaining methodologies: the rebuild replaces the community-reports
+  and the remaining methodologies (the extraction records stay, so adding
+  the methodology back later extracts nothing again): the rebuild replaces the community-reports
   index with an empty one, drops the graph's community vertices and, without
   `raptor`, deletes the summary tree's indices (those of a build killed
   before it swapped in too). Without the registry every run is a full build,
