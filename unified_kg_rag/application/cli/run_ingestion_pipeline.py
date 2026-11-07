@@ -586,6 +586,14 @@ class IngestionPipelineRunner:
         ask on the run fails rather than blocking or reading EOF."""
         return self._ask(question, "--yes", getattr(self.args, "yes", False))
 
+    def _confirm_integrity(self, question: str) -> bool:
+        """Ask the integrity ``question`` of a resumed run whose inputs
+        changed: ``--yes`` answers it; without a terminal the run stops,
+        naming ``--confirm-integrity`` (the flag that answers it alone)."""
+        return self._ask(
+            question, "--confirm-integrity", getattr(self.args, "yes", False)
+        )
+
     def _confirm_reset(self, question: str) -> bool:
         """Ask a reset's ``question`` (the pipeline's ``confirm``):
         ``--confirm-reset`` (or its env var) answers it, and so does
@@ -719,11 +727,7 @@ class IngestionPipelineRunner:
                         "Continue despite integrity issues? "
                         "[dim](--confirm-integrity)[/dim]"
                     )
-                elif not self._ask(
-                    "Continue despite integrity issues?",
-                    "--confirm-integrity",
-                    getattr(self.args, "yes", False),
-                ):
+                elif not self._confirm_integrity("Continue despite integrity issues?"):
                     console.print("[yellow]Pipeline execution cancelled.[/yellow]")
                     return False
         return True

@@ -234,7 +234,7 @@ def test_run_ingestion_prints_integrity_errors_literally(
             return False, ["[/red] stage inputs changed"]
 
     runner.pipeline = _Pipeline()  # type: ignore[assignment]
-    runner._confirm = lambda prompt: False  # type: ignore[method-assign]
+    runner._confirm_integrity = lambda prompt: False  # type: ignore[method-assign]
     assert runner._validate_pipeline_integrity() is False
     assert "[/red] stage inputs changed" in capsys.readouterr().out
 
@@ -257,3 +257,15 @@ def test_prepare_benchmark_prints_the_output_directory_literally(
     # Joined: rich folds the path at the console width, and a long tmp_path
     # (a pytest-xdist worker's, say) puts the fold inside "[/red]out".
     assert "[/red]out" in "".join(capsys.readouterr().out.splitlines())
+
+
+def test_the_integrity_question_names_its_own_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = object.__new__(run_ingestion_pipeline.IngestionPipelineRunner)
+    runner.args = argparse.Namespace(yes=False)
+    monkeypatch.setattr(run_ingestion_pipeline.sys.stdin, "isatty", lambda: False)
+    with pytest.raises(
+        run_ingestion_pipeline.ConfirmationDeclinedError, match="--confirm-integrity"
+    ):
+        runner._confirm_integrity("Continue despite integrity issues?")
