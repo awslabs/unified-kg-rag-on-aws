@@ -32,12 +32,12 @@ How this compares with the papers and with Amazon Bedrock Knowledge Bases GraphR
 
 This runs everything on one machine: embedded SQLite stores and [Ollama](https://ollama.com) models. You need Python 3.11–3.12, [uv](https://docs.astral.sh/uv/) and Ollama.
 
-**1. Install** (the `local` extra adds the Ollama and OpenAI-compatible clients, no PyTorch; the cross-encoder reranker is the `cross-encoder` extra: [Getting started locally](./docs/getting-started/local.md#install)):
+**1. Install** (the `local` extra adds the Ollama and OpenAI-compatible clients, no PyTorch; the cross-encoder reranker is the `cross-encoder` extra: [Getting started locally](./docs/getting-started/local.md#install); `--no-dev` leaves out the contributors' test and lint tools, which `uv run` without it would install):
 
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra local
+uv sync --no-dev --extra local
 ```
 
 **2. Pull the two default models:**
@@ -67,13 +67,13 @@ EOF
 **4. Build the knowledge graph:**
 
 ```bash
-UKR__LOGGING__LEVEL=WARNING uv run run-ingestion --backend local --source-directory ./sample-corpus
+UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-ingestion --backend local --source-directory ./sample-corpus
 ```
 
 **5. Ask a question** (the answer cites its sources as `[n]`, and `--verbose` lists every source with its score; without the `cross-encoder` extra the query runs with reranking off, logged once):
 
 ```bash
-UKR__LOGGING__LEVEL=WARNING uv run run-rag --backend local --search-strategy mix --verbose \
+UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-rag --backend local --search-strategy mix --verbose \
   --query "How are Acme Robotics and Globex Sensors related?"
 ```
 

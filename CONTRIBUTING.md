@@ -158,8 +158,9 @@ hand, together where they must match:
 - The Trivy image the `docker` jobs scan with (`aquasec/trivy`, tag and digest, in `quality.yml`).
 
 The weekly [`pin-freshness`](./.github/workflows/pin-freshness.yml) workflow runs `scripts/check_pins.py`, which
-compares the base image, uv, apt, ADOT, CDK CLI and Trivy pins with upstream, and builds and scans the image as the
-`docker` job does; it opens (or updates) one issue listing the pins that are behind and the fixable findings. The
+compares the base image, uv, apt, ADOT, CDK CLI and Trivy pins with upstream, and builds and scans the image with
+the opt-in extras (a superset of the default image) as the `docker-unstructured` job does; it opens (or updates) one
+issue listing the pins that are behind, the fixable findings and a build that failed. The
 image scan (Trivy, `--severity HIGH,CRITICAL --ignore-unfixed`) fails a pull request on a fixable HIGH or CRITICAL
 finding in either image; bump the pin that clears it, or accept it in [`.trivyignore.yaml`](./.trivyignore.yaml) with
 its reason and an expiry.

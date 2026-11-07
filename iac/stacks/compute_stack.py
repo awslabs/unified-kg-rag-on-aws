@@ -54,14 +54,14 @@ from iac.stacks.storage_stack import StorageStack
 # and result files.
 EVAL_PREFIX = "eval/"
 
-# ADOT collector v0.50.0, pinned by the multi-arch index digest (linux/amd64
+# ADOT collector v0.51.0, pinned by the multi-arch index digest (linux/amd64
 # and linux/arm64, so it runs with either fargate_cpu_architecture) so a
 # re-pushed tag cannot change the sidecar. Bump both together (`docker buildx imagetools
 # inspect public.ecr.aws/aws-observability/aws-otel-collector:<tag>`).
 COLLECTOR_REPOSITORY = "aws-observability/aws-otel-collector"
-COLLECTOR_VERSION = "v0.50.0"
+COLLECTOR_VERSION = "v0.51.0"
 COLLECTOR_DIGEST = (
-    "sha256:7968fb60db6a2390a47ba6a2df029745638486e285c9b2487da1b722d0855a3e"
+    "sha256:955e240b27d7fd3c7995fd937db4b963975948eb553f656d8c37a564e5b5e07d"
 )
 # Where the app's OTLP exporter sends spans: the collector in the same task
 # (awsvpc tasks share one network namespace).
@@ -261,9 +261,10 @@ class ComputeStack(Stack):
         # cluster's settings or a plugin's configuration (security, ISM,
         # ...), so those writes are denied, by the legacy _opendistro path
         # too. Nor does it write snapshot repositories, index or component
-        # templates (by the legacy _template path too), ingest pipelines or
-        # stored scripts: a template or a default pipeline would rewrite
-        # every index or document the app creates, so these are denied too.
+        # templates (by the legacy _template path too), ingest or search
+        # pipelines or stored scripts: a template or a default pipeline would
+        # rewrite every index, document or search the app makes, so these are
+        # denied too.
         role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.DENY,
@@ -282,6 +283,7 @@ class ComputeStack(Stack):
                     f"{domain_arn}/_component_template/*",
                     f"{domain_arn}/_template/*",
                     f"{domain_arn}/_ingest/*",
+                    f"{domain_arn}/_search/pipeline/*",
                     f"{domain_arn}/_scripts/*",
                 ],
             )

@@ -142,9 +142,9 @@ class SQLiteDocStatusStore:
             lambda e: DocStatusRegistryError(
                 f"Doc-status registry: could not {operation} on SQLite database "
                 f"'{self.path}': {type(e).__name__}: {e}. Check the path "
-                "(providers.doc_status.sqlite_path) is writable, then re-run. "
-                "Incremental indexing needs the registry; set "
-                "providers.doc_status.enabled: false to run without it."
+                "(providers.doc_status.sqlite_path) is writable, then re-run.",
+                indexing_hint="Incremental indexing needs the registry; set "
+                "providers.doc_status.enabled: false to run without it.",
             ),
         )
 

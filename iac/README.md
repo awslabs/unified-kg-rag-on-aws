@@ -23,7 +23,7 @@ Prerequisites:
   its Python is not the library's: the package supports Python 3.11 and 3.12,
   and the image runs 3.12.
 - Node.js 22 or 24 (CI uses 24) and the AWS CDK CLI v2.1146.1 or later
-  (`npm install -g aws-cdk@2.1146.1`, the version CI pins); an older CLI can
+  (`npm install -g aws-cdk@2.1148.0`, the version CI pins); an older CLI can
   reject the cloud assembly the locked `aws-cdk-lib` produces.
 - AWS credentials for the target account and region to bootstrap and deploy,
   and Docker to push the app image.
@@ -687,7 +687,7 @@ is not recorded (`observability.capture_content` stays `false`).
 What the option changes:
 
 - **Task definition**: a non-essential `otel-collector` container (ADOT
-  collector `v0.50.0`, pinned by digest in `compute_stack.py`), so a collector
+  collector `v0.51.0`, pinned by digest in `compute_stack.py`), so a collector
   that crashes or cannot export loses traces but never stops a run (an image
   ECS cannot pull does). The `app` container starts after it with
   `UKR__OBSERVABILITY__ENABLED=true`, `UKR__OBSERVABILITY__BACKEND=otlp`,

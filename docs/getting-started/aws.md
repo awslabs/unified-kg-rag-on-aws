@@ -89,8 +89,9 @@ cd unified-kg-rag-on-aws
 uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
 
-`uv sync` alone installs ingestion and queries. Two extras add the rest;
-without one, the command that needs it stops with exit `2`, naming it:
+`uv sync` alone installs ingestion and queries; optional features come as
+extras (this page names the ones a deployment uses), and without its extra
+the command that needs it stops with exit `2`, naming it. The two above:
 
 - **`eval`**: the opt-in RAGAS judge of `run-eval` (ragas, datasets,
   pandas; [Evaluators](../guides/evaluate.md#evaluators)). The default,

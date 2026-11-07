@@ -83,3 +83,20 @@ def test_verbose_panels_print_model_output_literally(terminal: io.StringIO) -> N
 
 def test_terminal_safe_keeps_newline_and_tab() -> None:
     assert run_rag_chain.terminal_safe("a\nb\tc\x1b\x00\x7f\x85d") == "a\nb\tcd"
+
+
+def test_metric_labels_read_as_words(terminal: io.StringIO) -> None:
+    # The keyword counts printed as "Hl Keyword Count" / "Ll Keyword Count".
+    RAGChainRunner._print_result(
+        {
+            "success": True,
+            "answer": "ok",
+            "search_results": {"hl_keyword_count": 1, "ll_keyword_count": 2},
+            "metadata": {"total_results": 3},
+        },
+        verbose=True,
+    )
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", terminal.getvalue())
+    assert "High-Level Keywords: 1" in plain and "Low-Level Keywords: 2" in plain
+    assert "Total Results: 3" in plain
+    assert "Hl Keyword" not in plain and "Ll Keyword" not in plain

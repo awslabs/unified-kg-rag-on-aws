@@ -59,7 +59,14 @@ class DocStatusRegistryError(AWSServiceError):
     Raised instead of falling back to a full rebuild: without the registry an
     incremental run cannot tell new, changed and deleted documents apart, and a
     full rebuild of only this run's documents replaces the live index content.
+
+    ``indexing_hint``, what an indexing run can do about it, ends the message;
+    :attr:`reason` is the message without it (what a reader reports).
     """
+
+    def __init__(self, message: str = "", *, indexing_hint: str = "") -> None:
+        super().__init__(f"{message} {indexing_hint}" if indexing_hint else message)
+        self.reason = message
 
 
 class EvaluationException(GraphRAGException):

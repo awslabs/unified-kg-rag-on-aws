@@ -20,6 +20,7 @@ from unified_kg_rag.adapters.provider_registry import (
     register_provider,
 )
 from unified_kg_rag.application.cli import (
+    run_describe,
     run_evaluation,
     run_ingestion_pipeline,
     run_prompt_tuning,
@@ -441,6 +442,25 @@ def test_eval_exits_before_the_chain_without_the_extra(
     assert exc.value.code == 2
     chain.assert_not_called()
     assert "langchain_ollama" in capsys.readouterr().err
+
+
+def test_describe_exits_before_the_stores_without_the_extra(
+    mocker,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    without_local_extra: None,
+) -> None:
+    # Text mode exited 2 and printed nothing: the error went to the JSON
+    # status only.
+    monkeypatch.setattr(sys, "argv", ["run-describe"])
+    mocker.patch.object(run_describe, "load_cli_config", return_value=_local_config())
+    describe = mocker.patch.object(run_describe, "describe_namespace")
+    with pytest.raises(SystemExit) as exc:
+        run_describe.main()
+    assert exc.value.code == 2
+    describe.assert_not_called()
+    err = " ".join(capsys.readouterr().err.split())
+    assert "run-describe: error:" in err and "uv sync --extra local" in err
 
 
 def _rdf_seeded_config() -> Config:

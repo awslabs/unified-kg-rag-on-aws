@@ -65,6 +65,13 @@ _SETTINGS_KEY_PREFIX = "#settings|"
 # Which schema annotations the namespace's stores hold, under this sort key.
 _ANNOTATIONS_KEY = "#annotations"
 LEASE_EXPIRY_ATTRIBUTE = "lease_expires_at"
+# What an indexing run can do about an unreadable registry (a reader, such
+# as run-describe, reports the error without it).
+_INDEXING_HINT = (
+    "Incremental indexing needs the registry; set "
+    "providers.doc_status.enabled: false to run without it (every run then "
+    "rebuilds the stores from its own documents)."
+)
 # DynamoDB rejects an item over 400 KB (attribute names plus values).
 _MAX_ITEM_BYTES = 400 * 1024
 # botocore's standard retry mode backs off and retries throttling
@@ -187,7 +194,9 @@ class DynamoDBDocStatusStore:
         try:
             yield
         except (ClientError, BotoCoreError) as e:
-            raise DocStatusRegistryError(self._describe_error(operation, e)) from e
+            raise DocStatusRegistryError(
+                self._describe_error(operation, e), indexing_hint=_INDEXING_HINT
+            ) from e
 
     def _describe_error(self, operation: str, error: Exception) -> str:
         code = (
@@ -220,10 +229,7 @@ class DynamoDBDocStatusStore:
         region = self.boto_session.region_name or "unset"
         return (
             f"Doc-status registry: could not {operation} on DynamoDB table "
-            f"'{self.table_name}' (region {region}): {code}: {error}. {hint} "
-            "Incremental indexing needs the registry; set "
-            "providers.doc_status.enabled: false to run without it (every run then rebuilds the stores from "
-            "its own documents)."
+            f"'{self.table_name}' (region {region}): {code}: {error}. {hint}"
         )
 
     def _check_key_schema(self, client: DynamoDBClient) -> None:

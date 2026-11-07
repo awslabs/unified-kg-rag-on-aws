@@ -320,12 +320,12 @@ class SQLiteSearchEngine:
             ``":memory:"`` for a private in-memory one.
         timeout_seconds: How long a statement waits for another writer's
             lock before ``StoreTimeoutError``.
-        create: Whether a missing file is created. A reader (the retriever)
-            passes ``False``: while the file does not exist (nothing was
-            ingested there) it reads an empty in-memory database, with a
-            WARNING naming the path, instead of leaving an empty file behind
-            (in the working directory, for the default relative path); once
-            ingestion wrote the file it reads that.
+        create: Whether a write creates a missing file. While the file does
+            not exist (nothing was ingested there) a read reads an empty
+            in-memory database instead of leaving an empty file behind (in
+            the working directory, for the default relative path), and once
+            the file exists it reads that. A reader (the retriever) passes
+            ``False``: it never creates the file, and warns with the path.
         """
         self.path = str(path)
         self.timeout_seconds = timeout_seconds
@@ -374,14 +374,23 @@ class SQLiteSearchEngine:
 
     @property
     def connection(self) -> sqlite3.Connection:
+        """The connection a write uses (it creates the file with ``create``)."""
+        return self._connect(write=True)
+
+    def _connect(self, *, write: bool) -> sqlite3.Connection:
         with self._lock:
             if (
                 self._connection is None
-                and not self._create
+                and not (write and self._create)
                 and not self._memory
                 and not Path(self.path).exists()
             ):
                 if self._empty is None:
+                    self._empty = connect(
+                        ":memory:", timeout_seconds=self.timeout_seconds, schema=_SCHEMA
+                    )
+                    if self._create:
+                        return self._empty
                     logger.warning(
                         "No embedded vector store at '%s' "
                         "(providers.vector.sqlite_path; a relative path resolves "
@@ -389,9 +398,6 @@ class SQLiteSearchEngine:
                         "ingested there, so the search finds nothing. Run "
                         "run-ingestion with this configuration first.",
                         self._cache_path,
-                    )
-                    self._empty = connect(
-                        ":memory:", timeout_seconds=self.timeout_seconds, schema=_SCHEMA
                     )
                 return self._empty
             if self._connection is None:
@@ -429,7 +435,7 @@ class SQLiteSearchEngine:
         with (
             self._lock,
             self._errors(operation),
-            read_snapshot(self.connection) as connection,
+            read_snapshot(self._connect(write=False)) as connection,
         ):
             yield connection
 
