@@ -1102,8 +1102,9 @@ class IntelligentTextChunker(BaseChunker):
 
         for chunk in chunks:
             if self.length_function(chunk) > max_size:
-                split_chunks = self.fallback_splitter.split_text(chunk)
-                final_chunks.extend(split_chunks)
+                # Split by size as a failed answer's pre-chunk is: the pieces
+                # under min_chunk_size folded back into their neighbours.
+                final_chunks.extend(self._create_fallback_chunks(chunk))
             else:
                 final_chunks.append(chunk)
 

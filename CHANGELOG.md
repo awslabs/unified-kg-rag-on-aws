@@ -450,6 +450,9 @@ From a `main` checkout (formats and keys no release had):
   build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
   date written as `2024年3月` (or `2024. 3. 15.`, #612, or a form read as a date since, #PR) is found under it, so
   nothing else re-runs.
+- `intelligent` chunking (the default) cuts a model chunk over `max_chunk_size` without pieces under
+  `min_chunk_size` (#PR): a reset re-cuts only the documents that had one, whose changed text units are extracted
+  again (the boundary answers are kept); incremental runs cut new and changed documents so.
 - With claim extraction on (`processing.claim_extraction.enabled`, off by default), the claim prompt changed (#PR):
   the next run asks the claims of every text unit it extracts again (one claim call per unit that states an entity;
   the graph records are kept), a reset all of them. Stored claims keep their status until their claim is derived
@@ -1145,7 +1148,9 @@ Ingestion and incremental indexing.
 - Unresolved claims are not indexed, an entity named only in a relationship gets its suffix and filters, and
   deduplication prefers an indexed copy (#220).
 - Chunking and translation errors are no longer swallowed, a chunk-boundary error falls back to a size split with a
-  WARNING, and the `intelligent` chunker splits a one-line pre-chunk by size without a call (#250, #289, #565).
+  WARNING, and the `intelligent` chunker splits a one-line pre-chunk by size without a call (#250, #289, #565). A
+  chunk the model's boundaries left over `max_chunk_size` is split as the size fallback splits, its pieces under
+  `min_chunk_size` folded into their neighbours (a three-character tail was a text unit of its own) (#PR).
 - `DataIngestionPipeline.run(source_directory)` ingests the directory it is given (#227).
 - Resume and caching: a pipeline id resumes; switching a stage on runs it; a new suffix or scope recomputes; turning
   the registry off rebuilds; `--force-rebuild` writes its outputs; `--resume-from-stage` ignores case; generated ids
