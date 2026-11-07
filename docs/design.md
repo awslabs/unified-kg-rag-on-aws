@@ -377,7 +377,7 @@ degree (§4.5), so with no seed graph the rank is the plain degree.
 
 ## 4. Ingestion Pipeline
 
-`DataIngestionPipeline` (`application/ingestion/pipeline.py`) runs 12
+`DataIngestionPipeline` (`application/ingestion/pipeline.py`) runs 13
 checkpointed stages, so a re-run resumes after the last valid one. Extraction
 works per text unit and the graph is resolved from the merged per-unit
 records, so a full build does not depend on batching and an incremental run
@@ -398,6 +398,7 @@ can re-derive what it touches (§5).
 | 10 | Graph analysis | `graph_analyzer.py` | graph build and statistics |
 | 11 | Community detection | `community_detector.py`, `domain/ingestion/community_clustering.py` | hierarchical Leiden (the clustering is pure, in the domain) and structured reports |
 | 12 | Indexing | `application/storage/indexing_manager.py` (+ `cross_run_merge.py`, `removal.py`, `reannotation.py`) | graph and vector stores; full build or delta |
+| 13 | Summary tree | `application/ingestion/summary_tree_stage.py`, `domain/ingestion/summary_tree.py` | only with `raptor` in `indexing.methodologies`: RAPTOR's tree over the stored text units, after indexing (§6.5) |
 
 The stage order lives in `DataIngestionPipeline.STAGE_CLASSES`; every stage
 gets its models and stores from the run's `Providers` bundle.

@@ -214,6 +214,10 @@ to its page map, and link it from the pages around it.
 - **Extension recipes** (new strategies, backends, evaluators, renderers, parsers, config sections) live in
   [docs/design.md §15 Extension Guide](./docs/design.md#15-extension-guide). Update the recipe there when the way to
   extend changes.
+- **Diagrams.** A change that adds, removes or renames a stage, a strategy or a methodology, or changes how a
+  strategy fuses its results, updates the diagrams that show it in the same pull request: the
+  `assets/*.drawio.png` files embed their draw.io source, so open the PNG in draw.io, edit it and export it again
+  as PNG with "Include a copy of my diagram" checked.
 
 **Korean pages.** User-facing documentation is in English. The Tier-1 pages, the ones most Korean readers use, have
 a Korean twin `<page>.ko.md` next to the English page. The one list of them is `TRANSLATED_PAGES` in
