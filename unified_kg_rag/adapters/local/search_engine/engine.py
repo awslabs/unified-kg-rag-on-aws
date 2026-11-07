@@ -305,20 +305,33 @@ class SQLiteSearchEngine:
 
     # Written in this process (see DataIngestionPipeline._stores_in_process).
     in_process: ClassVar[bool] = True
+    # Messages name it so, not "OpenSearch" (search_engine.engine_name).
+    engine_name: ClassVar[str] = "embedded SQLite search engine"
     # Whether two analyzer names tokenize alike here, so a live field mapped
     # with the other name takes this run's text (OpenSearchIndexer.
     # check_index_settings): "standard" and "cjk", say.
     analyzes_alike = staticmethod(analyzes_alike)
 
-    def __init__(self, path: str | Path, *, timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self, path: str | Path, *, timeout_seconds: float = 30.0, create: bool = True
+    ) -> None:
         """Args:
         path: Database file (created on first use with its directory), or
             ``":memory:"`` for a private in-memory one.
         timeout_seconds: How long a statement waits for another writer's
             lock before ``StoreTimeoutError``.
+        create: Whether a missing file is created. A reader (the retriever)
+            passes ``False``: while the file does not exist (nothing was
+            ingested there) it reads an empty in-memory database, with a
+            WARNING naming the path, instead of leaving an empty file behind
+            (in the working directory, for the default relative path); once
+            ingestion wrote the file it reads that.
         """
         self.path = str(path)
         self.timeout_seconds = timeout_seconds
+        self._create = create
+        # The empty database a reader reads while the file is missing.
+        self._empty: sqlite3.Connection | None = None
         self._memory = self.path == ":memory:"
         # An in-memory database is private to this engine: so are its cached
         # indices, freed when the engine closes or is collected.
@@ -362,6 +375,25 @@ class SQLiteSearchEngine:
     @property
     def connection(self) -> sqlite3.Connection:
         with self._lock:
+            if (
+                self._connection is None
+                and not self._create
+                and not self._memory
+                and not Path(self.path).exists()
+            ):
+                if self._empty is None:
+                    logger.warning(
+                        "No embedded vector store at '%s' "
+                        "(providers.vector.sqlite_path; a relative path resolves "
+                        "against the config file's directory): nothing was "
+                        "ingested there, so the search finds nothing. Run "
+                        "run-ingestion with this configuration first.",
+                        self._cache_path,
+                    )
+                    self._empty = connect(
+                        ":memory:", timeout_seconds=self.timeout_seconds, schema=_SCHEMA
+                    )
+                return self._empty
             if self._connection is None:
                 with self._errors("open the database"):
                     connection = connect(
@@ -404,6 +436,9 @@ class SQLiteSearchEngine:
     def close(self) -> None:
         """Close the connection (reopened on next use). Never raises."""
         with self._lock:
+            if self._empty is not None:
+                self._empty.close()
+                self._empty = None
             if self._connection is not None:
                 try:
                     self._connection.close()

@@ -16,10 +16,18 @@ and index mapping once per pipeline run (``shared.store_lookups``). An
 engine without one is asked every time. An ``analyzes_alike(first, second)``
 callable says whether two analyzer names tokenize alike on the engine: a live
 text field mapped with either then takes the other's text (an engine without
-one compares the names).
+one compares the names). An ``engine_name`` attribute names the engine in
+messages (:func:`engine_name`; ``OpenSearch`` without one).
 """
 
 from typing import Any, Protocol
+
+
+def engine_name(client: object) -> str:
+    """How messages name ``client``'s engine: its ``engine_name``, else
+    ``OpenSearch``."""
+    name = getattr(client, "engine_name", None)
+    return name if isinstance(name, str) and name else "OpenSearch"
 
 
 class SearchEngineClient(Protocol):

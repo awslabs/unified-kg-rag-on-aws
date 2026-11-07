@@ -1755,3 +1755,38 @@ def test_build_record_carries_the_community_counters(tmp_path: Path) -> None:
         assert stored["communities"]["communities_now"] == 6
         assert "community_change" not in stored
     indexer.close()
+
+
+def test_a_reader_creates_no_file_where_nothing_was_ingested(
+    tmp_path: Path, caplog
+) -> None:
+    # A query in a directory without stores left an empty vector.sqlite3
+    # there (the default path is relative to the working directory).
+    import logging
+
+    path = tmp_path / "stores" / "vector.sqlite3"
+    reader = SQLiteSearchEngine(path, create=False)
+    with caplog.at_level(logging.WARNING):
+        assert reader.get_index_name_by_alias(ALIAS) is None
+    assert not path.exists() and not path.parent.exists()
+    assert "No embedded vector store at" in caplog.text
+    assert "providers.vector.sqlite_path" in caplog.text
+    # Once ingestion wrote the file, the same reader reads it.
+    writer = SQLiteSearchEngine(path)
+    writer.create_index(INDEX, MAPPING)
+    writer.update_alias(ALIAS, INDEX)
+    writer.bulk_index(INDEX, DOCS)
+    assert reader.get_index_name_by_alias(ALIAS) == INDEX
+    assert _ids(reader, {"match_all": {}}) == ["a", "b", "c"]
+    reader.close()
+    writer.close()
+
+
+def test_messages_name_the_embedded_engine_not_opensearch(tmp_path: Path) -> None:
+    # Local-mode refusals and retrieval logs said "The OpenSearch index".
+    from unified_kg_rag.adapters.storage.search_engine import engine_name
+
+    assert engine_name(SQLiteSearchEngine(tmp_path / "v.sqlite3")) == (
+        "embedded SQLite search engine"
+    )
+    assert engine_name(object()) == "OpenSearch"

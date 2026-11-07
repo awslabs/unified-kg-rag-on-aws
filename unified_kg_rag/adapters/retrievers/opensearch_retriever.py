@@ -33,7 +33,10 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     source_kinds_values,
     union_filter_fields,
 )
-from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
+from unified_kg_rag.adapters.storage.search_engine import (
+    SearchEngineClient,
+    engine_name,
+)
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_key
@@ -337,7 +340,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         start_time = time.time()
         query_preview = text_digest(query.query)
         logger.info(
-            "OpenSearch retrieval started - query: %s ('%s')",
+            "%s retrieval started - query: %s ('%s')",
+            engine_name(self._opensearch_client),
             query_preview,
             query.search_type.value,
         )
@@ -418,7 +422,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             processing_time = time.time() - start_time
 
             logger.info(
-                "OpenSearch retrieval completed - retrieved: %s results (%.2fs)",
+                "%s retrieval completed - retrieved: %s results (%.2fs)",
+                engine_name(self._opensearch_client),
                 len(final_results),
                 processing_time,
             )
@@ -431,12 +436,15 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             # masquerading as "0 results"; degrade only on transient ones.
             if is_fatal_retrieval_error(e):
                 logger.error(
-                    "OpenSearch retrieval failed (fatal): %s", e, exc_info=True
+                    "%s retrieval failed (fatal): %s",
+                    engine_name(self._opensearch_client),
+                    e,
+                    exc_info=True,
                 )
                 raise
             logger.error(
-                "OpenSearch retrieval failed (transient, degrading to empty "
-                "results): %s",
+                "%s retrieval failed (transient, degrading to empty results): %s",
+                engine_name(self._opensearch_client),
                 e,
                 exc_info=True,
             )
@@ -993,7 +1001,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         stored = f"model '{stored_model}'" if stored_model else "an unrecorded model"
         shown_dimensions = ", ".join(str(d) for d in sorted(stored_dimensions))
         raise ConfigurationError(
-            f"The OpenSearch index '{index_name}' holds embeddings of {stored} "
+            f"The {engine_name(self._opensearch_client)} index '{index_name}' holds embeddings of {stored} "
             f"(dimension {shown_dimensions or 'unknown'}), but queries embed with "
             f"'{model}' (dimension {dimension}), so its vector search would fail "
             "or rank by unrelated vectors. Query with the embedding model and "

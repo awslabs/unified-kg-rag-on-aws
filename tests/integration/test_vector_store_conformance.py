@@ -768,8 +768,14 @@ def test_incremental_write_refuses_other_languages_or_an_untracked_build(
     # incrementally, nor is an index without _meta (an earlier release's).
     indexer.set_doc_status_tracking(False)
     _write(harness, "text_units", "index", _text_units())
-    with pytest.raises(ConfigurationError, match="registry off"):
+    with pytest.raises(ConfigurationError, match="registry off") as refused:
         indexer.check_index_settings("default")
+    # Named for the engine the harness runs (not "OpenSearch" on SQLite).
+    from unified_kg_rag.adapters.storage.search_engine import engine_name
+
+    assert str(refused.value).startswith(
+        f"The {engine_name(indexer.opensearch_client)} index "
+    )
     client = indexer.opensearch_client
     index_name = client.get_index_name_by_alias(
         indexer._get_name(

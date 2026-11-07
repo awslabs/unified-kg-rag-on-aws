@@ -26,7 +26,10 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     ATTRIBUTE_KEY_PREFIX,
     IndexLimits,
 )
-from unified_kg_rag.adapters.storage.search_engine import SearchEngineClient
+from unified_kg_rag.adapters.storage.search_engine import (
+    SearchEngineClient,
+    engine_name,
+)
 from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
@@ -464,6 +467,11 @@ class OpenSearchIndexer(VectorIndexer):
         self.opensearch_client.close()
 
     @property
+    def _engine(self) -> str:
+        """The engine as messages name it (OpenSearch, or the embedded one)."""
+        return engine_name(self.opensearch_client)
+
+    @property
     def in_process(self) -> bool:
         """Whether its search engine is embedded in this process (SQLite)."""
         return getattr(self.opensearch_client, "in_process", False) is True
@@ -815,7 +823,7 @@ class OpenSearchIndexer(VectorIndexer):
                 )
                 stored_dimensions = ", ".join(str(d) for d in sorted(dimensions))
                 raise ConfigurationError(
-                    f"The OpenSearch index '{index_name}' holds embeddings of "
+                    f"The {self._engine} index '{index_name}' holds embeddings of "
                     f"{stored} (dimension {stored_dimensions or 'unknown'}), but "
                     f"this run embeds with '{expected[META_MODEL]}' (dimension "
                     f"{expected[META_DIMENSION]}). An incremental run embeds only "
@@ -828,14 +836,14 @@ class OpenSearchIndexer(VectorIndexer):
             mismatches = self._text_field_mismatches(expected_properties, properties)
             if META_MODEL not in meta and META_DIMENSION not in meta:
                 raise ConfigurationError(
-                    f"The OpenSearch index '{index_name}' records no embedding "
+                    f"The {self._engine} index '{index_name}' records no embedding "
                     "settings: an earlier release built it, and this release "
                     "does not read its indices. Re-run once with "
                     "indexing.reset: true to rebuild the stores."
                 )
             if mismatches:
                 raise ConfigurationError(
-                    f"The OpenSearch index '{index_name}' was built for other "
+                    f"The {self._engine} index '{index_name}' was built for other "
                     f"language settings: {'; '.join(mismatches)}. An incremental "
                     "run writes only new and changed documents into the live "
                     "index, whose field analyzers cannot change. Re-run once with "
@@ -846,7 +854,7 @@ class OpenSearchIndexer(VectorIndexer):
                 )
             if meta.get(_META_DOC_STATUS) is False:
                 raise ConfigurationError(
-                    f"The OpenSearch index '{index_name}' was built by a run with "
+                    f"The {self._engine} index '{index_name}' was built by a run with "
                     "the doc-status registry off, so the registry does not "
                     "describe the documents it holds: an incremental run would "
                     "keep documents the registry does not list and skip ones it "
@@ -905,7 +913,7 @@ class OpenSearchIndexer(VectorIndexer):
         mapped = _mapped_disabled_objects(expected, live)
         if mapped:
             raise ConfigurationError(
-                f"The OpenSearch index '{index_name}' maps "
+                f"The {self._engine} index '{index_name}' maps "
                 f"{', '.join(repr(name) for name in mapped)} field by field: an "
                 "earlier build mapped each seed property key on its first "
                 "write, so a later value of another type, a string over 32 KB "
@@ -924,7 +932,7 @@ class OpenSearchIndexer(VectorIndexer):
         ]
         if retyped:
             raise ConfigurationError(
-                f"The OpenSearch index '{index_name}' maps fields otherwise: "
+                f"The {self._engine} index '{index_name}' maps fields otherwise: "
                 f"{'; '.join(retyped)}. A dynamic mapping typed them on a "
                 "first write, and every later value of another form fails to "
                 "write; a live index's field types cannot change. Re-run once "

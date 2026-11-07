@@ -916,6 +916,10 @@ From a `main` checkout (formats and keys no release had):
   naming `processing.translation.source_language`, when its script disagrees with the setting: a Korean, Japanese
   or Chinese corpus under the default `en` was extracted with prompts asking for English and analyzed as English
   without a word. `run-prompt-tuning` writes the `source_language` the sample reads as into its output (#PR).
+- `backend: local`: the refusals and retrieval logs of the embedded vector store name it ("The embedded SQLite search
+  engine index ...") instead of OpenSearch, and a query where nothing was ingested reads an empty store with a
+  WARNING naming `providers.vector.sqlite_path` instead of creating an empty `vector.sqlite3` (in the working
+  directory, for the default path) (#PR).
 - `run-ingestion` failures say why: a run a stage failed names the first failed stage's error (it named the stage
   alone; the cause was only in the logs) and prints the next step, the pipeline id to resume with; and a run that
   writes vectors embeds one probe text before its first model stage and stops (exit 2) when the model returns
