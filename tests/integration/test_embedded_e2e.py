@@ -56,6 +56,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGInput,
     RAGOutput,
 )
+from unified_kg_rag.domain.ingestion.report_references import report_cited_ids
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
@@ -813,3 +814,57 @@ def test_an_incremental_run_at_the_shard_cap_writes_into_its_live_indices(
     with pytest.raises(StoreRequestRejectedError, match="max_shards_per_node"):
         _ingest(built, _providers(built, server, encoder), source, tmp_path / "run-3")
     assert len(server.chat_models) == calls
+
+
+def test_a_global_answers_report_sources_name_the_records_their_findings_cite(
+    tmp_path: Path, no_aws
+) -> None:
+    # The findings' [Data: ...] references were resolved to record ids at
+    # indexing and then dropped: a report source could not say which
+    # entities and relationships its findings rest on.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+
+    def respond(system: str, human: str) -> str:
+        if "community analysis" in system:
+            return stages._REPORT.replace(
+                "Vendor works with Buyer and Depot.",
+                "Vendor works with Buyer and Depot "
+                "[Data: Entities (1, 2); Relationships (1, +more)].",
+            )
+        return _respond(system, human)
+
+    server = FakeOllama(respond, ANSWER, DIM)
+    providers = _providers(config, server, FakeCrossEncoder("synthetic-reranker"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+    context = _ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    os_config = config.indexing.opensearch
+    stored = {
+        prefix: {hit["_id"] for hit in _stored(config, providers, prefix)}
+        for prefix in (
+            os_config.entities_index_prefix,
+            os_config.relationships_index_prefix,
+        )
+    }
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        out = _ask(chain, SearchStrategy.GLOBAL)
+    finally:
+        chain.close()
+    reports = [
+        source["metadata"]
+        for source in out.sources
+        if source["metadata"].get("section_type") == "community"
+    ]
+    assert reports, out.sources
+    for metadata in reports:
+        entity_ids, relationship_ids = report_cited_ids(metadata)
+        assert len(entity_ids) == 2 and len(relationship_ids) == 1, metadata
+        assert set(entity_ids) <= stored[os_config.entities_index_prefix]
+        assert set(relationship_ids) <= stored[os_config.relationships_index_prefix]
+        # The references left the searched text.
+        assert "[Data:" not in metadata["full_content"]

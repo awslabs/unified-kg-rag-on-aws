@@ -39,6 +39,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KINDS,
 )
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
+from unified_kg_rag.domain.ingestion.report_references import REPORT_FINDINGS_FIELD
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     SUMMARY_TREE_META,
@@ -1142,6 +1143,11 @@ class OpenSearchIndexer(VectorIndexer):
             "max_cut_depth": max_cut_depth(report),
             "parent_community_id": report.parent_community_id,
             "child_community_ids": list(report.child_community_ids),
+            # The findings with the record ids each cites (report_cited_ids),
+            # unindexed: their text is searched in full_content.
+            REPORT_FINDINGS_FIELD: [
+                finding.model_dump(mode="json") for finding in report.findings
+            ],
         }
 
     def index_community_reports(
@@ -3416,6 +3422,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "max_cut_depth": {"type": "integer"},
                 "parent_community_id": {"type": "keyword"},
                 "child_community_ids": {"type": "keyword"},
+                REPORT_FINDINGS_FIELD: {"type": "object", "enabled": False},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )

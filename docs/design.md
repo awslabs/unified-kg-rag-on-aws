@@ -709,7 +709,13 @@ gets its models and stores from the run's `Providers` bundle.
   that input, so `report_references.split_data_references` takes them out
   of the prose and the finding keeps the record ids
   (`CommunityFinding.entity_ids` / `relationship_ids`); claims and
-  sub-community reports are not numbered.
+  sub-community reports are not numbered. The stored report keeps its
+  findings, ids included, in an unindexed field (`findings`, mapped
+  `enabled: false`; an earlier index gets it in the preflight's additive
+  mapping update), so a retrieved report and its reported source name the
+  records each finding rests on (`report_references.report_cited_ids`).
+  An incremental commit points them at the ids the cross-run merge kept,
+  as it does a community's members. A report stored before cites none.
 - **Sub-community roll-up (deviation).** When a parent's own context was
   cut, its children's report summaries (biggest child first, each with its
   rating) are added to that context under a second budget of
