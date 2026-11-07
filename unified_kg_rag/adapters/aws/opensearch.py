@@ -861,7 +861,9 @@ class OpenSearchClient:
         if self.client.indices.exists(index=index):
             if exist_ok:
                 return
-            raise ValueError(f"Index '{index}' already exists")
+            # As the local engine raises it; passed through, not logged as
+            # an unexpected error.
+            raise AWSServiceError(f"Index '{index}' already exists")
         try:
             self.client.indices.create(index=index, body=body)
         except RequestError as e:

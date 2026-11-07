@@ -11,6 +11,7 @@ from datasketch import MinHash, MinHashLSH
 from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
 from unified_kg_rag.domain.models import Document
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.utils import default_max_workers
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
@@ -99,7 +100,7 @@ class DirectoryLoader:
                 f"Directory does not exist: '{self.source_directory}'"
             )
         if not self.source_directory.is_dir():
-            raise ValueError(
+            raise ConfigurationError(
                 f"Path is not a valid directory: '{self.source_directory}'"
             )
 

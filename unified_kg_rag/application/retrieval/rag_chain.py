@@ -157,6 +157,7 @@ from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import (
     configure_event_loop,
+    error_digest,
     strip_embedding_fields,
     text_digest,
 )
@@ -801,8 +802,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             logger.warning(
                 "Strategy auto-selection failed, using '%s' as fallback: %s",
                 strategy.value,
-                e,
+                error_digest(e),
             )
+            logger.debug("Strategy auto-selection error: %s", e)
 
         state["resolved_strategy"] = strategy
         return state
@@ -977,7 +979,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.warning("Query processing failed: %s", e)
+            logger.warning("Query processing failed: %s", error_digest(e))
+            logger.debug("Query processing error: %s", e)
             return ProcessedQuery(
                 original_query=original_query,
                 standalone_query=standalone_query,
@@ -1055,7 +1058,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.warning("Follow-up rewrite failed; using the query as is: %s", e)
+            logger.warning(
+                "Follow-up rewrite failed; using the query as is: %s", error_digest(e)
+            )
+            logger.debug("Follow-up rewrite error: %s", e)
             return None
         return self._usable_rewrite(str(rewritten))
 
@@ -1401,7 +1407,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.warning("Context optimization failed: %s", e, exc_info=True)
+            logger.warning("Context optimization failed: %s", error_digest(e))
+            logger.debug("Context optimization error: %s", e, exc_info=True)
             return OptimizedContext(
                 sections=[],
                 total_tokens=0,
@@ -1947,8 +1954,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             logger.error(
                 "RAG chain execution failed for query %s: %s",
                 text_digest(rag_input.query),
-                e,
+                error_digest(e),
             )
+            logger.debug("RAG chain execution error: %s", e)
             # The degraded answer is still a failed query: mark its span so.
             span.record_exception(e)
             span.set_error(type(e).__name__)
@@ -2171,9 +2179,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             logger.error(
                 "Failed to save conversation memory for conversation '%s': %s",
                 output.conversation_id,
-                e,
-                exc_info=True,
+                error_digest(e),
             )
+            logger.debug("Conversation memory error: %s", e, exc_info=True)
 
     # Streaming yields answer TEXT chunks (str), not RAGOutput: callers of a
     # streamed answer want tokens as they arrive. Sources/metadata stay on the
@@ -2378,15 +2386,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 logger.error(
                     "RAG stream failed for query %s: %s",
                     text_digest(rag_input.query),
-                    e,
+                    error_digest(e),
                 )
                 raise
             logger.error(
                 "RAG stream failed for query %s after %s chunk(s): %s",
                 text_digest(rag_input.query),
                 len(chunks),
-                e,
+                error_digest(e),
             )
+            logger.debug("RAG stream error: %s", e)
             # Mirror ainvoke's degraded answer. If part of the answer was
             # already delivered, append the notice so the truncation is visible.
             yield f"\n\n{DEFAULT_ERROR_MESSAGE}" if delivered else DEFAULT_ERROR_MESSAGE

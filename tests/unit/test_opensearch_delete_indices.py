@@ -100,18 +100,24 @@ def test_a_failed_batch_does_not_stop_the_rest_and_is_reported() -> None:
     assert "cluster unavailable" in message
 
 
-def test_create_index_keeps_an_existing_index_unless_told_not_to() -> None:
+def test_create_index_keeps_an_existing_index_unless_told_not_to(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     client, backing = _client()
     backing.indices.exists.return_value = True
 
     client.create_index("graphrag-entities-default-20260101120000000", {})
     backing.indices.create.assert_not_called()
 
-    with pytest.raises(AWSServiceError, match="already exists"):
+    with pytest.raises(AWSServiceError, match="already exists") as raised:
         client.create_index(
             "graphrag-entities-default-20260101120000000", {}, exist_ok=False
         )
     backing.indices.create.assert_not_called()
+    # Raised as itself (as the local engine does), not wrapped and logged
+    # with a traceback as an unexpected error.
+    assert str(raised.value).startswith("Index ")
+    assert "Unexpected error" not in caplog.text
 
 
 _NEW_INDEX = "graphrag-claims-default-20260101120000000"

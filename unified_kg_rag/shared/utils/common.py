@@ -125,6 +125,13 @@ def text_digest(text: str | None) -> str:
     return f"len={len(text)} sha={compute_hash(text, length=8)}"
 
 
+def error_digest(error: BaseException) -> str:
+    """Log-safe stand-in for an error at INFO and above: its type and
+    ``text_digest`` of its message, which may quote a model's reply, an
+    answer, a query or corpus text. Log the error itself at DEBUG."""
+    return f"{type(error).__name__} ({text_digest(str(error))})"
+
+
 def ensure_list(data: Any, inner_key: str | None = None) -> list[Any]:
     if isinstance(data, dict):
         data = data.get(inner_key, []) if inner_key else data

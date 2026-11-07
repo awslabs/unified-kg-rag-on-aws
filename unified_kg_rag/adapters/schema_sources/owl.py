@@ -243,7 +243,7 @@ def read_ontology(
     for file, format_ in files:
         if is_s3_uri(file.location):
             if reader is None:
-                raise ValueError("read_ontology needs a reader for S3 files")
+                raise SchemaSourceError("read_ontology needs a reader for S3 files")
             data = reader.read(file, max_bytes=options.max_bytes)
         else:
             data = rdf_files.read_local(Path(file.location), terms=ONTOLOGY_TERMS)
