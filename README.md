@@ -8,20 +8,20 @@
 
 <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS logo" width="120" align="right">
 
-Unified Knowledge Graph RAG on AWS turns a large, multilingual document collection into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, returning the source passages each answer used. It runs four published methods on one index: Microsoft GraphRAG, LightRAG, HippoRAG 2 and, opt-in, RAPTOR. You choose the method per question, not per deployment, and build only the methods you use. Beyond the papers it adds hybrid search (keyword, vector and graph, fused and reranked), incremental indexing that removes exactly what a deleted document stated, Korean and other non-English corpora, merging a knowledge graph you already have, and an evaluation CLI whose defaults are backed by published measurements. Try it locally in five minutes without an AWS account.
+Unified Knowledge Graph RAG on AWS turns a large, multilingual document collection into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, citing each answer's evidence with `[n]` markers that name its documents and pages. It runs four published methods on one index: Microsoft GraphRAG, LightRAG, HippoRAG 2 and, opt-in, RAPTOR. You choose the method per question, not per deployment, and build only the methods you use. Beyond the papers it adds hybrid search (keyword, vector and graph, fused and reranked), incremental indexing that removes exactly what a deleted document stated, Korean and other non-English corpora, merging a knowledge graph you already have, and an evaluation CLI whose defaults are backed by published measurements. Try it locally in five minutes without an AWS account.
 
 **For** teams who want graph RAG (retrieval-augmented generation over a knowledge graph) in their own AWS account and need to pick a method, measure it and keep the index current as documents change.
 
-<!-- Console demo GIF goes here, once the console app lands (at most 5 MB and 15 s, with a PNG fallback).
-Alt text: "Console demo: a question about two companies is answered with the mix strategy; the answer lists its source passages, and the panel shows the knowledge-graph neighbourhood and the strategy the router chose." -->
+<img src="./assets/console-demo.gif" alt="Console demo: a question answered with the auto strategy cites its sources as [n] markers; following a citation opens its provenance trail to the source passage and its place in the knowledge graph; then a strategy comparison with paired intervals, and the dashboard of time, tokens and cost per strategy." width="800">
 
 ## Why this framework
 
-- **Four methods on one index.** GraphRAG (community summaries), LightRAG (dual-level keywords), HippoRAG 2 (Personalized PageRank over entities and passages) and RAPTOR (a summary tree, opt-in) share ingestion, indexing, caching and search; only the retrieval algorithm differs. `indexing.methodologies` builds only what the selected ones read ([Methodology profiles](./docs/concepts/overview.md#methodology-profiles)), and every answer returns the source passages that were in the model's context.
+- **Four methods on one index.** GraphRAG (community summaries), LightRAG (dual-level keywords), HippoRAG 2 (Personalized PageRank over entities and passages) and RAPTOR (a summary tree, opt-in) share ingestion, indexing, caching and search; only the retrieval algorithm differs. `indexing.methodologies` builds only what the selected ones read ([Methodology profiles](./docs/concepts/overview.md#methodology-profiles)), and every answer cites its evidence with `[n]` markers that name the documents and PDF pages behind each number ([Citations](./docs/guides/query.md#citations)).
 - **Hybrid search.** BM25, vector search and Neptune graph traversal, fused with Reciprocal Rank Fusion and reranked with a Bedrock rerank model. `simple` and `naive` read no graph, and `global` maps community reports instead ([Retrieval](./docs/concepts/retrieval.md)).
 - **Incremental indexing.** With the document-status registry on, only new and changed documents are re-indexed and merged into the live graph, and deleting a document removes only what no other document states ([Incremental indexing](./docs/guides/incremental.md)).
 - **Bring your own knowledge graph.** Seed graphs (JSONL, CSV or RDF instance data) merge a graph you already have into the extracted one as virtual documents: the documents stay canonical, and the seed adds descriptions, properties, IRIs and edges ([Seed graphs](./docs/guides/seed-graphs.md)).
 - **Multilingual.** Optional translation at indexing and query time, per-language analyzers (`nori` for Korean) and multilingual keyword extraction ([Multilingual corpora](./docs/guides/multilingual.md)).
+- **Use it from agents and a browser.** A read-only MCP server (`run-mcp-server`, the `mcp` extra) serves an index to agents as search, answer and graph tools, and a local web console (`run-console`, the `console` extra) asks with citations, ingests, evaluates and explores the graph ([MCP server](./docs/guides/mcp.md), [Console](./docs/guides/console.md)).
 - **Measured, not assumed.** `run-eval` scores answers with LLM-free metrics by default (answer match, retrieval hit rate, graph coverage) and opt-in LLM judges (RAGAS, assertions), compares strategies with paired intervals and meters each query's cost; the defaults it set are on [Defaults and evidence](./docs/concepts/defaults-and-evidence.md) ([Evaluation](./docs/guides/evaluate.md)).
 
 How this compares with the papers and with Amazon Bedrock Knowledge Bases GraphRAG: [Overview](./docs/concepts/overview.md#compared-with-amazon-bedrock-knowledge-bases-graphrag).
@@ -32,7 +32,7 @@ How this compares with the papers and with Amazon Bedrock Knowledge Bases GraphR
 
 This runs everything on one machine: embedded SQLite stores and [Ollama](https://ollama.com) models. You need Python 3.11–3.12, [uv](https://docs.astral.sh/uv/) and Ollama.
 
-**1. Install** (the `local` extra installs PyTorch, several GB on Linux; [CPU-only build](./docs/getting-started/local.md#install)):
+**1. Install** (the `local` extra adds the Ollama and OpenAI-compatible clients, no PyTorch; the cross-encoder reranker is the `cross-encoder` extra: [Getting started locally](./docs/getting-started/local.md#install)):
 
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
@@ -70,7 +70,7 @@ EOF
 UKR__LOGGING__LEVEL=WARNING uv run run-ingestion --backend local --source-directory ./sample-corpus
 ```
 
-**5. Ask a question** (`--verbose` also lists the sources the answer used; the first query downloads a small rerank model from Hugging Face):
+**5. Ask a question** (the answer cites its sources as `[n]`, and `--verbose` lists every source with its score; without the `cross-encoder` extra the query runs with reranking off, logged once):
 
 ```bash
 UKR__LOGGING__LEVEL=WARNING uv run run-rag --backend local --search-strategy mix --verbose \
@@ -91,18 +91,18 @@ Local mode is for development and evaluation only: the embedded stores serve one
 
 ## Architecture
 
-![Architecture at a glance: documents and seed graphs go through the 13-stage ingestion into Neptune, OpenSearch and DynamoDB; the strategies of four methods, iterative and the auto router answer from the same indexes with Bedrock models](./assets/architecture-overview.drawio.png)
+![Architecture at a glance: documents and seed graphs go through the 13-stage ingestion into Neptune, OpenSearch and DynamoDB; the strategies of four methods, structured graph queries, iterative and the auto router answer from the same indexes with Bedrock models, called from run-rag, Python, the MCP server or the web console, and each answer cites its documents and pages](./assets/architecture-overview.drawio.png)
 
 Ingestion is a resumable 13-stage pipeline: parse, chunk, extract entities and relationships, merge duplicate entities, detect communities with LLM-written reports, index, and for `raptor` build a summary tree. It writes to Neptune and OpenSearch on AWS, or to embedded SQLite or containers in local mode. Every strategy then runs in one chain over the same indexes and token budget; pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
 
 | Method | Strategies | Strong at |
 |---|---|---|
-| GraphRAG (community summaries) | `local`, `global`, `drift`, `simple`, `structured` | Thematic questions over the whole corpus (`global`, `drift`), questions about specific entities (`local`), and counts, rankings and paths the graph store computes (`structured`) |
+| GraphRAG (community summaries) | `local`, `global`, `drift`, `simple` | Thematic questions over the whole corpus (`global`, `drift`) and questions about specific entities (`local`) |
 | LightRAG (dual-level keywords) | `mix`, `hybrid`, `naive` | Keyword-driven lookups, and a fast chunk-only baseline (`naive`) |
 | HippoRAG 2 (Personalized PageRank) | `ppr` | Multi-hop questions at the lowest cost: one LLM call a query |
 | RAPTOR (summary tree, opt-in) | `tree` | A cheap index without graph extraction; on multi-hop questions it answered better than `naive`, below the graph strategies ([evidence](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree)) |
 
-`iterative` wraps `mix` or `local` with bounded follow-up rounds on the bridge entities of a multi-hop question. `auto`, the default, lets an LLM router pick one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `iterative`). [Retrieval](./docs/concepts/retrieval.md#search-strategies--when-to-use-which) explains when to use which strategy, and the [Design Doc](./docs/design.md) the layers, algorithms and data model.
+`structured` (opt-in, not one of the papers' methods) answers counts, rankings, lists and paths from a checked, read-only graph query on any namespace that holds the graph, and falls back to `local` without one ([Structured queries](./docs/guides/structured-queries.md)). `iterative` wraps `mix` or `local` with bounded follow-up rounds on the bridge entities of a multi-hop question. `auto`, the default, lets an LLM router pick one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `iterative`). [Retrieval](./docs/concepts/retrieval.md#search-strategies--when-to-use-which) explains when to use which strategy, and the [Design Doc](./docs/design.md) the layers, algorithms and data model.
 
 To do all of this in a browser on your machine, start the local [console](./docs/guides/console.md) (`run-console`; `uv run python console/demo/demo.py --models fake` tries it on a synthetic corpus).
 
