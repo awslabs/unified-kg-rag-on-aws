@@ -704,6 +704,7 @@ tasks read it, and the extras the image needs:
 | `schema_source` of kind `owl` | Ingestion, query and evaluation tasks | `ontology` | [Ontology schema in the image](#ontology-schema-in-the-image) |
 | `schema_source` of kind `file` or `owl` in S3 | Ingestion, query and evaluation tasks | `ontology` for `owl` | [Schema sources in S3](#schema-sources-in-s3) |
 | `processing.seed_graphs` | Ingestion task only | `ontology` for kind `rdf` | [Seed graphs in the image or S3](#seed-graphs-in-the-image-or-s3) |
+| `ragas` in `evaluation.enabled_evaluators` (or `run-eval --evaluators`) | Query task (`run-eval`) | `eval` | Build the image with `--build-arg UV_EXTRAS="--extra eval"` ([Evaluators](guides/evaluate.md#evaluators)) |
 
 A changed file in the image takes effect once the new image is pushed and
 deployed; a changed S3 object, at the next task start.
