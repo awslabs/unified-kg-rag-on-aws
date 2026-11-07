@@ -148,8 +148,20 @@ def test_missing_auth_still_fails_fast_by_default() -> None:
 
 
 @pytest.mark.parametrize(
-    "auth", [{"use_iam": True}, {"username": "admin", "password": "pw"}]
+    "auth",
+    [
+        {"use_iam": True},
+        {"username": "admin", "password": "pw"},
+        # A password alone was dropped without a word.
+        {"password": "pw"},
+    ],
 )
 def test_anonymous_auth_rejects_other_auth(auth: dict) -> None:
     with pytest.raises(ValueError, match="allow_anonymous cannot be combined"):
         OpenSearchConfig(allow_anonymous=True, **auth)
+
+
+@pytest.mark.parametrize("basic", [{"username": "admin"}, {"password": "pw"}])
+def test_iam_auth_rejects_basic_credentials_it_would_ignore(basic: dict) -> None:
+    with pytest.raises(ValueError, match="use_iam cannot be combined"):
+        OpenSearchConfig(use_iam=True, **basic)

@@ -315,7 +315,7 @@ def apply_backend_preset(data: dict[str, Any]) -> dict[str, Any]:
 
     Only ``backend: local`` has a preset; ``aws`` (the default) is the model
     defaults themselves. Values the config sets win, key by key. A config that
-    authenticates to OpenSearch (``username`` or ``use_iam``) does not get the
+    authenticates to OpenSearch (``username``, ``password`` or ``use_iam``) does not get the
     preset's anonymous access, which cannot be combined with either.
     """
     backend = data.get("backend", Backend.AWS)
@@ -326,7 +326,9 @@ def apply_backend_preset(data: dict[str, Any]) -> dict[str, Any]:
     preset = copy.deepcopy(LOCAL_PRESET)
     opensearch = (data.get("aws") or {}).get("opensearch") or {}
     if isinstance(opensearch, dict) and (
-        opensearch.get("username") or opensearch.get("use_iam")
+        opensearch.get("username")
+        or opensearch.get("password")
+        or opensearch.get("use_iam")
     ):
         preset["aws"]["opensearch"].pop("allow_anonymous")
     providers = data.get("providers") or {}

@@ -169,10 +169,10 @@ did-you-mean hint.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `env_name` | `dev` | Name prefix: `dev` keeps the bare names, any other value scopes them (`GraphRagProd*`, `prod-graphrag-*`) |
+| `env_name` | `dev` | Name prefix: `dev` keeps the bare names, any other value scopes them (`GraphRagProd*`, `prod-graphrag-*`). Synth fails when a name it makes is too long: the guardrail name (50 characters) holds an `env_name` of up to 16 characters in any region (21 in `us-east-1`), the cache bucket name (63) up to 20 |
 | `network_mode` | `private` | `private`: isolated subnets and VPC endpoints, no NAT; `public`: subnets with NAT egress |
 | `vpc_id` | — | Reuse a VPC. The stack adds no endpoints or subnets to it (synth lists what it needs): `private` needs `PRIVATE_ISOLATED` subnets, the S3/DynamoDB gateway endpoints and private-DNS interface endpoints for `bedrock`, `bedrock-runtime`, `bedrock-agent-runtime`, `ecr.api`, `ecr.dkr`, `logs` (and `xray` with tracing, `secretsmanager` with `observability_secret_arn`, `sts` with `sts_endpoint`); `public` needs `PRIVATE_WITH_EGRESS` subnets |
-| `max_azs` | `2` | AZs of a created VPC; at least 2 (Neptune needs two) |
+| `max_azs` | `2` | AZs of a created VPC; at least 2 (Neptune needs two). A synth without an account and region sees 2 AZs whatever this asks, so `max_azs=3` takes effect only with `CDK_DEFAULT_ACCOUNT` and `CDK_DEFAULT_REGION` set (or credentials) |
 | `sts_endpoint` | `false` | `private` mode: add the STS interface endpoint. Only an image config with `aws.bedrock.assumed_role_arn` calls STS (the task roles' credentials come from the ECS credentials endpoint, which needs none); such a config also needs `sts:AssumeRole` on that role, as a policy of your own on the task roles |
 | `bedrock_region` | deploy region | Bedrock runtime region (`UKR__AWS__BEDROCK__REGION_NAME`) and the guardrail stack's region. In `private` mode it must equal the deploy region |
 | `vpc_flow_logs` | `false` (dev) / `true` | VPC flow logs (created VPC only), kept `flow_log_retention_days` (default `731`) |
@@ -187,6 +187,8 @@ did-you-mean hint.
 | `backup_retention_days` | `7` | Neptune automated backups, 1-35 days ([Backup and restore](../docs/operations.md#backup-and-restore)) |
 | `neptune_maintenance_window` | `sun:20:00-sun:21:00` | Weekly Neptune maintenance window of the cluster and its instances (UTC, `ddd:hh24:mi-ddd:hh24:mi`, at least 30 minutes) ([Maintenance windows](../docs/operations.md#maintenance-windows)) |
 | `neptune_backup_window` | `18:00-19:00` | Daily Neptune backup window (UTC, `hh24:mi-hh24:mi`, at least 30 minutes, apart from the maintenance window) |
+| `neptune_audit_log` | `false` | Neptune audit logs: a cluster parameter group with `neptune_enable_audit_log=1`, exported to `/aws/neptune/cluster/<cluster id>/audit` (the CMK with `use_cmk`, `log_retention_days`). The parameter is static: reboot each instance after the deploy that turns it on, and the records start then |
+| `neptune_parameter_group_family` | `neptune1.4` | Family of that parameter group (`neptune_audit_log` only); it must match the cluster's engine version (1.4.x: `neptune1.4`; also `neptune1`, `neptune1.2`, `neptune1.3`), or the deploy fails |
 | `opensearch_instance` | `r6g.large.search` | OpenSearch data node type |
 | `opensearch_count` | `1` (dev) / `2` | Data nodes. Above 1: three dedicated masters (`opensearch_master_instance`, default `m6g.large.search`) and zone awareness over as many AZs as data nodes, up to 3 and the VPC's AZs; a domain in 2 AZs needs an even count. Moving a deployed domain to more AZs (e.g. to 3) is a blue/green deployment (every shard copied, slower for hours on a large domain): deploy it with no ingestion running |
 | `opensearch_volume_gib` | `50` | gp3 volume per data node; the free-storage alarm fires at 40% free |
@@ -394,7 +396,7 @@ for your region and sizes. What scales each service's cost:
 | Neptune | Provisioned instance-hours × `neptune_instances`, or Serverless NCU-hours (never below `MIN` per instance, so an idle cluster still bills `MIN`); storage, I/O, backups | `neptune_instance` or `neptune_serverless_ncu` (a low `MIN` for an environment idle most of the day), `neptune_instances`, I/O-Optimized storage when I/O is above about 25% of the Neptune bill ([Neptune I/O-Optimized storage](../docs/operations.md#neptune-io-optimized-storage)), `backup_retention_days`, tear down dev |
 | OpenSearch | Data node-hours × `opensearch_count`, three masters when above 1, gp3 storage per node | `opensearch_instance`, `opensearch_master_instance`, `opensearch_count` |
 | Fargate | vCPU, memory and disk above 20 GiB for the time tasks run | `fargate_cpu`, `fargate_memory`, `ingestion_ephemeral_storage_gib`, `ingestion_fargate_spot` (Spot price; an interruption repeats the interrupted stage), `fargate_cpu_architecture=arm64` (Graviton price) |
-| Interface endpoints (`private`) | Seven endpoints (one more each with tracing and with `observability_secret_arn`) × `max_azs` per AZ-hour, plus data | `max_azs`, or a reused VPC's endpoints |
+| Interface endpoints (`private`) | Six endpoints (one more each with tracing, with `observability_secret_arn` and with `sts_endpoint`) × `max_azs` per AZ-hour, plus data | `max_azs`, or a reused VPC's endpoints |
 | NAT gateways (`public`) | One per AZ per hour, plus data | `max_azs`, or `private` mode |
 | S3 | Checkpoints, corpus, access logs, noncurrent versions (the bucket is versioned) | 30-day expiry on `pipeline-runs/` (noncurrent versions there after 1 day, elsewhere after 30) |
 | DynamoDB | On-demand: one projected query of the namespace per run and one record per processed document; point-in-time recovery | Fewer, larger runs |
@@ -552,7 +554,7 @@ SUBNETS=$(echo "$INGEST" | jq -r '.NetworkConfiguration.AwsvpcConfiguration.Subn
 SECURITY_GROUPS=$(echo "$INGEST" | jq -r '.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups | join(",")')
 
 TASK_ARN=$(aws ecs run-task --region "$REGION" --cluster "$CLUSTER" \
-  --launch-type FARGATE --task-definition "$TASK_DEFINITION" \
+  --launch-type FARGATE --task-definition "$TASK_DEFINITION" --propagate-tags TASK_DEFINITION \
   --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
   --overrides '{"containerOverrides":[{"name":"app","command":["run-rag","--config-path","/app/config.yaml","--query","What are the main themes?","--search-strategy","global"]}]}' \
   --query 'tasks[0].taskArn' --output text)
@@ -562,7 +564,10 @@ aws logs tail /graphrag/tasks --region "$REGION" --since 30m
 ```
 
 The override must name the CLI (`run-rag ...`); the answer is in the task's
-log stream (`app/app/<task id>`). The query role cannot write or delete in
+log stream (`app/app/<task id>`). `--propagate-tags TASK_DEFINITION` gives the
+task the deployment's tags (`project`, `cost-center`, `owner`), so its Fargate
+cost is allocated with the stack's (the caller then also needs
+`ecs:TagResource` on the task, as the state machine role has for ingestion). The query role cannot write or delete in
 either store and has no DynamoDB access; do not run queries with the
 ingestion task definition. Add `"--metrics-sink","cloudwatch"` to the command
 to publish the query's latency, which the `QueryLatencyHigh` alarm and the
@@ -587,7 +592,7 @@ OVERRIDES=$(jq -nc \
   '{containerOverrides:[{name:"app",command:["run-eval","--config-path","/app/config.yaml","--data-path",$data,"--output-directory",$out,"--search-strategy","auto"]}]}')
 
 TASK_ARN=$(aws ecs run-task --region "$REGION" --cluster "$CLUSTER" \
-  --launch-type FARGATE --task-definition "$TASK_DEFINITION" \
+  --launch-type FARGATE --task-definition "$TASK_DEFINITION" --propagate-tags TASK_DEFINITION \
   --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS],assignPublicIp=DISABLED}" \
   --overrides "$OVERRIDES" \
   --query 'tasks[0].taskArn' --output text)

@@ -208,6 +208,24 @@ class OrchestrationStack(Stack):
         # SnsPublish grants sns:Publish only; publishing to an encrypted topic
         # also needs the key (SNS docs: kms:GenerateDataKey* + kms:Decrypt).
         self.topic_key.grant(self.state_machine, "kms:Decrypt", "kms:GenerateDataKey*")
+        # A RunTask that tags the task it creates (the propagated tags) is
+        # also authorized for ecs:TagResource on it (ECS "Grant permission to
+        # tag resources on creation"); EcsRunTask grants only RunTask. Scoped
+        # to tasks this RunTask creates in this deployment's cluster (by its
+        # fixed name: the cluster ARN would be another cross-stack export).
+        self.state_machine.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["ecs:TagResource"],
+                resources=[
+                    self.format_arn(
+                        service="ecs",
+                        resource="task",
+                        resource_name=f"{config.prefix}-cluster/*",
+                    )
+                ],
+                conditions={"StringEquals": {"ecs:CreateAction": "RunTask"}},
+            )
+        )
         CfnOutput(self, "StateMachineArn", value=self.state_machine.state_machine_arn)
 
     # ---------------------------------------------------------- ingest task
@@ -247,6 +265,10 @@ class OrchestrationStack(Stack):
                 ),
             ),
             assign_public_ip=False,
+            # The task carries the task definition's tags (project,
+            # cost-center, owner), so its Fargate cost is allocated with the
+            # rest of the deployment.
+            propagated_tag_source=ecs.PropagatedTagSource.TASK_DEFINITION,
             subnets=self.networking.app_subnets,
             security_groups=[self.networking.service_sg],
             container_overrides=[

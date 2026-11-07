@@ -52,6 +52,9 @@ bedrock_env = cdk.Environment(
 # differ, the data plane has no network route: every Bedrock call hangs, or no
 # task starts. Fail fast at synth with a clear message instead.
 config.check_deploy_region(deploy_region)
+# Physical names that embed env_name and the region have length limits that
+# CloudFormation would only report mid-deploy.
+config.check_physical_names(deploy_region, config.bedrock_region)
 
 stack_prefix = config.stack_prefix
 

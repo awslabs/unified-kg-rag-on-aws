@@ -47,6 +47,7 @@ from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
 from unified_kg_rag.shared.utils import (
     ensure_list,
     entity_key,
+    error_digest,
     generate_stable_id,
 )
 
@@ -193,7 +194,8 @@ class ClaimExtractor(BaseProcessor):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            logger.error("Error during claim extraction: %s", e)
+            logger.error("Error during claim extraction: %s", error_digest(e))
+            logger.debug("Claim extraction error: %s", e)
             for unit in units_to_process:
                 self._record_failure(unit)
             return {}, self.stats
@@ -241,9 +243,9 @@ class ClaimExtractor(BaseProcessor):
                 logger.error(
                     "Error preparing claim input for unit '%s': %s",
                     unit.id,
-                    e,
-                    exc_info=True,
+                    error_digest(e),
                 )
+                logger.debug("Claim input error: %s", e, exc_info=True)
 
         return unit_to_input
 
@@ -277,8 +279,9 @@ class ClaimExtractor(BaseProcessor):
                     logger.warning(
                         "Failed to parse extraction result for text unit '%s': %s",
                         text_unit.id,
-                        e,
+                        error_digest(e),
                     )
+                    logger.debug("Claim extraction result error: %s", e)
             else:
                 self._record_failure(text_unit)
                 logger.debug(
@@ -346,8 +349,11 @@ class ClaimExtractor(BaseProcessor):
             )
         except Exception as e:  # noqa: BLE001 - isolate one malformed claim
             logger.warning(
-                "Error creating claim object from text unit '%s': %s", text_unit.id, e
+                "Error creating claim object from text unit '%s': %s",
+                text_unit.id,
+                error_digest(e),
             )
+            logger.debug("Claim object error: %s", e)
             return None
 
     @staticmethod

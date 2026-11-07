@@ -514,6 +514,61 @@ def test_query_role_may_not_write_to_opensearch(
     assert not _allowed(query_statements, action, f"{_DOMAIN}{path}")
 
 
+# What ingestion sends (opensearch_indexer through OpenSearchClient): index
+# creation and checks, mappings and settings, alias swaps, bulk writes,
+# refreshes, deletes of its old indices and searches.
+_INGESTION_REQUESTS = [
+    ("HEAD", "/graphrag-entities-default-20260101"),
+    ("PUT", "/graphrag-entities-default-20260101"),
+    ("GET", "/graphrag-entities-default-20260101/_mapping"),
+    ("PUT", "/graphrag-entities-default-20260101/_mapping"),
+    ("GET", "/graphrag-entities-default-20260101/_settings"),
+    ("POST", "/_aliases"),
+    ("GET", "/_alias/graphrag-entities-default"),
+    ("DELETE", "/graphrag-entities-default-20250101/_alias/graphrag-entities"),
+    ("DELETE", "/graphrag-entities-default-20250101,graphrag-claims-default-1"),
+    ("POST", "/_bulk"),
+    ("POST", "/graphrag-entities-default-20260101/_refresh"),
+    ("POST", "/graphrag-entities-default/_search"),
+]
+_CLUSTER_WRITES = [
+    ("PUT", "/_cluster/settings"),
+    ("POST", "/_cluster/reroute"),
+    ("PUT", "/_plugins/_security/api/rolesmapping/all_access"),
+    ("PATCH", "/_plugins/_security/api/internalusers"),
+    ("PUT", "/_plugins/_ism/policies/p"),
+    ("DELETE", "/_plugins/_ism/policies/p"),
+    ("PUT", "/_opendistro/_security/api/rolesmapping/all_access"),
+]
+
+
+@pytest.fixture(scope="module")
+def ingestion_statements() -> list[dict[str, Any]]:
+    return [
+        s
+        for s in _role_statements(_compute_template(), "TaskRole")
+        if any("es:" in a for a in _listed(s["Action"]))
+    ]
+
+
+@pytest.mark.parametrize(("method", "path"), _INGESTION_REQUESTS)
+def test_ingestion_role_may_send_the_indexing_requests(
+    ingestion_statements: list[dict[str, Any]], method: str, path: str
+) -> None:
+    action = f"es:ESHttp{method.title()}"
+    assert _allowed(ingestion_statements, action, f"{_DOMAIN}{path}")
+
+
+@pytest.mark.parametrize(("method", "path"), _CLUSTER_WRITES)
+def test_ingestion_role_may_not_change_the_cluster_or_its_plugins(
+    ingestion_statements: list[dict[str, Any]], method: str, path: str
+) -> None:
+    action = f"es:ESHttp{method.title()}"
+    assert not _allowed(ingestion_statements, action, f"{_DOMAIN}{path}")
+    # Reads stay allowed (cluster health, a plugin's status).
+    assert _allowed(ingestion_statements, "es:ESHttpGet", f"{_DOMAIN}/_cluster/health")
+
+
 def test_query_role_reads_and_lists_only_the_eval_prefix(
     query_statements: list[dict[str, Any]],
 ) -> None:

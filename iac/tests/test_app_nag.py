@@ -79,6 +79,14 @@ def _synth_errors(context: dict[str, Any], outdir: Path) -> list[str]:
 
 _TRACING = {"enable_cloudwatch_tracing": "true"}
 _NORI = {"opensearch_nori_package": "true"}
+# Scoped model ARNs as iac/README.md documents them: a `*` region, since
+# inference profiles route across regions.
+_SCOPED_MODELS = {
+    "bedrock_model_arns": (
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0,"
+        "arn:aws:bedrock:*::foundation-model/amazon.rerank-v1:0"
+    )
+}
 
 
 @pytest.mark.parametrize(
@@ -93,6 +101,8 @@ _NORI = {"opensearch_nori_package": "true"}
         {**_TRACING, "fargate_cpu_architecture": "arm64"},
         _NORI,
         {**_PROD_HARDENED, **_NORI},
+        _SCOPED_MODELS,
+        {**_PROD_HARDENED, "neptune_audit_log": "true"},
     ],
     ids=[
         "dev",
@@ -104,6 +114,8 @@ _NORI = {"opensearch_nori_package": "true"}
         "tracing-arm64",
         "nori",
         "prod-hardened-nori",
+        "scoped-models",
+        "prod-hardened-neptune-audit",
     ],
 )
 def test_concrete_account_synth_has_no_nag_errors(
@@ -158,3 +170,11 @@ def test_the_security_stack_and_owner_tag_when_asked(tmp_path: Path) -> None:
     assert _synth_errors(context, tmp_path) == []
     assert (tmp_path / "GraphRagSecurity.template.json").exists()
     assert "owner" in _tag_keys(tmp_path, "GraphRagStorage")
+
+
+def test_the_app_refuses_an_env_name_too_long_for_its_names(tmp_path: Path) -> None:
+    # check_physical_names runs at synth, before CloudFormation would refuse
+    # the bucket or guardrail name mid-deploy.
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        _synth_errors({"env_name": "x" * 30}, tmp_path)
+    assert b"is too long for the cache bucket name" in raised.value.stderr

@@ -1,0 +1,18 @@
+# Trivy ignore file of the image scan in .github/workflows/quality.yml (jobs
+# docker and docker-unstructured), which fails on a HIGH or CRITICAL finding
+# that has a fix (--severity HIGH,CRITICAL --ignore-unfixed): one a
+# base-image digest or a lock bump can clear. A finding without a fix is not
+# gating.
+#
+# `vulnerabilities` lists the findings accepted although a fix exists, each
+# with the reason it cannot be taken yet (e.g. the fixed Debian package is not
+# in a python:3.12-slim digest yet) and an expiry, after which the finding
+# gates again. Prefer bumping the pin (scripts/check_pins.py reports a newer
+# base image digest) over adding an entry:
+#
+#   - id: CVE-YYYY-NNNNN
+#     purls:
+#       - pkg:deb/debian/<package>
+#     statement: <why it is accepted>
+#     expired_at: YYYY-MM-DD
+vulnerabilities: []

@@ -82,6 +82,27 @@ def test_ecr_repository_uses_cmk_only_when_enabled(use_cmk: bool) -> None:
 
 
 @pytest.mark.parametrize("use_cmk", [True, False], ids=["cmk", "default"])
+def test_cache_bucket_uses_a_bucket_key_with_the_cmk(use_cmk: bool) -> None:
+    (bucket,) = (
+        Template.from_stack(_stacks(use_cmk)["storage"])
+        .find_resources(
+            "AWS::S3::Bucket", {"Properties": {"VersioningConfiguration": {}}}
+        )
+        .values()
+    )
+    (rule,) = bucket["Properties"]["BucketEncryption"][
+        "ServerSideEncryptionConfiguration"
+    ]
+    default = rule["ServerSideEncryptionByDefault"]
+    if use_cmk:
+        assert default["SSEAlgorithm"] == "aws:kms"
+        assert rule["BucketKeyEnabled"] is True
+    else:
+        assert default["SSEAlgorithm"] == "AES256"
+        assert "BucketKeyEnabled" not in rule
+
+
+@pytest.mark.parametrize("use_cmk", [True, False], ids=["cmk", "default"])
 def test_every_log_group_uses_cmk_only_when_enabled(use_cmk: bool) -> None:
     stacks = _stacks(use_cmk)
     log_groups = {

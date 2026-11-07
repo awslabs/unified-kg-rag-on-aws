@@ -418,6 +418,10 @@ _JUDGE_MODULES = (
     "evaluation/assertion_evaluator.py",
     "evaluation/benchmarks/autoq.py",
     "evaluation/pairwise.py",
+    # A failed query or claim extraction step's error can quote the query,
+    # the model's reply or the text unit it was given.
+    "application/retrieval/rag_chain.py",
+    "adapters/ingestion/claim_extractor.py",
 )
 _ERROR_NAMES = {"e", "err", "error", "errors", "exc", "outcome"}
 

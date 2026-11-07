@@ -275,6 +275,17 @@ def test_named_graphs_are_read(tmp_path: Path) -> None:
 
 
 @requires_ontology
+def test_an_s3_file_without_a_reader_is_a_schema_source_error() -> None:
+    from unified_kg_rag.adapters.schema_sources import owl
+    from unified_kg_rag.adapters.source_files.locations import SourceFile
+    from unified_kg_rag.shared.exceptions import SchemaSourceError
+
+    files = [(SourceFile(location="s3://bucket/onto.ttl", size=10), "turtle")]
+    with pytest.raises(SchemaSourceError, match="needs a reader for S3"):
+        owl.read_ontology(files, OwlSourceOptions())
+
+
+@requires_ontology
 def test_the_reader_builds_the_model_the_mapping_example_states() -> None:
     from unified_kg_rag.adapters.schema_sources import owl, owl_reader
 

@@ -209,8 +209,9 @@ def normalize_source_scope(source_scope: str) -> str:
 
     A local path loses trailing and repeated slashes (the pipeline stores the
     resolved directory, which has neither). An ``s3://`` URI loses its
-    trailing slashes: ``aws s3 sync`` (the container entrypoint) reads
-    ``s3://bucket/corpus`` and ``s3://bucket/corpus/`` as the same folder.
+    trailing slashes: the container entrypoint's S3 sync (as ``aws s3
+    sync`` does) reads ``s3://bucket/corpus`` and ``s3://bucket/corpus/`` as
+    the same folder.
     Any other URI or a name is kept as is.
 
     Records keep the spelling their run used (it is part of their key), so

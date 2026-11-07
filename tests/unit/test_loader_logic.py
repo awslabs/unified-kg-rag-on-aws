@@ -19,6 +19,7 @@ from unified_kg_rag.adapters.ingestion.loader import (
     DirectoryLoader,
     compute_minhash,
 )
+from unified_kg_rag.shared.exceptions import ConfigurationError
 
 pytestmark = pytest.mark.unit
 
@@ -54,7 +55,8 @@ def test_path_that_is_a_file_raises(tmp_path: Path) -> None:
     f = tmp_path / "a_file.txt"
     f.write_text("not a directory")
     loader = DirectoryLoader(f)
-    with pytest.raises(ValueError, match="not a valid directory"):
+    # A ConfigurationError, which the CLIs report without a traceback.
+    with pytest.raises(ConfigurationError, match="not a valid directory"):
         loader.load()
 
 

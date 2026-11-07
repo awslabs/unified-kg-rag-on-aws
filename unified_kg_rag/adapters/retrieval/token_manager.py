@@ -144,6 +144,7 @@ class TokenManager:
         budget_ceiling = max(budget_ceiling, self.MIN_DERIVED_CONTEXT_TOKENS)
 
         if configured is None:
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
             logger.debug(
                 "Derived context budget of %d tokens for '%s' (window=%d, "
                 "output=%d, headroom=%.0f%%)",
@@ -155,6 +156,7 @@ class TokenManager:
             )
             return budget_ceiling
         if configured > budget_ceiling:
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
             logger.warning(
                 "Configured max_context_tokens (%d) exceeds what '%s' can accept "
                 "alongside its %d-token output reservation; clamping to %d.",
@@ -247,6 +249,7 @@ class TokenManager:
         available_tokens = target_tokens - query_tokens
 
         if available_tokens <= 0:
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
             logger.error(
                 "Token budget exceeded - query: %s, target: %s",
                 query_tokens,

@@ -248,6 +248,7 @@ class TruncationGuard(Runnable[Any, Any]):
         self.purpose = purpose
 
     def _warn(self, reason: str) -> None:
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
         logger.warning(
             "'%s' response (%s, model '%s') stopped at the output token limit " "(%s)",
             self.prompt_name,

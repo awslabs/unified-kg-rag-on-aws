@@ -11,37 +11,18 @@
 # fargate_cpu_architecture=arm64) alike: the base and uv digests are
 # multi-arch indexes, the apt pins exist for both architectures, and every
 # locked package has an aarch64 wheel or is pure Python. Keep a new pin so.
-ARG BASE_IMAGE=public.ecr.aws/docker/library/python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
+ARG BASE_IMAGE=public.ecr.aws/docker/library/python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54
 # checkov:skip=CKV_DOCKER_7: BASE_IMAGE defaults to a tag+digest pin; Checkov cannot resolve ARGs
-FROM ${BASE_IMAGE} AS base
+FROM ${BASE_IMAGE} AS build
 
-# uv (static binary) for fast, locked installs. Pinned by tag and digest so a
-# new uv release cannot change the build; bump both together.
+# uv (static binary) for fast, locked installs, in the build stage only: the
+# runtime image gets the virtual environment, not uv. Pinned by tag and
+# digest so a new uv release cannot change the build; bump both together.
 COPY --from=ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 /uv /usr/local/bin/uv
 
-# Runtime deps: the AWS CLI is used by the entrypoint to sync the source corpus
-# from S3 (the loader only reads a local Path). libgomp1 is the system OpenMP
-# runtime that numba's `omp` threading layer links (numba comes with the
-# `unstructured` extra); the core and eval wheels bundle their own libgomp
-# (scikit-network) or none, so a default image does not load it.
-# Versions are pinned (reproducible builds + satisfies SAST). Bump these when
-# the python:3.12-slim base advances and the pinned version is dropped from the
-# apt repo (check with `apt-cache policy awscli libgomp1` in the base image).
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        awscli=2.23.6-1 \
-        libgomp1=14.2.0-19 \
-    && rm -rf /var/lib/apt/lists/*
-
-# GIT_PYTHON_REFRESH=quiet: GitPython (pulled in transitively by ragas) probes
-# for a git binary at import time; the data plane never uses git, so silence the
-# probe rather than ship git in the image.
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=never \
-    PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    GIT_PYTHON_REFRESH=quiet
+    UV_PYTHON_DOWNLOADS=never
 
 WORKDIR /app
 
@@ -62,14 +43,41 @@ COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev --extra eval ${UV_EXTRAS}
 
-# Now the source, then install the project itself.
+# Now the source, then the project itself, installed into the venv (not
+# editable), so the runtime stage needs only /app/.venv.
 COPY unified_kg_rag ./unified_kg_rag
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --extra eval ${UV_EXTRAS}
+    uv sync --frozen --no-dev --no-editable --extra eval ${UV_EXTRAS}
+
+FROM ${BASE_IMAGE} AS runtime
+
+# libgomp1 is the system OpenMP runtime that numba's `omp` threading layer
+# links (numba comes with the `unstructured` extra); the core and eval wheels
+# bundle their own libgomp (scikit-network) or none, so a default image does
+# not load it. The corpus is synced from S3 by docker/s3_sync.py (boto3, in
+# the venv), so there is no AWS CLI. Versions are pinned (reproducible builds
+# + satisfies SAST). Bump the pin when the python:3.12-slim base advances and
+# it is dropped from the apt repo (check with `apt-cache policy libgomp1` in
+# the base image).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libgomp1=14.2.0-19 \
+    && rm -rf /var/lib/apt/lists/*
+
+# GIT_PYTHON_REFRESH=quiet: GitPython (pulled in transitively by ragas) probes
+# for a git binary at import time; the data plane never uses git, so silence the
+# probe rather than ship git in the image.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    GIT_PYTHON_REFRESH=quiet
+
+WORKDIR /app
+COPY --from=build /app/.venv /app/.venv
 
 # unstructured's own download (the version and SHA-256 it pins), run once at
 # build time into the venv; the import check fails the build if it did not
 # install.
+ARG UV_EXTRAS=""
 RUN case "${UV_EXTRAS}" in \
       *unstructured*) \
         /app/.venv/bin/python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')" \
@@ -77,19 +85,22 @@ RUN case "${UV_EXTRAS}" in \
     esac
 
 # Baked-in, endpoint-free config (deployed endpoints come from env vars the
-# compute stack injects; see docker/config.yaml) and the S3-sync entrypoint.
+# compute stack injects; see docker/config.yaml), the S3-sync entrypoint and
+# its sync script.
 COPY docker/config.yaml /app/config.yaml
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/s3_sync.py /usr/local/lib/unified-kg-rag/s3_sync.py
+COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 ENV PATH="/app/.venv/bin:${PATH}"
 
 # Run as a non-root user (defense in depth; satisfies SAST "missing USER").
-# The user owns /app so the entrypoint can write under it; the entrypoint also
-# syncs the source corpus to /tmp, which is world-writable. HOME is set so AWS
-# CLI / boto3 can resolve a cache/config dir.
+# The code, the venv and the config stay root-owned and read-only to it; it
+# owns only the directories the CLIs write under /app (the stage cache,
+# outputs and log files, by their config defaults). The entrypoint syncs the
+# source corpus to /tmp, which is world-writable. HOME is set so boto3 and
+# the libraries resolve a cache/config dir.
 RUN useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app
+    && install -d -o appuser -g appuser /app/cache /app/outputs /app/logs
 ENV HOME=/home/appuser
 USER appuser
 
