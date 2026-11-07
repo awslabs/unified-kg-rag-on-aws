@@ -29,6 +29,7 @@ import yaml
 from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.extras import VIZ_INSTALLED
 from tests.fixtures.fakes.model_servers import FakeOllama
+from tests.fixtures.fakes.rerank import FakeCrossEncoder
 from tests.fixtures.store_backends import (
     RETRIEVERS,
     StoreHarness,
@@ -116,16 +117,6 @@ def _respond(system: str, human: str) -> str:
     if "search convergence analyst" in system:
         return "0.9"
     return stages._respond(system, human)
-
-
-class FakeCrossEncoder:
-    def __init__(self, model_id: str, **_: Any) -> None:
-        self.model_id = model_id
-        self.calls = 0
-
-    def predict(self, pairs: list[tuple[str, str]], **_: Any) -> list[float]:
-        self.calls += 1
-        return [float("Depot" in passage) for _, passage in pairs]
 
 
 @pytest.fixture

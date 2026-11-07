@@ -24,6 +24,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 
+from tests.fixtures.fakes.rerank import FakeCrossEncoder
 from unified_kg_rag.adapters.llm import retry as retry_module
 from unified_kg_rag.adapters.llm.chain_factory import (
     TransientRetryRunnable,
@@ -548,21 +549,6 @@ def test_truncate_to_estimate_keeps_the_longest_fitting_prefix() -> None:
 # --- rerank -----------------------------------------------------------------
 
 
-class FakeCrossEncoder:
-    def __init__(self, model_id: str, **kwargs: Any) -> None:
-        self.model_id = model_id
-        self.kwargs = kwargs
-        self.calls = 0
-
-    def predict(self, pairs: list[tuple[str, str]], **kwargs: Any) -> list[float]:
-        self.calls += 1
-        query = pairs[0][0].lower().split()
-        return [
-            sum(word in passage.lower() for word in query) / len(query)
-            for _, passage in pairs
-        ]
-
-
 def _rerank_config() -> Config:
     return Config(
         providers={"rerank": {"kind": "cross_encoder"}},
@@ -574,7 +560,7 @@ def test_cross_encoder_reranks_and_limits_to_top_n() -> None:
     loaded: list[FakeCrossEncoder] = []
 
     def loader(model_id: str, **kwargs: Any) -> FakeCrossEncoder:
-        loaded.append(FakeCrossEncoder(model_id, **kwargs))
+        loaded.append(FakeCrossEncoder(model_id, relevant=None, **kwargs))
         return loaded[-1]
 
     factory = CrossEncoderRerankFactory(_rerank_config(), loader=loader)
