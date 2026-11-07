@@ -45,9 +45,9 @@ Every strategy runs in one chain over the same indexes and token budget. Pick on
 | `naive` | LightRAG | A fast chunk-only baseline (BM25 + vector, no graph) and comparison runs |
 | `iterative` | Its base's (`mix` or `local`) | Multi-hop questions whose last hop is about an entity the question does not name; bounded follow-up rounds on the bridge entities |
 | `ppr` | HippoRAG 2 | A cheap, fast multi-hop option: Personalized PageRank over entities and passages, one LLM call (the answer) |
-| `tree` | RAPTOR (opt-in) | Answers spanning several related passages, from a summary tree built with `raptor` in `indexing.methodologies` |
+| `tree` | RAPTOR (opt-in) | A summary tree over the text units, built with `raptor` in `indexing.methodologies` without graph extraction; on multi-hop questions it answered within the noise of `naive` ([evidence](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree)) |
 
-See [Retrieval](./docs/concepts/retrieval.md) for per-strategy behavior and the [Design Doc](./docs/design.md) for the layer map, algorithms, data model and the detailed [ingestion](./docs/design.md#4-ingestion-pipeline), [incremental](./docs/design.md#5-incremental-indexing) and [retrieval](./docs/design.md#6-retrieval-two-methodologies) diagrams.
+See [Retrieval](./docs/concepts/retrieval.md) for per-strategy behavior and the [Design Doc](./docs/design.md) for the layer map, algorithms, data model and the detailed [ingestion](./docs/design.md#4-ingestion-pipeline), [incremental](./docs/design.md#5-incremental-indexing) and [retrieval](./docs/design.md#6-retrieval-methodologies) diagrams.
 
 ## Quickstart
 
@@ -88,7 +88,7 @@ OpenSearch authenticates with a username and password by default (`aws.opensearc
 # Index a corpus (incremental when the doc-status registry is on)
 uv run run-ingestion --source-directory ./source --config-path config.yaml
 
-# Query with either methodology, or chat with conversation memory
+# Query with a GraphRAG or a LightRAG strategy, or chat with conversation memory
 uv run run-rag --query "What are the main themes?" --search-strategy global --config-path config.yaml
 uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
 uv run run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml

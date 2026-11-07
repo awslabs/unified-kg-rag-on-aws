@@ -65,7 +65,7 @@ HippoRAG 2(엔티티와 패시지에 대한 개인화 PageRank), 그리고 선�
 |---|---|---|---|---|
 | 전략 | `local`, `global`, `drift`, `simple` | `mix`, `hybrid`, `naive` | `ppr` | `tree` |
 | 읽는 것 | 엔티티와 그 그래프 이웃, 커뮤니티 리포트, 텍스트 단위, 주장 | 엔티티(저수준 키워드), 관계(고수준 키워드), 그 원문 청크 | 관계 검색 결과, 패시지 검색 결과, 그 엔티티와 패시지 사이의 그래프. LightRAG가 만드는 것 | 텍스트 단위와 그 위의 모든 레벨 요약 |
-| 잘하는 질문 | 코퍼스 전체에 걸친 주제·의미 파악 질문(`global`, `drift`), 특정 엔티티 질문(`local`) | 키워드 중심 조회, 빠르고 저렴한 기준선 | 가장 적은 비용의 멀티홉 질문. 질의마다 LLM 호출 한 번 | 관련 패시지 여러 개에 걸친 답(측정 전) |
+| 잘하는 질문 | 코퍼스 전체에 걸친 주제·의미 파악 질문(`global`, `drift`), 특정 엔티티 질문(`local`) | 키워드 중심 조회, 빠르고 저렴한 기준선 | 가장 적은 비용의 멀티홉 질문. 질의마다 LLM 호출 한 번 | 그래프 추출 없는 저렴한 인덱스. 멀티홉 질문에서는 `naive`와 오차 범위 안의 답을 냄([근거](./defaults-and-evidence.md#raptor-summary-tree), 영문) |
 
 `iterative`는 `mix`나 `local`을 감싸 멀티홉 질문이 기대는 연결(bridge) 엔티티로 정해진 횟수만큼
 후속 라운드를 실행하며, 기반 전략이 읽는 것을 읽습니다. `local`은 기본으로 HippoRAG 2의
@@ -77,7 +77,7 @@ PageRank로 텍스트 단위의 순서를 정합니다.
 (텍스트 단위는 `search.global_search.text_unit_slots`를 설정할 때만 합침).
 기본값인 `auto`는 LLM 라우터가 질의마다 `local`, `mix`, `global`, `iterative`(다중 홉 질문) 중 하나를 고릅니다. 언제 어떤
 전략을 쓸지는 [검색](./retrieval.ko.md#검색-전략-선택), 전략별 검색 방식은
-[설계 문서 §6](../design.md#6-retrieval-two-methodologies)(영문)에 있습니다.
+[설계 문서 §6](../design.md#6-retrieval-methodologies)(영문)에 있습니다.
 
 ### 방법론 프로필
 
@@ -88,8 +88,8 @@ PageRank로 텍스트 단위의 순서를 정합니다.
 |---|---|---|---|
 | `[graphrag, lightrag]`(기본값) | 텍스트 단위, 엔티티, 관계와 그 벡터, 그래프, 커뮤니티와 리포트 | `tree`를 뺀 모든 전략 | 청크 경계, 텍스트 단위마다 추출과 글리닝, 설명 요약, 커뮤니티마다 리포트 하나 |
 | `[lightrag]`나 `[hipporag]` | 커뮤니티와 리포트를 뺀 나머지 | `mix`, `hybrid`, `naive`, `simple`, `ppr`, `iterative`(`mix` 기반), `auto` | Leiden 단계와 리포트 호출을 뺀 나머지 |
-| `[graphrag]` | 기본값과 같음. `local`이 읽는 관계 벡터가 `lightrag`와 `hipporag`에도 쓰임 | `tree`를 뺀 모든 전략. `indexing.opensearch.build_relationship_vector_index: false`이면 `local`, `global`, `drift`, `simple`, `naive`, `iterative`(`local` 기반), `auto` | 기본값과 같음. 관계 벡터 인덱스를 끄면 관계 임베딩을 아끼는 대신 `local`의 관계 섹션과 `lightrag`·`hipporag`의 모든 전략이 빠짐 |
-| `[raptor]`(선택 사항, 측정 전) | 텍스트 단위와 그 위의 요약 트리(RAPTOR) | `tree`, `naive`, `simple`, `auto`(`tree`를 씀) | 청크 경계와 텍스트 단위 5-6개마다 요약 하나 정도. 그래프 추출 없음([요약 트리](../guides/ingest.ko.md#raptor-요약-트리선택-사항)) |
+| `[graphrag]` | 기본값과 같음. `local`이 읽는 관계 벡터가 `lightrag`와 `hipporag`에도 쓰임 | `tree`를 뺀 모든 전략. `indexing.opensearch.build_relationship_vector_index: false`이면 `local`, `global`, `drift`, `simple`, `naive`, `iterative`(`search.iterative_search.base: local`로 `local` 기반), `auto` | 기본값과 같음. 관계 벡터 인덱스를 끄면 관계 임베딩을 아끼는 대신 `local`의 관계 섹션과 `lightrag`·`hipporag`의 모든 전략이 빠짐 |
+| `[raptor]`(선택 사항) | 텍스트 단위와 그 위의 요약 트리(RAPTOR) | `tree`, `naive`, `simple`, `auto`(`tree`를 씀) | 청크 경계와 텍스트 단위 5-6개마다 요약 하나 정도. 그래프 추출 없음([요약 트리](../guides/ingest.ko.md#raptor-요약-트리선택-사항)) |
 
 다른 프로필에 `raptor`를 더하면 트리도 함께 만듭니다.
 `hipporag`는 `lightrag`가 만드는 것과 같은 것을 가리키며, 그것을 읽는 전략(`ppr`)에 씁니다.
@@ -117,9 +117,9 @@ PageRank로 텍스트 단위의 순서를 정합니다.
 | 영역 | GraphRAG | LightRAG | 이 프레임워크 | 문서 |
 |---|---|---|---|---|
 | 3중 하이브리드 검색 | 엔티티 설명, 텍스트 단위, 리포트 내용에 대한 벡터 검색(`config/embeddings.py`)과 인덱싱된 테이블에서 읽는 그래프 컨텍스트. 질의 코드에 어휘(lexical) 검색이나 재순위화 모델은 없음 | 엔티티, 관계, 청크 인덱스에 대한 벡터 검색과 그래프 저장소를 라운드 로빈으로 합치고, 재순위화 모델은 선택(`operate.py`, `rerank.py`) | BM25(OpenSearch), 벡터 검색(Bedrock 임베딩), Neptune 그래프 순회를 RRF로 합치고, Bedrock rerank 모델로 재순위화하고, MMR로 다양성을 맞춤. 커뮤니티 리포트를 map하는 `global`을 뺀 모든 전략이 점수 계산기 하나를 씀(`simple`과 `naive`는 그래프 제외) | [설계 문서 §7](../design.md#7-hybrid-scoring-and-token-management)(영문) |
-| 한 인덱스에서 여러 방법론 | 커뮤니티 리포트. 관계 벡터 인덱스(`config/embeddings.py`)와 키워드 수준 검색은 없음 | 엔티티와 관계 인덱스에 대한 이중 레벨 키워드. 커뮤니티 탐지와 리포트는 없음 | 한 번의 수집이 고른 방법론(기본값은 GraphRAG와 LightRAG이며, 이것으로 HippoRAG 2의 `ppr`도 씀)에 필요한 것을 모두 만들고, 방법론은 질의마다 직접 고르거나 `auto` 라우터가 고르며, 네임스페이스에 없는 방법론은 거절함 | [방법론 프로필](#방법론-프로필), [설계 문서 §6](../design.md#6-retrieval-two-methodologies)(영문) |
+| 한 인덱스에서 여러 방법론 | 커뮤니티 리포트. 관계 벡터 인덱스(`config/embeddings.py`)와 키워드 수준 검색은 없음 | 엔티티와 관계 인덱스에 대한 이중 레벨 키워드. 커뮤니티 탐지와 리포트는 없음 | 한 번의 수집이 고른 방법론(기본값은 GraphRAG와 LightRAG이며, 이것으로 HippoRAG 2의 `ppr`도 씀)에 필요한 것을 모두 만들고, 방법론은 질의마다 직접 고르거나 `auto` 라우터가 고르며, 네임스페이스에 없는 방법론은 거절함 | [방법론 프로필](#방법론-프로필), [설계 문서 §6](../design.md#6-retrieval-methodologies)(영문) |
 | 삭제 계보(lineage)를 갖춘 증분 인덱싱 | `graphrag update`는 제목이 새로운 문서를 인덱싱함. 계산한 차이에 삭제된 문서도 들어 있지만 갱신 워크플로에는 새 문서만 전달됨(`index/update/incremental_index.py`, `index/workflows/load_update_documents.py`) | 문서 상태 저장소는 파일 이름이나 내용 해시가 이미 등록된 문서의 삽입을 건너뜀(`pipeline.py`). `adelete_by_doc_id`는 문서를 지우고, 다른 문서가 여전히 뒷받침하는 엔티티와 관계는 캐시된 추출 결과로 다시 만듦(`lightrag.py`) | 레지스트리(DynamoDB, 로컬에서는 SQLite)가 내용 해시로 코퍼스를 비교해 새 문서와 바뀐 문서를 다시 인덱싱하고, 지운 문서는 각 항목이 인용한 텍스트 단위를 따라 제거해 남은 텍스트 단위가 기술하지 않는 것만 지움. 선기록(write-ahead) 장애 복구, 네임스페이스마다 쓰기 실행 하나. 속성 기반 테스트로 증분 실행이 전체 구축과 같은 결과에 수렴하는지 확인 | [증분 인덱싱](../guides/incremental.ko.md), [설계 문서 §5](../design.md#5-incremental-indexing)(영문) |
-| 다국어 | `graphrag prompt-tune --language`가 튜닝한 프롬프트의 언어를 정함(`cli/main.py`) | `SUMMARY_LANGUAGE`가 추출과 요약의 출력 언어를 정함(`addon_params.py`) | 인덱싱과 질의 시점의 선택적 번역 단계(추가 대상 언어 포함), 언어별 OpenSearch 분석기(한국어는 `nori`), 다국어 키워드 추출, 한국어·CJK를 고려한 답변 일치 채점을 두 방법론 모두에 적용 | [다국어 코퍼스](../guides/multilingual.ko.md), [설계 문서 §8.3](../design.md#83-multilingual-processing)(영문) |
+| 다국어 | `graphrag prompt-tune --language`가 튜닝한 프롬프트의 언어를 정함(`cli/main.py`) | `SUMMARY_LANGUAGE`가 추출과 요약의 출력 언어를 정함(`addon_params.py`) | 인덱싱과 질의 시점의 선택적 번역 단계(추가 대상 언어 포함), 언어별 OpenSearch 분석기(한국어는 `nori`), 다국어 키워드 추출, 한국어·CJK를 고려한 답변 일치 채점을 모든 방법론에 적용 | [다국어 코퍼스](../guides/multilingual.ko.md), [설계 문서 §8.3](../design.md#83-multilingual-processing)(영문) |
 | 온톨로지와 시드 그래프 가져오기 | Bring Your Own Graph: 추출 대신 엔티티와 관계 테이블을 넣고 커뮤니티 워크플로를 실행(`docs/index/byog.md`) | `insert_custom_kg`가 주어진 청크, 엔티티, 관계를 삽입(`lightrag.py`) | 직접 선언하거나 OWL/RDFS 온톨로지에서 읽은 추출 스키마(유형, 패턴, IRI). 시드 그래프(JSONL, CSV, RDF)를 코퍼스의 가상 문서로 추출 그래프에 병합하므로 증분 실행과 삭제가 파일처럼 다루고, 문서가 기준(canonical)으로 남음 | [Extraction schema](../guides/extraction-schema.md), [Ontology](../guides/ontology.md), [Seed graphs](../guides/seed-graphs.md)(영문) |
 | 측정으로 정한 기본값과 평가 도구 | 논문은 답변을 맞비교로 판정함(포괄성, 다양성, 역량 강화, 직접성). 라이브러리 패키지에는 평가 명령이 없음 | RAGAS 평가 스크립트(`evaluation/eval_rag_quality.py`)와 논문의 맞비교 판정 프롬프트(`reproduce/batch_eval.py`) | LangChain·RAGAS 판정 모델과 함께 쓰는 LLM 없는 평가기, 반복 실행과 부트스트랩 신뢰 구간을 갖춘 짝지은 비교, 순서를 바꿔 판정하고 위치 일관성을 보고하는 맞비교 판정, 측정한 비용과 지연 시간, CI 게이트, MuSiQue 벤치마크. 기본값의 근거가 되는 측정 결과를 공개함 | [평가](../guides/evaluate.ko.md), [기본값과 근거](./defaults-and-evidence.md)(영문) |
 
@@ -192,6 +192,9 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   `graphrag`가 없으므로 `local`, `global`, `drift`가 거절되고(`simple`은 가진 인덱스만 훑음), 관계 벡터 인덱스를 끄면(`indexing.opensearch.build_relationship_vector_index: false`)
   네임스페이스에 `lightrag`도 `hipporag`도 없어 `mix`, `hybrid`, `ppr`이 거절되고, `local`이 관계 섹션을 쓰지 못하며, 문서 필터가 걸린 그래프
   확장은 엔티티에 닿는 관계가 아니라 엔티티 인덱스 확인만으로 엔티티를 남깁니다.
+  `graph.community_detection.report_generation.enabled: false`이면 커뮤니티는 탐지하지만 리포트는
+  쓰지 않습니다. `local`은 리포트 섹션 없이 답하고, 리포트를 읽는 `global`과 `drift`는 이 스위치를
+  알려 주는 메시지와 함께 거절됩니다.
 - **Markdown과 HTML**에는 `unstructured` extra가 필요하며, 컨테이너 이미지에는 기본으로
   빠져 있습니다([Troubleshooting](../troubleshooting.md#why-are-my-markdown-or-html-files-not-indexed), 영문).
 - **증분 인덱싱은 전체 구축의 근사치입니다**([재구축 신호](../guides/incremental.ko.md#재구축-신호)). 증분 실행은 다시 군집화하지 않고 커뮤니티를

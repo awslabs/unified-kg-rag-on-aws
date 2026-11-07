@@ -13,7 +13,7 @@ recipes in [§15](#15-extension-guide).
 3. [Domain Model](#3-domain-model)
 4. [Ingestion Pipeline](#4-ingestion-pipeline)
 5. [Incremental Indexing](#5-incremental-indexing)
-6. [Retrieval: Two Methodologies](#6-retrieval-two-methodologies)
+6. [Retrieval: Methodologies](#6-retrieval-methodologies)
 7. [Hybrid Scoring and Token Management](#7-hybrid-scoring-and-token-management)
 8. [AWS Service Integration](#8-aws-service-integration)
 9. [Evaluation Framework](#9-evaluation-framework)
@@ -263,7 +263,9 @@ backend fills each role is open (`providers.graph.kind` /
 - **Search strategies**: `@register_strategy(...)`
   (`adapters/retrieval/strategy_registry.py`): a class, its required roles and
   query inputs, keyed by `SearchStrategy`; a wrapper (`iterative`) names the
-  strategy it runs under a config (`wraps`, §6.3).
+  strategy it runs under a config (`wraps`, §6.3), and a strategy that reads
+  less than its methodology requires names the index artifacts it reads
+  (`required_artifacts`, §4.6).
 - **Providers**: `@register_provider(ProviderRole.X, "kind")`
   (`adapters/provider_registry.py`): the builder `providers.<role>.kind`
   selects, for every model, store and registry role.
@@ -965,13 +967,20 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   artifacts a switch turns off: `graph.community_detection.enabled: false`
   drops `graphrag`, `indexing.opensearch.build_relationship_vector_index:
   false` drops `lightrag` and `hipporag`, so a pre-existing light config
-  reads as the profile it builds; none left is a config error. A stage
+  reads as the profile it builds; none left is a config error.
+  `graph.community_detection.report_generation.enabled: false` deselects
+  nothing (`ArtifactSwitch.deselects`: the communities are still detected)
+  but builds no community reports, so the namespace does not hold them:
+  `local` answers without its report section, and `global` and `drift`,
+  which read the reports, are refused before any model call with a message
+  naming the switch. A stage
   runs when `stages_enabled` and its config section allow it and it is in
   `stages_for` the effective methodologies' artifacts, plus claims when
   `processing.claim_extraction.enabled` (claims are per-document extraction
   output, recorded in each document's extraction settings, so their switch
   alone governs them; with no selected methodology reading them a WARNING
-  says so). For the default union every stage is selected, and
+  says so). For the default union every stage but `summary_tree` is selected
+  (claims as their switch says), and
   `indexing.methodologies` keys no stage cache and, at its default, no
   evaluation manifest (`cache_keys._KEYED_ONCE_SET`), so default users see
   no change. An explicit `--enabled-stages` list wins in both directions
@@ -1004,8 +1013,9 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   summaries and vectors, so its new model calls are the added
   methodology's (one report per community). Without the registry every run
   is a full build and reuses the same. A record written before profiles
-  existed has no `artifacts`: it is read as the configured methodologies,
-  so an upgrade promotes no run.
+  existed has no `artifacts`: it is read as holding what a run of the config
+  builds (`held_artifacts`, from `artifacts_to_build`), so nothing is missing
+  and an upgrade promotes no run.
 - **Removing a methodology** stops maintaining its artifacts: the next run
   that writes the namespace records them gone, and its strategies fail fast.
   Nothing is deleted: a reset with the remaining methodologies replaces the
@@ -1048,7 +1058,7 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   index the namespace lacks declares is refused, not dropped.
   An explicit strategy whose
   methodology (or declared artifacts) is not held raises `MethodologyNotIndexedError` (a
-  `ConfigurationError`; `run-rag` exits 2) before any model call, naming
+  `ConfigurationError`; `run-rag` and `run-eval` exit 2) before any model call, naming
   what the namespace holds, the strategies that serve it and how to add the
   methodology. `auto` routes only among the strategies
   of `search.auto_routable_strategies` the held artifacts serve, falling back to `local`, else `mix`,
@@ -1060,7 +1070,9 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   questions there. When `auto` falls back, it warns once per
   configuration and held methodologies, not on every query.
 - **Failure modes.** An unreadable record (store error, a backend without
-  index metadata) reads as the configured methodologies, as before; a
+  index metadata) reads as holding what a run of the config builds
+  (`artifacts_to_build`), and so the methodologies whose required artifacts
+  that holds (`methodologies_holding`); a
   record that over-claims cannot arise from a run (an artifact enters it
   only through a completed stage), and one that under-claims refuses
   queries until the next run that writes the namespace.
@@ -1515,7 +1527,9 @@ its lease.
 
 ---
 
-## 6. Retrieval: Two Methodologies
+<a id="6-retrieval-two-methodologies"></a>
+
+## 6. Retrieval: Methodologies
 
 `GraphRAGChain` (`application/retrieval/rag_chain.py`, an LCEL Runnable) runs
 one chain for every strategy: conversation memory (a follow-up is rewritten as
@@ -1523,8 +1537,7 @@ a standalone question) → strategy resolution → query processing (translation
 entity or keyword extraction) → retrieval → fusion and rerank → (RAG) context
 budget and answer. `RAGInput.search_strategy` picks the strategy, and so
 the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
-`iterative` (§6.3), HippoRAG 2's `ppr` (§6.4) and RAPTOR's `tree` (§6.5);
-the section keeps its title, which links cite.
+`iterative` (§6.3), HippoRAG 2's `ppr` (§6.4) and RAPTOR's `tree` (§6.5).
 
 ![Retrieval chain](../assets/retrieval-pipeline.drawio.png)
 
@@ -1851,11 +1864,11 @@ and its router guide entry describes questions that chain facts through a
 bridge entity the question does not name. An operator who leaves it out of
 that list keeps `auto` off it. Real-model runs decided this: they measured
 its answers against its base and the routing (multi-hop questions routed
-to it, sensemaking and single-hop ones left to the other strategies), at
-about 10 s more for the median query routed to it ([Defaults and
-evidence](concepts/defaults-and-evidence.md#iterative-follow-up-rounds)). It targets one
-failure: on 200 MuSiQue questions (v15 benchmark index) about 53 of `mix`'s
-96 failures lacked a supporting passage, and the missing one was a later
+to it, sensemaking and single-hop ones left to the other strategies), and
+its latency cost ([Defaults and
+evidence](concepts/defaults-and-evidence.md#iterative-follow-up-rounds)). It
+targets one failure: on 200 MuSiQue questions (an earlier index of the same
+benchmark) about 53 of `mix`'s 96 failures lacked a supporting passage, and the missing one was a later
 hop's far more often than the first's (the last hop's 14-16% against the
 first's 0-5%): round 0 finds the passage that names the bridge entity, not
 the passage about it.
@@ -2010,8 +2023,8 @@ masked or left out).
 `max_rounds + 2` decomposition and step calls (4), on the fast tier;
 `max_rounds` reruns of the base search without rerank, up to
 `max_rounds * max_next_queries` text searches, and one rerank call per
-round. At the 2026-11 list prices (Haiku 5.5 $0.10 / $0.50 per million
-tokens, Cohere Rerank 3.5 $2 per 1,000 search units), a controller call
+round. At the 2026-11 list prices ([Defaults and
+evidence](concepts/defaults-and-evidence.md#list-prices-used)), a controller call
 reading 8,000 context tokens costs about $0.001 (one reading the
 answer's whole 30,000-token budget, the default, about $0.003 when the
 chunks fill it) and a rerank $0.002, so the worst case adds about $0.007
@@ -2314,15 +2327,18 @@ The summary tree reimplements RAPTOR (Sarthi et al., ICLR 2024, arXiv
 run for comparison only, never vendored): text units are clustered in
 embedding space, each cluster is summarized by a model, the summaries are
 clustered and summarized again, and a query searches every level at once
-(RAPTOR's "collapsed tree"). It is opt-in and unmeasured: `raptor` is not
-in the default `indexing.methodologies`, so no default ingestion builds a
-tree, and `search.auto_routable_strategies` refuses `tree`. Whether it
-helps on this stack is not measured yet; the published evidence is mixed:
+(RAPTOR's "collapsed tree"). It is opt-in: `raptor` is not in the default
+`indexing.methodologies`, so no default ingestion builds a tree, and
+`search.auto_routable_strategies` refuses `tree`, because on MuSiQue's
+multi-hop questions it answered within the noise of `naive`, well below
+`mix` and `local`, and slower than `naive`
+([Defaults and evidence](concepts/defaults-and-evidence.md#raptor-summary-tree)).
+The published evidence is mixed too:
 RAPTOR leads on specific QA in one unified benchmark (Zhou et al., arXiv
 2503.04338: MuSiQue 24.1 against vanilla RAG's 17.2), but is below vanilla
 RAG on GraphRAG-Bench's novel set (arXiv 2506.05690: fact retrieval 49.3
-against 58.8). Its case is cheap indexing and cheap queries, not beating
-`global` on summaries.
+against 58.8). Its case is cheap indexing, not beating `global` on
+summaries.
 
 **Methodology (§4.6).** The tree is the `summary_tree` index artifact of the
 methodology `raptor` (required: text units and the summary tree), and `tree`
@@ -2592,16 +2608,18 @@ measured default path).
 | Indexing failed in the same run | The stage is skipped |
 | No summary tree at query time | `tree` is refused when the build record says so (`MethodologyNotIndexedError`); with a record from before methodology profiles it answers from the text units with `metadata["summary_tree"] = "missing"` and a WARNING. `run-ingestion --enabled-stages summary_tree` builds the tree from the stored text units |
 
-**Cost.** Calls ≈ leaves / (children per node − 1), about 0.18 per leaf;
-input about 1.1-1.9 times the corpus tokens. At the 2026-11 list prices
-(Sonnet 5.5 $2 / $10, Haiku 5.5 $0.10 / $0.50 per million tokens): the
-MuSiQue benchmark store (3,318 leaves, 0.37M tokens, about 580 nodes) about
-$2 with Sonnet without reasoning tokens (about $8 at high effort; $0.11 to
-$0.40 with `models.roles.summary_tree: fast`), against $371.64 for its graph
-ingest; a 1M-token corpus of 1,000-token chunks about $3-5. A delta pays
-for the clusters whose children changed. At query time `tree` costs a
-`naive` query plus up to three more searches, a wider rerank and one
-search per expanded summary.
+**Cost.** Calls ≈ leaves / (children per node − 1), about 0.18 per leaf.
+On the MuSiQue benchmark store (3,318 leaves, 0.37M tokens) the fast tier
+(`models.roles.summary_tree: fast`) built 603 nodes with one call each,
+reading about three times the corpus tokens; that run's tokens and cost
+are in [Defaults and
+evidence](concepts/defaults-and-evidence.md#raptor-summary-tree). Estimated
+from those tokens at the [list prices](concepts/defaults-and-evidence.md#list-prices-used),
+the default tier (Sonnet 5.5) costs about 20 times the fast tier, more
+with reasoning tokens. A delta pays for the clusters whose children
+changed. At query time `tree` costs a `naive` query plus up to three more
+searches, a wider rerank, one search per expanded summary and the
+summaries' context.
 
 **Fidelity against the original** (`tests/unit/test_raptor_fidelity.py`).
 Upstream's outputs on synthetic, pre-reduced points were recorded once by a

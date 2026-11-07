@@ -172,7 +172,7 @@ cp config-template.yaml config.yaml
 
 `uv run` runs the CLIs in the project environment; with `pip`, activate the
 virtual environment instead and drop the `uv run` prefix. Index a corpus,
-then query it with either methodology:
+then query it with a GraphRAG or a LightRAG strategy:
 
 ```bash
 uv run run-ingestion --source-directory ./source --config-path config.yaml

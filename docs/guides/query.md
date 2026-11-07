@@ -195,7 +195,7 @@ answers once, from the fused candidates. No default selects it, but `auto`
 may route a question that chains facts through an entity it does not name to
 it (`search.auto_routable_strategies`). Over `mix` it answered multi-hop
 questions significantly better than `mix` alone, and the median query took
-about 10 s longer
+markedly longer
 ([evidence](../concepts/defaults-and-evidence.md#iterative-follow-up-rounds)).
 To keep `auto` off it, list the routable strategies without it:
 `search.auto_routable_strategies: [local, mix, global]`.
@@ -241,8 +241,10 @@ How it works and how it compares with IRCoT and KAG:
 methodology ([ingestion](./ingest.md#a-raptor-summary-tree-opt-in)): the
 passages and every level of the summary tree at once, BM25 + kNN each,
 fused and reranked together; each summary kept brings its best passages.
-It is opt-in and unmeasured: `auto` routes to it only on a `raptor`-only
-namespace, and a namespace without a tree refuses it before any model call.
+It is opt-in, as on multi-hop questions it answered within the noise of
+`naive` ([evidence](../concepts/defaults-and-evidence.md#raptor-summary-tree)):
+`auto` routes to it only on a `raptor`-only namespace, and a namespace
+without a tree refuses it before any model call.
 
 ```yaml
 search:

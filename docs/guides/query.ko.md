@@ -175,7 +175,7 @@ search:
 답변 모델은 융합한 후보로 한 번만 답합니다. 기본값으로 선택되지는 않지만, 질문에 이름이 나오지
 않는 엔티티를 거쳐 사실을 이어야 하는 질문은 `auto`가 이 전략으로 보낼 수 있습니다
 (`search.auto_routable_strategies`). `mix` 기반으로 실행하면 다중 홉 질문에서 `mix`만 쓸 때보다
-유의하게 잘 답했고, 질의 시간 중앙값은 10초 정도 늘었습니다
+유의하게 잘 답했고, 질의 시간 중앙값은 눈에 띄게 늘었습니다
 ([근거](../concepts/defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 이
 전략을 고르지 않게 하려면 이 전략을 뺀 목록을 지정합니다:
 `search.auto_routable_strategies: [local, mix, global]`.
@@ -217,7 +217,8 @@ models:
 `--search-strategy tree`는 `raptor` 방법론으로 만든 네임스페이스를
 ([수집](./ingest.ko.md#raptor-요약-트리선택-사항)) 검색합니다. 구절과 요약 트리의 모든 레벨을
 한 번에, 각각 BM25 + kNN으로 검색하고 융합해 함께 재순위화하며, 남은 요약마다 가장 잘 맞는
-구절을 함께 가져옵니다. 선택 사항이며 아직 측정하지 않았습니다. `auto`는 `raptor`만 가진
+구절을 함께 가져옵니다. 멀티홉 질문에서 `naive`와 오차 범위 안의 답을 냈으므로 선택
+사항입니다([근거](../concepts/defaults-and-evidence.md#raptor-summary-tree), 영문). `auto`는 `raptor`만 가진
 네임스페이스에서만 이 전략을 고르고, 트리가 없는 네임스페이스는 모델을 호출하기 전에 이
 전략을 거절합니다.
 

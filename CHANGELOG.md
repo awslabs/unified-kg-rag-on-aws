@@ -438,6 +438,12 @@ From a `main` checkout (formats and keys no release had):
   buckets are renamed (`<=0.67x`, `0.67-0.91x`, `0.91-1.1x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path` now also downloads the
   answerable split and draws the answerable questions from it (labelled `musique`); prepare again for that sample.
   Nothing else re-runs.
+  whitespace, so a default-normalization run is refused against them (exit 2) until one side is scored again (an
+  `official_squad` or `hotpotqa` run still compares). Their `abstention_statistics` left failed answers out (rate
+  and recall over the completed answers), and pairwise length buckets are renamed (`<=0.67x`, `0.67-0.91x`,
+  `0.91-1.1x`, `1.1-1.5x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path` now also
+  downloads the answerable split and draws the answerable questions from it (labelled `musique`); prepare again for
+  that sample. Nothing else re-runs.
 - #607 rerank metering: a query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the
   `rerank` role and the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the
   rerank model has a price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets
@@ -461,12 +467,13 @@ From a `main` checkout (formats and keys no release had):
   reports, are refused naming the switch. Nothing re-runs.
 
 ### Added
-- RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
-  after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
-  mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index
-  language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps the rebuilt tree into its own
-  index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children are unchanged reuses its
-  summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
+- RAPTOR summary tree, opt-in (#599; on multi-hop questions it answered within the noise of `naive`,
+  [evidence](docs/concepts/defaults-and-evidence.md#raptor-summary-tree)): the `raptor` methodology adds a
+  `summary_tree` ingestion stage after indexing that clusters the stored text units by their vectors (numpy k-means
+  by default, RAPTOR's Gaussian mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each
+  cluster bottom-up in the index language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps
+  the rebuilt tree into its own index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children
+  are unchanged reuses its summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
   (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, and one still over the budget
   keeps its whole sentences within it (#601). `run-ingestion --enabled-stages summary_tree` builds the tree under the
   pipeline id that built the namespace even after an upgrade changed the earlier stages' cache keys, running none of

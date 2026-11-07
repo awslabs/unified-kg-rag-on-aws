@@ -157,7 +157,7 @@ indexing:
   알림) `auto`도 고르지 않습니다.
 - **네임스페이스가 가진 것.** 실행마다 빌드 기록(`artifacts`, `methodologies`)에 남깁니다.
   질의한 전략이 네임스페이스에 없는 방법론을 읽으면 모델을 호출하기 전에 거절하고
-  (`MethodologyNotIndexedError`, `run-rag`는 종료 코드 2), 네임스페이스가 가진 것을 알려 줍니다.
+  (`MethodologyNotIndexedError`, `run-rag`와 `run-eval`은 종료 코드 2), 네임스페이스가 가진 것을 알려 줍니다.
 - **나중에 추가하면**(예: `[lightrag]`로 만든 뒤 `graphrag`) 그 방법론이 더하는 것만 만듭니다.
   문서 상태 레지스트리를 켰다면 다음 실행이 커뮤니티 없는 네임스페이스를 보고 한 번 다시
   구축하며(`indexing.reset`, WARNING으로 알림), 저장된 청크 경계, 추출 결과, 설명 요약, 벡터를
@@ -178,7 +178,8 @@ indexing:
 군집화하고 군집마다 요약(`models.roles.summary_tree`, default 티어)한 뒤, 요약을 다시
 군집화하고 요약하는 일을 `indexing.summary_tree.max_levels`(5) 레벨까지 반복해 `tree`
 전략이 쓰는 별도 인덱스에 씁니다([검색](../concepts/retrieval.ko.md#검색-전략-선택)).
-선택 사항이며 아직 측정하지 않았습니다. `naive`보다 답이 나은지 보여 주는 측정은 아직 없습니다.
+선택 사항입니다. 멀티홉 질문에서는 `naive`와 오차 범위 안의 답을 냈습니다
+([근거](../concepts/defaults-and-evidence.md#raptor-summary-tree), 영문).
 
 ```yaml
 indexing:
@@ -192,10 +193,10 @@ indexing:
 - **`raptor`만 고르면 실행되는 단계.** 파싱, 로딩, 청킹, 번역(켠 경우), 인덱싱과 트리뿐이며
   그래프 추출, 글리닝, 병합, 주장, 커뮤니티는 실행하지 않습니다. 그래서 `raptor`만 가진
   네임스페이스는 요약 비용만 냅니다. 텍스트 유닛 5-6개에 호출 한 번 정도이므로 코퍼스 토큰당
-  비용은 청크가 작을수록, 추론 수준(effort)이 높을수록 커집니다. MuSiQue 벤치마크 저장소(문단
-  하나씩인 청크로 토큰 37만 개)는 default 티어에서 약 $2-8(추론 없음에서 기본값 `high`까지),
-  `models.roles.summary_tree: fast`로 $0.1-0.4이며, 같은 저장소의 그래프 수집은 약 $370입니다
-  ([설계 §6.5](../design.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). 이 네임스페이스는
+  비용은 청크가 작을수록, 추론 수준(effort)이 높을수록 커집니다. MuSiQue 벤치마크 인덱스에서
+  fast 티어(`models.roles.summary_tree: fast`)로 만든 트리는 1달러에 한참 못 미쳤고, 같은
+  인덱스의 그래프 수집은 수백 달러였습니다([근거](../concepts/defaults-and-evidence.md#raptor-summary-tree),
+  default 티어 추정치: [설계 §6.5](../design.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). 이 네임스페이스는
   `tree`, `naive`, `simple`이 서비스하며 `auto`는 `tree`로 갑니다. 그래프 저장소에 쓰지 않으므로 Neptune 엔드포인트가
   필요 없습니다. 네임스페이스에 있던 그래프는 증분 실행에서는 그대로 두고, 전체 구축
   (`indexing.reset: true`, 또는 레지스트리 없는 모든 실행)은 더 만들지 않는 벡터 인덱스를 비우듯
@@ -205,7 +206,9 @@ indexing:
   --enabled-stages summary_tree`로, 저장된 텍스트 유닛에서 트리만 만듭니다. 다시 추출하거나
   네임스페이스를 재구축하지 않습니다. 이 단계는 저장소만 읽으므로, 업그레이드로 앞 단계의 캐시
   키가 바뀌었어도 네임스페이스를 만든 파이프라인 id로 `--enabled-stages summary_tree`를 실행할
-  수 있고 앞 단계는 실행하지 않습니다.
+  수 있고 앞 단계는 실행하지 않습니다. 어느 쪽이든 그 실행의 `indexing.methodologies`에 `raptor`가
+  있어야 합니다. `raptor` 없이 `--enabled-stages summary_tree`로 실행하면 트리는 쓰지만 빌드 기록에
+  남기지 않으므로 `tree`는 계속 거절됩니다.
 - **증분 실행.** 저장된 텍스트 유닛으로 트리를 다시 만들어 교체합니다. 자식이 그대로인 군집은
   저장된 요약을 그대로 쓰고(모델 호출 없음), 군집화는 작은 델타로는 거의 바뀌지 않는 노드 id
   표본에서 시작하므로 대부분의 군집이 살아남습니다. 삭제된 문서의 요약과 그 위의 모든 요약은
@@ -230,10 +233,15 @@ indexing:
 비용은 대부분 LLM 호출에서 나옵니다. 추출(청크당 1회 이상), 글리닝(청크당 최대
 `max_rounds`회), 커뮤니티 리포트, 주장(텍스트 단위당 1회, 기본은 꺼짐), 질의마다의 답변
 생성입니다. `graphrag`를 뺀 [방법론 프로필](#방법론-프로필)(커뮤니티 리포트 없음), 기계적인
-역할에 Haiku급 모델 쓰기(청킹, 번역, map-reduce, 요약의 기본값), 글리닝 횟수 줄이기, 주장 끄기,
-캐시와 증분 인덱싱으로 줄일 수 있습니다.
+역할에 Haiku급 모델 쓰기(청킹, 번역, map-reduce, 요약의 기본값), 글리닝 횟수 줄이기, 수집 추론
+수준 낮추기, 주장 끄기, 캐시와 증분 인덱싱으로 줄일 수 있습니다.
 
-이 중 가장 큰 것은 글리닝입니다(측정한 수집 비용의 47%). `processing.gleaning.max_rounds`는
-3이며, 글리닝이 더하는 관계는 대부분 1회차에서 나오고 2~3회차는 조금만 더합니다
-([근거](../concepts/defaults-and-evidence.md#gleaning-rounds), 영문). `max_rounds: 1`(MS GraphRAG
-기본값)로 두면 그 효과의 대부분을 글리닝 비용의 약 3분의 1로 얻습니다.
+이 중 가장 큰 것은 글리닝입니다(측정한 수집에서 차지한 비중:
+[근거](../concepts/defaults-and-evidence.md#gleaning-rounds), 영문). `processing.gleaning.max_rounds`는
+3이며, 글리닝이 더하는 관계는 대부분 1회차에서 나오고 2~3회차는 조금만 더합니다. 1회차만 쓴
+그래프와 비교한 답변에서도 어느 쪽이 낫다고 할 수 없었습니다. `max_rounds: 1`(MS GraphRAG 기본값)로
+두면 그 효과의 대부분을 글리닝 비용의 약 3분의 1로 얻습니다.
+
+`aws.bedrock.ingestion_effort: low`는 default 티어 수집 호출의 추론 수준만 낮춥니다(질의는
+`default_effort`를 그대로 씀). 측정한 일부 코퍼스에서 수집 비용이 약 5분의 1 줄었고 답변에는
+측정할 만한 차이가 없었습니다([근거](../concepts/defaults-and-evidence.md#ingestion-effort), 영문).

@@ -45,9 +45,9 @@
 | `naive` | LightRAG | 그래프 없이 청크만 검색하는(BM25 + 벡터) 빠른 기준선과 비교 실험 |
 | `iterative` | 기반 전략(`mix`나 `local`)의 방법론 | 마지막 홉이 질문에 이름이 나오지 않는 엔티티에 관한 멀티홉 질문. 연결 엔티티로 후속 라운드를 정해진 횟수만큼 실행합니다 |
 | `ppr` | HippoRAG 2 | 저렴하고 빠른 멀티홉 선택지. 엔티티와 패시지에 대한 개인화 PageRank이며 LLM 호출은 답변 한 번입니다 |
-| `tree` | RAPTOR(선택 사항) | 관련 패시지 여러 개에 걸친 답. `indexing.methodologies`에 `raptor`를 넣어 만든 요약 트리를 읽습니다 |
+| `tree` | RAPTOR(선택 사항) | `indexing.methodologies`에 `raptor`를 넣어 그래프 추출 없이 만든 텍스트 단위 위의 요약 트리를 읽습니다. 멀티홉 질문에서는 `naive`와 오차 범위 안의 답을 냈습니다([근거](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree), 영문) |
 
-전략별 동작은 [검색](./docs/concepts/retrieval.ko.md)을, 레이어 구조·알고리즘·데이터 모델과 [수집](./docs/design.md#4-ingestion-pipeline)·[증분 인덱싱](./docs/design.md#5-incremental-indexing)·[검색](./docs/design.md#6-retrieval-two-methodologies) 상세 다이어그램은 [설계 문서](./docs/design.md)를 참고하세요.
+전략별 동작은 [검색](./docs/concepts/retrieval.ko.md)을, 레이어 구조·알고리즘·데이터 모델과 [수집](./docs/design.md#4-ingestion-pipeline)·[증분 인덱싱](./docs/design.md#5-incremental-indexing)·[검색](./docs/design.md#6-retrieval-methodologies) 상세 다이어그램은 [설계 문서](./docs/design.md)를 참고하세요.
 
 ## 빠른 시작
 
@@ -87,7 +87,7 @@ OpenSearch는 기본적으로 사용자 이름과 비밀번호로 인증합니�
 # 코퍼스 수집과 인덱싱 (문서 상태 레지스트리를 켜면 증분 인덱싱)
 uv run run-ingestion --source-directory ./source --config-path config.yaml
 
-# 두 방법론 중 하나로 질의하거나 대화 메모리를 켜고 대화형으로 실행
+# GraphRAG나 LightRAG 전략으로 질의하거나 대화 메모리를 켜고 대화형으로 실행
 uv run run-rag --query "문서의 주요 주제는?" --search-strategy global --config-path config.yaml
 uv run run-rag --query "Alice와 Acme는 어떤 관계인가?" --search-strategy mix --config-path config.yaml
 uv run run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml

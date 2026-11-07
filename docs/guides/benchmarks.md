@@ -39,7 +39,7 @@ prepare-benchmark musique --output-directory bench/musique --limit 100
 # 2. Ingest the paragraphs under their own suffix.
 run-ingestion --source-directory bench/musique/corpus --config-path musique.yaml
 
-# 3. Paired comparison of both methodologies, EM / F1 on the short answer span.
+# 3. Paired comparison of GraphRAG and LightRAG strategies, EM / F1 on the short answer span.
 run-eval --data-path bench/musique/eval_data.json --suffix musique \
   --search-strategy local,mix,global,naive --repeats 2 --config-path musique.yaml
 ```

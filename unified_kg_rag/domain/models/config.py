@@ -2003,9 +2003,10 @@ class GleaningConfig(BaseModel):
             "Maximum gleaning rounds per text unit. Each round after the first"
             " re-sends only the text units whose previous answer added a new "
             "entity or relationship, so a unit stops once an answer adds "
-            "nothing new. Within one MuSiQue ingestion, round 1 added most of "
-            "gleaning's relationships to bridge entities and rounds 2-3 little "
-            "more, and gleaning was 47% of the ingestion cost (see "
+            "nothing new. On MuSiQue, round 1 added most of gleaning's "
+            "relationships to bridge entities and rounds 2-3 little more, "
+            "gleaning was the largest share of the ingestion cost, and the "
+            "answers favoured neither 1 nor 3 rounds (see "
             "docs/concepts/defaults-and-evidence.md#gleaning-rounds). 1 is MS "
             "GraphRAG's default and the cost lever."
         ),
@@ -3217,7 +3218,7 @@ class CommunityCompactionConfig(BaseModel):
 
 
 class SummaryTreeConfig(BaseModel):
-    """RAPTOR's summary tree over the stored text units (opt-in, unmeasured).
+    """RAPTOR's summary tree over the stored text units (opt-in).
 
     Built when ``indexing.methodologies`` selects ``raptor`` (not a
     default): after indexing, the ``summary_tree`` stage clusters the
@@ -4494,7 +4495,7 @@ class PPRSearchConfig(BaseModel):
 
 
 class TreeSearchConfig(BaseModel):
-    """RAPTOR summary-tree search (``tree``, opt-in, unmeasured; the
+    """RAPTOR summary-tree search (``tree``, opt-in; the
     ``raptor`` methodology).
 
     Fuses, by RRF, a hybrid search of the text units, one of every level of
@@ -4562,8 +4563,10 @@ def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrate
         )
     if SearchStrategy.TREE in strategies:
         raise ValueError(
-            "auto_routable_strategies cannot include 'tree': it is opt-in and "
-            "unmeasured, so the router does not pick it; select it explicitly"
+            "auto_routable_strategies cannot include 'tree': it is opt-in (it "
+            "answered no better than naive, docs/concepts/"
+            "defaults-and-evidence.md#raptor-summary-tree), so the router does "
+            "not pick it; select it explicitly"
         )
     return strategies
 
@@ -4656,9 +4659,9 @@ class AbstentionConfig(BaseModel):
             "reported abstained (metadata.abstention_reason: marker) whatever "
             "its language. The instruction changes the answer prompt, so "
             "answers and EM/F1 differ from off: compare mark runs as their own "
-            "arm. Opt-in: on multi-hop questions it cost 10-12 points of EM "
+            "arm. Opt-in: on multi-hop questions it cost exact-match points "
             "for machine-readable declines (docs/concepts/"
-            "defaults-and-evidence.md)."
+            "defaults-and-evidence.md#declines-and-abstention)."
         ),
     )
     strip_marker: bool = Field(
@@ -4682,8 +4685,9 @@ class AbstentionConfig(BaseModel):
             "is told not to answer and writes the decline in the query's "
             "language; the output is reported abstained "
             "(abstention_reason: insufficient_context). Neither adds a call. "
-            "hedge is the default: with iterative, abstain declined 45% of "
-            "answerable questions."
+            "hedge is the default: with iterative, abstain declined many "
+            "answerable questions (docs/concepts/"
+            "defaults-and-evidence.md#declines-and-abstention)."
         ),
     )
 
@@ -4708,15 +4712,18 @@ class SearchConfig(BaseModel):
             " drift because it costs up to 27 LLM calls a query (local: 2), a "
             "price one misrouted question should not pay; add it to route to "
             "it. iterative, for questions that chain facts through an entity "
-            "they do not name, adds about 10 s to the median query it is "
-            "routed to; leave it out to keep auto off it. Only the strategies "
+            "they do not name, adds latency to the queries it is routed to "
+            "(docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds); "
+            "leave it out to keep auto off it. Only the strategies "
             "the queried index namespace serves are offered (on a "
             "LightRAG-only namespace none of local, global and drift), and "
             "when nothing is left local, else mix, else the first strategy "
             "of a held methodology is used (tree on a raptor-only "
             "namespace); with one strategy left no router call is "
             "made. auto itself is rejected, and so are ppr until a "
-            "measurement shows where it wins and tree, which is unmeasured; "
+            "measurement shows where it wins and tree, which answered no "
+            "better than naive (docs/concepts/defaults-and-evidence.md"
+            "#raptor-summary-tree); "
             "every strategy stays selectable explicitly, and one reading "
             "what the namespace does not hold is refused."
         ),
@@ -4878,14 +4885,13 @@ class SearchConfig(BaseModel):
             "explains every key point, modelled on MS GraphRAG's global "
             "reduce prompt, custom_prompts.comprehensive_answer_*). The map "
             "is merged over the default {global: comprehensive}; every other "
-            "strategy is concise unless named. Measured on 50 sensemaking "
-            "questions, comprehensive global answers won comprehensiveness, "
-            "diversity and empowerment against concise ones at 0.95-0.99 "
-            "with three pairwise judges, for +$0.016 per query (3.2k -> 7.6k "
-            "characters), and lost directness (win rate 0.00-0.39); pairwise "
-            "judges also favour longer answers. drift stays concise: "
-            "comprehensive drift won the same way, but its p95 latency rose "
-            "from 147 s to 168 s (max 178 s) against the 180 s "
+            "strategy is concise unless named. On sensemaking questions, "
+            "comprehensive global answers won comprehensiveness, diversity and "
+            "empowerment against concise ones, also with a judge that compares "
+            "only what each answer adds, at a higher cost per query, and "
+            "lost directness (docs/concepts/defaults-and-evidence.md"
+            "#answer-style). drift stays concise: comprehensive drift won the "
+            "same way, but its p95 latency came close to the 180 s "
             "query_timeout_seconds, so raise that with {drift: "
             "comprehensive}. {global: concise} restores the earlier default. "
             "An auto query uses the style of the strategy it routes to."

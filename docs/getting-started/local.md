@@ -7,7 +7,7 @@ account, for development and evaluation (AWS stays the default). By default
 the graph store, the vector/lexical store and the registry are SQLite files, so
 the only service to run is [Ollama](https://ollama.com) at
 `http://localhost:11434`. This page indexes a two-file sample corpus, queries
-it with both methodologies and scores the answers without an LLM judge.
+it with a GraphRAG and a LightRAG strategy and scores the answers without an LLM judge.
 
 Local mode is for development and evaluation only: the embedded stores serve
 one host and about 100,000 documents per index, the containers have no
@@ -70,7 +70,7 @@ uv run run-ingestion --backend local --source-directory ./sample-corpus
   (for example `UKR__INDEXING__RESET=true`), which rebuilds the stores and
   fills the registry; later runs are incremental.
 
-## Query with both methodologies
+## Query with GraphRAG and LightRAG
 
 `local` is the GraphRAG strategy for questions about specific entities and
 their relationships; `mix` is the general LightRAG strategy:

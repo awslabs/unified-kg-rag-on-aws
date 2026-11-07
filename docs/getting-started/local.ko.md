@@ -6,7 +6,7 @@
 모드입니다(기본값은 여전히 AWS). 기본 설정에서는 그래프 저장소, 벡터·어휘 저장소,
 레지스트리가 모두 SQLite 파일이므로 실행할 서비스는
 `http://localhost:11434`의 [Ollama](https://ollama.com) 하나뿐입니다. 이 문서에서는 파일 두
-개로 된 예제 코퍼스를 인덱싱하고, 두 방법론으로 질의한 뒤, LLM 판정 모델 없이 답변을
+개로 된 예제 코퍼스를 인덱싱하고, GraphRAG 전략과 LightRAG 전략으로 질의한 뒤, LLM 판정 모델 없이 답변을
 채점합니다.
 
 로컬 모드는 개발과 평가 전용입니다. 내장 저장소는 호스트 한 대와 인덱스당 문서 약
@@ -67,7 +67,7 @@ uv run run-ingestion --backend local --source-directory ./sample-corpus
   `indexing.reset: true`로(예: `UKR__INDEXING__RESET=true`) 한 번 돌리면 저장소를 다시
   만들고 레지스트리를 채우며, 그다음 실행부터 증분으로 처리합니다.
 
-## 두 방법론으로 질의
+## GraphRAG와 LightRAG로 질의
 
 `local`은 특정 엔티티와 그 관계를 묻는 질문에 쓰는 GraphRAG 전략이고, `mix`는 LightRAG의
 범용 전략입니다.

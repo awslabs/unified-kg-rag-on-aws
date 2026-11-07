@@ -177,7 +177,7 @@ indexing:
 - **What the namespace holds.** Each run records it in the build record
   (`artifacts`, `methodologies`). A query whose strategy reads a methodology
   the namespace does not hold is refused before any model call
-  (`MethodologyNotIndexedError`; `run-rag` exits 2), naming what it holds.
+  (`MethodologyNotIndexedError`; `run-rag` and `run-eval` exit 2), naming what it holds.
 - **Adding one later**, say `graphrag` after a `[lightrag]` build, builds
   only what it adds. With the doc-status registry the next run finds the
   namespace without communities and rebuilds it once (`indexing.reset`, a
@@ -206,8 +206,8 @@ text units are clustered by their vectors, each cluster is summarized
 clustered and summarized again, up to `indexing.summary_tree.max_levels`
 (5), and the tree is written into its own index for the `tree` strategy
 ([Retrieval](../concepts/retrieval.md#search-strategies--when-to-use-which)).
-Opt-in and unmeasured: no measurement shows yet whether it answers better
-than `naive`.
+Opt-in: on multi-hop questions it answered within the noise of `naive`
+([evidence](../concepts/defaults-and-evidence.md#raptor-summary-tree)).
 
 ```yaml
 indexing:
@@ -223,11 +223,11 @@ indexing:
   resolution, claims or communities, so a `raptor`-only namespace pays
   for the summaries alone: about one call per five or six text units, so
   the cost per corpus token grows as the chunks shrink and with the
-  reasoning effort. The MuSiQue benchmark store (0.37M tokens in
-  one-paragraph chunks) costs about $2 to $8 on the default tier (no
-  reasoning to the default `high` effort) and $0.1-0.4 with
-  `models.roles.summary_tree: fast`, against about $370 for its graph
-  ingest ([Design §6.5](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)).
+  reasoning effort. On the MuSiQue benchmark index the tree on the fast
+  tier (`models.roles.summary_tree: fast`) cost well under a dollar, against
+  hundreds for its graph ingestion
+  ([evidence](../concepts/defaults-and-evidence.md#raptor-summary-tree); the
+  default tier's estimate: [Design §6.5](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)).
   `tree`, `naive` and `simple` serve it; `auto` falls back to `tree`. It
   writes no graph store, so it needs no Neptune endpoint. A graph the
   namespace held before is left as it is by an incremental run; a full
@@ -241,7 +241,10 @@ indexing:
   rebuild of the namespace. The stage reads only the stores, so the
   `--enabled-stages summary_tree` run works under the pipeline id that
   built the namespace even when an upgrade changed the earlier stages'
-  cache keys, and it runs no earlier stage.
+  cache keys, and it runs no earlier stage. Either way `raptor` must be in
+  `indexing.methodologies` of that run: an `--enabled-stages summary_tree`
+  run without it writes a tree but does not record it in the build record,
+  so `tree` is still refused.
 - **Incremental runs** rebuild the tree from the stored text units and swap
   it in. A cluster whose children are unchanged takes its stored summary (no
   model call); the clustering starts from a sample of the node ids that a
@@ -274,12 +277,18 @@ unit, off by default) and one answer per query. Levers: a
 [methodology profile](#methodology-profiles) without `graphrag` (no
 community reports), Haiku-class models for
 the mechanical roles (the default for chunking, translation, map-reduce and
-summarization), fewer gleaning rounds, claims off, the caches and incremental
-indexing.
+summarization), fewer gleaning rounds, a lower ingestion effort, claims
+off, the caches and incremental indexing.
 
-Gleaning is the largest of these levers (47% of a measured ingestion).
+Gleaning is the largest of these levers (its share of a measured
+ingestion: [evidence](../concepts/defaults-and-evidence.md#gleaning-rounds)).
 `processing.gleaning.max_rounds` is 3; round 1 adds most of gleaning's
-relationships and rounds 2-3 little more
-([evidence](../concepts/defaults-and-evidence.md#gleaning-rounds)). Set
-`max_rounds: 1` (MS GraphRAG's default) to keep most of that gain at about
-a third of the gleaning cost.
+relationships and rounds 2-3 little more, and the answers measured with
+round 1 alone favoured neither setting. Set `max_rounds: 1` (MS GraphRAG's
+default) to keep most of that gain at about a third of the gleaning cost.
+
+`aws.bedrock.ingestion_effort: low` lowers the reasoning effort of the
+default tier's ingestion calls alone (queries keep `default_effort`): on a
+measured slice it cut about a fifth of the ingestion cost with no
+measurable difference in the answers
+([evidence](../concepts/defaults-and-evidence.md#ingestion-effort)).
