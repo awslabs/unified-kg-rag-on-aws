@@ -3852,9 +3852,11 @@ choices:
   scope, so arms that ask together make one call. Configuration arms
   (`run-eval --arm NAME=overlay.yaml`, `application/cli/arm_args.py`,
   `evaluation/arms.py`) are runs of their own chain and manager under the
-  run's config with an overlay merged over it (its `evaluation` section
-  kept), labelled `<strategy>@NAME` and paired with the same strategy's base
-  run. Every delta gets a sign-flip randomization p-value (exact
+  run's config with an overlay merged over it (its `evaluation` section and
+  scoring models kept, the judge chosen over every arm's answer model),
+  labelled `<strategy>@NAME` and paired with the same strategy's base run;
+  an arm shares the base chain's extractions only when its extraction
+  settings match (`run_evaluation.extraction_settings`). Every delta gets a sign-flip randomization p-value (exact
   on few pairs, where the percentile bootstrap is anti-conservative), and
   `adjust_for_multiplicity` Holm-adjusts them in families: the pre-declared
   primary metric (`evaluation.primary_metric`, default `answer_contains`)
