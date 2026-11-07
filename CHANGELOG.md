@@ -349,7 +349,7 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    stops at "Cannot delete export ...". The old table is retained where `removal_destroy` is off (delete it in step
    12) and deleted with the stack update where it is on. A 0.2.3 `doc_status_table` of your own needs a new name
    too, as CloudFormation replaces no custom-named table under its own name. Container Insights series restart
-   under the renamed ingestion task family (#558, #PR).
+   under the renamed ingestion task family (#558, #626).
 8. On that deploy: pass `-c owner=aws-proserve` to keep the `owner` tag; without `use_cmk`, delete a leftover
    `GraphRagSecurity` stack (CDK metadata only) with `aws cloudformation delete-stack`; dry-run the TLS policy
    change (`aws opensearch update-domain-config ... --dry-run`) to see whether it runs blue/green; in a
@@ -585,7 +585,7 @@ From a `main` checkout (formats and keys no release had):
   are unchanged reuses its summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) 70% of its token
   budget (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, as Claude Haiku writes
   about 1.4 times the length asked (at 90%, 70% of the summaries were cut), and one still over the budget keeps its
-  whole sentences within it (#601, #PR). `run-ingestion --enabled-stages summary_tree` builds the tree under the
+  whole sentences within it (#601, #626). `run-ingestion --enabled-stages summary_tree` builds the tree under the
   pipeline id that built the namespace even after an upgrade changed the earlier stages' cache keys, running none of
   them and probing only the indices the namespace lacks (#601). `raptor` alone runs no graph stage. The `tree`
   strategy (`auto` routes to it only on a `raptor`-only namespace) fuses BM25 + kNN searches of the text units and
@@ -623,7 +623,7 @@ From a `main` checkout (formats and keys no release had):
   Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them, and the next run records them gone, one with no document change too; a reset to fewer methodologies keeps
-  the extraction records, so adding one back extracts nothing again (#PR). Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
+  the extraction records, so adding one back extracts nothing again (#626). Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
   reads less declares its artifacts (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace
   that holds the text units, and `simple` sweeps only the indexes it holds (#607). A filter key is checked, after
   the methodology check, against the indexes the strategy reads that the namespace holds and a run of the config
@@ -770,7 +770,7 @@ From a `main` checkout (formats and keys no release had):
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
   #563, #589). Rerank requests count apart (`rerank_calls`, `rerank_search_units`, one per 100 documents, a document of more
   than 500 estimated tokens with the query counting as several, as Amazon Bedrock bills it: about 2x the units of
-  one per 100 at 4,800-character chunks; run manifests record `usage_schema: 3`, and a comparison against a run saved with an earlier schema gives no USD delta) (#PR), priced by
+  one per 100 at 4,800-character chunks; run manifests record `usage_schema: 3`, and a comparison against a run saved with an earlier schema gives no USD delta) (#626), priced by
   `evaluation.prices.<rerank model>.per_thousand_rerank_search_units` (#607); the run manifest records
   `usage_schema: 2`, and a comparison gives no USD delta against a run saved before it (#613).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
@@ -1144,7 +1144,7 @@ Ingestion and incremental indexing.
 - Neptune no longer loses edges when interrupted, a vertex write replaces its stored properties, and OpenSearch no
   longer stores a description cut at the Neptune cap (#252, #294, #377); an edge write looks its endpoints up by
   vertex id (property-mode ids read in one request per batch), so its cost no longer grows with the vertex count of
-  every tenant on the cluster (1.5 s an edge at 21k vertices) (#PR).
+  every tenant on the cluster (1.5 s an edge at 21k vertices) (#626).
 - A store error while preparing or clearing fails the stage, a lost create or delete response no longer fails a
   build, a failed delete batch counts every id, bulk errors name their cause, and indexing memory no longer grows
   with the corpus (#252, #265, #294, #431, #432, #440).
