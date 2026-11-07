@@ -1,7 +1,7 @@
 # CLI exit codes and JSON output
 
 What every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
-`run-prompt-tuning`, `prepare-benchmark`) returns to a script or a scheduler:
+`run-describe`, `run-prompt-tuning`, `prepare-benchmark`) returns to a script or a scheduler:
 its exit code, what a signal does, and the document `--output-format json`
 prints. Every flag: [CLI Reference](./cli.md); what an error message means:
 [Troubleshooting](../troubleshooting.md).
@@ -84,6 +84,12 @@ holds:
 - **`run-visualization`**: the `output_directory`, the written `files` and
   the `failed_renderers` (each failed renderer's error); an empty list
   (nothing rendered) or a failed renderer exits `1`.
+- **`run-describe`**: the namespace's description (`suffix`, `namespace`,
+  `build`, `artifacts`, `methodologies`, `strategies`, `auto_routes`,
+  `indices`, `registry`) and `export` (its `path`, `counts`, `truncated`
+  and `missing` kinds, or `null` without `--output-path`); a namespace that
+  holds no index exits `2`
+  ([Inspect and export](../guides/inspect.md)).
 - **`run-prompt-tuning`**: the `output_path`, the `profile` and, with
   `--schema-out`, the `schema_path`.
 - **`prepare-benchmark`**: the `output_directory`, the `benchmark` label

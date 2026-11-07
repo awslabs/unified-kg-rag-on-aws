@@ -1163,6 +1163,9 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- A document's doc-status registry namespace and its artifacts' index suffix follow one rule
+  (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
+  fails the loading stage naming it instead of keying the document's record under a namespace no index has (#(PR)).
 - One index language (`index_language`: `target_language` when translation runs, else `source_language`) for every
   component: with translation disabled, extraction, gleaning, description summaries and community reports were
   written in `target_language` and the graph indexes analyzed for it while the text units, the summary tree and the
