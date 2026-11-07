@@ -394,3 +394,129 @@ async def test_interactive_a_failing_question_does_not_end_the_session(
     await runner._interactive_mode()
     assert "Unexpected error: model down" in printed.getvalue()
     assert [q.query for q in queries] == ["after"]
+
+
+# --- run-ingestion: failure output and the embedding preflight ----------
+
+
+class _Embeddings:
+    def __init__(self, dimension: int) -> None:
+        self.dimension = dimension
+
+    def embed_query(self, text: str) -> list[float]:
+        return [0.1] * self.dimension
+
+
+class _Factory:
+    """An embedding model that reports no dimensions (as a local server's)
+    and returns ``returns``-long vectors whatever it is asked for."""
+
+    def __init__(self, returns: int) -> None:
+        self.returns = returns
+        self.requested: list[int] = []
+
+    def get_model(self, model_id, **kwargs):
+        self.requested.append(kwargs["dimensions"])
+        return _Embeddings(self.returns)
+
+    def get_model_info(self, model_id):
+        return type("Info", (), {"dimensions": None})()
+
+
+def _context():
+    from datetime import datetime
+
+    from unified_kg_rag.domain.models import (
+        PipelineConfig,
+        PipelineContext,
+        PipelineStageStatus,
+    )
+
+    return PipelineContext(
+        pipeline_id="run-7",
+        config=PipelineConfig(),
+        status=PipelineStageStatus.RUNNING,
+        start_time=datetime.now(),
+        source_directory=Path("src"),
+    )
+
+
+def _probe(returns: int, dimension: int):
+    from unittest.mock import MagicMock
+
+    from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+
+    pipeline = object.__new__(DataIngestionPipeline)
+    pipeline.config = Config(
+        backend="local",
+        models={
+            "default": "llm",
+            "embedding": {"model_id": "embedder", "dimension": dimension},
+        },
+    )
+    pipeline.providers = MagicMock(embedding_factory=_Factory(returns))
+    return pipeline
+
+
+def test_the_preflight_refuses_an_embedding_dimension_the_index_cannot_take() -> None:
+    # It failed every vector write at the indexing stage, after the
+    # extraction was paid for, without naming the setting.
+    from unified_kg_rag.shared import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as refused:
+        _probe(returns=64, dimension=1024)._check_embedding_dimension(_context())
+    message = str(refused.value)
+    assert "returns vectors of dimension 64" in message
+    assert "mapped with 1024 (models.embedding.dimension)" in message
+    assert "Set models.embedding.dimension (--embedding-dimension) to 64" in message
+    pipeline = _probe(returns=1024, dimension=1024)
+    pipeline._check_embedding_dimension(_context())
+    assert pipeline.providers.embedding_factory.requested == [1024]
+    # An incremental run with nothing to (re)extract embeds nothing new.
+    from unified_kg_rag.domain.models import DocumentDelta
+
+    unchanged = _context()
+    unchanged.incremental_delta = DocumentDelta()
+    _probe(returns=64, dimension=1024)._check_embedding_dimension(unchanged)
+
+
+def test_a_failed_run_names_the_first_stage_error_and_the_next_step() -> None:
+    from datetime import datetime
+
+    from unified_kg_rag.domain.models import (
+        PipelineConfig,
+        PipelineContext,
+        PipelineStageResult,
+        PipelineStageStatus,
+    )
+
+    runner = run_ingestion_pipeline.IngestionPipelineRunner
+    context = PipelineContext(
+        pipeline_id="run-7",
+        config=PipelineConfig(),
+        status=PipelineStageStatus.FAILED,
+        start_time=datetime.now(),
+        source_directory=Path("src"),
+        stage_results=[
+            PipelineStageResult(
+                stage_name="graph_extraction",
+                status=PipelineStageStatus.COMPLETED,
+                start_time=datetime.now(),
+            ),
+            PipelineStageResult(
+                stage_name="indexing",
+                status=PipelineStageStatus.FAILED,
+                start_time=datetime.now(),
+                error_message="Vector dimension mismatch. Expected: 1024, Given: 64",
+            ),
+        ],
+    )
+    assert runner._stage_failure(context) == (
+        "Pipeline failed at stage(s): indexing. First error (indexing): Vector "
+        "dimension mismatch. Expected: 1024, Given: 64"
+    )
+    step = runner._next_step(context)
+    assert "set models.embedding.dimension (--embedding-dimension)" in step
+    assert "rerun with --pipeline-id run-7" in step
+    context.stage_results[1].error_message = "throttled"
+    assert "models.embedding" not in runner._next_step(context)

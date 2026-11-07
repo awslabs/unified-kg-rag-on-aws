@@ -899,7 +899,10 @@ def test_ingestion_json_result_lists_each_stage(
     assert result["pipeline_id"] == "run-1"
     assert result["status"] == "failed"
     # Named like the status of a run that fails before it prints.
-    assert result["error"] == "Pipeline failed at stage(s): text_chunking"
+    assert result["error"] == (
+        "Pipeline failed at stage(s): text_chunking. First error "
+        "(text_chunking): boom"
+    )
     assert result["exit_code"] == 1
     assert result["failed_documents"] == 0
     assert result["stages"] == [

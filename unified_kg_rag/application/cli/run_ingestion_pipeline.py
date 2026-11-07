@@ -744,6 +744,10 @@ class IngestionPipelineRunner:
                 # non-zero and the failure surfaces.
                 error = self._stage_failure(context)
                 if error is not None:
+                    console.print(
+                        f"\n[yellow]Next step: {markup_safe(self._next_step(context))}"
+                        "[/yellow]"
+                    )
                     raise PipelineExecutionError(error)
                 success_msg = "✓ Pipeline completed successfully!"
                 console.print(
@@ -761,15 +765,44 @@ class IngestionPipelineRunner:
 
     @staticmethod
     def _stage_failure(context: PipelineContext) -> str | None:
-        """The error of a run a stage failed, or None."""
+        """The error of a run a stage failed, with the first failed stage's
+        own error (the cause, which was only in the logs), or None."""
         if context.status != PipelineStageStatus.FAILED:
             return None
         failed = [
-            r.stage_name
+            r for r in context.stage_results if r.status == PipelineStageStatus.FAILED
+        ]
+        error = (
+            f"Pipeline failed at stage(s): "
+            f"{', '.join(r.stage_name for r in failed) or 'unknown'}"
+        )
+        first = next((r for r in failed if r.error_message), None)
+        if first is not None:
+            error += f". First error ({first.stage_name}): {first.error_message}"
+        return error
+
+    @staticmethod
+    def _next_step(context: PipelineContext) -> str:
+        """What to do after a run a stage failed: the fix the error names
+        (an embedding dimension the index refuses), then the resume."""
+        error = " ".join(
+            r.error_message or ""
             for r in context.stage_results
             if r.status == PipelineStageStatus.FAILED
-        ]
-        return f"Pipeline failed at stage(s): {', '.join(failed) or 'unknown'}"
+        )
+        step = ""
+        if "dimension" in error.lower():
+            step = (
+                "The embedding dimension does not match the index: set "
+                "models.embedding.dimension (--embedding-dimension) to what "
+                "the embedding model returns, or ingest into a new namespace "
+                "(--suffix) or with --reset. "
+            )
+        return (
+            f"{step}Fix the cause, then rerun with --pipeline-id "
+            f"{context.pipeline_id} to resume from the failed stage (the "
+            "finished stages are cached; --force-rebuild recomputes them)."
+        )
 
     def _json_result(self, context: PipelineContext) -> dict[str, Any]:
         """The run's ``--output-format json`` result; a run a stage failed

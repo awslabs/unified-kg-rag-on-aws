@@ -504,9 +504,11 @@ def test_a_failed_run_says_which_stage_failed(
     monkeypatch.setattr(ps.GraphExtractionStage, "execute", execute)
     caplog.set_level(logging.INFO)
     assert harness.run() == 1
-    assert "Error: Pipeline failed at stage(s): graph_extraction" in (
-        capsys.readouterr().out
-    )
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Error: Pipeline failed at stage(s): graph_extraction" in out
+    # The cause and what to do next, not only the stage's name.
+    assert "throttled beyond retries" in out
+    assert "Next step: Fix the cause, then rerun with --pipeline-id" in out
     assert not any(
         "Pipeline execution completed successfully" in r.getMessage()
         for r in caplog.records

@@ -228,7 +228,8 @@ model or credential error fails a query rather than answering from no context.
 
 | Message (abridged) | Meaning | Action |
 |---|---|---|
-| `Pipeline failed at stage(s): ...` | A stage failed; exit 1 | Fix from the stage's log and resume with the same `--pipeline-id` (`--force-rebuild` starts clean) |
+| `Pipeline failed at stage(s): ... First error (<stage>): ...` | A stage failed; exit 1. The message names the first failed stage's error, and a `Next step:` line the pipeline id to resume with | Fix the cause the error names and resume with the same `--pipeline-id` (`--force-rebuild` starts clean) |
+| `The embedding model '<id>' returns vectors of dimension <n>, but the indices are mapped with <m> (models.embedding.dimension)` (`run-ingestion` exit 2, before any extraction) | The model (often a local server's) returns another dimension than the configured one; the run embeds one probe text before the first model stage to find out | Set `models.embedding.dimension` (`--embedding-dimension`) to `<n>`, or use a model that returns `<m>`; an index already built with another dimension needs a new namespace (`--suffix`) or `--reset` |
 | `Pipeline resume failed: ...` (`PipelineResumeError`, exit 1, before any model call) | The pipeline id cannot be resumed as asked: a stage this run must rerun is not enabled (the message names it), an explicit `--resume-from-stage` past a stage whose cached output is gone, or its saved state could not be read | Enable the named stage or resume from it (`--resume-from-stage <stage>`); for unreadable state, a new `--pipeline-id` or `--force-rebuild` |
 | `CacheSyncError` | The S3 stage-cache download or upload failed | Check bucket permissions and `aws.s3.encryption`; resume |
 | `DocStatusRegistryError` | The registry table is missing, not accessible, or throttled | Create it or fix `aws.dynamodb.table_name`, grant the permissions the message names; resume |

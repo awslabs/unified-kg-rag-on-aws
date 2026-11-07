@@ -908,6 +908,11 @@ From a `main` checkout (formats and keys no release had):
   printed a header alone, and an answer is followed by one line naming its source files and counting its graph
   elements; `--verbose` lists every source with its score and text, in `--interactive` mode too (which printed
   the details on every answer) (#PR).
+- `run-ingestion` failures say why: a run a stage failed names the first failed stage's error (it named the stage
+  alone; the cause was only in the logs) and prints the next step, the pipeline id to resume with; and a run that
+  writes vectors embeds one probe text before its first model stage and stops (exit 2) when the model returns
+  another dimension than `models.embedding.dimension`, naming the setting, where every vector write failed at the
+  indexing stage after the extraction was paid for (one embedding call per run) (#PR).
 - `run-ingestion --suffix`, `--methodologies a,b` and `--reset` set `processing.document_parsing.index_value`,
   `indexing.methodologies` and `indexing.reset` for one run, validated as the config keys are (a bad value exits
   2); `run-ingestion` and `run-rag` print the run's index namespace (suffix and `indexing.additional_suffix`) as
