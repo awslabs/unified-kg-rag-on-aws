@@ -534,7 +534,7 @@ From a `main` checkout (formats and keys no release had):
   and a `community_depth` cut maps other reports), and asks every report once more under the new report prompt: one
   report call per community and its embeddings, the report stage of a first build (no text unit is extracted again);
   later builds reuse them. An incremental run clusters and reports its own communities the new way (#618).
-- (#PR) citations: answers now cite their context with `[n]` markers (`search.citations.enabled`, on), so answer
+- (#627) citations: answers now cite their context with `[n]` markers (`search.citations.enabled`, on), so answer
   texts and the LLM judges' scores differ from earlier runs (`answer_match` scores the words without the markers):
   compare runs of one setting, or set it `false` for the earlier context and prompt. Pages and relative paths are
   stored with the text units of documents indexed from this release on; to add them to an existing namespace,
@@ -552,7 +552,7 @@ From a `main` checkout (formats and keys no release had):
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
   rate's interval resamples queries. The default still judges the first repeat (#620).
-- Document citations (#PR): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages,
+- Document citations (#627): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages,
   entities, relationships, claims, reports, summaries; not model-written key points or intermediate answers) in
   every strategy, and the answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to
   cite them with those markers, ASCII in every answer language. `RAGOutput.citations` lists one `Citation` per
@@ -567,7 +567,7 @@ From a `main` checkout (formats and keys no release had):
   (ids and texts unchanged). `run-rag` prints the cited sources and its JSON output carries every citation. The
   retrieval evaluator adds `citation_precision` and `citation_recall` against `reference_sources`
   ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
-- `RAGInput.history` (#PR): a stateless caller passes the conversation as `{role, content}` turns, which the
+- `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the
   follow-up rewrite reads where it reads memory otherwise, bounded to `memory.max_messages_per_conversation` turns
   and `memory.max_history_tokens` (4,000, estimated) and screened by the input guardrail like the query (a masked
   turn is used masked, a blocked one dropped); not with `use_memory`
