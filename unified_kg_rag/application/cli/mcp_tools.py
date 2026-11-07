@@ -488,7 +488,13 @@ class KnowledgeGraphTools:
             )
         return chosen
 
-    def _bounded(self, name: str, value: int, low: int, high: int) -> int:
+    def _bounded(
+        self, name: str, value: int | None, low: int, high: int, default: int = 1
+    ) -> int:
+        """``value``, refused outside ``[low, high]``; ``None`` is ``default``
+        within the cap."""
+        if value is None:
+            return min(default, high)
         if not low <= value <= high:
             raise ToolArgumentError(f"{name} must be between {low} and {high}.")
         return value
@@ -636,7 +642,7 @@ class KnowledgeGraphTools:
         query: str,
         strategy: str | None,
         search_type: str,
-        top_k: int,
+        top_k: int | None,
         filters: dict[str, Any] | None,
         namespace: str | None,
     ) -> RAGInput:
@@ -651,7 +657,7 @@ class KnowledgeGraphTools:
             suffix=self._suffix(namespace),
             search_strategy=self._strategy(strategy),
             search_type=kind,
-            top_k=self._bounded("top_k", top_k, 1, self.settings.max_top_k),
+            top_k=self._bounded("top_k", top_k, 1, self.settings.max_top_k, 10),
             filters=self._filters(filters),
             # Stateless: no caller reaches another caller's history.
             use_memory=False,
@@ -715,7 +721,7 @@ class KnowledgeGraphTools:
         *,
         strategy: str | None = None,
         search_type: str = SearchType.HYBRID.value,
-        top_k: int = 10,
+        top_k: int | None = None,
         filters: dict[str, Any] | None = None,
         namespace: str | None = None,
     ) -> SearchToolResult:
@@ -753,7 +759,7 @@ class KnowledgeGraphTools:
         *,
         strategy: str | None = None,
         search_type: str = SearchType.HYBRID.value,
-        top_k: int = 10,
+        top_k: int | None = None,
         filters: dict[str, Any] | None = None,
         namespace: str | None = None,
     ) -> AnswerToolResult:
@@ -821,7 +827,7 @@ class KnowledgeGraphTools:
         entity_id: str | None = None,
         name: str | None = None,
         iri: str | None = None,
-        limit: int = 5,
+        limit: int | None = None,
         namespace: str | None = None,
     ) -> EntityToolResult:
         """``kg_get_entity``: the entities with this id, IRI or name."""
@@ -829,7 +835,7 @@ class KnowledgeGraphTools:
         async def run() -> EntityToolResult:
             given = self._entity_arguments(entity_id, name, iri)
             suffix = self._suffix(namespace)
-            bounded = self._bounded("limit", limit, 1, self.settings.max_top_k)
+            bounded = self._bounded("limit", limit, 1, self.settings.max_top_k, 5)
             with usage_scope() as meter:
                 match, hits = await self._within_deadline(
                     self._find(suffix, given, bounded)
@@ -879,7 +885,7 @@ class KnowledgeGraphTools:
         name: str | None = None,
         iri: str | None = None,
         max_hops: int = 1,
-        limit: int = 20,
+        limit: int | None = None,
         namespace: str | None = None,
     ) -> NeighborsToolResult:
         """``kg_neighbors``: the entities within ``max_hops`` of one entity
@@ -889,7 +895,7 @@ class KnowledgeGraphTools:
             given = self._entity_arguments(entity_id, name, iri)
             suffix = self._suffix(namespace)
             hops = self._bounded("max_hops", max_hops, 1, self.settings.max_hops)
-            bounded = self._bounded("limit", limit, 1, self.settings.max_neighbors)
+            bounded = self._bounded("limit", limit, 1, self.settings.max_neighbors, 20)
 
             async def walk() -> NeighborsToolResult:
                 match, hits = await self._find(suffix, given, 1)

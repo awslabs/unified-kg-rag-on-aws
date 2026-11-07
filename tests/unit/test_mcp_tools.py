@@ -317,6 +317,25 @@ async def test_arguments_out_of_bounds_are_refused(call: Any, error: str) -> Non
     assert chain.inputs == []
 
 
+async def test_omitted_sizes_default_within_the_caps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limits: list[int] = []
+
+    async def find(chain: Any, suffix: str | None, **kwargs: Any) -> Any:
+        limits.append(kwargs["limit"])
+        return "none", []
+
+    monkeypatch.setattr(graph_lookup, "find_entities", find)
+    chain = FakeChain()
+    await _tools(chain).search("q")
+    await _tools(chain, max_top_k=3).search("q")
+    await _tools(max_top_k=3).get_entity(name="Depot")
+    await _tools().get_entity(name="Depot")
+    assert [i.top_k for i in chain.inputs] == [10, 3]
+    assert limits == [3, 5]
+
+
 async def test_filters_are_typed_and_checked_before_the_query() -> None:
     chain = FakeChain()
     tools = _tools(chain)
