@@ -108,9 +108,10 @@ The console prints the same summary.
 - the CLI arguments (URLs without credentials), versions, `git_sha` /
   `git_dirty`, the dataset (path, hashes, query count, and `dense_script`:
   whether a question, gold answer or alias holds Han, Hangul or Kana
-  text), a UTC timestamp, `dropped_evaluators` and `usage_schema` (`2`:
-  the usage records count the rerank requests; a run saved without it
-  counted none);
+  text), a UTC timestamp, `dropped_evaluators` and `usage_schema` (`3`:
+  the usage records count the rerank requests and their search units as
+  Bedrock bills them; `2` counted one unit per 100 documents, too few for
+  long ones; a run saved without it counted none);
 - from `run-eval`: `run_id`, the invocation that answered the run (one per
   `run-eval`, shared by its strategies and repeats), with several runs
   `run_order` (`interleaved` or `sequential`, `evaluation.run_order`) and
@@ -298,9 +299,10 @@ strategies, or `--repeats`) saves every run's files and adds
   `usage/output_tokens`, `usage/total_tokens`, `usage/cost_usd`,
   `latency/response_time_seconds`, each query's mean over its repeats, with
   the bootstrap interval). No `usage/cost_usd` delta pairs a strategy whose
-  usage records count the rerank requests with one saved before they did
-  (no `usage_schema` 2 in its manifest; a warning says so): the older
-  side's estimate prices no rerank. A failed or timed-out answer counts with what it
+  usage records count the rerank search units as billed with one saved before
+  they did (a `usage_schema` below 3 in its manifest, or none; a warning
+  says so): the older side's estimate prices the rerank too low or not at
+  all. A failed or timed-out answer counts with what it
   spent before failing: each answer runs in its own usage scope and timer,
   so its result keeps the calls and tokens of its attempts and the time from
   its first attempt's start to its last one's end (`failed_answers` counts

@@ -770,7 +770,7 @@ From a `main` checkout (formats and keys no release had):
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
   #563, #589). Rerank requests count apart (`rerank_calls`, `rerank_search_units`, one per 100 documents, a document of more
   than 500 estimated tokens with the query counting as several, as Amazon Bedrock bills it: about 2x the units of
-  one per 100 at 4,800-character chunks) (#PR), priced by
+  one per 100 at 4,800-character chunks; run manifests record `usage_schema: 3`, and a comparison against a run saved with an earlier schema gives no USD delta) (#PR), priced by
   `evaluation.prices.<rerank model>.per_thousand_rerank_search_units` (#607); the run manifest records
   `usage_schema: 2`, and a comparison gives no USD delta against a run saved before it (#613).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,

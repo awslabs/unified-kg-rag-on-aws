@@ -794,7 +794,7 @@ class TestWarmUp:
         truths = [EvaluationGroundTruth(query_id="q1", ground_truth="Vendor")]
         manifest = manager.build_run_manifest(queries=english, ground_truths=truths)
         assert manifest["dataset"]["dense_script"] is False
-        assert manifest["usage_schema"] == 2
+        assert manifest["usage_schema"] == 3
         for question, answer, aliases in (
             ("누가 배송하나?", "Vendor", None),
             ("Who ships?", "운송사", None),

@@ -753,8 +753,10 @@ USD_MEASURE = "usage/cost_usd"
 # What a run's usage records count (the run manifest's ``usage_schema``):
 # 1, the model calls and tokens (a run saved before it was recorded); 2, the
 # rerank requests too (``rerank_calls``, ``rerank_search_units``), which a
-# USD estimate prices.
-USAGE_SCHEMA = 2
+# USD estimate prices; 3, the search units counted as Bedrock bills them
+# (a document over a chunk's token limit counts as several), where 2 counted
+# one per 100 documents and undercounted long ones.
+USAGE_SCHEMA = 3
 
 
 def answer_cost_usd(
@@ -863,8 +865,8 @@ def cost_comparison(
     with them or with some answers unmeasured, failed answers in the
     measures, repeat counts or cache hits per answer that differ from the
     baseline's, unpriced models, and strategies whose usage records do not
-    meter the rerank requests (``unmetered_rerank``: saved before
-    ``USAGE_SCHEMA`` 2) next to some that do: the USD delta between two
+    meter the rerank requests as billed (``unmetered_rerank``: saved before
+    ``USAGE_SCHEMA`` 3) next to some that do: the USD delta between two
     such is left out, since one side's estimate prices no rerank.
 
     A failed answer counts with the usage and time it spent before it failed
@@ -962,9 +964,10 @@ def cost_comparison(
     if prices and unmetered and len(unmetered) < len(names):
         warnings.append(
             f"The usage records of {', '.join(unmetered)} do not count rerank "
-            "requests (saved before usage_schema 2): their USD estimate leaves "
-            "the rerank out, and no USD delta is given against a strategy "
-            "whose records count them. Run them again to compare USD."
+            f"search units as billed (saved before usage_schema {USAGE_SCHEMA}): "
+            "their USD estimate leaves the rerank out or undercounts it, and "
+            "no USD delta is given against a strategy whose records count "
+            "them. Run them again to compare USD."
         )
     # Some strategies with usage and some without: their usage is not
     # paired (none with it at all is no warning, only no usage measures).

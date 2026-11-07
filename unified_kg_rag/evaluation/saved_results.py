@@ -307,8 +307,9 @@ def check_answer_scoring(
 def rerank_unmetered(
     manifests: Sequence[tuple[str, dict[str, Any] | None]],
 ) -> set[str]:
-    """The labels of the runs whose usage records count no rerank request:
-    their manifest records a ``usage_schema`` below ``USAGE_SCHEMA`` 2, or
+    """The labels of the runs whose usage records do not count rerank search
+    units as billed: their manifest records a ``usage_schema`` below
+    ``USAGE_SCHEMA`` (none before 2, too few for long documents before 3), or
     none (saved before it was recorded). A run without a manifest is not
     known, and not named."""
     return {
