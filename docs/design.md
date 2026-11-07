@@ -2886,6 +2886,173 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   decodes under the locale's encoding is kept as read, even when it was
   written in another encoding.
 
+### 8.4 Agent access: the read-only MCP server
+
+`run-mcp-server` (the `mcp` extra) serves one index namespace to agents as
+[Model Context Protocol](https://modelcontextprotocol.io) tools, so an agent
+(an IDE assistant, a Strands or LangGraph agent, an agent on Amazon Bedrock
+AgentCore) can search, ask and walk the graph without a client library. It
+is opt-in: nothing changes for a deployment that does not start it. The
+user guide is [MCP server](./guides/mcp.md).
+
+**Tools.** Five, all read-only (annotated `readOnlyHint`, `idempotentHint`,
+not `destructiveHint`, not `openWorldHint`). No tool ingests, deletes or
+writes memory; no tool takes an index name, an endpoint or a file path.
+
+| Tool | Runs | Model calls | Returns |
+|---|---|---|---|
+| `kg_search` | `GraphRAGChain.asearch` | those of the strategy's query processing (the `auto` router, query entities or keywords), the query embedding, the rerank | ranked supporting-content records |
+| `kg_answer` | `GraphRAGChain.ainvoke` | the above plus the answer | the answer, its sources as records, `usage`, `abstained`/`abstention_reason`, `blocked`, the strategy run |
+| `kg_get_entity` | the entities index by `id`, `iri` or exact `name.keyword`; without an exact match, a lexical search of `name` | none | up to `limit` entities, how they matched |
+| `kg_neighbors` | the graph walk from one entity (`max_hops`, the configured per-hop budget) and its incident relationships | none | the neighbours (hop distance, path) and the relationships with their text units and documents |
+| `kg_describe_schema` | the namespace's build record and held artifacts, the resolved extraction schema | none (a schema source may read its file or S3 object once) | held methodologies, the strategies they serve, the build, entity and relationship types and patterns, the filter keys |
+
+**Supporting-content record.** Every search hit, answer source, entity and
+relationship comes back in one chunk-oriented shape, so a caller can map it
+onto the "supporting content" records other agent and ontology tooling
+exchanges without per-kind code: `kind` (the section type: `text`,
+`entity`, `relationship`, `community`, `claim`, `summary`), `chunk_id`,
+`text` (cut to `mcp.max_text_chars`, `text_truncated` set), `score`,
+`source_id`, `document_id` and `document_name` (a text unit's file name,
+never its path), `documents` (the file names a graph item's text units
+come from, resolved in one fetch by id), `text_unit_ids`, `entities` (each
+`id`, `name`, `type`, `iri`: the item itself for an entity, the endpoints
+for a relationship, and for a chunk the entities of the same response that
+cite it), `provenance` (a seed graph's `kind`, `seed_graphs` and `iri`, as
+in `RAGOutput.sources`) and `synthesized` (model-written, such as global
+search's key points; `kg_answer` never cites one, as the chain does not).
+
+**Layer placement.** The server is a driving adapter in the entry-point
+layer, next to the other CLIs (§2.1): `application/cli/mcp_tools.py` holds
+the tool logic and result models and imports no MCP SDK (it is tested on a
+core install), `application/cli/mcp_server.py` binds it to the SDK's
+`MCPServer` (imported lazily; a missing SDK is a `ConfigurationError`
+naming the extra), and `application/cli/run_mcp_server.py` is the console
+script. The tools call only the public chain (`asearch`, `ainvoke`,
+`acheck_methodology`, `check_filter_keys`, `typed_filter_values`) and
+`application/retrieval/graph_lookup.py`, which reads the stores through the
+chain's own retrievers (as `methodology_check` and `filter_validation` do)
+with text-less fetches by id and the graph walk: the same read paths the
+strategies use, so every backend that serves queries (Neptune, OpenSearch,
+the embedded SQLite stores) serves the tools. `tests/unit/test_layering.py`
+is unchanged and its allowlist stays empty. `build_mcp_server` is exported
+from the package root for a host that mounts the server in its own ASGI
+application.
+
+**Transport.** stdio by default: the agent starts the server as a child
+process and owns its lifetime, there is no listening socket, and stdout
+carries only protocol messages (the banner and the logs go to stderr).
+Streamable HTTP (`--transport streamable-http`) is stateless (no session,
+every call stands alone) and binds `127.0.0.1:8000` by default, where the
+SDK checks the `Host` and `Origin` headers against loopback names (a web
+page cannot reach it through DNS rebinding). Binding any other address
+needs `--allow-remote`. The server has **no authentication**: it does not
+check who calls it, and the documentation claims nothing it cannot enforce.
+A remote deployment puts it behind something that authenticates every
+request and only forwards authenticated ones (AgentCore Runtime or Gateway
+inbound authorization, an authenticating reverse proxy, a private network
+whose every client may read the namespace) and keeps the port unreachable
+otherwise.
+
+**Scope.** The tenant scope is fixed when the server starts: the namespace
+is `--suffix`, else `processing.document_parsing.index_value` (as for
+`run-rag`), and `indexing.additional_suffix` comes from the config. A tool
+call can name another namespace only if `mcp.allowed_namespaces` lists it
+(the tools then take a `namespace` argument; without the list they have
+none). Caller `filters` are typed and checked as a query's are
+(`typed_filter_values`, then the chain's key and value checks against the
+indexes the strategy reads), and only narrow a search. They are not an
+isolation boundary: an entity or relationship merges the text of every
+document that states it, so a document filter does not hide what another
+document said about the same entity. Data a caller must not read belongs in
+another namespace. `mcp.strategies` limits which strategies the tools run
+(cost control); a strategy the namespace does not hold is refused with the
+chain's `MethodologyNotIndexedError` message, which names what it holds.
+
+**Limits.** Every argument is bounded in the published input schema and
+checked again in the tool: `top_k` and `limit` by `mcp.max_top_k`,
+`max_hops` by `mcp.max_hops`, neighbours by `mcp.max_neighbors`, the query
+by `mcp.max_query_chars`. Each record's text is cut to `mcp.max_text_chars`
+and a response past `mcp.max_response_chars` drops its lowest-ranked
+records (`truncated`, `omitted`). Each call runs under the query deadline
+(`search.query_timeout_seconds`: the chain's own for `kg_search` and
+`kg_answer`, the same seconds around the store reads of the others), and at
+most `mcp.max_concurrent_calls` run at once; the others wait inside their
+deadline. The tools are stateless: no conversation memory (`use_memory` is
+off), so no caller reaches another caller's history.
+
+**Usage, telemetry and redaction.** `kg_search` and `kg_answer` return the
+chain's `metadata.usage` (model calls, input and output tokens, by role and
+model); the graph tools make no model call and return zero usage. Each call
+opens a `kg_rag.mcp.tool` span (tool name, outcome, record count) under
+which the chain's `kg_rag.query` span nests. Its arguments are recorded as
+`input.value` only with `observability.capture_content`, after
+`observability.redact_patterns`, the policy every other span follows;
+INFO logs carry a digest of the query (`text_digest`), never its text. A
+caller-correctable error (an invalid argument or filter, a strategy the
+namespace does not hold, the deadline) is returned as a tool error with its
+message; any other failure returns a generic message and is logged with its
+traceback on the server, so a store endpoint or a stack trace never reaches
+the caller.
+
+**Untrusted text.** Chunk text, descriptions and answers are corpus or model
+text, and the server instructions and every tool description say to treat
+them as data, not instructions. The tools return them in structured fields,
+never as a prompt. Text planted in the corpus that persuades an agent to
+call more tools reaches only more read-only calls on the same namespace.
+`kg_search` and `kg_answer` pass through the configured guardrail as any
+query does (the query screened, the answer screened); the graph tools make
+no model call and return stored text as it is, so the guardrail does not
+screen them.
+
+**Multilingual, hybrid, provenance, methodologies.** Tool descriptions are
+English; arguments may be in any supported language. `kg_search` and
+`kg_answer` take the chain's query-language path (the query translated when
+the index was, the answer in the question's language) and its hybrid
+retrieval (`search_type` hybrid by default: BM25 and kNN fused, then
+reranked). `kg_get_entity` matches names exactly on `name.keyword`, then
+lexically on `name` with the index's analyzer (`nori`, `cjk` and the
+language analyzers), deliberately without an embedding: a name lookup
+needs no vector, and costs no model call. Every record keeps the
+provenance the chain reports. `kg_describe_schema` lists the methodologies
+the namespace holds and the strategies they serve; `kg_neighbors` reads the
+relationships with their descriptions and text units from the relationships
+index when the namespace holds the relationship vectors (lightrag,
+hipporag), else the edges from the graph (ids and weights only); a
+namespace without a graph (raptor only) answers both graph tools with an
+error naming what it holds.
+
+**Failure modes.**
+
+| Situation | Outcome |
+|---|---|
+| The `mcp` extra is missing | `run-mcp-server` exits 2 naming the extra (`build_mcp_server` raises `ConfigurationError`) |
+| A store endpoint is unset, an extra a provider needs is missing | exit 2 before the server starts (the CLI preflight) |
+| A non-loopback `--host` without `--allow-remote` | exit 2 |
+| An argument out of bounds, an unknown namespace or strategy, a bad filter | tool error naming the argument |
+| A strategy the namespace does not hold | tool error with the chain's message (what it holds, how to add it) |
+| The deadline passes | tool error `QueryTimeoutError`; the chain cancels its calls |
+| A store or model failure | tool error with a generic message, logged with its traceback |
+| The client closes stdin (stdio) | the server exits 0; SIGTERM exits 143, Ctrl-C 130 |
+
+**Cost.** `kg_search` costs what `run-rag --mode search` costs for the same
+strategy (with `auto`, the router call; the query embedding; one rerank
+request), `kg_answer` what `run-rag` costs (plus
+the answer call, usually the largest), and the graph tools one to four
+store requests and no model call. An agent may call a tool many times per
+task, so `mcp.tools` can drop `kg_answer` (the agent then writes the answer
+from `kg_search`'s records with its own model) and `mcp.strategies` can
+leave out the costlier strategies (`drift`, `global` with dynamic
+selection, `iterative`).
+
+**Deployment (follow-up).** This round adds no infrastructure. The query
+image can run `run-mcp-server --transport streamable-http --host 0.0.0.0
+--allow-remote` as an AgentCore Runtime MCP server (the container listens
+on port 8000 at `/mcp`, stateless) with Runtime inbound authorization, or
+behind AgentCore Gateway; the IAM policy is the query task role's (read
+access to the stores, the models the strategies call). Both need a
+real-AWS verification before they are documented as supported.
+
 ---
 
 ## 9. Evaluation Framework
