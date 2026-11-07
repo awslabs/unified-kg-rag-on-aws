@@ -226,7 +226,9 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 그 단가(`cache_read_per_million_tokens`, `cache_write_per_million_tokens`)를 주면 따로
 계산하고, 없으면 입력 단가로 계산합니다(Claude에서 캐시 읽기는 입력의 10분의 1이므로 상한값).
 재순위화(rerank) 모델도 검색 단위(search unit) 1,000개당 가격으로 넣습니다(사용량
-`rerank_search_units`: 문서 100개까지의 재순위화 요청 하나에 1단위. 로컬 크로스 인코더는 0).
+`rerank_search_units`: 문서 100개까지의 재순위화 요청 하나에 1단위. Amazon Bedrock은 질의를
+포함해 500토큰이 넘는 문서를 여러 개로 계산하므로 약 4,800자 청크는 3개쯤입니다. 토큰은
+문자 체계를 고려한 추정치라 청구서와 1단위쯤 다를 수 있습니다. 로컬 크로스 인코더는 0).
 
 ```yaml
 evaluation:

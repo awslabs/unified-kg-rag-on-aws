@@ -848,3 +848,56 @@ def test_mmr_on_spaced_text_is_unchanged() -> None:
     original = "Acme Corp acquired Beta Inc in 2020 for ten million dollars"
     other = "Gamma Ltd makes widgets in Ohio for export"
     assert _diverse([original, original + " today", other]) == ["c0", "c2"]
+
+
+class TestRerankSearchUnits:
+    """Amazon Bedrock bills a rerank request per 100 documents, a document
+    of more than 500 tokens with the query counting as several."""
+
+    class _Reranker:
+        top_n: int | None = None
+
+        def compress_documents(self, documents: list, query: str) -> list:
+            return documents
+
+    def _units(self, contents: list[str], query: str = "Which vendor?") -> int:
+        from unified_kg_rag.shared.usage import usage_scope
+
+        scorer = _scorer()
+        scorer.rerank_model = self._Reranker()
+        results = [_r(c, 1.0 - i / 1000, f"s{i}") for i, c in enumerate(contents)]
+        with usage_scope() as meter:
+            scorer._apply_bedrock_reranking(results, query, "test")
+        used = meter.snapshot()
+        assert used["rerank_calls"] == 1
+        return int(used["rerank_search_units"])
+
+    def test_short_documents_count_a_unit_per_hundred(self) -> None:
+        assert self._units(["Vendor supplies widgets."] * 40) == 1
+        assert self._units([f"Vendor {i} supplies widgets." for i in range(150)]) == 2
+
+    def test_a_long_document_counts_as_several(self) -> None:
+        # Regression (CloudWatch SearchUnits 44 vs 21 counted): 45 chunks of
+        # ~4,800 characters (~1,200 tokens) are three billed documents each,
+        # 135 documents, two units, not one.
+        long_text = ("The vendor supplies widgets to the buyer. " * 115)[:4800]
+        assert self._units([f"{i} {long_text}" for i in range(45)]) == 2
+
+    def test_dense_scripts_count_by_their_own_tokens(self) -> None:
+        # ~1 token a Hangul syllable: 1,200 characters are three documents.
+        korean = "공급업체가구매자에게위젯을공급한다" * 70
+        assert self._units([f"{i}{korean}" for i in range(40)], "누가?") == 2
+        assert self._units(["공급업체"] * 40, "누가?") == 1
+
+
+def test_rerank_search_units_follow_the_document_tokens() -> None:
+    from unified_kg_rag.shared.usage import rerank_search_units
+
+    assert rerank_search_units(10, [100] * 100) == 1
+    assert rerank_search_units(10, [100] * 101) == 2
+    # 490 tokens of room a document beside a 10-token query.
+    assert rerank_search_units(10, [490] * 100) == 1
+    assert rerank_search_units(10, [491] * 50) == 1
+    assert rerank_search_units(10, [491] * 51) == 2
+    assert rerank_search_units(0, documents=250) == 3
+    assert rerank_search_units(0, []) == 1

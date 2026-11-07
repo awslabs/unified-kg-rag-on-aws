@@ -47,7 +47,7 @@ own task, keep separate counts.
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -65,6 +65,7 @@ __all__ = [
     "record_cache_hit",
     "record_llm_call",
     "record_rerank_call",
+    "rerank_search_units",
     "start_llm_call",
     "usage_scope",
 ]
@@ -87,6 +88,9 @@ COUNT_FIELDS: tuple[str, ...] = (
 # Documents one rerank search unit covers (Amazon Bedrock bills a rerank
 # query per 100 documents; one with more counts as several).
 RERANK_DOCUMENTS_PER_UNIT = 100
+# Tokens one of those documents holds, the query's included: a longer one is
+# billed as several documents (Amazon Bedrock pricing, Cohere Rerank 3.5).
+RERANK_TOKENS_PER_DOCUMENT = 500
 
 # Set in the ``generation_info`` of a response the LLM response cache served,
 # so the usage callback counts it as a cache hit rather than a call.
@@ -303,12 +307,39 @@ def record_llm_call(
     )
 
 
-def record_rerank_call(model: str, *, documents: int) -> None:
+def rerank_search_units(
+    query_tokens: int,
+    document_tokens: Sequence[int] | None = None,
+    *,
+    documents: int = 0,
+) -> int:
+    """The search units Amazon Bedrock bills one rerank request: one per
+    ``RERANK_DOCUMENTS_PER_UNIT`` documents, where a document longer than
+    ``RERANK_TOKENS_PER_DOCUMENT`` tokens with the query
+    (``query_tokens``) counts as one per that many of its own tokens
+    (``document_tokens``, one count each). Without the counts,
+    ``documents`` documents of one unit each. At least one unit."""
+    if document_tokens is None:
+        chunks = documents
+    else:
+        room = max(1, RERANK_TOKENS_PER_DOCUMENT - max(0, query_tokens))
+        chunks = sum(max(1, -(-max(0, tokens) // room)) for tokens in document_tokens)
+    return max(1, -(-chunks // RERANK_DOCUMENTS_PER_UNIT))
+
+
+def record_rerank_call(
+    model: str, *, documents: int, search_units: int | None = None
+) -> None:
     """Record one rerank request of ``documents`` documents, under the
     ``rerank`` role: not a model call (``llm_calls``) but a rerank call and
-    its search units (one per ``RERANK_DOCUMENTS_PER_UNIT`` documents),
-    which Amazon Bedrock bills per thousand."""
-    units = max(1, -(-documents // RERANK_DOCUMENTS_PER_UNIT))
+    its ``search_units`` (:func:`rerank_search_units`; by default one per
+    ``RERANK_DOCUMENTS_PER_UNIT`` documents), which Amazon Bedrock bills
+    per thousand."""
+    units = (
+        search_units
+        if search_units is not None
+        else rerank_search_units(0, documents=documents)
+    )
     _record("rerank", model, _Counts(rerank_calls=1, rerank_search_units=units))
 
 
