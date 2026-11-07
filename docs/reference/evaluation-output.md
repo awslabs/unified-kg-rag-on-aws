@@ -26,7 +26,8 @@ A comparison adds `evaluation_comparison_<timestamp>.json`, `.csv` and `.md`
 
 Each row of `evaluation_results_*` is one answer: the question, answer,
 ground truth, retrieved contexts and source provenance, `response_time`,
-`usage`, `error` / `error_message`, `rerank_status`, `guardrail_blocked`,
+`usage`, `error` / `error_message`, `rerank_status`, `degraded_error`,
+`guardrail_blocked`,
 `category`, the query's `metadata`, and the chain's decline and
 sufficiency fields:
 
@@ -90,7 +91,13 @@ from the text, and under
   first line (`fallbacks`).
 - `rerank_status_counts`: queries per [rerank status](../guides/query.md#rerank-status); each
   result carries `rerank_status` (`null` when answer generation failed
-  first).
+  first). The `failed` ones count against `--max-failure-rate` over
+  `applied` + `failed`.
+- `degraded_error_counts`: answers whose retrieval absorbed a step failure
+  (a global map batch, a DRIFT follow-up, an iterative round, a step
+  `processing.ignore_errors` skipped), per error type; each result carries
+  `degraded_error`. They count against `--max-failure-rate` over every
+  query.
 - `guardrail_blocked_counts`: blocked queries per `input` / `output` (a
   blocked item is scored on the blocked message; a blocked answer drops its
   sources, so its retrieval metrics and the RAGAS context metrics
@@ -244,8 +251,11 @@ strategies, or `--repeats`) saves every run's files and adds
   a metric that only the failed query could score (one item with
   `expected_relationships`, say) is not filled either
   (`failed_answers` / `failed_queries`;
-  `guardrail_blocked_counts` counts blocks; `warnings` names strategies that
-  failed, or had blocked, different numbers, runs whose exact match and
+  `guardrail_blocked_counts` counts blocks, `rerank_status_counts` and
+  `degraded_answers` (of `answers`) the degraded ones; `warnings` names
+  strategies that failed, or had blocked, different numbers, each run with
+  rerank failures or degraded answers and its rate (louder, `NOT
+  COMPARABLE AS IS`, when the rates differ), runs whose exact match and
   token F1 read different `answer_span`s, and, with `answer_span:
   extracted`, each strategy whose extracted spans fell back to the first
   line (`answer_span_fallbacks`) and fallback rates that differ). A

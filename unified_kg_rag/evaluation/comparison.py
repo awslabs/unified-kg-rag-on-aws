@@ -74,6 +74,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     LLMUsage,
     LLMUsageCounts,
+    RerankStatus,
 )
 from unified_kg_rag.domain.models.config import ModelPrice
 from unified_kg_rag.shared import get_logger
@@ -597,6 +598,26 @@ def _paired_comparison(
             "iterative_statistics": iterative_statistics(
                 result for _, results in runs[strategy] for result in results
             ),
+            # What reranking did (over every repeat): a failed rerank kept
+            # the fused order, so its answer read unreranked evidence.
+            "rerank_status_counts": dict(
+                sorted(
+                    Counter(
+                        result.rerank_status.value
+                        for _, results in runs[strategy]
+                        for result in results
+                        if result.rerank_status
+                    ).items()
+                )
+            ),
+            # Answers whose retrieval absorbed a step failure (over every
+            # repeat), and the answers.
+            "degraded_answers": sum(
+                bool(result.degraded_error)
+                for _, results in runs[strategy]
+                for result in results
+            ),
+            "answers": sum(len(results) for _, results in runs[strategy]),
             # Answers the guardrail blocked (over every repeat), by blocked text.
             "guardrail_blocked_counts": dict(
                 sorted(
@@ -661,6 +682,7 @@ def _paired_comparison(
     )
     warnings = [
         *_failure_warnings(summary),
+        *_degraded_warnings(summary),
         *_span_warnings(runs),
         *_span_fallback_warnings(summary),
         *cost.pop("warnings"),
@@ -799,6 +821,53 @@ def failed_metric_counts_differ(
         for s in dict.fromkeys(strategies)
     }
     return failed if len(set(failed.values())) > 1 else {}
+
+
+def _degraded_warnings(summary: Mapping[str, Any]) -> list[str]:
+    """Warnings on answers that went out degraded: per run, the queries
+    whose rerank call failed (the fused order kept) and the answers whose
+    retrieval absorbed a step failure, with their rates; and a louder one
+    when those rates differ between the compared runs, whose deltas then
+    measure the failures too."""
+    reranks: dict[str, tuple[int, int]] = {}
+    degraded: dict[str, tuple[int, int]] = {}
+    for s, stats in summary.items():
+        counts = stats.get("rerank_status_counts") or {}
+        failed = int(counts.get(RerankStatus.FAILED.value, 0))
+        attempted = failed + int(counts.get(RerankStatus.APPLIED.value, 0))
+        if attempted:
+            reranks[s] = (failed, attempted)
+        if stats.get("answers"):
+            degraded[s] = (int(stats.get("degraded_answers") or 0), stats["answers"])
+    warnings = [
+        f"{s}: reranking failed on {f}/{n} queries ({f / n:.0%}); their answers "
+        "read the fused order, unreranked (rerank_status_counts.failed)."
+        for s, (f, n) in reranks.items()
+        if f
+    ] + [
+        f"{s}: {d}/{n} answers ({d / n:.0%}) were degraded by a retrieval step "
+        "failure the strategy absorbed (degraded_error)."
+        for s, (d, n) in degraded.items()
+        if d
+    ]
+    for what, rates in (
+        ("rerank failure", reranks),
+        ("degraded-answer", degraded),
+    ):
+        shares = {s: f / n for s, (f, n) in rates.items()}
+        if any(shares.values()) and len(set(shares.values())) > 1:
+            listed = ", ".join(
+                f"{s} {rates[s][0]}/{rates[s][1]} ({share:.0%})"
+                for s, share in shares.items()
+            )
+            warnings.append(
+                f"NOT COMPARABLE AS IS: the compared runs' {what} rates differ "
+                f"({listed}), so their deltas measure those failures as well "
+                "as the strategies or arms. Re-run the affected runs (fewer "
+                "concurrent runs, a larger retry budget), or bound them with "
+                "--max-failure-rate."
+            )
+    return warnings
 
 
 def _failure_warnings(summary: Mapping[str, Any]) -> list[str]:

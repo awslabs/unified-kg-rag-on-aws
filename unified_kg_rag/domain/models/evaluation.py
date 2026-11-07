@@ -330,6 +330,16 @@ class EvaluationResult(BaseModel):
             "when answer generation failed before retrieval reported it."
         ),
     )
+    degraded_error: str | None = Field(
+        default=None,
+        description=(
+            "The type name of a retrieval step failure the strategy absorbed "
+            "to answer anyway (the chain's metadata.degraded_error: a global "
+            "map batch, a DRIFT follow-up, an iterative round, a step "
+            "processing.ignore_errors skipped). None when every step "
+            "succeeded."
+        ),
+    )
     guardrail_blocked: Literal["input", "output"] | None = Field(
         default=None,
         description=(
@@ -485,6 +495,14 @@ class EvaluationSummary(BaseModel):
             "Queries per rerank status (EvaluationResult.rerank_status), e.g. "
             "{'applied': 48, 'failed': 2}; queries without a status are not "
             "counted."
+        ),
+    )
+    degraded_error_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Answers whose retrieval absorbed a step failure, per error type "
+            "(EvaluationResult.degraded_error), e.g. {'ThrottlingException': "
+            "3}; empty when none was degraded."
         ),
     )
     guardrail_blocked_counts: dict[str, int] = Field(

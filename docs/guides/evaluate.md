@@ -188,7 +188,17 @@ statistics, scored/failed/skipped counts, abstentions, rerank and guardrail
 counts and a run manifest that records what was measured, so two runs can be
 compared: [Evaluation output](../reference/evaluation-output.md). The
 console prints the same summary; the failure budget
-(`--max-failure-rate`) applies to every run.
+(`--max-failure-rate`) applies to every run. It counts the answers that
+went out degraded as well as those that failed: queries whose rerank call
+failed (a throttled rerank model keeps the fused order; counted over the
+queries reranking was attempted on) and answers whose retrieval absorbed a
+step failure (`degraded_error_counts`), so at the default 1.0 a run whose
+every rerank call failed exits 1, and `--max-failure-rate 0.05` fails one
+where more than 5% did. A comparison names each run's rerank failures and
+degraded answers with their rates, and warns louder (`NOT COMPARABLE AS
+IS`) when those rates differ between the compared runs, since its deltas
+then measure the failures too. Reranking that is off or could not be built
+(`disabled`, `unavailable`) is no failed call.
 
 ## Comparing strategies
 

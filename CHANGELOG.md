@@ -906,7 +906,11 @@ From a `main` checkout (formats and keys no release had):
   (`search.max_concurrency` at a time) only when it intervenes; interventions name word lists
   (`wordPolicy:customWords`, `wordPolicy:PROFANITY`) (#462, #471, #567, #583). See
   [guardrail](docs/guides/guardrail.md).
-- Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284).
+- Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284). In `run-eval`, queries
+  whose rerank call failed (a throttled rerank model keeps the fused order) and answers whose retrieval absorbed a step
+  failure (each result's `degraded_error`, the summary's `degraded_error_counts`) count against `--max-failure-rate`,
+  so at the default 1.0 a run whose every rerank call failed exits 1; a comparison names each run's rerank failures and
+  degraded answers with their rates and warns louder when the rates differ between the compared runs.
 - Query deadline: `search.query_timeout_seconds` bounds every query and stream (which must send a first chunk within
   `search.model_timeout_seconds`) and raises `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure);
   query-time model calls get their own clients (`search.model_timeout_seconds`, `model_max_attempts`; `backend:

@@ -87,6 +87,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     LLMUsage,
     ModelRole,
+    RerankStatus,
     SearchStrategy,
     model_id_value,
 )
@@ -395,15 +396,33 @@ def failure_budget_breaches(
 ) -> list[str]:
     """Why the run must exit non-zero; empty when it is within budget.
 
-    The budget applies to answer generation (failed / total queries) and to
+    The budget applies to answer generation (failed / total queries), to
     every metric (failed / attempted, where attempted = scored + failed;
-    skipped metrics were not applicable and do not count). A share of 1.0,
-    or an empty run, always breaches it.
+    skipped metrics were not applicable and do not count), and to the
+    answers that went out degraded: reranking that failed (failed / the
+    queries it was attempted on, failed + applied; the fused order was
+    kept) and a retrieval step failure the strategy absorbed (degraded /
+    total queries). A share of 1.0, or an empty run, always breaches it.
     """
     breaches = []
     if _over(summary.failed_evaluations, summary.total_queries, max_failure_rate):
         breaches.append(
             f"{summary.failed_evaluations}/{summary.total_queries} queries failed"
+        )
+    rerank = summary.rerank_status_counts
+    failed_reranks = rerank.get(RerankStatus.FAILED.value, 0)
+    attempted = failed_reranks + rerank.get(RerankStatus.APPLIED.value, 0)
+    if failed_reranks and _over(failed_reranks, attempted, max_failure_rate):
+        breaches.append(
+            f"rerank: {failed_reranks}/{attempted} queries' reranking failed "
+            "(the fused order was kept)"
+        )
+    degraded = sum(summary.degraded_error_counts.values())
+    if degraded and _over(degraded, summary.total_queries, max_failure_rate):
+        kinds = ", ".join(summary.degraded_error_counts)
+        breaches.append(
+            f"{degraded}/{summary.total_queries} answers degraded by a retrieval "
+            f"step failure ({kinds})"
         )
     for evaluator_name, metrics in summary.metric_outcomes.items():
         for metric_name, counts in metrics.items():
@@ -727,10 +746,12 @@ class CommandLineInterface:
             default=1.0,
             help=(
                 "Exit non-zero when the fraction of queries whose answer generation "
-                "failed, or the fraction of attempted values of any metric that "
-                "failed, exceeds this value (0.0-1.0). Skipped metrics do not count. "
-                "Default 1.0 = fail only when all queries, or all attempts of a "
-                "metric, failed."
+                "failed, the fraction of attempted values of any metric that "
+                "failed, the fraction of reranked queries whose rerank call "
+                "failed (the fused order kept), or the fraction of answers a "
+                "retrieval step failure degraded, exceeds this value (0.0-1.0). "
+                "Skipped metrics do not count. Default 1.0 = fail only when all "
+                "queries, all attempts of a metric, or all of those, failed."
             ),
         )
         parser.add_argument(
@@ -2463,6 +2484,8 @@ _SUMMARY_FIELDS = {
     "metric_outcomes",
     "abstention_statistics",
     "answer_span_statistics",
+    "rerank_status_counts",
+    "degraded_error_counts",
     "guardrail_blocked_counts",
     "structured_statistics",
     "iterative_statistics",
