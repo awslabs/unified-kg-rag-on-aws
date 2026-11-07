@@ -1565,23 +1565,34 @@ class ClaimExtractionStage(PipelineStage):
             )
         reused = len(per_unit)
 
-        to_extract = [unit for unit in text_units if unit.id not in per_unit]
+        pending = [unit for unit in text_units if unit.id not in per_unit]
+        # A claim's subject resolves only against the entities its own unit
+        # states (ClaimResolver): a unit that states none has no claim, and
+        # is not asked.
+        entities_of = {
+            unit.id: unit_entities(records[unit.id]) if unit.id in records else []
+            for unit in pending
+        }
+        to_extract = [unit for unit in pending if entities_of[unit.id]]
         stats = ClaimExtractionStats()
         unsaved: set[str] = set()
+        extracted: dict[str, list[Claim]] = {}
         if to_extract:
-            entities = [
-                entity
-                for unit in to_extract
-                if unit.id in records
-                for entity in unit_entities(records[unit.id])
-            ]
-            extracted, stats = self.extractor.extract_units(to_extract, entities)
-            per_unit.update(extracted)
+            extracted, stats = self.extractor.extract_units(
+                to_extract,
+                [entity for unit in to_extract for entity in entities_of[unit.id]],
+            )
+        answered = {
+            **{unit.id: [] for unit in pending if not entities_of[unit.id]},
+            **extracted,
+        }
+        per_unit.update(answered)
+        if answered:
             for gleaned in (False, True):
                 unsaved |= self.store.save(
                     [
                         (storable[unit_id], claims_payload(claims))
-                        for unit_id, claims in extracted.items()
+                        for unit_id, claims in answered.items()
                         if unit_id in storable and records[unit_id].gleaned is gleaned
                     ],
                     unit_record_fingerprint(self.config, gleaned=gleaned, claims=True),
@@ -1613,6 +1624,7 @@ class ClaimExtractionStage(PipelineStage):
         metrics = {
             "text_units_processed": len(text_units),
             "text_units_reused": reused,
+            "text_units_without_entities": len(answered) - len(extracted),
             "claims_extracted": len(claims),
             "failed_units": stats.num_failed_extractions,
             "records_not_stored": len(unsaved),

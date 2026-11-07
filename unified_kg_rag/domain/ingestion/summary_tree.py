@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from typing import Any
 
@@ -173,9 +173,29 @@ def node_id(level: int, partition: str | None, child_ids: Sequence[str]) -> str:
     return compute_hash(payload, length=32)
 
 
-def leaf_digest(leaf_ids: Sequence[str]) -> str:
-    """Digest of a tree's leaf set (the sorted text-unit ids)."""
-    return compute_hash("\x1f".join(sorted(leaf_ids)), length=32)
+def leaf_digest(leaves: Iterable[tuple[str, str, Mapping[str, Any]]]) -> str:
+    """Digest of a tree's leaves: each text unit's id, the text the tree
+    reads (its translation, when it holds one) and its document filters.
+
+    A leaf whose text or filters changed under the same id (a reset after
+    a re-translation, or after a document's filters changed) changes the
+    digest, so the tree is built again: its summaries were made from the
+    old text and its nodes carry the old uniform filters. The leaf vectors
+    are a function of the text and the embedding model, which the tree's
+    fingerprint holds.
+    """
+    payload = json.dumps(
+        sorted(
+            [
+                leaf_id,
+                compute_hash(text),
+                json.dumps(filters, sort_keys=True, default=str),
+            ]
+            for leaf_id, text, filters in leaves
+        ),
+        ensure_ascii=False,
+    )
+    return compute_hash(payload, length=32)
 
 
 def summary_input_key(

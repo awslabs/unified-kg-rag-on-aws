@@ -3,7 +3,7 @@
 """The cross-run merge: a delta, or a strip, meets the stored graph it
 touches, and the items it writes are derived from their text units' records."""
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -71,6 +71,24 @@ class CrossRunMergeResult(BaseModel):
     # Per index suffix: delta entity/relationship id -> the stored id it merged
     # into, so lineage can record the ids actually written.
     id_remap_by_suffix: dict[str, dict[str, str]] = Field(default_factory=dict)
+
+
+def _single_additions(
+    added: Sequence[tuple[str, Entity | Relationship]],
+    stored: Sequence[Entity | Relationship],
+    excluded: Collection[str],
+) -> dict[str, str | None]:
+    """``{final id: added description}`` of the ``added`` items (paired with
+    the id each ends under) whose final id one delta item and at most one
+    ``stored`` copy end under, and which is not ``excluded``: the items
+    :func:`extend_summaries` may extend."""
+    reached = Counter(final for final, _ in added)
+    held = Counter(item.id for item in stored)
+    return {
+        final: item.description
+        for final, item in added
+        if final not in excluded and reached[final] == 1 and held[final] <= 1
+    }
 
 
 class CrossRunMerge:
@@ -579,26 +597,44 @@ class CrossRunMerge:
         reuse_summaries(derived.entities, entities)
         reuse_summaries(derived.relationships, relationships)
         stripped = m._stripped_ids.get(suffix, set())
+        # Extending holds only when the item's stored summary covers exactly
+        # what its stored copy stated. Not for an entity a split parted (the
+        # whole's summary holds the part's lines, the part's is the whole's),
+        # nor for an id more than one delta item or stored copy ends under
+        # (folded spellings: one summary would be extended, the others'
+        # lines lost). Those are summarized from their derived lines, as a
+        # full build does.
+        parted = {i for pair in derived.split_from.items() for i in pair}
+        stored_entities = [
+            e.model_copy(update={"id": rekey.get(e.id, e.id)})
+            for e in existing
+            if e.id not in stripped
+        ]
+        stored_relationships = [
+            r.model_copy(update={"id": rekey.get(r.id, r.id)})
+            for r in existing_rels
+            if r.id not in stripped
+        ]
         extend_summaries(
             derived.entities,
-            [
-                e.model_copy(update={"id": rekey.get(e.id, e.id)})
-                for e in existing
-                if e.id not in stripped
-            ],
-            {final_id(e.id, entity_id_remap): e.description for e in entities},
+            stored_entities,
+            _single_additions(
+                [(final_id(e.id, entity_id_remap), e) for e in entities],
+                stored_entities,
+                parted,
+            ),
             summarized={
                 final_id(e.id, entity_id_remap) for e in entities if _is_summary(e)
             },
         )
         extend_summaries(
             derived.relationships,
-            [
-                r.model_copy(update={"id": rekey.get(r.id, r.id)})
-                for r in existing_rels
-                if r.id not in stripped
-            ],
-            {final_id(r.id, relationship_remap): r.description for r in relationships},
+            stored_relationships,
+            _single_additions(
+                [(final_id(r.id, relationship_remap), r) for r in relationships],
+                stored_relationships,
+                (),
+            ),
             summarized={
                 final_id(r.id, relationship_remap)
                 for r in relationships
@@ -642,8 +678,10 @@ class CrossRunMerge:
         # belong to a part it split into. Until nothing more is held or
         # parted: a re-key can cascade (another spelling joins, its edges
         # move, their other ends join), and a round less leaves a moved
-        # entity ranked without the edges not yet read.
-        for attempt in range(_DERIVE_ROUNDS):
+        # entity ranked without the edges not yet read. The last of the
+        # _DERIVE_ROUNDS rounds returns whatever it reached.
+        attempt = 0
+        while True:
             unit_ids = sorted(
                 {
                     u
@@ -684,7 +722,7 @@ class CrossRunMerge:
             )
             rewired = sorted(moved)
             done = not any(held) and not parted
-            if not done and attempt == _DERIVE_ROUNDS - 1:
+            if not done and attempt >= _DERIVE_ROUNDS - 1:
                 # Out of rounds: an entity some of whose stored edges were
                 # not read keeps its stored links in its rank (rewired, they
                 # would not count).
@@ -709,8 +747,7 @@ class CrossRunMerge:
             items = self._next_round_items(
                 suffix, items, held, parted, derived, sibling_ids, blocked, attempt
             )
-        m.underived_items += len(set(derived.underived))
-        return derived
+            attempt += 1
 
     def _held_by_others(
         self,

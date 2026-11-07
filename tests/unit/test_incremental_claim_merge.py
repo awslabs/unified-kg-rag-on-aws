@@ -152,7 +152,8 @@ def test_deleting_a_document_strips_its_text_units_from_a_shared_claim(
     assert stored.attributes == {"index": suffix}
 
 
-def test_merge_claims_is_idempotent_and_keeps_the_stored_status() -> None:
+def test_merge_claims_is_idempotent_and_disputes_disagreeing_statuses() -> None:
+    # A stored status used to stay whatever the delta stated.
     stored = _claim("a.txt").model_copy(update={"status": "SUSPECTED"})
     delta = _claim("b.txt")
 
@@ -160,7 +161,7 @@ def test_merge_claims_is_idempotent_and_keeps_the_stored_status() -> None:
     (twice,) = merge_claims([once], [delta])
 
     assert once == twice
-    assert once.status == "SUSPECTED"
+    assert once.status == "disputed"
     assert once.description == (
         "Vendor supplies Buyer per a.txt.\nVendor supplies Buyer per b.txt."
     )
@@ -179,16 +180,38 @@ def test_remove_claim_text_units_returns_only_the_claims_it_changed() -> None:
     assert shared.text_unit_ids == ["tu-a", "tu-b"]
 
 
-def test_merge_claims_status_matches_the_resolver_for_two_claims() -> None:
-    # The docstring's claim: for one stored and one delta claim the stored
-    # status is ClaimResolver's most-common rule (the first on a tie).
-    stored = _claim("a.txt").model_copy(update={"status": "SUSPECTED"})
-    delta = _claim("b.txt")
+@pytest.mark.parametrize(
+    ("stored_statuses", "delta_status"),
+    [
+        (("TRUE",), "FALSE"),
+        (("SUSPECTED",), "TRUE"),
+        (("TRUE", "TRUE"), "FALSE"),
+        (("UNKNOWN",), "TRUE"),
+        (("TRUE", "UNKNOWN"), "TRUE"),
+        (("TRUE", "FALSE"), "TRUE"),
+        ((None,), "UNKNOWN"),
+    ],
+)
+def test_merge_claims_status_matches_the_resolver(
+    stored_statuses: tuple[str | None, ...], delta_status: str
+) -> None:
+    # The stored claim keeps no per-status counts: the status a stored
+    # claim's statements merged into, merged with a delta's, must be what the
+    # full build's resolver gives all the statements (it disagreed with a
+    # majority vote: a stored TRUE of two statements stayed TRUE after a
+    # FALSE, where the full build's tie read FALSE).
     resolver = ClaimResolver(Config(), use_process_pool=False, show_progress=False)
+    statements = [
+        _claim(f"s{n}.txt").model_copy(update={"status": status})
+        for n, status in enumerate(stored_statuses)
+    ]
+    stored = resolver._merge_claims(statements)
+    delta = _claim("b.txt").model_copy(update={"status": delta_status})
 
     (merged,) = merge_claims([stored], [delta])
 
-    assert merged.status == resolver._merge_claims([stored, delta]).status
+    expected = resolver._merge_claims([*statements, delta]).status
+    assert (merged.status or "") == expected
 
 
 def test_merge_claims_unions_document_filters() -> None:

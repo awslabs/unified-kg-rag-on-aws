@@ -55,6 +55,7 @@ import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
 import unified_kg_rag.adapters.ingestion.graph_extractor as extractor_module
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.fixtures.fakes.summarizer import AtomSetSummarizer
 from tests.fixtures.incremental_runs import edge_state, entity_state
 from tests.fixtures.property_stores import Stores, property_stores
 from tests.fixtures.seed_graphs import (
@@ -493,6 +494,93 @@ def _manager(stores: Stores) -> IndexingManager:
     return IndexingManager(
         config=stores.config, vector_indexer=stores.vector, graph_indexer=stores.graph
     )
+
+
+# --- summarized descriptions ---------------------------------------------------
+
+
+def _summarizing_config() -> Config:
+    """Every description over one token summarized (by :class:`AtomSetSummarizer`)."""
+    config = Config()
+    summarization = config.processing.graph_extraction.description_summarization
+    summarization.enabled = True
+    summarization.force_summary_threshold_tokens = 1
+    return config
+
+
+_SUMMARIZING = _summarizing_config()
+
+
+def _summarized_extract(corpus: dict[str, Any]):
+    """:func:`_extract` with the merged descriptions summarized, as a full
+    build summarizes them after graph resolution."""
+    units, records, entities, edges = _extract(corpus, _SUMMARIZING)
+    summarizer = AtomSetSummarizer(_SUMMARIZING)
+    summarizer.summarize_entities(entities)
+    summarizer.summarize_relationships(edges)
+    return units, records, entities, edges
+
+
+# Both spellings of a name in one unit ("Vendor Inc" is "Vendor"'s compact
+# key, and the same type here, so they stay one entity).
+_TWO_SPELLINGS = [(["Vendor", "Vendor Inc"], [("Vendor Inc", "Depot", 1)], [])]
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(
+    max_examples=200,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+@given(rounds=st.lists(_round, min_size=1, max_size=4))
+# The summarized "Vendor" grows by c.txt, whose two units add a line under
+# each spelling: both delta items end under the stored id, and extending the
+# summary with one of them loses the other's line.
+@example(
+    rounds=[
+        {_PATHS[0]: None, _PATHS[1]: _TWO_SPELLINGS, _PATHS[2]: None},
+        {
+            _PATHS[0]: None,
+            _PATHS[1]: _TWO_SPELLINGS,
+            _PATHS[2]: [(["Vendor"], [], []), (["Vendor Inc"], [], [])],
+        },
+    ]
+)
+# The same with an edge under each spelling of one endpoint.
+@example(
+    rounds=[
+        {_PATHS[0]: None, _PATHS[1]: _TWO_SPELLINGS, _PATHS[2]: None},
+        {
+            _PATHS[0]: None,
+            _PATHS[1]: _TWO_SPELLINGS,
+            _PATHS[2]: [
+                (["Vendor"], [("Vendor", "Depot", 2)], []),
+                (["Vendor Inc"], [("Vendor Inc", "Depot", 2)], []),
+            ],
+        },
+    ]
+)
+def test_incremental_rounds_match_a_full_build_with_summaries(rounds) -> None:
+    """With every description summarized, an incremental run's summaries
+    (stored ones extended with what a delta adds) equal a full build's."""
+    graph = FakeGraphStore()
+    vector = FakeVectorStore(opensearch_config=_SUMMARIZING.indexing.opensearch)
+    manager = IndexingManager(
+        config=_SUMMARIZING, vector_indexer=vector, graph_indexer=graph
+    )
+    manager._description_summarizer = AtomSetSummarizer(_SUMMARIZING)
+    inc = IncrementalIndexer(FakeDocStatusStore(), manager)
+
+    for state in rounds:
+        corpus = {path: content for path, content in state.items() if content}
+        _run(inc, corpus, _summarized_extract)
+
+        expected = _expected_state(corpus, _summarized_extract)
+        assert _graph_state(graph) == expected
+        assert {
+            e.id: entity_state(e) for e in vector.data.get("entities", {}).values()
+        } == expected[0]
 
 
 # --- strict extraction schema ---------------------------------------------------

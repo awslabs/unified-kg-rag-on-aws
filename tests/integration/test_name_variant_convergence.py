@@ -27,6 +27,7 @@ from opensearchpy.exceptions import NotFoundError
 
 from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.model_servers import FakeOllama
+from tests.fixtures.fakes.summarizer import atom_summary
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_ingestion_stages as stages
 from tests.integration.test_embedded_e2e import (
@@ -63,6 +64,12 @@ NAMES = (
     "Acme LLC",
     "Acme",
     "ACME",
+    "ACME Corp",
+    "한빛물류",
+    "한빛 물류",
+    "주식회사 한빛물류",
+    "山田商事",
+    "山田商事株式会社",
 )
 TYPES = {"goods": "ORGANIZATION", "parts": "PERSON", "cash": "LOCATION"}
 
@@ -572,6 +579,82 @@ def test_a_hub_grown_under_another_spelling_extends_its_summary(
     # Eight lines in the first run; one call (or none) on the summary and
     # the added line in the second.
     assert [lines for name, lines in calls if name == "Acme"] in ([8], [8, 2])
+
+
+def _atom_respond(system: str, human: str) -> str:
+    """:func:`_respond` with :func:`atom_summary` summaries: the summary of a
+    summary and new lines is the summary of all the lines."""
+    if "knowledge-graph editor" not in system:
+        return _respond(system, human)
+    match = re.search(r"<descriptions>\n(.*?)\n</descriptions>", human, re.S)
+    assert match
+    return atom_summary(match.group(1))
+
+
+@pytest.mark.parametrize(
+    "runs",
+    [
+        # A stored "Acme" summary and "ACME Corp"'s: the delta folds them
+        # into one entity, which two stored summaries end under.
+        [
+            {"a.txt": "Acme trade cash 2.", "d.txt": "ACME Corp trade goods 2."},
+            {
+                "a.txt": "Acme trade cash 2.",
+                "d.txt": "ACME Corp trade goods 2.",
+                "c.txt": "ACME Corp and Acme and Acme Inc trade cash 1.",
+            },
+        ],
+        # "Acme Inc" merged into the summarized "ACME Corp" until a.txt
+        # states it otherwise: the split-off part's lines leave the whole.
+        [
+            {"b.txt": "ACME Corp and Acme Inc trade goods 1. ACME Corp trade parts 2."},
+            {
+                "b.txt": "ACME Corp and Acme Inc trade goods 1. "
+                "ACME Corp trade parts 2.",
+                "a.txt": "ACME Corp and Acme Inc trade parts 1.",
+            },
+        ],
+        # Hangul and Han spellings (a space, a legal form) folded and split
+        # by one delta.
+        [
+            {
+                "a.txt": "Acme Inc and Acme and Depot trade cash 2. "
+                "山田商事 trade goods 2.",
+                "b.txt": "한빛물류 trade goods 1.",
+                "c.txt": "한빛 물류 and Acme trade parts 2.",
+            },
+            {
+                "a.txt": "Acme Inc and Acme and Depot trade cash 2. "
+                "山田商事 trade goods 2.",
+                "b.txt": "Buyer and 山田商事株式会社 trade cash 1. "
+                "Depot and 한빛물류 trade cash 3.",
+                "c.txt": "한빛 물류 and Acme trade parts 2.",
+                "d.txt": "한빛 물류 and 山田商事株式会社 and Depot trade goods 3. "
+                "주식회사 한빛물류 and 山田商事 and 山田商事株式会社 trade parts 1.",
+            },
+        ],
+    ],
+    ids=["two-stored-summaries", "split-off-part", "cjk-fold-and-split"],
+)
+def test_summaries_extended_across_spellings_match_a_full_build(
+    tmp_path: Path, runs: list[dict[str, str]]
+) -> None:
+    # Regression: a stored summary was extended with the delta's lines when
+    # the entity under its id had gained or lost a spelling, so it kept a
+    # split-off part's lines, or one of two folded summaries was lost.
+    summaries: list[str] = []
+
+    def respond(system: str, human: str) -> str:
+        answer = _atom_respond(system, human)
+        if answer.startswith("SUM{"):
+            summaries.append(answer)
+        return answer
+
+    full = _state(tmp_path / "full", [runs[-1]], respond=respond, summarize=True)
+    incremental = _state(tmp_path / "inc", runs, respond=respond, summarize=True)
+
+    assert summaries
+    assert incremental == full
 
 
 def test_a_run_resumed_after_dying_mid_split_matches_a_full_build(

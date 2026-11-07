@@ -672,6 +672,36 @@ class TestIntelligentChunkerHelpers:
         assert "small" in out
         assert len(out) > 2
 
+    def test_an_oversized_model_chunk_is_split_without_small_pieces(
+        self, intelligent_chunker
+    ) -> None:
+        # A chunk the model's boundaries left over max_chunk_size was split by
+        # size without folding the pieces under min_chunk_size back, as the
+        # size fallback does: a three-character tail became a text unit.
+        paragraph = "word " * 11
+        chunk = "\n\n".join([paragraph.strip()] * 8 + ["end"])
+        assert len(chunk) > 400
+
+        out = intelligent_chunker._split_large_line_chunks([chunk, "small"])
+
+        *pieces, last = out
+        assert last == "small"
+        assert len(pieces) > 1
+        assert all(len(p) >= 10 for p in pieces)
+        assert pieces[-1].endswith("end")
+        assert pieces == intelligent_chunker._create_fallback_chunks(chunk)
+
+    @pytest.mark.parametrize(("size", "asked"), [(15, False), (19, False), (20, True)])
+    def test_a_pre_chunk_under_twice_the_minimum_is_not_asked(
+        self, intelligent_chunker, size: int, asked: bool
+    ) -> None:
+        # Any cut of it leaves a piece under min_chunk_size (10), which the
+        # merge folds back: the answer would be the pre-chunk itself.
+        pre_chunk = "a" * (size // 2) + "\n" + "b" * (size - size // 2 - 1)
+        assert len(pre_chunk) == size
+
+        assert intelligent_chunker._needs_llm(pre_chunk) is asked
+
     def test_create_pre_chunks_plain_text(self, intelligent_chunker) -> None:
         out = intelligent_chunker._create_pre_chunks("a b c d e f")
         assert out == ["a b c d e f"]

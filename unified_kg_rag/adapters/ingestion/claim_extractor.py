@@ -32,7 +32,10 @@ from unified_kg_rag.domain.ingestion.base_processor import (
     group_by_text_unit,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
-from unified_kg_rag.domain.ingestion.claim_resolver import claim_identity_suffix
+from unified_kg_rag.domain.ingestion.claim_resolver import (
+    claim_identity_suffix,
+    claim_object_value,
+)
 from unified_kg_rag.domain.models import (
     Claim,
     Config,
@@ -73,6 +76,9 @@ def prepare_claim_input(
     return {
         "input_text": unit_text,
         "entity_specs": entity_specs_str,
+        # The language the corpus is indexed in, which descriptions are
+        # written in (as extraction writes them).
+        "target_language": config.get("target_language", "en"),
     }
 
 
@@ -315,10 +321,12 @@ class ClaimExtractor(BaseProcessor):
     ) -> Claim | None:
         try:
             subject_name = coerce_llm_text(claim_data.get("subject"))
-            object_name = coerce_llm_text(claim_data.get("object"))
+            # A claim with no object (empty, NONE, UNKNOWN...) is kept, with
+            # the one NONE literal the prompt asks for.
+            object_name = claim_object_value(coerce_llm_text(claim_data.get("object")))
             claim_type = coerce_llm_text(claim_data.get("claim_type"))
 
-            if not all([subject_name, object_name, claim_type]):
+            if not all([subject_name, claim_type]):
                 return None
 
             start_date = coerce_llm_text(claim_data.get("start_date"))

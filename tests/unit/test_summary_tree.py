@@ -177,7 +177,12 @@ def test_identity_and_digests_are_order_free() -> None:
     assert node_id(1, None, ["b", "a"]) == node_id(1, None, ["a", "b"])
     assert node_id(1, None, ["a"]) != node_id(2, None, ["a"])
     assert node_id(1, '["x"]', ["a"]) != node_id(1, None, ["a"])
-    assert leaf_digest(["b", "a"]) == leaf_digest(["a", "b"])
+    a, b = ("a", "text a", {}), ("b", "text b", {"category": "x"})
+    assert leaf_digest([b, a]) == leaf_digest([a, b])
+    # A leaf's text or filters changing under its id is another leaf set.
+    assert leaf_digest([a, ("b", "text b2", {"category": "x"})]) != leaf_digest([a, b])
+    assert leaf_digest([a, ("b", "text b", {"category": "y"})]) != leaf_digest([a, b])
+    assert leaf_digest([a, ("b", "text b", {})]) != leaf_digest([a, b])
     assert summary_input_key("fp", "Korean", ["가", "나"]) != summary_input_key(
         "fp", "English", ["가", "나"]
     )

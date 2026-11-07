@@ -154,9 +154,8 @@ class SummaryTreeStage(_RegistryStage):
         self, indexer: VectorIndexer, suffix: str, context: PipelineContext
     ) -> dict[str, Any]:
         tree = self.config.indexing.summary_tree
-        partitioned = tree.scope == "document" or bool(tree.partition_by)
         rows = indexer.scan_text_units(
-            suffix, fields=["attributes"] if partitioned else []
+            suffix, fields=["text", self._translated_field, "attributes"]
         )
         if rows is None:
             logger.warning(
@@ -169,7 +168,14 @@ class SummaryTreeStage(_RegistryStage):
         if not rows:
             logger.info("'%s' holds no text unit: no summary tree to build", suffix)
             return {"status": "no_text_units"}
-        digest = leaf_digest([str(row["id"]) for row in rows])
+        digest = leaf_digest(
+            (str(row["id"]), self._leaf_text(row), self._leaf_filters(row))
+            for row in rows
+        )
+        for row in rows:
+            # Only the ids and attributes are needed past the digest.
+            row.pop("text", None)
+            row.pop(self._translated_field, None)
         fingerprint = summary_tree_fingerprint(self.config)
         stored = indexer.read_summary_tree_record(suffix)
         current = (
@@ -389,7 +395,7 @@ class SummaryTreeStage(_RegistryStage):
     ) -> dict[str | None, list[Leaf]]:
         """The suffix's stored text units with their vectors (float32), by
         tree (``_tree_of``)."""
-        translated = f"translated_text_{index_language(self.config)}"
+        translated = self._translated_field
         rows = (
             indexer.scan_text_units(
                 suffix,
@@ -407,20 +413,20 @@ class SummaryTreeStage(_RegistryStage):
             vector = row.get("text_embedding")
             if isinstance(vector, list):
                 vector = np.asarray(vector, dtype=np.float32)
-            text = row.get(translated) or row.get("text") or ""
+            text = self._leaf_text(row)
             if not isinstance(vector, np.ndarray) or not vector.size or not text:
                 skipped += 1
                 continue
-            attributes = row.get("attributes") or {}
-            filters = attributes.get(Constants.FILTERS.value) or {}
-            groups[self._tree_of(attributes)].append(
+            # The stored count is the source text's: a translation is
+            # counted in its own script.
+            n_tokens = 0 if row.get(translated) else int(row.get("n_tokens") or 0)
+            groups[self._tree_of(row.get("attributes") or {})].append(
                 Leaf(
                     id=str(row["id"]),
                     text=text,
                     vector=vector,
-                    n_tokens=int(row.get("n_tokens") or 0)
-                    or self.summarizer.count_tokens(text),
-                    filters=filters if isinstance(filters, dict) else {},
+                    n_tokens=n_tokens or self.summarizer.count_tokens(text),
+                    filters=self._leaf_filters(row),
                 )
             )
         if skipped:
@@ -431,6 +437,23 @@ class SummaryTreeStage(_RegistryStage):
                 suffix,
             )
         return dict(groups)
+
+    @property
+    def _translated_field(self) -> str:
+        """The text-unit field holding the translation into the index
+        language."""
+        return f"translated_text_{index_language(self.config)}"
+
+    def _leaf_text(self, row: dict[str, Any]) -> str:
+        """The text a stored text unit is a leaf of the tree with: its
+        translation, when it holds one, else its text."""
+        return str(row.get(self._translated_field) or row.get("text") or "")
+
+    @staticmethod
+    def _leaf_filters(row: dict[str, Any]) -> dict[str, Any]:
+        """A stored text unit's document filters."""
+        filters = (row.get("attributes") or {}).get(Constants.FILTERS.value) or {}
+        return filters if isinstance(filters, dict) else {}
 
     def _uncovered(
         self, indexer: VectorIndexer, suffix: str, rows: list[dict[str, Any]]

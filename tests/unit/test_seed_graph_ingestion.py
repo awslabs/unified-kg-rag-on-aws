@@ -1257,7 +1257,11 @@ def test_claims_skip_seed_units(mocker) -> None:
     context = _context(
         text_units=[_doc_unit(), seed],
         unit_extractions=[
-            TextUnitExtraction(text_unit_id="u1"),
+            # u1 states an entity: a unit that states none is not asked.
+            TextUnitExtraction(
+                text_unit_id="u1",
+                entities=[Entity(id="e1", name="Vendor", text_unit_ids=["u1"])],
+            ),
             parse_seed_unit(seed),
         ],
     )

@@ -58,7 +58,7 @@ def test_a_name_is_its_most_frequent_spelling_the_smallest_on_a_tie(
 
 
 @pytest.mark.parametrize("order", [("TRUE", "SUSPECTED"), ("SUSPECTED", "TRUE")])
-def test_a_tied_claim_status_is_the_smallest(order: tuple[str, str]) -> None:
+def test_disagreeing_claim_statuses_merge_into_disputed(order: tuple[str, str]) -> None:
     from unified_kg_rag.domain.ingestion.claim_resolver import ClaimResolver
 
     claims = [
@@ -76,7 +76,7 @@ def test_a_tied_claim_status_is_the_smallest(order: tuple[str, str]) -> None:
 
     merged = object.__new__(ClaimResolver)._merge_claims(claims)
 
-    assert merged.status == "SUSPECTED"
+    assert merged.status == "disputed"
 
 
 def _claim_statements(order: tuple[int, ...]) -> list[Claim]:

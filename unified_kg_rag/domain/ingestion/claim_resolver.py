@@ -5,7 +5,7 @@ import functools
 import re
 import time
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -25,53 +25,100 @@ _RESOLVE_PROGRESS_EVERY = 2000
 
 logger = get_logger(__name__)
 
-# Placeholders the claim prompt (or the model) uses for an absent date. The
-# prompt asks for UNKNOWN, but a model writing descriptions in the corpus
-# language writes the placeholder in it too ("不明", "미상").
+
+def placeholder_key(text: str | None) -> str:
+    """``text`` as the placeholder sets hold it: casefolded, without
+    whitespace, so "해당없음" is "해당 없음" and "N / A" is "n/a"."""
+    return "".join((text or "").casefold().split())
+
+
+# What a model writes for "no value", in the supported languages: the claim
+# prompt asks for NONE (an object) or UNKNOWN (a date), but a model writing
+# descriptions in the corpus language writes the placeholder in it too.
+_NO_VALUE = (
+    "",
+    "-",
+    "--",
+    "none",
+    "unknown",
+    "n/a",
+    "na",
+    "null",
+    "nil",
+    "unspecified",
+    "notapplicable",
+    # Chinese and Japanese.
+    "不明",
+    "未知",
+    "不详",
+    "不詳",
+    "未詳",
+    "无",
+    "無",
+    "なし",
+    "無し",
+    "該当なし",
+    "不明確",
+    # Korean.
+    "미상",
+    "불명",
+    "알수없음",
+    "없음",
+    "해당없음",
+    "모름",
+    # German, Spanish, French, Italian, Portuguese, Russian.
+    "unbekannt",
+    "keine",
+    "keiner",
+    "desconocido",
+    "ninguno",
+    "inconnu",
+    "inconnue",
+    "aucun",
+    "aucune",
+    "sconosciuto",
+    "nessuno",
+    "desconhecido",
+    "nenhum",
+    "неизвестно",
+    "нет",
+)
+# A claim's object when it states none (the claim prompt's NONE): one
+# literal for every spelling of "no value", so an object-less claim is kept
+# under one identity rather than dropped or split by the word chosen.
+NO_OBJECT = "NONE"
+# "NA" is also a name (sodium's symbol, say): kept as an object.
+_NO_OBJECT_VALUES = frozenset(_NO_VALUE) - {"na"}
+
+
+def claim_object_value(value: str | None) -> str:
+    """A claim's object as extracted: :data:`NO_OBJECT` when absent or a
+    placeholder of "no value" (``NONE``, ``UNKNOWN``, ``N/A``, ``없음``,
+    ``なし``...), else as written."""
+    text = (value or "").strip()
+    return NO_OBJECT if placeholder_key(text) in _NO_OBJECT_VALUES else text
+
+
+# Placeholders for an absent date: "no value" (see ``_NO_VALUE``), and an
+# open period's end ("ongoing", "present"), which is no calendar date either.
 _UNKNOWN_DATE_VALUES = frozenset(
     {
-        "",
-        "-",
-        "unknown",
-        "none",
-        "n/a",
-        "na",
-        "null",
+        *_NO_VALUE,
         "tbd",
-        "unspecified",
         "ongoing",
         "present",
         # Chinese and Japanese.
-        "不明",
-        "未知",
-        "不详",
         "未定",
         "待定",
-        "无",
-        "なし",
-        "該当なし",
         "現在",
         "现在",
         "至今",
         "進行中",
         "进行中",
         # Korean.
-        "미상",
-        "불명",
-        "알 수 없음",
-        "없음",
         "미정",
-        "해당 없음",
         "현재",
-        "진행 중",
-        # German, Spanish, French, Italian, Portuguese, Russian.
-        "unbekannt",
-        "desconocido",
-        "inconnu",
-        "inconnue",
-        "sconosciuto",
-        "desconhecido",
-        "неизвестно",
+        "진행중",
     }
 )
 # An ISO 8601 week ("2024-W03", or with its weekday "2024-W03-2"):
@@ -91,6 +138,133 @@ _ABBREVIATION_DOT = re.compile(r"(?<=[A-Za-z])\s*\.")
 _COMMA = re.compile(r"\s*,\s*")
 # "Sept" is no %b abbreviation.
 _SEPT = re.compile(r"\bSept\b", re.IGNORECASE)
+# The month names (and their usual abbreviations) of the other supported
+# languages that write dates with words: German, Spanish, French, Italian,
+# Portuguese and Russian (nominative and genitive), read as the English
+# names strptime reads.
+_MONTH_WORDS: dict[str, tuple[str, ...]] = {
+    "January": (
+        "januar",
+        "jänner",
+        "enero",
+        "ene",
+        "janvier",
+        "janv",
+        "gennaio",
+        "gen",
+        "janeiro",
+        "январь",
+        "января",
+        "янв",
+    ),
+    "February": (
+        "februar",
+        "feber",
+        "febrero",
+        "février",
+        "févr",
+        "fevrier",
+        "febbraio",
+        "fevereiro",
+        "fev",
+        "февраль",
+        "февраля",
+        "фев",
+    ),
+    "March": (
+        "märz",
+        "maerz",
+        "mär",
+        "marzo",
+        "mars",
+        "março",
+        "marco",
+        "март",
+        "марта",
+        "мар",
+    ),
+    "April": ("abril", "abr", "avril", "avr", "aprile", "апрель", "апреля", "апр"),
+    "May": ("mai", "mayo", "maggio", "mag", "maio", "май", "мая"),
+    "June": ("juni", "junio", "juin", "giugno", "giu", "junho", "июнь", "июня", "июн"),
+    "July": (
+        "juli",
+        "julio",
+        "juillet",
+        "juil",
+        "luglio",
+        "lug",
+        "julho",
+        "июль",
+        "июля",
+        "июл",
+    ),
+    "August": ("agosto", "ago", "août", "aout", "август", "августа", "авг"),
+    "September": (
+        "septiembre",
+        "setiembre",
+        "septembre",
+        "settembre",
+        "set",
+        "setembro",
+        "сентябрь",
+        "сентября",
+        "сен",
+        "сент",
+    ),
+    "October": (
+        "oktober",
+        "okt",
+        "octubre",
+        "octobre",
+        "ottobre",
+        "ott",
+        "outubro",
+        "out",
+        "октябрь",
+        "октября",
+        "окт",
+    ),
+    "November": ("noviembre", "novembre", "novembro", "ноябрь", "ноября", "ноя"),
+    "December": (
+        "dezember",
+        "dez",
+        "diciembre",
+        "dic",
+        "décembre",
+        "déc",
+        "decembre",
+        "dicembre",
+        "dezembro",
+        "декабрь",
+        "декабря",
+        "дек",
+    ),
+}
+_MONTH_NAMES = {word: name for name, words in _MONTH_WORDS.items() for word in words}
+# Words a written-out date carries around its parts in those languages: the
+# Spanish and Portuguese "de"/"del" ("15 de marzo de 2024"), the Russian
+# year mark ("2024 г.", "2024 года"), the French first-day ordinal ("1er").
+_DATE_FILLERS = frozenset({"de", "del", "г", "года", "год"})
+_DATE_WORD = re.compile(r"[^\W\d_]+\.?")
+_FIRST_DAY = re.compile(r"(?<=\b1)(er|º|ª|°)", re.IGNORECASE)
+# The day's dot of German ("15. März 2024"), before a month word.
+_DAY_DOT = re.compile(r"(?<=\d)\.(?=\s*[^\W\d_])")
+
+
+def _english_month_words(text: str) -> str:
+    """``text`` with the month names of :data:`_MONTH_WORDS` in English and
+    the filler words of :data:`_DATE_FILLERS` dropped."""
+
+    def word(match: re.Match[str]) -> str:
+        found = match.group(0)
+        key = found.rstrip(".").casefold()
+        if key in _DATE_FILLERS:
+            return " "
+        return _MONTH_NAMES.get(key, found)
+
+    return _DATE_WORD.sub(word, _DAY_DOT.sub(" ", _FIRST_DAY.sub("", text)))
+
+
 # A Chinese, Japanese or Korean date: a year, a year and month, or a full
 # date written with their unit characters ("2024年3月15日", "2024년 3월 15일",
 # "2024年3月"), and a quarter ("2024年第3四半期", "2024年第3季度",
@@ -101,16 +275,36 @@ _WEEKDAY = (
     r"(?:\s*\((?:[月火水木金土日](?:曜日?)?|(?:星期|周|週)[一二三四五六日天]"
     r"|[월화수목금토일](?:요일)?)\))?"
 )
-_CJK_DATE = re.compile(
-    r"(?P<y>\d{4})\s*[年년]"
-    r"(?:\s*(?P<m>\d{1,2})\s*[月월](?:\s*(?P<d>\d{1,2})\s*[日일]" + _WEEKDAY + r")?)?"
+# A year written with its unit character: four digits, or a Japanese era's
+# year (令和6年, 平成31年, 元年 its first) or the Minguo calendar's (民國113年).
+_CJK_YEAR = (
+    r"(?:(?P<era>令和|平成|昭和|大正|明治|民國|民国)\s*(?P<ey>\d{1,3}|元)|(?P<y>\d{4}))"
 )
-# The Korean dotted form: 2024. 3. 15. (the last dot optional).
+# The first year of each era, so era year n is that year plus n - 1.
+_ERA_START = {
+    "明治": 1868,
+    "大正": 1912,
+    "昭和": 1926,
+    "平成": 1989,
+    "令和": 2019,
+    "民國": 1912,
+    "民国": 1912,
+}
+_CJK_DATE = re.compile(
+    _CJK_YEAR
+    + r"\s*[年년]"
+    + r"(?:\s*(?P<m>\d{1,2})\s*[月월](?:\s*(?P<d>\d{1,2})\s*[日일]"
+    + _WEEKDAY
+    + r")?)?"
+)
+# The Korean dotted form: 2024. 3. 15. (the last dot optional), and a month
+# alone, 2024. 3. (the dot after it optional).
 _DOTTED_DATE = re.compile(
-    r"(?P<y>\d{4})\s*\.\s*(?P<m>\d{1,2})\s*\.\s*(?P<d>\d{1,2})\s*\.?" + _WEEKDAY
+    r"(?P<y>\d{4})\s*\.\s*(?P<m>\d{1,2})(?:\s*\.\s*(?P<d>\d{1,2}))?\s*\.?" + _WEEKDAY
 )
 _CJK_QUARTER = re.compile(
-    r"(?P<y>\d{4})\s*[年년]?\s*第?\s*(?P<q>[1-4])\s*(?:四半期|季度|季|분기)"
+    r"(?:(?P<era>令和|平成|昭和|大正|明治|民國|民国)\s*(?P<ey>\d{1,3}|元)\s*年|(?P<y>\d{4})\s*[年년]?)"
+    r"\s*第?\s*(?P<q>[1-4])\s*(?:四半期|季度|季|분기)"
 )
 
 
@@ -147,10 +341,12 @@ def _last_day(year: int, month: int) -> date:
 @functools.lru_cache(maxsize=1 << 16)
 def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
     """A claim date as stored: None when absent or a placeholder such as
-    UNKNOWN, TBD, 不明 or 미상 (``_UNKNOWN_DATE_VALUES``), ``YYYY-MM-DD`` when it reads as a calendar date (ISO
+    UNKNOWN, TBD, 不明, 미상 or 해당없음 (``_UNKNOWN_DATE_VALUES``, however
+    spaced), ``YYYY-MM-DD`` when it reads as a calendar date (ISO
     8601, a time dropped, unpadded ``2024-1-5``, or a written-out date such
     as "January 15th, 2024", "Jan. 15, 2024", "Sept. 3, 2024",
-    "2024年3月15日", "2024年3月15日(金)", "2024년 3월 15일" or
+    "15. März 2024", "15 de marzo de 2024" (``_MONTH_WORDS``),
+    "2024年3月15日", "2024年3月15日(金)", "令和6年3月15日", "2024년 3월 15일" or
     "2024. 3. 15."), or as a
     coarser period, stored as its first day (an ISO week ``2024-W03`` as its
     Monday, ``Q3 2022`` as 2022-07-01, ``March 2024``/``2024-03`` as
@@ -162,7 +358,7 @@ def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
     it unchanged. Called for every statement of every claim, often with the
     same values: memoised (per mode)."""
     text = " ".join((value or "").split())
-    if text.casefold() in _UNKNOWN_DATE_VALUES:
+    if placeholder_key(text) in _UNKNOWN_DATE_VALUES:
         return None
     if (cjk := _cjk_date_value(text, end=end)) is not None:
         return cjk
@@ -189,7 +385,12 @@ def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
     cleaned = _COMMA.sub(
         ", ",
         " ".join(
-            _SEPT.sub("Sep", _ABBREVIATION_DOT.sub(" ", _ORDINAL.sub("", text))).split()
+            _SEPT.sub(
+                "Sep",
+                _ABBREVIATION_DOT.sub(
+                    " ", _ORDINAL.sub("", _english_month_words(text))
+                ),
+            ).split()
         ),
     )
     for date_format in _DATE_FORMATS:
@@ -211,14 +412,14 @@ def _cjk_date_value(text: str, *, end: bool) -> str | None:
     fullwidth digits read as digits), else None."""
     normalized = unicodedata.normalize("NFKC", text)
     if quarter := _CJK_QUARTER.fullmatch(normalized):
-        year, month = int(quarter["y"]), 3 * (int(quarter["q"]) - 1) + 1
+        year, month = _cjk_year(quarter), 3 * (int(quarter["q"]) - 1) + 1
         if end:
             return _last_day(year, month + 2).isoformat()
         return f"{year:04d}-{month:02d}-01"
     found = _CJK_DATE.fullmatch(normalized) or _DOTTED_DATE.fullmatch(normalized)
     if found is None:
         return None
-    year = int(found["y"])
+    year = _cjk_year(found)
     try:
         if found["d"] is not None:
             return date(year, int(found["m"]), int(found["d"])).isoformat()
@@ -229,6 +430,47 @@ def _cjk_date_value(text: str, *, end: bool) -> str | None:
     except ValueError:
         # No such day or month ("2024年13月"): kept as written.
         return None
+
+
+# The status of a claim whose statements disagree: the claim prompt's word
+# for conflicting information, lowercase as resolved statuses are stored.
+DISPUTED_STATUS = "disputed"
+# The status that states nothing about the claim's truth (the prompt's
+# "insufficient information"): it never disagrees with another.
+_UNKNOWN_STATUS = "unknown"
+
+
+def merge_claim_statuses(statuses: Iterable[str | None]) -> str | None:
+    """The status of one claim stated with ``statuses``: the status they all
+    state (case aside; its most frequent spelling, the smallest on a tie),
+    ``disputed`` when two of them disagree (``TRUE`` and ``FALSE``, say), and
+    ``unknown`` (or None) only when nothing else is stated. An ``unknown``
+    or missing status adds nothing to a known one.
+
+    Independent of the statements' order and associative: merging a merged
+    claim's status with more statements' gives what merging every statement
+    gives, so an incremental run that folds a stored claim's status with a
+    delta's (``merge_claims``) agrees with a full build.
+    """
+    present = [s for s in statuses if s]
+    known = [s for s in present if s.casefold() != _UNKNOWN_STATUS]
+    if len({s.casefold() for s in known}) > 1:
+        return DISPUTED_STATUS
+    candidates = known or present
+    if not candidates:
+        return None
+    counts = Counter(candidates)
+    return min(counts, key=lambda s: (-counts[s], s))
+
+
+def _cjk_year(found: re.Match[str]) -> int:
+    """The Gregorian year of a ``_CJK_YEAR`` match: its digits, or its era's
+    first year plus the era year less one (元年 is the first)."""
+    era = found.groupdict().get("era")
+    if era is None:
+        return int(found["y"])
+    era_year = 1 if found["ey"] == "元" else int(found["ey"])
+    return _ERA_START[era] + era_year - 1
 
 
 def claim_date_key(value: str | None, *, end: bool = False) -> str:
@@ -591,7 +833,8 @@ class ClaimResolver(BaseResolver):
             or primary_claim.object_name,
             type=self._get_most_common_value([c.type for c in claims])
             or primary_claim.type,
-            status=self._get_most_common_value([c.status for c in claims if c.status]),
+            # Disputed when the statements disagree (merge_claim_statuses).
+            status=merge_claim_statuses(c.status for c in claims) or "",
             # As stored, the smallest: the statements of one claim agree on
             # its dates only up to case (claim_date_key), and their order
             # varies.

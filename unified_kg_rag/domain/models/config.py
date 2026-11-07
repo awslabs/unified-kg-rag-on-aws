@@ -1511,8 +1511,11 @@ class ChunkingConfig(BaseModel):
         default=500,
         ge=0,
         description=(
-            "Overlap between consecutive chunks (length_unit, characters by "
-            "default)."
+            "Overlap between consecutive chunks the size-based splitter cuts "
+            "(the simple chunker, and the intelligent chunker's size "
+            "fallbacks), in length_unit (characters by default). The "
+            "intelligent chunker's model-chosen boundaries cut between lines "
+            "and share no text."
         ),
     )
     pre_chunk_size: int = Field(
@@ -1537,7 +1540,8 @@ class ChunkingConfig(BaseModel):
             "Target chunk size for the size-based splitter (the simple "
             "chunker, and intelligent chunking when the LLM fails or a chunk "
             "exceeds max_chunk_size). It splits at paragraphs, then lines, "
-            "then after CJK sentence terminators, then spaces "
+            "then after CJK sentence terminators, then after a sentence's "
+            "'.', '!', '?' or '…' before a space, then spaces "
             "(length_unit, characters by default). 4,800 characters is ~1,200 "
             "English tokens, the default chunk size of MS GraphRAG and "
             "LightRAG."
