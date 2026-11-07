@@ -204,6 +204,10 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
 - `--output-format json` prints one JSON document on stdout (a status document on failure, argparse errors included)
   and everything else on stderr; `run-ingestion` rejects it with `--metrics-sink cloudwatch` (#333, #359, #366,
   #420).
+- JSON failures have one schema: `status` (`failed`, or `interrupted`), `exit_code`, `error` and a new `error_type`
+  (the exception's class, `UsageError`, `FailureBudgetExceeded`, `RegressionGateFailed`, `RunFailed` or
+  `Interrupted`), in a status document and in a result that shows a failure: a failed `run-rag` query adds them to
+  `success: false` (it had only `error`), and a failing `run-eval` or `run-visualization` result has them (#PR).
 - `run-rag --output-format json`: an answer's `search_results` leaves out `results`, which repeated its `sources`;
   `--verbose` keeps them (#PR).
 - `run-eval --search-strategy` takes a list (`["auto"]` by default); with several strategies or `--repeats` it

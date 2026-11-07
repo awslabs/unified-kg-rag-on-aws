@@ -105,21 +105,35 @@ holds:
 
 ### Failures and interruptions
 
+Every failure has the same keys, in a status document or in a result that
+shows the failure:
+
+| Key | Value |
+|---|---|
+| `status` | `"failed"` (`"interrupted"` for a stopped run; a `run-ingestion` result keeps the run's own status) |
+| `exit_code` | The process's exit code |
+| `error` | The message, when there is one |
+| `error_type` | What failed: the exception's class name (`ConfigurationError`, `QueryTimeoutError`, `StoreConnectionError`, `PipelineExecutionError`, ...), `UsageError` for a refused command line, `FailureBudgetExceeded` or `RegressionGateFailed` for `run-eval`, `RunFailed` for a run that failed without an exception (nothing rendered), `Interrupted` for a stopped run |
+
 A run that printed its result prints nothing more; the result shows the
-failure, as listed above. A run that did not prints a status document
+failure with these keys: a failed `run-rag` query (also with
+`"success": false`), a `run-ingestion` run a stage failed, a `run-eval`
+breach, gate or upload error, a `run-visualization` run that rendered
+nothing or lost a renderer. A run that did not prints a status document
 instead:
 
 - A run stopped by a signal before it printed prints
-  `{"status": "interrupted", "exit_code": 143}` (`130` for Ctrl-C).
+  `{"status": "interrupted", "exit_code": 143, "error_type": "Interrupted"}`
+  (`130` for Ctrl-C).
 - A run that fails before it printed prints
-  `{"status": "failed", "exit_code": 1}` (or `2`) with the `error` it failed
-  with, an argparse error included.
+  `{"status": "failed", "exit_code": 1, "error_type": ...}` (or `2`) with the
+  `error` it failed with, an argparse error included.
 - That holds from the first moment: a SIGTERM while the CLI still loads, or
   after it printed its result while the process exits, exits `143` too, and
   a Ctrl-C while it loads `130` (the status document only while loading; a
   SIGINT the parent ignores, as `nohup` does, stays ignored).
-- A `run-ingestion` result whose run a stage failed carries the same `error`
-  and `exit_code`. `run-ingestion` adds the `pipeline_id` to resume with
+- A `run-ingestion` result whose run a stage failed carries the same `error`,
+  `exit_code` and `error_type`. `run-ingestion` adds the `pipeline_id` to resume with
   (once the run resolved it) and, when a stopped run's next run on the
   namespace must wait for writes possibly still in flight (this run's, or
   those of the run whose expired lease it took over),

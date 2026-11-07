@@ -20,11 +20,14 @@ Exit codes:
 ``--output-format json`` prints one JSON document with the run's result to
 stdout and sends everything else (banner, progress, logs) to stderr, so the
 output pipes into ``jq``. A run stopped by a signal before it printed one
-prints ``{"status": "interrupted", "exit_code": 143}`` (or 130) instead, and
-one that fails before it printed one ``{"status": "failed", "exit_code": 1}``
-(or 2) with the ``error`` it failed with (an argparse error included, see
+prints ``{"status": "interrupted", "exit_code": 143, "error_type":
+"Interrupted"}`` (or 130) instead, and one that fails before it printed one
+``{"status": "failed", "exit_code": 1, "error_type": ...}`` (or 2) with the
+``error`` it failed with (an argparse error included, see
 :class:`ArgumentParser`), and ``run-ingestion`` the ``pipeline_id`` once
-resolved.
+resolved. A result document that shows a failure (a failed ``run-rag``
+query, a ``run-ingestion`` run a stage failed) carries the same keys
+(:func:`failure_fields`).
 """
 
 from __future__ import annotations
@@ -90,11 +93,42 @@ _stop_now = threading.Event()
 _print_lock = threading.RLock()
 
 
-def usage_error(message: str) -> NoReturn:
-    """Report a usage or configuration error as argparse does and exit 2."""
+# The error_type of a failure without an exception: a usage error (an
+# argparse error, a refused flag) or a run that failed.
+USAGE_ERROR = "UsageError"
+RUN_FAILED = "RunFailed"
+INTERRUPTED = "Interrupted"
+
+
+def usage_error(message: str, error_type: str = USAGE_ERROR) -> NoReturn:
+    """Report a usage or configuration error as argparse does and exit 2
+    (``error_type`` names it in the JSON status: the exception's class when
+    one was refused, ``ConfigurationError``)."""
     print(f"{Path(sys.argv[0]).name}: error: {message}", file=sys.stderr)
-    print_status(EXIT_USAGE, message)
+    print_status(EXIT_USAGE, message, error_type=error_type)
     raise SystemExit(EXIT_USAGE)
+
+
+def error_type_of(exit_code: int, error: BaseException | str | None) -> str:
+    """The ``error_type`` of a failure: the exception's class name, else
+    :data:`USAGE_ERROR` for exit 2 and :data:`RUN_FAILED` otherwise."""
+    if isinstance(error, BaseException) and not isinstance(error, SystemExit):
+        return type(error).__name__
+    return USAGE_ERROR if exit_code == EXIT_USAGE else RUN_FAILED
+
+
+def failure_fields(
+    exit_code: int, error: BaseException | str | None, error_type: str | None = None
+) -> dict[str, Any]:
+    """The keys every JSON failure document has: ``status`` ``failed``, the
+    ``exit_code``, the ``error`` message (when there is one) and its
+    ``error_type`` (:func:`error_type_of` unless given). A CLI whose result
+    document shows a failure merges them into it."""
+    fields: dict[str, Any] = {"status": "failed", "exit_code": exit_code}
+    if isinstance(error, str | Exception) and str(error):
+        fields["error"] = str(error)
+    fields["error_type"] = error_type or error_type_of(exit_code, error)
+    return fields
 
 
 def failed(exit_code: int, error: BaseException | str) -> int:
@@ -394,22 +428,30 @@ def print_json(result: Any) -> None:
 
 
 def print_status(
-    exit_code: int, error: BaseException | str | None = None, **fields: Any
+    exit_code: int,
+    error: BaseException | str | None = None,
+    *,
+    error_type: str | None = None,
+    **fields: Any,
 ) -> None:
     """Print the status document of a run that exits ``exit_code`` without
     having printed its result (once, and only with JSON output): a failed
-    one names its ``error``; ``fields`` (``pipeline_id``) are added."""
+    one names its ``error`` and ``error_type`` (:func:`failure_fields`), a
+    stopped one has ``error_type`` ``Interrupted``; ``fields``
+    (``pipeline_id``) are added."""
     with _print_lock:
         if not _json["enabled"] or _json["printed"]:
             return
-        stopped = exit_code in (EXIT_INTERRUPTED, EXIT_TERMINATED)
-        status: dict[str, Any] = {
-            "status": "interrupted" if stopped else "failed",
-            "exit_code": exit_code,
-        }
-        if not stopped and isinstance(error, str | Exception) and str(error):
-            status["error"] = str(error)
+        if exit_code in (EXIT_INTERRUPTED, EXIT_TERMINATED):
+            status: dict[str, Any] = interrupted_fields(exit_code)
+        else:
+            status = failure_fields(exit_code, error, error_type)
         print_json({**status, **fields})
+
+
+def interrupted_fields(exit_code: int) -> dict[str, Any]:
+    """The keys of a stopped run's JSON status."""
+    return {"status": "interrupted", "exit_code": exit_code, "error_type": INTERRUPTED}
 
 
 def _exit_stopped(exit_code: int) -> None:

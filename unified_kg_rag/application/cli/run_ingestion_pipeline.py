@@ -27,6 +27,7 @@ from unified_kg_rag.application.cli.conventions import (
     ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    interrupted_fields,
     json_output,
     print_json,
     print_status,
@@ -773,7 +774,16 @@ class IngestionPipelineRunner:
         return {
             "pipeline_id": context.pipeline_id,
             "status": context.status.value,
-            **({"error": error, "exit_code": EXIT_FAILURE} if error else {}),
+            # The keys of every failure document (status stays the run's).
+            **(
+                {
+                    "error": error,
+                    "exit_code": EXIT_FAILURE,
+                    "error_type": PipelineExecutionError.__name__,
+                }
+                if error
+                else {}
+            ),
             "duration_seconds": context.duration_seconds,
             "failed_documents": len(context.recorded_failed_doc_ids),
             # Text units a stage failed on: counted in a full build too,
@@ -862,8 +872,7 @@ def _print_interrupted(runner: IngestionPipelineRunner | None, exit_code: int) -
     pipeline_id = runner.pipeline.pipeline_id if runner and runner.pipeline else None
     if runner and runner.json_output and pipeline_id and not runner.reported:
         status: dict[str, Any] = {
-            "status": "interrupted",
-            "exit_code": exit_code,
+            **interrupted_fields(exit_code),
             "pipeline_id": pipeline_id,
         }
         if when := _next_run_writes_from(runner):

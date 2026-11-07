@@ -43,6 +43,7 @@ from unified_kg_rag.application.cli.conventions import (
     add_output_format_argument,
     exits_on_sigterm,
     failed,
+    failure_fields,
     json_output,
     print_json,
     usage_error,
@@ -283,25 +284,23 @@ def main() -> int:
             len(written),
             args.output_directory,
         )
+        error = None
+        if not written:
+            error = f"No visualization files were rendered from '{args.data_path}'"
+        elif failures:
+            # The others rendered, but a requested output is missing.
+            error = f"Renderer(s) failed: {', '.join(sorted(failures))}"
         if as_json:
             print_json(
                 {
                     "output_directory": str(args.output_directory),
                     "files": [str(path) for path in written],
                     "failed_renderers": failures,
+                    **(failure_fields(EXIT_FAILURE, error) if error else {}),
                 }
             )
-        if not written:
-            return failed(
-                EXIT_FAILURE,
-                f"No visualization files were rendered from '{args.data_path}'",
-            )
-        if failures:
-            # The others rendered, but a requested output is missing.
-            return failed(
-                EXIT_FAILURE,
-                f"Renderer(s) failed: {', '.join(sorted(failures))}",
-            )
+        if error:
+            return failed(EXIT_FAILURE, error)
         return 0
     except KeyboardInterrupt:
         logger.warning("Visualization interrupted by user.")

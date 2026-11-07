@@ -22,11 +22,13 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
+    RUN_FAILED,
     ArgumentParser,
     add_output_format_argument,
     add_removed_flag,
     exits_on_sigterm,
     failed,
+    failure_fields,
     interruptible,
     json_output,
     print_json,
@@ -647,7 +649,15 @@ class RAGChainRunner:
                     f"\n[bold red]Error executing query: {markup_safe(error)}"
                     "[/bold red]"
                 )
-                return {"success": False, "error": error, **output}
+                return {
+                    "success": False,
+                    **output,
+                    **failure_fields(
+                        EXIT_FAILURE,
+                        error,
+                        (output.get("metadata") or {}).get("error_type") or RUN_FAILED,
+                    ),
+                }
             console.print("\n[bold green]Query executed successfully![/bold green]")
             return {"success": True, **output}
 
@@ -670,7 +680,7 @@ class RAGChainRunner:
             )
             return {
                 "success": False,
-                "error": str(e),
+                **failure_fields(EXIT_FAILURE, e),
                 "conversation_id": rag_input.conversation_id,
             }
 

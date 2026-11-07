@@ -37,7 +37,11 @@ def _stopped_while_loading(signum: int, _frame: object) -> None:
     nothing to unwind or flush but the status document."""
     exit_code = 128 + signum
     if wants_json(sys.argv[1:]):
-        status = {"status": "interrupted", "exit_code": exit_code}
+        status = {
+            "status": "interrupted",
+            "exit_code": exit_code,
+            "error_type": "Interrupted",  # conventions.INTERRUPTED
+        }
         sys.stdout.write(json.dumps(status, indent=2) + "\n")
         sys.stdout.flush()
     os._exit(exit_code)

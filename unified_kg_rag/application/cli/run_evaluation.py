@@ -40,6 +40,7 @@ from unified_kg_rag.application.cli.conventions import (
     ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    failure_fields,
     json_output,
     print_json,
     stoppable,
@@ -1053,9 +1054,33 @@ class EvaluationRunner:
                     "comparison": comparison,
                     "failure_budget_breaches": breaches,
                     "gate_failures": gate_failures,
+                    **self._failure(exit_code, breaches, gate_failures, upload_error),
                 }
             )
         return exit_code, upload_error is not None
+
+    @staticmethod
+    def _failure(
+        exit_code: int,
+        breaches: list[str],
+        gate_failures: list[str],
+        upload_error: Exception | None,
+    ) -> dict[str, Any]:
+        """The failure keys of a result that exits 1 (a breached budget, a
+        failed gate, a failed upload), as every CLI's failure document has
+        them; ``error_type`` names the first."""
+        if not exit_code:
+            return {}
+        errors = [*breaches, *gate_failures]
+        if upload_error is not None:
+            errors.append(str(upload_error))
+        if breaches:
+            kind = "FailureBudgetExceeded"
+        elif gate_failures:
+            kind = "RegressionGateFailed"
+        else:
+            kind = type(upload_error).__name__
+        return failure_fields(exit_code, "; ".join(errors) or None, kind)
 
     def _load_baseline(self) -> dict[str, list[SavedRun]] | None:
         """The ``--baseline-results`` runs by strategy (in the order the
