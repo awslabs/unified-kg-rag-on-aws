@@ -82,6 +82,7 @@ PUBLIC_API = sorted(
         "DocStatusPort",
         "EmbeddingFactoryPort",
         "GraphIndexer",
+        "GraphQueryPort",
         "GuardAction",
         "GuardSource",
         "GuardVerdict",
