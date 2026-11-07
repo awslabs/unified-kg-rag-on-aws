@@ -1,14 +1,18 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""``docs/getting-started/local.md`` (and its Korean edition) runs as written.
+"""The local quickstarts run as written: ``docs/getting-started/local.md``,
+the README's five-minute quickstart, and their Korean editions.
 
 Every ``bash`` block of the page is read and run in order in an empty
 working directory: the shell commands that write the sample files run in
 ``bash``, and every ``uv run <console script>`` runs that script's entry
 point in-process with the block's arguments and environment variables. The
-installs (``uv sync``, ``uv pip``, ``ollama pull``) are skipped. The models
-are the local adapters against a fake Ollama (``FakeOllama``, no network),
-and the reranker a fake cross-encoder (no download).
+installs (``uv sync``, ``uv pip``, ``ollama pull``) and the checkout
+(``git clone``, ``cd``) are skipped. The models are the local adapters
+against a fake Ollama (``FakeOllama``, no network). The reranker is a fake
+cross-encoder (no download) only when the page's ``uv sync`` installs the
+``cross-encoder`` extra; otherwise loading it fails as without the extra, and
+the queries must still succeed with reranking off.
 
 A renamed flag, environment variable, script or output file the page names
 fails here: each command must exit 0, and the outputs the page promises
@@ -38,20 +42,27 @@ from unified_kg_rag.adapters.local import rerank as rerank_module
 from unified_kg_rag.adapters.local.embeddings import OllamaEmbeddingFactory
 from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
 from unified_kg_rag.application import config as config_module
+from unified_kg_rag.shared.exceptions import ConfigurationError
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 ROOT = Path(__file__).parents[2]
-# The page and its Korean edition run the same commands.
-PAGES = [
-    ROOT / "docs" / "getting-started" / name for name in ("local.md", "local.ko.md")
-]
+# Each page and its Korean edition run the same commands: the console
+# scripts each runs, in order.
+GUIDE_FLOW = ["run-ingestion", "run-rag", "run-rag", "run-eval"]
+README_FLOW = ["run-ingestion", "run-rag"]
+PAGES = {
+    ROOT / "docs" / "getting-started" / "local.md": GUIDE_FLOW,
+    ROOT / "docs" / "getting-started" / "local.ko.md": GUIDE_FLOW,
+    ROOT / "README.md": README_FLOW,
+    ROOT / "README.ko.md": README_FLOW,
+}
 # The sample corpus's entities (the page's made-up companies and people).
 NAMES = ("Acme Robotics", "Alice Chen", "Globex Sensors", "Bob Martin")
 ANSWER = "Alice Chen is the chief engineer at Acme Robotics."
 # The default local embedding model's dimension (bge-m3).
 DIMENSION = 1024
-_INSTALLS = (("uv", "sync"), ("uv", "pip"), ("ollama", "pull"))
+_INSTALLS = (("uv", "sync"), ("uv", "pip"), ("ollama", "pull"), ("git", "clone"))
 
 
 def _respond(system: str, human: str) -> str:
@@ -128,8 +139,7 @@ def _with_transport(init: Any, default: Any) -> Any:
 
 @pytest.fixture
 def fake_models(monkeypatch: pytest.MonkeyPatch) -> FakeOllama:
-    """The CLIs' Ollama clients answer from a ``FakeOllama``, and their
-    cross-encoder is a fake (no network, no download)."""
+    """The CLIs' Ollama clients answer from a ``FakeOllama`` (no network)."""
     import httpx
 
     server = FakeOllama(_respond, ANSWER, DIMENSION)
@@ -138,21 +148,42 @@ def fake_models(monkeypatch: pytest.MonkeyPatch) -> FakeOllama:
         monkeypatch.setattr(
             factory, "__init__", _with_transport(factory.__init__, transport)
         )
-    init = rerank_module.CrossEncoderRerankFactory.__init__
-
-    def rerank(self: Any, config: Any, *, loader: Any = None) -> None:
-        init(
-            self,
-            config,
-            loader=loader or (lambda *_, **__: FakeCrossEncoder("x", relevant=None)),
-        )
-
-    monkeypatch.setattr(rerank_module.CrossEncoderRerankFactory, "__init__", rerank)
     return server
 
 
+def _installs_cross_encoder(commands: list[str]) -> bool:
+    return any(
+        command.startswith("uv sync") and "cross-encoder" in command
+        for command in commands
+    )
+
+
+def _reranker(monkeypatch: pytest.MonkeyPatch, *, installed: bool) -> list[str]:
+    """The cross-encoder a page's install gives: a fake one, or a load that
+    fails as it does without the extra. The model ids it was asked to load."""
+    loaded: list[str] = []
+
+    def load(model_id: str, **_: Any) -> FakeCrossEncoder:
+        loaded.append(model_id)
+        if not installed:
+            raise ConfigurationError(
+                "sentence_transformers is not installed: uv sync --extra cross-encoder"
+            )
+        return FakeCrossEncoder("x", relevant=None)
+
+    init = rerank_module.CrossEncoderRerankFactory.__init__
+
+    def rerank(self: Any, config: Any, *, loader: Any = None) -> None:
+        init(self, config, loader=loader or load)
+
+    monkeypatch.setattr(rerank_module.CrossEncoderRerankFactory, "__init__", rerank)
+    return loaded
+
+
 @pytest.mark.timeout(300)
-@pytest.mark.parametrize("page", PAGES, ids=lambda page: page.name)
+@pytest.mark.parametrize(
+    "page", PAGES, ids=lambda page: page.relative_to(ROOT).as_posix()
+)
 def test_the_local_quickstart_runs_as_written(
     page: Path,
     tmp_path: Path,
@@ -162,6 +193,8 @@ def test_the_local_quickstart_runs_as_written(
     text = page.read_text(encoding="utf-8")
     commands = _commands(text)
     scripts = _scripts()
+    cross_encoder = _installs_cross_encoder(commands)
+    loaded = _reranker(monkeypatch, installed=cross_encoder)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
     # A prompt the fake cannot answer fails at once instead of backing off.
@@ -173,7 +206,7 @@ def test_the_local_quickstart_runs_as_written(
         while words and re.fullmatch(r"[A-Z_][A-Z0-9_]*=.*", words[0]):
             name, _, value = words.pop(0).partition("=")
             env[name] = value
-        if tuple(words[:2]) in _INSTALLS:
+        if tuple(words[:2]) in _INSTALLS or words[:1] == ["cd"]:
             continue
         if words[:2] != ["uv", "run"]:
             # Writes the sample files: plain shell, in the working directory.
@@ -195,13 +228,23 @@ def test_the_local_quickstart_runs_as_written(
         assert code == 0, f"{command!r} exited {code}"
         ran.append(script)
 
-    # The page's flow: ingest, two queries, one comparison.
-    assert ran == ["run-ingestion", "run-rag", "run-rag", "run-eval"]
+    assert ran == PAGES[page]
     assert fake_models.chat_models and fake_models.embed_models
-    # The stores where the page says they are.
-    assert "`.unified-kg-rag/`" in text
+    # The queries asked for the preset's cross-encoder, which loaded only
+    # where the page installs it (else they ran with reranking off).
+    assert loaded
     stores = tmp_path / ".unified-kg-rag"
     assert {"graph.sqlite3", "vector.sqlite3"} <= {p.name for p in stores.iterdir()}
+    if not cross_encoder:
+        # The page says its queries then rerank nothing.
+        assert re.search(
+            r"reranking (?:is )?off|fused order|재순위화 없이|융합 순서", text
+        )
+    if PAGES[page] is README_FLOW:
+        return
+    # The guide's flow: ingest, two queries, one comparison; the stores
+    # where it says they are.
+    assert "`.unified-kg-rag/`" in text
     # Each strategy's results, reports and summary, and the comparison file
     # the page names, pairing mix against local.
     # One run-eval invocation writes into its own run subdirectory.

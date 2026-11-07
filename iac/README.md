@@ -251,14 +251,19 @@ did-you-mean hint.
 The domain carries the `EnableVersionUpgrade` update policy, so a changed
 `OPENSEARCH_VERSION` in `storage_stack.py` upgrades the deployed domain as a
 blue/green deployment, keeping its endpoint and indices, instead of replacing
-it with an empty one. **A domain deployed on 2.13 upgrades to 2.19 on its next
-deploy of `GraphRagStorage`**: 15 minutes to several hours, queries and
+it with an empty one. **A 2.13 domain with that policy upgrades to 2.19 on its
+next deploy of `GraphRagStorage`**: 15 minutes to several hours, queries and
 ingestion slower meanwhile, and no way back to 2.13 except restoring a manual
 snapshot on a new domain. Before that deploy, stop ingestion, take a manual
 snapshot, run the eligibility check and check that `cdk diff GraphRagStorage`
 changes only `EngineVersion`
 ([Upgrading OpenSearch](../docs/operations.md#upgrading-opensearch)); to
-postpone it, set `OPENSEARCH_VERSION` back to `OPENSEARCH_2_13` first.
+postpone it, set `OPENSEARCH_VERSION` back to `OPENSEARCH_2_13` first. **A
+domain the 0.2.3 stack created lacks the policy**, and a deploy that adds it
+while changing the engine version can replace the domain with an empty one:
+pin `OPENSEARCH_2_13` for the deploys that upgrade the stack, then put back
+`OPENSEARCH_2_19` and upgrade as above (the CHANGELOG's
+[Upgrading](../CHANGELOG.md#upgrading), steps 6-9).
 
 **The Neptune engine version is not pinned.** A new cluster starts on
 Neptune's default engine version at creation; pinning one now would change the
@@ -467,14 +472,21 @@ docker push "$REGISTRY/graphrag-app:latest"
   `cdk deploy --all -c image_tag=<tag>`, so a pushed image cannot be swapped
   under the running task definition.
 - Extras: the image always installs `eval` (the `run-eval` judges of the
-  query task). Add `--build-arg UV_EXTRAS="--extra unstructured"` to parse
-  `.md` / `.html` files (the build then also installs the spaCy model
-  `en_core_web_sm` the extra needs, which a task in the private VPC could
-  not download: without it each such file waited 120 s and failed),
+  query task). The core install reads `.md` / `.html` files (Markdown as
+  written, HTML through the standard library's parser); add
+  `--build-arg UV_EXTRAS="--extra unstructured"` for unstructured's richer
+  parsers (the build then also installs the spaCy model `en_core_web_sm`
+  the extra needs, which a task in the private VPC could not download:
+  without it each such file waited 120 s and failed), `--extra docx` to
+  read Word (`.docx`) files (skipped with a WARNING otherwise),
   `--extra otel` with `enable_cloudwatch_tracing`,
   `--extra ontology` for a `schema_source.kind: owl` config
-  ([Ontology schema in the image](../docs/operations.md#ontology-schema-in-the-image));
-  several go in one argument (`"--extra otel --extra unstructured"`).
+  ([Ontology schema in the image](../docs/operations.md#ontology-schema-in-the-image)),
+  and `--extra mcp` for an image that runs `run-mcp-server` on a host you
+  add (the stack runs no server: [MCP server](../docs/guides/mcp.md#http-and-remote-deployment));
+  several go in one argument (`"--extra otel --extra unstructured"`). The
+  `local`, `cross-encoder` and `console` extras are for running on your own
+  machine.
 - The image bakes in the endpoint-free `docker/config.yaml` (it turns on
   `providers.doc_status.enabled`, so ingestion is incremental). The task
   injects the deployed values: `UKR__AWS__NEPTUNE__ENDPOINT` (the cluster

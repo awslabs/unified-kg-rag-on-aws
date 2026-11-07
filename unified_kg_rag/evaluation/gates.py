@@ -79,8 +79,10 @@ STATS = (
 # null deltas (3,000 comparisons each, 2,000 resamples), the 95% interval
 # excluded 0 in 8% of them at 10 pairs of 0/1-metric deltas (12% for
 # heavy-tailed t3 deltas), 5% from 20-30 pairs (7% for t3 at 30-50), against
-# the nominal 5%; a gate read on under ~30 pairs breaches on noise more often
-# than its confidence says.
+# the nominal 5%; a gate on the interval read on under ~30 pairs breaches on
+# noise more often than its confidence says. The sign-flip `p_value` (exact on
+# few pairs) and its Holm-adjusted `adjusted_p_value` hold their level there,
+# so on a small set gate on those; the floor still applies to every statistic.
 MIN_GATE_PAIRS = 10
 _OPS: dict[str, Callable[[float, float], bool]] = {
     "<=": operator.le,

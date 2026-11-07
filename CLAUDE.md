@@ -134,8 +134,11 @@ The rules to keep in mind:
   `run-prompt-tuning` (profile a corpus → domain-adapted `custom_prompts` YAML),
   `prepare-benchmark` (`musique`: corpus + `run-eval` dataset, downloaded at
   run time, never committed; `assertions`: questions and assertions from
-  your corpus), `run-mcp-server` (one namespace as read-only MCP tools for
-  agents, `application/cli/mcp_*.py`). `run-eval --search-strategy a,b --repeats N`
+  your corpus; `structural`: graph-structure questions), `run-describe` (a
+  namespace's methodologies, strategies and counts; graph export),
+  `run-mcp-server` (one namespace as read-only MCP tools for agents,
+  `application/cli/mcp_*.py`), `run-console` (the local web console,
+  `application/cli/console/`). `run-eval --search-strategy a,b --repeats N`
   runs a paired comparison (`evaluation/comparison.py`, optional
   `--pairwise-judge`). `docs/reference/cli.md` lists every flag; it is
   generated from the parsers by `scripts/gen_cli_reference.py`, so change a
@@ -152,9 +155,10 @@ The rules to keep in mind:
   the renderers registered via `@register_renderer` (`adapters/renderers/`,
   one registry + `RenderContext`). The interactive renderer needs the `viz`
   extra; the static charts need none.
-- **Extras**: `eval` (LLM judges) and `viz` (pyvis) are optional, like
-  `otel`, `ontology` (rdflib), `mcp` (the MCP SDK of `run-mcp-server`), `local` and
-  `unstructured`; a feature whose extra is missing fails
+- **Extras**: `eval` (the ragas judge) and `viz` (pyvis) are optional, like
+  `otel`, `ontology` (rdflib), `mcp` (the MCP SDK of `run-mcp-server`),
+  `console` (FastAPI and Uvicorn of `run-console`), `local`, `cross-encoder`
+  (the local reranker), `docx` and `unstructured`; a feature whose extra is missing fails
   fast with a `ConfigurationError` naming the extra. Tests that need one use
   `tests/fixtures/extras.py`; the CI `core-install` job runs without them.
 - **Docs**: user docs start at `docs/index.md` (the hub), with task pages in

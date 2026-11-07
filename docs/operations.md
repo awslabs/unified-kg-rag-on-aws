@@ -410,7 +410,19 @@ The CDK domain runs OpenSearch 2.19 and carries the CloudFormation
 the domain in place: same endpoint, same indices, no reindex. Without the
 policy CloudFormation would replace the domain with a new, empty one.
 
-**A domain deployed on 2.13 upgrades to 2.19 on its next deploy of
+**A domain the 0.2.3 stack created has no such policy.** A deploy that adds
+the policy and changes the engine version in the same stack update is not
+covered by it, and CloudFormation can replace the domain with an empty one.
+So keep such a domain on 2.13 while the stack itself is upgraded: set
+`OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_13` in
+`iac/stacks/storage_stack.py` for those deploys (steps 6-8 of the
+CHANGELOG's [Upgrading](../CHANGELOG.md#upgrading); `cdk diff
+GraphRagStorage` then adds the `UpdatePolicy` and leaves `EngineVersion`
+alone). Once they are done, put back `OPENSEARCH_2_19` and upgrade with the
+steps below, before rebuilding the indices.
+
+**A 2.13 domain that carries the policy (deployed from a `main` checkout
+since #457, or upgraded as above) upgrades to 2.19 on its next deploy of
 `GraphRagStorage`** (any `cdk deploy` that includes it, `--all` too).
 OpenSearch Service upgrades 2.13 to 2.19 in one step: it checks the domain,
 takes its own snapshot, then runs a blue/green deployment that copies every

@@ -253,7 +253,8 @@ def _structural(args: argparse.Namespace, as_json: bool) -> None:
         f"written to '{out}'.[/green]\n"
         f"Ingest: run-ingestion --config-path {out}/structural-config.yaml "
         f"--source-directory {out}/corpus\n"
-        f"Score: run-eval --data-path {out}/eval_data.json "
+        f"Score: run-eval --config-path {out}/structural-config.yaml "
+        f"--data-path {out}/eval_data.json "
         "--search-strategy structured,local,mix --repeats 3"
     )
     if as_json:

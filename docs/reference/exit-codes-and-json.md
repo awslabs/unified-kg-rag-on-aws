@@ -1,7 +1,8 @@
 # CLI exit codes and JSON output
 
 What every CLI (`run-ingestion`, `run-rag`, `run-eval`, `run-visualization`,
-`run-describe`, `run-prompt-tuning`, `prepare-benchmark`) returns to a script or a scheduler:
+`run-describe`, `run-prompt-tuning`, `prepare-benchmark`, and the servers
+`run-mcp-server` and `run-console`) returns to a script or a scheduler:
 its exit code, what a signal does, and the document `--output-format json`
 prints. Every flag: [CLI Reference](./cli.md); what an error message means:
 [Troubleshooting](../troubleshooting.md).
@@ -24,6 +25,16 @@ extra missing, a non-loopback `--host` without `--allow-remote`), `1`
 for a failure, `130` and `143` for a signal. It has no `--output-format`:
 over stdio its stdout carries the MCP messages only
 ([MCP server](../guides/mcp.md)).
+
+`run-console` exits `0` when Ctrl-C stops it (the server finishes running
+requests first, up to 60 s), `143` on SIGTERM, `2` for a usage error (the
+`console` extra missing, a non-loopback `--host` without `--allow-remote`,
+a `--source-directory` that is not a directory) and `1` when it cannot
+listen on the address. A config file that does not load is no error: the
+console starts and its Settings page shows why. With `--output-format json`
+it prints one `{"status": "serving", "url": ..., "web_built": ...,
+"version": ...}` document once it listens; the URL carries the access token
+([Console](../guides/console.md)).
 
 ## Signals
 

@@ -39,6 +39,10 @@ stored is read again: follow *Upgrading* in order.
   (#475-#496).
 - Seed graphs: an existing knowledge graph (JSONL, CSV, RDF) merged into the extracted one as virtual documents
   (#497-#515).
+- Answers cite their evidence with `[n]` markers that name the documents and PDF pages behind each number (#627).
+- Structured graph queries: counts, rankings, lists and paths compiled from a checked JSON plan and run read-only
+  by the graph store, opt-in (#630).
+- A read-only MCP server for agents and a local web console, both opt-in (#616, #631).
 - A query deadline and always-on LLM usage accounting (#522, #526).
 - Evaluation: LLM-free evaluators, paired strategy comparison with cost and bootstrap intervals, a pairwise judge
   and a MuSiQue preparer (#121, #324, #526); declines on unanswerable questions, an assertion judge,
@@ -57,7 +61,8 @@ stored is read again: follow *Upgrading* in order.
 - A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 83 packages, 937 to 335 MB on
   Linux. Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis,
   for the `interactive` renderer), `local`, `cross-encoder` (the local reranker, with PyTorch), `otel`,
-  `unstructured` (the richer Markdown and HTML parser), `docx` (Word files), `ontology` (rdflib). A feature whose
+  `unstructured` (the richer Markdown and HTML parser), `docx` (Word files), `ontology` (rdflib), `mcp`
+  (`run-mcp-server`), `console` (`run-console`: FastAPI, Uvicorn, python-multipart). A feature whose
   extra is missing fails naming it: the CLIs exit 2 before any work, the library raises `ConfigurationError` (also
   under `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer need no extra; the container
   image installs `eval` (#467, #472, #520, #576).
@@ -198,7 +203,7 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   none), and `run-rag` / `run-eval --enable-thinking` (the default Claude 5.x models always reason: tune their depth
   with `aws.bedrock.default_effort` / `fast_effort`; from Python, `RAGInput.enable_thinking` still turns thinking on
   for a model that opts in). Either flag fails with exit 2 saying so; run-eval results no longer record
-  `enable_thinking` (#(PR)).
+  `enable_thinking` (#628).
 - Exit codes: `2` for a usage or configuration error before any work (also one met while running), `1` for a failed
   run, `130` for Ctrl-C, `143` for SIGTERM (#333, #344).
 - `--output-format json` prints one JSON document on stdout (a status document on failure, argparse errors included)
@@ -213,6 +218,12 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
 - `run-eval --search-strategy` takes a list (`["auto"]` by default); with several strategies or `--repeats` it
   overrides an item's `search_strategy`; `abstention_statistics.unanswerable` has the overall block's shape
   (`completed`, `abstained`, `answered`, `abstention_rate`) (#292, #324, #600).
+- `run-eval` writes each invocation into its own `<outputs>/run_<timestamp>_<id>/` directory (0.2.3 wrote
+  `evaluation_results_<timestamp>.json` and its siblings into the outputs directory itself), and the result, report
+  and summary file names carry the strategy when a run used one (`evaluation_results_<strategy>_<timestamp>.json`,
+  the timestamp with a random suffix); the JSON output's
+  `output_directory` names the run directory, and `evaluation.run_subdirectories: false` keeps the flat layout
+  (#121, #620). See [evaluation output](docs/reference/evaluation-output.md).
 - The `indexing_results` stage metrics in `pipeline_metadata.json` (and the index types an `Indexing failed` error
   names) start `vector_` / `graph_` instead of `opensearch_` / `neptune_` (`vector_text_units`, `graph_entities`,
   ...); the EMF metrics are unchanged (#584).
@@ -237,8 +248,8 @@ See [`iac/README.md`](iac/README.md).
 - `iac/` is a uv project (`cd iac && uv sync`; `requirements*.txt` are gone) and needs AWS CDK CLI 2.1146.1 or later
   (#251, #438).
 - Ingestion is one Fargate task (state `Ingest`, result under `$.task`; was four phases and `$.last_phase`), and its
-  task definition lives in `GraphRagOrchestration`: a deployed stack upgrades in two deploys (*Upgrading*) (#328,
-  #558).
+  task definition lives in `GraphRagOrchestration`: a deployed stack upgrades in three deploys (*Upgrading*) (#328,
+  #558, #626).
 - Queries get their own task definition and read-only role (`QueryTaskDefinitionArn` / `QueryTaskRoleArn` of
   `GraphRagCompute`); keep `run-eval` datasets and results under `s3://<cache bucket>/eval/` (#319).
 - The registry table is `graphrag-doc-status-v2` (`<env>-graphrag-doc-status-v2`); the old one is retained outside
@@ -255,11 +266,13 @@ See [`iac/README.md`](iac/README.md).
   `owner` tag is applied only when `-c owner=...` is set; `GraphRagSecurity` is synthesized only with `use_cmk`; the
   OpenSearch domain requires `Policy-Min-TLS-1-2-PFS-2023-10` (TLS 1.2+ with ECDHE) (#566); a `removal_destroy`
   environment stops writing cache-bucket access logs and deletes `CacheAccessLogs` with its logs (#583).
-- The OpenSearch domain runs 2.19 (was 2.13), and the local stack (`docker/compose.local.yaml`) 2.19.7. A deployed
-  domain upgrades in place on its next deploy of `GraphRagStorage`: same endpoint and indices, no reindex, a
-  blue/green deployment of 15 minutes to several hours with slower queries and ingestion, and no downgrade
-  (*Upgrading*). The application's defaults behave the same on both versions and it still runs on 2.13 clusters;
-  `vector_mode` / `compression_level` and faiss with `cosinesimil` now work on the CDK domain, opt-in as before.
+- The OpenSearch domain runs 2.19 (was 2.13), and the local stack (`docker/compose.local.yaml`) 2.19.7. A 0.2.3 domain
+  lacks the policy that makes a version change an in-place upgrade, so the stack deploys of the upgrade keep it on
+  2.13 (adding the policy while changing the version could replace it with an empty domain) and it upgrades in place
+  after them (same endpoint and indices, no reindex, a blue/green deployment of 15 minutes to several hours with
+  slower queries and ingestion, and no downgrade; *Upgrading*). The application's defaults behave the same on both
+  versions and it still runs on 2.13 clusters; `vector_mode` / `compression_level` and faiss with `cosinesimil` now
+  work on the CDK domain, opt-in as before (#457, #622, #626).
 
 #### Library API
 - 0.2.3 exported only `__version__`. The public API is what `unified_kg_rag` exports (`unified_kg_rag.__all__`):
@@ -311,6 +324,8 @@ See [`iac/README.md`](iac/README.md).
   masked one continues with the masked text, interventions are in `metadata.guardrail`, a guardrail error fails the
   query, and with `check_output` a stream delivers the answer as one chunk after the check. A role outside the CDK
   stack needs `bedrock:ApplyGuardrail` (#104, #319, #344).
+- Answers carry `[n]` citation markers by default (`search.citations.enabled`): their text and the judges' scores
+  are not comparable with 0.2.3 runs; set it `false` for the earlier context and prompt (#627).
 - A query with conversation history is rewritten as a standalone question (`models.roles.query_rewrite`) that every
   step reads (#212).
 - A filter key no retriever of the strategy declares raises `InvalidFilterError` (#123); a suffix nothing was
@@ -319,10 +334,11 @@ See [`iac/README.md`](iac/README.md).
 ### Upgrading
 From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
 [Upgrading the library](docs/operations.md#upgrading-the-library) links here.
-1. Install on Python 3.11 or 3.12 with the extras you use (`eval`, `viz`, `local`, `otel`, `unstructured`, `docx`,
-   `ontology`). A CLI whose configuration needs a missing extra exits 2 at start-up naming it (#472). Markdown and
-   HTML files indexed with `unstructured` keep their text and ids only with that extra installed: without it the core
-   readers write other text, so the next incremental run re-extracts those files as changed documents (#(PR)).
+1. Install on Python 3.11 or 3.12 with the extras you use (`eval`, `viz`, `local`, `cross-encoder`, `otel`,
+   `unstructured`, `docx`, `ontology`, `mcp`, `console`). A CLI whose configuration needs a missing extra exits 2 at
+   start-up naming it (#472). Markdown and HTML files indexed with `unstructured` keep their text and ids only with
+   that extra installed: without it the core readers write other text, so the next incremental run re-extracts
+   those files as changed documents (#628).
 2. Load your config once and fix what it reports: unknown keys (*Configuration* lists the 0.2.3 ones), moved keys
    (the load names the replacement) and removed keys (a WARNING names it). Rename environment variables to
    `UKR__...`.
@@ -342,17 +358,11 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
 6. CDK: install AWS CDK CLI 2.1146.1 or later, run `cd iac && uv sync`, and deploy the stacks with the new image
    (they share the environment names, EMF dimension, query task and registry table). Add `-c sts_endpoint=true` when
    a private-mode image config sets `aws.bedrock.assumed_role_arn` (or the role assumption hangs), and `-c
-   opensearch_nori_package=true` for Korean on the CDK domain (or keep its `cjk`) (#282, #459, #566).
-   A 0.2.3 domain has no `EnableVersionUpgrade` update policy, and a deploy that adds it and changes the engine
-   version at once is not covered by it: CloudFormation can replace the domain with a new, empty one. So set
-   `OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_13` in `iac/stacks/storage_stack.py` for the deploys
-   of steps 7-8, then put back `OPENSEARCH_2_19` and upgrade the domain as the runbook's
-   [Upgrading OpenSearch](docs/operations.md#upgrading-opensearch) says (snapshot first; 15 minutes to several
-   hours; `cdk diff GraphRagStorage` must show no `UpdatePolicy` added).
-7. A deployed stack: run `cdk deploy GraphRagOrchestration --exclusively` (`GraphRag<Env>Orchestration` outside
-   `dev`) with your usual `-c` flags and the new `image_tag`, then `cdk deploy --all`; a plain `--all` stops at
-   `GraphRagCompute` ("Cannot delete export ...") and rolls back unchanged. Container Insights series restart under
-   the renamed ingestion task family (#558).
+   opensearch_nori_package=true` for Korean on the CDK domain (or keep its `cjk`) (#282, #459, #566). Before the
+   deploys of step 7, set `OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_13` in
+   `iac/stacks/storage_stack.py`: a 0.2.3 domain has no `EnableVersionUpgrade` update policy, and a deploy that adds
+   it and changes the engine version at once is not covered by it, so CloudFormation can replace the domain with a
+   new, empty one (step 9 upgrades it) (#457, #622, #626).
 7. A deployed stack, in three deploys with your usual `-c` flags and the new `image_tag`, and `-c
    legacy_doc_status_table=<the 0.2.3 registry table>` (`graphrag-doc-status` in `dev`, `<env>-graphrag-doc-status`
    otherwise, or the `doc_status_table` you set) on the first two: `cdk deploy GraphRagOrchestration --exclusively`
@@ -361,46 +371,53 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    and observability stacks import its ARN and name: without the setting the storage stack fails ("Cannot update
    export ...DocStatusTable... as it is in use") and rolls back unchanged; without the first deploy `GraphRagCompute`
    stops at "Cannot delete export ...". The old table is retained where `removal_destroy` is off (delete it in step
-   12) and deleted with the stack update where it is on. A 0.2.3 `doc_status_table` of your own needs a new name
+   13) and deleted with the stack update where it is on. A 0.2.3 `doc_status_table` of your own needs a new name
    too, as CloudFormation replaces no custom-named table under its own name. Container Insights series restart
    under the renamed ingestion task family (#558, #626).
-8. On that deploy: pass `-c owner=aws-proserve` to keep the `owner` tag; without `use_cmk`, delete a leftover
+8. On those deploys: pass `-c owner=aws-proserve` to keep the `owner` tag; without `use_cmk`, delete a leftover
    `GraphRagSecurity` stack (CDK metadata only) with `aws cloudformation delete-stack`; dry-run the TLS policy
    change (`aws opensearch update-domain-config ... --dry-run`) to see whether it runs blue/green; in a
    `removal_destroy` environment copy the `CacheAccessLogs` logs you need, as the bucket is deleted (#566, #583).
-9. Run queries with `QueryTaskDefinitionArn` and keep evaluation data under `s3://<cache bucket>/eval/` (#319).
-10. Rebuild every index: one ingestion with `indexing.reset: true` and the registry on, in the new table, with
+9. OpenSearch 2.19: put back `OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_19` and upgrade the domain
+   as the runbook's [Upgrading OpenSearch](docs/operations.md#upgrading-opensearch) says: stop ingestion, take a
+   manual snapshot (the only way back to 2.13), run the eligibility check, and deploy `GraphRagStorage` once `cdk
+   diff GraphRagStorage` changes only `EngineVersion` (no `UpdatePolicy` added). It takes 15 minutes to several
+   hours with slower queries and ingestion, so run it before the rebuild of step 11. To stay on 2.13 for now, keep
+   the pin: the application runs on both (#622).
+10. Run queries with `QueryTaskDefinitionArn` and keep evaluation data under `s3://<cache bucket>/eval/` (#319).
+11. Rebuild every index: one ingestion with `indexing.reset: true` and the registry on, in the new table, with
     `--force-rebuild` or a new `--pipeline-id` (never a 0.2.3 one). It costs a first build: every text unit is
     extracted (and gleaned) again and every vector embedded (#327, #331, #332).
-11. Local mode: a `backend: local` config that relied on the preset for the stores gets the embedded SQLite stores;
+12. Local mode: a `backend: local` config that relied on the preset for the stores gets the embedded SQLite stores;
     add `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch` (as `docker/config.local.yaml` does)
-    to keep the containers (#273).
-12. After the rebuild succeeds: delete the old registry table, the OpenSearch pipeline 0.2.3 wrote (`DELETE
+    to keep the containers (#273). Its reranker needs the `cross-encoder` extra: with `local` alone queries run
+    with reranking off (#628).
+13. After the rebuild succeeds: delete the old registry table, the OpenSearch pipeline 0.2.3 wrote (`DELETE
     _search/pipeline/graphrag-hybrid-search-pipeline`) and `s3://<bucket>/embedding-cache/` if you used it.
-13. Scripts: update the renamed flags, exit codes and JSON output, `.States.PrepPhase` to `.States.Ingest` and
-    `$.last_phase` to `$.task`, and `indexing_results` keys to `vector_*` / `graph_*` (#328, #333, #584).
-14. Evaluation: list `ragas` in `evaluation.enabled_evaluators` (or `run-eval --evaluators ...,ragas`) to keep its
-    scores, with the `eval` extra; a `--fail-if ragas/...` gate fails without it. The `langchain` evaluator is removed
-    (a config naming it, or `evaluation.langchain_metrics`, loads with a WARNING and without it): gate on
-    `ragas/answer_correctness` instead of `langchain/correctness` (#620). `graph_aware` coverage matches by entity
-    A Python script that runs ingestion (`DataIngestionPipeline`, `DirectoryLoader.deduplicate_documents`, the
+14. Scripts: update the renamed flags, exit codes and JSON output, `.States.PrepPhase` to `.States.Ingest` and
+    `$.last_phase` to `$.task`, `indexing_results` keys to `vector_*` / `graph_*`, and read `run-eval` results from
+    the run directory the JSON output's `output_directory` names (#328, #333, #584, #620).
+15. Evaluation: list `ragas` in `evaluation.enabled_evaluators` (or `run-eval --evaluators ...,ragas`) to keep its
+    scores, with the `eval` extra; a `--fail-if ragas/...` gate fails without it. The `langchain` evaluator is
+    removed (a config naming it, or `evaluation.langchain_metrics`, loads with a WARNING and without it): gate on
+    `ragas/answer_correctness` instead of `langchain/correctness`. `graph_aware` coverage matches by entity key and
+    can read lower than before on the same answers: run baselines again before comparing. Re-render static charts
+    to get the SVG pages (#563, #576, #620).
+16. A Python script that runs ingestion (`DataIngestionPipeline`, `DirectoryLoader.deduplicate_documents`, the
     graph resolver) must keep its entry point behind `if __name__ == "__main__":`: the deduplication and fuzzy
     matching worker processes now start from a forkserver, which imports the main module, instead of forking a
     process that runs threads (a lock another thread held could hang the worker). The console scripts and a
-    notebook need nothing; what a custom pool task gets must pickle (#(PR)).
-14. Evaluation: list `langchain` in `evaluation.enabled_evaluators` to keep its scores (a `--fail-if langchain/...`
-    gate fails without it; leaving it out saves two judge calls per query). `graph_aware` coverage matches by entity
-    key and can read lower than before on the same answers: run baselines again before comparing. Re-render static
-    charts to get the SVG pages (#563, #576).
+    notebook need nothing; what a custom pool task gets must pickle (#628).
 
 From a `main` checkout (formats and keys no release had):
-- OpenSearch 2.19: the next deploy of `GraphRagStorage` upgrades a domain deployed on 2.13 in place (deployed from
-  #457 on, it has the update policy; `cdk diff GraphRagStorage` must change only `EngineVersion`). It takes 15
-  minutes to several hours, queries and ingestion run slower meanwhile, and the only way back to 2.13 is a manual
-  snapshot restored on a new domain: stop ingestion and take one first
-  ([Upgrading OpenSearch](docs/operations.md#upgrading-opensearch)). Nothing is re-indexed or re-run. To postpone,
-  set `OPENSEARCH_VERSION` back to `OPENSEARCH_2_13` before deploying. Local stores: `docker compose -f docker/compose.local.yaml up -d --build --wait`
-  rebuilds the OpenSearch image and restarts it on 2.19 with its data volume, whose indices it reads as they are.
+- #622 OpenSearch 2.19: the next deploy of `GraphRagStorage` upgrades a 2.13 domain deployed from #457 on (it has
+  the update policy; `cdk diff GraphRagStorage` must change only `EngineVersion`) in place; a domain deployed
+  before #457 follows steps 6-9 above. It takes 15 minutes to several hours, queries and ingestion run slower
+  meanwhile, and the only way back to 2.13 is a manual snapshot restored on a new domain: stop ingestion and take
+  one first ([Upgrading OpenSearch](docs/operations.md#upgrading-opensearch)). Nothing is re-indexed or re-run. To
+  postpone, set `OPENSEARCH_VERSION` back to `OPENSEARCH_2_13` before deploying. Local stores: `docker compose -f
+  docker/compose.local.yaml up -d --build --wait` rebuilds the OpenSearch image and restarts it on 2.19 with its
+  data volume, whose indices it reads as they are.
 - `aws.bedrock.default_max_output_tokens` is `models.default_max_output_tokens` (the load fails until renamed;
   nothing re-runs). The pre-release `search.llm_retry`, `providers.llm.max_retries`,
   `providers.embedding.max_retries` and `evaluation.ragas_max_retries` are unknown keys: set `retry` (#216, #584).
@@ -470,18 +487,17 @@ From a `main` checkout (formats and keys no release had):
   local query adds a text-unit search, a relationship kNN search, an edge read and one query embedding (about 0.1 s
   on the embedded stores), and without the relationship vector index the PageRank is seeded by the entities and
   passages alone. Set `search.local_search.text_unit_ranking: support` to keep the earlier order.
-- #605 one index language: a namespace ingested with `processing.translation.enabled: false` and a
-  `source_language` other than `target_language` was extracted, summarized and reported in `target_language`. Its
-  extraction settings and stage caches now record the index language (#612), so its next incremental run stops before
-  any model call where the analyzers differ (exit 2, `was built for other language settings`, the graph indexes'
-  analyzers follow `source_language`) and otherwise extracts every document again (a WARNING names
-  `index_language`); a re-run of a `--pipeline-id` does not resume from its stage caches either. Run one
-  `indexing.reset: true`, which costs a first build (every unit extracted and gleaned again, every summary, report
-  and vector made again). Any other configuration
-  keeps its extraction records and indices; the community report prompt now names its language, so the next full
-  build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
-  date written as `2024年3月` (or `2024. 3. 15.`, #612, or a form read as a date since, #624) is found under it, so
-  nothing else re-runs.
+- #605 one index language: a namespace ingested with `processing.translation.enabled: false` and a `source_language`
+  other than `target_language` was extracted, summarized and reported in `target_language`. Its extraction settings
+  and stage caches now record the index language (#612), so its next incremental run stops before any model call where
+  the analyzers differ (exit 2, `was built for other language settings`, the graph indexes' analyzers follow
+  `source_language`) and otherwise extracts every document again (a WARNING names `index_language`); a re-run of a
+  `--pipeline-id` does not resume from its stage caches either. Run one `indexing.reset: true`, which costs a first
+  build (every unit extracted and gleaned again, every summary, report and vector made again). Any other configuration
+  keeps its extraction records and indices; the community report prompt now names its language, so the next full build
+  asks every report once more (one call per community), and later builds reuse them. A claim stored under a date
+  written as `2024年3月` (or `2024. 3. 15.`, #612, or a form read as a date since, #624) is found under it, so nothing
+  else re-runs.
 - `intelligent` chunking (the default) cuts a model chunk over `max_chunk_size` without pieces under
   `min_chunk_size` (#624): a reset re-cuts only the documents that had one, whose changed text units are extracted
   again (the boundary answers are kept); incremental runs cut new and changed documents so.
@@ -490,38 +506,32 @@ From a `main` checkout (formats and keys no release had):
   the graph records are kept), a reset all of them. Stored claims keep their status until their claim is derived
   again: reset once for `disputed` statuses and the object-less claims an empty `<object>` dropped.
 - #606 evaluation results: `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by
-  whitespace, so on a dataset with Han, Hangul or Kana text a default-normalization run is refused against them
-  (exit 2) until one side is scored again (an `official_squad` or `hotpotqa` run, or any run on a dataset without
-  such text, still compares). Results saved from #606 until #613 record `script_aware`: their Korean token F1
-  dropped any one to three Hangul syllables after a gold word, so they are refused the same way. Their
-  `abstention_statistics` left failed answers out (rate and recall over the completed answers), and pairwise length
-  buckets are renamed (`<=0.67x`, `0.67-0.91x`, `0.91-1.1x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path` now also downloads the
-  answerable split and draws the answerable questions from it (labelled `musique`); prepare again for that sample.
-  Nothing else re-runs.
-  whitespace, so a default-normalization run is refused against them (exit 2) until one side is scored again (an
-  `official_squad` or `hotpotqa` run still compares). Their `abstention_statistics` left failed answers out (rate
-  and recall over the completed answers), and pairwise length buckets are renamed (`<=0.67x`, `0.67-0.91x`,
-  `0.91-1.1x`, `1.1-1.5x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path` now also
-  downloads the answerable split and draws the answerable questions from it (labelled `musique`); prepare again for
-  that sample. Nothing else re-runs.
+  whitespace, so on a dataset with Han, Hangul or Kana text a default-normalization run is refused against them (exit
+  2) until one side is scored again (an `official_squad` or `hotpotqa` run, or any run on a dataset without such text,
+  still compares). Results saved from #606 until #613 record `script_aware`: their Korean token F1 dropped any one to
+  three Hangul syllables after a gold word, so they are refused the same way. Their `abstention_statistics` left
+  failed answers out (rate and recall over the completed answers), and pairwise length buckets are renamed (`<=0.67x`,
+  `0.67-0.91x`, `0.91-1.1x`, `1.1-1.5x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path`
+  now also downloads the answerable split and draws the answerable questions from it (labelled `musique`); prepare
+  again for that sample. Nothing else re-runs.
 - #607 rerank metering: a query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the
   `rerank` role and the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the
   rerank model has a price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets
   both token prices or the rerank price; one with neither, or one token price alone, is refused at load. Results
   saved before #613 record no `usage_schema`: a comparison against them gives no USD delta (a warning names them)
   until they are run again. Nothing is re-run.
-- #608 stored translations: translations are stored from the first run after upgrading: that run still asks the
-  model for every unit it translates, with the new translation prompt, so a reset of a translated namespace
-  translates and re-extracts every unit once more (the cost of a first build; an incremental run only its new and
-  changed documents), and later resets reuse them. Community report answers stored before are not found under the new key (the packed
-  input), so the next full build asks every report once more (one call per community, the same call #605 names), and
-  later builds reuse them. A graph with entities without relationships may lose its top community
-  level at its next clustering (its reports go, no call is added, global search's `community_depth` cuts one level
-  higher). A document with a paragraph longer than a chunk is cut otherwise when it is next chunked (a reset or an
-  edit), and those chunks are extracted again. `graph_metrics` no longer holds
-  `average_clustering` or `diameter`. A summary tree of more than 100,000 text units
-  now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`. The tree
-  stored before stays in the build record, so `tree` keeps serving the text units it covers (#612).
+- #608 stored translations: translations are stored from the first run after upgrading: that run still asks the model
+  for every unit it translates, with the new translation prompt, so a reset of a translated namespace translates and
+  re-extracts every unit once more (the cost of a first build; an incremental run only its new and changed documents),
+  and later resets reuse them. Community report answers stored before are not found under the new key (the packed
+  input): the full build after it pays that same report call per community that #605 names, once for both, and later
+  builds reuse them. A graph with entities without relationships may lose its top community level at its next
+  clustering (its reports go, no call is added, global search's `community_depth` cuts one level higher). A document
+  with a paragraph longer than a chunk is cut otherwise when it is next chunked (a reset or an edit), and those chunks
+  are extracted again. `graph_metrics` no longer holds `average_clustering` or `diameter`. A summary tree of more than
+  100,000 text units now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with
+  `fargate_memory`. The tree stored before stays in the build record, so `tree` keeps serving the text units it covers
+  (#612).
 - #620 run directories: `run-eval` results land in `<outputs>/run_<timestamp>_<id>/`; scripts that read
   `<outputs>/evaluation_*` directly read the run subdirectory (the JSON output's `output_directory` names it), or set
   `evaluation.run_subdirectories: false`. A results directory that mixes runs of one strategy from several
@@ -544,109 +554,97 @@ From a `main` checkout (formats and keys no release had):
   names. CDK: the next deploy turns on the cache bucket's S3 Bucket Key with `use_cmk` (new objects only, no
   re-encryption; fewer KMS requests), tags the ingestion tasks and grants the state machine `ecs:TagResource` on
   them; an `env_name` too long for the bucket or guardrail name now fails the synth. Nothing re-runs.
-- Community hierarchy: stored communities and reports stay as they are until the namespace is clustered again. Its
-  next full build (`indexing.reset: true`) keeps the level-0 communities and changes the levels above them where a
-  community was split (it is now the parent of its pieces, so the hierarchy can be a level deeper and a
-  `community_depth` cut maps other reports): one report call per new parent community; later builds reuse them. An
-  incremental run clusters its own communities the new way (#618).
-- Community hierarchy and report references: stored communities and reports stay as they are until the namespace is
-  clustered again. Its next full build (`indexing.reset: true`) keeps the level-0 communities and changes the levels
-  above them where a community was split (it is now the parent of its pieces, so the hierarchy can be a level deeper
-  and a `community_depth` cut maps other reports), and asks every report once more under the new report prompt: one
-  report call per community and its embeddings, the report stage of a first build (no text unit is extracted again);
-  later builds reuse them. An incremental run clusters and reports its own communities the new way (#618).
-- (#627) citations: answers now cite their context with `[n]` markers (`search.citations.enabled`, on), so answer
+- #618 community hierarchy and report references: stored communities and reports stay as they are until the namespace
+  is clustered again. Its next full build (`indexing.reset: true`) keeps the level-0 communities and changes the
+  levels above them where a community was split (it is now the parent of its pieces, so the hierarchy can be a level
+  deeper and a `community_depth` cut maps other reports), and asks every report once more under the new report prompt:
+  one report call per community and its embeddings, the report stage of a first build (no text unit is extracted
+  again); later builds reuse them. An incremental run clusters and reports its own communities the new way (#618).
+- #627 citations: answers now cite their context with `[n]` markers (`search.citations.enabled`, on), so answer
   texts and the LLM judges' scores differ from earlier runs (`answer_match` scores the words without the markers):
   compare runs of one setting, or set it `false` for the earlier context and prompt. Pages and relative paths are
   stored with the text units of documents indexed from this release on; to add them to an existing namespace,
   re-ingest it (`indexing.reset: true`): chunk boundaries and text-unit ids do not change, so the extraction
   store's records are reused and the cost is the embedding and indexing of the text units.
+- #628 `run-visualization` no longer takes the provider flags (`--backend`, `--llm-provider`, `--llm-model`,
+  `--embedding-provider`, `--embedding-model`, `--embedding-dimension`): it renders exported data and calls no model,
+  so a script passing one exits 2 until it drops it.
 
 ### Added
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
   `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in
   advance (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared
   strategies only, every other metric, and the cost measures, each delta with `adjusted_p_value` and a simultaneous
-  `adjusted_ci_low`/`adjusted_ci_high`. On simulated A/A comparisons ten unadjusted metrics showed a difference on noise
-  in 30-40% of them, the Holm-adjusted family in about 5% or fewer. `--fail-if` reads the four new
-  statistics, and the tables print `Holm p` (#620).
+  `adjusted_ci_low`/`adjusted_ci_high`. On simulated A/A comparisons ten unadjusted metrics showed a difference on
+  noise in 30-40% of them, the Holm-adjusted family in about 5% or fewer. `--fail-if` reads the four new statistics,
+  and the tables print `Holm p` (#620).
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
   rate's interval resamples queries. The default still judges the first repeat (#620).
-- Document citations (#627): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages,
-  entities, relationships, claims, reports, summaries; not model-written key points or intermediate answers) in
-  every strategy, and the answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to
-  cite them with those markers, ASCII in every answer language. `RAGOutput.citations` lists one `Citation` per
-  number: whether the answer cites it, its documents (`CitedDocument`: document id, file name, path relative to the
-  corpus root, pages), text units, chunk id, title, seed-graph provenance and IRI; a graph section names the
-  documents of up to `search.citations.lineage_units` (10) of its text units, read in one batched fetch under the
-  query's suffix and filters, so an excluded or another tenant's document is never named. A number the context
-  did not show is reported in `metadata.unknown_citation_markers`, never as a citation; a blocked answer has none.
-  `CitationMarkerScanner` reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation`
-  marker and `cited`. The document converter keeps where each PDF page
-  starts and text units store `page_start` / `page_end`, `relative_path` and `document_id` in their attributes
-  (ids and texts unchanged). `run-rag` prints the cited sources and its JSON output carries every citation. The
-  retrieval evaluator adds `citation_precision` and `citation_recall` against `reference_sources`
-  ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
+- Document citations (#627): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages, entities,
+  relationships, claims, reports, summaries; not model-written key points or intermediate answers) in every strategy,
+  and the answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those
+  markers, ASCII in every answer language. `RAGOutput.citations` lists one `Citation` per number: whether the answer
+  cites it, its documents (`CitedDocument`: document id, file name, path relative to the corpus root, pages), text
+  units, chunk id, title, seed-graph provenance and IRI; a graph section names the documents of up to
+  `search.citations.lineage_units` (10) of its text units, read in one batched fetch under the query's suffix and
+  filters, so an excluded or another tenant's document is never named. A number the context did not show is reported
+  in `metadata.unknown_citation_markers`, never as a citation; a blocked answer has none. `CitationMarkerScanner`
+  reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`. The
+  document converter keeps where each PDF page starts and text units store `page_start` / `page_end`, `relative_path`
+  and `document_id` in their attributes (ids and texts unchanged). `run-rag` prints the cited sources and its JSON
+  output carries every citation. The retrieval evaluator adds `citation_precision` and `citation_recall` against
+  `reference_sources` ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
 - `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the
   follow-up rewrite reads where it reads memory otherwise, bounded to `memory.max_messages_per_conversation` turns
   and `memory.max_history_tokens` (4,000, estimated) and screened by the input guardrail like the query (a masked
   turn is used masked, a blocked one dropped); not with `use_memory`
   ([Design §7.2](docs/design.md#72-caller-supplied-conversation-history)).
-- RAPTOR summary tree, opt-in (#599; on multi-hop questions it answered within the noise of `naive`,
-  [evidence](docs/concepts/defaults-and-evidence.md#raptor-summary-tree)): the `raptor` methodology adds a
-  `summary_tree` ingestion stage after indexing that clusters the stored text units by their vectors (numpy k-means
-  by default, RAPTOR's Gaussian mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each
-  cluster bottom-up in the index language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps
-  the rebuilt tree into its own index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children
-  are unchanged reuses its summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
 - A read-only MCP (Model Context Protocol) server, opt-in through the new `mcp` extra and the `run-mcp-server` console
   script (#616): five tools serve one index namespace to agents (`kg_search`, `kg_answer`, `kg_get_entity`,
-  `kg_neighbors`, `kg_describe_schema`), each annotated read-only, over stdio or stateless streamable HTTP (loopback by
-  default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
+  `kg_neighbors`, `kg_describe_schema`), each annotated read-only, over stdio or stateless streamable HTTP (loopback
+  by default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
   seed-graph provenance). The namespace is fixed at start (`--suffix`, else `index_value`) unless
   `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the `mcp.max_*` bounds limit what a call
   may ask and costs (`mcp.strategies` binds the chain's new `allowed_strategies`: `auto` routes, and falls back, only
   within it, and is refused before any model call when the namespace serves none of it); every call runs under
-  `search.query_timeout_seconds` and returns its model `usage`. The graph
-  tools read the stores through the chain's retrievers and make no model call; they look names, IRIs and ids up in
-  NFC (and a name again in NFKC), as search composes a query. Over HTTP only POST is served (405 otherwise), and on
-  any loopback address the `Host` and `Origin` headers must name it or a loopback name (421/403). `build_mcp_server`
-  and `build_mcp_app` (package root; the latter the stateless ASGI application, its `Host`/`Origin` checks on with
-  `allowed_hosts`) mount the same server in a host's application; neither changes the chain given. Under
-  `processing.ignore_errors` the error answer names its error in `metadata.error_type`. Guide:
-  [MCP server](docs/guides/mcp.md).
+  `search.query_timeout_seconds` and returns its model `usage`. The graph tools read the stores through the chain's
+  retrievers and make no model call; they look names, IRIs and ids up in NFC (and a name again in NFKC), as search
+  composes a query. Over HTTP only POST is served (405 otherwise), and on any loopback address the `Host` and `Origin`
+  headers must name it or a loopback name (421/403). `build_mcp_server` and `build_mcp_app` (package root; the latter
+  the stateless ASGI application, its `Host`/`Origin` checks on with `allowed_hosts`) mount the same server in a
+  host's application; neither changes the chain given. Under `processing.ignore_errors` the error answer names its
+  error in `metadata.error_type`. Guide: [MCP server](docs/guides/mcp.md).
 - Structured graph queries, opt-in and unmeasured (#630): the `structured` search strategy answers counts, rankings,
   lists, paths between two named entities and seed-entity properties from a query the graph store runs. One planner
-  call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`; `search.output_ceilings.graph_query`)
-  writes the question as a closed JSON plan over the graph's schema profile (declared types plus a sampled profile of
-  what the suffix holds), never query text; code validates it (one repair call with the refusal), links the names it
-  mentions through the hybrid entity search (a name without a name match needs a lexical hit, so an absent
-  entity links nothing and falls back), compiles it to Gremlin bytecode (Neptune, Gremlin Server) or
-  parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled form against a
-  read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer, and runs it
-  read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and top rows
-  are exact. The result table, the entities and paths
-  it names (with seed provenance) and their passages are fused (buckets `structured_query_result`,
-  `structured_entities`, `structured_relationships`, `structured_text_units`, `structured_text_hits`), the table
-  numbered `[n]` like any evidence section and its citation naming the documents of its evidence rows; counts are
-  exact unless a document filter or seed-property condition makes code check up to `max_scan_rows` matches ("at
-  least N" past it), and a count or an aggregate cites its first matches as entities. Filter keys are checked
-  against the fallback that would run too. Without a structured answer the query runs `search.structured.fallback_strategy` (`local`) and
-  records why in `metadata["structured"]`; `mode: augment` runs it beside the graph query. Served by every
-  namespace holding the graph, on every graph store; `auto` routes to it only once it is in
-  `search.auto_routable_strategies`. `GraphQueryPort` is exported for custom graph backends, and
-  `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md §6.6,
-  [guide](docs/guides/structured-queries.md)).
-- `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed, procurement
-  world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`, `MAKES`), a
-  document per vendor and buyer (part of those facts, and a chief executive only text states), the schema and seed
-  config, and `eval_data.json` with count, ranking, two-hop, shared-buyer, yes/no, numeric and text-only control
-  templates (`category`), absent-entity negatives, Korean and Japanese variants and a `large` size past the scan cap,
-  each graph gold answer computed by the reference executor from its plan
-  (`metadata.gold_plan`). `run-eval` keeps each answer's `structured` record and reports `structured_statistics`
-  (status, fallback reasons, valid-plan, repair, truncation and exact rates), per arm under a comparison
+  call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`;
+  `search.output_ceilings.graph_query`) writes the question as a closed JSON plan over the graph's schema profile
+  (declared types plus a sampled profile of what the suffix holds), never query text; code validates it (one repair
+  call with the refusal), links the names it mentions through the hybrid entity search (a name without a name match
+  needs a lexical hit, so an absent entity links nothing and falls back), compiles it to Gremlin bytecode (Neptune,
+  Gremlin Server) or parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
+  form against a read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer,
+  and runs it read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and
+  top rows are exact. The result table, the entities and paths it names (with seed provenance) and their passages are
+  fused (buckets `structured_query_result`, `structured_entities`, `structured_relationships`,
+  `structured_text_units`, `structured_text_hits`), the table numbered `[n]` like any evidence section and its
+  citation naming the documents of its evidence rows; counts are exact unless a document filter or seed-property
+  condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a count or an aggregate cites
+  its first matches as entities. Filter keys are checked against the fallback that would run too. Without a structured
+  answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
+  `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
+  `auto` routes to it only once it is in `search.auto_routable_strategies`. `GraphQueryPort` is exported for custom
+  graph backends, and `search.token_manager.type_budgets.query_result` sizes the result's context share
+  (docs/design.md §6.6, [guide](docs/guides/structured-queries.md)).
+- `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed,
+  procurement world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`,
+  `MAKES`), a document per vendor and buyer (part of those facts, and a chief executive only text states), the schema
+  and seed config, and `eval_data.json` with count, ranking, two-hop, shared-buyer, yes/no, numeric and text-only
+  control templates (`category`), absent-entity negatives, Korean and Japanese variants and a `large` size past the
+  scan cap, each graph gold answer computed by the reference executor from its plan (`metadata.gold_plan`). `run-eval`
+  keeps each answer's `structured` record and reports `structured_statistics` (status, fallback reasons, valid-plan,
+  repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)).
 - A local web console, opt-in (the `console` extra, `run-console`; #631): ask with a strategy picker (and how `auto`
   chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources they
@@ -667,22 +665,20 @@ From a `main` checkout (formats and keys no release had):
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
   streams them (the output, its citations included, is that of an unstreamed answer), and an `auto` query's output
   carries `metadata["routing"]` (how the strategy was chosen, among which candidates) (#631).
-- RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
-  after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
-  mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index
-  language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps the rebuilt tree into its own
-  index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children are unchanged reuses its
-  summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
+- RAPTOR summary tree, opt-in (#599): on 100 MuSiQue multi-hop questions, one repeat, `tree` answered about 8
+  points of `answer_contains` above `naive` (unadjusted interval) and well below the graph strategies
+  ([evidence](docs/concepts/defaults-and-evidence.md#raptor-summary-tree)). The `raptor` methodology adds a
+  `summary_tree` ingestion stage after indexing that clusters the stored text units by their vectors (numpy k-means
+  by default, RAPTOR's Gaussian mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each
+  cluster bottom-up in the index language (`models.roles.summary_tree`, `custom_prompts.tree_summary_*`) and swaps
+  the rebuilt tree into its own index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children
   are unchanged reuses its summary. The tree is built again when a text unit's id, text, translation or document
   filters changed (a reset after re-filtering or re-translating the same units kept the old tree, its nodes' old
   filters passing queries filtered by the old value), over the translations with their own token counts (#624).
-  Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
-  (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, and one still over the budget
-  keeps its whole sentences within it (#601). `run-ingestion --enabled-stages summary_tree` builds the tree under the
-  are unchanged reuses its summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) 70% of its token
-  budget (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, as Claude Haiku writes
-  about 1.4 times the length asked (at 90%, 70% of the summaries were cut), and one still over the budget keeps its
-  whole sentences within it (#601, #626). `run-ingestion --enabled-stages summary_tree` builds the tree under the
+  Each summary is asked for the words (characters for Japanese, Chinese and Korean) 70% of its token budget
+  (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, as Claude Haiku writes about
+  1.4 times the length asked (at 90%, 70% of the summaries were cut), and one still over the budget keeps its whole
+  sentences within it (#601, #626). `run-ingestion --enabled-stages summary_tree` builds the tree under the
   pipeline id that built the namespace even after an upgrade changed the earlier stages' cache keys, running none of
   them and probing only the indices the namespace lacks (#601). `raptor` alone runs no graph stage. The `tree`
   strategy (`auto` routes to it only on a `raptor`-only namespace) fuses BM25 + kNN searches of the text units and
@@ -692,10 +688,9 @@ From a `main` checkout (formats and keys no release had):
   to `expand_children` of its passages; a summary is reported with its lineage, keeps a document filter only when
   all its documents share it, and goes, with every summary above it, when one of its text units is removed. Under a
   filter key the text units store and the summary index does not (`community_ids`, `source_kinds`; not an entity
-  key, which leaves both unfiltered alike, #613) `tree` reads no summary
-  (`metadata.summaries_skipped_for_filters`) where it returned them unfiltered, the graph buckets run where the
-  queried namespace holds the entities index (not where the config would build one), and their text units are the
-  best-weighted that pass the filters (#607).
+  key, which leaves both unfiltered alike, #613) `tree` reads no summary (`metadata.summaries_skipped_for_filters`)
+  where it returned them unfiltered, the graph buckets run where the queried namespace holds the entities index
+  (not where the config would build one), and their text units are the best-weighted that pass the filters (#607).
   Settings: `indexing.summary_tree`, `search.tree_search`, `search.token_manager.type_budgets.summary`; the
   `VectorIndexer` port gains the summary-tree methods (each with a "cannot" default). Differential tests against the
   original code ship with recorded fixtures. The build record keeps naming a live tree while a run rebuilds it (the
@@ -713,54 +708,51 @@ From a `main` checkout (formats and keys no release had):
   makes no report call. On the CDK stack the `methodologies` context key sets it on both task definitions, so every
   state-machine run builds the profile (#603). The build record names the artifacts and methodologies a namespace
   holds; a query whose strategy reads what the namespace does not hold fails before any model call, naming what it
-  holds and what adding the methodology costs (for `raptor`, the tree alone, once `indexing.methodologies` names it)
-  (#609, #619); `run-eval` refuses one before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only
-  among the strategies it serves. A failed read of the record serves that query by the config and is not cached
-  (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()` are public (#619).
-  holds and what adding the methodology costs (for `raptor`, the tree alone, with the `run-ingestion
-  --methodologies ... --enabled-stages summary_tree` command that builds it) (#609, #629); an `--enabled-stages`
-  stage no selected methodology needs (`summary_tree` without `raptor`) stops the run before any model call (exit 2),
-  naming the methodology to add to `indexing.methodologies` (#629); `run-eval` refuses one
-  before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only among the strategies it serves.
-  Adding a methodology to an incremental namespace rebuilds it once from its stored
-  extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
-  them, and the next run records them gone, one with no document change too; a reset to fewer methodologies keeps
-  the extraction records, so adding one back extracts nothing again (#626). Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
-  reads less declares its artifacts (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace
-  that holds the text units, and `simple` sweeps only the indexes it holds (#607). A filter key is checked, after
-  the methodology check, against the indexes the strategy reads that the namespace holds and a run of the config
-  builds, so a key only an absent index declares (`type` on a `raptor`-only namespace) is refused
-  (`InvalidFilterError`) instead of being dropped; the default sweep and the optional indexes a strategy reads
-  (claims, relationship vectors, reports) follow the same artifacts (#613). `hipporag` holds what `lightrag`
-  builds, so `ppr` is served wherever `lightrag` is, and `raptor` reads a summary tree (#599). Without a build
-  record (a namespace ingested before them), a query takes the namespace to hold what a run of the config builds,
-  `hipporag` included (#602). With `graph.community_detection.report_generation.enabled: false` a run builds no
-  reports, so an incremental run no longer takes them for missing and rebuilds the namespace, and the namespace
-  holds `graphrag` for `local` while `global` and `drift`, which declare the reports among their artifacts, are
-  refused naming the switch (a WARNING at load says so, #612); the rebuild that adds
-  a methodology asks before deleting more than `indexing.max_deletion_share` of the scope's documents, as an
-  incremental run does; a run without community detection (`[lightrag]`) exports `visualization_data.json` without
-  communities; a run that builds no graph-store artifact (`[raptor]`) writes no graph store, so `run-ingestion`
-  needs no Neptune endpoint for it (#608), and a run creates (and probes) no vector index of an artifact it does not
-  build, emptying only a live one on a full build; that full build (a reset) also deletes the namespace's graph when
-  a graph endpoint is configured (#612). See [methodology
-  profiles](docs/concepts/overview.md#methodology-profiles) and [Design
+  holds and what adding the methodology costs (for `raptor`, the tree alone, with the `run-ingestion --methodologies
+  ... --enabled-stages summary_tree` command that builds it) (#609, #629); an `--enabled-stages` stage no selected
+  methodology needs (`summary_tree` without `raptor`) stops the run before any model call (exit 2), naming the
+  methodology to add to `indexing.methodologies` (#629); `run-eval` refuses one before its first answer (exit 2, as
+  `run-rag`) (#613), and `auto` routes only among the strategies it serves. A failed read of the record serves that
+  query by the config and is not cached (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()`
+  are public (#619). Adding a methodology to an incremental namespace rebuilds it once from its stored extractions
+  (only the added model calls are new); removing one stops maintaining its artifacts without deleting them, and the
+  next run records them gone, one with no document change too; a reset to fewer methodologies keeps the extraction
+  records, so adding one back extracts nothing again (#626). Every strategy class declares
+  `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that reads less declares its artifacts
+  (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace that holds the text units, and
+  `simple` sweeps only the indexes it holds (#607). A filter key is checked, after the methodology check, against the
+  indexes the strategy reads that the namespace holds and a run of the config builds, so a key only an absent index
+  declares (`type` on a `raptor`-only namespace) is refused (`InvalidFilterError`) instead of being dropped; the
+  default sweep and the optional indexes a strategy reads (claims, relationship vectors, reports) follow the same
+  artifacts (#613). `hipporag` holds what `lightrag` builds, so `ppr` is served wherever `lightrag` is, and `raptor`
+  reads a summary tree (#599). Without a build record (a namespace ingested before them), a query takes the namespace
+  to hold what a run of the config builds, `hipporag` included (#602). With
+  `graph.community_detection.report_generation.enabled: false` a run builds no reports, so an incremental run no
+  longer takes them for missing and rebuilds the namespace, and the namespace holds `graphrag` for `local` while
+  `global` and `drift`, which declare the reports among their artifacts, are refused naming the switch (a WARNING at
+  load says so, #612); the rebuild that adds a methodology asks before deleting more than
+  `indexing.max_deletion_share` of the scope's documents, as an incremental run does; a run without community
+  detection (`[lightrag]`) exports `visualization_data.json` without communities; a run that builds no graph-store
+  artifact (`[raptor]`) writes no graph store, so `run-ingestion` needs no Neptune endpoint for it (#608), and a run
+  creates (and probes) no vector index of an artifact it does not build, emptying only a live one on a full build;
+  that full build (a reset) also deletes the namespace's graph when a graph endpoint is configured (#612). See
+  [methodology profiles](docs/concepts/overview.md#methodology-profiles) and [Design
   §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the
   `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). The cross-encoder is
   its own `cross-encoder` extra, since it pulls in PyTorch (the CUDA build on Linux, several GB): `local` alone runs
-  with reranking off, logged once; `local` declares `httpx`, which its adapters import (#(PR)). See [local
+  with reranking off, logged once; `local` declares `httpx`, which its adapters import (#628). See [local
   mode](docs/guides/local-mode.md).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
   doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
-  (#(PR)). See [Python library](docs/guides/python-library.md#documents-from-memory).
+  (#628). See [Python library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
-  (`--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#(PR)). See
+  (`--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#628). See
   [inspect and export](docs/guides/inspect.md).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
@@ -865,13 +857,13 @@ From a `main` checkout (formats and keys no release had):
   bridge entities and follow-up queries that seed up to `max_rounds` (2) more base searches and text-unit searches
   under the same filters; the rounds are fused (buckets `iterative_round_<n>`, `iterative_round_<n>_text`) and
   reranked, and the answer is generated once. A `mix` round that names no new bridge entity runs its text searches
-  alone, where `mix` reran with no keyword (falling back to the search text, or no entity search past `raw_query_fallback_max_len`) (#598). Over `mix` it
-  answered multi-hop questions significantly better than `mix`, at more than twice the p95 latency
-  ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)); a KAG-style decomposition into
-  steps measured no better than the loop and is not offered (#(PR)). `metadata["context_sufficient"]: false` reports
-  a final insufficient verdict, `metadata["iterative"]` the rounds and their model usage; new
-  `custom_prompts.iterative_controller_*` (#594). The controller reads the context packed to the
-  answer's budget (`controller_context_tokens: null`; a smaller cap left it the first passages of long chunks), a
+  alone, where `mix` reran with no keyword (falling back to the search text, or no entity search past
+  `raw_query_fallback_max_len`) (#598). Over `mix` it answered multi-hop questions significantly better than `mix`, at
+  more than twice the p95 latency ([evidence](docs/concepts/defaults-and-evidence.md#iterative-follow-up-rounds)); a
+  KAG-style decomposition into steps measured no better than the loop and is not offered (#628).
+  `metadata["context_sufficient"]: false` reports a final insufficient verdict, `metadata["iterative"]` the rounds and
+  their model usage; new `custom_prompts.iterative_controller_*` (#594). The controller reads the context packed to
+  the answer's budget (`controller_context_tokens: null`; a smaller cap left it the first passages of long chunks), a
   round follows at most five bridge entities, a deadline that cancels the round an insufficient verdict started
   reports it (`insufficiency_reason: deadline`), and the follow-up queries and bridge entities in
   `metadata["iterative"]` are screened by the output guardrail with `check_output` (#607). See
@@ -881,11 +873,11 @@ From a `main` checkout (formats and keys no release had):
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
   call counts from its start, so cancelled and background calls are billed at an estimated input; a response that
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
-  #563, #589). Rerank requests count apart (`rerank_calls`, `rerank_search_units`, one per 100 documents, a document of more
-  than 500 estimated tokens with the query counting as several, as Amazon Bedrock bills it: about 2x the units of
-  one per 100 at 4,800-character chunks; run manifests record `usage_schema: 3`, and a comparison against a run saved with an earlier schema gives no USD delta) (#626), priced by
-  `evaluation.prices.<rerank model>.per_thousand_rerank_search_units` (#607); the run manifest records
-  `usage_schema: 2`, and a comparison gives no USD delta against a run saved before it (#613).
+  #563, #589). Rerank requests count apart (`rerank_calls`, `rerank_search_units`, one per 100 documents, a document
+  of more than 500 estimated tokens with the query counting as several, as Amazon Bedrock bills it: about 2x the units
+  of one per 100 at 4,800-character chunks) (#626), priced by `evaluation.prices.<rerank
+  model>.per_thousand_rerank_search_units` (#607); the run manifest records the usage schema (`usage_schema: 3`), and
+  a comparison gives no USD delta against a run saved with an earlier one (#613, #626).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
   `total_files_skipped`, `total_documents_excluded` / `_deleted` / `_failed` / `_retrying` and
   `total_documents_without_claims`; a run with failed units ends with a WARNING naming them per stage (#518, #532).
@@ -1059,7 +1051,7 @@ From a `main` checkout (formats and keys no release had):
   `langchain-openai` as the security floor of the copy ragas depends on (#620).
 - The document deduplication and fuzzy entity matching worker processes start from a forkserver (`spawn` where
   the platform has none) instead of forking the run, whose I/O and client-pool threads may hold a lock the forked
-  worker would wait on forever; see *Upgrading* for scripts (#(PR)).
+  worker would wait on forever; see *Upgrading* for scripts (#628).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
@@ -1129,7 +1121,7 @@ From a `main` checkout (formats and keys no release had):
   before a space) before it falls back to its last space (#608).
 - The `graph_analysis` stage no longer computes the average clustering coefficient (about 10 s at 80,000 entities)
   or the diameter, which no stage read: `graph.analysis.statistics.calculate_average_clustering` and
-  `calculate_diameter` load with a WARNING and are ignored (#608, #(PR)).
+  `calculate_diameter` load with a WARNING and are ignored (#608, #628).
 - Embedding requests in flight are bounded by `processing.max_concurrency` too (at most 16 as before) (#608).
 - Stage cache keys cover the whole configuration and the package version (#332).
 - `BatchProcessor` runs one pool of `processing.max_concurrency` items, connection pools follow the concurrency, and
@@ -1137,12 +1129,11 @@ From a `main` checkout (formats and keys no release had):
 - The `graph_analysis` stage computes no centrality (#248); `run-visualization` computes it only for a renderer that
   reads it (`BaseRenderer.needs_centrality`) (#563).
 - The parser uses its own loaders on langchain-core (same text and ids; a 4,000-page PDF loads in about 1 s);
-  `ParserFactory.register_loader` takes any `BaseLoader` (#460, #471). Markdown and HTML are read without an
-  extra: Markdown as written, HTML through the standard library's parser (one paragraph per block element, no script
-  or style); the `unstructured` extra, when installed, reads both in its place, its image installs its spaCy model,
-  and an offline run without that model fails at once naming the install command (#534, #(PR)). Word (`.docx`) files
-  are read with the new `docx` extra (python-docx); without it they are skipped with a WARNING naming the extra
-  (#(PR)).
+  `ParserFactory.register_loader` takes any `BaseLoader` (#460, #471). Markdown and HTML are read without an extra:
+  Markdown as written, HTML through the standard library's parser (one paragraph per block element, no script or
+  style); the `unstructured` extra, when installed, reads both in its place, its image installs its spaCy model, and
+  an offline run without that model fails at once naming the install command (#534, #628). Word (`.docx`) files are
+  read with the new `docx` extra (python-docx); without it they are skipped with a WARNING naming the extra (#628).
 - Gleaning refines each text unit's own record and a correction changes only what that unit says (#322).
 - `graph_aware`'s `retrieved_entity_coverage` and `retrieved_relationship_coverage` match by entity key (case, CJK
   spacing, quotes and legal forms ignored), not as a phrase inside a name, and count same-key expectations once
@@ -1185,10 +1176,7 @@ From a `main` checkout (formats and keys no release had):
 - `graph.community_detection.auto_resolution`, `auto_resolution_candidates` and `auto_resolution_max_nodes` log a
   deprecation WARNING when set and will be removed: maximizing modularity on the coarse upper levels merges unrelated
   communities (it lost global search accuracy in testing, which is why it has been off by default since #141). They
-  still apply; set `graph.community_detection.resolution` instead (#(PR)).
-- `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and will be removed: the default Claude 5.x
-  models always reason, so tune their depth with `aws.bedrock.default_effort` / `fast_effort`. It still turns
-  thinking on for models that opt in (#577).
+  still apply; set `graph.community_detection.resolution` instead (#628).
 - `run-eval --verbose` logs a deprecation WARNING and will be removed: use `--log-level DEBUG`, which every CLI
   takes (`--verbose` means more of each result in `run-rag`) (#629).
 
@@ -1218,12 +1206,11 @@ Queries and retrieval.
   units carry the requested language, so they matched no entity, relationship or report (#567, #583, #619).
 - DRIFT (primer, actions, HyDE), iterative's controller and global search's map points write in the index language
   (`source_language` with translation disabled), not always `target_language` nor a requested language, whose
-  follow-up queries found no entity (#613, #619);
-  query entities a model separates with `、`, `，` or `；` (or one per line) are split into entities, not read as
-  one; global search reads a relevance rating past a scale written as `10점 만점에`, `10点満点中` or `满分10分`;
-  LightRAG's raw-query fallback counts a CJK or Hangul character as 4 against
-  `raw_query_fallback_max_len` (a Korean question four times as long as an English one fell back); a Korean,
-  Japanese or Chinese refusal is no longer used as the follow-up rewrite (#605).
+  follow-up queries found no entity (#613, #619); query entities a model separates with `、`, `，` or `；` (or one per
+  line) are split into entities, not read as one; global search reads a relevance rating past a scale written as `10점
+  만점에`, `10点満点中` or `满分10分`; LightRAG's raw-query fallback counts a CJK or Hangul character as 4 against
+  `raw_query_fallback_max_len` (a Korean question four times as long as an English one fell back); a Korean, Japanese
+  or Chinese refusal is no longer used as the follow-up rewrite (#605).
 - Store failures fail the query instead of answering from no context (unreachable, denied, rejected or overloaded
   stores, a failing embedding call) (#249, #258, #261, #266); queries no longer hang on a silent store
   (`search.store_timeout_seconds`, a Neptune traversal timeout) (#258, #264); a stalled Bedrock call no longer holds
@@ -1252,8 +1239,8 @@ Queries and retrieval.
 - Global search: a map batch over the model's context is left unrated instead of failing, a map step that fails
   entirely fails the query or is recorded in `degraded_error`, and a fatal model error fails the query even under
   `processing.ignore_errors` (#264, #267, #348, #354, #360, #567). A dynamic-selection rating is its answer's first
-  number clamped to 1-10 (`8/10`, `Score: 2`; none counts in `global_unrated_report_count`), not a number of a
-  mention of the scale (`On a scale of 1-10, I'd rate 8` is 8) (#567, #589).
+  number clamped to 1-10 (`8/10`, `Score: 2`; none counts in `global_unrated_report_count`), not a number of a mention
+  of the scale (`On a scale of 1-10, I'd rate 8` is 8) (#567, #589).
 - A suffix nothing was ingested under fails with `No indices found` (#227); indices of another embedding model or
   dimension fail with a `ConfigurationError`, and queries embed with `models.embedding.dimension` (#232).
 - `run-rag` and `run-eval` query `processing.document_parsing.index_value` when `--suffix` is not given (they
@@ -1268,7 +1255,7 @@ Queries and retrieval.
 Ingestion and incremental indexing.
 - A document's doc-status registry namespace and its artifacts' index suffix follow one rule
   (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
-  fails the loading stage naming it instead of keying the document's record under a namespace no index has (#(PR)).
+  fails the loading stage naming it instead of keying the document's record under a namespace no index has (#628).
 - One index language (`index_language`: `target_language` when translation runs, else `source_language`) for every
   component: with translation disabled, extraction, gleaning, description summaries and community reports were
   written in `target_language` and the graph indexes analyzed for it while the text units, the summary tree and the

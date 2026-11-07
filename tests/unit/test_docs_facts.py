@@ -4,8 +4,9 @@
 
 A stage, a strategy or a methodology added in code without the docs (or a
 sentence edited without the code) fails here: the number of ingestion stages,
-the strategy tables, the default ``auto`` routable list and the number of
-methodologies, wherever the tracked Markdown states them. The stage list sits
+the strategy tables, the default ``auto`` routable list, the number of
+methodologies, of strategies and of CLIs, wherever the tracked Markdown states
+them. The stage list sits
 under an explicit ``<a id="pipeline-stages">`` so its links survive a count
 change.
 """
@@ -13,6 +14,7 @@ change.
 from __future__ import annotations
 
 import re
+import tomllib
 
 import pytest
 
@@ -28,7 +30,26 @@ STAGES = [stage.value for stage in PipelineStageType]
 STRATEGIES = [strategy.value for strategy in SearchStrategy]
 ROUTABLE = [s.value for s in SearchConfig().auto_routable_strategies]
 METHODOLOGIES = [m.value for m in Methodology]
-_WORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7}
+# The strategies a caller picks besides the auto router.
+PICKABLE = [s for s in STRATEGIES if s != SearchStrategy.AUTO.value]
+with (REPO_ROOT / "pyproject.toml").open("rb") as _file:
+    SCRIPTS = sorted(tomllib.load(_file)["project"]["scripts"])
+# Strategies no paper's methodology is: a wrapper, the router, and the graph
+# query the README names after its method table.
+_NOT_A_METHOD = {"iterative", "auto", "structured"}
+_WORDS = {
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+}
 _KO_WORDS = {"두": 2, "세": 3, "네": 4, "다섯": 5, "여섯": 6}
 
 
@@ -67,6 +88,37 @@ def _methodology_counts(text: str) -> list[int]:
     return [int(n) if n.isdigit() else _WORDS[n.lower()] for n in english] + [
         _KO_WORDS[n] for n in korean
     ]
+
+
+def _number(word: str) -> int:
+    return int(word) if word.isdigit() else _WORDS[word.lower()]
+
+
+_COUNT_WORD = r"(\d+|" + "|".join(_WORDS) + r")"
+
+
+def _strategy_counts(text: str) -> list[int]:
+    """Where a page counts the strategies one picks among: "one of eleven
+    strategies", "전략 11개 중" (not "3 strategies x 4 gates")."""
+    english = re.findall(
+        r"\b(?:one of|all|any of) "
+        + _COUNT_WORD
+        + r" (?:search |retrieval )?strategies\b",
+        text,
+        flags=re.I,
+    )
+    korean = re.findall(r"전략 (\d+)개 중", text)
+    return [_number(n) for n in english] + [int(n) for n in korean]
+
+
+def _cli_counts(text: str) -> list[int]:
+    english = re.findall(
+        r"\b" + _COUNT_WORD + r" (?:CLIs|console scripts|command-line tools)\b(?!')",
+        text,
+        flags=re.I,
+    )
+    korean = re.findall(r"(?:CLI|콘솔 스크립트) (\d+)개", text)
+    return [_number(n) for n in english] + [int(n) for n in korean]
 
 
 _STRATEGY_NAME = re.compile(r"\b(" + "|".join(STRATEGIES) + r")\b")
@@ -108,6 +160,35 @@ def test_every_stated_methodology_count_matches_the_enum(page: str) -> None:
         assert count == len(
             METHODOLOGIES
         ), f"{page} states {count} methodologies, not {len(METHODOLOGIES)}"
+
+
+@pytest.mark.parametrize("page", sorted(PAGES))
+def test_every_stated_strategy_count_matches_the_enum(page: str) -> None:
+    for count in _strategy_counts(PAGES[page]):
+        assert count == len(
+            PICKABLE
+        ), f"{page} states {count} strategies besides auto, not {len(PICKABLE)}"
+
+
+def test_the_strategy_count_is_stated_somewhere() -> None:
+    # The overview and its Korean edition count them; the scan must see both.
+    stated = {page for page in PAGES if _strategy_counts(PAGES[page])}
+    assert {"docs/concepts/overview.md", "docs/concepts/overview.ko.md"} <= stated
+
+
+@pytest.mark.parametrize("page", sorted(PAGES))
+def test_every_stated_cli_count_matches_the_scripts(page: str) -> None:
+    for count in _cli_counts(PAGES[page]):
+        assert count == len(SCRIPTS), f"{page} states {count} CLIs, not {len(SCRIPTS)}"
+
+
+@pytest.mark.parametrize(
+    "page", ["docs/reference/exit-codes-and-json.md", "docs/reference/cli.md"]
+)
+def test_the_cli_pages_name_every_console_script(page: str) -> None:
+    text = PAGES[page]
+    missing = [script for script in SCRIPTS if f"`{script}`" not in text]
+    assert not missing, f"{page} does not name {missing}"
 
 
 @pytest.mark.parametrize("page", sorted(PAGES))
@@ -161,8 +242,13 @@ def test_the_readme_method_table_covers_every_methodology_strategy(page: str) ->
     table = re.findall(r"^\| [^|`]+ \| ((?:`\w+`(?:, )?)+) \|", text, flags=re.M)
     assert len(table) == len(METHODOLOGIES)
     named = {name for row in table for name in re.findall(r"`(\w+)`", row)}
-    # iterative wraps another strategy and auto routes; neither is a method's.
-    assert named == set(STRATEGIES) - {"iterative", "auto"}
+    # iterative wraps another strategy, auto routes and structured runs a
+    # graph query: none is a paper's method, so the table leaves them out
+    # and the page names them after it.
+    assert named == set(STRATEGIES) - _NOT_A_METHOD
+    after = text.split(table[-1], 1)[1].split("\n## ", 1)[0]
+    for name in _NOT_A_METHOD:
+        assert f"`{name}`" in after, f"{page} does not name `{name}` after its table"
 
 
 @pytest.mark.parametrize(
@@ -210,6 +296,31 @@ def test_the_methodology_count_scan(text: str, expected: list[int]) -> None:
 )
 def test_the_routable_list_scan(text: str, expected: list[list[str]]) -> None:
     assert _routable_lists(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("runs one of eleven strategies, or the `auto` router", [11]),
+        ("runs one of 10 search strategies", [10]),
+        ("전략 11개 중 하나나 `auto`", [11]),
+        ("3 strategies × 4 gates; 전략 3개 × 게이트 4개", []),
+    ],
+)
+def test_the_strategy_count_scan(text: str, expected: list[int]) -> None:
+    assert _strategy_counts(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("the nine CLIs and 9 console scripts", [9, 9]),
+        ("CLI 9개", [9]),
+        ("every CLI takes it", []),
+    ],
+)
+def test_the_cli_count_scan(text: str, expected: list[int]) -> None:
+    assert _cli_counts(text) == expected
 
 
 def test_a_page_is_read_whole() -> None:

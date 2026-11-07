@@ -30,7 +30,7 @@ This page explains the parts and how they fit. To run it, start from the
 - **Models.** Bedrock for chat, embedding and rerank models by default;
   Ollama or any OpenAI-compatible server in local mode. Every LLM role runs
   on one of two tiers, so one setting switches the pipeline.
-- **Retrieval** (`run-rag`, or the Python chain) runs one of ten
+- **Retrieval** (`run-rag`, or the Python chain) runs one of eleven
   strategies, or the `auto` router, over the same stores, then packs the
   context into the answer model's token budget.
 - **Evaluation** (`run-eval`) scores answers with LLM-free metrics and LLM
