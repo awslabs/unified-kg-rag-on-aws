@@ -5,8 +5,8 @@
 # unset (see docs/guides/local-mode.md for the full list and the expected
 # differences from AWS mode):
 #   - language models and embeddings: Ollama at localhost:11434
-#   - reranking: a sentence-transformers cross-encoder ([local] extra; without
-#     it queries keep the fused order)
+#   - reranking: a sentence-transformers cross-encoder ([cross-encoder] extra;
+#     without it queries keep the fused order)
 #   - graph, vector/lexical store and incremental-indexing registry: SQLite
 #     files (no server)
 #

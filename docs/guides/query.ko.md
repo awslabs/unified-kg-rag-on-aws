@@ -80,7 +80,7 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 |---|---|
 | `applied` | 재순위화 모델이 후보 순서를 바꿨습니다. |
 | `disabled` | `providers.rerank.kind: none`. |
-| `unavailable` | 재순위화 모델을 만들 수 없습니다(초기화 실패는 ERROR로 기록, 또는 크로스 인코더의 `[local]` extra 미설치). |
+| `unavailable` | 재순위화 모델을 만들 수 없습니다(초기화 실패는 ERROR로 기록, 또는 크로스 인코더의 `[cross-encoder]` extra 미설치). |
 | `skipped` | 재순위화할 대상이 없습니다: 후보 없음, 재순위화 대상 유형의 결과 없음, 질의 텍스트 없음. |
 | `failed` | 호출이 예외를 냈거나(`bedrock:Rerank` 거부, 모델이 없는 리전, 연결할 수 없는 엔드포인트) 쓸 수 있는 결과를 돌려주지 않아 융합 순서를 유지했습니다. |
 

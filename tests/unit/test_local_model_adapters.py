@@ -457,6 +457,17 @@ def test_missing_extra_names_the_remedy(mocker) -> None:
         import_optional("langchain_ollama", "ollama")
 
 
+def test_the_cross_encoder_names_its_own_extra(mocker) -> None:
+    # sentence-transformers pulls in PyTorch: it is not in the local extra.
+    mocker.patch(
+        "unified_kg_rag.adapters.local.models.importlib.import_module",
+        side_effect=ImportError("no module"),
+    )
+    factory = CrossEncoderRerankFactory(Config())
+    with pytest.raises(ConfigurationError, match="uv sync --extra cross-encoder"):
+        factory._encoder("cross-encoder/model")
+
+
 # --- embeddings -------------------------------------------------------------
 
 

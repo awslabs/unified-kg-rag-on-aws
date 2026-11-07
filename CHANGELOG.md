@@ -56,10 +56,11 @@ stored is read again: follow *Upgrading* in order.
 - Python 3.11 or 3.12 is required (`>=3.11, <3.13`); 3.10 is dropped (#430).
 - A core install (`uv sync`, `pip install -e .`) is ingestion and queries: 145 to 83 packages, 937 to 335 MB on
   Linux. Extras: `eval` (ragas, datasets, pandas, langchain, langchain-community, langchain-openai), `viz` (pyvis,
-  for the `interactive` renderer), `local`, `otel`, `unstructured` (the richer Markdown and HTML parser), `docx` (Word files), `ontology` (rdflib). A
-  feature whose extra is missing fails naming it: the CLIs exit 2 before any work, the library raises
-  `ConfigurationError` (also under `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer
-  need no extra; the container image installs `eval` (#467, #472, #520, #576).
+  for the `interactive` renderer), `local`, `cross-encoder` (the local reranker, with PyTorch), `otel`,
+  `unstructured` (the richer Markdown and HTML parser), `docx` (Word files), `ontology` (rdflib). A feature whose
+  extra is missing fails naming it: the CLIs exit 2 before any work, the library raises `ConfigurationError` (also
+  under `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer need no extra; the container
+  image installs `eval` (#467, #472, #520, #576).
 - No longer dependencies: `graspologic` (Leiden runs on `graspologic-native`), `bokeh` (with `contourpy`, `tornado`,
   `xyzservices`), `umap-learn`, `scikit-learn`, `nest-asyncio`; `langchain` comes only with `eval` (#225, #226,
   #465, #520, #576). Security floors follow the package that pulls the pinned one in: `pillow` in `eval`, `llvmlite`
@@ -679,7 +680,9 @@ From a `main` checkout (formats and keys no release had):
   §4.6](docs/design.md#46-methodology-profiles).
 - Local mode: the `providers` section and provider registry (`@register_provider`), Ollama and OpenAI-compatible
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the
-  `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). See [local
+  `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). The cross-encoder is
+  its own `cross-encoder` extra, since it pulls in PyTorch (the CUDA build on Linux, several GB): `local` alone runs
+  with reranking off, logged once; `local` declares `httpx`, which its adapters import (#(PR)). See [local
   mode](docs/guides/local-mode.md).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps

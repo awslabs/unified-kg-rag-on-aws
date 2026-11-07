@@ -91,7 +91,7 @@ Reranking provider
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `kind` | string (min length 1) | `"bedrock"` | Reranker: bedrock \| cross_encoder (sentence-transformers, [local] extra) \| none (keep the fused order). With none, or a cross-encoder that cannot load, queries run unreranked, logged once and visible as kg_rag.rerank_enabled=false on the fusion span. |
+| `kind` | string (min length 1) | `"bedrock"` | Reranker: bedrock \| cross_encoder (sentence-transformers, [cross-encoder] extra) \| none (keep the fused order). With none, or a cross-encoder that cannot load, queries run unreranked, logged once and visible as kg_rag.rerank_enabled=false on the fusion span. |
 | `device` | string \| null | `null` | Torch device for the cross-encoder (null lets it choose). |
 | `max_length` | integer (≥ 16) | `512` | Longest query + passage pair the cross-encoder scores, in tokens. |
 | `batch_size` | integer (≥ 1) | `16` | Pairs scored per cross-encoder batch. |

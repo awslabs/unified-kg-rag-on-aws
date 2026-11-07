@@ -177,19 +177,25 @@ mcp = [
     "mcp>=2.3.0,<3",
 ]
 # Optional: local mode (`backend: local` / `providers.*.kind`). OpenAI-compatible
-# servers (vLLM, llama.cpp, LM Studio) and Ollama for the LLM and embeddings,
-# tiktoken for `providers.llm.tokenizer: tiktoken`, and a sentence-transformers
-# cross-encoder for `providers.rerank.kind: cross_encoder` (pulls in PyTorch;
-# without it reranking is skipped with a warning), and the Porter stemmer of
-# the embedded SQLite vector store's `english` analyzer (without it that
-# analyzer does not stem, with a warning). The core package imports none of
-# these; the local adapters load them only when their kind is selected.
+# servers (vLLM, llama.cpp, LM Studio) and Ollama for the LLM and embeddings
+# (and httpx, which the local adapters import to give each event loop its own
+# client), tiktoken for `providers.llm.tokenizer: tiktoken`, and the Porter
+# stemmer of the embedded SQLite vector store's `english` analyzer (without it
+# that analyzer does not stem, with a warning). The core package imports none
+# of these; the local adapters load them only when their kind is selected.
 local = [
+    "httpx>=0.28.1",
     "langchain-ollama>=1.0.0,<2.0.0",
     "langchain-openai>=1.1.14,<2.0.0",
-    "sentence-transformers>=5.1.0",
     "snowballstemmer>=2.2",
     "tiktoken>=0.12.0",
+]
+# Optional: the sentence-transformers cross-encoder of
+# `providers.rerank.kind: cross_encoder`, the local preset's reranker. It pulls
+# in PyTorch (the CUDA build on Linux, several GB), so it is its own extra:
+# without it local mode runs with reranking off (the fused order), logged once.
+cross-encoder = [
+    "sentence-transformers>=5.1.0",
 ]
 
 [tool.uv]

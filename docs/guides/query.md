@@ -87,7 +87,7 @@ and `hybrid`) and `reason`.
 |---|---|
 | `applied` | The rerank model reordered the candidates. |
 | `disabled` | `providers.rerank.kind: none`. |
-| `unavailable` | The rerank model could not be built (initialization failed, logged at ERROR, or the cross-encoder's `[local]` extra is missing). |
+| `unavailable` | The rerank model could not be built (initialization failed, logged at ERROR, or the cross-encoder's `[cross-encoder]` extra is missing). |
 | `skipped` | Nothing to rerank: no candidates, none of a rerank-eligible type, or no query text. |
 | `failed` | The call raised (denied `bedrock:Rerank`, a region without the model, an unreachable endpoint) or returned nothing usable; the fused order was kept. |
 

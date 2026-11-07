@@ -5,7 +5,7 @@
 Both conform to ``RerankFactoryPort``. ``HybridScorer`` treats a ``None``
 model as "no reranking" and keeps the fused order, which is how the no-op
 factory (``providers.rerank.kind: none``) and a cross-encoder that cannot load
-(the ``[local]`` extra is not installed) degrade: logged once per process, and
+(the ``[cross-encoder]`` extra is not installed) degrade: logged once per process, and
 visible as ``kg_rag.rerank_enabled=false`` on the fusion span.
 
 The cross-encoder model is loaded once per factory on first use and shared by
@@ -140,7 +140,7 @@ class CrossEncoderRerankFactory:
                 loader = self._loader
                 if loader is None:
                     loader = import_optional(
-                        "sentence_transformers", self.kind
+                        "sentence_transformers", self.kind, "cross-encoder"
                     ).CrossEncoder
                 self._encoders[model_id] = loader(
                     model_id,

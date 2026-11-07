@@ -25,9 +25,11 @@ ollama pull qwen2.5:7b-instruct
 ollama pull bge-m3
 ```
 
-- **CPU 전용 PyTorch.** Linux에서 `uv sync --extra local`은 잠금 파일이 고정한 CUDA
-  빌드(수 GB)를 설치합니다. CPU 빌드를 쓰려면 `uv sync` 뒤에
-  `uv pip install --torch-backend cpu -e '.[local]'`을 실행하세요(나중에 그냥
+- **재순위화.** 로컬 프리셋은 크로스 인코더로 재순위화하며, 여기에는 `cross-encoder` extra가
+  필요합니다(`uv sync --extra local --extra cross-encoder`). 없으면 질의는 융합 순서를 그대로
+  씁니다(로그는 한 번만 남김). Linux에서 이 extra는 잠금 파일이 고정한 CUDA 빌드의 PyTorch(수 GB)를
+  설치합니다. CPU 빌드를 쓰려면 `uv sync --extra local` 뒤에
+  `uv pip install --torch-backend cpu -e '.[local,cross-encoder]'`을 실행하세요(나중에 그냥
   `uv sync`를 실행하면 지워짐).
 
 ## 예제 코퍼스 수집
@@ -81,8 +83,8 @@ uv run run-rag --backend local --search-strategy mix --verbose --query "How are 
 `INFO`로 기록하므로, 경고와 결과만 보려면 명령 앞에 `UKR__LOGGING__LEVEL=WARNING`을
 붙이세요.
 
-첫 질의는 기본 재순위화 모델인 크로스 인코더 `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`을
-Hugging Face에서 내려받으므로 한 번은 인터넷 연결이 필요하고 시간이 더 걸립니다. 이후
+`cross-encoder` extra가 있으면 첫 질의는 기본 재순위화 모델인 크로스 인코더
+`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`을 Hugging Face에서 내려받으므로 한 번은 인터넷 연결이 필요하고 시간이 더 걸립니다. 이후
 질의는 캐시된 모델을 씁니다. 오프라인 환경에서는 미리 내려받거나
 `providers.rerank.kind: none`으로 설정하세요([Local mode](../guides/local-mode.md), 영문).
 

@@ -45,7 +45,8 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   not checked against the model at start): a wrong value fails at the first
   vector write or search.
 - **Reranking.** The cross-encoder downloads its model from Hugging Face on
-  the first query. Without the `[local]` extra (or with `kind: none`) queries
+  the first query. Without the `cross-encoder` extra (`uv sync --extra local --extra
+  cross-encoder`; it pulls in PyTorch), or with `kind: none`, queries
   keep the fused order, logged once and reported as
   `metadata.rerank.status` `unavailable` (`disabled` for `kind: none`).
 - **Embedded stores.** Each `sqlite` store is one file created on first use
