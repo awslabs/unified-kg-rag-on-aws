@@ -123,7 +123,22 @@ run-mcp-server --config-path config.yaml --transport streamable-http \
 Gateway나 AgentCore Runtime 뒤, 모든 요청을 인증하는 리버스 프록시 뒤, 또는 모든
 클라이언트가 그 네임스페이스를 읽어도 되는 사설 네트워크 안이어야 합니다. 필요한 IAM
 정책은 질의 태스크의 역할(저장소 읽기 권한과 전략이 호출하는 모델)과 같습니다.
-AgentCore나 CDK 스택의 질의 태스크에서 실행하는 구성은 아직 AWS에서 검증하지 않았습니다.
+
+**CDK 스택이 배포하는 이미지로는 실행할 수 없습니다.** 데이터 플레인 이미지에는 `mcp`
+extra가 없고, 스택의 질의 태스크는 서비스, 포트, 로드 밸런서 없이 한 번 실행하고 끝나는
+태스크(`run-rag`, `run-eval`)입니다. AWS에서 에이전트에 제공하려면 다음 중 하나를 쓰세요.
+
+- **extra를 넣은 이미지 빌드.** 데이터 플레인 이미지를
+  `docker build --build-arg UV_EXTRAS="--extra mcp" -f docker/Dockerfile .`로 빌드하고
+  ([이미지 빌드와 푸시](../../iac/README.md#2-build-and-push-the-app-image)(영문)), 직접
+  추가한 호스트(인증 프록시 뒤의 ECS 서비스나 AgentCore Runtime)에서
+  `run-mcp-server --transport streamable-http --host 0.0.0.0 --allow-remote`를 컨테이너
+  명령으로 실행합니다. 저장소에 닿는 VPC 안에서, 질의 태스크 역할과 같은 권한으로 실행해야
+  합니다.
+- **에이전트 옆에서 실행.** 저장소에 닿는 컴퓨터(로컬 모드나 VPC 안의 호스트)에서
+  `uv sync --extra mcp`로 설치하고, 같은 컴퓨터의 에이전트에는 stdio로 연결합니다.
+
+AgentCore나 이 서버를 실행하는 ECS 서비스 구성은 아직 AWS에서 검증하지 않았습니다.
 
 호스트 애플리케이션이 서버를 직접 마운트할 수도 있습니다. `build_mcp_app`은 상태 없는
 ASGI 애플리케이션을 돌려줍니다. `allowed_hosts`(프록시가 전달하는 `Host` 값)를 주면

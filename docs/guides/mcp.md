@@ -132,8 +132,27 @@ AgentCore Gateway or AgentCore Runtime with inbound authorization, behind a
 reverse proxy that authenticates every request, or on a private network
 whose every client may read the namespace. The query task's IAM role (read
 access to the stores and the models the strategies call) is the policy it
-needs. Hosting on AgentCore or the CDK stack's query task is not yet
-verified on AWS.
+needs.
+
+**The image the CDK stack ships does not run it.** The data-plane image
+installs no `mcp` extra, and the stack's query task is a one-shot task
+(`run-rag`, `run-eval`) with no service, port or load balancer in front.
+To serve agents from AWS:
+
+- **Build an image with the extra.** Add it to the data-plane build,
+  `docker build --build-arg UV_EXTRAS="--extra mcp" -f docker/Dockerfile .`
+  ([build and push](../../iac/README.md#2-build-and-push-the-app-image)),
+  and run `run-mcp-server --transport streamable-http --host 0.0.0.0
+  --allow-remote` as the container command on a host you add (an ECS
+  service behind an authenticating proxy, or AgentCore Runtime), inside the
+  VPC that reaches the stores, under a role with the query task role's
+  permissions.
+- **Or run it next to the agent.** `uv sync --extra mcp` on a machine that
+  reaches the stores (local mode, or a host in the VPC), with stdio for an
+  agent on the same machine.
+
+Neither AgentCore nor an ECS service running the server is verified on AWS
+yet.
 
 A host application can mount the server itself. `build_mcp_app` returns
 the stateless ASGI application; `allowed_hosts` (the `Host` values the
