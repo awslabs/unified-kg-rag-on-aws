@@ -763,6 +763,8 @@ From a `main` checkout (formats and keys no release had):
   are public (#619). Adding a methodology to an incremental namespace rebuilds it once from its stored extractions
   (only the added model calls are new); removing one stops maintaining its artifacts without deleting them, and the
   next run records them gone, one with no document change too (in every suffix its documents hold); while the namespace holds other source scopes' documents, a run (`insert_documents` and `delete_documents` too) that would drop a methodology it holds for them is refused before any model call (exit 2), naming the scopes and the ways out (the namespace's methodologies, a namespace of its own, a reset), as one that would add a methodology by a rebuild is; the build record names the source scopes it holds (`source_scopes`, absent from older records), so a query's refusal advises a rebuild only where one is allowed; a reset to fewer methodologies keeps the extraction
+  next run records them gone, one with no document change too (in every suffix its documents hold, which the registry's diff
+  reads, `DocumentDelta.unchanged_suffixes`, rather than a second read of the records, #PR); a reset to fewer methodologies keeps the extraction
   records, so adding one back extracts nothing again (#626), and so does any reset that builds nothing from them
   (`raptor` alone, a second time too) (#640); a reset prunes only the kinds of record it produces, so the report
   answers stay through any number of resets without `graphrag`, and the claim records through any number with

@@ -2975,8 +2975,10 @@ class IndexingStage(_RegistryStage):
         artifacts all the same: unrecorded, their strategies would still be
         served until a run with a delta. The suffixes are the configured
         one and those the registry records of the ``delta``'s unchanged
-        documents name (a document with an index value of its own).
-        Best-effort, as ``record_build``.
+        documents name (a document with an index value of its own), as the
+        diff read them (``DocumentDelta.unchanged_suffixes``) or, from a
+        registry whose diff does not, read again. Best-effort, as
+        ``record_build``.
         """
         building = artifacts_to_build(self.config)
         vector_indexer = self.indexing_manager.vector_indexer
@@ -2984,7 +2986,9 @@ class IndexingStage(_RegistryStage):
             self.config.processing.document_parsing.index_value
             or Constants.DEFAULT_SUFFIX.value
         }
-        if delta is not None and delta.unchanged:
+        if delta is not None and delta.unchanged_suffixes is not None:
+            suffixes |= set(delta.unchanged_suffixes)
+        elif delta is not None and delta.unchanged:
             try:
                 records = self._build_doc_status_store().get_many(delta.unchanged)
             except NamespaceLeaseError:

@@ -87,7 +87,7 @@ def test_stored_states_are_projected_and_read_per_namespace(
     ddb_store: DynamoDBDocStatusStore, mocker
 ) -> None:
     # The projected read backing diff() returns just {doc_id: (hash, scope,
-    # failed, extraction fingerprint)}, even for records listing text units,
+    # status, extraction fingerprint, suffix)}, even for records listing text units,
     # and Queries the namespace's partition rather than scanning the table.
     ddb_store.put(
         DocStatusRecord(doc_id="ns#d1", content_hash="h1", text_unit_ids=["t1"])
@@ -100,15 +100,16 @@ def test_stored_states_are_projected_and_read_per_namespace(
             status="processed",
             scope="ns|src",
             extraction_fingerprint="x1",
+            suffix="tenant-c",
         )
     )
     ddb_store.put(DocStatusRecord(doc_id="other#d1", content_hash="h4"))
     scan = mocker.spy(ddb_store.client, "scan")
 
     assert ddb_store._stored_states("ns") == {
-        "ns#d1": ("h1", None, "pending", None),
-        "ns#d2": ("h2", None, "failed", None),
-        "ns#d3": ("h3", "ns|src", "processed", "x1"),
+        "ns#d1": ("h1", None, "pending", None, "default"),
+        "ns#d2": ("h2", None, "failed", None, "default"),
+        "ns#d3": ("h3", "ns|src", "processed", "x1", "tenant-c"),
     }
     assert ddb_store.diff({}, scope="ns|src").deleted == ["ns#d3"]
     scan.assert_not_called()

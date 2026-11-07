@@ -171,7 +171,11 @@ class DocStatusPort(Protocol):
         read in ``DocumentDelta.stored_scopes`` (the scan already reads them);
         the pipeline uses them only to warn about other corpora sharing the
         run's namespace, and leaving it empty just silences that warning.
-        Likewise ``DocumentDelta.quarantined_unchanged`` lists the unchanged
+        It should read each record's suffix too (``StoredDocument.suffix``),
+        which ``classify`` reports in ``DocumentDelta.unchanged_suffixes``:
+        left unread, a run with no change reads the unchanged documents'
+        records again to find them. Likewise
+        ``DocumentDelta.quarantined_unchanged`` lists the unchanged
         documents whose record is ``QUARANTINED``, so a raised
         ``indexing.max_document_attempts`` retries them; left empty, only an
         edit or a settings change does.

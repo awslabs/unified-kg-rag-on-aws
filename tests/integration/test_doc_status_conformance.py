@@ -253,6 +253,19 @@ def test_diff_of_an_empty_registry_marks_everything_new(store: DocStatusPort) ->
     assert delta.deleted == delta.stored_scopes == []
 
 
+def test_diff_reads_the_suffixes_of_the_unchanged_documents(
+    store: DocStatusPort,
+) -> None:
+    store.put(_record("a", suffix="tenant-a"))
+    store.put(_record("b"))
+    store.put(_record("c", suffix="tenant-c"))
+
+    delta = store.diff({"a": "h", "b": "h", "c": "changed"})
+
+    assert delta.unchanged_suffixes == ["default", "tenant-a"]
+    assert store.diff({"c": "changed"}).unchanged_suffixes == []
+
+
 def test_a_quarantined_record_is_unchanged_until_its_content_changes(
     store: DocStatusPort,
 ) -> None:

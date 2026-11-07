@@ -233,6 +233,8 @@ class StoredDocument(NamedTuple):
     scope: str | None
     status: str | None  # the record's ``DocStatus`` value
     extraction_fingerprint: str | None
+    # The record's ``suffix``; ``None`` when the registry does not read it.
+    suffix: str | None = None
 
 
 def settings_changed(stored: str | None, run: str | None) -> bool:
@@ -275,6 +277,13 @@ class DocumentDelta(BaseModel):
         "(records without a scope left out), sorted. Informational: it never "
         "changes the partition. A store that does not report it leaves it "
         "empty",
+    )
+    unchanged_suffixes: list[str] | None = Field(
+        default=None,
+        description="Distinct suffixes of the ``unchanged`` documents' "
+        "records, sorted, when the registry read them "
+        "(``StoredDocument.suffix``); ``None`` when it did not, and a run "
+        "that needs them reads the records",
     )
     quarantined: list[str] = Field(
         default_factory=list,
@@ -394,6 +403,9 @@ class DocumentDelta(BaseModel):
         delta.stored_scopes = sorted(
             {r.scope for r in stored.values() if r.scope is not None}
         )
+        suffixes = [stored[doc_id].suffix for doc_id in delta.unchanged]
+        if None not in suffixes:
+            delta.unchanged_suffixes = sorted({s for s in suffixes if s})
         return delta
 
     @property

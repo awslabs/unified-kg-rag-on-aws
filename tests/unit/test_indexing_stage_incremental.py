@@ -644,3 +644,49 @@ def test_a_run_with_no_change_narrows_every_suffix_its_documents_hold(
     for suffix in ("default", "tenant-b"):
         record = vectors.read_build_record(suffix)
         assert record is not None and "graphrag" not in record["methodologies"]
+
+
+def test_a_run_with_no_change_reads_the_suffixes_from_the_diff(mocker) -> None:
+    # The diff reads every unchanged document's suffix: the narrowing finds
+    # the suffixes without reading the registry records again.
+    from tests.fixtures.fakes.stores import FakeVectorStore
+    from unified_kg_rag.domain.models import IndexBuildRecord, Methodology
+
+    store = FakeDocStatusStore()
+    vectors = FakeVectorStore()
+    manager = _RecordingManager()
+    manager.vector_indexer = vectors
+    config = Config()
+    held = IndexBuildRecord(
+        pipeline_id="run-1",
+        mode="full",
+        built_at=datetime(2026, 1, 1),
+        documents=1,
+        extraction_fingerprint=extraction_fingerprint(config),
+    ).with_artifacts(ps.artifacts_to_build(config))
+    for suffix in ("default", "tenant-b"):
+        vectors.record_build(held, suffix)
+    own = compute_doc_id("own.json", "tenant-b", "/corpus")
+    store.put(
+        DocStatusRecord(
+            doc_id=own,
+            file_path="own.json",
+            content_hash="h",
+            status=DocStatus.PROCESSED,
+            suffix="tenant-b",
+            updated_at="2026-01-01T00:00:00+00:00",
+        )
+    )
+    delta = store.diff({own: "h"})
+    assert delta.unchanged_suffixes == ["tenant-b"]
+    mocker.patch.object(ps, "IndexingManager", return_value=manager)
+    stage = ps.IndexingStage(config=config, doc_status=store)
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    reads = mocker.spy(store, "get_many")
+
+    stage._record_removed_artifacts([], delta)
+
+    assert reads.call_count == 0
+    for suffix in ("default", "tenant-b"):
+        record = vectors.read_build_record(suffix)
+        assert record is not None and "graphrag" not in record["methodologies"]

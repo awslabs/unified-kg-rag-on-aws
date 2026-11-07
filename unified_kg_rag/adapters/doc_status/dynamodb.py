@@ -582,13 +582,14 @@ class DynamoDBDocStatusStore:
             namespace,
             # Attribute-name placeholders keep the projection clear of
             # DynamoDB reserved words.
-            ProjectionExpression="#id, #hash, #scope, #status, #extraction",
+            ProjectionExpression="#id, #hash, #scope, #status, #extraction, #suffix",
             ExpressionAttributeNames={
                 "#id": _SORT_KEY,
                 "#hash": "content_hash",
                 "#extraction": "extraction_fingerprint",
                 "#scope": _SCOPE_ATTRIBUTE,
                 "#status": "status",
+                "#suffix": "suffix",
             },
         ):
             doc_id = item.get(_SORT_KEY, {}).get("S")
@@ -598,6 +599,8 @@ class DynamoDBDocStatusStore:
                     item.get(_SCOPE_ATTRIBUTE, {}).get("S"),
                     item.get("status", {}).get("S"),
                     item.get("extraction_fingerprint", {}).get("S"),
+                    # As ``_deserialize`` reads it.
+                    item.get("suffix", {}).get("S") or "default",
                 )
         return states
 
