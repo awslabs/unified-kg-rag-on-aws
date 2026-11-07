@@ -53,6 +53,11 @@ export interface Source {
   community_id?: string | null;
   supported_by?: number[];
   unread_passages?: number;
+  /** A graph query result (the structured strategy). */
+  operation?: string | null;
+  row_count?: number | null;
+  exact?: boolean;
+  backend?: string | null;
   /** The context marker [n] the answer model saw it under. */
   marker: number | null;
 }

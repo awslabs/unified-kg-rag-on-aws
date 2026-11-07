@@ -122,7 +122,10 @@ answer that state it (arcs to their stations on the rail) and how many of
 its passages the answer did not read; a passage names its file and chunk
 and the graph sources that cite it; a seed-graph statement shows its seed
 graph and IRI. A source carries the context marker it was shown under,
-highlighted when the answer cites it. **Show in the graph** opens the Graph page on that entity
+highlighted when the answer cites it. The `structured` strategy's graph query result
+is a source of its own: its table, the query it ran, the number of rows
+and whether the table is whole, the graph store, the passages its entities
+cite and **Show in the graph** on the first entity it returned. **Show in the graph** opens the Graph page on that entity
 (or edge, or community), with the trail continued above the graph back to
 the question.
 

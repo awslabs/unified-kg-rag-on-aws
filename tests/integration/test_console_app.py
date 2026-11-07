@@ -162,6 +162,26 @@ def test_a_question_streams_its_answer_then_the_result(client: Any) -> None:
     assert all(c["source_rank"] for c in cited)
 
 
+def test_a_structured_question_shows_its_graph_query_result(client: Any) -> None:
+    found = {s["name"]: s for s in client.get("/api/strategies").json()["strategies"]}
+    assert found["structured"]["available"]
+    assert found["structured"]["methodology"] == "graphrag"
+    result = _ask(
+        client,
+        query="Which kinds of entities are most common?",
+        search_strategy="structured",
+    )[-1]
+    assert result["kind"] == "result", result
+    assert result["strategy"] == "structured"
+    tables = [s for s in result["sources"] if s["kind"] == "query_result"]
+    assert len(tables) == 1
+    table = tables[0]
+    assert table["operation"] and table["row_count"] and table["exact"]
+    assert table["backend"] and table["excerpt"]
+    # The table is a cited context section like any other.
+    assert table["marker"] is not None
+
+
 def test_a_follow_up_carries_the_conversation_as_history(client: Any) -> None:
     first = _ask(client, query="Who carries the lidar units?", search_strategy="local")
     answer = first[-1]["answer"]

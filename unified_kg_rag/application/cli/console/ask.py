@@ -53,6 +53,8 @@ from unified_kg_rag.shared.exceptions import (
 logger = get_logger(__name__)
 
 EXCERPT_CHARACTERS = 600
+# A graph query result is its table: shown whole up to this.
+TABLE_CHARACTERS = 6000
 MAX_QUESTION_CHARACTERS = 4000
 # A follow-up's history as the page sends it; the chain bounds it further
 # (memory.max_messages_per_conversation, memory.max_history_tokens).
@@ -119,7 +121,9 @@ def source_view(rank: int, source: dict[str, Any]) -> dict[str, Any]:
         "kind": kind,
         "id": source.get("source"),
         "score": source.get("score"),
-        "excerpt": str(source.get("content") or "")[:EXCERPT_CHARACTERS],
+        "excerpt": str(source.get("content") or "")[
+            : TABLE_CHARACTERS if kind == "query_result" else EXCERPT_CHARACTERS
+        ],
         "truncated": bool(metadata.get("truncated")),
         "document_ids": _listed(metadata.get("document_ids")),
         "file_name": attributes.get("file_name") or metadata.get("file_name"),
@@ -142,6 +146,18 @@ def source_view(rank: int, source: dict[str, Any]) -> dict[str, Any]:
             node_ids=[metadata.get("source_id"), metadata.get("target_id")],
             edge_id=source.get("source"),
         )
+    elif kind == "query_result":
+        # The structured strategy's graph query: what it computed, how many
+        # rows, whether the table is whole, and the entities it returned.
+        rows = metadata.get("row_count")
+        view.update(
+            title=metadata.get("plan_description") or metadata.get("operation"),
+            operation=metadata.get("operation"),
+            row_count=rows if isinstance(rows, int) else None,
+            exact=metadata.get("exact") is not False,
+            backend=metadata.get("backend"),
+            node_ids=_listed(metadata.get("entity_ids")),
+        )
     elif kind == "community":
         view.update(
             title=metadata.get("name"), community_id=metadata.get("community_id")
@@ -153,13 +169,13 @@ def source_view(rank: int, source: dict[str, Any]) -> dict[str, Any]:
 
 def link_sources(sources: list[dict[str, Any]]) -> None:
     """Join the graph sources to the passages of the same answer: each
-    entity or relationship lists the ranks of the text sources it cites
+    entity, relationship or graph query result lists the ranks of the text sources it cites
     (``supported_by``) and how many cited passages the answer did not read
     (``unread_passages``)."""
     by_unit = {s["id"]: s["rank"] for s in sources if s["kind"] == "text" and s["id"]}
     for source in sources:
         units = source.get("text_unit_ids") or []
-        if source["kind"] in ("entity", "relationship") and units:
+        if source["kind"] in ("entity", "relationship", "query_result") and units:
             source["supported_by"] = [by_unit[u] for u in units if u in by_unit]
             source["unread_passages"] = sum(1 for u in units if u not in by_unit)
 

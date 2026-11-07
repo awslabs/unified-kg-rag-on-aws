@@ -249,6 +249,37 @@ def answer(human: str) -> str:
     )
 
 
+def plan(question: str) -> str:
+    """The structured strategy's plan: the paths between two named
+    entities, the entities one name matches, else how many entities of
+    each type the graph holds."""
+    names = _names_in(question)
+    if len(names) >= 2:
+        body: dict[str, Any] = {
+            "nodes": [
+                {"var": "a", "mention": names[0]},
+                {"var": "z", "mention": names[1]},
+            ],
+            "edges": [{"direction": "both", "hops": [1, 2]}],
+            "returns": {"kind": "path", "limit": 5},
+        }
+    elif names:
+        body = {
+            "nodes": [{"var": "x", "mention": names[0]}],
+            "returns": {"kind": "rows"},
+        }
+    else:
+        body = {
+            "nodes": [{"var": "x"}],
+            "returns": {
+                "kind": "group_count",
+                "group_by": {"var": "x", "prop": "type"},
+                "limit": 10,
+            },
+        }
+    return json.dumps({**body, "entities": names[:2], "keywords": tokens(question)[:5]})
+
+
 def rewrite(human: str) -> str:
     """The follow-up rewrite: the latest message, naming the entities the
     conversation names when the message names none."""
@@ -312,6 +343,8 @@ def respond(system: str, human: str) -> tuple[str, bool]:
     if "knowledge-graph editor" in system:
         descriptions = _between(human, "<descriptions>", "</descriptions>")
         return " ".join(dict.fromkeys(_sentences(descriptions)))[:600], False
+    if "translate a question into a query plan" in system:
+        return plan(_between(human, "<question>\n", "\n</question>")), False
     if "rewrite the latest user message" in system:
         return rewrite(human), False
     if "search strategy selector" in system:

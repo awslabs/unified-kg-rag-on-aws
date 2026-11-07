@@ -129,6 +129,9 @@ export function AskPage({ status }: { status: Status | null }) {
     else if (source.kind === "relationship" && source.node_ids?.[0]) {
       params.focus = source.node_ids[0];
       if (source.node_ids[1]) params.edge = source.node_ids[1];
+    } else if (source.kind === "query_result") {
+      // The graph query's first returned entity.
+      if (source.node_ids?.[0]) params.focus = source.node_ids[0];
     } else if (source.id) params.focus = source.id;
     navigate("graph", params);
   };

@@ -820,6 +820,20 @@ details > summary {
     animation: none;
   }
 }
+.query-table {
+  margin: 0;
+  max-height: 16rem;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--sheet-sunk);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  font-family: var(--font-data);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre;
+  text-align: left;
+}
 /* Citation markers: the answer's [n] is a station of the trace. */
 .cite {
   font-family: var(--font-data);

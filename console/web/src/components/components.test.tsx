@@ -275,3 +275,28 @@ describe("conversationHistory", () => {
     ]);
   });
 });
+
+describe("graph query result", () => {
+  it("shows the table whole and its trail: query, rows, passages", () => {
+    const result = source(1, "query_result", {
+      title: "Count suppliers per depot",
+      excerpt: "depot | suppliers\nKestrel | 2",
+      operation: "aggregate",
+      row_count: 1,
+      exact: true,
+      backend: "sqlite",
+      node_ids: ["e-1", "e-2"],
+      supported_by: [2],
+    });
+    const opened = vi.fn();
+    const { container } = renderIn(<EvidenceTrace sources={[result, source(2, "text")]} question="" onOpenInGraph={opened} />);
+    expect(container.querySelector(".query-table")?.textContent).toBe("depot | suppliers\nKestrel | 2");
+    fireEvent.click(screen.getByText("Count suppliers per depot").closest("button") as HTMLElement);
+    const trail = container.querySelector(".source-trail") as HTMLElement;
+    expect(within(trail).getByText("aggregate")).toBeInTheDocument();
+    expect(within(trail).getByText("exact")).toBeInTheDocument();
+    expect(within(trail).getByRole("button", { name: "#2" })).toBeInTheDocument();
+    fireEvent.click(within(trail).getByRole("button", { name: "Show in the graph" }));
+    expect(opened).toHaveBeenCalledWith(result);
+  });
+});

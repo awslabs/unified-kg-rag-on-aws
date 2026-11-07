@@ -12,7 +12,9 @@ import { useI18n } from "../i18n/i18n";
 import type { Source } from "../lib/types";
 import { Highlighted } from "./Highlighted";
 
-const KINDS = ["all", "text", "entity", "relationship", "community"] as const;
+const KINDS = ["all", "query_result", "text", "entity", "relationship", "community"] as const;
+// The kinds whose trail lists the passages that state them.
+const STATED = new Set(["entity", "relationship", "query_result"]);
 // Sources shown before "Show all".
 const FIRST = 10;
 
@@ -214,9 +216,13 @@ function SourceCard({
           {seeded ? <span className="badge badge-trace">{t("ask.trace.seed")}</span> : null}
           {source.truncated ? <span className="badge badge-warn">{t("ask.trace.truncated")}</span> : null}
         </span>
-        <p className="source-excerpt">
-          <Highlighted text={excerptBody(source)} query={question} />
-        </p>
+        {source.kind === "query_result" ? (
+          <pre className="query-table">{source.excerpt}</pre>
+        ) : (
+          <p className="source-excerpt">
+            <Highlighted text={excerptBody(source)} query={question} />
+          </p>
+        )}
       </button>
       {open ? (
         <div className="source-trail" id={`${id}-trail`}>
@@ -231,7 +237,24 @@ function SourceCard({
               </Step>
             </>
           ) : null}
-          {source.kind === "entity" || source.kind === "relationship" ? (
+          {source.kind === "query_result" ? (
+            <>
+              {source.operation ? (
+                <Step label={t("ask.trail.operation")}>
+                  <span className="mono">{source.operation}</span>
+                </Step>
+              ) : null}
+              {source.row_count != null ? (
+                <Step label={t("ask.trail.rows")}>
+                  {number(source.row_count)}
+                  <span className={`badge${source.exact ? " badge-good" : " badge-warn"}`}>{source.exact ? t("ask.trail.exact") : t("ask.trail.cut")}</span>
+                </Step>
+              ) : null}
+              {source.backend ? <Step label={t("ask.trail.backend")}>{source.backend}</Step> : null}
+              {source.node_ids?.length ? <Step label={t("ask.trail.entities")}>{number(source.node_ids.length)}</Step> : null}
+            </>
+          ) : null}
+          {STATED.has(source.kind) ? (
             <>
               <Step label={t("ask.trail.statedIn")}>
                 <RankLinks ranks={source.supported_by ?? []} onJump={onJump} none={t("ask.trail.statedInNone")} />
@@ -259,7 +282,7 @@ function SourceCard({
             {source.text_unit_ids.length ? <span className="id">{t("ask.trail.units", { count: source.text_unit_ids.length })}</span> : null}
           </Step>
           {source.score != null ? <Step label={t("ask.trail.score")}>{number(source.score, { maximumFractionDigits: 4 })}</Step> : null}
-          {onOpenInGraph && source.kind !== "text" ? (
+          {onOpenInGraph && source.kind !== "text" && (source.kind !== "query_result" || source.node_ids?.length) ? (
             <div>
               <button className="button button-small button-primary" onClick={() => onOpenInGraph(source)}>
                 {source.kind === "community" ? t("ask.trail.openCommunity") : t("ask.trail.openGraph")}
