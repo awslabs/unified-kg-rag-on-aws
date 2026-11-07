@@ -5874,6 +5874,18 @@ class EvaluationConfig(BaseModel):
         default="outputs/evaluation",
         description=("Directory the evaluation results are written to."),
     )
+    run_subdirectories: bool = Field(
+        default=True,
+        description=(
+            "Write each run-eval invocation's files into a subdirectory of "
+            "outputs_directory (or --output-directory) of its own, named "
+            "run_<timestamp>_<id> (the run manifest's run_id), so the runs of "
+            "different invocations are never mixed in one directory. "
+            "run-eval --from-results and --baseline-results read a directory "
+            "and its run subdirectories. false writes into the directory "
+            "itself (the behaviour before)."
+        ),
+    )
     enabled_evaluators: Annotated[
         list[EvaluatorType], BeforeValidator(_without_removed_evaluators)
     ] = Field(

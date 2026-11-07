@@ -162,7 +162,7 @@ def test_an_interrupted_comparison_completed_and_rebuilt_has_the_same_deltas(
                 [*strategies, "--output-directory", str(stopped)],
             )
         object.__setattr__(chain, "ainvoke", answer)
-        assert not list(stopped.glob("evaluation_results_naive_*"))
+        assert not list(stopped.rglob("evaluation_results_naive_*"))
         # The missing strategy alone, into the same directory.
         _cli(
             chain,

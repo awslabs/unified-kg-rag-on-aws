@@ -9,7 +9,11 @@ comparison: [Evaluation](../guides/evaluate.md). Every flag:
 
 ## Result files
 
-Results are written as `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`
+Each `run-eval` invocation writes into a subdirectory of its own of the
+outputs directory (`--output-directory`, else `evaluation.outputs_directory`),
+named `run_<YYYYMMDD_HHMMSS>_<8 hex characters>`, the run manifest's
+`run_id` (`evaluation.run_subdirectories: false` writes into the directory
+itself, as before). Results are written as `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`
 when every query asked for, or used, one strategy (an `auto` run is
 `..._auto_...`), and as `evaluation_{results,reports,summary}_<timestamp>.json`
 otherwise; the results and reports only with `evaluation.save_detailed_results`
@@ -352,14 +356,19 @@ a closed-book arm is marked "(no retrieval)").
 The full rules of `--from-results`, `--baseline-results` and `--fail-if`
 ([Rebuilding, re-judging and gating a comparison](../guides/evaluate.md#rebuilding-re-judging-and-gating-a-comparison)):
 
-- The saved runs of one strategy are pooled as its repeats. The rebuild
-  warns when they differ in a query flag (`suffix`, `top_k`, `search_type`,
-  `retrieval_multiplier`, `enable_thinking`), `retrieval_config_sha256`,
-  `git_sha`, the `index` build or the answer model (keep runs of other
-  settings in another directory, or list the result files), when the
-  strategies ran different numbers of repeats, and when a run has no
-  `evaluation_summary_*` file (its manifest, so none of these checks, nor
-  the answer-scoring and self-preference ones, can read it).
+- A directory is read with its run subdirectories (one level). The saved
+  runs of one strategy are pooled as its repeats only when they are one
+  invocation's: runs of several `run_id`s (or one with and one without; or,
+  saved before `run_id` was recorded, more runs than their
+  `cli_args.repeats`), or runs that differ in a query flag (`suffix`,
+  `top_k`, `search_type`, `retrieval_multiplier`, `enable_thinking`),
+  `retrieval_config_sha256`, `git_sha`, the `index` build or the answer
+  model are refused (exit 2) by `--from-results` and `--baseline-results`
+  unless `--pool-runs` is given, which pools them with a warning naming what
+  differs. The rebuild also warns when the strategies ran different numbers
+  of repeats, and when a run has no `evaluation_summary_*` file (its
+  manifest, so none of these checks, nor the answer-scoring and
+  self-preference ones, can read it).
 - `--pairwise-judge` with `--from-results` judges the saved answers again
   (`--judge-model` sets `models.roles.evaluation` for the run, here and in a
   normal run; without `--pairwise-judge` and an LLM-judge evaluator it
@@ -376,10 +385,10 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   `repeat_extractions: reuse` repeats reuse the query extraction cache, so
   different counts shift the usage deltas (warned about). A baseline is a
   separate run, so the latency deltas against it are warned about (run
-  order above). Save each run in
-  a directory of its own: an `--output-directory` that is the
-  `--baseline-results` directory is warned about, since the next run that
-  reads it as its baseline pools this run in as repeats.
+  order above). With `evaluation.run_subdirectories: false`, an
+  `--output-directory` that is the `--baseline-results` directory is warned
+  about, since the next run that reads it as its baseline would hold two
+  invocations (refused without `--pool-runs`).
 - Runs whose exact
   match and token F1 read the answer differently (`answer_scoring` in the
   run manifest: `evaluation.answer_span`, `answer_normalization`,

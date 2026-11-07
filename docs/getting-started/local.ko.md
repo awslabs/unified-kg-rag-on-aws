@@ -124,7 +124,7 @@ uv run run-eval --backend local --data-path sample-eval.json --search-strategy l
 ```
 
 전략마다 결과, 보고서, 요약 파일과 `evaluation_comparison_<timestamp>.json`(`mix`의 지표를
-`local`과 짝지어 비교)이 `outputs/evaluation/`에 생깁니다. 지표의 뜻은
+`local`과 짝지어 비교)이 `outputs/evaluation/run_<timestamp>_<id>/`에 생깁니다. 지표의 뜻은
 [평가기](../guides/evaluate.ko.md#평가기)와 [전략 비교](../guides/evaluate.ko.md#전략-비교)에 있습니다.
 질문 두 개로는 동작만 확인할 수 있으므로, 차이를 믿으려면 질문 수백 개로 측정하세요.
 

@@ -152,8 +152,10 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 그 값을 채웁니다. 실행 주체에는 데이터셋에 대한
 `s3:GetObject`와 접두사에 대한 `s3:PutObject` 권한이 필요합니다.
 
-실행마다 `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`을
-씁니다(질의가 여러 전략을 썼으면 `<strategy>`가 빠짐). 전략이 다른 파일은 이름순이
+`run-eval`은 출력 디렉터리 아래 자기만의 하위 디렉터리 `run_<timestamp>_<id>`에 쓰며
+(`evaluation.run_subdirectories`), 그 안에 실행마다
+`evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`을 씁니다(질의가 여러 전략을
+썼으면 `<strategy>`가 빠짐). 전략이 다른 파일은 이름순이
 시간순과 다르므로 최신 실행은 수정 시각(`ls -t`)으로 찾으세요. 요약에는 지표별 통계,
 채점/실패/건너뜀 개수, 답변 거절, 재순위화와 가드레일 집계, 그리고 무엇을 측정했는지 기록해 두 실행을 비교할 수 있게 하는 실행
 매니페스트가 있습니다([Evaluation output](../reference/evaluation-output.md), 영문).
@@ -292,18 +294,19 @@ evaluation:
 
 `run-eval --from-results <dir|files>`는 이전 실행이 저장한 파일(`evaluation_results_*`와 그 옆의
 `evaluation_reports_*`, `evaluation_summary_*`. 기본값인 `evaluation.save_detailed_results:
-true`일 때 저장됨)로 질의에 답하거나 저장소를 열지 않고 비교를 다시 만듭니다. 실행을 전략별로
+true`일 때 저장됨. 디렉터리는 그 실행 하위 디렉터리까지 읽음)로 질의에 답하거나 저장소를 열지 않고 비교를 다시 만듭니다. 실행을 전략별로
 묶어 가장 오래된 실행이 나열한 순서로 비교하므로(`--search-strategy`를 주면 그 전략을 그 순서로
 비교), 중간에 멈춘 비교는 빠진 전략만 같은 디렉터리에 같은 `--repeats`로 실행한 뒤 다시 만들면
 끝납니다. 이렇게 만든 차이는 중단 없이 실행한 비교와 같습니다. 단, 이렇게 하려면 실행이
 끝날 때마다 저장하는 `--run-order sequential`로 실행해야 합니다. 번갈아 답하는 비교는 모든
 실행이 함께 끝나므로 도중에 멈추면 저장된 실행이 없습니다. 실행이 모두 사라진 전략은
 `--repeats N`으로 다시 실행하고, 반복 일부가 저장된 전략은 빠진 반복만 실행하거나(남은 횟수를
-`--repeats`로) 그 전략의 일부 파일을 지운 뒤 N번 모두 실행하세요.
+`--repeats`로 실행하고 `--pool-runs`로 다시 만들기. 아래 참고) 그 전략의 일부 파일을 지운 뒤
+N번 모두 실행하세요.
 
 ```bash
-# naive 실행 중에 멈춤(--repeats 3으로 실행): naive만 같은 디렉터리에 같은 --repeats로
-# 실행하고 다시 만들기.
+# naive 실행 중에 멈춤(--run-order sequential --repeats 3으로 실행): naive만 같은
+# 디렉터리에 같은 --repeats로 실행하고 두 실행 하위 디렉터리로 다시 만들기.
 run-eval --data-path eval.json --search-strategy naive --repeats 3 --output-directory out/
 run-eval --from-results out/ --output-directory out/
 
@@ -317,13 +320,17 @@ run-eval --data-path eval.json --search-strategy local \
   --fail-if "usage/total_tokens:mean_delta>500"
 ```
 
-- **합치기.** 한 전략의 저장된 실행들은 그 전략의 반복으로 합칩니다. 설정(질의 플래그,
-  구성 해시, 코드, 인덱스, 답변 모델)이 다른 실행이 섞이면 경고하므로, 그런 실행은 다른
-  디렉터리에 두세요.
+- **합치기.** 한 전략의 저장된 실행들은 `run-eval` 한 번이 같은 설정으로 답했을 때만 그
+  전략의 반복입니다. 여러 번 실행한 결과(`run_id`가 여러 개. `run_id`를 기록하기 전에 저장한
+  실행은 `--repeats`보다 실행이 많을 때)나 설정(질의 플래그, 구성 해시, 코드, 인덱스, 답변
+  모델)이 다른 실행이 섞이면 거부합니다(종료 코드 2). 실행 하위 디렉터리 하나를 가리키거나
+  결과 파일을 나열하고, 그래도 합치려면 `--pool-runs`를 주세요(무엇이 섞였는지 경고합니다).
 - **다시 판정하기.** `--from-results`와 `--pairwise-judge`를 함께 쓰면 저장한 답변을 다시
   판정합니다. `--judge-model`은 그 실행의 판정 모델을 정합니다.
 - **기준 실행.** `--baseline-results`는 각 전략을 이전 실행의 같은 전략(`baseline:<strategy>`)과
-  비교합니다. 기준 실행은 같은 `--repeats`로 만들고, 실행마다 디렉터리를 따로 두세요.
+  비교합니다. 기준 실행은 같은 `--repeats`로 만드세요. 실행마다 하위 디렉터리에 따로
+  저장되며, 한 전략을 여러 번 실행한 결과가 든 기준 디렉터리는 `--from-results`처럼
+  거부합니다(`--pool-runs`).
 - **채점 방식이 같아야 함.** exact match와 token F1이 답변을 다르게 읽은 실행
   (`evaluation.answer_span`, `answer_normalization`)은 답변을 생성하기 전에 거부합니다(종료
   코드 2). 데이터셋이 다른 실행은 경고하고 공통 질의 ID만 짝짓습니다.

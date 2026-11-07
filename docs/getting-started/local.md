@@ -131,7 +131,7 @@ uv run run-eval --backend local --data-path sample-eval.json --search-strategy l
 
 Each strategy's results, reports and summary, and
 `evaluation_comparison_<timestamp>.json` (each metric of `mix` paired against
-`local`), are written to `outputs/evaluation/`.
+`local`), are written to `outputs/evaluation/run_<timestamp>_<id>/`.
 [Evaluators](../guides/evaluate.md#evaluators) and
 [Comparing strategies](../guides/evaluate.md#comparing-strategies) explain the
 metrics; two questions show the mechanics only, so measure on a few hundred

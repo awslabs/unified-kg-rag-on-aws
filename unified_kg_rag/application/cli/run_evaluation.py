@@ -113,6 +113,7 @@ from unified_kg_rag.evaluation.saved_results import (
     group_runs,
     interleaving_warnings,
     load_saved_runs,
+    pooling_errors,
     pooling_warnings,
     rerank_unmetered,
     summary_warnings,
@@ -338,8 +339,10 @@ class CommandLineInterface:
             metavar="PATH",
             help=(
                 "Rebuild the comparison from saved runs instead of answering: "
-                "result directories or evaluation_results_*.json files (with "
-                "their reports and summary next to them). No answer is "
+                "result directories (read with their run subdirectories) or "
+                "evaluation_results_*.json files (with their reports and "
+                "summary next to them). A strategy's runs from several run-eval "
+                "invocations are refused without --pool-runs. No answer is "
                 "generated and no store is queried; --pairwise-judge re-judges "
                 "the saved answers (with --judge-model, another model). The "
                 "strategies compare in --search-strategy order when given, else "
@@ -360,6 +363,18 @@ class CommandLineInterface:
                 "warning, when it has none). Refused when the runs scored "
                 "exact_match and token_f1 with different answer_scoring "
                 "settings"
+            ),
+        )
+        parser.add_argument(
+            "--pool-runs",
+            action="store_true",
+            help=(
+                "Pool the saved runs of one strategy as its repeats although "
+                "they come from several run-eval invocations, or ran with "
+                "different settings (a warning names them). Without it "
+                "--from-results and --baseline-results refuse such runs "
+                "(exit 2): list the result files, or the run subdirectory, of "
+                "one invocation"
             ),
         )
         parser.add_argument(
@@ -396,7 +411,9 @@ class CommandLineInterface:
             type=str,
             help=(
                 "Directory to save evaluation results (default: "
-                "evaluation.outputs_directory). Accepts a local path or an "
+                "evaluation.outputs_directory), in a subdirectory of its own "
+                "per run-eval invocation, run_<timestamp>_<id> "
+                "(evaluation.run_subdirectories). Accepts a local path or an "
                 "s3://bucket/prefix/ URI (results are uploaded after the run; "
                 "a failed upload exits non-zero)."
             ),
@@ -569,6 +586,17 @@ class EvaluationRunner:
             self.args.output_directory or self.config.evaluation.outputs_directory
         )
 
+    def _run_target(self) -> str:
+        """Where this invocation writes its files: a subdirectory of the
+        outputs directory named by ``run_id`` (``evaluation.run_subdirectories``),
+        else the outputs directory itself."""
+        target = self._output_directory()
+        if not self.config.evaluation.run_subdirectories:
+            return target
+        if is_s3_uri(target):
+            return f"{target.rstrip('/')}/{self.run_id}/"
+        return str(Path(target) / self.run_id)
+
     @property
     def _from_results(self) -> list[Path] | None:
         return getattr(self.args, "from_results", None)
@@ -606,9 +634,14 @@ class EvaluationRunner:
 
     def _output_is_baseline(self) -> bool:
         """Whether this run saves its results where --baseline-results reads
-        the baseline from (the next run reading it pools them in)."""
+        the baseline from (the next run reading it pools them in). In a run
+        subdirectory of its own it does not."""
         target = self._output_directory()
-        if self._from_results is not None or is_s3_uri(target):
+        if (
+            self._from_results is not None
+            or is_s3_uri(target)
+            or self.config.evaluation.run_subdirectories
+        ):
             return False
         out = Path(target).resolve()
         return any(
@@ -906,7 +939,7 @@ class EvaluationRunner:
 
     def _local_outputs(self, work_dir: Path) -> Path:
         """Where the result files are written (``work_dir`` for an S3 target)."""
-        target = self._output_directory()
+        target = self._run_target()
         return work_dir / "outputs" if is_s3_uri(target) else Path(target)
 
     def _upload_finished_runs(self, work_dir: Path) -> bool:
@@ -914,7 +947,7 @@ class EvaluationRunner:
 
         Returns whether ``work_dir`` may go: nothing to upload, or uploaded.
         """
-        target = self._output_directory()
+        target = self._run_target()
         outputs = self._local_outputs(work_dir)
         if not is_s3_uri(target) or not any(outputs.glob("*")):
             return True
@@ -946,7 +979,7 @@ class EvaluationRunner:
 
     async def _run(self, work_dir: Path) -> tuple[int, bool]:
         """Run the evaluation; returns ``(exit code, keep work_dir)``."""
-        outputs_target = self._output_directory()
+        outputs_target = self._run_target()
         s3_client = (
             s3_client_for(self.config)
             if is_s3_uri(self.args.data_path or "") or is_s3_uri(outputs_target)
@@ -1035,7 +1068,26 @@ class EvaluationRunner:
             grouped = group_runs(load_saved_runs(self._baseline_results))
         except EvaluationException as e:
             raise InvalidDatasetError(f"--baseline-results: {e}") from e
+        self._check_pooling(grouped, "--baseline-results")
         return {f"baseline:{strategy}": runs for strategy, runs in grouped.items()}
+
+    def _check_pooling(self, grouped: dict[str, list[SavedRun]], flag: str) -> None:
+        """Refuse (exit 2) the saved runs of a strategy that are not one
+        run's repeats, unless ``--pool-runs``: then a warning per strategy
+        names what its pooled runs mix (logged here; the settings ones
+        reach the comparison's warnings too)."""
+        errors = pooling_errors(grouped)
+        if not errors:
+            return
+        if getattr(self.args, "pool_runs", False):
+            for error in errors:
+                logger.warning("%s: pooled with --pool-runs: %s", flag, error)
+            return
+        raise InvalidDatasetError(
+            f"{flag}: {'; '.join(errors)}. They are not one run's repeats: "
+            "list the result files, or the run subdirectory, of one run-eval "
+            "invocation, or give --pool-runs to pool them anyway"
+        )
 
     def _check_baseline_scoring(
         self,
@@ -1117,6 +1169,7 @@ class EvaluationRunner:
             grouped = group_runs(saved, order)
         except EvaluationException as e:
             raise InvalidDatasetError(f"--from-results: {e}") from e
+        self._check_pooling(grouped, "--from-results")
         warnings = [
             *summary_warnings(saved, "--from-results"),
             *pooling_warnings(grouped),
@@ -1170,7 +1223,7 @@ class EvaluationRunner:
         """Answer and score the dataset once per strategy and repeat."""
         assert self.rag_chain is not None
         eval_data_uri = self.args.data_path
-        outputs_target = self._output_directory()
+        outputs_target = self._run_target()
         eval_data_path: str | Path = eval_data_uri
         if s3_client is not None and is_s3_uri(eval_data_uri):
             eval_data_path = download_s3_object(
@@ -1439,7 +1492,8 @@ class EvaluationRunner:
                 summary.run_manifest["run_order"] = context.run_order
             if context.repeat_extractions is not None:
                 summary.run_manifest["repeat_extractions"] = context.repeat_extractions
-        # The directory --output-directory chose, not the config default.
+        # The directory this run wrote to (--output-directory, or the config
+        # default, and its run subdirectory).
         summary.configuration["outputs_directory"] = context.outputs_target
         manager.save_results(
             results=results,

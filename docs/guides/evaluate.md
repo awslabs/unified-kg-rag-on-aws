@@ -167,7 +167,9 @@ reached with the config's `aws.profile_name` / `aws.region_name`; the shell's
 The principal needs `s3:GetObject` on the dataset and `s3:PutObject` on the
 prefix.
 
-Each run writes `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`
+Each `run-eval` writes into a subdirectory of its own of the outputs
+directory, `run_<timestamp>_<id>` (`evaluation.run_subdirectories`), and each
+run in it `evaluation_{results,reports,summary}_<strategy>_<timestamp>.json`
 (without `<strategy>` when the queries used several; find the latest run by
 modification time, `ls -t`, since names of different strategies do not sort by
 time). The summary holds the per-metric
@@ -338,7 +340,8 @@ changes a default until a measured experiment decides
 `run-eval --from-results <dir|files>` rebuilds the comparison from the files
 earlier runs saved (`evaluation_results_*` with the `evaluation_reports_*`
 and `evaluation_summary_*` next to them; `evaluation.save_detailed_results:
-true`, the default) without answering a query or opening a store. The runs
+true`, the default; a directory is read with its run subdirectories) without
+answering a query or opening a store. The runs
 are grouped by strategy and compared in the order the oldest run listed them
 (`--search-strategy` picks and orders them instead), so a comparison that was
 stopped part-way is finished by running only the missing strategies into the
@@ -347,11 +350,13 @@ those of an uninterrupted run. That needs `--run-order sequential`, which
 saves each run as it finishes: an interleaved comparison finishes all its
 runs together, so one stopped part-way saved none. A strategy whose runs were all lost runs again
 with `--repeats N`; one with some repeats saved runs only the missing ones
-(`--repeats` of the difference), or delete its partial files and run all N.
+(`--repeats` of the difference, rebuilt with `--pool-runs`, below), or
+delete its partial files and run all N.
 
 ```bash
-# Stopped during naive (run with --repeats 3): run it alone into the same
-# directory with the same --repeats, then rebuild.
+# Stopped during naive (run with --run-order sequential --repeats 3): run it
+# alone into the same directory with the same --repeats, then rebuild from
+# both run subdirectories.
 run-eval --data-path eval.json --search-strategy naive --repeats 3 --output-directory out/
 run-eval --from-results out/ --output-directory out/
 
@@ -365,15 +370,20 @@ run-eval --data-path eval.json --search-strategy local \
   --fail-if "usage/total_tokens:mean_delta>500"
 ```
 
-- **Pooling.** The saved runs of one strategy are pooled as its repeats;
-  the rebuild warns when they ran with other settings (query flags,
-  configuration hash, code, index or answer model), so keep such runs in
-  another directory.
+- **Pooling.** The saved runs of one strategy are its repeats only when
+  one `run-eval` answered them with the same settings. Runs of one strategy
+  from several invocations (several `run_id`s; for runs saved before it was
+  recorded, more runs than their `--repeats`) or with other settings (query
+  flags, configuration hash, code, index or answer model) are refused
+  (exit 2): point at one run subdirectory or list the result files, or give
+  `--pool-runs` to pool them anyway (a warning names what they mix).
 - **Re-judging.** `--pairwise-judge` with `--from-results` judges the saved
   answers again; `--judge-model` sets the judge model for the run.
 - **A baseline run.** `--baseline-results` compares each strategy with the
   same strategy of an earlier run (`baseline:<strategy>`). Run it with the
-  same `--repeats`, and save each run in a directory of its own.
+  same `--repeats`; each run is saved in a run subdirectory of its own, and
+  a baseline directory holding several invocations of one strategy is
+  refused like `--from-results` (`--pool-runs`).
 - **Scoring must match.** Runs whose exact match and token F1 read the
   answer differently (`evaluation.answer_span`, `answer_normalization`) are
   refused (exit 2) before any answer is generated; runs of different

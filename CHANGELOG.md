@@ -463,6 +463,11 @@ From a `main` checkout (formats and keys no release had):
   `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
   now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`. The tree
   stored before stays in the build record, so `tree` keeps serving the text units it covers (#612).
+- #PR run directories: `run-eval` results land in `<outputs>/run_<timestamp>_<id>/`; scripts that read
+  `<outputs>/evaluation_*` directly read the run subdirectory (the JSON output's `output_directory` names it), or set
+  `evaluation.run_subdirectories: false`. A results directory that mixes runs of one strategy from several
+  invocations (the earlier flat layout, filled by more than one `run-eval`) is refused by `--from-results` and
+  `--baseline-results`: list the result files of one invocation, or add `--pool-runs`. Nothing re-runs.
 - #PR run order: a `run-eval` comparison is answered interleaved, so one stopped part-way saves no run (all finish
   together); run `--run-order sequential` to complete an interrupted comparison by its missing strategies. With
   `--repeats N`, each repeat makes its own query extraction calls (fast model; one entity or keyword extraction per
@@ -833,6 +838,11 @@ From a `main` checkout (formats and keys no release had):
   question's language, one sentence per supported language told by its script and function words (English, the
   0.2.3 reply, or the index language when they do not tell); evaluation counts a decline by `metadata.abstained`
   alone, no longer by the English text (#619).
+- `run-eval` writes each invocation into a run subdirectory of its own of the outputs directory, `run_<timestamp>_<id>`
+  (the manifest's `run_id`; `evaluation.run_subdirectories: false` for the flat layout), and `--from-results` /
+  `--baseline-results` read a directory with its run subdirectories. They no longer pool unrelated runs silently: the
+  saved runs of one strategy from several invocations, or with other settings, are refused (exit 2) unless
+  `--pool-runs` is given, with a warning naming what the pooled runs mix (#PR).
 - `run-eval` answers the runs of a comparison interleaved: every query by every strategy and repeat before the next
   query, their order reversed on every other query (ABBA), in one batch. Answered one run after another, the later
   runs answered later, and two runs of one configuration differed by 0.5-5.8 s of latency per query; the drift now

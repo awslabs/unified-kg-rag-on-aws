@@ -71,7 +71,9 @@ class SavedRun(BaseModel):
 
 def result_files(paths: Iterable[Path]) -> list[Path]:
     """The ``evaluation_results_*.json`` files of ``paths`` (directories, or
-    result files themselves), each once.
+    result files themselves), each once. A directory's are its own and its
+    subdirectories' (one level: the run subdirectories ``run-eval`` writes,
+    ``evaluation.run_subdirectories``).
 
     Raises:
         EvaluationException: A path is missing or not a result file, or
@@ -80,11 +82,20 @@ def result_files(paths: Iterable[Path]) -> list[Path]:
     files: dict[Path, None] = {}
     for path in paths:
         if path.is_dir():
-            found = sorted(p for p in path.iterdir() if _RESULTS_FILE.match(p.name))
+            found = sorted(
+                p
+                for directory in (
+                    path,
+                    *sorted(d for d in path.iterdir() if d.is_dir()),
+                )
+                for p in directory.iterdir()
+                if _RESULTS_FILE.match(p.name)
+            )
             if not found:
                 raise EvaluationException(
-                    f"'{path}' holds no evaluation_results_*.json file (they "
-                    "are saved with evaluation.save_detailed_results: true)"
+                    f"'{path}' holds no evaluation_results_*.json file, nor "
+                    "do its subdirectories (they are saved with "
+                    "evaluation.save_detailed_results: true)"
                 )
             files.update(dict.fromkeys(p.resolve() for p in found))
         elif path.is_file() and _RESULTS_FILE.match(path.name):
@@ -394,6 +405,47 @@ def _pooled_settings(manifest: dict[str, Any]) -> dict[str, Any]:
 def _shown(value: Any) -> str:
     text = json.dumps(value, sort_keys=True, default=str)
     return text if len(text) <= 24 else f"{text[:21]}..."
+
+
+def _invocations(runs: Sequence[SavedRun]) -> int | None:
+    """How many ``run-eval`` invocations answered ``runs``, when that is
+    known to be more than one: distinct ``run_id``s, a run with one next to
+    one without, or (runs saved before ``run_id`` was recorded) more runs
+    than any of their invocations' ``--repeats``. ``None`` otherwise."""
+    ids = {(run.manifest or {}).get("run_id") for run in runs}
+    known = ids - {None}
+    if len(known) > 1:
+        return len(known)
+    if known and None in ids:
+        return 2
+    if not known:
+        repeats = [
+            int(value)
+            for run in runs
+            if isinstance(
+                value := ((run.manifest or {}).get("cli_args") or {}).get("repeats"),
+                int,
+            )
+        ]
+        if repeats and len(runs) > max(repeats):
+            return 2
+    return None
+
+
+def pooling_errors(grouped: Mapping[str, Sequence[SavedRun]]) -> list[str]:
+    """Why the saved runs of a strategy are not one run's repeats: they come
+    from several ``run-eval`` invocations (``_invocations``), or differ in a
+    setting that changes the answers (``pooling_warnings``). Pooled anyway
+    (``run-eval --pool-runs``), they mix the invocations' time and
+    settings into one strategy's means."""
+    errors = []
+    for strategy, runs in grouped.items():
+        if (count := _invocations(runs)) is not None:
+            errors.append(
+                f"the {len(runs)} saved runs of {strategy} come from {count} or "
+                "more run-eval invocations"
+            )
+    return [*errors, *pooling_warnings(grouped)]
 
 
 def pooling_warnings(grouped: Mapping[str, Sequence[SavedRun]]) -> list[str]:

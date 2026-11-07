@@ -1056,7 +1056,7 @@ async def test_eval_runner_exit_code_and_manifest(
     )
     runner = run_evaluation.EvaluationRunner(args, _DictChain(error), config)
     assert await runner.run() == code
-    summary_file = next(out.glob("evaluation_summary_*.json"))
+    summary_file = next(out.rglob("evaluation_summary_*.json"))
     manifest = json.loads(summary_file.read_text())["run_manifest"]
     assert manifest["cli_args"]["data_path"] == str(data)
     assert len(manifest["dataset"]["sha256"]) == 64
@@ -1278,8 +1278,8 @@ async def test_eval_runner_compares_strategies_pairwise(
         ]
         questions = chain.questions[3:]
         assert questions == [q for q in sorted(set(questions)) for _ in runs]
-    assert len(list(out.glob("evaluation_summary_*.json"))) == 6
-    comparison = json.loads(next(out.glob("evaluation_comparison_*.json")).read_text())
+    assert len(list(out.rglob("evaluation_summary_*.json"))) == 6
+    comparison = json.loads(next(out.rglob("evaluation_comparison_*.json")).read_text())
     assert comparison["baseline"] == "local"
     em = "answer_match/exact_match"
     mix = comparison["deltas_vs_baseline"]["mix"][em]
@@ -1335,7 +1335,7 @@ async def test_eval_runner_runs_the_pairwise_judge(config, mocker, tmp_path) -> 
     baseline, candidate = judge.return_value.acompare.await_args.args
     assert [r.generated_answer for r in baseline] == ["Vendor"]
     assert [r.generated_answer for r in candidate] == ["Buyer"]
-    comparison = json.loads(next(out.glob("evaluation_comparison_*.json")).read_text())
+    comparison = json.loads(next(out.rglob("evaluation_comparison_*.json")).read_text())
     assert comparison["pairwise_vs_baseline"] == {"mix": judged}
 
 
