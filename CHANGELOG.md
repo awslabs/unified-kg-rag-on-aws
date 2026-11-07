@@ -1007,7 +1007,8 @@ From a `main` checkout (formats and keys no release had):
   `judge_effort` and, with an extracted span, its model and effort in `answer_scoring` (runs without them are warned
   about, not refused).
 - `run-eval --arm NAME=overlay.yaml[,suffix=SUFFIX]` (repeatable): a configuration arm answers the dataset with the
-  run's config under a YAML overlay (validated like a config file; the run's `evaluation` section is kept), as a chain
+  run's config under a YAML overlay (validated like a config file; the run's `evaluation` section and scoring models
+  are kept: an unset judge is chosen over the base and every arm's answer models and pinned first), as a chain
   and evaluation manager of its own, with every `--search-strategy`, interleaved with the base runs. Its runs
   (`<strategy>@NAME`) are compared with the same strategy's base run and Holm-adjusted with the other deltas; the
   manifest records the overlay's path and sha256 and the comparison order, which `--from-results` keeps. An arm
@@ -1017,7 +1018,8 @@ From a `main` checkout (formats and keys no release had):
   extraction's noise (it shares the extractions). See [evaluation](docs/guides/evaluate.md#configuration-arms).
 - The `run-eval` judge defaults to Opus 5.5 on Bedrock (a judge judging its own answers shifted directness by
   -0.27): when the answer model, or the model that wrote re-judged answers, is Opus 5.5, an unset judge falls back
-  to the default tier or Sonnet 5.5; a configured judge that is the answer model is kept with a warning. The CDK
+  to the default tier or Sonnet 5.5; a configured judge that is the answer model is kept with a warning. A comparison
+  whose runs record different judges, judge efforts or ragas embedding models warns. The CDK
   stack's default Bedrock grant covers it (#533, #536).
 - Models: Claude Sonnet/Opus 5.5, Opus 4.6-4.8, Sonnet 4.6, Haiku 5.5 and OpenAI GPT models on Bedrock, free-form
   ids with `aws.bedrock.model_overrides`, reasoning effort per tier (#113, #117, #127, #128, #162, #179);

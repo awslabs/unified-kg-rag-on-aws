@@ -150,6 +150,7 @@ if TYPE_CHECKING:
         dataset_warnings,
         group_runs,
         interleaving_warnings,
+        judge_warnings,
         load_saved_runs,
         pooling_errors,
         pooling_warnings,
@@ -255,6 +256,7 @@ __getattr__, _load_evaluation = lazy_names(
         "dataset_warnings": _saved_results_module,
         "group_runs": _saved_results_module,
         "interleaving_warnings": _saved_results_module,
+        "judge_warnings": _saved_results_module,
         "load_saved_runs": _saved_results_module,
         "pooling_errors": _saved_results_module,
         "pooling_warnings": _saved_results_module,
@@ -890,19 +892,39 @@ class EvaluationRunner:
     def _judge_choice(self) -> tuple[str, str]:
         """The LLM judge and why, as ``Config.judge_model_choice`` picks it,
         from the models of every answer it judges: those of the saved runs
-        it reads (``--from-results``, ``--baseline-results``) too. A default
-        judge that wrote them falls back as for this run's answer model and
-        is pinned, so every judge this run builds uses it."""
+        it reads (``--from-results``, ``--baseline-results``) and of every
+        ``--arm`` too. A default judge that wrote any of them falls back as
+        for this run's answer model and is pinned before the arms are
+        built, so every judge this run builds uses it."""
         saved = self._saved_answer_models()
-        if not saved:
+        arms = self._arm_answer_models()
+        if not saved and not arms:
             return self.config.judge_model_choice()
-        answers = list(saved)
+        answers = [*saved, *arms]
         if self._from_results is None:  # this run answers too
             answers.append(self.config.model_id(ModelRole.ANSWER_GENERATION))
         judge, reason = self.config.judge_model_choice(answers)
         if self.config.models.roles.evaluation is None:
             self.config = with_judge_model(self.config, judge)
         return judge, reason
+
+    def _arm_answer_models(self) -> list[str]:
+        """The answer models of the ``--arm`` overlays (an overlay that does
+        not load is reported when its arm is built)."""
+        models = set()
+        for arm in self._arms:
+            try:
+                config, _ = arm_config(
+                    self.config,
+                    arm,
+                    allow_unknown_keys=bool(
+                        getattr(self.args, "allow_unknown_keys", False)
+                    ),
+                )
+            except ConfigurationError:
+                continue
+            models.add(config.model_id(ModelRole.ANSWER_GENERATION))
+        return sorted(models)
 
     def _saved_answer_models(self) -> list[str]:
         """The answer models the saved runs this run reads recorded."""
@@ -2187,6 +2209,7 @@ class EvaluationRunner:
                 *dataset_warnings(manifests),
                 *interleaving_warnings(manifests),
                 *citation_warnings(manifests),
+                *judge_warnings(manifests),
             ]
         except EvaluationException as e:
             raise InvalidDatasetError(str(e)) from e

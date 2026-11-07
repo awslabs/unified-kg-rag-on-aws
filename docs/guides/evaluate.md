@@ -325,8 +325,16 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   run, so its deltas measure the overlay; the base strategies compare with
   the first as usual. Holm adjusts the arms' deltas with the strategies'.
 - The overlay is validated like a config file (an unknown key stops the
-  run, exit 2, unless `--allow-unknown-keys`); its `evaluation` section is
-  ignored with a warning, since every arm is scored as the base runs are.
+  run, exit 2, unless `--allow-unknown-keys`); its `evaluation` section and
+  `models.roles.evaluation` / `answer_span` are ignored with a warning,
+  since every arm is scored as the base runs are: an unset LLM judge is
+  chosen over the answer models of the base runs and of every arm (one
+  that wrote none of them when there is one) and pinned before the arms
+  are built, and the answer-span extractor is the run's.
+- A comparison whose runs were scored with different LLM judges, judge
+  efforts or ragas embedding models (an arm that changes
+  `models.embedding`, `--baseline-results` or `--from-results` runs of
+  other invocations) warns that its judged deltas measure the judges too.
 - The run manifest records each arm run's `arm` (name, overlay path and
   sha256, suffix) and `compared_runs`, so `--from-results` rebuilds the
   same pairs. A comparison whose arms differ in `search.citations.enabled`

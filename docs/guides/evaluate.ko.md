@@ -281,7 +281,13 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   첫 번째 전략과 비교합니다. Holm 보정은 비교군의 차이를 전략의 차이와 함께 보정합니다.
 - 오버레이는 구성 파일처럼 검증합니다(`--allow-unknown-keys`가 없으면 알 수 없는 키에서
   종료 코드 2로 멈춤). 모든 비교군은 기본 실행과 같은 방식으로 채점하므로 오버레이의
-  `evaluation` 섹션은 경고와 함께 무시합니다.
+  `evaluation` 섹션과 `models.roles.evaluation` / `answer_span`은 경고와 함께 무시합니다.
+  LLM 판정 모델을 지정하지 않았으면 기본 실행과 모든 비교군의 답변 모델을 함께 보고(가능하면
+  그중 어느 것도 아닌 모델로) 고른 뒤 비교군을 만들기 전에 고정하며, 답변 구간 추출 모델은
+  실행의 것을 씁니다.
+- 비교한 실행들의 LLM 판정 모델, 판정 추론 강도, ragas 임베딩 모델이 다르면(`models.embedding`을
+  바꾼 비교군, 다른 호출의 `--baseline-results`나 `--from-results` 실행) 판정 지표의 차이에
+  판정 모델의 차이도 섞인다고 경고합니다.
 - 실행 매니페스트는 비교군 실행마다 `arm`(이름, 오버레이 경로와 sha256, suffix)과
   `compared_runs`를 기록하므로 `--from-results`가 같은 짝을 다시 만듭니다. 비교군끼리
   `search.citations.enabled`가 다르면 답변 프롬프트도 다르다고 경고합니다.
