@@ -321,6 +321,7 @@ class _LocalLanguageModelFactory:
             temperature,
         )
         model = self._build(model_id, max_tokens, temperature, callbacks, purpose)
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
         logger.debug(
             "Created %s language model '%s' (max_tokens %s)",
             self.kind,

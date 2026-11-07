@@ -727,6 +727,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         stats["global_mapped_report_count"] = len(reports)
         stats["global_map_call_count"] = len(batches)
         stats["global_map_report_tokens"] = report_tokens
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
         logger.info(
             "Global map: %s reports (%s report tokens) in %s map calls",
             len(reports),
@@ -848,6 +849,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 break
             kept.append(report)
             used += cost
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
         logger.debug(
             "Kept %s/%s cited reports (%s tokens) within evidence_tokens %s",
             len(kept),

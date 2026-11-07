@@ -74,6 +74,7 @@ def mark_count_tokens_unsupported(model_id: str, reason: object) -> None:
         if model_id in _unsupported_model_ids:
             return
         _unsupported_model_ids.add(model_id)
+    # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
     logger.info(
         "Bedrock count_tokens is unsupported for model '%s' (%s); using the "
         "script-aware estimate for the rest of this process.",
@@ -156,6 +157,7 @@ class BedrockTokenCounter:
             if is_count_tokens_unsupported_error(e):
                 mark_count_tokens_unsupported(self.model_id, e)
                 return self._estimate(text)
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
             logger.debug(
                 "Bedrock count_tokens failed for model '%s': %s. Degrading to "
                 "script-aware estimate.",

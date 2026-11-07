@@ -43,6 +43,7 @@ def load_encoding(name: str) -> Any | None:
             encoding = tiktoken.get_encoding(name)
         except Exception as e:  # noqa: BLE001 - any failure means "estimate"
             _failed.add(name)
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
             logger.warning(
                 "tiktoken encoding '%s' is unavailable (%s); counting tokens "
                 "with the script-aware estimate instead.",

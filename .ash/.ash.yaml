@@ -77,9 +77,6 @@ global_settings:
     - path: unified_kg_rag/domain/models/config.py
       rule_id: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
       reason: the use_ssl field description names the plain-WebSocket scheme for a local Gremlin Server; TLS is the default
-    - path: unified_kg_rag/*
-      rule_id: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
-      reason: the matched messages log LLM token counts and budgets, not credentials
     - path: pyproject.toml
       rule_id: package_managers.uv.uv-missing-dependency-cooldown.uv-missing-dependency-cooldown
       reason: the lock moves through Dependabot, which waits 7 days (cooldown in .github/dependabot.yml); a uv exclude-newer would also hold back deliberate manual locks

@@ -128,6 +128,7 @@ class BaseBedrockWrapper:
             if len(truncated) < len(text):
                 final_text = truncated
                 original_count = self._token_counter.count_tokens(text)
+                # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure - LLM token counts, not credentials
                 logger.warning(
                     "%s token count (%s) exceeds maximum (%s). Truncating.",
                     text_type.capitalize(),
