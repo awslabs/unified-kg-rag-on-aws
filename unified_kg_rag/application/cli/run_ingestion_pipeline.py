@@ -726,6 +726,7 @@ class IngestionPipelineRunner:
             usage_error(error)
 
     def run(self) -> None:
+        _load_pipeline()
         display_ascii_art(__version__)
         self._display_run_info()
 
@@ -836,6 +837,7 @@ class IngestionPipelineRunner:
         also has its ``error`` and ``exit_code``, as a run that fails before
         printing does."""
         assert self.pipeline is not None
+        _load_pipeline()
         error = self._stage_failure(context)
         return {
             "pipeline_id": context.pipeline_id,

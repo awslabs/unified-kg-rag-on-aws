@@ -527,6 +527,7 @@ class RAGChainRunner:
 
     async def _initialize_chain(self) -> None:
         console.print("[bold]Initializing RAG chain...[/bold]")
+        _load_chain()
         try:
             self.rag_chain = GraphRAGChain(config=self.config)
             console.print("[green]Query chain initialized.[/green]")
