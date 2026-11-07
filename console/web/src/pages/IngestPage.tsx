@@ -10,6 +10,15 @@ import { useApi } from "../lib/useApi";
 
 const METHODOLOGIES = ["graphrag", "lightrag", "hipporag", "raptor"];
 
+/** What an index namespace holds, as its build record names it. */
+interface Held {
+  namespace: string;
+  recorded: boolean;
+  held: string[];
+  // Those an ingestion of the picked methodologies would no longer serve.
+  dropped: string[];
+}
+
 interface FileWithPath extends File {
   webkitRelativePath: string;
 }
@@ -25,6 +34,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmDeletions, setConfirmDeletions] = useState(false);
   const [confirmIntegrity, setConfirmIntegrity] = useState(false);
+  const [confirmNarrowing, setConfirmNarrowing] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadName, setUploadName] = useState("");
@@ -32,7 +42,28 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const [uploading, setUploading] = useState(false);
   const [over, setOver] = useState(false);
 
-  const chosen = methodologies ?? status?.methodologies ?? ["graphrag", "lightrag"];
+  const suffix = indexValue.trim();
+  // The target namespace's methodologies: the picker starts from them, so
+  // ingesting another corpus keeps what the namespace serves. Unknown (a
+  // store error, a bad name) reads as no record.
+  const [holds, setHolds] = useState<string[] | null>(null);
+  const chosen = methodologies ?? holds ?? status?.methodologies ?? ["graphrag", "lightrag"];
+  const held = useApi(
+    () =>
+      get<Held>("namespace/methodologies", { suffix: suffix || undefined, methodologies: chosen.join(",") || undefined })
+        .then((found) => {
+          setHolds(found.recorded && found.held.length ? found.held : null);
+          return found;
+        })
+        .catch(() => {
+          setHolds(null);
+          return null;
+        }),
+    [suffix, chosen.join(","), status?.config_path],
+  );
+  // What this run would remove from the namespace (the server decides, by
+  // the artifacts the picked methodologies build).
+  const dropped = held.data?.recorded ? held.data.dropped : [];
   const ingestJobs = (jobs.data?.jobs ?? []).filter((j) => j.kind === "ingest");
   const active = ingestJobs.find((j) => j.status === "running" || j.status === "stopping");
   const shownJob = jobId ?? active?.id ?? null;
@@ -53,6 +84,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
           confirm_reset: confirmReset,
           confirm_deletions: confirmDeletions,
           confirm_integrity: confirmIntegrity,
+          confirm_narrowing: dropped.length > 0 && confirmNarrowing,
         };
     try {
       const job = await send<JobRecord>("jobs/ingest", body);
@@ -173,6 +205,11 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
           <Sheet title={t("ingest.methodologies")}>
             <div className="stack" style={{ gap: 10 }}>
               <span className="field-help">{t("ingest.methodologiesHelp")}</span>
+              {holds && held.data ? (
+                <span className="field-help">
+                  {t("ingest.namespaceHolds", { namespace: held.data.namespace, methodologies: holds.map((m) => t(`methodology.${m}`)).join(", ") })}
+                </span>
+              ) : null}
               <div className="stack" role="group" aria-label={t("ingest.methodologies")} style={{ gap: 6 }}>
                 {METHODOLOGIES.map((name) => (
                   <label key={name} className="check">
@@ -222,9 +259,20 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                 </div>
               </details>
               {!chosen.length ? <Notice tone="warn">{t("ingest.noMethodology")}</Notice> : null}
+              {dropped.length && chosen.length && held.data ? (
+                <Notice tone="warn" title={t("ingest.narrowingTitle", { namespace: held.data.namespace })}>
+                  <p style={{ margin: "0 0 8px" }}>
+                    {t("ingest.narrowingHelp", { namespace: held.data.namespace, methodologies: dropped.map((m) => t(`methodology.${m}`)).join(", ") })}
+                  </p>
+                  <label className="check">
+                    <input type="checkbox" checked={confirmNarrowing} onChange={(e) => setConfirmNarrowing(e.target.checked)} />
+                    <span>{t("ingest.narrowingConfirm", { methodologies: dropped.map((m) => t(`methodology.${m}`)).join(", ") })}</span>
+                  </label>
+                </Notice>
+              ) : null}
               {error ? <Notice tone="bad">{error}</Notice> : null}
               <div>
-                <button className="button button-primary" disabled={!corpus || !chosen.length || !!active} onClick={() => void start()}>
+                <button className="button button-primary" disabled={!corpus || !chosen.length || !!active || (dropped.length > 0 && !confirmNarrowing)} onClick={() => void start()}>
                   {t("ingest.start")}
                 </button>
                 {!corpus ? <span className="field-help" style={{ marginLeft: 12 }}>{t("ingest.pickFirst")}</span> : null}
@@ -242,6 +290,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                 onEnded={() => {
                   onJobsChanged();
                   void jobs.reload();
+                  void held.reload();
                 }}
               >
                 {(job) => (

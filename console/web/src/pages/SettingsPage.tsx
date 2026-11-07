@@ -33,6 +33,7 @@ interface Preview {
   warnings: string[];
   unknown_keys: string[];
   endpoint_changes: { path: string; from: unknown; to: unknown }[];
+  directory_changes?: { path: string; from: unknown; to: unknown }[];
 }
 
 interface Change {
@@ -55,6 +56,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [endpointsConfirmed, setEndpointsConfirmed] = useState(false);
+  const [directoriesConfirmed, setDirectoriesConfirmed] = useState(false);
   const fields = useMemo(() => (schema.data ? fieldsOf(schema.data) : []), [schema.data]);
 
   const setChange = (change: Change | null, path: string) =>
@@ -70,6 +72,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
     setError(null);
     setSaved(false);
     setEndpointsConfirmed(false);
+    setDirectoriesConfirmed(false);
     try {
       setPreview(
         await send<Preview>("config/preview", useText ? { text: yaml ?? view.data?.text ?? "" } : { changes: Object.values(changes) }),
@@ -90,6 +93,7 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
         text: preview.text,
         base_sha: view.data.sha,
         confirm_endpoints: endpointsConfirmed ? (preview.endpoint_changes ?? []).map((c) => c.path) : [],
+        confirm_directories: directoriesConfirmed ? (preview.directory_changes ?? []).map((c) => c.path) : [],
       });
       setSaved(true);
       setChanges({});
@@ -237,11 +241,32 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
                     </label>
                   </Notice>
                 ) : null}
+                {(preview.directory_changes ?? []).length ? (
+                  <Notice tone="warn" title={t("settings.directoriesTitle")}>
+                    <ul style={{ margin: "0 0 8px", paddingLeft: 18 }}>
+                      {(preview.directory_changes ?? []).map((c) => (
+                        <li key={c.path} className="mono">
+                          {c.path}: {JSON.stringify(c.from ?? null)} → {JSON.stringify(c.to ?? null)}
+                        </li>
+                      ))}
+                    </ul>
+                    <p style={{ margin: "0 0 8px" }}>{t("settings.directoriesHelp")}</p>
+                    <label className="check">
+                      <input type="checkbox" checked={directoriesConfirmed} onChange={(e) => setDirectoriesConfirmed(e.target.checked)} />
+                      <span>{t("settings.directoriesConfirm")}</span>
+                    </label>
+                  </Notice>
+                ) : null}
                 <Diff text={preview.diff} />
                 <div className="row">
                   <button
                     className="button button-primary"
-                    disabled={!preview.valid || !preview.changed || ((preview.endpoint_changes ?? []).length > 0 && !endpointsConfirmed)}
+                    disabled={
+                      !preview.valid ||
+                      !preview.changed ||
+                      ((preview.endpoint_changes ?? []).length > 0 && !endpointsConfirmed) ||
+                      ((preview.directory_changes ?? []).length > 0 && !directoriesConfirmed)
+                    }
                     onClick={() => void save()}
                   >
                     {t("settings.save", { file: data.path?.split("/").pop() ?? "config" })}

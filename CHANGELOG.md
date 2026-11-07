@@ -650,11 +650,15 @@ From a `main` checkout (formats and keys no release had):
   chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources they
   cite, follow-ups sent with the page's conversation (`RAGInput.history`), and each source the answer read on a
   provenance trace back to its passage, file, seed graph and IRI and into the graph; ingest a workspace folder or an
-  upload with a methodology profile, with live stage progress and a stop the pipeline checkpoints; run and compare
-  evaluations (paired deltas with intervals, gates, cost, declines, win rates by answer length) and open saved runs;
+  upload with a methodology profile (starting from what the namespace's build record holds; a run that would drop
+  a held methodology for every corpus in the namespace starts only once confirmed), with live stage progress and a
+  stop the pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
+  Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
+  interval for older comparisons; gates, cost, declines, win rates by answer length) and open saved runs;
   explore the exported graph (search, neighbourhoods, communities, degree, schema conformance, seed versus document
   evidence); a dashboard of the questions and jobs run through it (time, tokens, cost per strategy, model and role);
-  and edit the config file with validation, a diff before saving and secrets never shown or written. Jobs run the
+  and edit the config file with validation, a diff before saving, a confirmation before a provider endpoint or a
+  directory the console serves changes, and secrets never shown or written. Jobs run the
   unchanged `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs
   `--allow-remote`), requires a per-launch access token, refuses paths outside its directories and cross-site
   requests, and loads nothing from another host. The web client (`console/web/`, Vite, React, TypeScript) is in

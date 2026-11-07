@@ -6,10 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n/i18n";
 import { fieldsOf, parseValue, type JsonSchema } from "../lib/schema";
 import { answerSegments, markerNumbers } from "../lib/citations";
-import type { AskResult, Citation, Source, StrategyInfo } from "../lib/types";
+import type { AskResult, Citation, Delta, Multiplicity, Source, StrategyInfo } from "../lib/types";
 import { conversationHistory, parseFilters } from "../pages/AskPage";
 import { AnswerText, CitationList } from "./AnswerText";
-import { deltaVerdict, higherIsBetter } from "./charts";
+import { DeltaPlot, deltaInterval, deltaVerdict, higherIsBetter } from "./charts";
 import { citedBy, EvidenceTrace, excerptBody } from "./EvidenceTrace";
 import { queryTerms } from "./Highlighted";
 import { StrategyPicker } from "./StrategyPicker";
@@ -137,6 +137,47 @@ describe("helpers", () => {
     expect(deltaVerdict("latency/response_time_seconds", delta)).toBe("worse");
     expect(deltaVerdict("answer_match/token_f1", { ...delta, ci_low: -0.1 })).toBe("neutral");
     expect(higherIsBetter("graph_aware/answer_length")).toBeNull();
+  });
+  it("calls a delta by its Holm-adjusted p-value when the comparison has one", () => {
+    // The plain interval excludes zero, but over the family it does not count.
+    const delta: Delta = { pairs: 40, mean_delta: 0.04, ci_low: 0.01, ci_high: 0.07, wins: 9, ties: 28, losses: 3, p_value: 0.01, family: "secondary", adjusted_p_value: 0.2, adjusted_ci_low: -0.01, adjusted_ci_high: 0.09 };
+    expect(deltaVerdict("answer_match/token_f1", delta, 0.05)).toBe("neutral");
+    expect(deltaVerdict("answer_match/token_f1", { ...delta, adjusted_p_value: 0.01 }, 0.05)).toBe("better");
+    expect(deltaVerdict("usage/total_tokens", { ...delta, adjusted_p_value: 0.01 }, 0.05)).toBe("worse");
+    // An older comparison (no alpha) or a delta without one reads its interval.
+    expect(deltaVerdict("answer_match/token_f1", delta)).toBe("better");
+    expect(deltaVerdict("answer_match/token_f1", { ...delta, adjusted_p_value: undefined }, 0.05)).toBe("better");
+    const multiplicity: Multiplicity = { method: "holm", alpha: 0.05, primary_metric: "answer_match/answer_contains", families: { secondary: { tests: 10, interval_confidence: 0.995 } } };
+    expect(deltaInterval(delta, multiplicity, 0.95)).toEqual({ low: -0.01, high: 0.09, confidence: 0.995, adjusted: true });
+    expect(deltaInterval(delta, null, 0.95)).toEqual({ low: 0.01, high: 0.07, confidence: 0.95, adjusted: false });
+  });
+  it("shows the Holm p-value, the simultaneous interval and the primary metric", () => {
+    const multiplicity: Multiplicity = {
+      method: "holm",
+      alpha: 0.05,
+      primary_metric: "answer_match/answer_contains",
+      families: { primary: { tests: 1, interval_confidence: 0.95 }, secondary: { tests: 10, interval_confidence: 0.995 } },
+    };
+    const base = { pairs: 40, wins: 9, ties: 28, losses: 3, p_value: 0.01 };
+    const deltas: [string, Delta][] = [
+      ["answer_match/answer_contains", { ...base, mean_delta: 0.1, ci_low: 0.02, ci_high: 0.18, family: "primary", adjusted_p_value: 0.01, adjusted_ci_low: 0.02, adjusted_ci_high: 0.18 }],
+      ["answer_match/token_f1", { ...base, mean_delta: 0.04, ci_low: 0.01, ci_high: 0.07, family: "secondary", adjusted_p_value: 0.2, adjusted_ci_low: -0.01, adjusted_ci_high: 0.09 }],
+      ["abstention/precision", { ...base, mean_delta: 0.1, ci_low: 0.05, ci_high: 0.2 }],
+    ];
+    renderIn(<DeltaPlot deltas={deltas} multiplicity={multiplicity} />);
+    const rows = screen.getAllByRole("row");
+    expect(screen.getByRole("columnheader", { name: "Holm p" })).toBeInTheDocument();
+    const primary = rows.find((r) => r.textContent?.includes("answer_contains"))!;
+    expect(within(primary).getByText("primary")).toBeInTheDocument();
+    expect(within(primary).getByText("better")).toBeInTheDocument();
+    const secondary = rows.find((r) => r.textContent?.includes("token_f1"))!;
+    expect(within(secondary).queryByText("better")).toBeNull();
+    expect(secondary.textContent).toContain("[-0.01, 0.09]");
+    expect(secondary.textContent).toContain("99.5%");
+    expect(secondary.textContent).toContain("0.2");
+    const ratio = rows.find((r) => r.textContent?.includes("abstention/precision"))!;
+    expect(ratio.textContent).toContain("unadjusted");
+    expect(within(ratio).getByText("better")).toBeInTheDocument();
   });
   it("types filter values", () => {
     expect(parseFilters("file_name: a.pdf\nin_schema: false\nyear: 2026\n\nbad")).toEqual({ file_name: "a.pdf", in_schema: false, year: 2026 });

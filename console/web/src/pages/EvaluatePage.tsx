@@ -313,9 +313,12 @@ function RunView({ refName }: { refName: string }) {
           }
         >
           <p className="field-help" style={{ marginTop: 0 }}>
-            {t("evaluate.pairedHelp", { resamples: number(comparison.bootstrap?.resamples ?? 2000) })}
+            {t("evaluate.pairedHelp", { resamples: number(comparison.bootstrap?.resamples ?? 2000) })}{" "}
+            {comparison.multiplicity && !comparison.multiplicity.unadjusted?.includes(shown)
+              ? t("evaluate.pairedHolmHelp", { alpha: number(comparison.multiplicity.alpha) })
+              : t("evaluate.pairedPlainHelp")}
           </p>
-          <DeltaPlot deltas={deltas} confidence={comparison.bootstrap?.confidence ?? 0.95} />
+          <DeltaPlot deltas={deltas} confidence={comparison.bootstrap?.confidence ?? 0.95} multiplicity={comparison.multiplicity && !comparison.multiplicity.unadjusted?.includes(shown) ? comparison.multiplicity : null} />
           {comparison.warnings?.length ? (
             <div style={{ marginTop: 12 }}>
               <Notice tone="warn" title={t("evaluate.warnings")}>

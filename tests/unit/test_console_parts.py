@@ -177,6 +177,48 @@ def test_a_preview_validates_like_a_run(tmp_path: Path) -> None:
     assert not unknown["valid"] and unknown["unknown_keys"] == ["search.nope"]
 
 
+def test_moving_a_served_directory_is_saved_only_when_confirmed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("logging:\n  level: INFO\n")
+    file = settings_api.SettingsFile(path)
+    base = settings_api.digest(path.read_text())
+    preview = file.preview(
+        text=None,
+        changes=[
+            {"path": "evaluation.outputs_directory", "value": "/srv/elsewhere"},
+            {"path": "logging.level", "value": "DEBUG"},
+        ],
+    )
+    assert preview["directory_changes"] == [
+        {"path": "evaluation.outputs_directory", "from": None, "to": "/srv/elsewhere"}
+    ]
+    with pytest.raises(settings_api.DirectoriesNotConfirmed) as refused:
+        file.save(text=preview["text"], base_sha=base)
+    assert refused.value.paths == ["evaluation.outputs_directory"]
+    assert "/srv/elsewhere" not in path.read_text()
+    file.save(
+        text=preview["text"],
+        base_sha=base,
+        confirm_directories=["evaluation.outputs_directory"],
+    )
+    assert "/srv/elsewhere" in path.read_text()
+    # Another key alone asks nothing; the visualization folder does.
+    assert not file.preview(
+        text=None, changes=[{"path": "logging.level", "value": "INFO"}]
+    )["directory_changes"]
+    viz = file.preview(
+        text=None,
+        changes=[
+            {"path": "graph.visualization.outputs_directory", "value": "/srv/viz"}
+        ],
+    )
+    assert [c["path"] for c in viz["directory_changes"]] == [
+        "graph.visualization.outputs_directory"
+    ]
+
+
 def test_a_view_without_a_file_uses_the_defaults(tmp_path: Path) -> None:
     view = settings_api.SettingsFile(None).view()
     assert view["path"] is None and not view["writable"]

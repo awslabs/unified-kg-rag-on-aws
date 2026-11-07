@@ -132,7 +132,14 @@ the question.
 **Ingest.** The workspace's folders of documents with their file counts,
 sizes and types, plus an upload (a folder or files) into `uploads/`. Pick
 what to build (the methodologies: build only what you will query; adding
-one later builds only its artifacts) and, under more options, another
+one later builds only its artifacts). The picker starts from what the
+target namespace's build record says it holds, so another corpus ingested
+into it keeps every methodology its strategies serve; a pick that builds
+less (a held methodology whose artifacts the run would not build) is
+listed, and the run starts only once you confirm removing them: the
+namespace then stops serving their strategies for every corpus in it, not
+only this one (the API refuses it as `narrowing` without
+`confirm_narrowing`). Under more options: another
 index namespace, a forced recompute and the answers to the two questions a
 run can ask (a reset that drops another source's content, a mass
 deletion). Start runs `run-ingestion` with a pipeline id per corpus folder
@@ -158,12 +165,22 @@ which evaluators it feeds are shown), the strategies (the first is the
 baseline), repeats, a closed-book arm, the pairwise judge, regression gates
 (`MEASURE:STAT<OP>VALUE`, as `run-eval --fail-if`) and a failure budget.
 Start runs `run-eval --output-format json` into its own directory under
-`evaluation.outputs_directory`; its runs count up as they finish. Any saved
+`evaluation.outputs_directory`; its progress counts the answers (from the
+answer batch's progress lines in its log, every ~10% or minute) and the
+runs saved. Interleaved runs (`evaluation.run_order`, the default with two
+or more) are answered in one batch and scored and saved only once every
+answer is in, so stopping one keeps no run; one at a time, Stop keeps the
+runs that finished. Any saved
 run (the console's or another `run-eval`'s) opens as a results table (each
 metric's mean per strategy), the paired comparison against the baseline (a
 row per metric: the mean difference with its interval drawn on the row's
-own scale, marked better or worse only when the interval excludes zero, and
-the wins, ties and losses), the comparison's warnings, the cost per
+own scale, and the wins, ties and losses). A comparison adjusted for
+multiplicity ([Comparing strategies](./evaluate.md#comparing-strategies))
+marks a difference better or worse only when its Holm-adjusted p-value is
+below the comparison's alpha, shows that p-value, draws the family's
+simultaneous interval (with its confidence) and marks the primary metric;
+an older comparison, and a delta without per-query pairs or a closed-book
+arm, falls back to the interval excluding zero. Then the comparison's warnings, the cost per
 question (USD, tokens, median and 95th percentile time), the declines
 (rate, and precision and recall over the unanswerable questions) and, with
 the pairwise judge, the win rate per answer-length bucket. A job's gates
@@ -203,7 +220,10 @@ a provider sends its requests (`providers.*.base_url`,
 `aws.neptune.endpoint`, `aws.opensearch.endpoint`, their ports) is listed in
 the review and saved only once confirmed there: the requests carry the
 credentials the console's environment holds for that provider (an API key,
-a store password, signed AWS requests). The file is written whole (a
+a store password, signed AWS requests). A change to a directory the
+console serves (`evaluation.outputs_directory`, read and written;
+`graph.visualization.outputs_directory`, read) is confirmed the same way:
+it opens the new directory to the page. The file is written whole (a
 temporary file beside it, renamed over it). The Methodologies
 tab edits `indexing.methodologies`; the Tracing tab edits `observability`
 and shows which `LANGFUSE_*`, `PHOENIX_*` and `OTEL_*` variables are set,
@@ -288,7 +308,8 @@ npm run build
   history shared between browsers.
 - The Graph page draws the 600 best-connected entities of a large graph;
   the others are found by name or in the table.
-- A job's progress is per stage (ingestion) or per run (evaluation), not
-  per document or question.
+- A job's progress is per stage (ingestion), or per answer and saved run
+  (evaluation), not per document; the answers count only at a log level
+  that shows INFO lines (`logging.level`).
 - Running the console against the AWS stack's Neptune and OpenSearch works
   as the CLIs do, through the config, but has not been measured there yet.

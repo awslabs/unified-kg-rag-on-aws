@@ -6,8 +6,10 @@ A job is ``run-ingestion`` or ``run-eval --output-format json`` started with
 the console's directories. Stop sends SIGTERM, the stop the CLIs are built
 for (the pipeline checkpoints its finished stages and exits 143; ``run-eval``
 keeps the runs it finished); one still running after the CLIs' stop grace is
-killed. Progress is read from the files the run writes (``stages``,
-:func:`evaluation_progress`), the result from its JSON document on stdout.
+killed. Progress is read from what the run writes: an ingestion's stage
+metadata (``stages``), an evaluation's answer progress lines in its log
+(:class:`AnswerProgress`) and saved summaries (:func:`evaluation_progress`);
+the result from its JSON document on stdout.
 One job per index namespace runs at a time (docs/design.md#101-the-console-run-console-opt-in).
 """
 
@@ -23,7 +25,7 @@ import signal
 import sys
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -33,6 +35,7 @@ from typing import Any
 from unified_kg_rag.application.cli.console import stages
 from unified_kg_rag.application.cli.console.paths import PathRefused, walk_files
 from unified_kg_rag.application.cli.console.store import ConsoleStore
+from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -40,6 +43,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     validate_path_segment,
 )
+from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
 from unified_kg_rag.evaluation.gates import parse_gate
 from unified_kg_rag.shared import ConfigurationError, get_logger
 
@@ -81,6 +85,20 @@ class JobConflict(ConfigurationError):
         self.job_id = job_id
 
 
+class NarrowingNotConfirmed(ConfigurationError):
+    """An ingestion that builds fewer methodologies than its namespace
+    holds, not confirmed (the request is refused)."""
+
+    def __init__(self, namespace: str, dropped: list[str]) -> None:
+        super().__init__(
+            f"the index namespace '{namespace}' holds {', '.join(dropped)}, which "
+            "this run does not build: it would stop serving them for every "
+            "corpus in the namespace. Pick them too, or confirm the narrowing"
+        )
+        self.namespace = namespace
+        self.dropped = dropped
+
+
 @dataclass
 class Job:
     """One job; ``record()`` is what the API and the store see."""
@@ -104,6 +122,8 @@ class Job:
     output_directory: Path | None = None
     plan: list[str] = field(default_factory=list)
     total_runs: int = 0
+    # An evaluation's answers so far, read from its log (AnswerProgress).
+    answers: AnswerProgress | None = None
     # The question a failed ingestion stopped at, unanswered (its flag).
     confirmation: str | None = None
     process: asyncio.subprocess.Process | None = None
@@ -157,6 +177,40 @@ def namespace_of(config: Config, index_value: str | None = None) -> str:
     )
 
 
+def ingest_config(
+    config: Config, methodologies: list[str] | None
+) -> tuple[Config, list[str] | None]:
+    """The config a console ingestion of ``methodologies`` (None: the
+    config's) runs with, and the methodologies' values.
+
+    Raises:
+        ConfigurationError: An unknown methodology.
+    """
+    if not methodologies:
+        return config, None
+    try:
+        chosen = [Methodology(m).value for m in methodologies]
+    except ValueError as e:
+        raise ConfigurationError(f"methodologies: {e}") from e
+    config = config.model_copy(deep=True)
+    config.indexing.methodologies = [Methodology(m) for m in chosen]
+    return config, chosen
+
+
+def dropped_methodologies(held: list[str], config: Config) -> list[str]:
+    """The ``held`` methodologies a run of ``config`` does not build the
+    required artifacts of: after it the namespace no longer serves them.
+    (One that reads only what another builds, as HippoRAG 2 reads
+    LightRAG's, is not dropped.)"""
+    built = artifacts_to_build(config)
+    known = {m.value: m for m in Methodology}
+    return [
+        m
+        for m in held
+        if m in known and not METHODOLOGY_PROFILES[known[m]].required <= built
+    ]
+
+
 def _pipeline_id(corpus: Path, namespace: str) -> str:
     """A stable pipeline id per corpus directory and namespace, so a rerun of
     the same corpus resumes or runs incrementally on the same cache: a
@@ -184,6 +238,7 @@ class JobManager:
         config_path: Path | None,
         load_config: Callable[[], Config],
         on_ingest_end: Callable[[], None] | None = None,
+        read_held: Callable[[str], Awaitable[list[str] | None]] | None = None,
         cwd: Path | None = None,
     ) -> None:
         self.store = store
@@ -193,6 +248,9 @@ class JobManager:
         self.config_path = config_path
         self.load_config = load_config
         self.on_ingest_end = on_ingest_end
+        # The methodologies a namespace's build record says it holds (None:
+        # no record), for refusing an unconfirmed narrowing.
+        self.read_held = read_held
         self.cwd = cwd or Path.cwd()
         self.jobs: dict[str, Job] = {}
         # Namespaces a request has claimed before its job is registered: two
@@ -284,6 +342,7 @@ class JobManager:
         confirm_reset: bool = False,
         confirm_deletions: bool = False,
         confirm_integrity: bool = False,
+        confirm_narrowing: bool = False,
     ) -> Job:
         """Start ``run-ingestion`` over ``corpus`` (a resolved directory).
 
@@ -291,21 +350,19 @@ class JobManager:
         ``confirm_integrity`` (continue a pipeline id whose inputs changed),
         ``confirm_reset``, ``confirm_deletions``; unanswered, the run stops
         before it writes and the job's ``confirmation`` names the question.
+        A run that builds fewer methodologies than the namespace's build
+        record holds starts only with ``confirm_narrowing``: the namespace
+        would stop serving the others, for every corpus in it.
 
         Raises:
             JobConflict: A job runs in the namespace.
+            NarrowingNotConfirmed: It narrows the namespace, unconfirmed.
             ConfigurationError: An unknown methodology or a bad index value.
         """
-        config = self.load_config()
+        config, chosen = ingest_config(self.load_config(), methodologies)
         env: dict[str, str] = {}
-        if methodologies:
-            try:
-                chosen = [Methodology(m).value for m in methodologies]
-            except ValueError as e:
-                raise ConfigurationError(f"methodologies: {e}") from e
+        if chosen:
             env["UKR__INDEXING__METHODOLOGIES"] = json.dumps(chosen)
-            config = config.model_copy(deep=True)
-            config.indexing.methodologies = [Methodology(m) for m in chosen]
         if index_value:
             try:
                 index_value = validate_path_segment(index_value, "index value")
@@ -313,6 +370,8 @@ class JobManager:
                 raise ConfigurationError(str(e)) from e
             env["UKR__PROCESSING__DOCUMENT_PARSING__INDEX_VALUE"] = index_value
         namespace = namespace_of(config, index_value)
+        if not confirm_narrowing:
+            await self._check_narrowing(namespace, config)
         job_id = self._new_id()
         self._claim(namespace, job_id)
         try:
@@ -329,9 +388,24 @@ class JobManager:
                 confirm_reset,
                 confirm_deletions,
                 confirm_integrity,
+                confirm_narrowing,
             )
         finally:
             self._release(namespace, job_id)
+
+    async def _check_narrowing(self, namespace: str, config: Config) -> None:
+        """Raise ``NarrowingNotConfirmed`` if ``config`` builds fewer of the
+        methodologies than ``namespace`` holds. A record that cannot be read
+        is not a refusal: the run meets the store error itself."""
+        if self.read_held is None:
+            return
+        try:
+            held = await self.read_held(namespace)
+        except Exception as e:  # noqa: BLE001 - the run reports a store error
+            logger.warning("Reading what namespace '%s' holds failed: %s", namespace, e)
+            return
+        if dropped := dropped_methodologies(held or [], config):
+            raise NarrowingNotConfirmed(namespace, dropped)
 
     async def _start_ingest(
         self,
@@ -347,6 +421,7 @@ class JobManager:
         confirm_reset: bool,
         confirm_deletions: bool,
         confirm_integrity: bool,
+        confirm_narrowing: bool,
     ) -> Job:
         if not await asyncio.to_thread(corpus.is_dir):
             raise PathRefused(f"'{corpus_ref}' is not a directory")
@@ -384,6 +459,7 @@ class JobManager:
                 "confirm_reset": confirm_reset,
                 "confirm_deletions": confirm_deletions,
                 "confirm_integrity": confirm_integrity,
+                "confirm_narrowing": confirm_narrowing,
             },
             argv,
             env,
@@ -468,6 +544,7 @@ class JobManager:
         gates: list[str],
         max_failure_rate: float | None,
     ) -> Job:
+        config = self.load_config()
         job = self._new_job(job_id, JobKind.EVALUATE, namespace, {}, [], {})
         output = self.evaluation_outputs / "console" / job.id
         output.mkdir(parents=True, exist_ok=True)
@@ -505,6 +582,16 @@ class JobManager:
         }
         job.output_directory = output
         job.total_runs = (len(chosen) + int(closed_book)) * repeats
+        # As run-eval orders them (evaluation.run_order, one run: one at a
+        # time): interleaved runs answer in one batch and are saved only
+        # once every answer is in, so a stop keeps none of them.
+        run_order = (
+            str(config.evaluation.run_order) if job.total_runs > 1 else "sequential"
+        )
+        job.params["run_order"] = run_order
+        job.answers = AnswerProgress(
+            batches=1 if run_order == "interleaved" else job.total_runs
+        )
         await self._launch(job)
         return job
 
@@ -655,7 +742,11 @@ class JobManager:
             done = sum(s["status"] in ("completed", "restored") for s in steps)
             return {"stages": steps, "done": done, "total": len(steps)}
         assert job.output_directory is not None
-        return evaluation_progress(job.output_directory, job.total_runs)
+        progress = evaluation_progress(job.output_directory, job.total_runs)
+        if job.answers is not None:
+            job.answers.read(job.log_path)
+            progress["answers"] = job.answers.view()
+        return progress
 
     def log_tail(self, job: Job, lines: int = LOG_TAIL_LINES) -> list[str]:
         try:
@@ -697,6 +788,60 @@ def _alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+# The answer batch's lines run-eval logs (BatchProcessor, ProgressLogger),
+# in the text or the JSON log format alike.
+_ANSWER_TASK = "Answer Generation"
+_BATCH_START = re.compile(rf"Starting processing for '{_ANSWER_TASK}': (\d+) items")
+_BATCH_PROGRESS = re.compile(rf"Progress '{_ANSWER_TASK}': (\d+)/(\d+) items")
+_BATCH_DONE = re.compile(rf"Completed '{_ANSWER_TASK}': (\d+) results")
+
+
+@dataclass
+class AnswerProgress:
+    """An evaluation's answers so far, from the answer batch progress lines
+    of its log: each run answers in a batch of its own (sequential) or every
+    run in one (interleaved), logged as it starts, every ~10% (or minute)
+    and as it completes. ``batches`` is how many the job answers in. The
+    log is read on from where the last read stopped."""
+
+    batches: int
+    offset: int = 0
+    # Per batch seen: [answered, of].
+    seen: list[list[int]] = field(default_factory=list)
+    _partial: bytes = b""
+
+    def read(self, log_path: Path) -> None:
+        try:
+            with log_path.open("rb") as handle:
+                handle.seek(self.offset)
+                data = handle.read()
+        except OSError:
+            return
+        self.offset += len(data)
+        *lines, self._partial = (self._partial + data).split(b"\n")
+        for raw in lines:
+            self.feed(raw.decode("utf-8", errors="replace"))
+
+    def feed(self, line: str) -> None:
+        if match := _BATCH_START.search(line):
+            self.seen.append([0, int(match.group(1))])
+        elif self.seen and (match := _BATCH_PROGRESS.search(line)):
+            self.seen[-1] = [int(match.group(1)), int(match.group(2))]
+        elif self.seen and _BATCH_DONE.search(line):
+            self.seen[-1][0] = self.seen[-1][1]
+
+    def view(self) -> dict[str, int] | None:
+        """``done`` of ``total`` answers, the batches not started yet counted
+        at the size of the last one (``None`` before the first starts, or
+        with a log level that hides the lines)."""
+        if not self.seen:
+            return None
+        done = sum(answered for answered, _ in self.seen)
+        total = sum(of for _, of in self.seen)
+        total += max(0, self.batches - len(self.seen)) * self.seen[-1][1]
+        return {"done": min(done, total), "total": total}
 
 
 def evaluation_progress(output: Path, total: int) -> dict[str, Any]:
