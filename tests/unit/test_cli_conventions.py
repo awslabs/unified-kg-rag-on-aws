@@ -1020,7 +1020,8 @@ async def test_eval_json_output_is_the_only_stdout(
     runner = run_evaluation.EvaluationRunner(args, _Chain(), config)  # type: ignore[arg-type]
     assert await runner.run() == 0
     result = json.loads(capsys.readouterr().out)
-    assert result["output_directory"] == str(tmp_path / "out")
+    # The run's own subdirectory of the outputs directory.
+    assert result["output_directory"] == str(tmp_path / "out" / runner.run_id)
     assert result["failure_budget_breaches"] == []
     assert [
         (r["strategy"], r["repeat"], r["total_queries"]) for r in result["runs"]
