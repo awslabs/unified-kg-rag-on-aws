@@ -1377,7 +1377,11 @@ class BaseSearchStrategy(ABC):
                 pages = await gather_bounded(
                     self.config.search.max_concurrency,
                     (
-                        self._incident_relationships(within, batch, fields, ends=(end,))
+                        # A full page is asked again in halves: no cut to
+                        # warn of.
+                        self._incident_relationships(
+                            within, batch, fields, ends=(end,), warn_full=False
+                        )
                         for batch in pending
                     ),
                 )
@@ -1515,13 +1519,15 @@ class BaseSearchStrategy(ABC):
         size: int | None = None,
         ends: tuple[str, ...] = _ENDPOINTS,
         away_from: list[str] | None = None,
+        warn_full: bool = True,
     ) -> tuple[list[RetrievalResult], tuple[str, ...]]:
         """The relationships incident to ``entity_ids`` (only
         ``source_fields`` of each when given) at the ``ends`` named, at most
         ``size`` per end (``_incident_fetch_limit`` by default; never past
         the index's live ``max_result_window``), without those
         whose other endpoint is in ``away_from``, and the ends whose page came
-        back full (the edges past it were dropped).
+        back full (the edges past it were dropped; a WARNING once a process
+        says so unless ``warn_full`` is off, for a caller that asks again).
 
         The relationships index stores its endpoints as `source_id`/`target_id`
         keywords, but `_build_filter_clauses` ANDs every filter, so
@@ -1578,7 +1584,7 @@ class BaseSearchStrategy(ABC):
                 memo[key] = outcome
                 try:
                     edges, full, failed = await self._ask_incident(
-                        query, batches, source_fields, size, ends, away
+                        query, batches, source_fields, size, ends, away, warn_full
                     )
                 except BaseException:
                     del memo[key]
@@ -1591,7 +1597,7 @@ class BaseSearchStrategy(ABC):
                     outcome.set_result((edges, full))
                 return list(edges), full
         edges, full, _ = await self._ask_incident(
-            query, batches, source_fields, size, ends, away
+            query, batches, source_fields, size, ends, away, warn_full
         )
         return edges, full
 
@@ -1603,6 +1609,7 @@ class BaseSearchStrategy(ABC):
         size: int | None = None,
         ends: tuple[str, ...] = _ENDPOINTS,
         away_from: list[str] | None = None,
+        warn_full: bool = True,
     ) -> tuple[list[RetrievalResult], tuple[str, ...], bool]:
         """``_incident_relationships``' requests (one per end and batch of
         vertices, at most ``search.max_concurrency`` at once): the edges,
@@ -1655,7 +1662,7 @@ class BaseSearchStrategy(ABC):
             for end, side in zip(ends, sides, strict=True)
             if any(len(hits) >= page for hits in side)
         )
-        if full and page >= cap:  # not a sized page
+        if full and page >= cap and warn_full:  # not a sized page
             # A hub entity hits it on every query that matches it: a WARNING
             # once a process, DEBUG after.
             warned = _PAGE_CAP_WARNED.is_set()

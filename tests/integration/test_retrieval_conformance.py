@@ -11,6 +11,7 @@ expansion over the SQLite graph, Gremlin Server and Neptune; see
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -1975,7 +1976,7 @@ def test_the_relationships_index_gives_the_graphs_neighbourhood_edges(
 
 
 def test_the_relationships_index_gives_a_hubs_neighbourhood_edges(
-    graph_harness: StoreHarness,
+    graph_harness: StoreHarness, caplog: pytest.LogCaptureFixture, monkeypatch
 ) -> None:
     # Regression (real Neptune): the relationships index, which Neptune
     # deployments always read the PageRank graph from, returned at most one
@@ -2019,7 +2020,15 @@ def test_the_relationships_index_gives_a_hubs_neighbourhood_edges(
             await graph.aclose()
         return None if found is None else [e.id for e in found]
 
+    import threading
+
+    from unified_kg_rag.adapters.retrieval import base
+
+    # The full pages are asked again, so no "edges are dropped" warning.
+    monkeypatch.setattr(base, "_PAGE_CAP_WARNED", threading.Event())
+    caplog.set_level(logging.WARNING, logger=base.__name__)
     for per_vertex in (1, 50, 1000):
         on_graph = [e[0] for e in _edges_within(h, vertices, per_vertex=per_vertex)]
         assert asyncio.run(indexed(per_vertex)) == on_graph, per_vertex
     assert len(on_graph) == len(edges)
+    assert not [r for r in caplog.records if "page cap" in r.getMessage()]
