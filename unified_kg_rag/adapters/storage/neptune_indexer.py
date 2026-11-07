@@ -1044,6 +1044,9 @@ class NeptuneIndexer(GraphIndexer):
                 "Indexing %s relationships for '%s'...", len(rels), entity_label
             )
 
+            # A run that lost its lease stops before the endpoint read, as
+            # before the edge writes it precedes.
+            check_write_fence()
             try:
                 vertices = self._endpoint_vertex_ids(rels, entity_label)
             except NamespaceLeaseError:
