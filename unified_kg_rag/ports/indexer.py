@@ -657,9 +657,20 @@ class VectorIndexer(BaseIndexer):
         """:meth:`scan_text_units`, one page at a time: a page is read only
         once the one before it is consumed, so a caller that keeps a little
         of each unit holds one page of their text. Yields nothing without a
-        live index; ``None`` (the default) when the backend cannot page its
-        text units. Raises when a read fails."""
-        return None
+        live index; ``None`` when the backend cannot page its text units.
+        Raises when a read fails.
+
+        The default serves :meth:`scan_text_units` (``None`` when it
+        returns ``None``) in pages of ``page_size``: a store that implements
+        only that one still builds the summary tree, holding every unit's
+        fields at once."""
+        units = self.scan_text_units(suffix, fields=fields, page_size=page_size)
+        if units is None:
+            return None
+        size = max(page_size or len(units), 1)
+        return iter(
+            [units[start : start + size] for start in range(0, len(units), size)]
+        )
 
     def read_summary_nodes(
         self, suffix: str | None, *, fields: list[str]

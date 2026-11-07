@@ -742,9 +742,10 @@ From a `main` checkout (formats and keys no release had):
   only once a tree build fails; a full build without `raptor` deletes the tree's indices; a partial tree is built
   again under `refresh: on_reset`; the leaves' vectors are read as float32 arrays (about 15 KiB per leaf read instead
   of 40-60 KiB, about 50 KiB at the build's peak) and `max_leaves_in_memory` is checked before they are read, at a
-  default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#608), the leaf digest that tells a current
-  tree streaming the texts a page at a time (ids, attributes and text hashes kept;
-  `VectorIndexer.scan_text_unit_pages`). Failed summaries and, with
+  default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#608). The leaf digest that tells whether a
+  tree is current reads the texts a page at a time and keeps only their ids, attributes and text hashes
+  (`VectorIndexer.scan_text_unit_pages`) (#640); the port's default pages a store's `scan_text_units`, so a store
+  that implements only that one still builds the tree (#PR). Failed summaries and, with
   `refresh: on_reset`, the text units no summary covers are EMF metrics (`total_tree_summaries_failed`,
   `total_tree_uncovered_leaves`) on the CDK dashboard's "Summary tree (EMF)" widget (#603). See
   [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
