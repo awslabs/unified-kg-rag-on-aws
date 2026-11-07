@@ -139,22 +139,30 @@ detect-secrets, which scans ASH's file list, finds nothing: run it from a clone 
 ### Pins Dependabot does not move
 
 [Dependabot](./.github/dependabot.yml) updates both uv locks, the console's npm lock (`console/web`), the SHA-pinned
-workflow actions and the local store images in `docker/compose.local.yaml`. These pins it cannot read; bump them by hand, together where they must match:
+workflow actions and the local store images in `docker/compose.local.yaml`. These pins it cannot read; bump them by
+hand, together where they must match:
 
 - The uv version, `version: "0.12.23"` under every `astral-sh/setup-uv` step in `.github/workflows/` (Dependabot moves
   the action's SHA, not this input), and the `ghcr.io/astral-sh/uv` image `docker/Dockerfile` copies uv from
   (`COPY --from`, tag and digest).
 - The container base image, the `BASE_IMAGE` ARG default in `docker/Dockerfile` (tag and digest; Dependabot does not
   resolve an ARG in `FROM`).
+- The apt pins of the runtime stage's `apt-get install` line in `docker/Dockerfile` (`libgomp1=…`, `zlib1g=…`).
+  Debian publishes a security fix to `trixie-security` before a `python:3.12-slim` digest ships it, so a fixable
+  finding can fail the image scan while the base digest is current. Pin the fixed version on that line (the
+  `zlib1g` pin is one), with a comment naming the CVEs, and drop the pin once the base digest ships that version
+  (the weekly check below says when). Bump a pin when the repository offers a newer version: the superseded one
+  leaves the repository and the build fails.
 - The AWS CDK CLI, `npm install -g aws-cdk@…` in the `iac` job of `quality.yml`, and that job's `node-version`.
 - The ADOT collector sidecar, `COLLECTOR_VERSION` and `COLLECTOR_DIGEST` in `iac/stacks/compute_stack.py`.
 - The Trivy image the `docker` jobs scan with (`aquasec/trivy`, tag and digest, in `quality.yml`).
 
 The weekly [`pin-freshness`](./.github/workflows/pin-freshness.yml) workflow runs `scripts/check_pins.py`, which
-compares the base image, uv, ADOT and CDK CLI pins with upstream and opens (or updates) one issue listing those that
-are behind. The image scan (Trivy, `--severity HIGH,CRITICAL --ignore-unfixed`) fails a pull request on a fixable HIGH or
-CRITICAL finding in either image; bump the pin that clears it, or accept it in
-[`.trivyignore.yaml`](./.trivyignore.yaml) with its reason and an expiry.
+compares the base image, uv, apt, ADOT, CDK CLI and Trivy pins with upstream, and builds and scans the image as the
+`docker` job does; it opens (or updates) one issue listing the pins that are behind and the fixable findings. The
+image scan (Trivy, `--severity HIGH,CRITICAL --ignore-unfixed`) fails a pull request on a fixable HIGH or CRITICAL
+finding in either image; bump the pin that clears it, or accept it in [`.trivyignore.yaml`](./.trivyignore.yaml) with
+its reason and an expiry.
 
 ### Tests
 
