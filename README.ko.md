@@ -32,12 +32,12 @@ Unified Knowledge Graph RAG on AWS는 대규모 다국어 문서를 Amazon Neptu
 
 한 대의 컴퓨터에서 내장 SQLite 저장소와 [Ollama](https://ollama.com) 모델로 모든 과정을 실행합니다. Python 3.11–3.12, [uv](https://docs.astral.sh/uv/), Ollama가 필요합니다.
 
-**1. 설치**(`local` extra는 Ollama와 OpenAI 호환 클라이언트를 더하며 PyTorch는 설치하지 않습니다. 크로스 인코더 재순위화 모델은 `cross-encoder` extra입니다. [로컬에서 시작하기](./docs/getting-started/local.ko.md#설치) 참고):
+**1. 설치**(`local` extra는 Ollama와 OpenAI 호환 클라이언트를 더하며 PyTorch는 설치하지 않습니다. 크로스 인코더 재순위화 모델은 `cross-encoder` extra입니다. [로컬에서 시작하기](./docs/getting-started/local.ko.md#설치) 참고. `--no-dev`는 기여자용 테스트·린트 도구를 빼며, 이 옵션 없이 `uv run`을 실행하면 그 도구가 설치됩니다):
 
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra local
+uv sync --no-dev --extra local
 ```
 
 **2. 기본 모델 두 개 내려받기:**
@@ -67,13 +67,13 @@ EOF
 **4. 지식 그래프 만들기:**
 
 ```bash
-UKR__LOGGING__LEVEL=WARNING uv run run-ingestion --backend local --source-directory ./sample-corpus
+UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-ingestion --backend local --source-directory ./sample-corpus
 ```
 
 **5. 질문하기**(답변은 근거를 `[n]`으로 인용하고, `--verbose`는 모든 근거를 점수와 함께 보여 줍니다. `cross-encoder` extra가 없으면 재순위화 없이 실행하고 로그에 한 번 남깁니다):
 
 ```bash
-UKR__LOGGING__LEVEL=WARNING uv run run-rag --backend local --search-strategy mix --verbose \
+UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-rag --backend local --search-strategy mix --verbose \
   --query "How are Acme Robotics and Globex Sensors related?"
 ```
 

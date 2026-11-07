@@ -81,8 +81,9 @@ cd unified-kg-rag-on-aws
 uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
 
-`uv sync`만 실행하면 수집과 질의만 설치됩니다. 나머지는 extra 두 개로 추가하며, 필요한
-extra가 없으면 해당 명령이 extra 이름을 알려 주고 종료 코드 `2`로 종료합니다.
+`uv sync`만 실행하면 수집과 질의만 설치됩니다. 선택 기능은 extra로 추가하며(이 페이지는
+배포에 쓰는 extra를 다룹니다), 필요한 extra가 없으면 해당 명령이 extra 이름을 알려 주고 종료
+코드 `2`로 종료합니다. 위 명령의 두 extra는 다음과 같습니다.
 
 - **`eval`**: `run-eval`의 선택 사항인 RAGAS 심사 평가기(ragas, datasets, pandas.
   [평가기](../guides/evaluate.ko.md#평가기)). 기본으로 켜진, LLM을 쓰지 않는 평가기에는

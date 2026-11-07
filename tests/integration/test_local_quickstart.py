@@ -5,7 +5,7 @@ the README's five-minute quickstart, and their Korean editions.
 
 Every ``bash`` block of the page is read and run in order in an empty
 working directory: the shell commands that write the sample files run in
-``bash``, and every ``uv run <console script>`` runs that script's entry
+``bash``, and every ``uv run [--no-dev] <console script>`` runs that script's entry
 point in-process with the block's arguments and environment variables. The
 installs (``uv sync``, ``uv pip``, ``ollama pull``) and the checkout
 (``git clone``, ``cd``) are skipped. The models are the local adapters
@@ -29,6 +29,7 @@ import signal
 import subprocess  # nosec B404 - runs the page's own file-writing commands
 import sys
 import tomllib
+from itertools import dropwhile
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,7 @@ ANSWER = "Alice Chen is the chief engineer at Acme Robotics."
 # The default local embedding model's dimension (bge-m3).
 DIMENSION = 1024
 _INSTALLS = (("uv", "sync"), ("uv", "pip"), ("ollama", "pull"), ("git", "clone"))
+_UV_RUN_FLAGS = frozenset({"--no-dev"})
 
 
 def _respond(system: str, human: str) -> str:
@@ -214,6 +216,8 @@ def test_the_local_quickstart_runs_as_written(
                 ["bash", "-euc", command], cwd=tmp_path, check=True
             )
             continue
+        # uv's own flags (`uv run --no-dev <script>`) take no value here.
+        words = words[:2] + list(dropwhile(lambda w: w in _UV_RUN_FLAGS, words[2:]))
         script, argv = words[2], words[3:]
         assert script in scripts, f"the page runs '{script}', not a console script"
         with monkeypatch.context() as scoped:

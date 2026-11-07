@@ -175,6 +175,11 @@ _FILES_SHOWN = 5
 _SNIPPET_CHARS = 160
 # Plurals of the result types a sources line counts.
 _PLURALS = {"entity": "entities", "community": "community reports"}
+# Execution metrics whose key does not read as a label once title-cased.
+_METRIC_LABELS = {
+    "hl_keyword_count": "High-Level Keywords",
+    "ll_keyword_count": "Low-Level Keywords",
+}
 
 
 def _hit_kind(item: dict[str, Any]) -> str:
@@ -738,7 +743,7 @@ class RAGChainRunner:
             f"[dim]Search Type:[/dim] {self.args.search_type}",
             f"[dim]Top K Results:[/dim] {self.args.top_k}",
             f"[dim]Retrieval Multiplier:[/dim] {self.args.retrieval_multiplier}",
-            f"[dim]Use Memory:[/dim] {self.args.interactive}",
+            f"[dim]Conversation Memory:[/dim] {self.args.interactive}",
             f"[dim]Query Processing:[/dim] {not self.args.disable_query_processing}",
             f"[dim]Verbose Output:[/dim] {self.args.verbose}",
             self._get_suffix_display(),
@@ -860,7 +865,7 @@ class RAGChainRunner:
                 elif isinstance(value, int | float | str | bool) or (
                     isinstance(value, list | dict) and len(str(value)) < 100
                 ):
-                    label = key.replace("_", " ").title()
+                    label = _METRIC_LABELS.get(key) or key.replace("_", " ").title()
                     metrics_content += f"  - {label}: {markup_safe(value)}\n"
 
             if metrics_content:
