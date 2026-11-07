@@ -8,6 +8,9 @@ caller's filters and suffix, and the guardrail and abstention edges."""
 from __future__ import annotations
 
 import ast
+import asyncio
+import threading
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -68,6 +71,11 @@ pytestmark = pytest.mark.unit
         ("See [note] and [] and [a1].", []),
         ("A reversed range [3-1] names its two ends.", [3, 1]),
         ("A long range [1-500] is not every number in it.", [1, 500]),
+        # A bracketed year is text, as strip_markers reads it, in every
+        # language.
+        ("In [2020] the vendor shipped [2].", [2]),
+        ("2020년 [2020] 공급사가 출하했다 [1].", [1]),
+        ("［２０２０］年に出荷した【1】。", [1]),
     ],
 )
 def test_markers_are_read_in_every_answer_language(
@@ -81,6 +89,23 @@ def test_markers_are_stripped_from_the_words_of_an_answer() -> None:
     assert strip_markers("倉庫［１］【2】は保管する") == "倉庫は保管する"
     # A bracketed year is text.
     assert strip_markers("In [2020] Depot [3] opened.") == "In [2020] Depot opened."
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "In [2020] Depot [3] opened [1000].",
+        "2020년 [2020] 창고 [12] 개설 [999].",
+        "［２０２０］年 倉庫【7】",
+    ],
+)
+def test_the_markers_read_are_the_markers_stripped(text: str) -> None:
+    # A marker counted as a citation is one the answer's words lose, and a
+    # bracketed number kept as text is never a citation ("[2020]" was an
+    # unknown citation marker).
+    stripped = strip_markers(text)
+    assert cited_markers(stripped) == []
+    assert cited_markers(text) and all(len(str(n)) <= 3 for n in cited_markers(text))
 
 
 def test_only_the_contexts_markers_count() -> None:
@@ -208,6 +233,39 @@ def test_a_numbered_context_numbers_its_evidence_in_rendered_order(
         strict=True,
     ):
         assert len(line.split()) <= section.token_count, line
+
+
+def test_a_synthesized_section_naming_its_evidence_is_numbered(
+    config: Config,
+) -> None:
+    # Global search's key points and DRIFT's intermediate answers carry the
+    # lineage of what they were written from (citable): the answer can cite
+    # them. A synthesized section without one stays unnumbered.
+    manager = _token_manager(config)
+    results = _results()
+    results.append(
+        RetrievalResult(
+            content="Key point from the community reports (relevance 80/100): "
+            "Vendor ships widgets.",
+            score=0.8,
+            source="synthesized_key_points_1",
+            retriever_type="general",
+            metadata={
+                "synthesized": True,
+                "citable": True,
+                "text_unit_ids": ["tu-7"],
+                "document_ids": ["doc-7"],
+            },
+        )
+    )
+    optimized = manager.optimize_context(results, "q", number_sections=True)
+    context = manager.build_context_string(optimized)
+    markers = {s.source_id: s.marker for s in optimized.sections}
+    assert markers["synthesized_key_points"] is None
+    assert markers["synthesized_key_points_1"] == 4
+    assert "[4] Key point from the community reports" in context
+    unnumbered = manager.optimize_context(results, "q")
+    assert all(s.marker is None for s in unnumbered.sections)
 
 
 def test_an_unnumbered_context_is_as_before(config: Config) -> None:
@@ -479,6 +537,7 @@ def _chain(
     *,
     hits: list[RetrievalResult] | None = None,
     guard: _Guard | None = None,
+    on_answer: Callable[[], None] | None = None,
 ) -> tuple[GraphRAGChain, _Store, list[tuple[str, str]]]:
     config.providers.rerank.kind = "none"
     prompts: list[tuple[str, str]] = []
@@ -489,6 +548,8 @@ def _chain(
             # Content blocks (a prompt-cache marker): the fake joins their repr.
             system = "".join(b["text"] for b in ast.literal_eval(system))
         prompts.append((system, human))
+        if on_answer is not None:
+            on_answer()
         return answer
 
     chain = GraphRAGChain(
@@ -545,6 +606,49 @@ async def test_the_answer_cites_numbered_sections_and_their_documents(
     assert [s["source"] for s in out.sources] == ["tu-1", "e-1"]
 
 
+_KEY_POINT_ANSWERS = {
+    "en": "Depot stores widgets [1]; Vendor ships them [3].",
+    "ko": "창고가 부품을 보관하고 [1] 공급사가 출하합니다 [3].",
+    "ja": "倉庫が部品を保管し［１］、供給者が出荷する【3】。",
+}
+
+
+@pytest.mark.parametrize("language", list(_KEY_POINT_ANSWERS))
+async def test_an_answer_citing_a_key_point_names_its_reports_documents(
+    config: Config, language: str
+) -> None:
+    # Regression: the key points had no marker, so a global answer cited
+    # nothing; now a point's citation names the documents of the reports it
+    # credits, read from their lineage, even with the reports themselves
+    # out of the context. It is still never a source.
+    point = RetrievalResult(
+        content="Key point from the community reports (relevance 90/100): "
+        "Vendor ships the widgets.",
+        score=0.9,
+        source="synthesized_key_points_1",
+        retriever_type="general",
+        metadata={
+            "synthesized": True,
+            "citable": True,
+            "report_ids": ["c-1"],
+            "text_unit_ids": ["tu-2"],
+            "document_ids": ["doc-2"],
+        },
+    )
+    chain, store, prompts = _chain(
+        config, _KEY_POINT_ANSWERS[language], hits=[*_hits(), point]
+    )
+    out = await chain.ainvoke(_query())
+    assert "[3] Key point from the community reports" in prompts[-1][1]
+    cited = {c.marker: c for c in out.citations}
+    assert cited[3].cited is True
+    assert cited[3].source_id == "synthesized_key_points_1"
+    assert cited[3].text_unit_ids == ["tu-2"]
+    assert [d.file_name for d in cited[3].documents] == ["logistics.pdf"]
+    assert "unknown_citation_markers" not in out.metadata
+    assert "synthesized_key_points_1" not in [s["source"] for s in out.sources]
+
+
 async def test_a_filtered_query_never_names_a_document_its_filters_exclude(
     config: Config,
 ) -> None:
@@ -571,6 +675,57 @@ async def test_a_failed_lineage_read_leaves_the_answer_and_passages(
     assert out.metadata["citations_unresolved"] is True
     assert out.citations[0].file_name == "contract.txt"
     assert out.citations[1].documents == []
+
+
+async def test_the_lineage_read_runs_alongside_the_answer(config: Config) -> None:
+    # The read needs only the context: it no longer waits for the answer.
+    # The answer model (run in a worker thread) waits for the read to start;
+    # run one after the other it would wait out its timeout.
+    started = threading.Event()
+    seen: list[bool] = []
+    chain, store, _ = _chain(
+        config, on_answer=lambda: seen.append(started.wait(timeout=5))
+    )
+    fetch = store.aretrieve
+
+    async def recording(query: SearchQuery) -> list[RetrievalResult]:
+        if "id" in (query.filters or {}):
+            started.set()
+        return await fetch(query)
+
+    store.aretrieve = recording  # type: ignore[method-assign]
+    out = await chain.ainvoke(_query())
+    assert seen == [True]
+    assert [d.file_name for d in out.citations[1].documents] == [
+        "logistics.pdf",
+        "secret.txt",
+    ]
+
+
+async def test_a_failed_answer_cancels_the_lineage_read(config: Config) -> None:
+    config.processing.ignore_errors = False
+
+    def broken() -> None:
+        raise RuntimeError("model down")
+
+    chain, store, _ = _chain(config, on_answer=broken)
+    cancelled = asyncio.Event()
+    fetch = store.aretrieve
+
+    async def hanging(query: SearchQuery) -> list[RetrievalResult]:
+        if "id" not in (query.filters or {}):
+            return await fetch(query)
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return []
+
+    store.aretrieve = hanging  # type: ignore[method-assign]
+    with pytest.raises(Exception, match="model down"):
+        await chain.ainvoke(_query())
+    assert cancelled.is_set()
 
 
 async def test_citations_off_restores_the_earlier_context_and_prompt(

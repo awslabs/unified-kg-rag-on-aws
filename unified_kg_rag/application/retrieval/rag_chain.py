@@ -423,8 +423,11 @@ class RAGInput(BaseModel):
     search_strategy: SearchStrategy = Field(
         default=SearchStrategy.AUTO,
         description=(
-            "The search strategy: GraphRAG (auto, drift, global, local, simple) "
-            "or LightRAG dual-level keyword (mix, hybrid, naive)"
+            "The search strategy: GraphRAG (auto, drift, global, local, simple), "
+            "LightRAG dual-level keyword (mix, hybrid, naive), HippoRAG "
+            "personalized PageRank (ppr), RAPTOR summary tree (tree), "
+            "bounded follow-up rounds over local or mix (iterative) or a "
+            "checked read-only graph query (structured)"
         ),
     )
     search_type: SearchType = Field(
@@ -470,7 +473,8 @@ class RAGInput(BaseModel):
         default=True,
         description="Whether to enable query processing (translation, entity "
         "and keyword extraction). The follow-up rewrite is not part of it: it "
-        "runs whenever use_memory finds conversation history.",
+        "runs whenever there is conversation history (use_memory's or the "
+        "caller's history).",
     )
     target_language: str | None = Field(
         default=None, description="Target language for translation"
@@ -761,10 +765,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # Keeps the context the answer was generated from for the
             # answer's grounding check; wired only when that check is on.
             answer_step = answer_step | RunnableLambda(self._capture_grounding_step)
+        self._answer_step = answer_step
         rag_branch = (
             context_step
-            | answer_step
-            | RunnableLambda(self._citations_step)
+            | RunnableLambda(self._answer_with_citations_step)
             | RunnableLambda(self._format_output_step)
         )
 
@@ -1738,6 +1742,27 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             assert section.marker is not None
             cited.append(citations.citation_from_entry(section.marker, entry))
         return cited
+
+    async def _answer_with_citations_step(
+        self, state: dict[str, Any], config: RunnableConfig | None = None
+    ) -> dict[str, Any]:
+        """The answer (``_answer_step``) with the lineage read of its
+        context's citations (``_citations_step``) running alongside: the
+        read needs only the context, so it no longer waits for the answer.
+        A failed or cancelled answer cancels the read."""
+        read_state = dict(state)
+        lineage = asyncio.ensure_future(self._citations_step(read_state))
+        try:
+            answered: dict[str, Any] = await self._answer_step.ainvoke(state, config)
+        except BaseException:
+            lineage.cancel()
+            await asyncio.gather(lineage, return_exceptions=True)
+            raise
+        await lineage
+        answered["citations"] = read_state["citations"]
+        if read_state.get("citations_unresolved"):
+            answered["citations_unresolved"] = True
+        return answered
 
     async def _citations_step(self, state: dict[str, Any]) -> dict[str, Any]:
         """Set ``state["citations"]``: the context's citations, the

@@ -1788,7 +1788,8 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   and follow-up queries. *Actions:* for `n_depth` rounds the best-scored open
   follow-ups each run the local search (without rerank) and are answered with
   a score and new follow-ups. *Reduce:* the intermediate answers (one
-  synthesized section, never a reported source) and the evidence (each
+  synthesized section each, citable by the lineage of what it read, never a
+  reported source; §7.1) and the evidence (each
   primer fold's reports, each action's local search results), reranked
   once, go to the answer model. Without reports or primer follow-ups,
   the question itself is the one follow-up.
@@ -1882,9 +1883,10 @@ query deadline cancels them and starts no queued one) extracts key points scored
 each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`; a
 report's id in the prompt is its ordinal in the batch, mapped back). Points
 at or below `map_relevance_threshold` are dropped, the rest ranked, packed
-into `max_map_reduce_tokens` and handed to the answer model as one
-synthesized section (no separate reduce call: it only added a rewrite that
-could drop facts), followed by the reports they cite; a
+into `max_map_reduce_tokens` and handed to the answer model as synthesized
+sections, one per point with the lineage of the reports it credits (§7.1;
+no separate reduce call: it only added a rewrite that could drop facts),
+followed by the reports they cite; a
 point citing none of its batch's reports credits the whole batch.
 `evidence_tokens` caps the cited report text (whole reports, best point
 first) at 4000 tokens by default; null keeps the reports the answer's
@@ -3218,8 +3220,20 @@ releases and returns no citations):
   reports and is added to entity and relationship lines (about 3 tokens; a
   section is counted with a `[999]` placeholder so the budget holds). A
   synthesized section (global search's key points, DRIFT's intermediate
-  answers) is model output, not evidence: it gets no marker and no citation,
-  as it is not a source.
+  answers) is model output, not evidence, and never a source; each point or
+  answer is a section of its own carrying the lineage of what it was written
+  from (`evidence_lineage`: the text units and documents of the reports a
+  point credits, of a primer fold's reports or of the sections of an
+  action's local context) and flagged `citable`, so it gets a marker and its
+  citation resolves that lineage like a report's: MS GraphRAG's reduce
+  cites `[Data: Reports (...)]` and DRIFT's `[Data: Sources (...)]`, and the
+  documents are named even when `evidence_tokens` left the reports out. A
+  synthesized section without lineage gets no marker. Its text is screened
+  by the output guardrail as before. A marker has at most three digits,
+  read and stripped alike, so a bracketed year (`[2020]`) is text; an
+  earlier answer reaches the follow-up rewrite without its markers
+  (`history_buffer`). The lineage read runs alongside the answer call
+  (`_answer_with_citations_step`; a failed answer cancels it).
 - **Prompt.** `CITATION_INSTRUCTIONS` is appended to the system prompt of
   whichever answer prompt runs (concise, comprehensive or a `custom_prompts`
   override), like the abstention text: cite the supporting items after each

@@ -162,10 +162,14 @@ Tuning is in the
 
 Every answer cites the documents it rests on (`search.citations`, on by
 default). The answer context numbers its evidence `[1]`, `[2]`, ... (passages,
-entities, relationships, claims, community reports, summaries; not global
-search's key points or DRIFT's intermediate answers, which are model output),
-and the answer prompt asks the model to cite them with those markers, ASCII
-in every answer language:
+entities, relationships, claims, community reports, summaries), and the answer
+prompt asks the model to cite them with those markers, ASCII in every answer
+language. Global search's key points and DRIFT's intermediate answers are
+numbered one by one too: each names the documents of the reports (or the
+local context) it was written from, as MS GraphRAG's `[Data: Reports (...)]`
+does, even when the evidence budget left those reports out of the context.
+They are model output, so they are never listed as sources. A marker has
+at most three digits, so a bracketed year such as `[2020]` is text:
 
 ```text
 Depot stores the widgets for Vendor [1][3].
@@ -181,7 +185,8 @@ documents of up to `search.citations.lineage_units` of its text units (one
 batched store read per query, under the query's filters and suffix: a
 document they exclude is never named). A number the answer uses that the
 context did not show is in `metadata.unknown_citation_markers`, never a
-citation.
+citation. The store read runs alongside the answer call. A follow-up's
+rewrite reads the earlier answers without their markers.
 
 - `run-rag` prints the cited sources under the answer; `--output-format
   json` includes every citation.

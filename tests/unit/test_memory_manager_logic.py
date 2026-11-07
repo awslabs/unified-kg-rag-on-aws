@@ -75,6 +75,31 @@ def test_buffer_string_cuts_long_answers_only(patched_history) -> None:
     assert history.messages[1].content == "a" * 50  # stored answer untouched
 
 
+@pytest.mark.parametrize(
+    ("answer", "shown"),
+    [
+        ("Depot stores the widgets [1][3].", "Depot stores the widgets."),
+        ("창고가 부품을 보관합니다 [2, 4].", "창고가 부품을 보관합니다."),
+        ("倉庫は部品を保管する［１］【2】。", "倉庫は部品を保管する。"),
+        # A bracketed year is text, not a marker.
+        ("It opened in [2020] [1].", "It opened in [2020]."),
+    ],
+)
+def test_buffer_string_drops_the_answers_citation_markers(
+    patched_history, answer: str, shown: str
+) -> None:
+    # Regression: the markers numbered that turn's context, which the
+    # follow-up rewrite never sees; it copied them into the standalone
+    # question. A user message keeps what the user typed.
+    history = patched_history()
+    history.add_message(HumanMessage(content="Which [1] stores them?"))
+    history.add_message(AIMessage(content=answer))
+    assert history.get_buffer_string() == (
+        f"Human: Which [1] stores them?\nAI: {shown}"
+    )
+    assert history.messages[1].content == answer  # stored answer untouched
+
+
 # --- MemoryManager (async) -----------------------------------------------
 
 

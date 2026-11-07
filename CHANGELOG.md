@@ -595,6 +595,26 @@ From a `main` checkout (formats and keys no release had):
   and `document_id` in their attributes (ids and texts unchanged). `run-rag` prints the cited sources and its JSON
   output carries every citation. The retrieval evaluator adds `citation_precision` and `citation_recall` against
   `reference_sources` ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
+- Document citations (#627): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages,
+  entities, relationships, claims, reports, summaries) in every strategy, and global search's key points and DRIFT's
+  intermediate answers one section each, with the text units and documents of the reports (or the local context)
+  each was written from, as MS GraphRAG's reduce cites `[Data: Reports (...)]`: a cited point names those documents
+  even when the evidence budget left its reports out of the context, and stays model-written (screened, never a
+  source). The answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to
+  cite them with those markers, ASCII in every answer language. `RAGOutput.citations` lists one `Citation` per
+  number: whether the answer cites it, its documents (`CitedDocument`: document id, file name, path relative to the
+  corpus root, pages), text units, chunk id, title, seed-graph provenance and IRI; a graph section names the
+  documents of up to `search.citations.lineage_units` (10) of its text units, read in one batched fetch under the
+  query's suffix and filters, so an excluded or another tenant's document is never named, alongside the answer
+  call. A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation
+  (a marker has at most three digits: a bracketed year such as `[2020]` is text); a blocked answer has none. Earlier
+  answers reach the follow-up rewrite without their markers.
+  `CitationMarkerScanner` reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation`
+  marker and `cited`. The document converter keeps where each PDF page
+  starts and text units store `page_start` / `page_end`, `relative_path` and `document_id` in their attributes
+  (ids and texts unchanged). `run-rag` prints the cited sources and its JSON output carries every citation. The
+  retrieval evaluator adds `citation_precision` and `citation_recall` against `reference_sources`
+  ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
 - `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the
   follow-up rewrite reads where it reads memory otherwise, bounded to `memory.max_messages_per_conversation` turns
   and `memory.max_history_tokens` (4,000, estimated) and screened by the input guardrail like the query (a masked

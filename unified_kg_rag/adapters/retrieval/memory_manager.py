@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.messages.utils import get_buffer_string
 
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.retrieval.citations import strip_markers
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -25,21 +26,22 @@ def history_buffer(
     """``messages`` as ``Human: ...`` / ``AI: ...`` lines, as the follow-up
     rewrite reads a conversation (memory's or a caller's ``RAGInput.history``).
 
-    ``max_answer_chars`` cuts each answer (not the user messages) to that
-    many characters, marking the cut with an ellipsis.
+    Each answer loses its citation markers (``[1]``): they number the
+    sections of that turn's context, which the rewrite never sees, so the
+    rewrite would carry them into the standalone question.
+    ``max_answer_chars`` then cuts each answer (not the user messages) to
+    that many characters, marking the cut with an ellipsis.
     """
-    if max_answer_chars is not None:
-        messages = [
-            (
-                AIMessage(content=f"{m.content[:max_answer_chars]}...")
-                if isinstance(m, AIMessage)
-                and isinstance(m.content, str)
-                and len(m.content) > max_answer_chars
-                else m
-            )
-            for m in messages
-        ]
-    return get_buffer_string(messages)
+    shown: list[BaseMessage] = []
+    for m in messages:
+        if isinstance(m, AIMessage) and isinstance(m.content, str):
+            text = strip_markers(m.content)
+            if max_answer_chars is not None and len(text) > max_answer_chars:
+                text = f"{text[:max_answer_chars]}..."
+            if text != m.content:
+                m = AIMessage(content=text)
+        shown.append(m)
+    return get_buffer_string(shown)
 
 
 class ConversationKey(NamedTuple):

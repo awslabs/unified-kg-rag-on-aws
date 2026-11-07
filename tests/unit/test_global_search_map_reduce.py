@@ -46,6 +46,18 @@ def _communities(n: int) -> list[RetrievalResult]:
     return [_community(i) for i in range(n)]
 
 
+def _points(out: list[RetrievalResult]) -> list[RetrievalResult]:
+    """The key points of a map-reduce result: its leading synthesized items."""
+    points = [r for r in out if r.metadata.get("synthesized")]
+    assert out[: len(points)] == points
+    return points
+
+
+def _evidence(out: list[RetrievalResult]) -> list[RetrievalResult]:
+    """The reports after the key points."""
+    return out[len(_points(out)) :]
+
+
 class _SyncMapChain:
     """Stub map chain: ``.ainvoke`` answers through ``.invoke``."""
 
@@ -221,7 +233,7 @@ async def test_map_step_rates_only_reports() -> None:
 
     (map_input,) = strat.map_rater.batch_inputs
     assert "chunk text" not in map_input["reports"]
-    assert [r.source for r in out] == ["synthesized_key_points", "c0", "c1"]
+    assert [r.source for r in out] == ["synthesized_key_points_1", "c0", "c1"]
 
 
 async def test_map_step_counts_only_reports_against_the_minimum() -> None:
@@ -296,14 +308,19 @@ def test_reduce_hands_the_ranked_points_to_the_answer_model() -> None:
     results = _communities(3)
     out = strat._reduce_from_points(points, results)
 
-    assert out[0].source == "synthesized_key_points"
+    assert [r.source for r in out[:2]] == [
+        "synthesized_key_points_1",
+        "synthesized_key_points_2",
+    ]
     assert out[0].metadata["ranked_key_points"] == 2
-    assert [r.source for r in out[1:]] == ["c0", "c1", "c2"]
-    # The section is the ranked key points (with relevance), NOT the raw
-    # report bodies.
-    assert "alpha" in out[0].content and "beta" in out[0].content
+    assert [r.source for r in out[2:]] == ["c0", "c1", "c2"]
+    # Each section is a ranked key point (with relevance), NOT a raw report
+    # body.
+    assert "alpha" in out[0].content and "beta" in out[1].content
     assert "relevance 90" in out[0].content
-    assert "community report 0" not in out[0].content
+    assert all("community report 0" not in r.content for r in out[:2])
+    # Without its batch a point names no evidence: it is not citable.
+    assert out[0].metadata["citable"] is False
 
 
 def test_global_search_builds_no_reduce_chain() -> None:
@@ -351,7 +368,7 @@ async def test_apply_map_reduce_full_pipeline_prepends_synthesis() -> None:
     )
     results = _communities(2)
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
-    assert out[0].source == "synthesized_key_points"
+    assert out[0].source == "synthesized_key_points_1"
     assert out[0].metadata["ranked_key_points"] == 1  # only the 95 survived
     # Map-LLM output, not evidence: flagged so it is never reported as a source.
     assert out[0].metadata["synthesized"] is True
@@ -480,7 +497,7 @@ async def test_asearch_without_a_failure_has_no_degraded_marker() -> None:
 # --------------------------------------------------------------------------- #
 
 
-async def test_passes_ranked_points_as_one_section() -> None:
+async def test_passes_each_ranked_point_as_its_own_section() -> None:
     strat = _strategy(
         map_batch_size=1,
         map_reduce_min_results=2,
@@ -493,15 +510,23 @@ async def test_passes_ranked_points_as_one_section() -> None:
 
     out = await strat._apply_map_reduce(results, SearchQuery(query="q"))
 
-    points = out[0]
-    assert points.source == "synthesized_key_points"
-    assert points.metadata["synthesized"] is True  # never reported as a source
-    assert points.metadata["ranked_key_points"] == 2
-    assert points.content.index("strong point") < points.content.index("weaker")
-    assert "relevance 95" in points.content
-    assert "noise" not in points.content
+    points = _points(out)
+    assert [p.source for p in points] == [
+        "synthesized_key_points_1",
+        "synthesized_key_points_2",
+    ]
+    for point in points:
+        assert point.metadata["synthesized"] is True  # never reported as a source
+        assert point.metadata["ranked_key_points"] == 2
+    assert "strong point" in points[0].content and "relevance 95" in points[0].content
+    assert "weaker point" in points[1].content
+    assert [p.score for p in points] == [0.95, 0.4]
+    assert all("noise" not in p.content for p in points)
     # The evidence follows its best point (c1's 95 before c0's 40), scored 0-1.
-    assert [(r.source, r.score) for r in out[1:]] == [("c1", 0.95), ("c0", 0.4)]
+    assert [(r.source, r.score) for r in _evidence(out)] == [
+        ("c1", 0.95),
+        ("c0", 0.4),
+    ]
     assert strat._was_map_reduce_applied(out) is True
 
 
@@ -519,7 +544,71 @@ async def test_a_point_credits_only_the_reports_it_cites() -> None:
     )
     strat = _strategy(map_batch_size=4, map_outputs=[cited])
     out = await strat._apply_map_reduce(_communities(4), SearchQuery(query="q"))
-    assert [(r.source, r.score) for r in out[1:]] == [("c1", 0.8), ("c3", 0.6)]
+    assert [(r.source, r.score) for r in _evidence(out)] == [("c1", 0.8), ("c3", 0.6)]
+
+
+def _cited_community(i: int) -> RetrievalResult:
+    report = _community(i)
+    report.metadata.update(
+        text_unit_ids=[f"tu-{i}a", f"tu-{i}b", "tu-shared"],
+        document_ids=[f"doc-{i}"],
+    )
+    return report
+
+
+@pytest.mark.parametrize(
+    "descriptions",
+    [
+        ("Vendor ships widgets", "Depot stores them"),
+        ("공급사가 부품을 출하한다", "창고가 부품을 보관한다"),
+        ("供給者が部品を出荷する", "倉庫が部品を保管する"),
+    ],
+    ids=["en", "ko", "ja"],
+)
+async def test_each_point_carries_the_lineage_of_the_reports_it_credits(
+    descriptions: tuple[str, str],
+) -> None:
+    # Regression: the key points were one uncitable section, so an answer
+    # drawn from them cited nothing, and with the evidence budget most of
+    # their reports never reached the context. MS GraphRAG's reduce keeps
+    # each point's [Data: Reports (...)]: here each point is its own
+    # section whose lineage is the union of its credited reports'.
+    one, both = descriptions
+    payload = json.dumps(
+        {
+            "points": [
+                {"description": one, "score": 80, "report_ids": ["2"]},
+                {"description": both, "score": 60},  # no ids: its whole batch
+            ]
+        },
+        ensure_ascii=False,
+    )
+    strat = _strategy(map_batch_size=2, map_outputs=[payload], evidence_tokens=0)
+    reports = [_cited_community(0), _cited_community(1)]
+    out = await strat._apply_map_reduce(reports, SearchQuery(query="q"))
+
+    first, second = out  # evidence_tokens 0: the points alone
+    assert one in first.content and both in second.content
+    assert first.metadata["citable"] is True
+    assert first.metadata["report_ids"] == ["c1"]
+    assert first.metadata["text_unit_ids"] == ["tu-1a", "tu-1b", "tu-shared"]
+    assert first.metadata["document_ids"] == ["doc-1"]
+    assert second.metadata["report_ids"] == ["c0", "c1"]
+    assert second.metadata["text_unit_ids"] == [
+        "tu-0a",
+        "tu-0b",
+        "tu-shared",
+        "tu-1a",
+        "tu-1b",
+    ]
+    assert second.metadata["document_ids"] == ["doc-0", "doc-1"]
+
+
+async def test_a_point_of_reports_without_lineage_is_not_citable() -> None:
+    strat = _strategy(map_batch_size=2, map_outputs=[_map_payload(("p", 70))])
+    out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
+    assert out[0].metadata["citable"] is False
+    assert out[0].metadata["text_unit_ids"] == []
 
 
 @pytest.mark.parametrize("ids", [None, [], ["9"], ["cid-0"], "1"])
@@ -531,7 +620,7 @@ async def test_a_point_without_valid_ids_credits_its_batch(ids: Any) -> None:
         map_batch_size=2, map_outputs=[json.dumps({"points": [point]}), ""]
     )
     out = await strat._apply_map_reduce(_communities(3), SearchQuery(query="q"))
-    assert [r.source for r in out[1:]] == ["c0", "c1"]
+    assert [r.source for r in _evidence(out)] == ["c0", "c1"]
 
 
 def test_the_map_prompt_asks_for_the_report_ids() -> None:
@@ -889,8 +978,8 @@ async def test_evidence_tokens_caps_the_cited_reports(
     out = await strat._apply_map_reduce(
         _communities(3), SearchQuery(query="q"), stats=stats
     )
-    assert out[0].source == "synthesized_key_points"
-    assert [r.source for r in out[1:]] == kept
+    assert out[0].source == "synthesized_key_points_1"
+    assert [r.source for r in _evidence(out)] == kept
     if evidence_tokens is None:
         assert "global_evidence_reports" not in stats
     else:

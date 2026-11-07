@@ -140,7 +140,7 @@ answer keeps its sources
 context budget holds, which on a large cut is most of a global query's input
 tokens; `0` (cheaper still) sends the key points only, as MS GraphRAG's reduce step reads
 them, and the answer then reports no sources (the key points are model
-output), so the `retrieval` evaluator skips its rank metrics for a global
+output; each is still cited by the documents of the reports it credits), so the `retrieval` evaluator skips its rank metrics for a global
 query (`no_sources_by_config`) instead of scoring a miss.
 
 ## Context budget

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -123,9 +124,18 @@ class _Local:
         )
 
 
+class _Optimized(list):
+    """The fake budget's selection: the results it kept, each a section of
+    the result it was cut from."""
+
+    @property
+    def sections(self) -> list[SimpleNamespace]:
+        return [SimpleNamespace(result_index=i) for i in range(len(self))]
+
+
 class _Tokens:
     def optimize_context(self, results, query, max_tokens):
-        return results
+        return _Optimized(results)
 
     def build_context_string(self, optimized) -> str:
         return "\n".join(r.content for r in optimized)
@@ -202,9 +212,10 @@ def _strategy(
 
 
 def _answers(result: SearchResult) -> str:
-    first = result.results[0]
-    assert first.metadata.get("synthesized") is True
-    return first.content
+    """The intermediate answers, best first: one synthesized section each."""
+    answers = [r for r in result.results if (r.metadata or {}).get("synthesized")]
+    assert answers and result.results[: len(answers)] == answers
+    return "\n\n".join(r.content for r in answers)
 
 
 # --------------------------------------------------------------------------- #
@@ -396,7 +407,7 @@ async def test_an_action_reads_its_local_context_within_the_budget() -> None:
     class _Budget(_Tokens):
         def optimize_context(self, results, query, max_tokens):
             budgets.append(max_tokens)
-            return results[:0] if max_tokens < 1000 else results
+            return _Optimized(results[:0] if max_tokens < 1000 else results)
 
     strat = _strategy(n_depth=1, local_context_tokens=999)
     strat.token_manager = _Budget()  # type: ignore[assignment]
@@ -592,12 +603,67 @@ async def test_answers_are_ranked_and_packed_into_the_budget() -> None:
     text = _answers(result)
     assert text.index("answer to about report 0?") < text.index("draft from report 0")
     assert text.index("draft from report 0") < text.index("answer to about report 2?")
-    assert result.results[0].source == "synthesized_drift_answers"
+    assert result.results[0].source == "synthesized_drift_answers_1"
 
     strat = _strategy(action=_action(tree), max_answer_tokens=128)
     text = _answers(await strat.asearch(SearchQuery(query="question")))
     assert "answer to about report 0?" in text
     assert "answer to about report 2?" not in text
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["Who ships?", "누가 출하하나요?", "誰が出荷しますか？"],
+    ids=["en", "ko", "ja"],
+)
+async def test_each_intermediate_answer_cites_what_it_was_written_from(
+    question: str,
+) -> None:
+    # Regression: the intermediate answers were one uncitable section, so an
+    # answer drawn from them cited nothing (MS GraphRAG's DRIFT reduce keeps
+    # [Data: Sources (...)]). Each is now a section of its own with the
+    # lineage of its fold's reports or of the local context it read.
+    reports = _Reports(count=2)
+    for i, report in enumerate(reports.reports):
+        report.metadata.update(text_unit_ids=[f"tu-r{i}"], document_ids=[f"doc-r{i}"])
+
+    class _CitingLocal(_Local):
+        async def asearch(self, query, config=None):
+            found = await super().asearch(query, config)
+            for result in found.results:
+                result.metadata.update(id=f"tu:{query.query}", document_ids=["doc-l"])
+            # Cut by the action's budget below: never in its context.
+            found.results.append(
+                _result("over budget", source="t:cut", metadata={"id": "tu-cut"})
+            )
+            return found
+
+    class _Budget(_Tokens):
+        def optimize_context(self, results, query, max_tokens):
+            return _Optimized(r for r in results if r.source != "t:cut")
+
+    strat = _strategy(reports=reports, local=_CitingLocal(), n_depth=1, primer_folds=2)
+    strat.token_manager = _Budget()  # type: ignore[assignment]
+    result = await strat.asearch(SearchQuery(query=question))
+
+    answers = {
+        r.content.split("\n", 1)[1]: r.metadata
+        for r in result.results
+        if r.metadata.get("synthesized")
+    }
+    primed = answers["draft from report 0"]
+    assert primed["citable"] is True
+    assert (primed["text_unit_ids"], primed["document_ids"]) == (
+        ["tu-r0"],
+        ["doc-r0"],
+    )
+    acted = answers["answer to about report 0?"]
+    assert acted["text_unit_ids"] == ["tu:about report 0?"]
+    assert acted["document_ids"] == ["doc-l"]
+    assert all("tu-cut" not in m["text_unit_ids"] for m in answers.values())
+    assert [m["intermediate_answer_rank"] for m in answers.values()] == list(
+        range(1, len(answers) + 1)
+    )
 
 
 async def test_evidence_is_fused_with_the_local_quota(mocker) -> None:
