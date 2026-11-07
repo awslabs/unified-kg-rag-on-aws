@@ -475,7 +475,7 @@ From a `main` checkout (formats and keys no release had):
   the rebuilt tree into its own index (`indexing.opensearch.summary_nodes_index_prefix`); a cluster whose children
   are unchanged reuses its summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
 - A read-only MCP (Model Context Protocol) server, opt-in through the new `mcp` extra and the `run-mcp-server` console
-  script (#PR): five tools serve one index namespace to agents (`kg_search`, `kg_answer`, `kg_get_entity`,
+  script (#616): five tools serve one index namespace to agents (`kg_search`, `kg_answer`, `kg_get_entity`,
   `kg_neighbors`, `kg_describe_schema`), each annotated read-only, over stdio or stateless streamable HTTP (loopback by
   default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
