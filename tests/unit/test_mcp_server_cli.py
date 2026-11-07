@@ -20,7 +20,7 @@ from unified_kg_rag.application.cli.mcp_server import (
     build_mcp_server,
     mcp_extra_error,
 )
-from unified_kg_rag.domain.models import Config, SearchStrategy
+from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -125,28 +125,6 @@ def test_the_port_and_suffix_are_validated() -> None:
         with pytest.raises(SystemExit):
             run_mcp_server.parse_args(flags)
     assert run_mcp_server.parse_args(["--suffix", "tenant_a"]).suffix == "tenant_a"
-
-
-def test_auto_is_narrowed_to_the_offered_strategies() -> None:
-    config = Config()
-    assert run_mcp_server.narrowed_config(config) is config
-    config.mcp.strategies = [
-        SearchStrategy.AUTO,
-        SearchStrategy.LOCAL,
-        SearchStrategy.MIX,
-    ]
-    narrowed = run_mcp_server.narrowed_config(config)
-    assert narrowed.search.auto_routable_strategies == [
-        SearchStrategy.LOCAL,
-        SearchStrategy.MIX,
-    ]
-    # The loaded config is not changed.
-    assert SearchStrategy.GLOBAL in config.search.auto_routable_strategies
-    config.mcp.strategies = [SearchStrategy.AUTO, SearchStrategy.PPR]
-    with pytest.raises(ConfigurationError, match="none of"):
-        run_mcp_server.narrowed_config(config)
-    config.mcp.strategies = [SearchStrategy.LOCAL]
-    assert run_mcp_server.narrowed_config(config) is config
 
 
 def test_mcp_settings_are_validated() -> None:

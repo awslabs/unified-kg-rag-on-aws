@@ -5994,7 +5994,9 @@ class McpServerConfig(BaseModel):
             "The search strategies kg_search and kg_answer may run (null: "
             "every strategy; one the namespace does not hold is refused "
             "either way). The default strategy is auto when listed, else the "
-            "first one"
+            "first one; auto then routes (and falls back) only among them, "
+            "and is refused before any model call when the namespace serves "
+            "none of them"
         ),
     )
     max_top_k: int = Field(

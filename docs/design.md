@@ -2971,6 +2971,16 @@ document said about the same entity. Data a caller must not read belongs in
 another namespace. `mcp.strategies` limits which strategies the tools run
 (cost control); a strategy the namespace does not hold is refused with the
 chain's `MethodologyNotIndexedError` message, which names what it holds.
+The list binds the chain (`GraphRAGChain(allowed_strategies=...)`) and is
+enforced where the chain resolves the strategy (`_resolve_strategy`), not
+after the answer: a strategy outside it is refused (`ToolArgumentError`),
+and `auto`'s candidates (the routing fallback of
+`strategy_registry.routable_strategies` included) are cut to the list
+before the router is asked, so neither the router nor the fallback after
+a failed routing can pick another. When the namespace serves none of the
+listed strategies, `auto` is refused before any model call
+(`MethodologyNotIndexedError`, naming the allowed list and what `auto`
+could have routed to).
 
 **Limits.** Every argument is bounded in the published input schema and
 checked again in the tool: `top_k` and `limit` by `mcp.max_top_k`,

@@ -481,7 +481,9 @@ From a `main` checkout (formats and keys no release had):
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
   seed-graph provenance). The namespace is fixed at start (`--suffix`, else `index_value`) unless
   `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the `mcp.max_*` bounds limit what a call
-  may ask and costs; every call runs under `search.query_timeout_seconds` and returns its model `usage`. The graph
+  may ask and costs (`mcp.strategies` binds the chain's new `allowed_strategies`: `auto` routes, and falls back, only
+  within it, and is refused before any model call when the namespace serves none of it); every call runs under
+  `search.query_timeout_seconds` and returns its model `usage`. The graph
   tools read the stores through the chain's retrievers and make no model call. `build_mcp_server` (package root)
   mounts the same server in a host's ASGI application. Guide: [MCP server](docs/guides/mcp.md).
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage

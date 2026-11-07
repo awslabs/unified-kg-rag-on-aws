@@ -53,7 +53,6 @@ from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
     Config,
     RetrieverRole,
-    SearchStrategy,
     validate_safe_name,
 )
 from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
@@ -164,40 +163,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def narrowed_config(config: Config) -> Config:
-    """``config`` with ``auto`` routing only among ``mcp.strategies``, when
-    the list allows ``auto`` (a strategy outside it could otherwise be
-    picked by the router).
-
-    Raises:
-        ConfigurationError: No routable strategy is in the list.
-    """
-    allowed = config.mcp.strategies
-    if not allowed or SearchStrategy.AUTO not in allowed:
-        return config
-    routable = config.search.auto_routable_strategies
-    kept = [s for s in routable if s in allowed]
-    if kept == routable:
-        return config
-    if not kept:
-        raise ConfigurationError(
-            "mcp.strategies allows auto but none of "
-            "search.auto_routable_strategies "
-            f"({', '.join(s.value for s in routable)}); list one of them"
-        )
-    narrowed = config.model_copy(deep=True)
-    narrowed.search.auto_routable_strategies = kept
-    logger.info(
-        "auto routes among %s (mcp.strategies)", ", ".join(s.value for s in kept)
-    )
-    return narrowed
-
-
 async def serve(args: argparse.Namespace, config: Config) -> int:
     """Build the chain and the server, and serve until the transport ends."""
     loop = asyncio.get_running_loop()
     executor = event_loop.configure_event_loop(loop, config.processing.io_workers)
-    chain = GraphRAGChain(config=config)
+    chain = GraphRAGChain(config=config, allowed_strategies=config.mcp.strategies)
     try:
         tools = KnowledgeGraphTools(chain, namespace=args.suffix)
         server = build_mcp_server(tools)
@@ -227,9 +197,7 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
 async def async_main(args: argparse.Namespace) -> int:
     try:
         with exit_on_config_error():
-            config = narrowed_config(
-                apply_provider_arguments(load_cli_config(args), args)
-            )
+            config = apply_provider_arguments(load_cli_config(args), args)
         # stdout is the protocol's: everything else goes to stderr.
         console.stderr = True
         setup_logging(config, stream=sys.stderr)

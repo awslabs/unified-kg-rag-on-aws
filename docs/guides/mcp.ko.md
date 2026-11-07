@@ -91,7 +91,7 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 |---|---|---|
 | `mcp.tools` | 다섯 개 모두 | 제공할 도구. `kg_answer`를 빼면 답변 모델을 호출하지 않음 |
 | `mcp.allowed_namespaces` | `[]` | 호출이 추가로 지정할 수 있는 네임스페이스 |
-| `mcp.strategies` | 모든 전략 | `kg_search`와 `kg_answer`가 실행할 수 있는 전략. 목록에 `auto`가 있으면 `auto`도 목록 안에서만 라우팅 |
+| `mcp.strategies` | 모든 전략 | `kg_search`와 `kg_answer`가 실행할 수 있는 전략. 목록에 `auto`가 있으면 `auto`도 목록 안에서만 라우팅하고, 네임스페이스가 목록의 전략을 하나도 제공하지 않으면 모델 호출 전에 거부 |
 | `mcp.max_top_k` | `20` | 검색의 `top_k`, `kg_get_entity`의 `limit` |
 | `mcp.max_hops`, `mcp.max_neighbors` | `2`, `50` | `kg_neighbors` 탐색 |
 | `mcp.max_query_chars` | `2000` | 질의나 엔터티 이름 |

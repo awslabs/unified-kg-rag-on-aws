@@ -97,7 +97,7 @@ read from its own server and namespace, with the store roles of the
 |---|---|---|
 | `mcp.tools` | all five | The tools listed; leave `kg_answer` out to make no answer-model call |
 | `mcp.allowed_namespaces` | `[]` | Further namespaces a call may name |
-| `mcp.strategies` | every strategy | The strategies `kg_search` and `kg_answer` may run; with `auto` in the list, `auto` routes only among the listed ones |
+| `mcp.strategies` | every strategy | The strategies `kg_search` and `kg_answer` may run; with `auto` in the list, `auto` routes only among the listed ones, and is refused before any model call when the namespace serves none of them |
 | `mcp.max_top_k` | `20` | `top_k` of a search, `limit` of `kg_get_entity` |
 | `mcp.max_hops`, `mcp.max_neighbors` | `2`, `50` | A `kg_neighbors` walk |
 | `mcp.max_query_chars` | `2000` | A query or entity name |

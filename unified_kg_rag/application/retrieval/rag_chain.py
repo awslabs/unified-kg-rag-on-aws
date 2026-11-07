@@ -149,6 +149,10 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.exceptions import (
+    MethodologyNotIndexedError,
+    ToolArgumentError,
+)
 from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import (
@@ -159,6 +163,11 @@ from unified_kg_rag.shared.utils import (
 from unified_kg_rag.shared.utils.concurrency import discard, settle
 
 logger = get_logger(__name__)
+
+
+def _names(strategies: Collection[SearchStrategy]) -> str:
+    """``strategies`` as a message lists them, in declaration order."""
+    return ", ".join(s.value for s in SearchStrategy if s in strategies)
 
 
 def _listed(value: Any) -> list[str]:
@@ -506,9 +515,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             dict[RetrieverRole, Callable[[], BaseGraphRAGRetriever]] | None
         ) = None,
         guard: ContentGuardPort | None = None,
+        allowed_strategies: Collection[SearchStrategy] | None = None,
     ) -> None:
         super().__init__()
         self.config = config
+        # The strategies a query may run, when a serving surface limits them
+        # (the MCP server's mcp.strategies): auto routes only among them and
+        # another is refused when the strategy resolves (_resolve_strategy).
+        self.allowed_strategies: frozenset[SearchStrategy] | None = (
+            frozenset(allowed_strategies) if allowed_strategies is not None else None
+        )
         try:
             config.aws.bedrock.guardrail.check_contextual_grounding()
         except ValueError as e:
@@ -724,18 +740,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         strategy = state.get("search_strategy", SearchStrategy.AUTO)
 
         if strategy != SearchStrategy.AUTO:
+            self._check_allowed(strategy)
             state["resolved_strategy"] = strategy
             return state
 
         # Before routing, as an interactive session does: the router picks
         # only among the strategies that apply every filter key, so whether
         # a key is refused never depends on the route a question takes.
-        routable = filter_validation.auto_candidates(
-            self,
-            state.get("filters"),
-            # What auto routes among; each candidate's filter keys are
-            # checked against these indexes.
-            state.get("held_artifacts"),
+        routable = self._allowed_routes(
+            filter_validation.auto_candidates(
+                self,
+                state.get("filters"),
+                # What auto routes among; each candidate's filter keys are
+                # checked against these indexes.
+                state.get("held_artifacts"),
+            ),
+            state.get("suffix"),
         )
         if len(routable) == 1:
             # Nothing to choose between: no router call.
@@ -785,6 +805,42 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
         state["resolved_strategy"] = strategy
         return state
+
+    def _check_allowed(self, strategy: SearchStrategy) -> None:
+        """Refuse ``strategy`` outside ``allowed_strategies``, before any
+        model call of the query."""
+        allowed = getattr(self, "allowed_strategies", None)
+        if allowed is not None and strategy not in allowed:
+            raise ToolArgumentError(
+                f"Search strategy '{strategy.value}' is not allowed here; "
+                f"choose one of {_names(allowed)}."
+            )
+
+    def _allowed_routes(
+        self, routable: tuple[SearchStrategy, ...], suffix: str | None
+    ) -> tuple[SearchStrategy, ...]:
+        """Of ``routable`` (auto's candidates, the routable fallback
+        included), those in ``allowed_strategies``: the router picks only
+        among them and the routing fallback takes the first, so auto never
+        runs another. Raises ``MethodologyNotIndexedError``, before the
+        router call, when none is left."""
+        allowed = getattr(self, "allowed_strategies", None)
+        if allowed is None:
+            return routable
+        kept = tuple(s for s in routable if s in allowed)
+        if kept:
+            return kept
+        namespace = (
+            suffix
+            or self.config.processing.document_parsing.index_value
+            or Constants.DEFAULT_SUFFIX.value
+        )
+        raise MethodologyNotIndexedError(
+            f"auto may run only {_names(allowed)}, and none of them serves "
+            f"the index namespace '{namespace}' (with these filters auto "
+            f"could route to {_names(routable)}); pick one it serves, or "
+            "ingest the methodology an allowed strategy reads."
+        )
 
     @staticmethod
     def _parse_routed_strategy(

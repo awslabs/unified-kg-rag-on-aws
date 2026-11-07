@@ -40,7 +40,13 @@ from unified_kg_rag.application.cli import mcp_tools
 from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
 from unified_kg_rag.application.retrieval import methodology_check
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
-from unified_kg_rag.domain.models import Config, IndexArtifact, PipelineStageStatus
+from unified_kg_rag.domain.models import (
+    Config,
+    IndexArtifact,
+    PipelineStageStatus,
+    SearchStrategy,
+)
+from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
 
 pytestmark = pytest.mark.integration
@@ -73,13 +79,16 @@ def _respond(system: str, human: str) -> str:
 
 
 class Index:
-    def __init__(self, config: Config, providers: Providers, root: Path) -> None:
+    def __init__(
+        self, config: Config, providers: Providers, root: Path, server: FakeOllama
+    ) -> None:
         self.config = config
         self.providers = providers
         self.root = root
+        self.server = server
 
-    def chain(self) -> GraphRAGChain:
-        return GraphRAGChain(self.config, providers=self.providers)
+    def chain(self, **kwargs: Any) -> GraphRAGChain:
+        return GraphRAGChain(self.config, providers=self.providers, **kwargs)
 
 
 @pytest.fixture(scope="module")
@@ -101,7 +110,7 @@ def index(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Index]:
         patch.setattr(boto3.Session, "client", _forbidden("boto3.Session.client"))
         context = _ingest(config, providers, source, root / "run-1")
     assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
-    yield Index(config, providers, root)
+    yield Index(config, providers, root, server)
 
 
 def _forbidden(what: str) -> Any:
@@ -229,6 +238,72 @@ async def test_kg_describe_schema_lists_what_the_namespace_holds(
     assert "name.keyword" in result.filter_keys
     assert result.extraction_schema is not None
     assert result.namespaces == ["default"]
+
+
+# --- the strategy allowlist ------------------------------------------------
+
+
+async def test_auto_runs_only_an_offered_strategy(index: Index) -> None:
+    # The router would answer "local"; with mix the only offered strategy
+    # auto may route to, auto runs mix and asks no router.
+    chain = index.chain()
+    try:
+        tools = KnowledgeGraphTools(
+            chain, settings=McpServerConfig(strategies=["auto", "mix"])
+        )
+        calls = len(index.server.chat_models)
+        result = await tools.search("Who stores the widgets for Vendor?")
+        assert result.strategy == "mix"
+        prompts = len(index.server.chat_models) - calls
+        assert prompts == result.usage["llm_calls"] == 1  # the keywords only
+    finally:
+        await chain.aclose()
+
+
+@pytest.mark.parametrize(
+    ("offered", "routable"),
+    [
+        # tree reads the summary tree, which the namespace does not hold.
+        (["auto", "tree"], None),
+        # No configured route serves the namespace: the routing fallback
+        # (local) is not offered, so auto is refused rather than run it.
+        (["auto", "mix"], ["tree"]),
+    ],
+)
+async def test_auto_with_no_offered_strategy_served_is_refused_before_any_call(
+    index: Index, offered: list[str], routable: list[str] | None
+) -> None:
+    config = index.config.model_copy(deep=True)
+    if routable is not None:
+        config.search.auto_routable_strategies = [SearchStrategy(s) for s in routable]
+    chain = GraphRAGChain(config, providers=index.providers)
+    try:
+        tools = KnowledgeGraphTools(chain, settings=McpServerConfig(strategies=offered))
+        calls = len(index.server.chat_models), len(index.server.embed_models)
+        with pytest.raises(MethodologyNotIndexedError, match="auto may run only"):
+            await tools.answer("Who stores the widgets for Vendor?")
+        assert (len(index.server.chat_models), len(index.server.embed_models)) == calls
+    finally:
+        await chain.aclose()
+
+
+async def test_the_chain_refuses_a_strategy_outside_its_allowlist(
+    index: Index,
+) -> None:
+    from unified_kg_rag.application.retrieval.rag_chain import RAGInput
+    from unified_kg_rag.shared.exceptions import ToolArgumentError
+
+    chain = index.chain(allowed_strategies=[SearchStrategy.LOCAL])
+    try:
+        calls = len(index.server.chat_models), len(index.server.embed_models)
+        with pytest.raises(ToolArgumentError, match="choose one of local"):
+            await chain.asearch(RAGInput(query="Depot", search_strategy="mix"))
+        assert (len(index.server.chat_models), len(index.server.embed_models)) == calls
+        # The allowed one runs.
+        out = await chain.asearch(RAGInput(query="Depot", search_strategy="local"))
+        assert out.metadata["search_strategy"] == "local"
+    finally:
+        await chain.aclose()
 
 
 # --- the protocol ----------------------------------------------------------

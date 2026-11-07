@@ -285,14 +285,17 @@ async def test_only_offered_strategies_run() -> None:
             await tools.search("q", strategy=refused)
 
 
-def test_auto_may_not_route_outside_the_offered_strategies() -> None:
-    config = Config()
-    config.mcp.strategies = [SearchStrategy.AUTO, SearchStrategy.LOCAL]
-    with pytest.raises(ConfigurationError, match="auto_routable_strategies"):
-        KnowledgeGraphTools(FakeChain(config))  # type: ignore[arg-type]
-    config.search.auto_routable_strategies = [SearchStrategy.LOCAL]
-    tools = KnowledgeGraphTools(FakeChain(config))  # type: ignore[arg-type]
-    assert tools.default_strategy is SearchStrategy.AUTO
+def test_the_offered_strategies_bind_the_chain() -> None:
+    chain = FakeChain()
+    _tools(chain)
+    assert getattr(chain, "allowed_strategies", None) is None
+    _tools(chain, strategies=["auto", "local"])
+    assert chain.allowed_strategies == {SearchStrategy.AUTO, SearchStrategy.LOCAL}
+    # A chain that already allows more than the server offers is refused.
+    wider = FakeChain()
+    wider.allowed_strategies = frozenset(SearchStrategy)  # type: ignore[attr-defined]
+    with pytest.raises(ConfigurationError, match="mcp.strategies does not"):
+        _tools(wider, strategies=["local"])
 
 
 @pytest.mark.parametrize(

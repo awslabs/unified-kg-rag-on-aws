@@ -101,9 +101,10 @@ class MethodologyNotIndexedError(ConfigurationError):
 
 
 class ToolArgumentError(GraphRAGException, ValueError):
-    """An MCP tool call's argument is outside what the server allows (a
-    bound, a namespace or a strategy it does not serve, a missing or
-    conflicting argument). Raised before any store or model call."""
+    """An argument outside what the serving surface allows: an MCP tool
+    call's bound, a namespace or a strategy the server does not serve, a
+    missing or conflicting argument, or a strategy outside a chain's
+    ``allowed_strategies``. Raised before any model call."""
 
 
 class LanguageModelError(ModelError):

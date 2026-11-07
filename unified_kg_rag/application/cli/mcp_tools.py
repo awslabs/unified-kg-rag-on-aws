@@ -414,7 +414,10 @@ class KnowledgeGraphTools:
     ``namespace`` is the suffix served (``None``: the config's
     ``processing.document_parsing.index_value``, else ``default``);
     ``settings`` the ``mcp`` section (the chain config's by default). The
-    chain is the caller's: :meth:`aclose` closes it.
+    chain is the caller's: :meth:`aclose` closes it. With ``mcp.strategies``
+    set, the chain's ``allowed_strategies`` becomes that list (a chain that
+    already allows others is refused), so no query of the chain runs
+    another strategy, ``auto``'s route included.
     """
 
     def __init__(
@@ -442,19 +445,18 @@ class KnowledgeGraphTools:
             if SearchStrategy.AUTO in self.strategies
             else self.strategies[0]
         )
-        if SearchStrategy.AUTO in self.strategies and self.settings.strategies:
-            stray = [
-                s.value
-                for s in config.search.auto_routable_strategies
-                if s not in self.strategies
-            ]
-            if stray:
+        if self.settings.strategies:
+            # Enforced where the chain resolves the strategy: auto routes
+            # only among these, its routing fallback included, and refuses
+            # before the router call when the namespace serves none.
+            offered = frozenset(self.strategies)
+            held = getattr(chain, "allowed_strategies", None)
+            if held is not None and not held <= offered:
                 raise ConfigurationError(
-                    "mcp.strategies allows auto, which may route to "
-                    f"{', '.join(stray)} (search.auto_routable_strategies); list "
-                    "them in mcp.strategies or leave them out of "
-                    "search.auto_routable_strategies"
+                    "The chain allows strategies mcp.strategies does not: "
+                    + ", ".join(sorted(s.value for s in held - offered))
                 )
+            chain.allowed_strategies = held or offered
         self._slots = asyncio.Semaphore(self.settings.max_concurrent_calls)
         self._deadline = config.search.query_timeout_seconds
 
