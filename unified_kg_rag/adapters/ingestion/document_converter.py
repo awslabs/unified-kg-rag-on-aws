@@ -10,7 +10,38 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     compute_text_hash,
     normalize_source_path,
 )
+from unified_kg_rag.domain.ingestion.pages import PAGE_OFFSETS_KEY
 from unified_kg_rag.domain.models import Constants, Document
+
+# What joins the pages (loader documents) of one file.
+_PAGE_SEPARATOR = "\n\n"
+
+
+def _page_offsets(
+    langchain_docs: list[LangChainDocument], page_texts: list[str], stripped: int
+) -> list[list[int]] | None:
+    """Where each non-empty page starts in the joined text, as ``[offset,
+    page]`` pairs (1-based pages), for a loader that numbers its pages (the
+    0-based ``page`` of PDF loaders); ``None`` otherwise. ``stripped``
+    characters were cut from the front of the joined text."""
+    pages: list[int] = []
+    for doc in langchain_docs:
+        page = doc.metadata.get("page")
+        if not isinstance(page, int) or isinstance(page, bool) or page < 0:
+            return None
+        pages.append(page)
+    if not pages:
+        return None
+    offsets: list[list[int]] = []
+    position = 0
+    for text, page in zip(page_texts, pages, strict=True):
+        if not text:
+            continue
+        if offsets:
+            position += len(_PAGE_SEPARATOR)
+        offsets.append([max(0, position - stripped), page + 1])
+        position += len(text)
+    return offsets or None
 
 
 def convert_langchain_to_document(
@@ -27,17 +58,20 @@ def convert_langchain_to_document(
     page_texts = [
         unicodedata.normalize("NFC", doc.page_content) for doc in langchain_docs
     ]
-    combined_text = "\n\n".join(text for text in page_texts if text)
+    combined_text = _PAGE_SEPARATOR.join(text for text in page_texts if text)
     # Strip a leading UTF-8 BOM (U+FEFF): loaders that decode as plain "utf-8"
     # (not "utf-8-sig") leave the BOM in the text, so the same logical document
     # with/without a BOM would hash to a different content-derived document_id
     # and break incremental-indexing dedup. Normalize once, here, since this is
     # the single source of both the id and the stored content.
-    combined_text = combined_text.lstrip("\ufeff")
+    stripped = len(combined_text) - len(combined_text.lstrip("\ufeff"))
+    combined_text = combined_text[stripped:]
 
     # Copy rather than alias the loader's metadata dict, so setting the INDEX
     # key does not mutate the loader's document.
     metadata = dict(langchain_docs[0].metadata) if langchain_docs else {}
+    if (offsets := _page_offsets(langchain_docs, page_texts, stripped)) is not None:
+        metadata[PAGE_OFFSETS_KEY] = offsets
     if index_value is not None:
         metadata[Constants.INDEX.value] = index_value
     # Path + full-content hash: a name + text-prefix id collided for two files
