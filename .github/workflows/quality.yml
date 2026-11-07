@@ -129,11 +129,12 @@ jobs:
           if-no-files-found: ignore
 
   core-install:
-    # The default install has neither the eval, the viz, the ontology nor the
-    # mcp extra: check the public API, the CLIs and the embedded end-to-end
-    # runs (a JSONL seed graph's too) and the static charts work without them,
-    # and that run-eval, the interactive renderer, an owl schema source, an rdf
-    # seed source and run-mcp-server fail naming the extra instead.
+    # The default install has none of the eval, viz, ontology, mcp, console,
+    # otel and cross-encoder extras: check the public API, every console
+    # script in a process of its own, the embedded end-to-end runs (a JSONL
+    # seed graph's too) and the static charts work without them, and that
+    # run-eval, the interactive renderer, an owl schema source, an rdf seed
+    # source, run-mcp-server and run-console fail naming the extra instead.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -154,9 +155,10 @@ jobs:
       - name: Check the extras are absent
         run: >-
           uv run --frozen --no-dev --group test python -c "import importlib.util as u, sys;
-          present = [m for m in ('datasets', 'docx', 'langchain',
+          present = [m for m in ('datasets', 'docx', 'fastapi', 'langchain',
           'langchain_community', 'langchain_openai', 'langgraph', 'mcp',
-          'pandas', 'pyvis', 'ragas', 'rdflib')
+          'multipart', 'opentelemetry', 'pandas', 'pyvis', 'ragas', 'rdflib',
+          'sentence_transformers', 'uvicorn')
           if u.find_spec(m)]; sys.exit(f'installed: {present}' if present else 0)"
 
       - name: Public API, extra errors and embedded end to end
@@ -169,9 +171,11 @@ jobs:
           tests/unit/test_layering.py
           tests/unit/test_mcp_server_cli.py
           tests/unit/test_mcp_tools.py
+          tests/unit/test_run_console.py
           tests/unit/test_owl_schema_source.py
           tests/unit/test_seed_sources.py
           tests/unit/test_rdf_seed_source.py
+          tests/integration/test_cli_entry_points.py
           tests/integration/test_embedded_e2e.py
           tests/integration/test_seed_graph_embedded.py
           tests/integration/test_seed_properties_embedded.py
@@ -318,7 +322,9 @@ jobs:
       - name: Sync dependencies
         # --frozen: resolve nothing, install exactly what the committed lock
         # pins, so this also proves the lock itself is installable on the floor.
-        run: uv sync --python 3.11 --frozen --extra otel --extra eval --extra viz --extra ontology
+        # The extras the quality job installs, so the mcp, docx and console
+        # tests run on the floor too instead of skipping.
+        run: uv sync --python 3.11 --frozen --extra otel --extra eval --extra viz --extra ontology --extra mcp --extra docx --extra console
 
       - name: pytest
         run: uv run --python 3.11 --frozen pytest -q -n logical

@@ -44,7 +44,11 @@ def test_the_default_host_is_loopback() -> None:
     assert args.host == "127.0.0.1" and not args.allow_remote and args.port == 8501
 
 
-def test_another_address_needs_allow_remote(capsys: pytest.CaptureFixture[str]) -> None:
+def test_another_address_needs_allow_remote(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Checked after the extra (a core install names the extra first).
+    monkeypatch.setattr(run_console, "missing_extra", lambda: [])
     with pytest.raises(SystemExit) as exc:
         run_console.main(["--host", ALL_INTERFACES])
     assert exc.value.code == 2
