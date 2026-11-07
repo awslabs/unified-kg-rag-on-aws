@@ -173,7 +173,21 @@ strategies, or `--repeats`) saves every run's files and adds
 - `deltas_vs_baseline.<s>.<metric>`: paired against the first strategy over
   the queries both scored: `mean_delta`, a 95% paired bootstrap interval
   (`ci_low`/`ci_high`; 2,000 resamples, seed 0), `wins`/`ties`/`losses`, the
-  per-query deltas and `unpaired`. A query whose answer generation failed
+  per-query deltas, `unpaired` and `p_value` (a two-sided sign-flip
+  randomization test of the mean delta: exact over every sign pattern up to
+  10 non-zero deltas, else 2,000 random patterns, seed 0; zero deltas carry
+  no sign). `multiplicity` sorts the deltas into families, each
+  Holm-adjusted over its tests: `primary` (`primary_metric`:
+  `evaluation.primary_metric` / `--primary-metric`, default
+  `answer_match/answer_contains` when scored; its tests are the compared
+  strategies), `secondary` (every other metric with per-query deltas) and
+  `cost` (`cost.deltas_vs_baseline`); closed-book arms are in none
+  (`unadjusted`). Each member delta has `family`, `adjusted_p_value` and
+  `adjusted_ci_low` / `adjusted_ci_high`, the bootstrap interval at
+  confidence 1 - 0.05 / m for a family of m tests (simultaneous over it, so
+  a little wider than Holm's decision: a delta can have `adjusted_p_value`
+  under 0.05 with an adjusted interval touching 0). `abstention/precision`
+  (a ratio) and `deltas_by_category` have no adjusted values. A query whose answer generation failed
   scores 0 on every metric the other run scored (`answer_length` and the
   lower-is-better `assertion_contradiction_rate` and
   `negative_assertion_violation_rate`, where 0 is the best score, excepted:
@@ -375,7 +389,10 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
 - `--fail-if <measure>:<stat><op><value>` (repeatable) exits 1 when a
   compared strategy's paired delta meets the condition: `<measure>` is a key
   of `deltas_vs_baseline` (`<evaluator>/<metric>`) or of
-  `cost.deltas_vs_baseline`, `<stat>` is `mean_delta`, `ci_low` or `ci_high`.
+  `cost.deltas_vs_baseline`, `<stat>` is `mean_delta`, `ci_low`, `ci_high`,
+  `p_value`, `adjusted_p_value`, `adjusted_ci_low` or `adjusted_ci_high`
+  (a delta without the statistic, such as `abstention/precision` for the
+  adjusted ones, fails the gate).
   `ci_high<-0.02` fails only when the whole interval is below -0.02, a
   regression the query sample supports. A strategy with no delta of the
   measure fails the gate too, and so does a cost measure (`usage/*`,

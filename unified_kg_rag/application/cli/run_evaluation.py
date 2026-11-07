@@ -91,6 +91,7 @@ from unified_kg_rag.evaluation.closed_book import (
 )
 from unified_kg_rag.evaluation.comparison import (
     Run,
+    adjust_for_multiplicity,
     baseline_comparison,
     paired_comparison,
     per_query_rows,
@@ -156,6 +157,15 @@ def _gate(value: str) -> Gate:
         return parse_gate(value)
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def _primary_metric(value: str) -> str:
+    evaluator, _, metric = value.strip().partition("/")
+    if not evaluator or not metric or "/" in metric:
+        raise argparse.ArgumentTypeError(
+            f"'{value}' is not <evaluator>/<metric> (e.g. answer_match/token_f1)"
+        )
+    return value.strip()
 
 
 def _model_id(value: str) -> str:
@@ -365,9 +375,11 @@ class CommandLineInterface:
                 "with unanswerable items) or a cost measure (usage/llm_calls, "
                 "usage/input_tokens, usage/output_tokens, usage/total_tokens, "
                 "usage/cost_usd, latency/response_time_seconds); STAT is "
-                "mean_delta, ci_low or ci_high; OP is <, <=, > or >=. Example: "
-                "answer_match/token_f1:ci_high<-0.02. Needs a comparison (two "
-                "strategies or --baseline-results)"
+                "mean_delta, ci_low or ci_high, or adjusted for the many "
+                "deltas read (--primary-metric): adjusted_ci_low, "
+                "adjusted_ci_high, p_value or adjusted_p_value; OP is <, <=, "
+                "> or >=. Example: answer_match/token_f1:adjusted_ci_high<-0.02. "
+                "Needs a comparison (two strategies or --baseline-results)"
             ),
         )
         parser.add_argument(
@@ -411,6 +423,19 @@ class CommandLineInterface:
                 "Answer and score the dataset this many times per strategy; the "
                 "comparison averages each query over the repeats and reports "
                 "the run-to-run spread (default 1)"
+            ),
+        )
+        parser.add_argument(
+            "--primary-metric",
+            type=_primary_metric,
+            metavar="EVALUATOR/METRIC",
+            help=(
+                "The comparison's primary metric, declared in advance "
+                "(default: evaluation.primary_metric, else "
+                "answer_match/answer_contains when scored): adjusted only "
+                "over the compared strategies, while every other metric's "
+                "delta is Holm-adjusted over all of them (adjusted_p_value, "
+                "adjusted_ci_low/high, which --fail-if can read)"
             ),
         )
         parser.add_argument(
@@ -805,8 +830,9 @@ class EvaluationRunner:
             table.add_column(markup_safe(marked), style="green")
         for strategy, label in pairs.items():
             table.add_column(f"{strategy} - {label} [CI]", style="cyan")
+        primary = (comparison.get("multiplicity") or {}).get("primary_metric")
         for key in baseline_metric_keys(comparison):
-            row = [markup_safe(key)]
+            row = [markup_safe(f"{key} (primary)" if key == primary else key)]
             for strategy in strategies:
                 stats = strategies[strategy]["metrics"].get(key)
                 row.append(f"{stats['mean']:.3f}" if stats else "-")
@@ -1570,9 +1596,18 @@ class EvaluationRunner:
                     self.args.max_failure_rate,
                 )
             )
-        if arms := closed_book_arms(names):
+        arms = closed_book_arms(names)
+        if arms:
             # No retrieval: a bound on prior knowledge, not a strategy to gate.
             comparison["closed_book_arms"] = arms
+        adjust_for_multiplicity(
+            comparison,
+            primary_metric=(
+                getattr(self.args, "primary_metric", None)
+                or self.config.evaluation.primary_metric
+            ),
+            exclude=arms,
+        )
         comparison["run_manifest"] = measured.manifest
         if self._from_results is not None or baseline is not None:
             comparison["sources"] = {

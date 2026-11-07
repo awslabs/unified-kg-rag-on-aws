@@ -34,6 +34,7 @@ from unified_kg_rag.domain.models.config import (
 )
 from unified_kg_rag.evaluation import gates as gates_module
 from unified_kg_rag.evaluation.comparison import (
+    adjust_for_multiplicity,
     answer_cost_usd,
     cost_comparison,
     paired_comparison,
@@ -530,12 +531,14 @@ def test_from_results_rebuilds_the_comparison_without_a_chain(tmp_path: Path) ->
     )
     assert code == 0
     comparison = out["comparison"]
-    expected = paired_comparison(
-        {
-            "local": [_run(_BASE, "local")],
-            "mix": [_run(_WORSE, "mix", tokens=300)],
-        },
-        categories={"q1": "2hop", "q2": "1hop", "q3": "2hop", "q4": "1hop"},
+    expected = adjust_for_multiplicity(
+        paired_comparison(
+            {
+                "local": [_run(_BASE, "local")],
+                "mix": [_run(_WORSE, "mix", tokens=300)],
+            },
+            categories={"q1": "2hop", "q2": "1hop", "q3": "2hop", "q4": "1hop"},
+        )
     )
     assert comparison["baseline"] == "local"
     assert json.dumps(comparison["deltas_vs_baseline"], sort_keys=True) == json.dumps(

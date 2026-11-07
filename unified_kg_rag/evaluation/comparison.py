@@ -194,6 +194,59 @@ def bootstrap_ci(
     return float(low), float(high)
 
 
+# Rows of sign patterns drawn at a time by ``sign_flip_p_value`` (bounds its
+# memory on large datasets).
+_SIGN_FLIP_CHUNK = 256
+
+
+def sign_flip_p_value(deltas: Sequence[float], *, resamples: int, seed: int) -> float:
+    """Two-sided p-value of the mean of paired ``deltas`` under "no
+    difference": a sign-flip randomization test.
+
+    Under the null each query's delta is as likely negative as positive, so
+    the observed sum of the non-zero deltas is compared with the sums under
+    random signs: exactly over every sign pattern when there are at most
+    ``log2(resamples)`` of them, else over ``resamples`` random patterns
+    (``(1 + hits) / (1 + resamples)``, never 0). Ties (zero deltas) carry no
+    sign. Unlike the percentile bootstrap it holds its level on few pairs
+    (five wins of five: p = 0.0625, the exact sign test).
+    """
+    data = np.asarray(deltas, dtype=float)
+    nonzero = data[data != 0]
+    if nonzero.size == 0:
+        return 1.0
+    observed = abs(float(nonzero.sum()))
+    # Float sums of the same values in another order differ in the last bits.
+    tolerance = 1e-9 * max(1.0, float(np.abs(nonzero).sum()))
+    if 2**nonzero.size <= resamples:
+        patterns = (
+            (np.arange(2**nonzero.size)[:, None] >> np.arange(nonzero.size)) & 1
+        ) * 2.0 - 1.0
+        sums = np.abs(patterns @ nonzero)
+        return float(np.count_nonzero(sums >= observed - tolerance) / sums.size)
+    rng = np.random.default_rng(seed)
+    hits = 0
+    for start in range(0, resamples, _SIGN_FLIP_CHUNK):
+        rows = min(_SIGN_FLIP_CHUNK, resamples - start)
+        signs = rng.choice((-1.0, 1.0), size=(rows, nonzero.size))
+        hits += int(np.count_nonzero(np.abs(signs @ nonzero) >= observed - tolerance))
+    return (1 + hits) / (1 + resamples)
+
+
+def holm_adjusted(p_values: Sequence[float]) -> list[float]:
+    """Holm's step-down adjusted p-values, in the order given: the i-th
+    smallest is ``max over j <= i of (m - j + 1) * p_(j)``, capped at 1.
+    Rejecting where the adjusted value is below alpha keeps the chance of
+    any false rejection in the family at alpha or less."""
+    m = len(p_values)
+    adjusted = [0.0] * m
+    running = 0.0
+    for rank, index in enumerate(sorted(range(m), key=lambda i: p_values[i])):
+        running = max(running, min(1.0, (m - rank) * p_values[index]))
+        adjusted[index] = running
+    return adjusted
+
+
 def _delta_stats(
     base: Mapping[str, float],
     other: Mapping[str, float],
@@ -219,6 +272,8 @@ def _delta_stats(
         "mean_delta": float(np.mean(diff)),
         "ci_low": low,
         "ci_high": high,
+        # Unadjusted; adjust_for_multiplicity adds the family's Holm value.
+        "p_value": sign_flip_p_value(diff, resamples=resamples, seed=seed),
         "wins": sum(d > 0 for d in diff),
         "ties": sum(d == 0 for d in diff),
         "losses": sum(d < 0 for d in diff),
@@ -1017,6 +1072,104 @@ def _cache_warnings(strategies: Mapping[str, Any], names: Sequence[str]) -> list
             "set search.query_extraction_cache_size: 0."
         )
     return warnings
+
+
+# The metric a comparison tests unadjusted when answers are scored and no
+# other is declared (evaluation.primary_metric, run-eval --primary-metric):
+# the answer_match headline, free and judge-free.
+DEFAULT_PRIMARY_METRIC = "answer_match/answer_contains"
+
+
+def adjust_for_multiplicity(
+    comparison: dict[str, Any],
+    *,
+    primary_metric: str | None = None,
+    exclude: Collection[str] = (),
+) -> dict[str, Any]:
+    """Add Holm-adjusted p-values and intervals to ``comparison``'s deltas.
+
+    A comparison reads many deltas, and each 95% interval excludes 0 on
+    noise alone in 5% of runs: over ten metrics a clean change shows a
+    "supported" difference in about 40% of runs. So the deltas fall into
+    families, each adjusted over its tests (every compared strategy but
+    ``exclude``, the closed-book arms, times its measures):
+
+    - ``primary``: ``primary_metric`` (default ``DEFAULT_PRIMARY_METRIC``
+      when a strategy scored it), the one metric declared in advance, so
+      adjusted only over the compared strategies (with one, unadjusted);
+    - ``secondary``: every other metric of ``deltas_vs_baseline`` with
+      per-query deltas (``abstention/precision``, a ratio, has none);
+    - ``cost``: the measures of ``cost.deltas_vs_baseline``.
+
+    Each delta gets ``family``, ``adjusted_p_value`` (Holm over the family,
+    from the sign-flip ``p_value``) and ``adjusted_ci_low`` /
+    ``adjusted_ci_high``: the paired bootstrap interval at confidence
+    ``1 - alpha / m`` (Bonferroni over the family's ``m`` tests, so
+    simultaneous for the family and a little wider than Holm's decision
+    needs: read ``adjusted_p_value`` for whether a difference counts, the
+    interval for its size). ``deltas_by_category`` stays unadjusted
+    (exploratory). Returns ``comparison``, with a ``multiplicity`` block.
+    """
+    stats = comparison.get("bootstrap") or {}
+    resamples = int(stats.get("resamples", 2000))
+    confidence = float(stats.get("confidence", 0.95))
+    seed = int(stats.get("seed", 0))
+    alpha = 1.0 - confidence
+    deltas = comparison.get("deltas_vs_baseline") or {}
+    cost = (comparison.get("cost") or {}).get("deltas_vs_baseline") or {}
+    compared = [s for s in deltas if s not in exclude]
+    primary: str | None = primary_metric or DEFAULT_PRIMARY_METRIC
+    if not any(primary in (deltas.get(s) or {}) for s in compared):
+        if primary_metric is not None and compared:
+            warning = (
+                f"The primary metric '{primary}' has no paired delta in this "
+                "comparison: every metric is tested as secondary (Holm over "
+                "all of them)."
+            )
+            logger.warning("%s", warning)
+            comparison.setdefault("warnings", []).append(warning)
+        primary = None
+    families: dict[str, list[dict[str, Any]]] = {
+        "primary": [],
+        "secondary": [],
+        "cost": [],
+    }
+    for strategy in compared:
+        for key, delta in (deltas.get(strategy) or {}).items():
+            if "p_value" in delta and "per_query" in delta:
+                families["primary" if key == primary else "secondary"].append(delta)
+        for delta in (cost.get(strategy) or {}).values():
+            if "p_value" in delta and "per_query" in delta:
+                families["cost"].append(delta)
+    summary: dict[str, Any] = {}
+    for name, members in families.items():
+        if not members:
+            continue
+        level = 1.0 - alpha / len(members)
+        adjusted = holm_adjusted([float(d["p_value"]) for d in members])
+        for delta, value in zip(members, adjusted, strict=True):
+            low, high = bootstrap_ci(
+                list(delta["per_query"].values()),
+                resamples=resamples,
+                confidence=level,
+                seed=seed,
+            )
+            delta.update(
+                family=name,
+                adjusted_p_value=value,
+                adjusted_ci_low=low,
+                adjusted_ci_high=high,
+            )
+        summary[name] = {"tests": len(members), "interval_confidence": level}
+    comparison["multiplicity"] = {
+        "method": "holm",
+        "p_value": "sign_flip",
+        "alpha": alpha,
+        "primary_metric": primary,
+        "families": summary,
+        "unadjusted": sorted(set(deltas) - set(compared)),
+    }
+    return comparison
 
 
 def per_query_rows(

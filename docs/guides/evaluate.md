@@ -197,11 +197,20 @@ How to read it:
   help a strategy. The tables print each delta's `pairs` and `unpaired`
   queries: a judge that could not score a query leaves it unpaired, and
   different counts per strategy are warned about.
-- **When a difference counts.** A difference is supported when its interval
-  excludes 0. On a paired binary metric only the queries where the two
-  strategies disagree carry information, so power depends on how often
-  they do: in a simulation of this interval, a 10-point difference is
-  detected in 45% of runs with 50 queries and 99% with 200 when they
+- **When a difference counts.** Declare one metric in advance, the primary
+  metric (`--primary-metric`, `evaluation.primary_metric`; default
+  `answer_match/answer_contains` when answers are scored): its delta is
+  adjusted only over the compared strategies. Every other metric is a
+  secondary one, Holm-adjusted over all of them (and the cost measures over
+  theirs): `adjusted_p_value` below 0.05 is a difference that survives the
+  many deltas read, and the tables print it as `Holm p`; read `ci_low` /
+  `ci_high` (unadjusted) or `adjusted_ci_low` / `adjusted_ci_high`
+  (simultaneous over the family) for its size. Ten metrics read unadjusted
+  show a difference on noise in about 40% of comparisons of one
+  configuration with itself. On a paired binary metric only the queries
+  where the two strategies disagree carry information, so power depends on
+  how often they do: in a simulation of this interval, a 10-point difference
+  is detected in 45% of runs with 50 queries and 99% with 200 when they
   disagree on 15% of the queries, and in 28% and 73% when they disagree on
   30%. Compare on a few hundred queries, and run the same configuration
   twice to see your noise floor. `deltas_by_category` splits the deltas by dataset `category`;
@@ -380,7 +389,10 @@ run-eval --data-path eval.json --search-strategy local \
   a `ci_high<0` gate breaches on noise alone in about 2.5% of runs, so with
   k compared strategies and m such gates a clean change fails up to
   k × m × 2.5% of the time (3 strategies × 4 gates: up to 30%). Gate a few
-  measures chosen in advance, with a margin (`ci_high<-0.02`, not `<0`).
+  measures chosen in advance, with a margin (`ci_high<-0.02`, not `<0`), or
+  gate on the adjusted statistics, which account for the strategies and
+  metrics compared: `--fail-if "answer_match/token_f1:adjusted_ci_high<-0.02"`
+  (also `adjusted_ci_low`, `p_value`, `adjusted_p_value`).
 
 The full rules (what each warning compares, when a cost gate fails):
 [Evaluation output: Rebuilding and gating rules](../reference/evaluation-output.md#rebuilding-and-gating-rules).

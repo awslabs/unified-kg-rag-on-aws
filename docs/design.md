@@ -3184,6 +3184,23 @@ choices:
   own strategy scores somewhere (a metric the strategy never produces is no
   loss to invent), and a pair with one failed answer goes to the other side
   unjudged.
+- **A comparison guards against time and multiplicity.** Its runs are
+  answered interleaved (`EvaluationManager.answer_interleaved`): one batch,
+  each query by every run before the next, the runs' order reversed on
+  every other query (ABBA), each run with its own usage meter
+  (`shared.usage.metering`) and span attributes; answered one run after
+  another, later runs answer later, and an A/A pair of one configuration
+  showed 0.5-5.8 s latency "differences". Each repeat extracts the query
+  again in its own extraction cache scope (`extraction_cache_scope`), so
+  `repeat_stdev` includes that variance while the arms of a repeat still
+  share keywords. Every delta gets a sign-flip randomization p-value (exact
+  on few pairs, where the percentile bootstrap is anti-conservative), and
+  `adjust_for_multiplicity` Holm-adjusts them in families: the pre-declared
+  primary metric (`evaluation.primary_metric`, default `answer_contains`)
+  over the compared strategies only, every other metric, and the cost
+  measures, with Bonferroni-level intervals; ten unadjusted metrics would
+  show a "supported" difference on noise in about 40% of A/A runs. Gates
+  can read the adjusted statistics.
 - **Cost is measured, not estimated.** `shared/usage.py` keeps contextvar
   scopes (one per ingestion stage, per query, per `run-eval` run and answer
   attempt) that a

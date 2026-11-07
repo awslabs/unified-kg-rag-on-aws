@@ -50,14 +50,18 @@ def _cell(text: Any) -> str:
 
 
 def delta_cell(delta: Mapping[str, Any] | None) -> str:
-    """A paired delta as ``mean [ci_low, ci_high] (pairs, unpaired)``; the
-    counts show how many queries the interval rests on and how many one
-    side did not score (skipped, or failed to score)."""
+    """A paired delta as ``mean [ci_low, ci_high] (pairs, unpaired, Holm
+    p)``; the counts show how many queries the interval rests on and how
+    many one side did not score (skipped, or failed to score), and the
+    adjusted p-value whether the difference survives the comparison's many
+    deltas (``adjust_for_multiplicity``)."""
     if not delta:
         return "-"
     counts = f"{delta['pairs']} pairs" if "pairs" in delta else ""
     if delta.get("unpaired"):
         counts += f", {delta['unpaired']} unpaired"
+    if delta.get("adjusted_p_value") is not None:
+        counts += f", Holm p {delta['adjusted_p_value']:.3g}"
     return (
         f"{delta['mean_delta']:+.3f} "
         f"[{delta['ci_low']:+.3f}, {delta['ci_high']:+.3f}]"
@@ -137,8 +141,9 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
             "",
         ]
     rows = []
+    primary = (comparison.get("multiplicity") or {}).get("primary_metric")
     for key in baseline_metric_keys(comparison):
-        row: list[Any] = [f"`{key}`"]
+        row: list[Any] = [f"`{key}` (primary)" if key == primary else f"`{key}`"]
         for strategy in strategies:
             stats = strategies[strategy]["metrics"].get(key)
             row.append(f"{stats['mean']:.3f}" if stats else "-")
@@ -151,6 +156,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
         *(f"{s} - {pairs[s]} [{confidence:.0%} CI]" for s in others),
     ]
     lines += _table(header, rows)
+    lines += _multiplicity_lines(comparison)
 
     cost = comparison.get("cost") or {}
     if cost.get("strategies"):
@@ -251,6 +257,29 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
         lines += ["", "## Warnings", ""]
         lines += [f"- {_cell(w)}" for w in comparison["warnings"]]
     return "\n".join(lines) + "\n"
+
+
+def _multiplicity_lines(comparison: Mapping[str, Any]) -> list[str]:
+    """How the deltas were adjusted for the many read
+    (``comparison.adjust_for_multiplicity``)."""
+    multiplicity = comparison.get("multiplicity") or {}
+    families = multiplicity.get("families") or {}
+    if not families:
+        return []
+    primary = multiplicity.get("primary_metric")
+    listed = ", ".join(
+        f"{name} {family['tests']} ({family['interval_confidence']:.2%} intervals)"
+        for name, family in families.items()
+    )
+    return [
+        "",
+        (f"Primary metric: `{primary}`. " if primary else "No primary metric. ")
+        + "Holm p is each delta's sign-flip p-value adjusted over its family "
+        f"of tests ({listed}); a difference counts when it is below "
+        f"{multiplicity.get('alpha', 0.05):g}. The intervals in the table are "
+        "unadjusted (adjusted_ci_low/high in the JSON are simultaneous over "
+        "the family).",
+    ]
 
 
 def _length_lines(

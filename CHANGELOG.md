@@ -493,6 +493,13 @@ From a `main` checkout (formats and keys no release had):
   later builds reuse them. An incremental run clusters and reports its own communities the new way (#618).
 
 ### Added
+- `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
+  `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in
+  advance (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared
+  strategies only, every other metric, and the cost measures, each delta with `adjusted_p_value` and a simultaneous
+  `adjusted_ci_low`/`adjusted_ci_high`. Ten unadjusted metrics showed a difference on noise in about 40% of A/A
+  comparisons; on simulated A/A comparisons the adjusted family's rate stays near 5%. `--fail-if` reads the four new
+  statistics, and the tables print `Holm p` (#PR).
 - RAPTOR summary tree, opt-in (#599; on multi-hop questions it answered within the noise of `naive`,
   [evidence](docs/concepts/defaults-and-evidence.md#raptor-summary-tree)): the `raptor` methodology adds a
   `summary_tree` ingestion stage after indexing that clusters the stored text units by their vectors (numpy k-means

@@ -6097,6 +6097,21 @@ class EvaluationConfig(BaseModel):
             "or search.query_extraction_cache_size 0."
         ),
     )
+    primary_metric: str | None = Field(
+        default=None,
+        pattern=r"^[^/\s]+/[^/\s]+$",
+        description=(
+            "The <evaluator>/<metric> a run-eval comparison declares in "
+            "advance as its primary metric (run-eval --primary-metric "
+            "overrides it): its paired delta is adjusted only over the "
+            "compared strategies, every other metric is Holm-adjusted over "
+            "all of them (deltas_vs_baseline.<s>.<metric>.adjusted_p_value, "
+            "adjusted_ci_low/high), so reading many metrics does not "
+            "multiply the chance of a difference on noise. null = "
+            "answer_match/answer_contains when the comparison scored it, "
+            "else no primary metric."
+        ),
+    )
     prices: dict[str, ModelPrice] = Field(
         default_factory=dict,
         description=(
