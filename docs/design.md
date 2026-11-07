@@ -183,6 +183,7 @@ unified_kg_rag/
 │  └─ provider_registry.py # @register_provider: builders keyed by role and kind
 ├─ application/         # orchestration + entry points
 │  ├─ cli/              #   run-ingestion/rag/eval/visualization/prompt-tuning, prepare-benchmark,
+│  │                    #   run-mcp-server (mcp_tools, mcp_server: §8.4),
 │  │                    #   display (rich console helpers)
 │  ├─ ingestion/        #   DataIngestionPipeline + pipeline_stages, IncrementalIndexer,
 │  │                    #   namespace lease, extraction-record store, stage cache
@@ -193,7 +194,8 @@ unified_kg_rag/
 │  │                    #   cross_run_merge, removal, reannotation, stored_items
 │  ├─ retrieval/        #   rag_chain (GraphRAGChain, RAGInput/Output), its query
 │  │                    #   processing (query_processing) and filter-key checks
-│  │                    #   (filter_validation), methodology_check (what a namespace holds)
+│  │                    #   (filter_validation), methodology_check (what a namespace holds),
+│  │                    #   graph_lookup (the MCP tools' read-only store reads)
 │  ├─ prompts/          #   PromptTuner (LLM-based corpus profiling)
 │  ├─ bootstrap.py      #   the composition root: build_providers, build_query_guard,
 │  │                    #   build_checkpoint_sync, resolve_extraction_schema,
@@ -2928,8 +2930,9 @@ the tool logic and result models and imports no MCP SDK (it is tested on a
 core install), `application/cli/mcp_server.py` binds it to the SDK's
 `MCPServer` (imported lazily; a missing SDK is a `ConfigurationError`
 naming the extra), and `application/cli/run_mcp_server.py` is the console
-script. The tools call only the public chain (`asearch`, `ainvoke`,
-`acheck_methodology`, `check_filter_keys`, `typed_filter_values`) and
+script. The tools call only the public chain (`asearch` and `ainvoke`,
+which check the strategy and the filter keys as every query does, and
+`typed_filter_values` / `check_filter_values` first) and
 `application/retrieval/graph_lookup.py`, which reads the stores through the
 chain's own retrievers (as `methodology_check` and `filter_validation` do)
 with text-less fetches by id and the graph walk: the same read paths the

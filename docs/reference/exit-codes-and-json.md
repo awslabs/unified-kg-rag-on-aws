@@ -18,6 +18,13 @@ prints. Every flag: [CLI Reference](./cli.md); what an error message means:
 
 Flags must be spelled out in full: a prefix such as `--output` is rejected.
 
+`run-mcp-server` uses the same codes: `0` once the client closes stdio (or
+the HTTP server stops), `2` for a usage or configuration error (the `mcp`
+extra missing, a non-loopback `--host` without `--allow-remote`), `1`
+for a failure, `130` and `143` for a signal. It has no `--output-format`:
+over stdio its stdout carries the MCP messages only
+([MCP server](../guides/mcp.md)).
+
 ## Signals
 
 A run stopped with `130` or `143` ends its process at once: model calls in

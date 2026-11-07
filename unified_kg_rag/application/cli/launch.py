@@ -97,3 +97,9 @@ def run_prompt_tuning() -> Any:
 
 def prepare_benchmark() -> Any:
     return _run("prepare_benchmark")
+
+
+def run_mcp_server() -> Any:
+    # It runs the query path for every tool call, often several at once.
+    one_blas_thread()
+    return _run("run_mcp_server")

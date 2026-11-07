@@ -25,6 +25,8 @@ LANGCHAIN_JUDGE_INSTALLED = _installed("langchain_openai")
 VIZ_INSTALLED = _installed("pyvis")
 # The RDF reader of the ontology schema sources (the ontology extra).
 ONTOLOGY_INSTALLED = _installed("rdflib")
+# The MCP SDK of run-mcp-server (the mcp extra).
+MCP_INSTALLED = _installed("mcp")
 
 requires_eval = pytest.mark.skipif(
     not EVAL_INSTALLED, reason="needs the eval extra (uv sync --extra eval)"
@@ -34,4 +36,7 @@ requires_viz = pytest.mark.skipif(
 )
 requires_ontology = pytest.mark.skipif(
     not ONTOLOGY_INSTALLED, reason="needs the ontology extra (uv sync --extra ontology)"
+)
+requires_mcp = pytest.mark.skipif(
+    not MCP_INSTALLED, reason="needs the mcp extra (uv sync --extra mcp)"
 )

@@ -51,6 +51,7 @@ COMMANDS: list[tuple[str, tuple[str, str], str]] = [
         ("Benchmarks", "guides/benchmarks.md"),
         "benchmark",
     ),
+    ("run-mcp-server", ("MCP server", "guides/mcp.md"), "mcp_server"),
 ]
 
 HEADER = """\
@@ -83,6 +84,7 @@ def _parsers() -> dict[str, Callable[[], argparse.ArgumentParser]]:
         prepare_benchmark,
         run_evaluation,
         run_ingestion_pipeline,
+        run_mcp_server,
         run_prompt_tuning,
         run_rag_chain,
         run_visualization,
@@ -95,6 +97,7 @@ def _parsers() -> dict[str, Callable[[], argparse.ArgumentParser]]:
         "visualization": run_visualization._build_parser,
         "prompt_tuning": run_prompt_tuning._build_parser,
         "benchmark": prepare_benchmark._parser,
+        "mcp_server": run_mcp_server.build_parser,
     }
 
 

@@ -391,6 +391,8 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
     "search": Unkeyed(_QUERY),
     "memory": Unkeyed(_QUERY),
     "evaluation": Unkeyed("read by run-eval only"),
+    # It narrows auto through search.auto_routable_strategies, which counts.
+    "mcp": _neutral("read by run-mcp-server only, to bound its tool calls"),
     "evaluation.outputs_directory": _neutral("says where run-eval writes"),
     "evaluation.save_detailed_results": _neutral("says what run-eval writes"),
     "logging": _neutral("telemetry"),

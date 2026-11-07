@@ -42,6 +42,7 @@ the keys most deployments set.
 - [`observability`](#observability)
 - [`evaluation`](#evaluation)
 - [`custom_prompts`](#custom_prompts)
+- [`mcp`](#mcp)
 - [Long defaults](#long-defaults)
 - [Moved keys](#moved-keys)
 - [Removed keys](#removed-keys)
@@ -964,6 +965,23 @@ Custom prompt configuration
 | `global_map_system` | string \| null | `null` | Custom system prompt for the global-search map step (rate community-report key points 0-100 for relevance) |
 | `global_map_human` | string \| null | `null` | Custom human prompt for the global-search map step (rate community-report key points 0-100 for relevance) |
 
+## `mcp`
+
+The read-only MCP server of run-mcp-server
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `tools` | list[`"kg_search"` \| `"kg_answer"` \| `"kg_get_entity"` \| `"kg_neighbors"` \| `"kg_describe_schema"`] (min length 1) | see [Long defaults](#long-defaults) | The tools the server lists, of kg_search, kg_answer, kg_get_entity, kg_neighbors and kg_describe_schema (all by default). Leave kg_answer out to make no answer-model call: the agent then answers from kg_search's records with its own model |
+| `allowed_namespaces` | list[string] | `[]` | Further index namespaces (suffixes) a tool call may name in its namespace argument. Empty (the default): the tools take no namespace argument and serve only the namespace the server started with |
+| `strategies` | list[`"auto"` \| `"drift"` \| `"global"` \| `"local"` \| `"simple"` \| `"mix"` \| `"hybrid"` \| `"naive"` \| `"iterative"` \| `"ppr"` \| `"tree"`] \| null (min length 1) | `null` | The search strategies kg_search and kg_answer may run (null: every strategy; one the namespace does not hold is refused either way). The default strategy is auto when listed, else the first one |
+| `max_top_k` | integer (≥ 1, ≤ 100) | `20` | Largest top_k (and kg_get_entity limit) a call may ask |
+| `max_hops` | integer (≥ 1, ≤ 3) | `2` | Largest max_hops of a kg_neighbors call |
+| `max_neighbors` | integer (≥ 1, ≤ 500) | `50` | Largest number of neighbours (and of relationships) one kg_neighbors call returns |
+| `max_query_chars` | integer (≥ 1) | `2000` | Longest query (and entity name) a call may give, in characters |
+| `max_text_chars` | integer (≥ 100) | `2000` | Characters of text each returned record keeps (chunk text, a description); a longer one is cut and marked text_truncated |
+| `max_response_chars` | integer (≥ 1000) | `60000` | Characters of serialized records one response holds; past it the lowest-ranked records are left out (truncated, omitted) |
+| `max_concurrent_calls` | integer (≥ 1) | `4` | Tool calls the server runs at once; further calls wait, within their deadline (search.query_timeout_seconds) |
+
 ## Long defaults
 
 The defaults too long for their table.
@@ -1040,6 +1058,17 @@ ragas_metrics:
 - context_precision
 - context_recall
 - faithfulness
+```
+
+### `mcp.tools`
+
+```yaml
+tools:
+- kg_search
+- kg_answer
+- kg_get_entity
+- kg_neighbors
+- kg_describe_schema
 ```
 
 ## Moved keys

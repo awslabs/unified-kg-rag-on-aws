@@ -26,6 +26,7 @@ the [Configuration Reference](./configuration.md).
 - [`run-visualization`](#run-visualization)
 - [`run-prompt-tuning`](#run-prompt-tuning)
 - [`prepare-benchmark`](#prepare-benchmark)
+- [`run-mcp-server`](#run-mcp-server)
 - [Provider flags](#provider-flags)
 
 ## `run-ingestion`
@@ -175,9 +176,25 @@ Guide: [Benchmarks](../guides/benchmarks.md). Also takes the [provider flags](#p
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 
+## `run-mcp-server`
+
+Serve one index namespace to agents as read-only MCP (Model Context Protocol) tools: kg_search, kg_answer, kg_get_entity, kg_neighbors and kg_describe_schema. Needs the mcp extra
+
+Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider-flags).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--suffix` | — | Index namespace (suffix) to serve (default: the config's processing.document_parsing.index_value, else 'default'); a tool call may name another only if mcp.allowed_namespaces lists it. |
+| `--transport` | `stdio` | stdio (default): the agent starts this command and talks over its stdin and stdout. streamable-http: a stateless HTTP endpoint at http://HOST:PORT/mcp. |
+| `--host` | `127.0.0.1` | Address the HTTP transport binds (default 127.0.0.1, this machine only); a non-loopback address needs --allow-remote. |
+| `--port` | `8000` | Port of the HTTP transport (default 8000). |
+| `--allow-remote` | off | Let the HTTP transport bind a non-loopback address. The server authenticates no caller: put it behind a proxy or gateway that authenticates every request, and keep the port unreachable otherwise. |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+
 ## Provider flags
 
-Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`, `run-prompt-tuning`, `prepare-benchmark`. Override the config's provider selection (see docs/guides/local-mode.md).
+Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`, `run-prompt-tuning`, `prepare-benchmark`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
 
 | Flag | Default | Description |
 |---|---|---|

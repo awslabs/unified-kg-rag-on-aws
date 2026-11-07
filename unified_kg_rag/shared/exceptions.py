@@ -100,6 +100,12 @@ class MethodologyNotIndexedError(ConfigurationError):
     before any model call; ``run-rag`` exits 2."""
 
 
+class ToolArgumentError(GraphRAGException, ValueError):
+    """An MCP tool call's argument is outside what the server allows (a
+    bound, a namespace or a strategy it does not serve, a missing or
+    conflicting argument). Raised before any store or model call."""
+
+
 class LanguageModelError(ModelError):
     pass
 

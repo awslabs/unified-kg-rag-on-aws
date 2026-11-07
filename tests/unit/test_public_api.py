@@ -46,6 +46,7 @@ PUBLIC_API = sorted(
         "SearchResult",
         "SearchStrategy",
         "SearchType",
+        "build_mcp_server",
         "configure_event_loop",
         "get_config",
         "setup_logging",
@@ -165,6 +166,8 @@ _EXTRA_MODULES = (
     "langchain_openai",
     "pandas",
     "ragas",
+    # mcp
+    "mcp",
 )
 
 
@@ -181,6 +184,7 @@ def test_the_public_api_loads_no_optional_extra() -> None:
         "import unified_kg_rag.adapters.renderers\n"
         "import unified_kg_rag.application.cli.run_evaluation\n"
         "import unified_kg_rag.application.cli.run_visualization\n"
+        "import unified_kg_rag.application.cli.run_mcp_server\n"
         f"extras = {_EXTRA_MODULES!r}\n"
         "print(json.dumps(sorted({m.split('.')[0] for m in sys.modules} "
         "& set(extras))))\n"

@@ -37,6 +37,7 @@
 | 사용 방법 | [평가](./guides/evaluate.ko.md), [Benchmarks](./guides/benchmarks.md)(영문), [Visualization](./guides/visualize.md)(영문) | 평가기와 필요한 필드, 데이터 형식, 전략의 짝지은 비교, 비용과 가격, 다시 만들기·다시 판정하기·CI 게이트. MuSiQue를 코퍼스와 데이터셋으로 변환. 내보낸 그래프 렌더링 |
 | 사용 방법 | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md)(영문) | 질의와 답변 검사, 컨텍스트 근거 검사. Jaeger, Langfuse, Phoenix, CloudWatch로 추적, 전송 제한과 개인정보 |
 | 사용 방법 | [Using the library from Python](./guides/python-library.md)(영문) | Python에서 수집과 질의, 구분해 처리할 결과와 오류, 비동기 코드, 닫기, 로깅, 백엔드 주입 |
+| 사용 방법 | [MCP 서버](./guides/mcp.ko.md) | 인덱스를 읽기 전용 MCP 도구로 에이전트에 제공. 도구와 레코드, 범위와 한도, 인증 프록시 뒤의 HTTP, 비용과 텔레메트리 |
 | 레퍼런스 | [CLI 레퍼런스](./reference/cli.md)(영문) | 모든 CLI의 모든 플래그(파서에서 생성) |
 | 레퍼런스 | [CLI exit codes and JSON output](./reference/exit-codes-and-json.md)(영문) | 종료 코드의 의미, 신호를 받았을 때의 동작, `--output-format json` 문서 |
 | 레퍼런스 | [설정 레퍼런스](./reference/configuration.md)(영문) | 모든 설정 키의 타입, 기본값, 설명(코드에서 생성) |
@@ -59,6 +60,7 @@
 | 모델이나 설정 변경 | [설정](./guides/configure.ko.md), [모델 선택 참고 사항](./reference/models.md#model-selection-notes)(영문), [설정 레퍼런스](./reference/configuration.md)(영문) |
 | 질의와 답변 검사 | [Guardrail](./guides/guardrail.md)(영문) |
 | 질의와 수집 실행 추적 | [Observability](./guides/observability.md)(영문) |
+| 에이전트가 인덱스를 검색하거나 질의하게 하기 | [MCP 서버](./guides/mcp.ko.md) |
 | 코퍼스 수집, 재개, 재구축 | [수집](./guides/ingest.ko.md) |
 | 한국어나 여러 언어가 섞인 코퍼스 인덱싱 | [다국어 코퍼스](./guides/multilingual.ko.md) |
 | 검색 전략 고르기 | [검색 전략 선택](./concepts/retrieval.ko.md#검색-전략-선택) |

@@ -35,6 +35,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | How-to | [Evaluation](./guides/evaluate.md), [Benchmarks](./guides/benchmarks.md), [Visualization](./guides/visualize.md) | Evaluators and what they need, the dataset format, paired comparisons of strategies, cost and prices, rebuilding, re-judging and CI gates; MuSiQue as a corpus and a dataset; rendering the exported graph |
 | How-to | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md) | Screening queries and answers, the contextual grounding check; tracing with Jaeger, Langfuse, Phoenix or CloudWatch, export limits and privacy |
 | How-to | [Using the library from Python](./guides/python-library.md) | Ingesting and querying from Python, results and errors to tell apart, async code, closing, logging, injected backends |
+| How-to | [MCP server](./guides/mcp.md) | Serving an index to agents as read-only MCP tools: the tools and their records, scope and limits, HTTP behind an authenticating proxy, cost and telemetry |
 | Reference | [CLI Reference](./reference/cli.md) | Every flag of every CLI (generated from the parsers) |
 | Reference | [CLI exit codes and JSON output](./reference/exit-codes-and-json.md) | What each exit code means, what a signal does, the `--output-format json` document |
 | Reference | [Configuration Reference](./reference/configuration.md) | Every configuration key: type, default, description (generated from the code) |
@@ -57,6 +58,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Change a model or a setting | [Configuration](./guides/configure.md), [Model selection notes](./reference/models.md#model-selection-notes), [Configuration Reference](./reference/configuration.md) |
 | Screen queries and answers | [Guardrail](./guides/guardrail.md) |
 | Trace queries and ingestion runs | [Observability](./guides/observability.md) |
+| Let an agent search or query the index | [MCP server](./guides/mcp.md) |
 | Ingest a corpus, resume or rebuild | [Ingestion](./guides/ingest.md) |
 | Index a Korean or mixed-language corpus | [Multilingual corpora](./guides/multilingual.md) |
 | Pick a search strategy | [Search strategies](./concepts/retrieval.md#search-strategies--when-to-use-which) |
