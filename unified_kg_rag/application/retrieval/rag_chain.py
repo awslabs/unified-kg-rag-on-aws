@@ -1673,8 +1673,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             logger.warning(
                 "Could not read the text units of the answer's graph "
                 "citations; they name no document: %s",
-                e,
+                error_digest(e),
             )
+            logger.debug("Citation lineage read error", exc_info=True)
             state["citations_unresolved"] = True
         return state
 
