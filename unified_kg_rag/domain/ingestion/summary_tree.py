@@ -176,6 +176,25 @@ def node_id(level: int, partition: str | None, child_ids: Sequence[str]) -> str:
     return compute_hash(payload, length=32)
 
 
+def leaf_entry(
+    leaf_id: str, text: str, filters: Mapping[str, Any]
+) -> tuple[str, str, str]:
+    """What :func:`leaf_digest` keeps of one leaf: its id, its text's hash
+    and its filters, so a caller streaming the text units holds no text."""
+    return (
+        leaf_id,
+        compute_hash(text),
+        json.dumps(filters, sort_keys=True, default=str),
+    )
+
+
+def leaf_entries_digest(entries: Iterable[tuple[str, str, str]]) -> str:
+    """:func:`leaf_digest` of the leaves of ``entries`` (:func:`leaf_entry`),
+    in any order."""
+    payload = json.dumps(sorted(list(entry) for entry in entries), ensure_ascii=False)
+    return compute_hash(payload, length=32)
+
+
 def leaf_digest(leaves: Iterable[tuple[str, str, Mapping[str, Any]]]) -> str:
     """Digest of a tree's leaves: each text unit's id, the text the tree
     reads (its translation, when it holds one) and its document filters.
@@ -187,18 +206,7 @@ def leaf_digest(leaves: Iterable[tuple[str, str, Mapping[str, Any]]]) -> str:
     are a function of the text and the embedding model, which the tree's
     fingerprint holds.
     """
-    payload = json.dumps(
-        sorted(
-            [
-                leaf_id,
-                compute_hash(text),
-                json.dumps(filters, sort_keys=True, default=str),
-            ]
-            for leaf_id, text, filters in leaves
-        ),
-        ensure_ascii=False,
-    )
-    return compute_hash(payload, length=32)
+    return leaf_entries_digest(leaf_entry(*leaf) for leaf in leaves)
 
 
 def summary_input_key(

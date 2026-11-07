@@ -551,6 +551,56 @@ def test_a_tree_over_the_limit_fails_before_its_vectors_are_read(
     assert tree_nodes(providers)
 
 
+def test_the_leaf_digest_holds_one_page_of_text_at_a_time(
+    tmp_path: Path, no_aws, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    # Regression: the digest read every text unit's text and translation
+    # of the suffix into one list, every run (a current tree's and an
+    # on_reset one's too), before the size check could refuse the tree.
+    import gc
+    import weakref
+
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+    from unified_kg_rag.application.ingestion import summary_tree_stage as sts
+
+    config, providers, _, _ = setup(tmp_path)
+    source = corpus(tmp_path)
+    context = ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+
+    class Row(dict):  # a dict a weak reference can follow
+        pass
+
+    pages = OpenSearchIndexer.scan_text_unit_pages
+    scan = OpenSearchIndexer.scan_text_units
+    held: list[int] = []
+    listed: list[list[str]] = []
+
+    def paged(self: Any, suffix: Any, *, fields: list[str], **kwargs: Any) -> Any:
+        refs: list[Any] = []
+        for page in pages(self, suffix, fields=fields, **kwargs):
+            if "text_embedding" not in fields:
+                gc.collect()
+                held.append(sum(ref() is not None for ref in refs))
+            rows = [Row(row) for row in page]
+            refs.extend(weakref.ref(row) for row in rows)
+            yield rows
+
+    def scanned(self: Any, suffix: Any, *, fields: list[str], **kwargs: Any) -> Any:
+        if "text_embedding" not in fields:
+            listed.append(fields)
+        return scan(self, suffix, fields=fields, **kwargs)
+
+    monkeypatch.setattr(sts, "_DIGEST_PAGE", 1)
+    monkeypatch.setattr(OpenSearchIndexer, "scan_text_unit_pages", paged)
+    monkeypatch.setattr(OpenSearchIndexer, "scan_text_units", scanned)
+    context = ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert listed == []
+    # Read a unit at a time, at most the one before it is still held.
+    assert len(held) > 2 and max(held) <= 1, held
+
+
 def test_refresh_on_reset_builds_a_partial_tree_again(
     tmp_path: Path, no_aws, monkeypatch: pytest.MonkeyPatch  # noqa: F811
 ) -> None:

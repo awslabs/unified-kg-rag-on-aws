@@ -647,6 +647,20 @@ class VectorIndexer(BaseIndexer):
         the backend cannot page its text units. Raises when a read fails."""
         return None
 
+    def scan_text_unit_pages(
+        self,
+        suffix: str | None,
+        *,
+        fields: list[str],
+        page_size: int | None = None,
+    ) -> Iterator[list[dict[str, Any]]] | None:
+        """:meth:`scan_text_units`, one page at a time: a page is read only
+        once the one before it is consumed, so a caller that keeps a little
+        of each unit holds one page of their text. Yields nothing without a
+        live index; ``None`` (the default) when the backend cannot page its
+        text units. Raises when a read fails."""
+        return None
+
     def read_summary_nodes(
         self, suffix: str | None, *, fields: list[str]
     ) -> list[dict[str, Any]] | None:
