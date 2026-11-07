@@ -26,8 +26,9 @@ DENSE_SCRIPT_LANGUAGES: frozenset[LanguageCode] = frozenset(
 # What is read of a sample: the first characters of its first documents.
 SAMPLE_DOCUMENTS = 20
 SAMPLE_CHARS = 2000
-# Fewer letters than this decide nothing (a corpus of tables, numbers).
-_MIN_LETTERS = 200
+# Fewer letters than this decide nothing (a corpus of tables, numbers); a
+# two-sentence sample still decides.
+_MIN_LETTERS = 40
 # A dense-script language's corpus with fewer of its letters than this
 # share, or another language's with more than the majority, disagrees with
 # the setting. Wide margins: technical Korean or Japanese text carries Latin

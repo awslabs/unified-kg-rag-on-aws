@@ -22,7 +22,7 @@ from unified_kg_rag.domain.models import Config, LanguageCode
 
 pytestmark = pytest.mark.unit
 
-# Synthetic text, long enough to decide (200 letters and more).
+# Synthetic text, long enough to decide (40 letters and more).
 KOREAN = "벤더는 구매자에게 부품을 공급하고 납기와 가격을 계약서에 정한다. " * 8
 JAPANESE = "ベンダーは購入者に部品を供給し、納期と価格を契約書で定める。" * 8
 CHINESE = "供应商向买方供应零件，并在合同中约定交货期和价格。" * 10
@@ -87,6 +87,16 @@ def test_an_agreeing_or_undecidable_sample_is_not_reported(
     text: str, source: LanguageCode
 ) -> None:
     assert source_language_mismatch(script_share([text]), source) is None
+
+
+def test_a_two_sentence_corpus_still_decides() -> None:
+    # The sample corpora a first run uses are this small.
+    tiny = [
+        "벤더는 서울에 있는 구매자에게 전자 부품을 공급한다.",
+        "구매자는 계약서에 정한 날까지 대금을 지급한다.",
+    ]
+    reason = source_language_mismatch(script_share(tiny), LanguageCode.EN)
+    assert reason is not None and "set it to 'ko'" in reason
 
 
 def test_the_sample_is_bounded() -> None:
