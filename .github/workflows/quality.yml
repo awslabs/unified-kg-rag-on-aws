@@ -232,6 +232,18 @@ jobs:
           tests/integration/test_embedded_schema_e2e.py
           --cov=unified_kg_rag --cov-append --cov-report=
 
+      # The end-to-end ingest, incremental run and strategy loop of the
+      # embedded suite, on Gremlin Server and OpenSearch (its sqlite case
+      # runs in the quality job).
+      - name: End to end against the local stores
+        env:
+          LOCAL_STORES: "1"
+          COVERAGE_CORE: sysmon
+        run: >-
+          uv run pytest tests/integration/test_embedded_e2e.py
+          -k "each_store_backend and container"
+          --cov=unified_kg_rag --cov-append --cov-report=
+
       - name: Upload coverage data
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

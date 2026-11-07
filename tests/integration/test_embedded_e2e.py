@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,12 @@ import yaml
 from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.extras import VIZ_INSTALLED
 from tests.fixtures.fakes.model_servers import FakeOllama
+from tests.fixtures.store_backends import (
+    RETRIEVERS,
+    StoreHarness,
+    backends,
+    open_harness,
+)
 from tests.integration import test_ingestion_stages as stages
 from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.aws import token_counter as token_counter_module
@@ -264,6 +271,37 @@ def _ask(chain: GraphRAGChain, strategy: SearchStrategy) -> RAGOutput:
     return out
 
 
+def _ask_every_strategy(
+    chain: GraphRAGChain, server: FakeOllama, stored_ids: set[str]
+) -> None:
+    """Ask every search strategy: each answers from the stores, cites only
+    ``stored_ids`` and reports the model usage the server served."""
+    for strategy in SearchStrategy:
+        answers_before = server.answers
+        calls_before = len(server.chat_models)
+        tokens_before = (server.input_tokens, server.output_tokens)
+        out = _ask(chain, strategy)
+        assert out.answer == ANSWER, strategy
+        # The query's usage is exactly what the model server served.
+        usage = out.metadata["usage"]
+        assert usage["llm_calls"] == len(server.chat_models) - calls_before
+        assert (usage["input_tokens"], usage["output_tokens"]) == (
+            server.input_tokens - tokens_before[0],
+            server.output_tokens - tokens_before[1],
+        ), strategy
+        # Rerank requests count under their own role, and are no calls.
+        assert set(usage["by_role"]) - {"rerank"} == {"query"}, strategy
+        assert usage["by_role"].get("rerank", {}).get("llm_calls", 0) == 0
+        assert server.answers > answers_before, strategy
+        assert out.search_results.results, strategy
+        # Cited: the sources are stored artifacts.
+        cited = {source["source"] for source in out.sources}
+        assert cited and cited <= stored_ids, strategy
+        # AUTO is routed by the model's answer ("local").
+        expected = "local" if strategy is SearchStrategy.AUTO else strategy.value
+        assert out.metadata["search_strategy"] == expected
+
+
 def _render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: Path) -> int:
     """Run ``run-visualization --backend local`` on ``data``; its exit code."""
     config_path = tmp_path / "viz.yaml"
@@ -365,30 +403,7 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
     stored_ids = _stored_ids(config, providers)
     chain = GraphRAGChain(config, providers=providers)
     try:
-        for strategy in SearchStrategy:
-            answers_before = server.answers
-            calls_before = len(server.chat_models)
-            tokens_before = (server.input_tokens, server.output_tokens)
-            out = _ask(chain, strategy)
-            assert out.answer == ANSWER, strategy
-            # The query's usage is exactly what the model server served.
-            usage = out.metadata["usage"]
-            assert usage["llm_calls"] == len(server.chat_models) - calls_before
-            assert (usage["input_tokens"], usage["output_tokens"]) == (
-                server.input_tokens - tokens_before[0],
-                server.output_tokens - tokens_before[1],
-            ), strategy
-            # Rerank requests count under their own role, and are no calls.
-            assert set(usage["by_role"]) - {"rerank"} == {"query"}, strategy
-            assert usage["by_role"].get("rerank", {}).get("llm_calls", 0) == 0
-            assert server.answers > answers_before, strategy
-            assert out.search_results.results, strategy
-            # Cited: the sources are stored artifacts.
-            cited = {source["source"] for source in out.sources}
-            assert cited and cited <= stored_ids, strategy
-            # AUTO is routed by the model's answer ("local").
-            expected = "local" if strategy is SearchStrategy.AUTO else strategy.value
-            assert out.metadata["search_strategy"] == expected
+        _ask_every_strategy(chain, server, stored_ids)
         assert encoder.calls >= 1
         assert set(server.embed_models) == {"synthetic-embed"}
 
@@ -455,6 +470,101 @@ def test_local_mode_runs_end_to_end_on_the_embedded_stores(
         assert sorted(p.name for p in (tmp_path / "rendered").iterdir())
     else:
         assert _render(tmp_path, monkeypatch, data) == 2
+
+
+@pytest.fixture(params=backends(RETRIEVERS))
+def store_harness(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> Iterator[StoreHarness]:
+    yield from open_harness(request.param, tmp_path / "harness")
+
+
+def _on_harness_stores(config: Config, harness: StoreHarness) -> None:
+    """Point ``config`` at the stores (and the namespace) of ``harness``,
+    whose teardown then clears what the run wrote."""
+    stores = harness.config
+    for name in ("graph", "vector"):
+        mine, theirs = getattr(config.providers, name), getattr(stores.providers, name)
+        mine.kind = theirs.kind
+        mine.sqlite_path = theirs.sqlite_path
+    for name in ("neptune", "opensearch"):
+        mine, theirs = getattr(config.aws, name), getattr(stores.aws, name)
+        mine.endpoint, mine.port = theirs.endpoint, theirs.port
+    config.indexing.additional_suffix = stores.indexing.additional_suffix
+
+
+def test_ingest_update_and_every_strategy_on_each_store_backend(
+    tmp_path: Path, no_aws, store_harness: StoreHarness
+) -> None:
+    # The embedded run above, on each store backend with retrievers: the
+    # SQLite files and (LOCAL_STORES=1) Gremlin Server and OpenSearch. A
+    # full ingest, an incremental run that adds, changes and deletes a
+    # document, then every strategy over what it left.
+    harness = store_harness
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    config.indexing.methodologies = [*config.indexing.methodologies, Methodology.RAPTOR]
+    _on_harness_stores(config, harness)
+    server = FakeOllama(_respond, ANSWER, DIM)
+    encoder = FakeCrossEncoder("synthetic-reranker")
+    providers = _providers(config, server, encoder)
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+
+    def entity_names() -> set[str]:
+        graph = providers.build_graph_indexer()
+        try:
+            return {name for _, name in graph.read_entity_names()}
+        finally:
+            graph.close()
+
+    def texts() -> set[str]:
+        vectors = providers.build_vector_indexer()
+        try:
+            rows = vectors.scan_text_units(None, fields=["text"])
+        finally:
+            vectors.close()
+        return {row["text"].strip() for row in rows}
+
+    context = _ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    assert entity_names() == {"Vendor", "Buyer", "Depot"}
+    assert texts() == {
+        "Vendor supplies widgets to Buyer.",
+        "Depot stores widgets for Vendor.",
+    }
+
+    (source / "freight.txt").write_text("Carrier moves gadgets for Depot.")
+    (source / "logistics.txt").write_text(ANSWER)
+    (source / "contract.txt").unlink()
+    context = _ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+    delta = context.incremental_delta
+    assert delta is not None
+    assert (len(delta.new), len(delta.changed), len(delta.deleted)) == (1, 1, 1)
+    assert entity_names() == {"Vendor", "Depot", "Carrier"}
+    assert texts() == {ANSWER, "Carrier moves gadgets for Depot."}
+    assert _registry(providers) == {
+        "logistics.txt": DocStatus.PROCESSED,
+        "freight.txt": DocStatus.PROCESSED,
+    }
+    # The run wrote to the harness's stores: they hold its entities, and
+    # the stored ids the answers may cite.
+    assert len(harness.stored_ids("graph.entities")) == 3
+    stored_ids = set().union(
+        *(
+            harness.stored_ids(kind)
+            for kind in ("text_units", "entities", "relationships", "community_reports")
+        )
+    )
+
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        _ask_every_strategy(chain, server, stored_ids)
+    finally:
+        chain.close()
+    assert encoder.calls >= 1
 
 
 def _refusing(monkeypatch: pytest.MonkeyPatch, refused: Any) -> None:
