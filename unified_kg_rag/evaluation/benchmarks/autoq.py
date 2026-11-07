@@ -81,6 +81,7 @@ from unified_kg_rag.domain.prompts import (
     BenchmarkQuestionsPrompt,
     BenchmarkValidationPrompt,
 )
+from unified_kg_rag.evaluation.benchmarks import QUESTION_CLASSES
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.usage import merge_usage, usage_scope
 
@@ -91,13 +92,6 @@ LICENSE_NOTE = (
     "(MIT, https://github.com/microsoft/benchmark-qed), no BenchmarkQED data used."
 )
 BENCHMARK_NAME = "autoq"
-QUESTION_CLASSES = (
-    "data_local",
-    "data_global",
-    "data_linked",
-    "activity_local",
-    "activity_global",
-)
 DATA_CLASSES = frozenset({"data_local", "data_global", "data_linked"})
 CORPUS_SUFFIXES = frozenset({".txt", ".md"})
 OUTPUT_FILES = ("eval_data.json", "text_units.jsonl", "generation_report.json")

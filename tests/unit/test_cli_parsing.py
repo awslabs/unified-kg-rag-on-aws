@@ -2218,3 +2218,27 @@ def test_a_valid_suffix_is_kept() -> None:
         _rag_parser().parse_args(["--query", "q", "--suffix", "tenant-a"]).suffix
         == "tenant-a"
     )
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "module", ["run_evaluation", "prepare_benchmark", "run_rag_chain"]
+)
+def test_help_loads_no_chain_or_evaluation_manager(module: str) -> None:
+    # --help took ~3 s for run-eval and prepare-benchmark: the module
+    # imported the RAG chain, every search strategy and the evaluation
+    # manager before parsing anything.
+    import subprocess
+    import sys
+
+    code = (
+        "import sys\n"
+        f"from unified_kg_rag.application.cli import {module} as cli\n"
+        "heavy = [m for m in sys.modules if m.endswith(('.rag_chain', "
+        "'.evaluation_manager', '.autoq')) or '.search_strategies' in m]\n"
+        "print(heavy)\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    ).stdout
+    assert out.strip() == "[]", out

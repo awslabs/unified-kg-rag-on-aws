@@ -1,5 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+from __future__ import annotations
+
 import argparse
 import inspect
 import json
@@ -13,9 +15,9 @@ from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import TYPE_CHECKING, Any
 
-from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 from rich.panel import Panel
 from rich.table import Table
@@ -54,6 +56,7 @@ from unified_kg_rag.application.cli.display import (
     markup_safe,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
+from unified_kg_rag.application.cli.lazy import lazy_names
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
     missing_extras_error,
@@ -69,14 +72,12 @@ from unified_kg_rag.application.cli.query_args import (
     query_suffix,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.application.retrieval.rag_chain import (
-    GraphRAGChain,
-    extraction_cache_scope,
-)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
     EvaluationQuery,
+    EvaluationReport,
+    EvaluationResult,
     EvaluationSummary,
     EvaluatorType,
     ModelRole,
@@ -84,42 +85,6 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
-from unified_kg_rag.evaluation import EvaluationManager
-from unified_kg_rag.evaluation.answer_match_evaluator import answer_scoring
-from unified_kg_rag.evaluation.closed_book import (
-    CLOSED_BOOK_ARM,
-    closed_book_arms,
-    closed_book_chain,
-)
-from unified_kg_rag.evaluation.comparison import (
-    Run,
-    adjust_for_multiplicity,
-    baseline_comparison,
-    paired_comparison,
-    per_query_rows,
-)
-from unified_kg_rag.evaluation.evaluation_manager import AnswerArm
-from unified_kg_rag.evaluation.gates import Gate, gate_breaches, parse_gate
-from unified_kg_rag.evaluation.pairwise import PairwiseJudge
-from unified_kg_rag.evaluation.report import (
-    baseline_metric_keys,
-    compared_pairs,
-    comparison_csv,
-    comparison_markdown,
-    delta_cell,
-)
-from unified_kg_rag.evaluation.saved_results import (
-    SavedRun,
-    check_answer_scoring,
-    dataset_warnings,
-    group_runs,
-    interleaving_warnings,
-    load_saved_runs,
-    pooling_errors,
-    pooling_warnings,
-    rerank_unmetered,
-    summary_warnings,
-)
 from unified_kg_rag.shared import (
     AWSServiceError,
     ConfigurationError,
@@ -133,6 +98,148 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
+
+if TYPE_CHECKING:
+    from langchain_core.runnables import Runnable
+
+    from unified_kg_rag.application.retrieval.rag_chain import (
+        GraphRAGChain,
+        extraction_cache_scope,
+    )
+    from unified_kg_rag.evaluation.answer_match_evaluator import answer_scoring
+    from unified_kg_rag.evaluation.closed_book import (
+        CLOSED_BOOK_ARM,
+        closed_book_arms,
+        closed_book_chain,
+    )
+    from unified_kg_rag.evaluation.comparison import (
+        adjust_for_multiplicity,
+        baseline_comparison,
+        paired_comparison,
+        per_query_rows,
+    )
+    from unified_kg_rag.evaluation.evaluation_manager import (
+        AnswerArm,
+        EvaluationManager,
+    )
+    from unified_kg_rag.evaluation.gates import Gate, gate_breaches
+    from unified_kg_rag.evaluation.pairwise import PairwiseJudge
+    from unified_kg_rag.evaluation.report import (
+        baseline_metric_keys,
+        compared_pairs,
+        comparison_csv,
+        comparison_markdown,
+        delta_cell,
+    )
+    from unified_kg_rag.evaluation.saved_results import (
+        SavedRun,
+        check_answer_scoring,
+        dataset_warnings,
+        group_runs,
+        interleaving_warnings,
+        load_saved_runs,
+        pooling_errors,
+        pooling_warnings,
+        rerank_unmetered,
+        summary_warnings,
+    )
+
+
+def _chain_module() -> ModuleType:
+    from unified_kg_rag.application.retrieval import rag_chain
+
+    return rag_chain
+
+
+def _manager_module() -> ModuleType:
+    from unified_kg_rag.evaluation import evaluation_manager
+
+    return evaluation_manager
+
+
+def _answer_match_module() -> ModuleType:
+    from unified_kg_rag.evaluation import answer_match_evaluator
+
+    return answer_match_evaluator
+
+
+def _closed_book_module() -> ModuleType:
+    from unified_kg_rag.evaluation import closed_book
+
+    return closed_book
+
+
+def _comparison_module() -> ModuleType:
+    from unified_kg_rag.evaluation import comparison
+
+    return comparison
+
+
+def _gates_module() -> ModuleType:
+    from unified_kg_rag.evaluation import gates
+
+    return gates
+
+
+def _pairwise_module() -> ModuleType:
+    from unified_kg_rag.evaluation import pairwise
+
+    return pairwise
+
+
+def _report_module() -> ModuleType:
+    from unified_kg_rag.evaluation import report
+
+    return report
+
+
+def _saved_results_module() -> ModuleType:
+    from unified_kg_rag.evaluation import saved_results
+
+    return saved_results
+
+
+# Imported on first use: the chain and the evaluation manager load LangChain
+# and every search strategy (seconds), which --help and a refused command
+# line never need. Tests patch them as attributes of this module.
+__getattr__, _load_evaluation = lazy_names(
+    globals(),
+    {
+        "GraphRAGChain": _chain_module,
+        "extraction_cache_scope": _chain_module,
+        "EvaluationManager": _manager_module,
+        "AnswerArm": _manager_module,
+        "answer_scoring": _answer_match_module,
+        "CLOSED_BOOK_ARM": _closed_book_module,
+        "closed_book_arms": _closed_book_module,
+        "closed_book_chain": _closed_book_module,
+        "adjust_for_multiplicity": _comparison_module,
+        "baseline_comparison": _comparison_module,
+        "paired_comparison": _comparison_module,
+        "per_query_rows": _comparison_module,
+        "gate_breaches": _gates_module,
+        "PairwiseJudge": _pairwise_module,
+        "baseline_metric_keys": _report_module,
+        "compared_pairs": _report_module,
+        "comparison_csv": _report_module,
+        "comparison_markdown": _report_module,
+        "delta_cell": _report_module,
+        "SavedRun": _saved_results_module,
+        "check_answer_scoring": _saved_results_module,
+        "dataset_warnings": _saved_results_module,
+        "group_runs": _saved_results_module,
+        "interleaving_warnings": _saved_results_module,
+        "load_saved_runs": _saved_results_module,
+        "pooling_errors": _saved_results_module,
+        "pooling_warnings": _saved_results_module,
+        "rerank_unmetered": _saved_results_module,
+        "summary_warnings": _saved_results_module,
+    },
+)
+
+# One run: the reports and results of one strategy and repeat
+# (``comparison.Run``).
+Run = tuple[list[EvaluationReport], list[EvaluationResult]]
 
 logger = get_logger(__name__)
 
@@ -156,6 +263,8 @@ def _data_path(value: str) -> str | Path:
 
 
 def _gate(value: str) -> Gate:
+    from unified_kg_rag.evaluation.gates import parse_gate
+
     try:
         return parse_gate(value)
     except ValueError as e:
@@ -578,6 +687,7 @@ class EvaluationRunner:
         one ``rag_chain`` was built from). ``rag_chain`` is ``None`` with
         ``--from-results`` (nothing is answered); ``providers`` builds the
         pairwise judge then (default: from ``config``)."""
+        _load_evaluation()
         self.args = args
         self.config = with_pairwise_mode(
             with_judge_model(
@@ -1237,7 +1347,7 @@ class EvaluationRunner:
             return None
         return answer_scoring(evaluation)
 
-    def _saved_runs_input(self) -> "_Measured":
+    def _saved_runs_input(self) -> _Measured:
         """The comparison input rebuilt from ``--from-results``."""
         try:
             saved = load_saved_runs(self._from_results or [])
@@ -1301,7 +1411,7 @@ class EvaluationRunner:
         work_dir: Path,
         local_outputs: Path,
         baseline: dict[str, list[SavedRun]] | None,
-    ) -> "_Measured":
+    ) -> _Measured:
         """Answer and score the dataset once per strategy and repeat."""
         assert self.rag_chain is not None
         eval_data_uri = self.args.data_path
@@ -1496,8 +1606,8 @@ class EvaluationRunner:
         planned: list[tuple[str, int]],
         managers: dict[str, EvaluationManager],
         arm_queries: Callable[[str], list[EvaluationQuery]],
-        context: "_RunContext",
-        recorded: "_Measured",
+        context: _RunContext,
+        recorded: _Measured,
     ) -> None:
         """Answer every run of the comparison interleaved, query by query
         (``EvaluationManager.answer_interleaved``), then score each run."""
@@ -1556,8 +1666,8 @@ class EvaluationRunner:
         manager: EvaluationManager,
         run: Run,
         summary: EvaluationSummary,
-        context: "_RunContext",
-        recorded: "_Measured",
+        context: _RunContext,
+        recorded: _Measured,
     ) -> None:
         """Save one run's files and add it to the comparison's input."""
         reports, results = run
@@ -1602,7 +1712,7 @@ class EvaluationRunner:
         )
 
     def _baseline_pairs(
-        self, measured: "_Measured", baseline: dict[str, list[SavedRun]]
+        self, measured: _Measured, baseline: dict[str, list[SavedRun]]
     ) -> tuple[dict[str, str], list[str]]:
         """Each strategy's baseline label: ``baseline:<s>``, else the
         baseline's first strategy (warned about)."""
@@ -1627,7 +1737,7 @@ class EvaluationRunner:
 
     async def _compare(
         self,
-        measured: "_Measured",
+        measured: _Measured,
         baseline: dict[str, list[SavedRun]] | None,
         local_outputs: Path,
         elapsed: float,
@@ -1791,7 +1901,7 @@ class EvaluationRunner:
         self._print_comparison(comparison, elapsed)
         return comparison, gate_failures
 
-    def _judge_manifest(self, measured: "_Measured") -> dict[str, Any] | None:
+    def _judge_manifest(self, measured: _Measured) -> dict[str, Any] | None:
         """The manifest the judge warnings read: a re-judge's judge is this
         run's evaluation model, compared with the saved runs' answer model."""
         if self._from_results is None and self._baseline_results is None:
@@ -1862,6 +1972,7 @@ def main() -> None:
     try:
         cli = CommandLineInterface()
         args = cli.parse_args()
+        _load_evaluation()
 
         with exit_on_config_error():
             config = apply_provider_arguments(
