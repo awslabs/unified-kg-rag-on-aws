@@ -801,7 +801,7 @@ def corpus_manifest_fingerprint(
 
     Every file the pipeline could ingest contributes its path relative to the
     source root, its size, and a SHA-256 of its bytes. Modification times are
-    deliberately not used: an ``aws s3 sync`` into a fresh container or a new
+    deliberately not used: an S3 sync into a fresh container or a new
     checkout changes them without changing the content, which would turn every
     phase handoff into a cache miss.
 

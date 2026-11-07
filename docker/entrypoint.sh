@@ -12,7 +12,10 @@ LOCAL_SOURCE_DIR="/tmp/graphrag-source"
 if [[ "${UKR_SOURCE_DIRECTORY:-}" == s3://* ]]; then
     echo "[entrypoint] syncing source corpus ${UKR_SOURCE_DIRECTORY} -> ${LOCAL_SOURCE_DIR}"
     mkdir -p "${LOCAL_SOURCE_DIR}"
-    aws s3 sync "${UKR_SOURCE_DIRECTORY}" "${LOCAL_SOURCE_DIR}" --only-show-errors
+    # aws s3 sync --only-show-errors, with boto3 (docker/s3_sync.py): the
+    # image carries no AWS CLI. A failed download fails the task here.
+    python /usr/local/lib/unified-kg-rag/s3_sync.py \
+        "${UKR_SOURCE_DIRECTORY}" "${LOCAL_SOURCE_DIR}"
     # Every corpus is staged in the same local dir, so incremental deletion is
     # scoped to the S3 source rather than the staging path (unless set).
     export UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE="${UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE:-${UKR_SOURCE_DIRECTORY}}"
