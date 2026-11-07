@@ -45,6 +45,8 @@ class SectionType(str, Enum):
     # A node of the summary tree (the tree strategy).
     SUMMARY = "summary"
     TEXT = "text"
+    # A graph query's result table (the structured strategy).
+    QUERY_RESULT = "query_result"
 
 
 class ContextSection(BaseModel):
@@ -432,6 +434,7 @@ class TokenManager:
         SectionType.COMMUNITY: "community",
         SectionType.GENERAL: "general",
         SectionType.SUMMARY: "summary",
+        SectionType.QUERY_RESULT: "query_result",
     }
 
     def _type_budget_shares(
@@ -656,6 +659,7 @@ class TokenManager:
         )
 
     _SECTION_LABELS: ClassVar[dict[SectionType, str]] = {
+        SectionType.QUERY_RESULT: "Graph Query Result",
         SectionType.TEXT: "Document Chunks",
         SectionType.ENTITY: "Knowledge Graph — Entities",
         SectionType.RELATIONSHIP: "Knowledge Graph — Relationships",

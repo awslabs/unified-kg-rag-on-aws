@@ -647,6 +647,7 @@ def test_a_strategy_checks_filter_keys_against_its_own_retrievers(
         filtered_retrievers=lambda _strategy: list(reads[s].values()),
         filtered_index_prefixes=lambda _strategy: None,
         reserved_filter_keys=lambda _strategy: frozenset(),
+        filter_delegates=lambda _strategy, _artifacts: (),
     )
     chain.check_filter_keys({"status": "open"}, SearchStrategy.NAIVE)
     with pytest.raises(InvalidFilterError, match="status"):

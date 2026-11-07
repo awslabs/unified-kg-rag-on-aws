@@ -72,6 +72,12 @@ RRF, 재순위화)를 쓰며, `simple`과 `naive`는 그래프를 읽지 않습�
 |---|---|---|
 | `tree` | 그래프 추출 없는 저렴한 인덱스(`[raptor]`)나 RAPTOR와의 비교. 멀티홉 질문에서는 `naive`보다 나았지만(`answer_contains` +8점, 1회 반복) 그래프 전략보다 크게 낮았습니다([근거](./defaults-and-evidence.md#raptor-summary-tree), 영문) | `indexing.methodologies`에 `raptor`를 넣어 만든 네임스페이스가 필요합니다. 인덱싱 뒤에 텍스트 유닛을 벡터로 군집화하고 군집마다 요약(`models.roles.summary_tree`)하는 일을 레벨마다 반복하며, 요약은 인덱스 언어로 씁니다. 질의는 텍스트 유닛의 BM25 + kNN 검색, 모든 레벨 요약의 검색(RAPTOR의 collapsed tree), 그리고 네임스페이스에 엔티티 인덱스가 있으면 원 질의로 찾은 엔티티를 인용하는 요약과 구절(모델 호출 없음)을 RRF로 융합합니다. 교차 인코더가 구절과 요약을 함께 재순위화하고, 레벨마다 요약은 최대 `max_nodes_per_level`(3)개만 남기며, 남은 요약마다 자기 계보의 구절 `expand_children`(2)개를 함께 가져와 답변이 원문을 인용하게 합니다. 요약은 계보(`text_unit_ids`, `child_ids`)와 함께 출처로 보고됩니다. 비용은 `naive` 질의에 검색 몇 번과 요약 컨텍스트가 더해지고, 더 느립니다. 명시적으로 고를 때만 실행되며, `naive`보다 나은 답을 내지 못했으므로 `auto`는 이 전략으로 분기하지 않습니다. 다만 `raptor`만 가진 네임스페이스에서는 `auto`가 이 전략으로 대체합니다([설계](../design.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). |
 
+**구조화 그래프 질의(선택 사항, 측정 전):**
+
+| 전략 | 사용 시점 | 동작 방식 |
+|---|---|---|
+| `structured` | 타입, 관계, 속성으로 엔티티를 세거나 순위를 매기거나 나열하는 질문, 이름이 주어진 두 엔티티 사이의 경로, 시드 엔티티의 속성 | 계획 작성 호출 1회(`models.roles.graph_query`)가 질문을 그래프의 타입, 관계, 속성에 대한 JSON 계획으로 씁니다(질의 원문은 쓰지 않음). 코드는 그래프 프로필로 계획을 검증하고(거부되면 사유를 보여 주며 1회 재작성), 계획에 나온 이름을 하이브리드 엔티티 검색으로 연결하고, 질의의 접미사로 범위를 한정한 Gremlin이나 SQL로 컴파일해 그 결과를 검사한 뒤 읽기 전용으로 실행합니다. 결과 표, 결과가 가리키는 엔티티와 경로, 그것들이 인용하는 구절(그 구절 안의 하이브리드 구절 검색과 융합)이 답변으로 가고, 답변은 계산된 결과를 그대로 씁니다. 문서 필터나 시드 속성 조건 때문에 코드가 최대 `max_scan_rows`개의 일치 항목을 확인해야 하는 경우가 아니면 개수는 정확합니다(상한을 넘으면 "at least N"). 구조화된 답을 얻지 못하면 `search.structured.fallback_strategy`(`local`)를 실행하고 사유를 기록하며, `mode: augment`는 그래프 질의 옆에서 함께 실행합니다. 그래프가 있는 곳(`graphrag`, `lightrag`, `hipporag`)이면 모든 그래프 저장소에서 제공됩니다. `search.auto_routable_strategies`에 넣기 전까지 `auto`는 이 전략으로 분기하지 않습니다([가이드](../guides/structured-queries.ko.md), [설계](../design.md#66-structured-graph-queries-structured-opt-in), 영문). |
+
 ## 하이브리드 점수와 재순위화
 
 `global`(커뮤니티 리포트를 map하며, 텍스트 단위는 `search.global_search.text_unit_slots`를

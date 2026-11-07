@@ -374,6 +374,7 @@ class ModelRole(str, Enum):
     DRIFT_PRIMER = "drift_primer"
     DRIFT_ACTION = "drift_action"
     QUERY_CONTROLLER = "query_controller"
+    GRAPH_QUERY = "graph_query"
     EVALUATION = "evaluation"
     ANSWER_SPAN = "answer_span"
     PAIRWISE_OVERLAP = "pairwise_overlap"
@@ -414,6 +415,10 @@ _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
         "fast",
         "judges whether iterative search's context answers the question and "
         "names the follow-up queries",
+    ),
+    ModelRole.GRAPH_QUERY: (
+        "default",
+        "writes the structured strategy's graph query plan (search.structured)",
     ),
     ModelRole.EVALUATION: ("default", "judges answers in run-eval"),
     ModelRole.ANSWER_SPAN: (
@@ -489,6 +494,7 @@ class RoleModelsConfig(BaseModel):
     drift_primer: str | None = _role_field(ModelRole.DRIFT_PRIMER)
     drift_action: str | None = _role_field(ModelRole.DRIFT_ACTION)
     query_controller: str | None = _role_field(ModelRole.QUERY_CONTROLLER)
+    graph_query: str | None = _role_field(ModelRole.GRAPH_QUERY)
     evaluation: str | None = _EVALUATION_ROLE_FIELD
     answer_span: str | None = _role_field(ModelRole.ANSWER_SPAN)
     pairwise_overlap: str | None = _role_field(ModelRole.PAIRWISE_OVERLAP)
@@ -3718,8 +3724,11 @@ class FusionConfig(BaseModel):
             "first; iterative_round_<n>_text, its follow-up queries' text "
             "units; fused once more over the rounds, the base's own buckets "
             "fused within each), ppr (ppr_passages, ppr_seed_text_units, "
-            "ppr_facts) and tree (tree_text_units, tree_summaries, "
-            "tree_graph_summaries, tree_graph_text_units). A "
+            "ppr_facts), tree (tree_text_units, tree_summaries, "
+            "tree_graph_summaries, tree_graph_text_units) and structured "
+            "(structured_query_result, structured_entities, "
+            "structured_relationships, structured_text_units, "
+            "structured_text_hits, structured_fallback). A "
             "bucket without a key weighs 1.0 (the default: none); a weight is "
             "0 or more (0 drops the bucket's contribution). A weight on "
             "the former bucket opensearch_all applies to vector_all, with a "
@@ -4249,6 +4258,13 @@ class ContextTypeBudgetConfig(BaseModel):
         "strategy only, beside text's 0.50: at most half the context, and "
         "the text units take what the summaries leave)",
     )
+    query_result: float = Field(
+        default=0.25,
+        ge=0.0,
+        description="Relative share for a graph query result (the structured "
+        "strategy only): its table of counts, groups, rows or paths, at most "
+        "search.structured.rows_in_context long",
+    )
 
     @model_validator(mode="after")
     def validate_at_least_one_positive_share(self) -> "ContextTypeBudgetConfig":
@@ -4672,6 +4688,185 @@ class TreeSearchConfig(BaseModel):
     )
 
 
+def _structured_fallback(value: SearchStrategy | None) -> SearchStrategy | None:
+    if value in (SearchStrategy.AUTO, SearchStrategy.STRUCTURED):
+        raise ValueError(
+            f"fallback_strategy cannot be '{value.value}': name the strategy a "
+            "query without a structured answer runs (local by default), or "
+            "null to answer it from no context"
+        )
+    return value
+
+
+class StructuredSearchConfig(BaseModel):
+    """Structured graph queries (the ``structured`` strategy, opt-in; docs/
+    design.md §6.6, guide docs/guides/structured-queries.md).
+
+    A model writes the question as a JSON plan over the graph's schema, never
+    query text; code validates it, compiles it to Gremlin or SQL scoped to
+    the query's suffix, checks the compiled form and runs it read-only. A
+    question the plan cannot answer runs ``fallback_strategy``. Not routable
+    by auto by default (add it to search.auto_routable_strategies once the
+    structural benchmark shows a gain).
+    """
+
+    mode: Literal["fallback", "augment"] = Field(
+        default="fallback",
+        description=(
+            "fallback: answer from the graph query result, and run "
+            "fallback_strategy only when no structured answer is produced "
+            "(no valid plan, unanswerable, an unlinked name, an empty result, "
+            "a store refusal or time limit; metadata.structured.reason says "
+            "which). augment: run fallback_strategy on every query beside the "
+            "graph query and fuse both contexts, the query result first: more "
+            "recall on mixed questions at the fallback's cost on every query."
+        ),
+    )
+    fallback_strategy: Annotated[
+        SearchStrategy | None, AfterValidator(_structured_fallback)
+    ] = Field(
+        default=SearchStrategy.LOCAL,
+        description=(
+            "The strategy a query without a structured answer runs (and the "
+            "one augment runs beside it), reading the plan's entity names as "
+            "its query entities or keywords, so no extraction call is added. "
+            "One the namespace does not serve gives way to local, then mix. "
+            "null answers such a query from no context. auto and structured "
+            "are refused."
+        ),
+    )
+    max_hops: int = Field(
+        default=3,
+        ge=1,
+        le=4,
+        description="The longest walk a plan may ask for, in hops over all its edges.",
+    )
+    rows_in_context: int = Field(
+        default=50,
+        ge=1,
+        le=200,
+        description=(
+            "Rows, groups or paths written into the query result's context "
+            "section, and entities given their own section; for an answer "
+            "that names none (a count, an aggregate), the first matches by "
+            "rank read as its evidence."
+        ),
+    )
+    max_scan_rows: int = Field(
+        default=5000,
+        ge=1,
+        le=100_000,
+        description=(
+            "Distinct matches a store returns to code at most: the rows that "
+            "code orders by rank, and, under a document filter or a "
+            "seed-property condition (which the graph cannot evaluate), every "
+            "match it checks and aggregates. Past it the answer is marked "
+            "truncated (a count reads 'at least N'). A count without either "
+            "is computed by the store and exact."
+        ),
+    )
+    store_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description=(
+            "Server-side time limit of one structured query (Gremlin "
+            "evaluationTimeout, the SQLite progress handler), capped at "
+            "search.store_timeout_seconds; past it the query falls back "
+            "(reason timeout). Neptune's own neptune_query_timeout still "
+            "applies (StrictTimeoutValidation refuses a longer one)."
+        ),
+    )
+    repair_attempts: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        description=(
+            "Planner calls after one whose plan was refused, each shown the "
+            "refusal (the plan field and why)."
+        ),
+    )
+    schema_source: Literal["both", "declared", "observed"] = Field(
+        default="both",
+        description=(
+            "What the planner's schema lists: the extraction schema "
+            "(processing.graph_extraction, inline) and what the graph "
+            "holds (both), the declared schema alone, or the graph's "
+            "observed profile alone. declared reads no profile from the "
+            "store; a schema_source schema reaches the planner through the "
+            "types it stored."
+        ),
+    )
+    max_schema_tokens: int = Field(
+        default=3000,
+        ge=200,
+        description=(
+            "Budget of the planner's schema text, in the answer model's "
+            "tokens; the least frequent patterns, properties and types are "
+            "cut first."
+        ),
+    )
+    profile_sample_vertices: int = Field(
+        default=2000,
+        ge=1,
+        le=100_000,
+        description=(
+            "Entities read to build the observed profile (one bounded read "
+            "per suffix and profile_ttl_seconds), so a large graph costs no "
+            "scan."
+        ),
+    )
+    profile_edges_per_vertex: int = Field(
+        default=20,
+        ge=0,
+        le=1000,
+        description="Out-edges of each sampled entity the profile reads at most.",
+    )
+    profile_ttl_seconds: float = Field(
+        default=600.0,
+        ge=0,
+        description="Seconds a strategy reuses a suffix's profile (0: read it on every query).",
+    )
+    max_example_values: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description=(
+            "Sampled values shown for a string property with at most this "
+            "many distinct short values, so a condition uses the stored "
+            "spelling (a country, a status); 0 shows none. Entity names are "
+            "never listed: names in the question are linked by code."
+        ),
+    )
+    link_candidates: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description=(
+            "Entities a name in the question links to at most when no entity "
+            "has its name (by compact_name_key) among a hybrid entity search's "
+            "hits: the best hits of a lexical (BM25) search for it, under the "
+            "caller's filters and the node's types. A name no entity shares a "
+            "word with links nothing (the query falls back): a vector search "
+            "returns its nearest entities for any text."
+        ),
+    )
+    link_min_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Lexical score a linked entity needs above 0 at least (0: any lexical hit).",
+    )
+    supporting_chunks: int = Field(
+        default=5,
+        ge=0,
+        le=50,
+        description=(
+            "Passages fetched for the returned entities: those the entities "
+            "cite, fused with a hybrid text search of the question among "
+            "them and reranked, so the answer can cite text. 0 fetches none."
+        ),
+    )
+
+
 def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrategy]:
     if SearchStrategy.AUTO in strategies:
         raise ValueError("auto_routable_strategies cannot include 'auto'")
@@ -4755,6 +4950,14 @@ class QueryOutputCeilingsConfig(BaseModel):
             "max_tokens of each report rating of global search's dynamic "
             "selection (search.global_search.use_dynamic_selection), which "
             "answers one number"
+        ),
+    )
+    graph_query: int | None = Field(
+        default=4096,
+        ge=1,
+        description=(
+            "max_tokens of the structured strategy's plan call (models.roles."
+            "graph_query), which answers one JSON plan of a few hundred tokens"
         ),
     )
 
@@ -4913,6 +5116,10 @@ class SearchConfig(BaseModel):
     tree_search: TreeSearchConfig = Field(
         default_factory=TreeSearchConfig,
         description="RAPTOR summary-tree search configuration (opt-in)",
+    )
+    structured: StructuredSearchConfig = Field(
+        default_factory=StructuredSearchConfig,
+        description="Structured graph query (structured strategy) configuration (opt-in)",
     )
     token_manager: TokenManagerConfig = Field(
         default_factory=TokenManagerConfig, description="Token management configuration"
@@ -5585,6 +5792,15 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for iterative search's controller",
     )
+    graph_query_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for the structured strategy's "
+        "planner, which writes the question as a graph query plan (JSON)",
+    )
+    graph_query_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for the structured strategy's planner",
+    )
     drift_action_system: str | None = Field(
         default=None,
         description="Custom system prompt for answering a DRIFT follow-up query "
@@ -5710,6 +5926,7 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "entity_extraction": frozenset({"query"}),
     "global_map": frozenset({"query", "reports"}),
     "graph_extraction": frozenset({"input_text"}),
+    "graph_query": frozenset({"query", "schema"}),
     "graph_refinement": frozenset({"text", "entities", "relationships"}),
     "iterative_controller": frozenset({"query", "context"}),
     "keywords_extraction": frozenset({"query"}),

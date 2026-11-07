@@ -111,7 +111,9 @@ strategy), as is an empty list of values on any key. `auto` routes
 only among the strategies it may route to that apply every key (with the
 default set, `type:person` leaves `local` and `mix`) and refuses the
 filters, before routing, only when none does. Neptune filters entity
-vertices only.
+vertices only. `structured` reads entities, relationships and text units
+and the graph ([below](#structured-queries)); it refuses the keys its
+fallback strategy refuses.
 
 ## OpenSearch strictness
 
@@ -156,3 +158,22 @@ property (`attr_role`), applied where present (a vertex without it passes),
 but the entities-index check above still applies: `attr_role:buyer` selects
 nothing unless documents carry a `role` filter. Every other key is strict
 on both stores.
+
+## Structured queries
+
+`structured` applies the caller's filters to every entity a plan binds:
+`type`, `source_kinds`, `rank`, the schema annotations and the other entity
+vertex keys in the graph store (`attr_<key>` where the vertex has it, as
+graph expansion does), `source_kinds` also to every edge of the walk (an
+edge without the property is a document edge), and `id` as the entities
+allowed. A hop's intermediate entities are not filtered unless the plan
+returns its path. The keys the graph cannot apply (`attr_<key>` and
+`attributes.filters.<key>` as document filters, `name.keyword`,
+`attributes.<path>`) make the store return the matches (at most
+`search.structured.max_scan_rows`), which are checked as graph expansion's
+entities are: each bound entity against the entities index (under two or
+more document keys, through a text unit that passes them all), and a
+returned path's edges against the relationships index when it is built.
+Counts are then computed in code and marked truncated past the cap. The
+names a plan mentions are linked by an entity search under the filters, and
+the passages are fetched under them.

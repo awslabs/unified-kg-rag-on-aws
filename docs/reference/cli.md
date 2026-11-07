@@ -77,7 +77,7 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 | `--mode` | `rag` | Set the execution mode: 'rag' for full generation, 'search' for retrieval only (a single --query only; --interactive always generates). |
 | `--conversation-id` | — | Name the conversation. Memory is kept in this process only: it carries over between --interactive turns, not between separate run-rag invocations. |
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
-| `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`, `iterative`, `ppr`, `tree`. |
+| `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`, `iterative`, `ppr`, `tree`, `structured`. |
 | `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
 | `--top-k` | `10` | Set the maximum number of search results (times --retrieval-multiplier; default 10). |
 | `--retrieval-multiplier` | `1` | Widen the search N times: each index and graph expansion fetches up to top-k x N candidates and the fused list keeps up to top-k x N for the reranker and the context budget, at the cost of larger searches (default 1). |
@@ -185,20 +185,21 @@ Guide: [Domain adaptation](../guides/domain-adaptation.md#prompt-tuning-run-prom
 
 ## `prepare-benchmark`
 
-Prepare a public benchmark (MuSiQue) as a corpus directory and a run-eval dataset, or generate questions and assertions from your corpus (assertions)
+Prepare a public benchmark (MuSiQue) as a corpus directory and a run-eval dataset, generate questions and assertions from your corpus (assertions), or generate a synthetic structural benchmark for the structured strategy (structural)
 
 Guide: [Benchmarks](../guides/benchmarks.md). Also takes the [provider flags](#provider-flags).
 
 | Flag | Default | Description |
 |---|---|---|
-| `benchmark` | required | Benchmark to prepare: musique, or assertions (questions and assertions generated from --source-directory). |
+| `benchmark` | required | Benchmark to prepare: musique, assertions (questions and assertions generated from --source-directory), or structural (a generated procurement world: corpus/, seed/structural.jsonl, structural-config.yaml and graph-structure questions with gold answers computed over the generated graph). |
 | `--output-directory` | required | Directory for corpus/ and eval_data.json (corpus/ must be new or empty). |
 | `--data-path` | — | Local official JSONL of the answerable questions (e.g. musique_ans_v1.0_dev.jsonl from the official download; a musique_full_v1.0_*.jsonl supplies its answerable half, labelled musique-full-answerable, and with --unanswerable and no --unanswerable-data-path the unanswerable questions too); default: download the answerable dev split. |
 | `--unanswerable-data-path` | — | Local musique_full_v1.0_*.jsonl to draw the --unanswerable questions from (the answerable ones still come from --data-path or the default download); default: the --data-path file when it is a full file, else download the full dev split. |
 | `--limit` | — | Number of answerable questions to sample (default: all 2,417 of dev). |
 | `--unanswerable` `N` | — | Also write N unanswerable questions of the full split (metadata.answerable: false), leaving out any whose answerable twin is sampled or whose removed supporting paragraph's exact text is in the pooled corpus; the counts are reported (default: none). |
 | `--hops` `HOPS` | — | Hop counts to sample from: a list (3,4) filters both answerable and unanswerable questions; quotas (2=50,3=50,4=100) draw exactly that many answerable questions per hop count, instead of --limit (default: every hop count, sampled as one pool). |
-| `--seed` | `0` | Sampling seed (default 0). |
+| `--seed` | `0` | Sampling seed; for structural, the generated world's (default 0). |
+| `--size` | `small` | structural only: the world's size (small: 8 vendors, 6 buyers, up to 4 questions a template; medium: 40 vendors, 30 buyers, up to 25 a template; large: 400 vendors, 300 buyers, so a seed-filtered count scans past search.structured.max_scan_rows; default small). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |

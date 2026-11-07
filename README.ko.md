@@ -97,7 +97,7 @@ UKR__LOGGING__LEVEL=WARNING uv run run-rag --backend local --search-strategy mix
 
 | 방법 | 전략 | 잘하는 질문 |
 |---|---|---|
-| GraphRAG(커뮤니티 요약) | `local`, `global`, `drift`, `simple` | 코퍼스 전체에 걸친 주제 질문(`global`, `drift`)과 특정 엔티티에 대한 질문(`local`) |
+| GraphRAG(커뮤니티 요약) | `local`, `global`, `drift`, `simple`, `structured` | 코퍼스 전체에 걸친 주제 질문(`global`, `drift`), 특정 엔티티에 대한 질문(`local`), 그래프 저장소가 계산하는 개수·순위·경로(`structured`) |
 | LightRAG(이중 레벨 키워드) | `mix`, `hybrid`, `naive` | 키워드 중심 조회, 그리고 청크만 읽는 빠른 기준선(`naive`) |
 | HippoRAG 2(개인화 PageRank) | `ppr` | 가장 적은 비용의 멀티홉 질문. 질의당 LLM 호출 한 번 |
 | RAPTOR(요약 트리, 선택 사항) | `tree` | 그래프 추출 없는 저렴한 인덱스. 멀티홉 질문에서는 `naive`보다 나았고 그래프 전략보다 낮았습니다([근거](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree)(영문)) |

@@ -77,6 +77,37 @@ class GraphError(GraphRAGException):
     pass
 
 
+class GraphQueryError(GraphError):
+    """A structured graph query (search strategy ``structured``) that did
+    not produce a result; the strategy falls back."""
+
+
+class InvalidGraphQueryError(GraphQueryError, ValueError):
+    """A graph query plan its validation refuses. ``field`` names the plan
+    field (``nodes[1].types``), ``reason`` what is wrong with it: the message
+    the planner's repair call reads."""
+
+    def __init__(self, field: str, reason: str) -> None:
+        super().__init__(f"{field}: {reason}")
+        self.field = field
+        self.reason = reason
+
+
+class GraphQueryCompileError(GraphQueryError):
+    """A compiled graph query the static checker refused. A bug in the
+    compiler, never a model error: the query is not sent."""
+
+
+class GraphQueryExecutionError(GraphQueryError):
+    """The graph store failed one structured query without being unusable
+    (a query it refused, or its server-side time limit): that query falls
+    back, the store stays in use. ``timed_out`` says it ran out of time."""
+
+    def __init__(self, message: str, *, timed_out: bool = False) -> None:
+        super().__init__(message)
+        self.timed_out = timed_out
+
+
 class ModelError(GraphRAGException):
     pass
 

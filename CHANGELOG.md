@@ -617,6 +617,37 @@ From a `main` checkout (formats and keys no release had):
   `allowed_hosts`) mount the same server in a host's application; neither changes the chain given. Under
   `processing.ignore_errors` the error answer names its error in `metadata.error_type`. Guide:
   [MCP server](docs/guides/mcp.md).
+- Structured graph queries, opt-in and unmeasured (#630): the `structured` search strategy answers counts, rankings,
+  lists, paths between two named entities and seed-entity properties from a query the graph store runs. One planner
+  call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`; `search.output_ceilings.graph_query`)
+  writes the question as a closed JSON plan over the graph's schema profile (declared types plus a sampled profile of
+  what the suffix holds), never query text; code validates it (one repair call with the refusal), links the names it
+  mentions through the hybrid entity search (a name without a name match needs a lexical hit, so an absent
+  entity links nothing and falls back), compiles it to Gremlin bytecode (Neptune, Gremlin Server) or
+  parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled form against a
+  read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer, and runs it
+  read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and top rows
+  are exact. The result table, the entities and paths
+  it names (with seed provenance) and their passages are fused (buckets `structured_query_result`,
+  `structured_entities`, `structured_relationships`, `structured_text_units`, `structured_text_hits`), the table
+  numbered `[n]` like any evidence section and its citation naming the documents of its evidence rows; counts are
+  exact unless a document filter or seed-property condition makes code check up to `max_scan_rows` matches ("at
+  least N" past it), and a count or an aggregate cites its first matches as entities. Filter keys are checked
+  against the fallback that would run too. Without a structured answer the query runs `search.structured.fallback_strategy` (`local`) and
+  records why in `metadata["structured"]`; `mode: augment` runs it beside the graph query. Served by every
+  namespace holding the graph, on every graph store; `auto` routes to it only once it is in
+  `search.auto_routable_strategies`. `GraphQueryPort` is exported for custom graph backends, and
+  `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md §6.6,
+  [guide](docs/guides/structured-queries.md)).
+- `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed, procurement
+  world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`, `MAKES`), a
+  document per vendor and buyer (part of those facts, and a chief executive only text states), the schema and seed
+  config, and `eval_data.json` with count, ranking, two-hop, shared-buyer, yes/no, numeric and text-only control
+  templates (`category`), absent-entity negatives, Korean and Japanese variants and a `large` size past the scan cap,
+  each graph gold answer computed by the reference executor from its plan
+  (`metadata.gold_plan`). `run-eval` keeps each answer's `structured` record and reports `structured_statistics`
+  (status, fallback reasons, valid-plan, repair, truncation and exact rates), per arm under a comparison
+  ([guide](docs/guides/benchmarks.md#structural-benchmark)).
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
   after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
   mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index

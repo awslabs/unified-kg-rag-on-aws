@@ -1661,6 +1661,28 @@ def test_prepare_benchmark_ctrl_c_exits_130_without_a_traceback(
     assert json.loads(capsys.readouterr().out)["status"] == "interrupted"
 
 
+def test_prepare_benchmark_structural_ctrl_c_exits_130(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The generated benchmark's large size runs for minutes.
+    monkeypatch.setattr(console, "stderr", console.stderr)
+    monkeypatch.setattr(prepare_benchmark.structural, "prepare", _raise_interrupt)
+    with pytest.raises(SystemExit) as exc:
+        prepare_benchmark.main(
+            [
+                "structural",
+                "--output-directory",
+                str(tmp_path / "out"),
+                "--output-format",
+                "json",
+            ]
+        )
+    assert exc.value.code == 130
+    assert json.loads(capsys.readouterr().out)["status"] == "interrupted"
+
+
 @pytest.mark.parametrize(
     "line",
     [

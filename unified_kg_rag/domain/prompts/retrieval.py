@@ -168,6 +168,17 @@ with the exact token {ABSTENTION_MARKER}, written as is in every language, then 
 language as the user's query say which fact the context is missing."""
 
 
+# Appended to the answer prompt when the context holds a graph query result
+# (the structured strategy): its numbers are computed over the whole graph.
+QUERY_RESULT_INSTRUCTIONS = """
+
+GRAPH QUERY RESULT:
+The context opens with a graph query result, computed by code over every match in the knowledge graph (within the
+request's filters). Use its counts, lists, groups, values and yes/no as stated; never recount or re-rank them from
+the passages, which are only a few examples. When the result says "at least" or that it is a subset, say so in the answer. Answer in the language of
+the user's query."""
+
+
 class CommunityRelevancePrompt(BasePrompt):
     input_variables = ["query", "community_summary"]
 
@@ -636,6 +647,16 @@ STRATEGY_ROUTING_GUIDE: dict[SearchStrategy, str] = {
      exactly
    - Examples: "Where was the founder of the company that acquired the startup born", "Which city hosts the
      plant of the supplier the buyer chose\"""",
+    # Not in the default search.auto_routable_strategies until the structural
+    # benchmark measures it (docs/design.md §6.6).
+    SearchStrategy.STRUCTURED: """STRUCTURED SEARCH
+   - Method: The question is written as a query over the graph's entity types, relationships and properties, and
+     run on the whole graph: counts, rankings, lists and paths computed by the graph store
+   - Purpose: Questions about how many, which ones, the most or the least, and how two named entities connect
+   - Optimal for: Counting or listing entities by type, relationship and property; rankings; paths between two
+     named entities; properties of curated (seed) entities. Not for explanations, opinions or text-only facts
+   - Examples: "How many vendors supply buyers in Norland", "Which vendor supplies the most buyers", "How is
+     Acme connected to Globex\"""",
     # Not routable either (refused by search.auto_routable_strategies until
     # measured); auto falls back to it on a raptor-only namespace.
     SearchStrategy.TREE: """TREE SEARCH

@@ -94,6 +94,18 @@ def check_strategy_filter_keys(
     if artifacts is not None:
         prefixes = readable_index_prefixes(chain.config, prefixes, artifacts)
     validate_filter_keys(filters, instance.filtered_retrievers(strategy), prefixes)
+    # A strategy that may run another one's search in its place (structured's
+    # fallback) applies only the keys that one applies there.
+    for delegate in instance.filter_delegates(strategy, artifacts):
+        if delegate is strategy:
+            continue
+        try:
+            check_strategy_filter_keys(chain, filters, delegate, artifacts)
+        except InvalidFilterError as e:
+            raise InvalidFilterError(
+                f"{strategy.value} search may answer with {delegate.value}, "
+                f"which refuses the filter: {e}"
+            ) from e
 
 
 def auto_candidates(

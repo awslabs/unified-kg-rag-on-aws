@@ -220,6 +220,13 @@ reach those strategies through the communities documents also state.
 RAGInput(query="...", search_strategy="local", filters={"source_kinds": "document"})
 RAGInput(query="...", search_strategy="mix", filters={"attr_seed_graph": "procure"})
 ```
+- **Structured queries.** `structured` counts, lists and walks seed and
+  document entities alike, and reads seed properties as `seed.<key>` in a
+  plan's conditions, groups and aggregates (`seed.country = "Norland"`,
+  the `max` of `seed.employees`). The graph holds them as one JSON string,
+  so code checks those conditions over at most
+  `search.structured.max_scan_rows` matches; its entity sources name their
+  seed graphs ([Structured graph queries](./structured-queries.md#exact-answers-filters-and-seed-properties)).
 
 ## What re-indexes
 

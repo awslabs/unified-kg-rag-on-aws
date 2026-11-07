@@ -301,6 +301,16 @@ class EvaluationResult(BaseModel):
             "other strategies."
         ),
     )
+    structured: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The structured strategy's run record (metadata.structured): "
+            "status (answered, fallback, failed), reason, fallback_strategy, "
+            "plan, plan_description, operation, row_count, truncated, exact, "
+            "linked, repairs, backend, elapsed_ms, usage. None for the other "
+            "strategies."
+        ),
+    )
     rerank_status: RerankStatus | None = Field(
         default=None,
         description=(
@@ -472,6 +482,16 @@ class EvaluationSummary(BaseModel):
             "Queries the guardrail blocked, per blocked text "
             "(EvaluationResult.guardrail_blocked), e.g. {'input': 2, "
             "'output': 1}; empty when it blocked none."
+        ),
+    )
+    structured_statistics: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Over the answers the structured strategy gave (an "
+            "EvaluationResult.structured record): their count ('queries'), "
+            "per status, per fallback reason, and the rates of a valid plan "
+            "(one that reached the graph store), a repair call, a truncated "
+            "answer and an exact one; empty when no answer had a record."
         ),
     )
     benchmarks: dict[str, int] = Field(

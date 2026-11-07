@@ -23,6 +23,10 @@ run-rag --query "How does entity X relate to Y?" \
 # Retrieval only, JSON output
 run-rag --query "..." --mode search --output-format json --config-path config.yaml
 
+# 개수, 순위, 경로를 위한 그래프 질의(선택 사항)
+run-rag --query "Norland의 구매처에 공급하는 벤더는 몇 곳입니까?" \
+  --search-strategy structured --config-path config.yaml
+
 # HippoRAG 2 PageRank (opt-in; auto never routes to it)
 run-rag --query "Where was the founder of the company that acquired X born?" \
   --search-strategy ppr --config-path config.yaml
@@ -296,6 +300,22 @@ search:
 
 동작 방식과 RAPTOR 원 코드와의 차이는 [설계](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)(영문)에
 있습니다.
+
+## 구조화 그래프 질의(선택 사항)
+
+`--search-strategy structured`는 그래프 저장소가 실행한 질의로 개수, 순위, 목록,
+이름이 주어진 두 엔티티 사이의 경로, 시드 엔티티의 속성에 답합니다. 모델이 질문을
+JSON 계획으로 쓰고(질의 원문은 쓰지 않음), 코드가 계획을 검사해 질의의 접미사
+안에서 읽기 전용으로 실행하며, 답변은 결과 표와 결과가 가리키는 엔티티, 그 구절을
+읽습니다. 구조화된 답을 얻지 못하면 `search.structured.fallback_strategy`
+(`local`)를 실행하고, 무슨 일이 있었는지는 `metadata["structured"]`에 남습니다.
+선택 사항이며 측정 전이므로 `search.auto_routable_strategies`에 넣어야 `auto`가
+분기합니다. 가이드: [구조화 그래프 질의](./structured-queries.ko.md).
+
+```bash
+run-rag --query "구매처에 가장 많이 공급하는 벤더는?" \
+  --search-strategy structured --config-path config.yaml
+```
 
 ## 대화형 모드와 대화 메모리
 

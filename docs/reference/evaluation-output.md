@@ -43,6 +43,11 @@ sufficiency fields:
   `verdicts`, `added_results`, `round_0_rerank`;
   [Querying](../guides/query.md#follow-up-rounds-for-multi-hop-questions)); `null` for the
   other strategies.
+- `structured`: the `structured` strategy's run record (`status`,
+  `reason`, `fallback_strategy`, `plan`, `plan_description`, `operation`,
+  `row_count`, `truncated`, `exact`, `linked`, `repairs`, `backend`,
+  `elapsed_ms`, `usage`; [Structured graph queries](../guides/structured-queries.md#when-no-plan-answers));
+  `null` for the other strategies.
 
 Results saved before these fields read back with them `null`.
 
@@ -94,6 +99,11 @@ from the text, and under
   retrieval miss and scores 0 on context precision and recall, while
   `faithfulness` is skipped, as for any answer without context:
   `no_contexts`); each result carries `guardrail_blocked`.
+- `structured_statistics`: over the answers with a `structured` record,
+  their count (`queries`), per `status` and `fallback_reasons`, and the
+  `valid_plan_rate` (plans that reached the graph store), `repair_rate`,
+  and of the answered ones the `truncated_rate` and `exact_rate`; `{}`
+  without such answers. A strategy comparison reports it per arm.
 - `benchmarks`: the questions per benchmark label of a
   [prepared benchmark](../guides/benchmarks.md) dataset (also
   `dataset.benchmarks` in the run manifest).

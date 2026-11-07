@@ -793,6 +793,22 @@ class EvaluationRunner:
                 f" ({per_text})\n"
             )
 
+        if structured := summary.structured_statistics:
+            reasons = markup_safe(
+                ", ".join(
+                    f"{reason} {count}"
+                    for reason, count in structured["fallback_reasons"].items()
+                )
+                or "none"
+            )
+            status = structured["status"]
+            summary_text += (
+                f"Structured: answered {status.get('answered', 0)} of "
+                f"{structured['queries']}, valid plans "
+                f"{structured['valid_plan_rate']:.0%} (fallback reasons: "
+                f"{reasons})\n"
+            )
+
         if summary.total_queries > 0:
             success_rate = (
                 summary.successful_evaluations / summary.total_queries
@@ -1782,6 +1798,7 @@ _SUMMARY_FIELDS = {
     "abstention_statistics",
     "answer_span_statistics",
     "guardrail_blocked_counts",
+    "structured_statistics",
     "usage",
 }
 

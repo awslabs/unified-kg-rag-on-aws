@@ -11,6 +11,8 @@ Questions and source-cited assertions generated from your own corpus
 closed-book bound](./evaluate.md#assertions-length-control-and-a-closed-book-bound).
 The package's own measured runs on MuSiQue, and the commands that reproduce
 them: [Defaults and evidence](../concepts/defaults-and-evidence.md#how-the-measurements-were-run).
+A generated benchmark of graph-structure questions for the `structured`
+strategy (`prepare-benchmark structural`): [below](#structural-benchmark).
 
 ## Prepare the corpus and the dataset
 
@@ -113,6 +115,55 @@ run-eval --data-path bench/unans/eval_data.json --suffix musique \
 
 with `musique-mark.yaml` = `musique.yaml` plus `search.abstention.mode: mark`.
 Ingestion cost is about 19 paragraphs a question, as for answerable ones.
+
+## Structural benchmark
+
+`prepare-benchmark structural` generates, from `--seed`, a made-up
+procurement world and the questions the
+[`structured` strategy](./structured-queries.md) is for: counts by
+relationship and by a seed property, the top supplier and the top three, the
+vendor between a buyer and a product, the buyer two vendors share, yes/no
+supply, the largest and smallest number of employees, and text-only
+controls (each vendor's chief executive, stated only in its document) that
+measure what misrouting costs. Nothing is downloaded or committed.
+
+```bash
+prepare-benchmark structural --output-directory bench/structural --size medium --seed 0
+run-ingestion --config-path bench/structural/structural-config.yaml \
+  --source-directory bench/structural/corpus --suffix structural
+run-eval --data-path bench/structural/eval_data.json --suffix structural \
+  --search-strategy structured,local,mix --repeats 3
+```
+
+It writes `seed/structural.jsonl` (a [JSONL seed graph](../reference/seed-graph-formats.md#jsonl)
+of every node with its `country`, `founded` and `employees` properties and
+every `SUPPLIES` and `MAKES` edge), `corpus/` (one document per vendor and
+buyer, stating part of those edges, the products and the chief executive),
+`structural-config.yaml` (the extraction schema and the seed graph entry)
+and `eval_data.json`. `--size small` writes 8 vendors and up to 4 questions
+a template, `medium` 40 vendors and up to 25 (about 200 questions; templates
+whose answer would tie or be ambiguous in a world are left out for it), and
+`large` 400 vendors and 300 buyers, whose seed-filtered counts scan more
+matches than `search.structured.max_scan_rows` (the truncated "at least N"
+case; a few minutes to generate). Every size also asks about vendors no
+data names (`absent_entity`: the answer is no, or 0) and asks two templates
+in Korean and Japanese (`multilingual_ko`, `multilingual_ja`, with `예` /
+`아니요` and `はい` / `いいえ` as yes/no; `metadata.language`).
+Each graph question's gold answer is computed by the reference executor over
+the generated graph from the template's plan (`metadata.gold_plan`); a
+number has its digit and word forms as `answer_aliases`, and the top three
+every order of the three names. `category` is the template, so the
+per-category scores break the comparison down by question shape; the
+control questions carry their document as `reference_sources`.
+
+Score with `answer_match` (containment is the headline; EM and F1 with
+`evaluation.answer_span: extracted`). The run summary's
+`structured_statistics` reports the structured arm's plan validity, repair
+and fallback rates by reason, and truncation
+([Evaluation output](../reference/evaluation-output.md#run-summary)); the
+usage gives its calls and tokens per query. Gold answers are what the world
+states: an extraction that merges or misses an entity, or a seed edge that
+documents do not state, shows up as a lower score for every strategy.
 
 ## Reading the scores
 

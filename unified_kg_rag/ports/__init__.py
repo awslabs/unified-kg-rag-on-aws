@@ -24,6 +24,9 @@ Catalog:
 - ``TokenCounterPort`` — token counting/truncation for one model (``Protocol``;
   ``adapters.aws.token_counter.BedrockTokenCounter`` and
   ``adapters.local.token_counter.LocalTokenCounter`` conform structurally).
+- ``GraphQueryPort`` — structured queries over one suffix's graph, for the
+  ``structured`` strategy (``Protocol``; adapters: the graph retrievers in
+  ``adapters.retrievers``).
 
 Two further contracts are abstract *adapter bases* rather than pure ports —
 they construct infrastructure in ``__init__`` (HybridScorer/TokenManager) — so
@@ -35,6 +38,7 @@ imported from there directly. Listed here only as a pointer:
 """
 
 from unified_kg_rag.ports.doc_status import DocStatusPort
+from unified_kg_rag.ports.graph_query import GraphQueryPort
 from unified_kg_rag.ports.guardrail import (
     ContentGuardPort,
     GuardAction,
@@ -61,6 +65,7 @@ __all__ = [
     "DocStatusPort",
     "EmbeddingFactoryPort",
     "GraphIndexer",
+    "GraphQueryPort",
     "GuardAction",
     "GuardSource",
     "GuardVerdict",

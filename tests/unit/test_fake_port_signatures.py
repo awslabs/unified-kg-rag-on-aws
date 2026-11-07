@@ -16,6 +16,7 @@ import pytest
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+from tests.fixtures.fakes.graph_query import FakeGraphQueryRetriever
 from tests.fixtures.fakes.retrievers import FakeRetriever
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.fixtures.fakes.tokens import WordTokenCounter
@@ -60,6 +61,7 @@ from unified_kg_rag.ports import (
     ContentGuardPort,
     DocStatusPort,
     GraphIndexer,
+    GraphQueryPort,
     ModelFactoryPort,
     TokenCounterPort,
     VectorIndexer,
@@ -128,6 +130,10 @@ PAIRS = [
     (NeptuneRetriever, BaseGraphRAGRetriever),
     (SQLiteGraphRetriever, BaseGraphRAGRetriever),
     (GraphExpansionRetriever, BaseGraphRAGRetriever),
+    (FakeGraphQueryRetriever, BaseGraphRAGRetriever),
+    (FakeGraphQueryRetriever, GraphQueryPort),
+    (NeptuneRetriever, GraphQueryPort),
+    (SQLiteGraphRetriever, GraphQueryPort),
 ]
 
 
