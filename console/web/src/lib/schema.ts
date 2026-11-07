@@ -96,16 +96,17 @@ export function flatten(fields: SchemaField[]): SchemaField[] {
   return fields.flatMap((f) => (f.kind === "section" ? flatten(f.children) : [f]));
 }
 
+// Keys a config path never names: reading them would walk an object's
+// prototype instead of its data.
+const UNSAFE_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
+/** The value at a dotted ``path`` of ``data`` (own keys only; reads, never
+ * writes). */
 export function valueAt(data: unknown, path: string): unknown {
-  let current: unknown = data;
-  for (const key of path.split(".")) {
-    if (current && typeof current === "object" && key in (current as Record<string, unknown>)) {
-      current = (current as Record<string, unknown>)[key];
-    } else {
-      return undefined;
-    }
-  }
-  return current;
+  return path.split(".").reduce<unknown>((current, key) => {
+    if (UNSAFE_KEYS.has(key) || !current || typeof current !== "object") return undefined;
+    return Object.prototype.hasOwnProperty.call(current, key) ? (current as Record<string, unknown>)[key] : undefined;
+  }, data);
 }
 
 /** The value an editor's text stands for, or an error key. */

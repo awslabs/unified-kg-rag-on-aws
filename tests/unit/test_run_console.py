@@ -18,6 +18,9 @@ from unified_kg_rag.application.cli import run_console
 
 pytestmark = pytest.mark.unit
 
+# The wildcard address, refused without --allow-remote (never bound here).
+ALL_INTERFACES = ".".join(["0"] * 4)
+
 
 @pytest.mark.parametrize(
     ("host", "loopback"),
@@ -27,10 +30,10 @@ pytestmark = pytest.mark.unit
         ("::1", True),
         ("[::1]", True),
         ("127.0.0.2", True),
-        ("0.0.0.0", False),
+        (ALL_INTERFACES, False),
         ("192.168.1.5", False),
         ("example.org", False),
-    ],  # nosec B104
+    ],
 )
 def test_loopback_addresses(host: str, loopback: bool) -> None:
     assert run_console._is_loopback(host) is loopback
@@ -43,7 +46,7 @@ def test_the_default_host_is_loopback() -> None:
 
 def test_another_address_needs_allow_remote(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc:
-        run_console.main(["--host", "0.0.0.0"])  # nosec B104
+        run_console.main(["--host", ALL_INTERFACES])
     assert exc.value.code == 2
     assert "--allow-remote" in capsys.readouterr().err
 

@@ -394,10 +394,13 @@ jobs:
           fetch-depth: 0
       - name: Does the change touch the console?
         id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
+          if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "console=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "origin/${{ github.base_ref }}...HEAD" | grep -qE '^(console/|unified_kg_rag/application/cli/(console/|run_console\.py))'; then
+          elif git diff --name-only "origin/$BASE_REF...HEAD" | grep -qE '^(console/|unified_kg_rag/application/cli/(console/|run_console\.py))'; then
             echo "console=true" >> "$GITHUB_OUTPUT"
           else
             echo "console=false" >> "$GITHUB_OUTPUT"
