@@ -1410,6 +1410,8 @@ Deployment (CDK).
   as an unexpected error (#617).
 
 ### Security
+- The image upgrades `zlib1g` to the Debian security release fixing CVE-2026-76844 and CVE-2026-85091 (HIGH),
+  which the base image still carries, so the image scan passes (#632).
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity denial-of-service advisories, e.g.
   GHSA-5849-834g-hvw5), filelock 4.2.1 (nine advisories, GHSA-v4x8-3wr5-3wq8 high; an override lifts
   `unstructured`'s cap; locked at 4.2.5), Pillow 13.0.0 (GHSA-p4wg-p73j-c528 and others), `unstructured>=0.24.1`
