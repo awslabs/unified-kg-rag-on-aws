@@ -237,7 +237,7 @@ class TestCostBlock:
         assert "usage/llm_calls" in cost["deltas_vs_baseline"]["mix"]
         assert cost["strategies"]["mix"]["usd_total"] is not None
         (warning,) = cost["warnings"]
-        assert "baseline:local" in warning and "usage_schema 2" in warning
+        assert "baseline:local" in warning and "usage_schema 3" in warning
         # Every side unmetered: like with like, no warning.
         same = cost_comparison(
             runs, prices=prices, unmetered_rerank={"baseline:local", "mix"}
@@ -250,10 +250,13 @@ class TestCostBlock:
             [
                 ("old", {"answer_scoring": None}),
                 ("v1", {"usage_schema": 1}),
-                ("now", {"usage_schema": 2}),
+                # 2 counted one search unit per 100 documents, too few for
+                # long ones: its USD is not compared with a 3 run's.
+                ("v2", {"usage_schema": 2}),
+                ("now", {"usage_schema": 3}),
                 ("unknown", None),
             ]
-        ) == {"old", "v1"}
+        ) == {"old", "v1", "v2"}
 
     def test_a_price_entry_must_name_what_it_prices(self) -> None:
         from pydantic import ValidationError

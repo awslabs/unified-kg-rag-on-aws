@@ -105,6 +105,6 @@ def test_a_summary_of_the_hinted_length_fits_the_budget(
     )
 
     assert tokens <= budget
-    # Tight: the hint asks for ~90% of the budget, less the rounding of a
-    # unit and of the count over a small sample.
-    assert tokens >= 0.85 * budget - 2 * per_unit - 2 or n == 1
+    # Tight: the hint asks for 70% of the budget (_HINT_FILL), less the
+    # rounding of a unit and of the count over a small sample.
+    assert tokens >= 0.65 * budget - 2 * per_unit - 2 or n == 1

@@ -5803,7 +5803,9 @@ class ModelPrice(BaseModel):
         description=(
             "A rerank model's USD per thousand search units (usage "
             "rerank_search_units: one per rerank request of up to 100 "
-            "documents; Amazon Bedrock's price per 1,000 queries). An entry "
+            "documents, a document of more than 500 estimated tokens with "
+            "the query counting as several; Amazon Bedrock's price per "
+            "1,000 queries). An entry "
             "sets this, the two token prices, or both."
         ),
     )

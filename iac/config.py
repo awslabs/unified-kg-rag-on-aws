@@ -63,6 +63,15 @@ cannot leave its setting at the default:
                                        nori unless its optional analysis-nori
                                        package is associated
   doc_status_table    dev:"graphrag-doc-status-v2"/else:"<env>-graphrag-doc-status-v2"
+  legacy_doc_status_table None         the 0.2.3 registry table name, for the
+                                       one deploy that upgrades a 0.2.3 stack
+                                       set (dev: "graphrag-doc-status", else
+                                       "<env>-graphrag-doc-status", or its
+                                       doc_status_table): the storage stack
+                                       keeps exporting that table's ARN and
+                                       name, which the 0.2.3 compute and
+                                       observability stacks import, and those
+                                       stacks reference the new table by name
   opensearch_volume_gib 50             GP3 volume per OpenSearch data node; the
                                        free-storage alarm fires at 40% of it
   backup_retention_days 7              Neptune automated backup retention
@@ -205,6 +214,18 @@ _FARGATE_MEMORY: dict[int, frozenset[int]] = {
     8192: frozenset(range(16384, 61441, 4096)),
     16384: frozenset(range(32768, 122881, 8192)),
 }
+
+
+def _legacy_doc_status_table(value: Any) -> str | None:
+    """``legacy_doc_status_table``: a DynamoDB table name, or None."""
+    if value is None:
+        return None
+    name = str(value).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,255}", name):
+        raise ValueError(
+            f"legacy_doc_status_table must be a DynamoDB table name, got {value!r}"
+        )
+    return name
 
 
 def _as_bool(key: str, value: Any, default: bool) -> bool:
@@ -554,6 +575,9 @@ class DeploymentConfig:
     # The STS interface endpoint in private mode (for aws.bedrock.
     # assumed_role_arn only). Off: no endpoint, nothing else changes.
     sts_endpoint: bool = False
+    # The 0.2.3 registry table a 0.2.3 stack set is upgraded from (one
+    # deploy); None: the templates are exactly as without the setting.
+    legacy_doc_status_table: str | None = None
     # Retention of the task, pipeline, OpenSearch and custom-resource logs.
     log_retention_days: int = 30
     # Fargate Spot for the ingestion task, and the re-runs of a task Spot
@@ -914,6 +938,9 @@ class DeploymentConfig:
             neptune_serverless_ncu=neptune_serverless_ncu,
             ingestion_fargate_spot=ingestion_fargate_spot,
             sts_endpoint=as_bool("sts_endpoint", default=False),
+            legacy_doc_status_table=_legacy_doc_status_table(
+                ctx("legacy_doc_status_table")
+            ),
             log_retention_days=log_retention_days,
             spot_interruption_retries=as_int(
                 "spot_interruption_retries", 2, minimum=0, maximum=10
@@ -948,6 +975,12 @@ class DeploymentConfig:
             ),
             methodologies=_as_methodologies("methodologies", ctx("methodologies")),
         )
+        if config.legacy_doc_status_table == config.doc_status_table:
+            raise ValueError(
+                "legacy_doc_status_table names the current doc_status_table "
+                f"'{config.doc_status_table}': give the 0.2.3 table, which the "
+                "upgrade replaces with this one"
+            )
         # ECR limits a pull-through cache repository prefix to 30 characters.
         if config.enable_cloudwatch_tracing and len(config.collector_cache_prefix) > 30:
             raise ValueError(

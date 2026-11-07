@@ -37,7 +37,10 @@ from unified_kg_rag.domain.ingestion.contributions import (
     record_keys,
 )
 from unified_kg_rag.domain.ingestion.derivation import Derived
-from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
+from unified_kg_rag.domain.ingestion.methodologies import (
+    artifacts_to_build,
+    stored_artifacts,
+)
 from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
 from unified_kg_rag.domain.models import (
     Claim,
@@ -61,6 +64,19 @@ from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
 from unified_kg_rag.shared.write_fence import check_write_fence
 
 logger = get_logger(__name__)
+
+# The artifacts built from the extraction records (graph extraction, claims,
+# the community reports' answers).
+RECORD_BACKED_ARTIFACTS = frozenset(
+    {
+        IndexArtifact.ENTITIES,
+        IndexArtifact.RELATIONSHIPS,
+        IndexArtifact.RELATIONSHIP_VECTORS,
+        IndexArtifact.GRAPH,
+        IndexArtifact.COMMUNITY_REPORTS,
+        IndexArtifact.CLAIMS,
+    }
+)
 
 __all__ = [
     "CrossRunMergeResult",
@@ -283,6 +299,8 @@ class IndexingManager:
                 *(claims or []),
             ]
         )
+        # Read before the rebuild replaces the indices that hold it.
+        dropping = self._dropped_extraction_artifacts(suffixes)
         results = self._write_artifacts(
             text_units,
             entities,
@@ -295,8 +313,19 @@ class IndexingManager:
         written = results.get("vector_text_units")
         if written is not None and not written.failed_items:
             self._retain_extraction_records(
-                text_units or [], suffixes, community_reports or []
+                text_units or [],
+                suffixes,
+                community_reports or [],
+                keep_all=dropping,
             )
+            for suffix, dropped in sorted(dropping.items()):
+                logger.info(
+                    "Kept every extraction record of '%s': the rebuild no "
+                    "longer builds %s, and a run that adds it back rebuilds "
+                    "from them",
+                    suffix,
+                    ", ".join(sorted(a.value for a in dropped)),
+                )
             # The summaries of text the rebuild no longer holds go: a summary
             # tree, if any, is written again by the summary_tree stage. A
             # rebuild without raptor deletes the tree whole, as it replaces
@@ -315,17 +344,43 @@ class IndexingManager:
                     results[f"vector_summary_nodes_{suffix}"] = summaries
         return results
 
+    def _dropped_extraction_artifacts(
+        self, suffixes: list[str]
+    ) -> dict[str, frozenset[IndexArtifact]]:
+        """By suffix, the artifacts built from extraction records
+        (``RECORD_BACKED_ARTIFACTS``) its stored build record names and this
+        run does not build (a reset to fewer methodologies). The records
+        they were built from stay, keyed by content and settings: pruned to
+        what this run's text units name, adding the methodology back would
+        extract every document again. Suffixes without a record (or whose
+        record names no artifacts) drop nothing."""
+        building = artifacts_to_build(self.config)
+        dropping: dict[str, frozenset[IndexArtifact]] = {}
+        for suffix in suffixes:
+            try:
+                held = stored_artifacts(self.vector_indexer.read_build_record(suffix))
+            except NamespaceLeaseError:
+                raise
+            except Exception:  # noqa: BLE001 - the record is optional
+                held = None
+            dropped = (held or frozenset()) & RECORD_BACKED_ARTIFACTS - building
+            if dropped:
+                dropping[suffix] = dropped
+        return dropping
+
     def _retain_extraction_records(
         self,
         text_units: list[TextUnit],
         suffixes: list[str],
         community_reports: Sequence[CommunityReport] = (),
+        keep_all: Collection[str] = (),
     ) -> None:
         """Keep, per rebuilt suffix, only the extraction records its stored
         text units and community reports name (``REPORT_RECORD_ATTRIBUTE``):
         the records of other extraction settings, and of texts no stored
-        unit holds any more (deleted or edited documents), go. Best-effort: a
-        failure keeps the records, which cost space only.
+        unit holds any more (deleted or edited documents), go. The suffixes
+        of ``keep_all`` keep every record. Best-effort: a failure keeps the
+        records, which cost space only.
         """
         named: dict[str, set[str]] = {suffix: set() for suffix in suffixes}
         for unit in text_units:
@@ -337,6 +392,8 @@ class IndexingManager:
             if isinstance(key, str):
                 named.setdefault(BaseIndexer.get_suffix(report), set()).add(key)
         for suffix, keys in sorted(named.items()):
+            if suffix in keep_all:
+                continue
             try:
                 kept = self.vector_indexer.retain_extraction_records(
                     sorted(keys), suffix=suffix

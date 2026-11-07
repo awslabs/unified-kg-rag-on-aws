@@ -820,8 +820,8 @@ def test_delete_by_id_retries_after_a_lost_connection(indexer) -> None:
 def test_relationship_drop_retries_after_a_lost_connection(indexer, mocker) -> None:
     # Regression: the drop-by-id before the edge writes had one attempt, so a
     # lost connection failed the whole batch of edges. Every request answers
-    # the endpoints' ids (the endpoint read, then the edge write).
-    g = _LostOnce(["a", "b"])
+    # the endpoints' vertex ids (the endpoint read, then the edge write).
+    g = _LostOnce([{"id": "a", "vertex": "v-a"}, {"id": "b", "vertex": "v-b"}])
     indexer.neptune_client.g = g
     rel = Relationship(id="r1", source_id="a", target_id="b")
 
@@ -842,9 +842,12 @@ def test_an_edge_whose_endpoint_is_missing_keeps_its_stored_copy(
     from gremlin_python.structure.graph import Graph
 
     def execute(build, operation, *, results=False, **kwargs):
+        if operation == "Reading edge endpoints":
+            # Read as stored, then dropped before the write.
+            return [{"id": i, "vertex": f"v-{i}"} for i in ("a", "b", "gone")]
         assert operation == "Relationship indexing"
         written = build(traversal().withGraph(Graph()))
-        return [] if "gone" in repr(written.bytecode) else ["written"]
+        return [] if "v-gone" in repr(written.bytecode) else ["written"]
 
     mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
     kept = Relationship(id="r1", source_id="a", target_id="b")

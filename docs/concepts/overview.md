@@ -79,7 +79,7 @@ differs.
 |---|---|---|---|---|
 | Strategies | `local`, `global`, `drift`, `simple` | `mix`, `hybrid`, `naive` | `ppr` | `tree` |
 | Reads | Entities and their graph neighbourhood, community reports, text units, claims | Entities (low-level keywords), relationships (high-level keywords), their source chunks | Relationship hits, passage hits and the graph between their entities and passages: what LightRAG builds | Text units and every level of summaries over them |
-| Strong at | Thematic and sensemaking questions over the whole corpus (`global`, `drift`), and entity questions (`local`) | Keyword-driven lookups and a fast, low-cost baseline | Multi-hop questions at the lowest cost: one LLM call a query | A cheap index without graph extraction; on multi-hop questions it answered within the noise of `naive` ([evidence](./defaults-and-evidence.md#raptor-summary-tree)) |
+| Strong at | Thematic and sensemaking questions over the whole corpus (`global`, `drift`), and entity questions (`local`) | Keyword-driven lookups and a fast, low-cost baseline | Multi-hop questions at the lowest cost: one LLM call a query | A cheap index without graph extraction; on multi-hop questions it answered better than `naive`, below the graph strategies ([evidence](./defaults-and-evidence.md#raptor-summary-tree)) |
 
 `iterative` wraps `mix` or `local` with bounded follow-up rounds on the
 bridge entities a multi-hop question depends on, and reads what its base

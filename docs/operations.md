@@ -62,9 +62,12 @@ units (`fallback_chunk_size` 4,800 characters), scaled from short units
 | 30720 | about 200,000-300,000 |
 
 The `raptor` summary tree is built over every stored text unit, not only
-the run's: about 50 KiB per text unit of one tree at its peak (1,024
-dimensions; `indexing.summary_tree.max_leaves_in_memory`, 100,000, about
-5 GiB, bounds it).
+the run's: about 50 KiB per text unit of one tree at its peak for units of
+4,800 characters (1,024 dimensions; `indexing.summary_tree.max_leaves_in_memory`,
+100,000, about 5 GiB, bounds it). Short units need much less: a
+`raptor`-only run over 50,000 MuSiQue paragraphs (about 500 characters
+each, 9,294 summaries) peaked at 1,361 MiB of task memory in all, about
+21 KiB a unit end to end, on the default 2 vCPU and 8 GiB.
 
 Keep a margin: the `IngestionTaskMemory` alarm fires at 90%, and a task over
 its memory is killed with the running stage lost. A larger corpus can also
@@ -72,6 +75,13 @@ be ingested in several incremental runs, each within the budget. The task's
 disk (`ingestion_ephemeral_storage_gib`) holds the synced corpus, the parsed
 documents and the stage cache: about twice the corpus plus the cache
 (`IngestionTaskEphemeralStorage` fires at 90%).
+
+Neptune: keep a burstable instance (`neptune_instance=db.t4g.medium`) for a
+light dev stack only. Under parallel ingestion it runs out of CPU credits:
+eight ingestions and a bulk graph load at once held one at 99% CPU for 40
+minutes with a credit balance of 0, and their relationship writes stalled
+for more than 35 minutes. Ingest on a memory-optimized instance (`db.r6g.large`, the
+default, or larger); `NeptuneHighCpu` fires on the sustained load.
 
 With `raptor` selected, the `summary_tree` stage reads every text unit of a
 tree into memory with its vector and text: the whole namespace (or one
@@ -202,7 +212,7 @@ definition's environment and the image config again, so a setting every run
 must keep, such as `indexing.methodologies`, belongs in the image config or a
 CDK context key ([Methodology profiles on the CDK stack](#methodology-profiles-on-the-cdk-stack)):
 a one-off run that added a methodology is undone by the next state-machine run,
-which records the added artifacts gone.
+which records the added artifacts gone (a run with no document change too).
 
 ### Methodology profiles on the CDK stack
 
@@ -236,8 +246,9 @@ Then deploy and start runs as usual:
   hold exits 2 (`MethodologyNotIndexedError`) before any model call
   (`run-eval` checks every strategy it compares, or each query's own,
   before its first answer), and `auto` routes only among the held ones.
-- **Removing a methodology.** The next run that writes the namespace records
-  its artifacts gone and its strategies are refused from then on. Nothing is
+- **Removing a methodology.** The next run of the namespace records its
+  artifacts gone, one with no document change too, and its strategies are
+  refused from then on. Nothing is
   deleted: a [one-off](#run-a-one-off-ingestion-task) run with
   `UKR__INDEXING__RESET=true` empties the community-reports index and drops
   the community vertices.
@@ -257,6 +268,35 @@ Then deploy and start runs as usual:
   curl -X DELETE "https://<OpenSearch endpoint>/<index the alias names>" \
     --aws-sigv4 "aws:amz:<region>:es" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
     -H "x-amz-security-token: $AWS_SESSION_TOKEN"
+  ```
+
+  The container image has no `curl`. In a task of the ingestion task
+  definition (its role may delete; the query role may not), sign the same
+  two requests with botocore, which the image has:
+
+  ```bash
+  ALIAS=graphrag-summary-nodes-<suffix> python - <<'PY'
+  import json, os, urllib.request
+  import boto3
+  from botocore.auth import SigV4Auth
+  from botocore.awsrequest import AWSRequest
+
+  host = os.environ["UKR__AWS__OPENSEARCH__ENDPOINT"]
+  session = boto3.Session()
+  credentials = session.get_credentials().get_frozen_credentials()
+
+  def call(method, path):
+      request = AWSRequest(method=method, url=f"https://{host}{path}")
+      SigV4Auth(credentials, "es", session.region_name).add_auth(request)
+      sent = urllib.request.Request(
+          request.url, method=method, headers=dict(request.headers)
+      )
+      with urllib.request.urlopen(sent, timeout=60) as response:
+          return json.load(response)
+
+  for index in call("GET", f"/_alias/{os.environ['ALIAS']}"):
+      print(index, call("DELETE", f"/{index}"))
+  PY
   ```
 
   With `raptor` still selected the next run builds the tree again.
@@ -893,8 +933,10 @@ deployed stack:
    The stacks pass values to each other through strong cross-stack
    references (CloudFormation exports, pinned in `iac/cdk.json`): a deploy
    that would remove or change an export another stack still imports fails
-   with `Cannot delete export ... as it is in use`, which is why some notes
-   ask for one stack first. A move to CDK's weak references, which would
+   with `Cannot delete export ... as it is in use` (or `Cannot update
+   export`), which is why some notes ask for one stack first, or for a
+   setting that keeps an old export for one deploy (the 0.2.3 upgrade's
+   `legacy_doc_status_table`). A move to CDK's weak references, which would
    drop that ordering, is not made yet: it needs a `both` deploy of every
    environment before `weak`.
 5. When the notes call for a rebuild, run one reset ([Re-ingest](#re-ingest))

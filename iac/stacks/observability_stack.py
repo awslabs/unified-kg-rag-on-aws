@@ -623,7 +623,7 @@ class ObservabilityStack(Stack):
         topic = orchestration.alarm_topic
         action = cw_actions.SnsAction(topic)
         domain = self.storage.opensearch_domain
-        table = self.storage.doc_status_table
+        table = self.storage.doc_status_table_for(self)
 
         def _alarm(
             ident: str,

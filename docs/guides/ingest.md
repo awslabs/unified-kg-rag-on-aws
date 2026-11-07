@@ -191,10 +191,11 @@ indexing:
   same; a re-run of the same `--pipeline-id` runs only `community_detection`
   and `indexing` from its stage cache.
 - **Removing one** stops the runs from maintaining its artifacts: the next
-  run that writes the namespace records them gone and its strategies are
-  refused from then on; until then (an unchanged corpus) they stay current.
+  run of the namespace, one with an unchanged corpus too, records them gone
+  and its strategies are refused from then on.
   Nothing is deleted. To delete them, run once with `indexing.reset: true`
-  and the remaining methodologies: the rebuild replaces the community-reports
+  and the remaining methodologies (the extraction records stay, so adding
+  the methodology back later extracts nothing again): the rebuild replaces the community-reports
   index with an empty one, drops the graph's community vertices and, without
   `raptor`, deletes the summary tree's indices (those of a build killed
   before it swapped in too). Without the registry every run is a full build,
@@ -208,8 +209,8 @@ text units are clustered by their vectors, each cluster is summarized
 clustered and summarized again, up to `indexing.summary_tree.max_levels`
 (5), and the tree is written into its own index for the `tree` strategy
 ([Retrieval](../concepts/retrieval.md#search-strategies--when-to-use-which)).
-Opt-in: on multi-hop questions it answered within the noise of `naive`
-([evidence](../concepts/defaults-and-evidence.md#raptor-summary-tree)).
+Opt-in: on multi-hop questions it answered better than `naive` but well
+below the graph strategies, in one repeat on one corpus ([evidence](../concepts/defaults-and-evidence.md#raptor-summary-tree)).
 
 ```yaml
 indexing:

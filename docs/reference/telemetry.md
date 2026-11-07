@@ -71,7 +71,8 @@ ingestion stage that made it. `RAGOutput.metadata["usage"]` (and
 `cache_read_input_tokens`, `cache_write_input_tokens`, `request_retries`,
 `failed_calls`, `rerank_calls` and `rerank_search_units` (the reranker's
 requests and their billed search units, one per 100 documents a request
-ranks; not model calls), and the same counts
+ranks, a document of more than 500 estimated tokens with the query counting
+as several, as Amazon Bedrock bills them; not model calls), and the same counts
 `by_role` (the model's purpose: `query`, `ingestion`, `evaluation`;
 `rerank` for the reranker) and
 `by_model` (the model id the factory resolved). `run-ingestion

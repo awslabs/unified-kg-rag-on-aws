@@ -56,8 +56,11 @@ logger = get_logger(__name__)
 _CHARACTER_LANGUAGES = frozenset({LanguageCode.JA, LanguageCode.ZH, LanguageCode.KO})
 
 # The share of max_summary_tokens the length hint asks for: a model's length
-# is approximate, and what is over the budget is cut.
-_HINT_FILL = 0.9
+# is approximate, and what is over the budget is cut. Claude Haiku wrote about
+# 1.4 times the hinted length (603 summaries over MuSiQue at 0.9: 376 output
+# tokens each against a 270-token hint, 70% cut), so 0.7 lands the average
+# summary within the budget and leaves the cut to the long tail.
+_HINT_FILL = 0.7
 
 
 @dataclass(frozen=True)

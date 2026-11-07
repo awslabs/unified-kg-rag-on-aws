@@ -152,13 +152,32 @@ def test_custom_mode_upserts_a_vertex_by_its_vertex_id(make_indexer) -> None:
     assert "T.id" not in default
 
 
-def test_custom_mode_finds_the_edge_endpoints_by_vertex_id(make_indexer) -> None:
+def _edge_write(indexer: Any, rel: Relationship) -> str:
+    """The Groovy of the edge write ``upsert_relationships`` sends for ``rel``
+    (its endpoints read as stored, vertex ids ``4096``/``4097``)."""
+    sent: list[str] = []
+
+    def execute(build: Callable, operation: str, **kwargs: Any) -> list[Any]:
+        groovy = _groovy(build(Graph().traversal()))
+        sent.append(groovy)
+        if operation == "Reading edge endpoints":
+            return [
+                {"id": rel.source_id, "vertex": 4096},
+                {"id": rel.target_id, "vertex": 4097},
+            ]
+        return ["edge"] if operation == "Relationship indexing" else []
+
+    indexer._execute_with_retries = execute
+    indexer._checked_labels.add(_LABEL)
+    assert indexer.upsert_relationships([rel]).failed_items == 0
+    return sent[-1]
+
+
+def test_the_edge_endpoints_are_found_by_vertex_id_in_both_modes(
+    make_indexer,
+) -> None:
     rel = Relationship(id="r1", source_id="a", target_id="b")
-    custom = _groovy(
-        make_indexer("custom")._build_add_edge_traversal(
-            Graph().traversal(), rel, _LABEL
-        )
-    )
+    custom = _edge_write(make_indexer("custom"), rel)
     # The edge itself keeps its id property (and Neptune's own edge id).
     assert custom.startswith(
         "g.E().has('id','r1').where(__.outV().hasLabel('Entity-default'))"
@@ -167,15 +186,69 @@ def test_custom_mode_finds_the_edge_endpoints_by_vertex_id(make_indexer) -> None
     ), custom
     assert ".property('id','r1')" in custom and custom.endswith(".id()")
 
-    default = _groovy(
-        make_indexer("property")._build_add_edge_traversal(
-            Graph().traversal(), rel, _LABEL
-        )
-    )
-    assert (
-        ".V().hasLabel('Entity-default').has('id','a').as('source')"
-        ".V().hasLabel('Entity-default').has('id','b').as('target')" in default
+    # Property mode: the vertex ids one start-step read returned.
+    default = _edge_write(make_indexer("property"), rel)
+    assert default.startswith(
+        "g.E().has('id','r1').where(__.outV().hasLabel('Entity-default'))"
+        ".fold().as('stored').V(4096).as('source').V(4097).as('target')"
     ), default
+
+
+@pytest.mark.parametrize("mode", ["custom", "property"])
+def test_no_vertex_filter_follows_the_stored_edge_lookup(make_indexer, mode) -> None:
+    # Regression (real Neptune, 21k vertices): fold() is not a step Neptune
+    # runs natively, so every step after it runs in the TinkerPop engine; a
+    # V().hasLabel().has('id', x) there scanned every vertex of the cluster,
+    # 1.5 s per edge. Every V() of the edge write carries vertex ids.
+    rel = Relationship(id="r1", source_id="a", target_id="b")
+    indexer = make_indexer(mode)
+    sent: list[tuple[str, Any]] = []
+
+    def execute(build: Callable, operation: str, **kwargs: Any) -> list[Any]:
+        traversal = build(Graph().traversal())
+        sent.append((operation, traversal))
+        if operation == "Reading edge endpoints":
+            return [{"id": "a", "vertex": "v-a"}, {"id": "b", "vertex": "v-b"}]
+        return ["edge"] if operation == "Relationship indexing" else []
+
+    indexer._execute_with_retries = execute
+    indexer._checked_labels.add(_LABEL)
+    indexer.upsert_relationships([rel])
+    (write,) = [t for op, t in sent if op == "Relationship indexing"]
+    steps = write.bytecode.step_instructions
+    vs = [step for step in steps if step[0] == "V"]
+    assert len(vs) == 2 and all(len(step) == 2 for step in vs), steps
+    after_fold = [step[0] for step in steps[[s[0] for s in steps].index("fold") :]]
+    assert "hasLabel" not in after_fold and "has" not in after_fold, after_fold
+    # Property mode reads the vertex ids as a start step, one per batch.
+    reads = [t for op, t in sent if op == "Reading edge endpoints"]
+    if mode == "custom":
+        assert reads == []
+    else:
+        (read,) = reads
+        assert _groovy(read).startswith(
+            "g.V().hasLabel('Entity-default').has('id',within(['a','b']))"
+        ), _groovy(read)
+
+
+def test_an_edge_whose_endpoint_is_not_stored_sends_no_write(make_indexer) -> None:
+    indexer = make_indexer("property")
+    sent: list[str] = []
+
+    def execute(build: Callable, operation: str, **kwargs: Any) -> list[Any]:
+        sent.append(operation)
+        if operation == "Reading edge endpoints":
+            return [{"id": "a", "vertex": 1}]
+        return ["edge"]
+
+    indexer._execute_with_retries = execute
+    indexer._checked_labels.add(_LABEL)
+    stats = indexer.upsert_relationships(
+        [Relationship(id="r1", source_id="a", target_id="gone")]
+    )
+    assert stats.failed_ids == ["r1"]
+    assert any("'gone'" in e for e in stats.errors)
+    assert "Relationship indexing" not in sent
 
 
 @pytest.mark.parametrize(
@@ -880,17 +953,13 @@ def test_a_switch_to_property_ids_rewrites_no_custom_vertex_in_place(
     assert written.startswith(
         f"g.V().has('{_LABEL}','id','e1').has('build_tag','{tag}').fold()"
     ), written
-    edge = _groovy(
-        indexer._build_add_edge_traversal(
-            Graph().traversal(),
-            Relationship(id="r1", source_id="a", target_id="b"),
-            _LABEL,
-        )
-    )
-    assert (
-        f".has('id','a').has('build_tag','{tag}').as('source')" in edge
-        and f".has('id','b').has('build_tag','{tag}').as('target')" in edge
-    ), edge
+    graph.requests.clear()
+    indexer.upsert_relationships([Relationship(id="r1", source_id="a", target_id="b")])
+    (read,) = [g for op, g in graph.requests if op == "Reading edge endpoints"]
+    assert read.startswith(
+        f"g.V().hasLabel('{_LABEL}').has('id',within(['a','b']))"
+        f".has('build_tag','{tag}')"
+    ), read
     # Outside a switch the build rewrites the stored vertices in place.
     other = make_indexer("property")
     graph = _on(other, _Graph(stored="property"))

@@ -463,8 +463,11 @@ gets its models and stores from the run's `Providers` bundle.
 - **A record stays while a stored text unit names it.** A full build or
   reset whose text units were all written keeps only the records they name
   (`VectorIndexer.retain_extraction_records` copies them into a new index and
-  swaps the alias); an incremental run deletes the records only removed text
-  units named.
+  swaps the alias), except a rebuild to fewer methodologies, which stops
+  building an artifact the build record names and made from records
+  (entities, relationships, graph, reports, claims): it keeps every record,
+  so adding the methodology back extracts nothing again; an incremental run
+  deletes the records only removed text units named.
 - **Chunk boundaries are records too.** The intelligent chunker stores each
   pre-chunk's boundary answer in the same index, keyed by
   `<cache_keys.chunk_boundary_fingerprint>:<SHA-256 of the pre-chunk>` (the
@@ -1059,7 +1062,9 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   builds (`held_artifacts`, from `artifacts_to_build`), so nothing is missing
   and an upgrade promotes no run.
 - **Removing a methodology** stops maintaining its artifacts: the next run
-  that writes the namespace records them gone, and its strategies fail fast.
+  of the namespace records them gone (one with nothing to index narrows the
+  stored record to what it builds, `_record_removed_artifacts`), and its
+  strategies fail fast.
   Nothing is deleted: a reset with the remaining methodologies replaces the
   community-reports index with an empty one and drops the graph's community
   vertices (the rebuild sweep, §5.2). A run creates no vector index of an
@@ -2325,11 +2330,16 @@ cannot tell; the strategy then reads the relationships index.
 - Under a document filter (and from a graph that scans incident edges)
   the graph cannot tell which edges a passing document states, so the
   edges come from the relationships index
-  (`_incident_relationships`, as the filtered walk reads them: one request per
-  batch of source ids with the target pinned to the set, a page of at most
-  `max_query_size` edges best first; under two or more document keys an
-  edge also needs one passing document by its text units), cut per vertex
-  alike. A `source_kinds` filter applies to the edges of every path; there
+  (`_indexed_neighbourhood_edges`: one request per batch of source ids
+  with the target pinned to the set, a page of at most `max_query_size`
+  edges best first; a batch whose page comes back full is asked again in
+  halves down to one vertex, and a source with more than a page is asked
+  from its targets' end with the source pinned, so a hub's edges are all
+  read; under two or more document keys an edge also needs one passing
+  document by its text units), cut per vertex alike. Only a vertex past a
+  page at both ends keeps its best-ranked page there. Without the halving
+  the whole set got one page: on a real Neptune graph 100 of 178-678
+  edges, and the PageRank ran on a rank-biased cut. A `source_kinds` filter applies to the edges of every path; there
   the index also applies the caller's relationship keys (`predicate_iri`,
   `in_schema`, `weight`), which the graph path does not apply to edges, as
   the graph walk crosses every edge.
@@ -2408,9 +2418,10 @@ embedding space, each cluster is summarized by a model, the summaries are
 clustered and summarized again, and a query searches every level at once
 (RAPTOR's "collapsed tree"). It is opt-in: `raptor` is not in the default
 `indexing.methodologies`, so no default ingestion builds a tree, and
-`search.auto_routable_strategies` refuses `tree`, because on MuSiQue's
-multi-hop questions it answered within the noise of `naive`, well below
-`mix` and `local`, and slower than `naive`
+`search.auto_routable_strategies` refuses `tree`: on MuSiQue's multi-hop
+questions it answered better than `naive` (+8 points of `answer_contains`,
+one repeat on one corpus) but well below `mix` and `local`, and slower than
+`naive`
 ([Defaults and evidence](concepts/defaults-and-evidence.md#raptor-summary-tree)).
 The published evidence is mixed too:
 RAPTOR leads on specific QA in one unified benchmark (Zhou et al., arXiv
@@ -2480,8 +2491,10 @@ earlier stage keeps its cache key), run when `raptor` is selected, `application/
    language and the summary settings: `input_key`) equals a node of the
    live tree takes that node's summary and makes no call. *Length:* the
    prompt asks for the words (characters for Japanese, Chinese and Korean)
-   that 90% of `max_summary_tokens` holds at the rate the token counter
-   that bounds the summary gives the cluster's own texts, so the hint
+   that 70% of `max_summary_tokens` holds at the rate the token counter
+   that bounds the summary gives the cluster's own texts (Claude Haiku
+   wrote about 1.4 times the hinted length: at 90%, 70% of 603 MuSiQue
+   summaries were over the budget and cut), so the hint
    follows the counter (the script-aware estimate scaled for the model's
    tokenizer, or tiktoken) and the language: a fixed words-per-token rate
    asks for too many words where the counter counts about 2 tokens a word,

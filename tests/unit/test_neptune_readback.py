@@ -66,7 +66,7 @@ def _g():
 
 def _edge_row(indexer, rel: Relationship) -> dict[str, Any]:
     """The projected row Gremlin returns for the edge the indexer writes."""
-    written = indexer._build_add_edge_traversal(_g(), rel, _ENTITY_LABEL)
+    written = indexer._build_add_edge_traversal(_g(), rel, _ENTITY_LABEL, 1, 2)
     steps = written.bytecode.step_instructions
     add_e = next(i for i, step in enumerate(steps) if step[0] == "addE")
     props: dict[str, Any] = {}

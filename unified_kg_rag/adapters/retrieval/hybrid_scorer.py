@@ -8,6 +8,7 @@ from typing import Any
 
 from langchain_core.documents import Document
 
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
@@ -17,7 +18,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.model_factory import RerankFactoryPort
 from unified_kg_rag.shared import RerankModelError, get_logger
-from unified_kg_rag.shared.usage import record_rerank_call
+from unified_kg_rag.shared.usage import record_rerank_call, rerank_search_units
 from unified_kg_rag.shared.utils import compute_hash
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
@@ -581,11 +582,17 @@ class HybridScorer:
             reranked_docs = rerank_model.compress_documents(
                 documents=documents, query=query
             )
-            # Billed per search unit: counted in the query's usage.
+            # Billed per search unit: counted in the query's usage. A long
+            # document is billed as several (rerank_search_units), so the
+            # units follow each document's estimated tokens.
             model_id = self.config.rerank_model_id
             record_rerank_call(
                 str(getattr(model_id, "value", model_id) or "rerank"),
                 documents=len(documents),
+                search_units=rerank_search_units(
+                    estimate_token_count(query),
+                    [estimate_token_count(d.page_content) for d in documents],
+                ),
             )
             reranked_results = []
             for i, doc in enumerate(reranked_docs):

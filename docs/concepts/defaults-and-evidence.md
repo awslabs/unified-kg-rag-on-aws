@@ -98,7 +98,7 @@ ships no price table, because one would go stale.
 | `search.local_search.text_unit_ranking` | `ppr` | Against `support` on 200 MuSiQue questions, two repeats: recall@5 +6.1 [+2.9, +9.4] and supporting paragraphs in the context +12 to +13 points; answers no worse (`answer_contains` +3.5 [+0.5, +6.75], borderline after a multiplicity correction; EM and token F1 n.s.); +0.10 s retrieval a query ([Local PPR ranking](#local-ppr-ranking)) |
 | `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant; +3.08 s per answer, run separately (see *Latency* in [How the measurements were run](#how-the-measurements-were-run)) ([Retrieval switches](#retrieval-switches)) |
 | `search.auto_routable_strategies` | `local`, `mix`, `global`, `iterative` | `iterative` over `mix` against `mix` on multi-hop questions: `answer_contains` +12.5 points [+7.5, +18.0], token F1 +5.2 [+0.2, +10.1], last hop in the context +21.5; p95 11.1 s to 27.4 s, +$0.002 a query. `decompose` was no better than the loop, so it stays off ([Iterative follow-up rounds](#iterative-follow-up-rounds)) |
-| `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions: answers n.s. (`answer_contains` +4.0 [-1.0, +10.0]), recall@5 -8.7 [-13.6, -3.8], +5.5 s and +$0.0062 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions ([RAPTOR summary tree](#raptor-summary-tree)) |
+| `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions, one repeat: `answer_contains` +8.0 points [+3.0, +14.0], EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1], recall@5 -0.6 n.s., +1.2 s and +$0.0060 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions. One repeat on one corpus, so opt-in ([RAPTOR summary tree](#raptor-summary-tree)) |
 | `aws.bedrock.ingestion_effort` | `null` (`default_effort`, `high`) | `low` on a 109-document slice: ingestion cost -19%, answers n.s. on 30 questions ([Ingestion effort](#ingestion-effort)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
 
@@ -465,27 +465,39 @@ search:
 
 `tree` searches the text units and every level of a summary tree (§6.5 of
 the [Design Doc](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)).
-A run on 2026-11-06 (package at commit `1d11766b`) built the tree on a copy
+A run on 2026-11-07 (package at commit `1c80d7da`) built the tree on a copy
 of the repaired index with `run-ingestion --enabled-stages summary_tree`
 and `models.roles.summary_tree: fast`: 603 summaries in 4 levels over the
-3,318 text units, 603 Haiku 5.5 calls (1.09M input and 0.36M output
-tokens), $0.29 at the list prices, in 288 s.
+3,318 text units, 603 Haiku 5.5 calls (1.08M input and 0.23M output
+tokens), $0.22 at the list prices, in 116 s. Every summary ends a
+sentence; 421 of them (70%) were longer than `max_summary_tokens` and cut
+at a sentence end, which is why later packages ask for less (§6.5).
 
 On 100 of the 200 MuSiQue questions, one repeat, paired on the same
 questions:
 
 | Arm against `naive` | Answers | Retrieval | Latency and cost |
 |---|---|---|---|
-| `tree` | `answer_contains` +4.0 points [-1.0, +10.0], EM +4.0 [-2.0, +10.0], token F1 +2.8 [-2.3, +8.1]: all n.s. | recall@5 -8.7 [-13.6, -3.8] and MRR -3.3 [-6.7, -0.6]: the 5.2 summaries a context gained take source slots; the text units' own recall@5 +0.8, n.s. | +5.5 s [+4.9, +6.2] (5.1 s to 10.6 s); +$0.0062 a query ($0.0163 to $0.0225), the summaries' 3,075 input tokens |
+| `tree` | `answer_contains` +8.0 points [+3.0, +14.0] (0.62 to 0.70), EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1]: all significant | recall@5 -0.6 [-3.2, +2.0], n.s.; MRR -1.9 [-4.0, -0.3]: the passages come first, and the 5.2 summaries a context gains follow them | +1.2 s [+0.9, +1.4] (4.1 s to 5.3 s); +$0.0060 a query ($0.0182 to $0.0243), the summaries' 2,922 input tokens |
 | `mix` | `answer_contains` +19.0 [+11.0, +27.0], EM +15.0 [+8.0, +23.0] | recall@5 +2.5, n.s. | +4.3 s; +$0.0407 a query |
 | `local` | `answer_contains` +18.0 [+7.0, +29.0], EM +10.0 [+1.0, +19.0] | recall@5 +2.0, n.s. | +5.0 s; +$0.0266 a query |
 
-So on multi-hop questions over short paragraphs the tree is cheap to
-build and answers within the noise of `naive`, well below the graph
-strategies, at twice `naive`'s latency. That is why `raptor` is not in the
-default `indexing.methodologies` and `auto` does not route to `tree`.
-Not measured: sensemaking questions, long documents, `scope: document`
-and `algorithm: gmm`.
+The `mix` and `local` rows are from the run of 2026-11-06 (package at
+`1d11766b`) on the same questions and index. That run measured an earlier
+tree (summaries cut mid-sentence, summary nodes ranked above the passages):
+`tree` against `naive` was `answer_contains` +4.0 [-1.0, +10.0], n.s.,
+with recall@5 -8.7 [-13.6, -3.8] and +5.5 s. The changes of #601
+(summaries kept to whole sentences, the passages ranked before the
+summaries' lineage) came between the two runs; with them the gain is
+significant and the retrieval loss is gone.
+
+So on multi-hop questions over short paragraphs the tree is cheap to build
+and adds about 8 points of `answer_contains` over `naive` for $0.006 and
+1.2 s a query, still well below the graph strategies. It stays opt-in and
+`auto` does not route to `tree`: this is one repeat on one corpus, and the
+graph strategies win there by more than twice as much. Not measured:
+sensemaking questions, long documents, `scope: document` and
+`algorithm: gmm`.
 
 ## Query deadlines and model timeouts
 
@@ -604,6 +616,13 @@ Real units are longer (`fallback_chunk_size` 4,800 characters) and name more
 entities and relationships, so the runbook plans for 2-3 times the memory
 per unit. That factor is an estimate, not a measurement. The time excludes
 model latency and network writes to Neptune and OpenSearch.
+
+A `raptor`-only run on AWS (2026-11-07, package at `1c80d7da`, 2 vCPU and
+8 GiB) over 50,000 MuSiQue paragraphs (about 500 characters each; 33,165
+distinct) took 1,474 s: indexing 562 s (Titan embeddings), the summary tree
+811 s (9,294 Haiku 5.5 summary calls, 16.0M input and 3.27M output tokens,
+about $3.2). Its task memory peaked at 1,361 MiB (Container Insights,
+1-minute samples), about 21 KiB a unit end to end.
 
 ## On-disk vector recall
 

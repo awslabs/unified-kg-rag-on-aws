@@ -219,8 +219,8 @@ models:
 `--search-strategy tree`는 `raptor` 방법론으로 만든 네임스페이스를
 ([수집](./ingest.ko.md#raptor-요약-트리선택-사항)) 검색합니다. 구절과 요약 트리의 모든 레벨을
 한 번에, 각각 BM25 + kNN으로 검색하고 융합해 함께 재순위화하며, 남은 요약마다 가장 잘 맞는
-구절을 함께 가져옵니다. 멀티홉 질문에서 `naive`와 오차 범위 안의 답을 냈으므로 선택
-사항입니다([근거](../concepts/defaults-and-evidence.md#raptor-summary-tree), 영문). `auto`는 `raptor`만 가진
+구절을 함께 가져옵니다. 멀티홉 질문에서 `naive`보다 나았지만 그래프 전략보다 크게 낮았고 한
+코퍼스에서 1회 반복한 결과이므로 선택 사항입니다([근거](../concepts/defaults-and-evidence.md#raptor-summary-tree), 영문). `auto`는 `raptor`만 가진
 네임스페이스에서만 이 전략을 고르고, 트리가 없는 네임스페이스는 모델을 호출하기 전에 이
 전략을 거절합니다.
 

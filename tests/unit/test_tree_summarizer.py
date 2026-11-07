@@ -131,10 +131,27 @@ def test_a_summary_of_the_hinted_length_is_within_the_budget(
 
     assert summary is not None
     assert summary.n_tokens <= 300
-    # Not cut: as written, and most of the budget used.
+    # Not cut: as written, and most of the hinted length used.
     assert summary.text == writer.answers[-1]
     assert _ends_a_sentence(summary.text)
-    assert summary.n_tokens >= 300 * 0.7
+    assert summary.n_tokens >= 300 * 0.55
+
+
+@pytest.mark.parametrize("counter", sorted(_COUNTERS))
+@pytest.mark.parametrize("language", sorted(SENTENCES))
+def test_a_model_writing_past_the_hint_as_measured_is_not_cut(
+    language: LanguageCode, counter: str
+) -> None:
+    # Regression (real Bedrock): Claude Haiku wrote ~1.4 times the hinted
+    # length, and with the hint at 0.9 of the budget 70% of the summaries
+    # were cut. The hint leaves that room.
+    writer = _Writer(language, 1.35)
+    summarizer = _summarizer(language, writer, counter)
+    [summary] = summarizer.summarize([_cluster(language)])
+
+    assert summary is not None
+    assert summary.text == writer.answers[-1]
+    assert summary.n_tokens <= 300
 
 
 @pytest.mark.parametrize("language", sorted(SENTENCES))

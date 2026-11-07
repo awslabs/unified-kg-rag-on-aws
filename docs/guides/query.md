@@ -244,8 +244,8 @@ How it works and how it compares with IRCoT and KAG:
 methodology ([ingestion](./ingest.md#a-raptor-summary-tree-opt-in)): the
 passages and every level of the summary tree at once, BM25 + kNN each,
 fused and reranked together; each summary kept brings its best passages.
-It is opt-in, as on multi-hop questions it answered within the noise of
-`naive` ([evidence](../concepts/defaults-and-evidence.md#raptor-summary-tree)):
+It is opt-in: on multi-hop questions it answered better than `naive` but
+well below the graph strategies, in one repeat on one corpus ([evidence](../concepts/defaults-and-evidence.md#raptor-summary-tree)):
 `auto` routes to it only on a `raptor`-only namespace, and a namespace
 without a tree refuses it before any model call.
 

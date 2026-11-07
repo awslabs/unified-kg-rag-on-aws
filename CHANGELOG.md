@@ -339,6 +339,17 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    `dev`) with your usual `-c` flags and the new `image_tag`, then `cdk deploy --all`; a plain `--all` stops at
    `GraphRagCompute` ("Cannot delete export ...") and rolls back unchanged. Container Insights series restart under
    the renamed ingestion task family (#558).
+7. A deployed stack, in three deploys with your usual `-c` flags and the new `image_tag`, and `-c
+   legacy_doc_status_table=<the 0.2.3 registry table>` (`graphrag-doc-status` in `dev`, `<env>-graphrag-doc-status`
+   otherwise, or the `doc_status_table` you set) on the first two: `cdk deploy GraphRagOrchestration --exclusively`
+   (`GraphRag<Env>Orchestration` outside `dev`), then `cdk deploy --all`, then `cdk deploy --all` without
+   `legacy_doc_status_table`. The registry table is replaced (another key schema and name), and the 0.2.3 compute
+   and observability stacks import its ARN and name: without the setting the storage stack fails ("Cannot update
+   export ...DocStatusTable... as it is in use") and rolls back unchanged; without the first deploy `GraphRagCompute`
+   stops at "Cannot delete export ...". The old table is retained where `removal_destroy` is off (delete it in step
+   12) and deleted with the stack update where it is on. A 0.2.3 `doc_status_table` of your own needs a new name
+   too, as CloudFormation replaces no custom-named table under its own name. Container Insights series restart
+   under the renamed ingestion task family (#558, #626).
 8. On that deploy: pass `-c owner=aws-proserve` to keep the `owner` tag; without `use_cmk`, delete a leftover
    `GraphRagSecurity` stack (CDK metadata only) with `aws cloudformation delete-stack`; dry-run the TLS policy
    change (`aws opensearch update-domain-config ... --dry-run`) to see whether it runs blue/green; in a
@@ -571,6 +582,10 @@ From a `main` checkout (formats and keys no release had):
   Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
   (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, and one still over the budget
   keeps its whole sentences within it (#601). `run-ingestion --enabled-stages summary_tree` builds the tree under the
+  are unchanged reuses its summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) 70% of its token
+  budget (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, as Claude Haiku writes
+  about 1.4 times the length asked (at 90%, 70% of the summaries were cut), and one still over the budget keeps its
+  whole sentences within it (#601, #626). `run-ingestion --enabled-stages summary_tree` builds the tree under the
   pipeline id that built the namespace even after an upgrade changed the earlier stages' cache keys, running none of
   them and probing only the indices the namespace lacks (#601). `raptor` alone runs no graph stage. The `tree`
   strategy (`auto` routes to it only on a `raptor`-only namespace) fuses BM25 + kNN searches of the text units and
@@ -607,7 +622,8 @@ From a `main` checkout (formats and keys no release had):
   (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()` are public (#619).
   Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
-  them. Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
+  them, and the next run records them gone, one with no document change too; a reset to fewer methodologies keeps
+  the extraction records, so adding one back extracts nothing again (#626). Every strategy class declares `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that
   reads less declares its artifacts (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace
   that holds the text units, and `simple` sweeps only the indexes it holds (#607). A filter key is checked, after
   the methodology check, against the indexes the strategy reads that the namespace holds and a run of the config
@@ -752,7 +768,9 @@ From a `main` checkout (formats and keys no release had):
   `EvaluationResult.usage`, `run-ingestion`'s JSON `token_usage` and per-stage EMF metrics on the CDK dashboard. A
   call counts from its start, so cancelled and background calls are billed at an estimated input; a response that
   reports no tokens keeps its resent requests and an output estimated from its text (#526, #530, #532, #533, #541,
-  #563, #589). Rerank requests count apart (`rerank_calls`, `rerank_search_units`, one per 100 documents), priced by
+  #563, #589). Rerank requests count apart (`rerank_calls`, `rerank_search_units`, one per 100 documents, a document of more
+  than 500 estimated tokens with the query counting as several, as Amazon Bedrock bills it: about 2x the units of
+  one per 100 at 4,800-character chunks; run manifests record `usage_schema: 3`, and a comparison against a run saved with an earlier schema gives no USD delta) (#626), priced by
   `evaluation.prices.<rerank model>.per_thousand_rerank_search_units` (#607); the run manifest records
   `usage_schema: 2`, and a comparison gives no USD delta against a run saved before it (#613).
 - Corpus coverage: `run-ingestion`'s JSON `units_failed` and EMF metrics `total_units_failed`, `total_files_failed`,
@@ -851,7 +869,8 @@ From a `main` checkout (formats and keys no release had):
   multi-hop questions, for about 0.1 s more retrieval a query
   ([evidence](docs/concepts/defaults-and-evidence.md#local-ppr-ranking)) (#602); DRIFT's follow-up local searches
   keep `support` (`search.drift_search.text_unit_ranking`) (#607). Graph retrievers gain `aneighbourhood_edges`
-  (Neptune, Gremlin Server, SQLite; the relationships index under a document filter), and `SearchQuery.max_hops`
+  (Neptune, Gremlin Server, SQLite; the relationships index under a document filter and on Neptune, which reads every
+  edge within the set, not one 100-edge page of them, before the per-vertex cap), and `SearchQuery.max_hops`
   overrides the expansion depth (#597).
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs with the CMK and
   `log_retention_days` (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot
@@ -1123,7 +1142,9 @@ Ingestion and incremental indexing.
 - Two corpora in one namespace holding the same file no longer share text units, and store sets with other index
   prefixes no longer share a registry namespace (#283, #327).
 - Neptune no longer loses edges when interrupted, a vertex write replaces its stored properties, and OpenSearch no
-  longer stores a description cut at the Neptune cap (#252, #294, #377).
+  longer stores a description cut at the Neptune cap (#252, #294, #377); an edge write looks its endpoints up by
+  vertex id (property-mode ids read in one request per batch), so its cost no longer grows with the vertex count of
+  every tenant on the cluster (1.5 s an edge at 21k vertices) (#626).
 - A store error while preparing or clearing fails the stage, a lost create or delete response no longer fails a
   build, a failed delete batch counts every id, bulk errors name their cause, and indexing memory no longer grows
   with the corpus (#252, #265, #294, #431, #432, #440).
