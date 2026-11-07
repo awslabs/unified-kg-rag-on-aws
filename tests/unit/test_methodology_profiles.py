@@ -1022,6 +1022,106 @@ async def test_the_refusal_says_what_adding_the_methodology_costs() -> None:
     assert "rebuilt once from its stored extractions" in str(refused.value)
 
 
+async def test_the_refusal_advises_by_the_source_scopes_of_the_record() -> None:
+    from unified_kg_rag.shared import MethodologyNotIndexedError
+
+    def light(scopes: list[str] | None) -> _Records:
+        record = _record(*LIGHT).model_copy(update={"source_scopes": scopes})
+        return _Records(record.model_dump(mode="json"))
+
+    async def refusal(records: _Records, strategy: SearchStrategy) -> str:
+        with pytest.raises(MethodologyNotIndexedError) as refused:
+            await _chain(Config(), records).acheck_methodology(strategy)
+        return str(refused.value)
+
+    # Several source scopes: a rebuild from one corpus is refused, so the
+    # advice is a namespace of its own or a reset, never a rebuild.
+    for strategy in (SearchStrategy.GLOBAL, SearchStrategy.LOCAL):
+        shared = await refusal(light(["/corpus-a", "api"]), strategy)
+        assert "source scopes /corpus-a, api" in shared
+        assert "ingestion refuses" in shared
+        assert "indexing.reset: true" in shared
+        assert "rebuilt once" not in shared
+    # Also where the graph's first build is the cost: a rebuild all the same.
+    tree = _record(*TREE_ONLY).model_copy(update={"source_scopes": ["a", "b"]})
+    first = await refusal(_Records(tree.model_dump(mode="json")), SearchStrategy.LOCAL)
+    assert "source scopes a, b" in first
+    assert "every text unit is extracted" not in first
+    # One: a re-run over that scope's corpus, also for API-fed documents.
+    api = await refusal(light(["api"]), SearchStrategy.GLOBAL)
+    assert "over the corpus of the source scope 'api'" in api
+    assert "processing.document_parsing.source_scope: 'api'" in api
+    assert "rebuilt once from its stored extractions" in api
+    # A record without scopes (no registry, an earlier version) names the
+    # condition the rebuild needs.
+    for old in (light(None), _Records(_record(*LIGHT).model_dump(mode="json"))):
+        generic = await refusal(old, SearchStrategy.GLOBAL)
+        assert "a namespace of one source scope is rebuilt once" in generic
+        assert "also holds other source scopes is not" in generic
+
+
+def test_a_record_from_before_source_scopes_still_reads() -> None:
+    dump = _record(*FULL).model_dump(mode="json")
+    del dump["source_scopes"]
+    assert IndexBuildRecord.model_validate(dump).source_scopes is None
+
+
+def test_the_build_record_names_the_source_scopes_the_namespace_holds() -> None:
+    from unified_kg_rag.application.ingestion.incremental import (
+        recorded_source_scopes,
+    )
+    from unified_kg_rag.domain.models import DocumentDelta, PipelineContext
+
+    def scopes(reset: bool = False, **delta: list[str]) -> list[str] | None:
+        context = PipelineContext.model_construct(
+            incremental_scope="ns|/corpus-b",
+            incremental_retired_scopes=["s3://bucket/old/"],
+            incremental_delta=DocumentDelta(
+                stored_scopes=[
+                    "ns|/corpus-a",
+                    "ns|/corpus-b",
+                    "ns|api",
+                    "ns|s3://bucket/old",
+                    "other|/corpus-c",
+                ],
+                **delta,
+            ),
+        )
+        return recorded_source_scopes(context, reset)
+
+    # The run's, the others of its namespace, but a retired one (under
+    # any spelling) and another namespace's.
+    assert scopes(new=["d"]) == ["/corpus-a", "/corpus-b", "api"]
+    assert scopes(unchanged=["d"]) == ["/corpus-a", "/corpus-b", "api"]
+    # A run that deleted its corpus's last document holds the others only.
+    assert scopes(deleted=["d"]) == ["/corpus-a", "api"]
+    # A reset deletes the others.
+    assert scopes(reset=True, new=["d"]) == ["/corpus-b"]
+    # Without the registry: unknown.
+    unknown = PipelineContext.model_construct(
+        incremental_scope=None, incremental_delta=None
+    )
+    assert recorded_source_scopes(unknown, False) is None
+
+
+def test_dropped_methodologies_are_those_a_run_stops_maintaining() -> None:
+    full = _record(*FULL).model_dump(mode="json")
+    lightrag = Config(indexing={"methodologies": ["lightrag"]})
+    assert mp.dropped_methodologies(full, lightrag) == (G,)
+    assert mp.dropped_methodologies(full, Config()) == ()
+    # Adding is not dropping; a record without artifacts drops nothing.
+    light = _record(*LIGHT).model_dump(mode="json")
+    assert mp.dropped_methodologies(light, Config()) == ()
+    assert mp.dropped_methodologies(None, lightrag) == ()
+    del full["artifacts"]
+    assert mp.dropped_methodologies(full, lightrag) == ()
+    # An artifact switch drops what needs it.
+    no_vectors = Config(
+        indexing={"opensearch": {"build_relationship_vector_index": False}}
+    )
+    assert mp.dropped_methodologies(light, no_vectors) == (L, H)
+
+
 async def test_iterative_is_refused_where_its_base_is_not_held() -> None:
     from unified_kg_rag.shared import MethodologyNotIndexedError
 

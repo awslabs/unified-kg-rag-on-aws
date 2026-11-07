@@ -86,14 +86,17 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     compute_document_id,
     compute_text_hash,
     config_registry_namespace,
+    normalize_source_scope,
 )
 from unified_kg_rag.domain.ingestion.methodologies import (
     SWITCHABLE_STAGES,
+    dropped_methodologies,
     missing_artifacts,
     selected_stages,
     stage_methodologies,
     stage_switched_off,
     stages_for,
+    stored_artifacts,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
 from unified_kg_rag.domain.models import (
@@ -111,7 +114,11 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     validate_path_segment,
 )
-from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES, Methodology
+from unified_kg_rag.domain.models.methodology import (
+    METHODOLOGY_PROFILES,
+    Methodology,
+    methodologies_holding,
+)
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
@@ -1133,7 +1140,8 @@ class DataIngestionPipeline:
         Raises:
             ConfigurationError: The namespace also holds other source
                 scopes' documents, which a rebuild from this corpus would
-                delete.
+                delete, or which would lose a methodology the run stops
+                maintaining (``_refuse_dropped_methodologies``).
             DocStatusRegistryError: The namespace cannot be read.
         """
         if self._doc_status is None or self.config.indexing.reset:
@@ -1145,6 +1153,7 @@ class DataIngestionPipeline:
             )
         finally:
             indexer.close()
+        self._refuse_dropped_methodologies(record, source_path)
         missing = missing_artifacts(record, self.config)
         if not missing:
             return
@@ -1171,6 +1180,56 @@ class DataIngestionPipeline:
         )
         self.config.indexing.reset = True
         self._reset_for_run = True
+
+    def _refuse_dropped_methodologies(
+        self, record: Mapping[str, Any] | None, source_path: Path
+    ) -> None:
+        """Refuse a run whose methodologies leave out one the namespace's
+        build record holds while the namespace also holds documents of other
+        source scopes: the build record is the namespace's, so the run would
+        stop maintaining the methodology for their documents too, and adding
+        it back needs a rebuild, which a run of one corpus refuses
+        (``_rebuild_for_added_artifacts``). Narrowing a namespace of one
+        source scope is allowed. Scopes this run retires do not count.
+        Called before any model call, on corpus runs and runs of document
+        changes (``insert_documents``, ``delete_documents``) alike.
+
+        Raises:
+            ConfigurationError: Such a run.
+            DocStatusRegistryError: The namespace cannot be read.
+        """
+        assert self._doc_status is not None
+        dropped = dropped_methodologies(record, self.config)
+        if not dropped:
+            return
+        retired = {
+            normalize_source_scope(s) for s in self.config.indexing.retire_source_scopes
+        }
+        others = [
+            scope
+            for scope in other_source_scopes(self._doc_status, self.config, source_path)
+            if normalize_source_scope(scope) not in retired
+        ]
+        if not others:
+            return
+        held = ", ".join(
+            m.value for m in methodologies_holding(stored_artifacts(record) or ())
+        )
+        raise ConfigurationError(
+            f"indexing.methodologies ({', '.join(m.value for m in self.config.effective_methodologies)}) "
+            f"leaves out {', '.join(m.value for m in dropped)}, which the index "
+            "namespace holds for the documents of all its source scopes, "
+            f"among them {', '.join(others)}: this run would stop maintaining "
+            "it for those too, and adding it back needs a rebuild of the namespace "
+            "from one corpus, which deletes the others. Run with the "
+            f"methodologies the namespace holds (indexing.methodologies: {held}, "
+            "with the artifact switches it was built with); give each corpus "
+            "its own namespace (processing.document_parsing.index_value), "
+            "which extracts it again; retire a scope that is this corpus "
+            "before a move (indexing.retire_source_scopes); or rebuild the "
+            "namespace from this corpus with indexing.reset: true, deleting "
+            "the others."
+        )
 
     def _incremental_delta(self, context: PipelineContext | None) -> bool:
         """Whether ``context`` holds an incremental delta the registry tracks

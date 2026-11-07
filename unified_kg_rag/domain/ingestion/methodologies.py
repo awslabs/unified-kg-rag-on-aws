@@ -17,6 +17,7 @@ from unified_kg_rag.domain.models.methodology import (
     IndexArtifact,
     Methodology,
     artifacts_of,
+    methodologies_holding,
     parse_artifacts,
 )
 
@@ -224,3 +225,17 @@ def missing_artifacts(
     if stored is None:
         return frozenset()
     return (artifacts_to_build(config) & CORPUS_WIDE_ARTIFACTS) - stored
+
+
+def dropped_methodologies(
+    record: Mapping[str, Any] | None, config: Config
+) -> tuple[Methodology, ...]:
+    """The methodologies the namespace's build record holds that a run of
+    ``config`` stops maintaining (the record it writes no longer names
+    them, see ``IndexBuildRecord``); none without a record that names its
+    artifacts."""
+    stored = stored_artifacts(record)
+    if stored is None:
+        return ()
+    kept = methodologies_holding(stored & artifacts_to_build(config))
+    return tuple(m for m in methodologies_holding(stored) if m not in kept)

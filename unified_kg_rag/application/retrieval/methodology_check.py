@@ -14,6 +14,7 @@ chain they check for, like ``filter_validation``.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
@@ -63,12 +64,21 @@ async def namespace_artifacts(
     record, else (no record, one from before methodology profiles, a backend
     without index metadata, an unreadable one) those a run of the config
     builds (``held_artifacts``)."""
+    return (await _namespace_holding(chain, suffix, refresh=refresh))[0]
+
+
+async def _namespace_holding(
+    chain: GraphRAGChain, suffix: str | None, *, refresh: bool
+) -> tuple[frozenset[IndexArtifact], list[str] | None]:
+    """``namespace_artifacts`` and the source scopes the build record names
+    (``IndexBuildRecord.source_scopes``; None when it names none, is not
+    read again here or cannot be read)."""
     key = suffix or ""
     now = time.monotonic()
     with chain._cache_lock:
         cached = chain._held_artifacts.get(key)
     if cached is not None and not refresh and now - cached[0] < HELD_TTL_SECONDS:
-        return cached[1]
+        return cached[1], None
     try:
         record = await chain.aread_build_record(suffix)
     except Exception as e:  # noqa: BLE001 - the record is optional
@@ -76,11 +86,14 @@ async def namespace_artifacts(
         # for this query only: a cached fallback would refuse (or serve)
         # by the config for HELD_TTL_SECONDS after the store recovered.
         logger.debug("Reading the build record of '%s' failed: %s", key, e)
-        return held_artifacts(None, chain.config)
+        return held_artifacts(None, chain.config), None
     held = held_artifacts(record, chain.config)
     with chain._cache_lock:
         chain._held_artifacts[key] = (now, held)
-    return held
+    scopes = record.get("source_scopes") if isinstance(record, Mapping) else None
+    if not isinstance(scopes, list):
+        return held, None
+    return held, [s for s in scopes if isinstance(s, str)]
 
 
 async def check_strategy_methodology(
@@ -96,7 +109,8 @@ async def check_strategy_methodology(
     the held methodologies (``strategy_registry.routable_strategies``).
     """
     for refresh in (False, True):
-        artifacts = await namespace_artifacts(chain, suffix, refresh=refresh)
+        # The scopes of the last, fresh read advise a refusal.
+        artifacts, scopes = await _namespace_holding(chain, suffix, refresh=refresh)
         held = methodologies_holding(artifacts)
         if _served(chain, strategy, artifacts, held):
             return held
@@ -116,9 +130,8 @@ async def check_strategy_methodology(
         how = (
             "ingest with "
             + " and ".join(f"{key}: true" for key in switches)
-            + ": a namespace with the doc-status registry is rebuilt once from "
-            "its stored extractions, so only the model calls that build them "
-            "are new."
+            + ": "
+            + rebuild_advice("them", scopes)
             if switches
             else "run ingestion with indexing.methodologies naming any methodology."
         )
@@ -129,7 +142,55 @@ async def check_strategy_methodology(
         )
     assert methodology is not None  # _served serves a strategy without one
     raise MethodologyNotIndexedError(
-        not_indexed_message(strategy, methodology, artifacts, namespace, chain.config)
+        not_indexed_message(
+            strategy,
+            methodology,
+            artifacts,
+            namespace,
+            chain.config,
+            source_scopes=scopes,
+        )
+    )
+
+
+def rebuild_advice(what: str, source_scopes: Sequence[str] | None) -> str:
+    """How a run adds ``what`` (the artifacts of a methodology) to a
+    namespace holding ``source_scopes`` (its build record's; None when it
+    names none): by a rebuild from the corpus of its one source scope,
+    which reuses the stored extractions. A namespace of several is never
+    rebuilt from one corpus (ingestion refuses: it would delete the others)."""
+    if source_scopes and len(source_scopes) > 1:
+        return (
+            "the namespace holds the documents of the source scopes "
+            f"{', '.join(source_scopes)}, and adding a methodology rebuilds "
+            "it from one corpus, which ingestion refuses while it holds "
+            "others: ingest each corpus into an index namespace of its own "
+            "(processing.document_parsing.index_value), which extracts it "
+            "again, or rebuild the namespace from one corpus with "
+            "indexing.reset: true, deleting the others."
+        )
+    if source_scopes:
+        scope = source_scopes[0]
+        return (
+            f"re-run ingestion over the corpus of the source scope '{scope}' "
+            "(documents given through insert_documents: "
+            "DataIngestionPipeline.run over a directory holding each of them "
+            "as a file named by its id, with "
+            f"processing.document_parsing.source_scope: '{scope}'). With the "
+            "doc-status registry the namespace is rebuilt once from its "
+            f"stored extractions, so only the model calls that build {what} "
+            "are new."
+        )
+    return (
+        "re-run ingestion over the namespace's corpus. With the doc-status "
+        "registry a namespace of one source scope is rebuilt once from its "
+        f"stored extractions, so only the model calls that build {what} are "
+        "new; one that also holds other source scopes is not (ingestion "
+        "refuses: the rebuild would delete them), so ingest into an index "
+        "namespace of its own or rebuild with indexing.reset: true. Documents "
+        "given through insert_documents are rebuilt by "
+        "DataIngestionPipeline.run over a directory holding each of them as "
+        "a file named by its id, in their source scope."
     )
 
 
@@ -154,9 +215,12 @@ def not_indexed_message(
     artifacts: frozenset[IndexArtifact],
     namespace: str,
     config: Config,
+    *,
+    source_scopes: Sequence[str] | None = None,
 ) -> str:
     """Why ``strategy`` is refused, what the namespace (holding
-    ``artifacts``) serves instead and how to add ``methodology``."""
+    ``artifacts`` for the documents of ``source_scopes``, its build
+    record's) serves instead and how to add ``methodology``."""
     held = methodologies_holding(artifacts)
     serving = [
         s.value
@@ -175,6 +239,8 @@ def not_indexed_message(
             f"{selected}): the summary tree is built from the stored text "
             "units, with no re-extraction."
         )
+    elif source_scopes and len(source_scopes) > 1:
+        how = rebuild_advice(f"what {methodology.value} adds", source_scopes)
     elif set(held) <= {Methodology.RAPTOR}:
         # Nothing extracted yet: the graph costs a first build.
         how = (
@@ -182,11 +248,7 @@ def not_indexed_message(
             "unit is extracted (the cost of a first build)."
         )
     else:
-        how = (
-            "re-run ingestion: a namespace with the doc-status registry is "
-            "rebuilt once from its stored extractions, so only the model "
-            f"calls that build what {methodology.value} adds are new."
-        )
+        how = rebuild_advice(f"what {methodology.value} adds", source_scopes)
     return (
         f"Search strategy '{strategy.value}' reads the {methodology.value} "
         f"methodology, which the index namespace '{namespace}' does not hold "

@@ -318,6 +318,85 @@ def test_an_added_methodology_is_refused_with_advice_that_works(
         pipeline.close()
 
 
+def test_fewer_methodologies_are_refused_beside_another_scope(
+    tmp_path: Path,
+) -> None:
+    # Document changes with fewer methodologies than the namespace holds
+    # would stop maintaining the dropped one for every scope's documents:
+    # refused before any model call while another scope is held, allowed
+    # while the api scope is the namespace's only one.
+    asked: list[str] = []
+
+    def respond(system: str, human: str) -> str:
+        asked.append(system)
+        return _respond(system, human)
+
+    def pipeline_in(root: Path) -> tuple[Config, Any, DataIngestionPipeline]:
+        config = _config(root / "stores", root / "viz")
+        providers = _providers(
+            config, FakeOllama(respond, ANSWER, DIM), FakeCrossEncoder("rerank")
+        )
+        pipeline = DataIngestionPipeline(
+            config,
+            PipelineConfig(
+                stages_enabled=dict.fromkeys(PipelineStageType, True),
+                local_directory=root / "cache",
+            ),
+            providers=providers,
+        )
+        for stage in pipeline.stages:
+            if isinstance(stage, ps.GraphResolutionStage):
+                stage.resolver.entity_resolver.use_process_pool = False
+                stage.resolver.relationship_resolver.use_process_pool = False
+        return config, providers, pipeline
+
+    def record(providers: Any) -> dict[str, Any]:
+        indexer = providers.build_vector_indexer()
+        try:
+            return dict(indexer.read_build_record(None) or {})
+        finally:
+            indexer.close()
+
+    # Beside a directory corpus: refused.
+    config, providers, pipeline = pipeline_in(tmp_path / "shared")
+    try:
+        _ok(pipeline.insert_documents([{"id": "a", "text": "Vendor supplies Buyer."}]))
+        assert record(providers)["source_scopes"] == ["api"]
+        corpus = tmp_path / "corpus"
+        corpus.mkdir()
+        (corpus / "notes.txt").write_text("Bank lends money to Vendor.")
+        _ok(pipeline.run(corpus))
+        before = record(providers)
+        assert before["source_scopes"] == sorted([str(corpus.resolve()), "api"])
+
+        config.indexing.methodologies = [Methodology.LIGHTRAG]
+        asked.clear()
+        for call in (
+            lambda: pipeline.insert_documents([{"id": "b", "text": "Carrier."}]),
+            lambda: pipeline.delete_documents(["a"]),
+        ):
+            with pytest.raises(ConfigurationError, match="leaves out graphrag") as no:
+                call()
+            assert str(corpus.resolve()) in str(no.value)
+        assert asked == []
+        assert set(_records(providers)) == {"a", "notes.txt"}
+        assert record(providers) == before
+    finally:
+        pipeline.close()
+
+    # The api scope alone: narrowing is allowed.
+    config, providers, pipeline = pipeline_in(tmp_path / "alone")
+    try:
+        _ok(pipeline.insert_documents([{"id": "a", "text": "Vendor supplies Buyer."}]))
+        config.indexing.methodologies = [Methodology.LIGHTRAG]
+        _ok(pipeline.insert_documents([{"id": "b", "text": "Carrier ships."}]))
+        narrowed = record(providers)
+        assert narrowed["methodologies"] == ["lightrag", "hipporag"]
+        assert narrowed["source_scopes"] == ["api"]
+    finally:
+        pipeline.close()
+
+
 def test_delete_documents_closes_a_registry_it_builds(
     setup, monkeypatch: pytest.MonkeyPatch
 ) -> None:
