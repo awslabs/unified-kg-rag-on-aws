@@ -50,6 +50,12 @@ def _score(
         EvaluationQuery(query_id="q", question="?"), result, ""
     )
     values = {m.metric_type.value: m.value for m in report.metrics}
+    # The citation metrics have their own tests (test_citation_scoring).
+    skipped = report.metadata.get("skipped_metrics", {})
+    for key in ("citation_precision", "citation_recall"):
+        skipped.pop(key, None)
+    if not skipped:
+        report.metadata.pop("skipped_metrics", None)
     return {
         "fraction": values.pop("attributable_fraction", None),
         "metrics": values,

@@ -33,6 +33,14 @@ from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     record_key,
 )
+from unified_kg_rag.domain.ingestion.document_identity import RELATIVE_PATH_KEY
+from unified_kg_rag.domain.ingestion.pages import (
+    PAGE_END_KEY,
+    PAGE_OFFSETS_KEY,
+    PAGE_START_KEY,
+    chunk_page_ranges,
+    valid_offsets,
+)
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     ChunkLengthUnit,
@@ -495,6 +503,27 @@ class ChunkProcessor:
         return 0
 
 
+def annotate_pages(document: Document, text_units: list[TextUnit]) -> None:
+    """Store the first and last page each of ``text_units`` (the document's,
+    in order) covers in its attributes, for a document whose converter
+    recorded its pages (``domain.ingestion.pages``); a unit not found in the
+    text gets none. Texts and ids are unchanged."""
+    offsets = valid_offsets(document.metadata.get(PAGE_OFFSETS_KEY))
+    if offsets is None:
+        return
+    ranges = chunk_page_ranges(
+        document.page_content, offsets, [unit.text for unit in text_units]
+    )
+    for unit, pages in zip(text_units, ranges, strict=True):
+        if pages is None:
+            continue
+        unit.attributes = {
+            **(unit.attributes or {}),
+            PAGE_START_KEY: pages[0],
+            PAGE_END_KEY: pages[1],
+        }
+
+
 class BaseChunker(ABC):
     def __init__(self, config: Config, show_progress: bool = True) -> None:
         self.config = config
@@ -590,6 +619,7 @@ class BaseChunker(ABC):
 
             text_units = self._chunk_single_document(doc)
             if text_units:
+                annotate_pages(doc, text_units)
                 all_text_units.extend(text_units)
                 self.stats.num_successful_documents += 1
                 self.stats.total_chunks_created += len(text_units)
@@ -661,6 +691,14 @@ class BaseChunker(ABC):
 
             if "index" in document.metadata:
                 attributes["index"] = document.metadata["index"]
+
+            # What a citation names: the document (the text-units index
+            # stores no document_ids field) and its path relative to the
+            # corpus root (assign_document_identity), never the host's
+            # absolute one.
+            attributes["document_id"] = document.document_id
+            if relative := document.metadata.get(RELATIVE_PATH_KEY):
+                attributes[RELATIVE_PATH_KEY] = relative
 
             if "filters" in document.metadata:
                 attributes["filters"] = document.metadata["filters"]

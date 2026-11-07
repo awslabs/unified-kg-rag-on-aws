@@ -534,6 +534,12 @@ From a `main` checkout (formats and keys no release had):
   and a `community_depth` cut maps other reports), and asks every report once more under the new report prompt: one
   report call per community and its embeddings, the report stage of a first build (no text unit is extracted again);
   later builds reuse them. An incremental run clusters and reports its own communities the new way (#618).
+- (#627) citations: answers now cite their context with `[n]` markers (`search.citations.enabled`, on), so answer
+  texts and the LLM judges' scores differ from earlier runs (`answer_match` scores the words without the markers):
+  compare runs of one setting, or set it `false` for the earlier context and prompt. Pages and relative paths are
+  stored with the text units of documents indexed from this release on; to add them to an existing namespace,
+  re-ingest it (`indexing.reset: true`): chunk boundaries and text-unit ids do not change, so the extraction
+  store's records are reused and the cost is the embedding and indexing of the text units.
 
 ### Added
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
@@ -546,6 +552,26 @@ From a `main` checkout (formats and keys no release had):
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
   rate's interval resamples queries. The default still judges the first repeat (#620).
+- Document citations (#627): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages,
+  entities, relationships, claims, reports, summaries; not model-written key points or intermediate answers) in
+  every strategy, and the answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to
+  cite them with those markers, ASCII in every answer language. `RAGOutput.citations` lists one `Citation` per
+  number: whether the answer cites it, its documents (`CitedDocument`: document id, file name, path relative to the
+  corpus root, pages), text units, chunk id, title, seed-graph provenance and IRI; a graph section names the
+  documents of up to `search.citations.lineage_units` (10) of its text units, read in one batched fetch under the
+  query's suffix and filters, so an excluded or another tenant's document is never named. A number the context
+  did not show is reported in `metadata.unknown_citation_markers`, never as a citation; a blocked answer has none.
+  `CitationMarkerScanner` reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation`
+  marker and `cited`. The document converter keeps where each PDF page
+  starts and text units store `page_start` / `page_end`, `relative_path` and `document_id` in their attributes
+  (ids and texts unchanged). `run-rag` prints the cited sources and its JSON output carries every citation. The
+  retrieval evaluator adds `citation_precision` and `citation_recall` against `reference_sources`
+  ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
+- `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the
+  follow-up rewrite reads where it reads memory otherwise, bounded to `memory.max_messages_per_conversation` turns
+  and `memory.max_history_tokens` (4,000, estimated) and screened by the input guardrail like the query (a masked
+  turn is used masked, a blocked one dropped); not with `use_memory`
+  ([Design §7.2](docs/design.md#72-caller-supplied-conversation-history)).
 - RAPTOR summary tree, opt-in (#599; on multi-hop questions it answered within the noise of `naive`,
   [evidence](docs/concepts/defaults-and-evidence.md#raptor-summary-tree)): the `raptor` methodology adds a
   `summary_tree` ingestion stage after indexing that clusters the stored text units by their vectors (numpy k-means

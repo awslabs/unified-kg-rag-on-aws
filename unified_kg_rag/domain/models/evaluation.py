@@ -43,6 +43,11 @@ class EvaluationMetricType(str, Enum):
     # Share of reported sources attributable to a file (the rank metrics above
     # see only those).
     ATTRIBUTABLE_FRACTION = "attributable_fraction"
+    # What the answer cites (RAGOutput.citations it uses) against
+    # reference_sources: cited citations naming a reference file / cited
+    # citations naming a file, and references a cited citation names.
+    CITATION_PRECISION = "citation_precision"
+    CITATION_RECALL = "citation_recall"
     # Deterministic SQuAD-style answer metrics (max over answer + aliases).
     EXACT_MATCH = "exact_match"
     TOKEN_F1 = "token_f1"
@@ -191,6 +196,14 @@ class EvaluationResult(BaseModel):
             "Section type of each reported source, parallel to "
             "retrieved_source_ids (text, entity, relationship, community, claim, "
             "general; empty when unknown)."
+        ),
+    )
+    cited_source_ids: list[list[str]] | None = Field(
+        default=None,
+        description=(
+            "Per citation the answer uses (RAGOutput.citations with cited "
+            "true), the file names it stands for; None when the answer "
+            "carried no citations (search.citations off)."
         ),
     )
     retrieved_entities: list[str] = Field(

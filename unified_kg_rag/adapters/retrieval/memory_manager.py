@@ -19,6 +19,29 @@ logger = get_logger(__name__)
 HISTORY_ANSWER_CHARS = 1000
 
 
+def history_buffer(
+    messages: list[BaseMessage], max_answer_chars: int | None = None
+) -> str:
+    """``messages`` as ``Human: ...`` / ``AI: ...`` lines, as the follow-up
+    rewrite reads a conversation (memory's or a caller's ``RAGInput.history``).
+
+    ``max_answer_chars`` cuts each answer (not the user messages) to that
+    many characters, marking the cut with an ellipsis.
+    """
+    if max_answer_chars is not None:
+        messages = [
+            (
+                AIMessage(content=f"{m.content[:max_answer_chars]}...")
+                if isinstance(m, AIMessage)
+                and isinstance(m.content, str)
+                and len(m.content) > max_answer_chars
+                else m
+            )
+            for m in messages
+        ]
+    return get_buffer_string(messages)
+
+
 class ConversationKey(NamedTuple):
     """Who a conversation belongs to: its index namespace (the query's
     ``suffix``), end user and conversation id.
@@ -72,19 +95,7 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
         ``max_answer_chars`` cuts each answer (not the user messages) to that
         many characters, marking the cut with an ellipsis.
         """
-        messages = self._messages
-        if max_answer_chars is not None:
-            messages = [
-                (
-                    AIMessage(content=f"{m.content[:max_answer_chars]}...")
-                    if isinstance(m, AIMessage)
-                    and isinstance(m.content, str)
-                    and len(m.content) > max_answer_chars
-                    else m
-                )
-                for m in messages
-            ]
-        return get_buffer_string(messages)
+        return history_buffer(self._messages, max_answer_chars)
 
 
 class MemoryManager:

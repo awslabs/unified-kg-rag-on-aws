@@ -188,6 +188,8 @@ def test_pdf_pages_and_metadata(corpus: Path) -> None:
         "Either party may terminate.\nNotice period: 60 days.",
     ]
     metadata = {k: v for k, v in document.metadata.items() if k != "source"}
+    # Where each page starts in the text (1-based pages), for citations.
+    assert metadata.pop("page_offsets") == [[0, 1], [59, 2], [114, 3]]
     assert metadata == _PDF_METADATA
     pages = PdfFileLoader(corpus / "multi.pdf").load()
     assert [page.metadata["page"] for page in pages] == [0, 1, 2]

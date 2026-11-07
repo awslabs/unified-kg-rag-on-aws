@@ -29,6 +29,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     SearchOutput,
 )
 from unified_kg_rag.domain.models import (
+    Citation,
     Config,
     GraphEdge,
     RetrievalResult,
@@ -126,6 +127,7 @@ class FakeChain:
         self.config = config or Config()
         self.inputs: list[RAGInput] = []
         self.results = [_text(), _entity(), _relationship()]
+        self.citations: list[Citation] = []
         self.metadata = {
             "search_strategy": "local",
             "usage": {"llm_calls": 2, "input_tokens": 10, "output_tokens": 3},
@@ -167,6 +169,7 @@ class FakeChain:
             answer="Depot stores widgets for Vendor.",
             sources=sources,
             search_results=_search_result(self.results),
+            citations=self.citations,
             conversation_id=None,
             processed_query=self._processed(rag_input),
             metadata=dict(self.metadata),
@@ -415,6 +418,28 @@ async def test_answer_returns_the_sources_usage_and_abstention() -> None:
     assert [r.kind for r in result.records] == ["text", "entity", "relationship"]
     assert result.records[0].chunk_id == _UNIT
     assert result.usage == chain.metadata["usage"]
+
+
+async def test_answer_records_carry_their_citation_markers() -> None:
+    chain = FakeChain()
+    chain.citations = [
+        Citation(marker=1, cited=True, section_type="text", source_id=_UNIT),
+        Citation(
+            marker=2,
+            cited=False,
+            section_type="entity",
+            source_id=chain.results[1].source,
+        ),
+    ]
+    records = (await _tools(chain).answer("창고는 누구의 부품을 보관하나요?")).records
+    assert [(r.citation, r.cited) for r in records] == [
+        (1, True),
+        (2, False),
+        (None, None),
+    ]
+    # kg_search has no answer: no markers.
+    found = (await _tools(chain).search("q")).records
+    assert all(r.citation is None and r.cited is None for r in found)
 
 
 async def test_a_blocked_query_says_so() -> None:

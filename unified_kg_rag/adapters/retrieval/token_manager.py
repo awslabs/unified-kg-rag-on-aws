@@ -30,6 +30,10 @@ _TRUNCATION_BREAK = re.compile(r"[\s。．！？、，；]")
 # back it would throw away most of the room (one space early in Japanese text
 # used to leave a few characters), so the cut falls at the character instead.
 _TRUNCATION_BACKOFF_RATIO = 0.2
+# The marker a numbered section is counted with before the numbers are
+# known (optimize_context(number_sections=True)): as wide as any context
+# needs, so the rendered context never exceeds the budget it was packed in.
+_MARKER_PLACEHOLDER = 999
 
 
 class SectionType(str, Enum):
@@ -62,6 +66,12 @@ class ContextSection(BaseModel):
         "passed to optimize_context, so callers can map the selected sections "
         "back to the results they came from",
     )
+    marker: int | None = Field(
+        default=None,
+        description="The section's citation number [n] in a numbered context "
+        "(optimize_context(number_sections=True)); None for a synthesized "
+        "section, and in an unnumbered context",
+    )
 
 
 class OptimizedContext(BaseModel):
@@ -76,6 +86,11 @@ class OptimizedContext(BaseModel):
     )
     sections_excluded: int = Field(
         description="Number of sections excluded from the optimization"
+    )
+    numbered: bool = Field(
+        default=False,
+        description="Whether the sections render with citation markers [n] "
+        "instead of their ids (number_sections)",
     )
 
 
@@ -209,17 +224,26 @@ class TokenManager:
         query: str,
         max_tokens: int | None = None,
         spare_budget_first: Sequence[SectionType] = (),
+        number_sections: bool = False,
     ) -> OptimizedContext:
         """The sections of ``retrieval_results`` that fit the context budget.
 
         ``spare_budget_first`` names the section types that take budget other
         types leave unused before the rest share it (``_select_per_type``).
+        ``number_sections`` gives every selected section but a synthesized
+        one a citation marker ``[1]``, ``[2]``, ... in the order
+        ``build_context_string`` renders them, in place of its id prefix
+        (docs/design.md §7.1).
         """
         with observability.span(
             "kg_rag.context_build", results_in=len(retrieval_results)
         ) as span:
             optimized, budget = self._optimize_context(
-                retrieval_results, query, max_tokens, spare_budget_first
+                retrieval_results,
+                query,
+                max_tokens,
+                spare_budget_first,
+                number_sections,
             )
             # Tokens used vs the budget the sections had to fit in.
             span.set_attributes(
@@ -238,6 +262,7 @@ class TokenManager:
         query: str,
         max_tokens: int | None,
         spare_budget_first: Sequence[SectionType] = (),
+        number_sections: bool = False,
     ) -> tuple[OptimizedContext, int]:
         # A caller-supplied budget is still capped by what the answer model can
         # accept, so a large --top-k / RAGInput.max_tokens cannot overflow it.
@@ -261,11 +286,12 @@ class TokenManager:
                     total_tokens=0,
                     sections_included=0,
                     sections_excluded=len(retrieval_results),
+                    numbered=number_sections,
                 ),
                 available_tokens,
             )
 
-        all_sections = self._create_context_sections(retrieval_results)
+        all_sections = self._create_context_sections(retrieval_results, number_sections)
         # Each section type present gets a header in the context string
         # (build_context_string); it is paid from the same budget.
         available_tokens -= sum(
@@ -276,6 +302,8 @@ class TokenManager:
             all_sections, max(available_tokens, 0), spare_budget_first
         )
 
+        if number_sections:
+            selected_sections = self._numbered(selected_sections)
         total_tokens = sum(section.token_count for section in selected_sections)
         sections_included = len(selected_sections)
         sections_excluded = len(all_sections) - sections_included
@@ -286,29 +314,62 @@ class TokenManager:
                 total_tokens=total_tokens,
                 sections_included=sections_included,
                 sections_excluded=sections_excluded,
+                numbered=number_sections,
             ),
             available_tokens,
         )
 
+    @classmethod
+    def _numbered(cls, sections: list[ContextSection]) -> list[ContextSection]:
+        """``sections`` with their markers numbered 1, 2, ... in the order
+        ``build_context_string`` renders them (type block, then position)."""
+        order = [
+            i
+            for stype in cls._SECTION_LABELS
+            for i, s in enumerate(sections)
+            if s.section_type is stype and s.marker is not None
+        ]
+        numbered = list(sections)
+        for number, i in enumerate(order, start=1):
+            numbered[i] = sections[i].model_copy(update={"marker": number})
+        return numbered
+
     def _create_context_sections(
-        self, results: list[RetrievalResult]
+        self, results: list[RetrievalResult], number_sections: bool = False
     ) -> list[ContextSection]:
         # A section is counted as build_context_string renders it, with its
-        # "[source_id] " prefix where it has one, so the context stays within
-        # the budget.
+        # "[source_id] " prefix where it has one (its "[n] " marker in a
+        # numbered context, counted at the widest number), so the context
+        # stays within the budget.
+        markers = [
+            (
+                _MARKER_PLACEHOLDER
+                if number_sections and not (result.metadata or {}).get("synthesized")
+                else None
+            )
+            for result in results
+        ]
         counts = self.count_tokens_many(
             [
                 self._section_line(
                     self._section_type(result),
                     result.source or f"result_{index}",
                     result.content,
+                    marker=marker,
+                    numbered=number_sections,
                 )
-                for index, result in enumerate(results)
+                for index, (result, marker) in enumerate(
+                    zip(results, markers, strict=True)
+                )
             ]
         )
         return [
-            self._create_context_section(result, index, token_count=count)
-            for index, (result, count) in enumerate(zip(results, counts, strict=True))
+            self._create_context_section(
+                result, index, token_count=count, marker=marker
+            )
+            for index, (result, count, marker) in enumerate(
+                zip(results, counts, markers, strict=True)
+            )
         ]
 
     @staticmethod
@@ -324,7 +385,11 @@ class TokenManager:
             return SectionType.GENERAL
 
     def _create_context_section(
-        self, result: RetrievalResult, index: int, token_count: int | None = None
+        self,
+        result: RetrievalResult,
+        index: int,
+        token_count: int | None = None,
+        marker: int | None = None,
     ) -> ContextSection:
         source_id = result.source or f"result_{index}"
         section_type = self._section_type(result)
@@ -333,7 +398,9 @@ class TokenManager:
             content=result.content,
             token_count=(
                 self.count_tokens(
-                    self._section_line(section_type, source_id, result.content)
+                    self._section_line(
+                        section_type, source_id, result.content, marker=marker
+                    )
                 )
                 if token_count is None
                 else token_count
@@ -346,6 +413,7 @@ class TokenManager:
             source_id=source_id,
             metadata=result.metadata or {},
             result_index=index,
+            marker=marker,
         )
 
     # Both upstreams (MS GraphRAG `mixed_context`, LightRAG
@@ -556,7 +624,15 @@ class TokenManager:
         # token_count covers the rendered line, any "[source_id] " prefix
         # included.
         prefix_chars = (
-            len(self._section_line(section.section_type, section.source_id, "-")) - 1
+            len(
+                self._section_line(
+                    section.section_type,
+                    section.source_id,
+                    "-",
+                    marker=section.marker,
+                )
+            )
+            - 1
         )
         chars_per_token = (prefix_chars + len(section.content)) / section.token_count
         keep_chars = int(max_tokens * chars_per_token) - prefix_chars
@@ -593,24 +669,46 @@ class TokenManager:
     def _section_header(cls, section_type: SectionType) -> str:
         return f"##### {cls._SECTION_LABELS[section_type]}"
 
-    # Entity and relationship lines carry no "[id] " prefix: nothing reads
-    # their ids (the answer prompt cites passages, sources map back by
-    # section), and a UUID prefix is ~9 tokens (estimated; more for a BPE
-    # tokenizer) on lines of a few dozen.
+    # In an unnumbered context, entity and relationship lines carry no
+    # "[id] " prefix: nothing reads their ids (sources map back by section),
+    # and a UUID prefix is ~9 tokens (estimated; more for a BPE tokenizer) on
+    # lines of a few dozen. A numbered context gives every section its "[n] "
+    # citation marker instead (about 3 tokens).
     _UNPREFIXED: ClassVar[frozenset[SectionType]] = frozenset(
         {SectionType.ENTITY, SectionType.RELATIONSHIP}
     )
 
     @classmethod
     def _section_line(
-        cls, section_type: SectionType, source_id: str, content: str
+        cls,
+        section_type: SectionType,
+        source_id: str,
+        content: str,
+        *,
+        marker: int | None = None,
+        numbered: bool = False,
     ) -> str:
-        """How build_context_string renders one section ("" for no content)."""
+        """How build_context_string renders one section ("" for no content):
+        after its citation marker when it has one, else (and for a
+        synthesized section of a ``numbered`` context, which has none) as
+        before numbering."""
         if not content:
             return ""
-        if section_type in cls._UNPREFIXED:
+        if marker is not None:
+            return f"[{marker}] {content}"
+        if numbered or section_type in cls._UNPREFIXED:
             return content
         return f"[{source_id}] {content}"
+
+    @classmethod
+    def _rendered(cls, section: ContextSection, numbered: bool) -> str:
+        return cls._section_line(
+            section.section_type,
+            section.source_id,
+            section.content,
+            marker=section.marker if numbered else None,
+            numbered=numbered,
+        )
 
     @classmethod
     def ranked_section_lines(cls, optimized_context: OptimizedContext) -> list[str]:
@@ -619,9 +717,7 @@ class TokenManager:
         ranked = sorted(
             optimized_context.sections, key=lambda s: s.priority, reverse=True
         )
-        lines = (
-            cls._section_line(s.section_type, s.source_id, s.content) for s in ranked
-        )
+        lines = (cls._rendered(s, optimized_context.numbered) for s in ranked)
         return [line for line in lines if line]
 
     @classmethod
@@ -629,9 +725,10 @@ class TokenManager:
         # Group sections by type under labeled
         # headers (mirrors LightRAG's Entities/Relationships/Chunks blocks and MS's
         # sectioned tables) instead of a flat per-item "Source Type/Priority" dump.
-        # The Priority float was meaningless prompt noise; dropped. Text chunks carry
-        # a citable [id]; the answer prompt can reference them. Entity and
-        # relationship lines carry none (_section_line).
+        # The Priority float was meaningless prompt noise; dropped. In a numbered
+        # context every evidence section starts with its citation marker [n],
+        # which the answer prompt cites; otherwise text chunks carry their [id]
+        # and entity and relationship lines none (_section_line).
         if not optimized_context.sections:
             return EMPTY_CONTEXT_PLACEHOLDER
 
@@ -647,8 +744,6 @@ class TokenManager:
             # A blank line between items: an entity, relationship or claim
             # spans several lines and carries no "[id]" prefix, so a single
             # newline ran one item's last line into the next one's first.
-            lines = [
-                cls._section_line(s.section_type, s.source_id, s.content) for s in items
-            ]
+            lines = [cls._rendered(s, optimized_context.numbered) for s in items]
             blocks.append(cls._section_header(stype) + "\n" + "\n\n".join(lines))
         return "\n\n".join(blocks).strip()

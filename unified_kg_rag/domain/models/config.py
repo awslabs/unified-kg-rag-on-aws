@@ -4840,6 +4840,38 @@ class AbstentionConfig(BaseModel):
     )
 
 
+class CitationConfig(BaseModel):
+    """Numbered answer contexts and the answer's citations
+    (``RAGOutput.citations``). Guide: docs/guides/query.md#citations
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Number the answer context's evidence sections [1], [2], ..., ask "
+            "the answer model (concise, comprehensive or a custom_prompts "
+            "override) to cite them with those markers in every language, and "
+            "return RAGOutput.citations: per number its documents (file name, "
+            "relative path, pages), text units and seed-graph provenance, and "
+            "whether the answer cites it. The markers stay in the answer text. "
+            "false: the context labels passages by id and the prompts are "
+            "those of earlier releases; no citations. Unmeasured against off: "
+            "the instruction changes answers, so compare runs of one setting."
+        ),
+    )
+    lineage_units: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Text units of a graph section's lineage (entity, relationship, "
+            "claim, report, summary) read to name its documents, those in the "
+            "context first: one batched fetch by id per query for the ones "
+            "the context does not hold. Unmeasured: bounds the fetch for hub "
+            "entities and reports with thousands of units."
+        ),
+    )
+
+
 class SearchConfig(BaseModel):
     auto_routable_strategies: Annotated[
         list[SearchStrategy], AfterValidator(_reject_auto_strategy)
@@ -5053,6 +5085,10 @@ class SearchConfig(BaseModel):
         default_factory=AbstentionConfig,
         description="How an answer declines a question its context does not answer",
     )
+    citations: CitationConfig = Field(
+        default_factory=CitationConfig,
+        description="Numbered answer contexts and the answer's citations",
+    )
 
     def query_model_timeout(self, configured: float) -> float:
         """A query-time model-server request timeout: ``configured`` (the
@@ -5087,6 +5123,17 @@ class MemoryConfig(BaseModel):
         ge=1,
         description="Hours a conversation may stay idle (since its last message); "
         "an older one is dropped on the next memory lookup and starts over",
+    )
+    max_history_tokens: int = Field(
+        default=4000,
+        ge=1,
+        description=(
+            "Tokens (estimated) of a caller's RAGInput.history the follow-up "
+            "rewrite reads: of its last max_messages_per_conversation turns, "
+            "each answer cut to 1,000 characters, the oldest are dropped until "
+            "the rest fit. Conversation memory is not bounded by it. "
+            "Unmeasured."
+        ),
     )
 
 

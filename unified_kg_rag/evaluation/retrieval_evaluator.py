@@ -29,6 +29,8 @@ maps to no file is *unattributable* and contributes no file:
 - ``attributable_fraction``: attributable / reported sources — how much of the
   context the rank metrics can see. Emitted whenever the query has sources,
   with or without ``reference_sources``.
+- ``citation_precision`` / ``citation_recall``: the same matching over what
+  the answer *cites* (``evaluation.citation_scoring``).
 
 The report metadata also carries ``by_source_type``: the same three metrics
 over each section type's sources alone (``text``, ``entity``,
@@ -83,6 +85,10 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
     SearchStrategy,
+)
+from unified_kg_rag.evaluation.citation_scoring import (
+    CITATION_METRICS,
+    citation_scores,
 )
 
 # Why the rank metrics of a query the config makes report no sources are
@@ -187,6 +193,7 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             EvaluationMetricType.RECALL_AT_K,
             EvaluationMetricType.MRR,
             EvaluationMetricType.ATTRIBUTABLE_FRACTION,
+            *CITATION_METRICS,
         ]
 
     def evaluate_single(
@@ -262,6 +269,14 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
                 )
             )
         )
+        citation_values, citation_skips = citation_scores(
+            result,
+            references,
+            source_keys,
+            enabled=self.config.search.citations.enabled,
+        )
+        values.update(citation_values)
+        skipped.update(citation_skips)
         if skip_reason:
             skipped.update({m.value: skip_reason for m in rank_metrics})
         else:

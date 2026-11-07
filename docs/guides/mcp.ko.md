@@ -71,6 +71,7 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | `entities` | 참조(`id`, `name`, `type`, `iri`). 엔터티 자신, 관계나 클레임의 양 끝, 또는 같은 응답에서 이 청크를 인용하는 엔터티 |
 | `provenance`, `synthesized` | 시드 그래프 출처(`kind`, `seed_graphs`, `iri`). 글로벌 검색의 핵심 요점처럼 모델이 쓴 텍스트면 `true` |
 | `attributes` | 종류별 스칼라 값: `rank`, `weight`, `in_schema`, `type_iri`, `predicate_iri`, `hops` |
+| `citation`, `cited` | `kg_answer`만: 답변 컨텍스트가 레코드에 붙인 `[n]` 표식과 답변이 그것을 인용했는지([인용](./query.ko.md#인용)). 모델이 쓴 레코드와 `kg_search`에서는 `null` |
 
 응답이 `mcp.max_response_chars`를 넘으면 순위가 낮은 레코드부터 빼고 그 사실을
 알립니다(`truncated`, `omitted`).

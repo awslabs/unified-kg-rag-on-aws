@@ -158,6 +158,14 @@ class SupportingContent(BaseModel):
         default_factory=dict,
         description="Kind-specific scalars: rank, weight, in_schema, iris, hops",
     )
+    citation: int | None = Field(
+        default=None,
+        description="kg_answer: the [n] marker the answer context gave this "
+        "record (RAGOutput.citations); None for a synthesized one",
+    )
+    cited: bool | None = Field(
+        default=None, description="kg_answer: whether the answer cites [citation]"
+    )
 
 
 class _Records(BaseModel):
@@ -786,10 +794,16 @@ class KnowledgeGraphTools:
             )
             output = await self.chain.ainvoke(rag_input)
             self._checked(output)
-            records, omitted = await self._shaped(
-                str(rag_input.suffix),
-                [self._from_source(i, s) for i, s in enumerate(output.sources, 1)],
-            )
+            sources = [self._from_source(i, s) for i, s in enumerate(output.sources, 1)]
+            # Each record's [n] in the answer and whether the answer cites it.
+            by_source = {c.source_id: c for c in output.citations if c.source_id}
+            for record in sources:
+                found = by_source.get(record.source_id or "") or by_source.get(
+                    record.chunk_id or ""
+                )
+                if found is not None:
+                    record.citation, record.cited = found.marker, found.cited
+            records, omitted = await self._shaped(str(rag_input.suffix), sources)
             answer, cut = _cut(output.answer, self.settings.max_response_chars)
             return AnswerToolResult(
                 namespace=str(rag_input.suffix),
