@@ -2,114 +2,113 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11--3.12-blue.svg)](https://www.python.org/downloads/)
+[![CI](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml/badge.svg?branch=main)](https://github.com/awslabs/unified-kg-rag-on-aws/actions/workflows/quality.yml)
 
 🇰🇷 **[한국어 README](./README.ko.md)** · 🤝 **[Contributing](./CONTRIBUTING.md)**
 
-<p align="center">
-  <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS" width="320">
-</p>
+<img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS logo" width="120" align="right">
 
-An AWS-native knowledge graph RAG (Retrieval-Augmented Generation) framework that turns large, multilingual document corpora into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, using multi-hop graph traversal to reason across document boundaries. It reimplements Microsoft GraphRAG and LightRAG, with HippoRAG 2's Personalized PageRank and an opt-in RAPTOR summary tree, on one shared stack, so you choose the retrieval methodology per query rather than per deployment and build only the methodologies you use. Running several methodologies on one stack, triple-hybrid search, incremental indexing, and multilingual processing are deliberate enhancements over the source papers.
+Unified Knowledge Graph RAG on AWS turns a large, multilingual document collection into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, returning the source passages each answer used. It runs four published methods on one index: Microsoft GraphRAG, LightRAG, HippoRAG 2 and, opt-in, RAPTOR. You choose the method per question, not per deployment, and build only the methods you use. Beyond the papers it adds hybrid search (keyword, vector and graph, fused and reranked), incremental indexing that removes exactly what a deleted document stated, Korean and other non-English corpora, merging a knowledge graph you already have, and an evaluation CLI whose defaults are backed by published measurements. Try it locally in five minutes without an AWS account.
 
-What each of them adds over GraphRAG and LightRAG, and where the framework deliberately departs from them: [Beyond the papers](./docs/concepts/overview.md#beyond-the-papers).
+**For** teams who want graph RAG (retrieval-augmented generation over a knowledge graph) in their own AWS account and need to pick a method, measure it and keep the index current as documents change.
 
-Read the [AWS Open Source Blog introduction](https://aws.amazon.com/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/) for an overview of the architecture, both retrieval methodologies, and benchmark results.
+<!-- Console demo GIF goes here, once the console app lands (at most 5 MB and 15 s, with a PNG fallback).
+Alt text: "Console demo: a question about two companies is answered with the mix strategy; the answer lists its source passages, and the panel shows the knowledge-graph neighbourhood and the strategy the router chose." -->
 
 ## Why this framework
 
-- **Four methodologies on one AWS stack.** GraphRAG (community summaries), LightRAG (dual-level keywords), HippoRAG 2 (Personalized PageRank over entities and passages) and RAPTOR (a summary tree, opt-in) share ingestion, indexing, caching and search; only the retrieval algorithm differs, chosen per query. `indexing.methodologies` builds only what the selected ones read ([Methodology profiles](./docs/concepts/overview.md#methodology-profiles)). Every answer returns the sources that were actually in the model's context.
-- **Triple-hybrid search.** BM25, vector search and Neptune graph traversal, fused with Reciprocal Rank Fusion and reranked with a Bedrock rerank model (the chunk-only strategies skip the graph; `global` maps community reports instead).
-- **Incremental indexing.** With the doc-status registry on (`providers.doc_status.enabled`), only new and changed documents are re-indexed and merged into the live graph; deleting a document removes only what no other document states ([Incremental indexing](./docs/guides/incremental.md)).
-- **Bring your own knowledge graph.** Seed graphs (JSONL, CSV or an RDF A-Box) merge a graph you already have into the extracted one as virtual documents: documents stay canonical, and the seed adds descriptions, properties, IRIs and edges ([Seed graphs](./docs/guides/seed-graphs.md)).
-- **Multilingual.** Optional translation at indexing and query time, per-language analyzers (for example `nori` for Korean) and multilingual keyword extraction.
-- **Prompt tuning, evaluation and visualization.** `run-prompt-tuning` writes domain-adapted prompts from a corpus sample ([Domain adaptation](./docs/guides/domain-adaptation.md)); `run-eval` adds LLM-free coverage, retrieval and answer-match metrics to LangChain, RAGAS and assertion judges, with paired strategy comparisons, metered cost and decline statistics ([Evaluation](./docs/guides/evaluate.md)); `run-visualization` renders an exported graph ([Visualization](./docs/guides/visualize.md)).
-- **Pluggable.** Storage and model backends sit behind ports, and renderers, parsers, schema and seed sources and providers register from your own package through registries. A new search strategy or evaluator is an in-tree change (a fork or a contribution): strategies are keyed by the closed `SearchStrategy` enum ([extension guide](./docs/design.md#15-extension-guide)).
+- **Four methods on one index.** GraphRAG (community summaries), LightRAG (dual-level keywords), HippoRAG 2 (Personalized PageRank over entities and passages) and RAPTOR (a summary tree, opt-in) share ingestion, indexing, caching and search; only the retrieval algorithm differs. `indexing.methodologies` builds only what the selected ones read ([Methodology profiles](./docs/concepts/overview.md#methodology-profiles)), and every answer returns the source passages that were in the model's context.
+- **Hybrid search.** BM25, vector search and Neptune graph traversal, fused with Reciprocal Rank Fusion and reranked with a Bedrock rerank model. `simple` and `naive` read no graph, and `global` maps community reports instead ([Retrieval](./docs/concepts/retrieval.md)).
+- **Incremental indexing.** With the document-status registry on, only new and changed documents are re-indexed and merged into the live graph, and deleting a document removes only what no other document states ([Incremental indexing](./docs/guides/incremental.md)).
+- **Bring your own knowledge graph.** Seed graphs (JSONL, CSV or RDF instance data) merge a graph you already have into the extracted one as virtual documents: the documents stay canonical, and the seed adds descriptions, properties, IRIs and edges ([Seed graphs](./docs/guides/seed-graphs.md)).
+- **Multilingual.** Optional translation at indexing and query time, per-language analyzers (`nori` for Korean) and multilingual keyword extraction ([Multilingual corpora](./docs/guides/multilingual.md)).
+- **Measured, not assumed.** `run-eval` scores answers with LLM-free metrics (answer match, retrieval hit rate, graph coverage) and LLM judges, compares strategies with paired intervals and meters each query's cost; the defaults it set are on [Defaults and evidence](./docs/concepts/defaults-and-evidence.md) ([Evaluation](./docs/guides/evaluate.md)).
 
-## Architecture
+How this compares with the papers and with Amazon Bedrock Knowledge Bases GraphRAG: [Overview](./docs/concepts/overview.md#compared-with-amazon-bedrock-knowledge-bases-graphrag).
 
-![Architecture at a glance](./assets/architecture-overview.drawio.png)
+<a id="quickstart"></a>
 
-Ingestion is a resumable 13-stage pipeline (parse, chunk, extract entities and relationships, resolve, detect communities with LLM-written reports, index, and for `raptor` build a summary tree) into the graph and search stores: Neptune and OpenSearch on AWS, embedded SQLite or containers in local mode.
+## Quickstart (five minutes, no AWS)
 
-Every strategy runs in one chain over the same indexes and token budget. Pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
+This runs everything on one machine: embedded SQLite stores and [Ollama](https://ollama.com) models. You need Python 3.11–3.12, [uv](https://docs.astral.sh/uv/) and Ollama.
 
-| Strategy | Methodology | Use when |
-|---|---|---|
-| `auto` (default) | Any the index holds | You are not sure; an LLM router picks one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `iterative`; add `drift` to route to it) |
-| `simple` | GraphRAG | Fast factual lookups; vector + keyword search without graph traversal |
-| `local` | GraphRAG | Questions about specific entities and their relationships |
-| `global` | GraphRAG | Broad or thematic questions, answered by map-reduce over community reports |
-| `drift` | GraphRAG | Complex questions that need iterative exploration |
-| `mix` | LightRAG | General LightRAG use; entity and relationship keyword retrieval plus chunk retrieval |
-| `hybrid` | LightRAG | Keyword-driven graph questions, without the extra chunk retrieval |
-| `naive` | LightRAG | A fast chunk-only baseline (BM25 + vector, no graph) and comparison runs |
-| `iterative` | Its base's (`mix` or `local`) | Multi-hop questions whose last hop is about an entity the question does not name; bounded follow-up rounds on the bridge entities |
-| `ppr` | HippoRAG 2 | A cheap, fast multi-hop option: Personalized PageRank over entities and passages, one LLM call (the answer) |
-| `tree` | RAPTOR (opt-in) | A summary tree over the text units, built with `raptor` in `indexing.methodologies` without graph extraction; on multi-hop questions it answered within the noise of `naive` ([evidence](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree)) |
+**1. Install** (the `local` extra installs PyTorch, several GB on Linux; [CPU-only build](./docs/getting-started/local.md#install)):
 
-See [Retrieval](./docs/concepts/retrieval.md) for per-strategy behavior and the [Design Doc](./docs/design.md) for the layer map, algorithms, data model and the detailed [ingestion](./docs/design.md#4-ingestion-pipeline), [incremental](./docs/design.md#5-incremental-indexing) and [retrieval](./docs/design.md#6-retrieval-methodologies) diagrams.
+```bash
+git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
+cd unified-kg-rag-on-aws
+uv sync --extra local
+```
 
-## Quickstart
+**2. Pull the two default models:**
+
+```bash
+ollama pull qwen2.5:7b-instruct
+ollama pull bge-m3
+```
+
+**3. Write a two-file sample corpus** (the names, companies and figures are made up):
+
+```bash
+mkdir -p sample-corpus
+cat > sample-corpus/acme.txt <<'EOF'
+Acme Robotics is a manufacturer of warehouse robots based in Springfield.
+Alice Chen is the chief engineer at Acme Robotics and leads its motion-control team.
+In 2024 Acme Robotics signed a supply agreement with Globex Sensors.
+EOF
+cat > sample-corpus/globex.txt <<'EOF'
+Globex Sensors makes lidar sensors for mobile robots.
+Bob Martin runs the sensor division of Globex Sensors.
+Under its agreement with Acme Robotics, Globex Sensors supplies the lidar units
+for the Acme warehouse robots.
+EOF
+```
+
+**4. Build the knowledge graph:**
+
+```bash
+UKR__LOGGING__LEVEL=WARNING uv run run-ingestion --backend local --source-directory ./sample-corpus
+```
+
+**5. Ask a question** (`--verbose` also lists the sources the answer used; the first query downloads a small rerank model from Hugging Face):
+
+```bash
+UKR__LOGGING__LEVEL=WARNING uv run run-rag --backend local --search-strategy mix --verbose \
+  --query "How are Acme Robotics and Globex Sensors related?"
+```
+
+[Getting started locally](./docs/getting-started/local.md) continues from here: a GraphRAG query, and an evaluation of two strategies without an LLM judge.
 
 ### Choose how to run
 
 | Path | Graph and vector stores | Models | Start here |
 |---|---|---|---|
-| **Local mode** (development, no AWS) | Embedded SQLite graph and vector stores and registry, no server; or Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Ollama (or any OpenAI-compatible server), or Amazon Bedrock | Follow [Getting started locally](./docs/getting-started/local.md): pull the two Ollama models, then pass `--backend local` |
-| **Existing AWS resources** | Your Neptune cluster and OpenSearch domain (plus DynamoDB for incremental indexing, and an S3 bucket only to sync the stage cache) | Amazon Bedrock | Follow [Getting started on AWS](./docs/getting-started/aws.md): copy `config-template.yaml` to `config.yaml` and set the endpoints |
+| **Local mode** (development, no AWS) | Embedded SQLite graph and vector stores and registry, no server; or Gremlin Server and OpenSearch in containers ([`docker/compose.local.yaml`](./docker/compose.local.yaml)) | Ollama (or any OpenAI-compatible server), or Amazon Bedrock | [Getting started locally](./docs/getting-started/local.md) |
+| **Existing AWS resources** | Your Neptune cluster and OpenSearch domain (plus DynamoDB for incremental indexing, and an S3 bucket only to sync the stage cache) | Amazon Bedrock | [Getting started on AWS](./docs/getting-started/aws.md): install, credentials, required models and a first run |
 | **Bundled CDK stack** | Created by [`iac/`](./iac/README.md), with a Fargate data plane and a Step Functions ingestion pipeline | Amazon Bedrock | [Deploy on AWS](#deploy-on-aws-optional), then [`iac/README.md` After deploy](./iac/README.md#after-deploy) |
 
-The AWS paths call Amazon Bedrock, so enable the
-[required models](./docs/getting-started/aws.md#required-models) first. Local mode is
-for development and evaluation only: the embedded stores serve one host and
-about 100,000 documents per index, the containers have no authentication or TLS, and small
-local models extract weaker graphs.
+Local mode is for development and evaluation only: the embedded stores serve one host and about 100,000 documents per index, the containers have no authentication or TLS, and small local models extract weaker graphs.
 
-### Prerequisites
+## Architecture
 
-Python 3.11–3.12 and [uv](https://docs.astral.sh/uv/) (`pip` also works). Local mode needs [Ollama](https://ollama.com) (and Docker with Compose 2.23.1+ only for the stores in containers); the AWS paths need credentials with Bedrock access and, for existing resources, a Neptune cluster and an OpenSearch domain (the framework connects to services and never creates them); the CDK stack needs what [`iac/README.md`](./iac/README.md#quick-start) lists.
+![Architecture at a glance: documents and seed graphs go through the 13-stage ingestion into Neptune, OpenSearch and DynamoDB; the strategies of four methods, iterative and the auto router answer from the same indexes with Bedrock models](./assets/architecture-overview.drawio.png)
 
-### Install and configure
+Ingestion is a resumable 13-stage pipeline: parse, chunk, extract entities and relationships, merge duplicate entities, detect communities with LLM-written reports, index, and for `raptor` build a summary tree. It writes to Neptune and OpenSearch on AWS, or to embedded SQLite or containers in local mode. Every strategy then runs in one chain over the same indexes and token budget; pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
 
-```bash
-git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
-cd unified-kg-rag-on-aws
-uv sync --extra eval --extra viz        # or: pip install -e '.[eval,viz]'
-cp config-template.yaml config.yaml     # then set your Bedrock region and service endpoints
-```
+| Method | Strategies | Strong at |
+|---|---|---|
+| GraphRAG (community summaries) | `local`, `global`, `drift`, `simple` | Thematic questions over the whole corpus (`global`, `drift`) and questions about specific entities (`local`) |
+| LightRAG (dual-level keywords) | `mix`, `hybrid`, `naive` | Keyword-driven lookups, and a fast chunk-only baseline (`naive`) |
+| HippoRAG 2 (Personalized PageRank) | `ppr` | Multi-hop questions at the lowest cost: one LLM call a query |
+| RAPTOR (summary tree, opt-in) | `tree` | A cheap index without graph extraction; on multi-hop questions it answered within the noise of `naive` ([evidence](./docs/concepts/defaults-and-evidence.md#raptor-summary-tree)) |
 
-OpenSearch authenticates with a username and password by default (`aws.opensearch.use_iam: false`): copy `.env-template` to `.env` in the directory you run the CLIs from and fill in the credentials. For a domain that authorizes IAM (SigV4) requests, set `aws.opensearch.use_iam: true` instead. `uv sync` alone installs ingestion and queries; `run-eval`'s LangChain and RAGAS judges need the `eval` extra and `run-visualization`'s interactive graph the `viz` extra (its static charts need none). Parsing Markdown and HTML needs the optional `unstructured` extra (`uv sync --extra unstructured`), which downloads a spaCy model (`en_core_web_sm`) from GitHub at the first such file; without network access, install it beforehand. The deployed image leaves the extra out; built with `--build-arg UV_EXTRAS="--extra unstructured"`, it also installs the model at build time ([iac/README.md](iac/README.md)). PDF, TXT, CSV, and JSON work out of the box.
-
-### Ingest, query, evaluate
-
-`uv run` runs the CLIs in the project environment; with `pip`, activate the virtual environment instead and drop the `uv run` prefix.
-
-```bash
-# Index a corpus (incremental when the doc-status registry is on)
-uv run run-ingestion --source-directory ./source --config-path config.yaml
-
-# Query with a GraphRAG or a LightRAG strategy, or chat with conversation memory
-uv run run-rag --query "What are the main themes?" --search-strategy global --config-path config.yaml
-uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
-uv run run-rag --interactive --use-memory --conversation-id my-session --config-path config.yaml
-
-# Evaluate (RAGAS judge + graph-aware coverage, retrieval and answer-match metrics)
-uv run run-eval --data-path eval_data.json --config-path config.yaml
-
-# Optional: render the graph ingestion exported (it logs the file's path), or tune prompts to your domain
-uv run run-visualization --data-path ./cache/<pipeline-id>/visualization/visualization_data.json --output-directory ./viz --config-path config.yaml
-uv run run-prompt-tuning --source-directory ./source --output-path tuned_prompts.yaml --config-path config.yaml
-```
-
-The [documentation hub](./docs/index.md) has a guide per CLI ([Evaluation](./docs/guides/evaluate.md) covers the evaluation data format and the evaluators), the [CLI Reference](./docs/reference/cli.md) every flag, and the [Configuration Reference](./docs/reference/configuration.md) every configuration key.
+`iterative` wraps `mix` or `local` with bounded follow-up rounds on the bridge entities of a multi-hop question. `auto`, the default, lets an LLM router pick one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `iterative`). [Retrieval](./docs/concepts/retrieval.md#search-strategies--when-to-use-which) explains when to use which strategy, and the [Design Doc](./docs/design.md) the layers, algorithms and data model.
 
 ## Deploy on AWS (optional)
 
-The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with endpoints, Neptune, OpenSearch, the DynamoDB document-status table, an S3 cache bucket, an ECS Fargate data plane, a Step Functions ingestion pipeline, CloudWatch dashboards and alarms, and an optional Bedrock Guardrail.
+The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with endpoints, Neptune, OpenSearch, the DynamoDB document-status table, an S3 cache bucket, an ECS Fargate data plane, a Step Functions ingestion pipeline, CloudWatch dashboards and alarms, and an optional Bedrock Guardrail. [`iac/README.md`](./iac/README.md#quick-start) has the `cdk synth`, `cdk bootstrap` and `cdk deploy --all` commands and every `-c key=value` option; the stores are reachable only from inside the VPC, so the deployed Fargate tasks run the CLIs ([After deploy](./iac/README.md#after-deploy)).
 
-[`iac/README.md`](./iac/README.md#quick-start) has the `cdk synth`, `cdk bootstrap` and `cdk deploy --all` commands and every `-c key=value` option. The stores are reachable only from inside the VPC, so the deployed Fargate tasks run the CLIs; [After deploy](./iac/README.md#after-deploy) has the commands to push the image, start an ingestion and run a query or an evaluation.
-
-> **Cost and teardown.** Neptune and OpenSearch bill hourly, and `public` network mode adds NAT gateways. The default `dev` environment tears down with `cdk destroy --all`; non-dev environments default to retaining stateful stores with deletion protection on. Review the hardening options (`use_cmk`, `deletion_protection`, Multi-AZ sizing, `vpc_flow_logs`) in [`iac/README.md`](./iac/README.md) before production use.
+> **Cost and teardown.** Model calls are the cost that grows with the corpus: building an index of 3,318 short paragraphs (about 280,000 words) with the default models took 16,069 Bedrock calls, $371.64 at November 2026 list prices, and a query cost from $0.016 (`ppr`) to about $0.06 (`mix`, `global`) ([how it was measured](./docs/concepts/defaults-and-evidence.md#how-the-measurements-were-run); [cost levers](./docs/guides/ingest.md#cost-levers)). Neptune and OpenSearch bill hourly, and `public` network mode adds NAT gateways. The default `dev` environment tears down with `cdk destroy --all`; non-dev environments default to retaining stateful stores with deletion protection on. Review the hardening options (`use_cmk`, `deletion_protection`, Multi-AZ sizing, `vpc_flow_logs`) in [`iac/README.md`](./iac/README.md) before production use.
 
 ## Documentation
 
@@ -124,7 +123,7 @@ Start at the [documentation hub](./docs/index.md) ([한국어](./docs/index.ko.m
 | **Extender** | The [Design Doc](./docs/design.md) and its [Extension Guide](./docs/design.md#15-extension-guide) |
 | **Contributor** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
 
-Every flag is in the [CLI Reference](./docs/reference/cli.md), every configuration key in the [Configuration Reference](./docs/reference/configuration.md), and the supported models in the [Model Catalog](./docs/reference/models.md). Release notes: [CHANGELOG.md](./CHANGELOG.md); security reports: [SECURITY.md](./SECURITY.md).
+Every flag is in the [CLI Reference](./docs/reference/cli.md), every configuration key in the [Configuration Reference](./docs/reference/configuration.md), and the supported models in the [Model Catalog](./docs/reference/models.md). Release notes: [CHANGELOG.md](./CHANGELOG.md). The [AWS Open Source Blog post](https://aws.amazon.com/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/) introduced the first release, GraphRAG and LightRAG on one stack.
 
 ## Security & Disclaimer
 

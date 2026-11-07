@@ -96,14 +96,36 @@ PageRank로 텍스트 단위의 순서를 정합니다.
 `iterative`는 기반 전략(`local`이나 `mix`)이 읽는 것을 읽습니다. `naive`는 텍스트 단위만,
 `simple`은 네임스페이스가 가진 인덱스를 읽으므로 모든 프로필에서 쓸 수 있습니다.
 인덱스 네임스페이스는 자신이 가진 것을 기록합니다. 질의한 전략이 네임스페이스에 없는 방법론을
-읽으면 모델을 호출하기 전에 실패하고, 네임스페이스가 가진 것과 그 방법론을 추가하는 방법을
-알려 줍니다. `auto`는 가진 방법론의 전략 중에서만 고릅니다. 나중에 방법론을 추가하면 그
-방법론이 더하는 것만 새로 만듭니다. 증분 네임스페이스는 저장된 청크 경계, 추출 결과, 요약,
-벡터로 한 번 다시 구축되므로 새 모델 호출은 추가한 방법론의 것뿐입니다(`graphrag`라면 커뮤니티
-리포트, `raptor`라면 재구축 없이 저장된 텍스트 단위로 만드는 트리만. `raptor`만 가진
-네임스페이스에 그래프 방법론을 더하면 저장된 추출 결과가 없으므로 모든 텍스트 단위를 추출함). 방법론을 빼면 그 산출물은 더 이상 갱신되지 않으며, 재설정(reset) 전에는 아무것도 지우지
-않습니다([수집](../guides/ingest.ko.md#방법론-프로필),
+읽으면 모델을 호출하기 전에 실패하고, `auto`는 가진 방법론의 전략 중에서만 고릅니다. 나중에
+방법론을 추가하거나 뺄 때 무엇을 다시 만들고, 무엇을 재사용하며, 비용이 얼마나 드는지는
+[수집: 방법론 프로필](../guides/ingest.ko.md#방법론-프로필)에 있습니다(내부 동작:
 [설계 문서 §4.6](../design.md#46-methodology-profiles), 영문).
+
+## Amazon Bedrock Knowledge Bases GraphRAG와 비교
+
+[Amazon Bedrock Knowledge Bases GraphRAG](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs.html)(영문)는
+AWS에서 그래프 RAG를 관리형으로 운영하는 방법입니다. Amazon S3의 문서로 Amazon Neptune
+Analytics에 그래프를 만들고 유지하며, 직접 운영할 그래프 인프라가 없습니다. 이 프레임워크는
+자기 계정에서 직접 실행하고 운영하는 코드이고, 그 대가로 그래프를 만들고 검색하는 방식을
+직접 정할 수 있습니다. 관리형 서비스 열은 Amazon Bedrock 문서(2026-11-07 기준)를 옮긴 것이므로,
+달라진 점은 링크한 문서에서 확인하세요.
+
+| | Amazon Bedrock Knowledge Bases GraphRAG | 이 프레임워크 |
+|---|---|---|
+| 운영 | 완전 관리형. 지식 기반이 엔티티, 사실, 관계를 추출해 그래프를 만들고 갱신합니다([Neptune Analytics 그래프로 지식 기반 만들기](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs-build.html), 영문) | 자기 Neptune 클러스터와 OpenSearch 도메인, 또는 번들 CDK 스택 위에서 CLI나 Python 라이브러리를 직접 실행합니다. 서빙 계층은 들어 있지 않습니다([제한 사항](#제한-사항)) |
+| 저장소 | 그래프와 벡터 모두 Neptune Analytics. Neptune Analytics 그래프의 자동 확장은 지원하지 않습니다([고려 사항과 제한](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs.html), 영문) | 그래프는 Neptune, BM25와 벡터는 OpenSearch, 문서 상태 레지스트리는 DynamoDB. 로컬 모드에서는 내장 SQLite 저장소 |
+| 검색 | 한 가지 방법. 벡터 검색 후 찾은 청크에 연결된 그래프 노드를 가져와 그래프 순회로 넓힙니다([GraphRAG 동작 방식](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs.html), 영문) | 네 가지 방법(GraphRAG, LightRAG, HippoRAG 2, RAPTOR)과 `iterative`를 질의마다 고르거나 `auto` 라우터에 맡깁니다([검색](./retrieval.ko.md)) |
+| 키워드 검색 | 벡터와 원문을 함께 검색하는 하이브리드 검색은 필터링 가능한 텍스트 필드가 있는 Amazon RDS, OpenSearch Serverless, MongoDB 벡터 저장소에서만 지원하며, 다른 저장소는 의미 검색을 씁니다([검색 유형](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-test-config.html), 영문) | `global`을 뺀 모든 전략에서 BM25, 벡터 검색, 그래프 신호를 RRF로 합치고 재순위화합니다 |
+| 그래프 구축 제어 | 그래프 구축을 바꾸는 설정은 지원하지 않으며, 그래프 구축 모델만 고릅니다 | 추출 스키마나 OWL/RDFS 온톨로지, 도메인에 맞춘 프롬프트, 이미 가진 그래프의 시드 그래프, 만들 방법론을 정합니다([Extraction schema](../guides/extraction-schema.md), [Seed graphs](../guides/seed-graphs.md), 영문) |
+| 데이터 소스 | Amazon S3만 지원하며, 데이터 소스당 파일 1,000개까지(한도 상향 요청 시 10,000개) | 디렉터리의 파일(CDK 수집 파이프라인은 코퍼스를 S3에서 복사). PDF, TXT, CSV, JSON, 그리고 `unstructured` extra로 Markdown과 HTML |
+| 갱신 | 동기화는 증분 방식이어서 추가, 수정, 삭제된 문서만 다시 수집하거나 지웁니다([데이터 동기화](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-data-source-sync-ingest.html), 영문) | 내용 해시로 증분 인덱싱하며, 삭제한 문서는 남은 텍스트 단위가 기술하지 않는 내용만 지웁니다([증분 인덱싱](../guides/incremental.ko.md)) |
+| 답변의 근거 | `RetrieveAndGenerate`가 응답 구간과 그 근거 문서를 묶은 인용(citation)을 돌려줍니다([Citation](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_Citation.html), 영문) | 모든 답변이 모델 컨텍스트에 들어간 근거 문단을 함께 돌려줍니다 |
+| 측정 | — | LLM 없는 지표, LLM 심사, 짝 비교를 갖춘 `run-eval`. 기본값은 공개한 측정 결과로 정했습니다([기본값과 근거](./defaults-and-evidence.md), 영문) |
+| 리전 | 7개 리전(미국 동부(버지니아 북부), 미국 서부(오레곤), 유럽(프랑크푸르트, 런던, 아일랜드), 아시아 태평양(도쿄, 싱가포르)) | 설정한 Bedrock 모델과 Neptune, OpenSearch가 있는 모든 리전. 저장소와 다른 리전의 Bedrock도 쓸 수 있습니다([필수 모델](../getting-started/aws.ko.md#필수-모델)) |
+
+S3에 있는 코퍼스, 한 가지 검색 방법, 운영할 인프라가 없는 구성으로 충분하면 관리형 서비스를
+고르세요. 방법을 고르거나 비교해야 할 때, 벡터와 함께 키워드 검색이 필요할 때, 그래프에서
+추출할 내용을 직접 정해야 할 때, 코퍼스가 S3에 있지 않을 때는 이 프레임워크가 맞습니다.
 
 ## 원 논문을 넘어서
 
