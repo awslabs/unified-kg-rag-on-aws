@@ -2490,8 +2490,10 @@ earlier stage keeps its cache key), run when `raptor` is selected, `application/
    language and the summary settings: `input_key`) equals a node of the
    live tree takes that node's summary and makes no call. *Length:* the
    prompt asks for the words (characters for Japanese, Chinese and Korean)
-   that 90% of `max_summary_tokens` holds at the rate the token counter
-   that bounds the summary gives the cluster's own texts, so the hint
+   that 70% of `max_summary_tokens` holds at the rate the token counter
+   that bounds the summary gives the cluster's own texts (Claude Haiku
+   wrote about 1.4 times the hinted length: at 90%, 70% of 603 MuSiQue
+   summaries were over the budget and cut), so the hint
    follows the counter (the script-aware estimate scaled for the model's
    tokenizer, or tiktoken) and the language: a fixed words-per-token rate
    asks for too many words where the counter counts about 2 tokens a word,

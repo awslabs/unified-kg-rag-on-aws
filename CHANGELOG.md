@@ -582,6 +582,10 @@ From a `main` checkout (formats and keys no release had):
   Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
   (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, and one still over the budget
   keeps its whole sentences within it (#601). `run-ingestion --enabled-stages summary_tree` builds the tree under the
+  are unchanged reuses its summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) 70% of its token
+  budget (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, as Claude Haiku writes
+  about 1.4 times the length asked (at 90%, 70% of the summaries were cut), and one still over the budget keeps its
+  whole sentences within it (#601, #PR). `run-ingestion --enabled-stages summary_tree` builds the tree under the
   pipeline id that built the namespace even after an upgrade changed the earlier stages' cache keys, running none of
   them and probing only the indices the namespace lacks (#601). `raptor` alone runs no graph stage. The `tree`
   strategy (`auto` routes to it only on a `raptor`-only namespace) fuses BM25 + kNN searches of the text units and
