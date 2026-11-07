@@ -183,7 +183,7 @@ def test_an_empty_value_casts_no_vote(
     assert (claim.object_name, claim.type, claim.status, claim.description) == (
         "Buyer",
         "PAYS",
-        "TRUE",
+        "true",  # the stored spelling (claim_status)
         "Acme pays.",
     )
 
