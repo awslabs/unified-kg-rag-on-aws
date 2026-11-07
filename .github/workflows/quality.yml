@@ -538,7 +538,7 @@ jobs:
 
       - name: Check the image leaves the eval extra out
         # run-eval's default evaluators are LLM-free; the ragas judge's eval
-        # extra (about 350 MB) is opt-in (UV_EXTRAS, the docker-unstructured
+        # extra (about 390 MB) is opt-in (UV_EXTRAS, the docker-unstructured
         # job builds it), and run-eval names it when a run selects ragas.
         run: >-
           docker run --rm unified-kg-rag:ci python -c

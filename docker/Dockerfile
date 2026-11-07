@@ -2,7 +2,7 @@
 # unified-kg-rag-on-aws data-plane image: the same image runs the Step Functions ingestion task
 # (run-ingestion) and ad-hoc run-rag / run-eval (the CDK QueryTask). run-eval's
 # default evaluators are LLM-free and need no extra; the opt-in ragas judge
-# needs the `eval` extra (about 350 MB: ragas, datasets, pandas, pyarrow,
+# needs the `eval` extra (about 390 MB: ragas, datasets, pandas, pyarrow,
 # langchain-community), so it is opt-in here too (UV_EXTRAS below).
 # Built with uv for reproducible, locked dependency resolution.
 # Base image pinned by tag and digest (multi-arch index) so a re-pushed tag
