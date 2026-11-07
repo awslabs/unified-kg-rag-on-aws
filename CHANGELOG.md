@@ -744,7 +744,8 @@ From a `main` checkout (formats and keys no release had):
   are public (#619). Adding a methodology to an incremental namespace rebuilds it once from its stored extractions
   (only the added model calls are new); removing one stops maintaining its artifacts without deleting them, and the
   next run records them gone, one with no document change too; a reset to fewer methodologies keeps the extraction
-  records, so adding one back extracts nothing again (#626). Every strategy class declares
+  records, so adding one back extracts nothing again (#626), and so does any reset that builds nothing from them
+  (`raptor` alone, a second time too). Every strategy class declares
   `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that reads less declares its artifacts
   (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace that holds the text units, and
   `simple` sweeps only the indexes it holds (#607). A filter key is checked, after the methodology check, against the

@@ -482,3 +482,68 @@ def test_a_reset_to_fewer_methodologies_keeps_the_extraction_records(
     context = e2e._ingest(config, providers, source, tmp_path / "run-4")
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert 0 < len(e2e._stored(config, providers, prefix)) < records
+
+
+def test_a_second_raptor_only_reset_keeps_the_extraction_records(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Regression: the first raptor-only reset kept the records (its stored
+    # build record named lightrag's artifacts), the second one found only
+    # raptor in the record and pruned every one of them (3 -> 3 -> 0).
+    config, providers, _, calls = _setup(tmp_path)
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    source = _corpus(tmp_path)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    prefix = config.indexing.opensearch.extraction_records_index_prefix
+    records = len(e2e._stored(config, providers, prefix))
+    assert records > 0
+
+    config.indexing.methodologies = [Methodology.RAPTOR]
+    config.indexing.reset = True
+    for run in ("run-2", "run-3"):
+        context = e2e._ingest(config, providers, source, tmp_path / run)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        assert _record(providers)["methodologies"] == ["raptor"]
+        assert len(e2e._stored(config, providers, prefix)) == records
+
+    config.indexing.reset = False
+    config.indexing.methodologies = [Methodology.LIGHTRAG, Methodology.RAPTOR]
+    before = Counter(calls.kinds)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-4")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert calls.since(before)["extraction"] == 0
+
+
+def test_a_reset_after_narrowing_with_no_change_keeps_the_extraction_records(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Regression: an incremental raptor-only run with no change narrows the
+    # build record to raptor; the reset after it then pruned every record
+    # (3 -> 0), so adding lightrag back extracted every document again.
+    config, providers, _, calls = _setup(tmp_path)
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    source = _corpus(tmp_path)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    prefix = config.indexing.opensearch.extraction_records_index_prefix
+    records = len(e2e._stored(config, providers, prefix))
+    assert records > 0
+
+    config.indexing.methodologies = [Methodology.RAPTOR]
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert _record(providers)["methodologies"] == ["raptor"]
+
+    config.indexing.reset = True
+    context = e2e._ingest(config, providers, source, tmp_path / "run-3")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert len(e2e._stored(config, providers, prefix)) == records
+
+    config.indexing.reset = False
+    config.indexing.methodologies = [Methodology.LIGHTRAG, Methodology.RAPTOR]
+    before = Counter(calls.kinds)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-4")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert calls.since(before)["extraction"] == 0
+    assert "lightrag" in _record(providers)["methodologies"]

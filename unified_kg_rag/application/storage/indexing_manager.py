@@ -312,11 +312,18 @@ class IndexingManager:
         )
         written = results.get("vector_text_units")
         if written is not None and not written.failed_items:
+            # A run that builds nothing from the records (raptor only) names
+            # none of them, whatever the stored build record says (a reset
+            # after an earlier narrowing finds raptor there): pruning would
+            # drop extractions only a later run can use.
+            builds_from_records = bool(
+                artifacts_to_build(self.config) & RECORD_BACKED_ARTIFACTS
+            )
             self._retain_extraction_records(
                 text_units or [],
                 suffixes,
                 community_reports or [],
-                keep_all=dropping,
+                keep_all=dropping if builds_from_records else suffixes,
             )
             for suffix, dropped in sorted(dropping.items()):
                 logger.info(
