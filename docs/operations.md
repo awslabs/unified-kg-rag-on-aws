@@ -248,7 +248,9 @@ Then deploy and start runs as usual:
   before its first answer), and `auto` routes only among the held ones.
 - **Removing a methodology.** The next run of the namespace records its
   artifacts gone, one with no document change too, and its strategies are
-  refused from then on. Nothing is
+  refused from then on. While the namespace also holds another source
+  scope's documents, the run is refused instead (exit 2, nothing written),
+  naming them ([Methodology profiles](./guides/ingest.md#methodology-profiles)). Nothing is
   deleted: a [one-off](#run-a-one-off-ingestion-task) run with
   `UKR__INDEXING__RESET=true` empties the community-reports index and drops
   the community vertices.

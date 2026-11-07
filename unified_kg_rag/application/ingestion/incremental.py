@@ -1429,6 +1429,36 @@ def other_source_scopes(
     )
 
 
+def recorded_source_scopes(context: PipelineContext, reset: bool) -> list[str] | None:
+    """The source scopes whose documents the run's index namespace holds
+    once the run commits, for its build record (``IndexBuildRecord.
+    source_scopes``): the run's own while its corpus keeps a document, and
+    the other scopes the registry diff read (``DocumentDelta.stored_scopes``)
+    but those the run retires; a reset's alone. None without the registry
+    (``context.incremental_scope`` unset)."""
+    scope, delta = context.incremental_scope, context.incremental_delta
+    if scope is None or delta is None:
+        return None
+    namespace, _, own = scope.partition("|")
+    scopes: set[str] = set()
+    if delta.new or delta.changed or delta.unchanged or delta.failed:
+        scopes.add(own)
+    if not reset:
+        retired = {
+            normalize_source_scope(r) for r in context.incremental_retired_scopes or ()
+        }
+        scopes |= {
+            source
+            for stored in delta.stored_scopes
+            if stored != scope
+            for owner, _, source in [stored.partition("|")]
+            if owner == namespace
+            and source
+            and normalize_source_scope(source) not in retired
+        }
+    return sorted(scopes)
+
+
 def _source_scope_of(scope: str | None) -> str:
     """The source scope part of a registry ``scope`` (``namespace|source``)."""
     return (scope or "").partition("|")[2] or "(no scope)"

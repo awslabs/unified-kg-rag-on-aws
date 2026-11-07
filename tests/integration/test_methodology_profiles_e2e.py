@@ -33,6 +33,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
+    IndexBuildRecord,
     Methodology,
     PipelineConfig,
     PipelineContext,
@@ -372,8 +373,19 @@ def test_adding_a_methodology_never_rebuilds_over_another_scope(
         context = e2e._ingest(config, providers, source, cache)
         assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     record = _record(providers)
+    scopes = sorted(str(source.resolve()) for source in (first, second))
+    assert record["source_scopes"] == scopes
 
     config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    # The query-time advice for such a namespace is no rebuild either.
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        with pytest.raises(MethodologyNotIndexedError) as refused:
+            _ask(chain, SearchStrategy.GLOBAL)
+    finally:
+        chain.close()
+    assert f"source scopes {', '.join(scopes)}" in str(refused.value)
+    assert "rebuilt once" not in str(refused.value)
     calls = len(server.chat_models)
     with pytest.raises(ConfigurationError, match="also holds documents of source"):
         e2e._ingest(config, providers, first, tmp_path / "add")
@@ -386,6 +398,74 @@ def test_adding_a_methodology_never_rebuilds_over_another_scope(
         "freight.txt": DocStatus.PROCESSED,
         "notes.txt": DocStatus.PROCESSED,
     }
+
+
+def test_fewer_methodologies_beside_another_scope_are_refused(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Regression: a run of a second corpus with fewer methodologies dropped
+    # graphrag from the namespace's build record, for the first corpus's
+    # documents too; the query advised a rebuild, which was then refused.
+    # The run is refused before any model call instead, and writes nothing.
+    config, providers, server, _ = _setup(tmp_path)
+    first, second = _corpus(tmp_path / "a"), tmp_path / "b" / "corpus"
+    second.mkdir(parents=True)
+    (second / "notes.txt").write_text("Bank lends money to Vendor.")
+    context = e2e._ingest(config, providers, first, tmp_path / "run-a")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(providers)
+    assert record["source_scopes"] == [str(first.resolve())]
+
+    def refused() -> None:
+        calls = len(server.chat_models)
+        with pytest.raises(ConfigurationError, match="leaves out graphrag") as error:
+            e2e._ingest(config, providers, second, tmp_path / "run-b")
+        message = str(error.value)
+        assert str(first.resolve()) in message
+        for way_out in (
+            "indexing.methodologies: graphrag, lightrag, hipporag",
+            "processing.document_parsing.index_value",
+            "indexing.reset: true",
+        ):
+            assert way_out in message
+        assert len(server.chat_models) == calls
+        assert set(e2e._registry(providers)) == {
+            "contract.txt",
+            "logistics.txt",
+            "freight.txt",
+        }
+
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    refused()
+    assert _record(providers) == record
+    # A record written before source scopes were recorded: the registry
+    # tells the scopes, so it is refused all the same.
+    indexer = providers.build_vector_indexer()
+    try:
+        old = IndexBuildRecord.model_validate(record)
+        indexer.record_build(old.model_copy(update={"source_scopes": None}), None)
+    finally:
+        indexer.close()
+    refused()
+
+    # With the namespace's methodologies, the second corpus is added.
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    context = e2e._ingest(config, providers, second, tmp_path / "run-b2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(providers)
+    assert "graphrag" in record["methodologies"]
+    assert record["source_scopes"] == sorted(
+        str(source.resolve()) for source in (first, second)
+    )
+    # A run that retires the other scope narrows its own alone.
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    config.indexing.retire_source_scopes = [str(first.resolve())]
+    context = e2e._ingest(config, providers, second, tmp_path / "run-b3")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(providers)
+    assert record["methodologies"] == ["lightrag", "hipporag"]
+    assert record["source_scopes"] == [str(second.resolve())]
+    assert set(e2e._registry(providers)) == {"notes.txt"}
 
 
 def test_without_the_registry_a_new_run_reuses_the_stored_extractions(
@@ -428,10 +508,14 @@ def test_removing_a_methodology_is_recorded_by_a_run_with_no_change(
     record = _record(providers)
     assert record["methodologies"] == ["lightrag", "hipporag"]
     assert "community_reports" not in record["artifacts"]
+    # One source scope: narrowing is allowed, and the advice is a re-run.
+    assert record["source_scopes"] == [str(source.resolve())]
     chain = GraphRAGChain(config, providers=providers)
     try:
-        with pytest.raises(MethodologyNotIndexedError):
+        with pytest.raises(MethodologyNotIndexedError) as refused:
             _ask(chain, SearchStrategy.LOCAL)
+        assert f"source scope '{source.resolve()}'" in str(refused.value)
+        assert "rebuilt once from its stored extractions" in str(refused.value)
         assert _ask(chain, SearchStrategy.MIX).answer == e2e.ANSWER
     finally:
         chain.close()

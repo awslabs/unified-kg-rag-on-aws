@@ -154,6 +154,16 @@ class IndexBuildRecord(BaseModel):
             "(derived from artifacts when the record is written)."
         ),
     )
+    source_scopes: list[str] | None = Field(
+        default=None,
+        description=(
+            "The source scopes whose documents the suffix held when the "
+            "record was written, by the doc-status registry (the run's "
+            "and the others its diff read). Its methodologies hold for all "
+            "of them. None without the registry and in a record written "
+            "by an earlier version."
+        ),
+    )
     community_change: CommunityChange | None = Field(
         default=None,
         exclude=True,

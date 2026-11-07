@@ -191,9 +191,12 @@ indexing:
   from the reports, are refused naming the switch (a WARNING at load says
   so) and `auto` leaves them out.
 - **What the namespace holds.** Each run records it in the build record
-  (`artifacts`, `methodologies`). A query whose strategy reads a methodology
+  (`artifacts`, `methodologies`, and with the registry the `source_scopes`
+  whose documents it holds). A query whose strategy reads a methodology
   the namespace does not hold is refused before any model call
-  (`MethodologyNotIndexedError`; `run-rag` and `run-eval` exit 2), naming what it holds.
+  (`MethodologyNotIndexedError`; `run-rag` and `run-eval` exit 2), naming what it holds
+  and how to add it: a re-run over the corpus of its one source scope, or,
+  for a namespace of several, a namespace of its own or a reset.
 - **Adding one later**, say `graphrag` after a `[lightrag]` build, builds
   only what it adds. With the doc-status registry the next run finds the
   namespace without communities and rebuilds it once (`indexing.reset`, a
@@ -206,7 +209,16 @@ indexing:
   and `indexing` from its stage cache.
 - **Removing one** stops the runs from maintaining its artifacts: the next
   run of the namespace, one with an unchanged corpus too, records them gone
-  and its strategies are refused from then on.
+  and its strategies are refused from then on. The methodologies are the
+  namespace's, so while it also holds another source scope's documents a
+  run with fewer is refused before any model call (`ConfigurationError`,
+  exit 2, nothing written), naming the scopes: it would stop maintaining
+  the methodology for their documents too, and adding it back needs the
+  rebuild a run of one corpus is refused. Run with the namespace's
+  methodologies, give the corpus a namespace of its own
+  (`processing.document_parsing.index_value`), or rebuild from one corpus
+  with `indexing.reset: true`, deleting the others. `insert_documents` and
+  `delete_documents` are refused alike.
   Nothing is deleted. To delete them, run once with `indexing.reset: true`
   and the remaining methodologies (the extraction records stay, so adding
   the methodology back later extracts nothing again): the rebuild replaces the community-reports

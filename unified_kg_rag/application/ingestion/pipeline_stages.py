@@ -49,6 +49,7 @@ from unified_kg_rag.application.ingestion.incremental import (
     filter_to_delta,
     index_delta,
     record_rebuilt_annotations,
+    recorded_source_scopes,
     reset_namespaces,
     run_failures,
     run_incremental_indexer,
@@ -2917,6 +2918,7 @@ class IndexingStage(_RegistryStage):
             ),
             extraction_settings=settings,
             package_version=package_version,
+            source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
         ).with_artifacts(built_artifacts(self.config, _completed_stages(context)))
         added = Counter(BaseIndexer.get_suffix(c) for c in communities)
         deleted = self.indexing_manager.deleted_communities
