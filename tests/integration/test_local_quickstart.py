@@ -13,7 +13,7 @@ and the reranker a fake cross-encoder (no download).
 A renamed flag, environment variable, script or output file the page names
 fails here: each command must exit 0, and the outputs the page promises
 (the stores in ``.unified-kg-rag/``, the comparison file in
-``outputs/evaluation/``) must be where it says.
+``outputs/evaluation/run_<timestamp>_<id>/``) must be where it says.
 """
 
 from __future__ import annotations
@@ -204,8 +204,9 @@ def test_the_local_quickstart_runs_as_written(
     assert {"graph.sqlite3", "vector.sqlite3"} <= {p.name for p in stores.iterdir()}
     # Each strategy's results, reports and summary, and the comparison file
     # the page names, pairing mix against local.
-    assert "`outputs/evaluation/`" in text
-    outputs = tmp_path / "outputs" / "evaluation"
+    # One run-eval invocation writes into its own run subdirectory.
+    assert "`outputs/evaluation/run_<timestamp>_<id>/`" in text
+    (outputs,) = (tmp_path / "outputs" / "evaluation").glob("run_*")
     for kind in ("results", "reports", "summary"):
         for strategy in ("local", "mix"):
             assert list(outputs.glob(f"evaluation_{kind}_{strategy}_*.json")), (
