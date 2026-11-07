@@ -1781,6 +1781,28 @@ class OpenSearchIndexer(VectorIndexer):
             if isinstance(source.get("record"), dict)
         }
 
+    def extraction_record_keys(
+        self, prefixes: list[str], suffix: str | None = None
+    ) -> set[str] | None:
+        """The keys of ``suffix``'s records starting with any of
+        ``prefixes``, read as ids only, a page at a time, by a range of
+        ``id`` per prefix (see the port)."""
+        prefix = self.opensearch_config.extraction_records_index_prefix
+        keys: set[str] = set()
+        for start in sorted(set(prefixes)):
+            if not start:
+                continue
+            # Every key that starts with ``start`` sorts in [start, end).
+            end = start[:-1] + chr(ord(start[-1]) + 1)
+            for page in self._scan_pages(
+                prefix,
+                suffix,
+                {"includes": ["id"]},
+                where={"range": {"id": {"gte": start, "lt": end}}},
+            ):
+                keys.update(source["id"] for source in page)
+        return keys
+
     def stored_extraction_record_keys(
         self, keys: list[str], suffix: str | None = None
     ) -> set[str]:
@@ -2763,9 +2785,11 @@ class OpenSearchIndexer(VectorIndexer):
         page_size: int | None = None,
         exclude: dict[str, Any] | None = None,
         vector_fields: Collection[str] = (),
+        where: dict[str, Any] | None = None,
     ) -> Iterator[list[dict[str, Any]]]:
         """The pages :meth:`_scan` reads, each read once the one before it
-        is consumed; ``source_filter`` is the search's ``_source``."""
+        is consumed; ``source_filter`` is the search's ``_source``, and
+        ``where`` (a filter clause), if given, the documents read."""
         alias_name = self._get_name(alias_prefix, suffix)
         index_name = self._live_index(alias_name)
         if not index_name:
@@ -2775,8 +2799,11 @@ class OpenSearchIndexer(VectorIndexer):
         after: str | None = None
         while True:
             clauses: dict[str, Any] = {}
+            filters = [] if where is None else [where]
             if after is not None:
-                clauses["filter"] = [{"range": {"id": {"gt": after}}}]
+                filters.append({"range": {"id": {"gt": after}}})
+            if filters:
+                clauses["filter"] = filters
             if exclude is not None:
                 clauses["must_not"] = [exclude]
             response = self.opensearch_client.search(

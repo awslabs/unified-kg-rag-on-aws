@@ -951,6 +951,16 @@ class FakeVectorStore(_Recorder):
         retained = sum(1 for stored, _ in self.extraction_records if stored == wanted)
         return IndexingStats(total_items=retained, successful_items=retained)
 
+    def extraction_record_keys(
+        self, prefixes: list[str], suffix: str | None = None
+    ) -> set[str] | None:
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        return {
+            key
+            for stored, key in self.extraction_records
+            if stored == wanted and key.startswith(tuple(prefixes))
+        }
+
     def prepare_extraction_records(self, suffix: str | None = None) -> None:
         # The records live in a dict: nothing to create or refuse.
         return None

@@ -511,7 +511,10 @@ def test_create_pipeline_metrics_surfaces_extraction_failures() -> None:
         [
             _result("graph_extraction", metrics={"failed_units": 3}),
             _result("gleaning", metrics={"failed_units": 2}),
-            _result("claim_extraction", metrics={"failed_units": 1}),
+            _result(
+                "claim_extraction",
+                metrics={"failed_units": 1, "unrecognised_claim_statuses": 4},
+            ),
         ]
     )
     ctx.duration_seconds = 1.0
@@ -521,6 +524,7 @@ def test_create_pipeline_metrics_surfaces_extraction_failures() -> None:
     assert metrics.total_extraction_failures == 3
     assert metrics.total_gleaning_failures == 2
     assert metrics.total_claim_extraction_failures == 1
+    assert metrics.total_unrecognised_claim_statuses == 4
 
 
 def test_create_pipeline_metrics_surfaces_unstored_records_and_underived_items() -> (

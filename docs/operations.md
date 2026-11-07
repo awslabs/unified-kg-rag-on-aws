@@ -1328,6 +1328,7 @@ Corpus coverage metrics, one value per run (Sum):
 | `total_documents_retrying` | run end | Documents failed again for an error not their own (JSON `documents_retrying`) |
 | `total_documents_without_claims` | run end | Documents indexed without some claims (JSON `documents_without_claims`) |
 | `total_units_failed` | run end | Text units a stage failed on, full builds included (JSON `units_failed`) |
+| `total_unrecognised_claim_statuses` | `claim_extraction` | Extracted claims whose status the model wrote outside the words the claim reader knows (stored as `unknown`) |
 
 Model usage metrics, emitted right after each stage that called a model or
 was served from the LLM response cache (Sum; a model-free stage emits none,

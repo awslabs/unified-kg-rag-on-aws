@@ -31,6 +31,7 @@ from unified_kg_rag.application.storage.stored_items import (
     stripped_descriptions,
     unit_records,
 )
+from unified_kg_rag.domain.ingestion.cache_keys import unbuilt_record_prefixes
 from unified_kg_rag.domain.ingestion.community_hierarchy import attach_report_hierarchy
 from unified_kg_rag.domain.ingestion.contributions import (
     REPORT_RECORD_ATTRIBUTE,
@@ -39,7 +40,6 @@ from unified_kg_rag.domain.ingestion.contributions import (
 from unified_kg_rag.domain.ingestion.derivation import Derived
 from unified_kg_rag.domain.ingestion.methodologies import (
     artifacts_to_build,
-    stored_artifacts,
 )
 from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
 from unified_kg_rag.domain.models import (
@@ -299,8 +299,6 @@ class IndexingManager:
                 *(claims or []),
             ]
         )
-        # Read before the rebuild replaces the indices that hold it.
-        dropping = self._dropped_extraction_artifacts(suffixes)
         results = self._write_artifacts(
             text_units,
             entities,
@@ -312,27 +310,23 @@ class IndexingManager:
         )
         written = results.get("vector_text_units")
         if written is not None and not written.failed_items:
-            # A run that builds nothing from the records (raptor only) names
-            # none of them, whatever the stored build record says (a reset
-            # after an earlier narrowing finds raptor there): pruning would
-            # drop extractions only a later run can use.
-            builds_from_records = bool(
-                artifacts_to_build(self.config) & RECORD_BACKED_ARTIFACTS
-            )
+            # The rebuild prunes only the kinds of record it produces: the
+            # records of what it does not build (community reports, claims)
+            # stay, so a run that builds them again asks no model for them,
+            # however many narrower resets came between. A run that builds
+            # nothing from the records (raptor only) keeps every one.
+            building = artifacts_to_build(self.config)
+            if building & RECORD_BACKED_ARTIFACTS:
+                keep_all, unbuilt = self._unbuilt_record_keys(suffixes, building)
+            else:
+                keep_all, unbuilt = set(suffixes), {}
             self._retain_extraction_records(
                 text_units or [],
                 suffixes,
                 community_reports or [],
-                keep_all=dropping if builds_from_records else suffixes,
+                keep_all=keep_all,
+                also_named=unbuilt,
             )
-            for suffix, dropped in sorted(dropping.items()):
-                logger.info(
-                    "Kept every extraction record of '%s': the rebuild no "
-                    "longer builds %s, and a run that adds it back rebuilds "
-                    "from them",
-                    suffix,
-                    ", ".join(sorted(a.value for a in dropped)),
-                )
             # The summaries of text the rebuild no longer holds go: a summary
             # tree, if any, is written again by the summary_tree stage. A
             # rebuild without raptor deletes the tree whole, as it replaces
@@ -351,29 +345,58 @@ class IndexingManager:
                     results[f"vector_summary_nodes_{suffix}"] = summaries
         return results
 
-    def _dropped_extraction_artifacts(
-        self, suffixes: list[str]
-    ) -> dict[str, frozenset[IndexArtifact]]:
-        """By suffix, the artifacts built from extraction records
-        (``RECORD_BACKED_ARTIFACTS``) its stored build record names and this
-        run does not build (a reset to fewer methodologies). The records
-        they were built from stay, keyed by content and settings: pruned to
-        what this run's text units name, adding the methodology back would
-        extract every document again. Suffixes without a record (or whose
-        record names no artifacts) drop nothing."""
-        building = artifacts_to_build(self.config)
-        dropping: dict[str, frozenset[IndexArtifact]] = {}
+    def _unbuilt_record_keys(
+        self, suffixes: list[str], building: Collection[IndexArtifact]
+    ) -> tuple[set[str], dict[str, set[str]]]:
+        """The suffixes to keep every extraction record of, and by suffix
+        the keys of the stored records of the kinds a run that builds
+        ``building`` does not produce: community-report answers without
+        ``COMMUNITY_REPORTS``, claim records without ``CLAIMS``, under the
+        settings this config would store them with (claims on). A store that
+        cannot list its keys, or whose read fails, keeps every record of the
+        suffix (records cost space only)."""
+        prefixes = unbuilt_record_prefixes(self.config, building)
+        keep_all: set[str] = set()
+        unbuilt: dict[str, set[str]] = {}
+        if not prefixes:
+            return keep_all, unbuilt
         for suffix in suffixes:
             try:
-                held = stored_artifacts(self.vector_indexer.read_build_record(suffix))
+                keys = self.vector_indexer.extraction_record_keys(
+                    prefixes, suffix=suffix
+                )
             except NamespaceLeaseError:
                 raise
-            except Exception:  # noqa: BLE001 - the record is optional
-                held = None
-            dropped = (held or frozenset()) & RECORD_BACKED_ARTIFACTS - building
-            if dropped:
-                dropping[suffix] = dropped
-        return dropping
+            except Exception as e:  # noqa: BLE001 - garbage only costs space
+                logger.warning(
+                    "Listing the extraction records of '%s' the rebuild does not "
+                    "build from failed; every record stays: %s",
+                    suffix,
+                    e,
+                )
+                keys = None
+            if keys is None:
+                keep_all.add(suffix)
+                continue
+            unbuilt[suffix] = keys
+            if keys:
+                logger.info(
+                    "Kept %d extraction records of '%s' of what the rebuild does "
+                    "not build (%s): a run that builds it again reuses them",
+                    len(keys),
+                    suffix,
+                    ", ".join(
+                        sorted(
+                            a.value
+                            for a in (
+                                IndexArtifact.COMMUNITY_REPORTS,
+                                IndexArtifact.CLAIMS,
+                            )
+                            if a not in building
+                        )
+                    ),
+                )
+        return keep_all, unbuilt
 
     def _retain_extraction_records(
         self,
@@ -381,12 +404,14 @@ class IndexingManager:
         suffixes: list[str],
         community_reports: Sequence[CommunityReport] = (),
         keep_all: Collection[str] = (),
+        also_named: Mapping[str, Collection[str]] | None = None,
     ) -> None:
         """Keep, per rebuilt suffix, only the extraction records its stored
         text units and community reports name (``REPORT_RECORD_ATTRIBUTE``):
         the records of other extraction settings, and of texts no stored
-        unit holds any more (deleted or edited documents), go. The suffixes
-        of ``keep_all`` keep every record. Best-effort: a failure keeps the
+        unit holds any more (deleted or edited documents), go, but the keys
+        ``also_named`` lists by suffix. The suffixes of ``keep_all`` keep
+        every record. Best-effort: a failure keeps the
         records, which cost space only.
         """
         named: dict[str, set[str]] = {suffix: set() for suffix in suffixes}
@@ -398,6 +423,8 @@ class IndexingManager:
             key = (report.attributes or {}).get(REPORT_RECORD_ATTRIBUTE)
             if isinstance(key, str):
                 named.setdefault(BaseIndexer.get_suffix(report), set()).add(key)
+        for suffix, extra in (also_named or {}).items():
+            named.setdefault(suffix, set()).update(extra)
         for suffix, keys in sorted(named.items()):
             if suffix in keep_all:
                 continue

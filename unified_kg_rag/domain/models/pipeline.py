@@ -321,6 +321,11 @@ class PipelineMetrics(BaseModel):
     total_claim_extraction_failures: int = Field(
         default=0, description="Text units whose claim extraction failed"
     )
+    total_unrecognised_claim_statuses: int = Field(
+        default=0,
+        description="Extracted claims whose status the model wrote outside the "
+        "words the claim reader knows (stored as unknown)",
+    )
     total_documents_quarantined: int = Field(
         default=0,
         description="Incremental runs: documents quarantined this run, their "

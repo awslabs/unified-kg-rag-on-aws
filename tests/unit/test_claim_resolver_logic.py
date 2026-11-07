@@ -819,6 +819,21 @@ def test_a_claim_keyed_by_its_written_cjk_date_is_found_under_it() -> None:
         ("虚假", "false"),
         ("有争议", "disputed"),
         ("ＴＲＵＥ", "true"),  # full-width
+        # Uncertain and unverified: unknown in every language (English read
+        # them as disputed, Korean as unrecognised).
+        ("Uncertain", "unknown"),
+        ("unverified", "unknown"),
+        ("불확실", "unknown"),
+        ("미확인", "unknown"),
+        ("未確認", "unknown"),
+        ("不确定", "unknown"),
+        # Suspected in every language.
+        ("의심", "disputed"),
+        ("疑い", "disputed"),
+        ("涉嫌", "disputed"),
+        # Not a status word.
+        ("confirmed", "unknown"),
+        ("alleged", "unknown"),
     ],
 )
 def test_a_models_claim_status_is_read_into_the_prompts_vocabulary(
@@ -826,6 +841,22 @@ def test_a_models_claim_status_is_read_into_the_prompts_vocabulary(
 ) -> None:
     assert claim_status(raw) == status
     assert status in CLAIM_STATUSES
+
+
+def test_every_status_word_reads_as_itself_and_is_recognised() -> None:
+    # A word of the table that the reader's normalisation changes (a space,
+    # a punctuation mark, another case) would never match.
+    from unified_kg_rag.domain.ingestion.claim_resolver import (
+        _STATUS_WORDS,
+        claim_status_recognised,
+    )
+
+    for status, words in _STATUS_WORDS.items():
+        for word in words:
+            assert claim_status(word) == status, word
+            assert claim_status_recognised(word.upper())
+    assert claim_status_recognised(None) and claim_status_recognised(" ")
+    assert not claim_status_recognised("probably")
 
 
 def test_off_vocabulary_statuses_merge_as_the_status_they_name() -> None:

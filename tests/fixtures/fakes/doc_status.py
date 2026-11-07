@@ -141,6 +141,7 @@ class FakeDocStatusStore:
                     record.scope,
                     record.status.value,
                     record.extraction_fingerprint,
+                    record.suffix,
                 )
                 for doc_id, record in stored.items()
             },

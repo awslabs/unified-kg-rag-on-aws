@@ -448,10 +448,15 @@ From a `main` checkout (formats and keys no release had):
   an index built before #565 it costs a first build (the #565 prompts below).
 - Stored communities keep positional names (`Level 0 Community 3`) until the next reset, which renames them and asks
   every report once more; later resets reuse the answers (#539).
+- #640 claim statuses: claims stored before it keep the status the model wrote (`True.`, `Suspected`) until a
+  reset, which reads them from the stored records into the vocabulary without an extraction call; that first reset
+  also asks again the community reports whose input held such a status (their input changed). Claim records stored
+  since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again.
 - Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
   (#564, #589), also a run resumed after dying between its removal and its commit (#592), and a summary that kept
   the lines of a spelling a later run split off or lost those of a spelling a run folded in (#624), or the line of
-  an edge a run's delta resolved under a spelling the stored graph keeps apart: reset once to
+  an edge a run's delta resolved under a spelling the stored graph keeps apart (#640), or the line of an edge of
+  such a spelling stated in a unit beside the edge it kept: reset once to
   summarize from the lines (one call per such item over the threshold), or leave it.
 - #565 changed the translation, description summary and gleaning prompts (gleaning re-keys every gleaned record,
   claims too): a reset translates, extracts and gleans every unit again, the cost of a first build; incremental runs
@@ -741,9 +746,10 @@ From a `main` checkout (formats and keys no release had):
   only once a tree build fails; a full build without `raptor` deletes the tree's indices; a partial tree is built
   again under `refresh: on_reset`; the leaves' vectors are read as float32 arrays (about 15 KiB per leaf read instead
   of 40-60 KiB, about 50 KiB at the build's peak) and `max_leaves_in_memory` is checked before they are read, at a
-  default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#608), the leaf digest that tells a current
-  tree streaming the texts a page at a time (ids, attributes and text hashes kept;
-  `VectorIndexer.scan_text_unit_pages`). Failed summaries and, with
+  default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#608). The leaf digest that tells whether a
+  tree is current reads the texts a page at a time and keeps only their ids, attributes and text hashes
+  (`VectorIndexer.scan_text_unit_pages`) (#640); the port's default pages a store's `scan_text_units`, so a store
+  that implements only that one still builds the tree. Failed summaries and, with
   `refresh: on_reset`, the text units no summary covers are EMF metrics (`total_tree_summaries_failed`,
   `total_tree_uncovered_leaves`) on the CDK dashboard's "Summary tree (EMF)" widget (#603). See
   [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
@@ -762,8 +768,13 @@ From a `main` checkout (formats and keys no release had):
   are public (#619). Adding a methodology to an incremental namespace rebuilds it once from its stored extractions
   (only the added model calls are new); removing one stops maintaining its artifacts without deleting them, and the
   next run records them gone, one with no document change too (in every suffix its documents hold); while the namespace holds other source scopes' documents, a run (`insert_documents` and `delete_documents` too) that would drop a methodology it holds for them is refused before any model call (exit 2), naming the scopes and the ways out (the namespace's methodologies, a namespace of its own, a reset), as one that would add a methodology by a rebuild is; the build record names the source scopes it holds (`source_scopes`, absent from older records), so a query's refusal advises a rebuild only where one is allowed; a reset to fewer methodologies keeps the extraction
+  next run records them gone, one with no document change too (in every suffix its documents hold, which the registry's diff
+  reads, `DocumentDelta.unchanged_suffixes`, rather than a second read of the records); a reset to fewer methodologies keeps the extraction
   records, so adding one back extracts nothing again (#626), and so does any reset that builds nothing from them
-  (`raptor` alone, a second time too). Every strategy class declares
+  (`raptor` alone, a second time too) (#640); a reset prunes only the kinds of record it produces, so the report
+  answers stay through any number of resets without `graphrag`, and the claim records through any number with
+  claims off (the second such reset dropped them, and adding them back asked the model again); the
+  `VectorIndexer` port gains `extraction_record_keys`, whose "cannot" default keeps every record. Every strategy class declares
   `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that reads less declares its artifacts
   (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace that holds the text units, and
   `simple` sweeps only the indexes it holds (#607). A filter key is checked, after the methodology check, against the
@@ -1337,7 +1348,8 @@ Ingestion and incremental indexing.
 - With description summaries on, an incremental run no longer extends a stored summary with a delta edge's
   description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
   where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full
-  build's.
+  build's (#640). Nor when the moved and the kept lines share a text unit (a delta that resolved `(주)벤더` into
+  `벤더`): an edge with an endpoint the derivation split off is summarized from its lines.
 - A document's doc-status registry namespace and its artifacts' index suffix follow one rule
   (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
   fails the loading stage naming it instead of keying the document's record under a namespace no index has (#628).
@@ -1360,7 +1372,10 @@ Ingestion and incremental indexing.
   kept the stored status whatever the new documents said (#624). A status is read into the prompt's vocabulary
   (`true`, `false`, `disputed`, `unknown`, as stored: `True.` is `true`, MS GraphRAG's `SUSPECTED` is `disputed`, an
   unrecognised word `unknown`) at extraction and in every merge, so a stored off-vocabulary status no longer
-  disputes the same one.
+  disputes the same one (#640). The words read are the prompt's, `SUSPECTED` and a few plain synonyms, the same in
+  English, Korean, Japanese and Chinese (`uncertain`, `불확실`, `未確認` are all `unknown`; English read `uncertain` as
+  `disputed` and Korean as unrecognised); the claims whose status is none of them are counted in the
+  `total_unrecognised_claim_statuses` metric.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

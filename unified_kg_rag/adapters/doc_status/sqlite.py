@@ -311,7 +311,10 @@ class SQLiteDocStatusStore:
         With ``scope``, only the scope's namespace is read; the partition is
         ``DocumentDelta.classify``, as for every registry.
         """
-        columns = "doc_id, content_hash, status, scope, extraction_fingerprint"
+        columns = (
+            "doc_id, content_hash, status, scope, extraction_fingerprint, "
+            "json_extract(record, '$.suffix')"
+        )
         namespace = scope_namespace(scope)
         with self._lock, self._registry_errors("read the records"):
             if namespace is None:
@@ -326,7 +329,9 @@ class SQLiteDocStatusStore:
                     (namespace,),
                 ).fetchall()
         stored = {
-            doc_id: StoredDocument(content_hash, stored_scope, status, extraction)
-            for doc_id, content_hash, status, stored_scope, extraction in rows
+            doc_id: StoredDocument(
+                content_hash, stored_scope, status, extraction, suffix or "default"
+            )
+            for doc_id, content_hash, status, stored_scope, extraction, suffix in rows
         }
         return DocumentDelta.classify(incoming, stored, scope, extraction_fingerprint)

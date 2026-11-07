@@ -448,7 +448,11 @@ gets its models and stores from the run's `Providers` bundle.
   another document states that entity. Statements of one claim whose
   statuses disagree merge into `disputed` (`merge_claim_statuses`); a
   model's status is read into the prompt's four (`claim_status`: `true`,
-  `false`, `disputed`, `unknown`, as stored) at extraction and in each merge. Each unit's statement is resolved
+  `false`, `disputed`, `unknown`, as stored) at extraction and in each merge:
+  the prompt's words, MS GraphRAG's `SUSPECTED` (`disputed`) and a few plain
+  synonyms, each in English, Korean, Japanese and Chinese (`uncertain`,
+  `불확실`, `未確認` are `unknown` alike); any other word is `unknown`, counted
+  in `total_unrecognised_claim_statuses`. Each unit's statement is resolved
   on its own, and resolution merges the statements that resolve to one
   claim id.
 - **The extraction store** keeps each record, keyed by
@@ -469,11 +473,15 @@ gets its models and stores from the run's `Providers` bundle.
 - **A record stays while a stored text unit names it.** A full build or
   reset whose text units were all written keeps only the records they name
   (`VectorIndexer.retain_extraction_records` copies them into a new index and
-  swaps the alias), except a rebuild to fewer methodologies, which stops
-  building an artifact the build record names and made from records
-  (entities, relationships, graph, reports, claims): it keeps every record,
-  so adding the methodology back extracts nothing again; an incremental run
-  deletes the records only removed text units named.
+  swaps the alias). It prunes only the kinds of record it produces: a
+  rebuild without community reports or without claims also keeps the
+  records under the report-answer and claim fingerprints this config would
+  store them with (`VectorIndexer.extraction_record_keys` lists them by key
+  prefix; a store that cannot keeps every record), however many such
+  rebuilds come between, and one that builds nothing from the records
+  (`raptor` alone) keeps every record, so adding the methodology (or claims)
+  back asks no model for them again; an incremental run deletes the records
+  only removed text units named.
 - **Chunk boundaries are records too.** The intelligent chunker stores each
   pre-chunk's boundary answer in the same index, keyed by
   `<cache_keys.chunk_boundary_fingerprint>:<SHA-256 of the pre-chunk>` (the
@@ -2531,8 +2539,10 @@ methodology (`naive` and `simple` serve it too when selected).
 earlier stage keeps its cache key), run when `raptor` is selected, `application/ingestion/summary_tree_stage.py`:
 
 1. *Leaves.* The stage reads the namespace's stored text units through
-   `VectorIndexer.scan_text_units` (an id-ordered page walk, the seed
-   graphs' units left out as every text search leaves them out): their
+   `VectorIndexer.scan_text_unit_pages` (an id-ordered page walk, the seed
+   graphs' units left out as every text search leaves them out; the port's
+   default serves a store's `scan_text_units` in pages, so a store that
+   implements only that one keeps the tree, holding every unit at once): their
    id, indexed text (the `target_language` translation when one is
    stored, the source text otherwise, as the indexer embeds them), stored
    vector, `n_tokens` (counted again for a translation: the stored count

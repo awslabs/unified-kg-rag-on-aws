@@ -69,6 +69,15 @@ class TestParseClaimData:
         )
         assert claim is not None and claim.status == status
 
+    def test_unrecognised_statuses_are_counted(self, extractor, text_unit) -> None:
+        for raw in ("TRUE", "probably", "불확실", None, "아마도", "Suspected"):
+            extractor._parse_claim_data(
+                {"subject": "Acme", "claim_type": "X", "claim_status": raw},
+                text_unit,
+            )
+        # A missing status is none of them.
+        assert extractor.stats.unrecognised_statuses == 2
+
     def test_valid_claim(self, extractor, text_unit) -> None:
         claim = extractor._parse_claim_data(
             {

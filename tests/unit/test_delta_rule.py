@@ -24,14 +24,14 @@ from unified_kg_rag.domain.models import (
 pytestmark = pytest.mark.unit
 
 _STORED = {
-    "same": StoredDocument("h1", "s", "processed", "fp"),
-    "edited": StoredDocument("old", "s", "processed", "fp"),
-    "failed": StoredDocument("h3", "s", "failed", "fp"),
-    "resettled": StoredDocument("h4", "s", "processed", "other-fp"),
-    "unknown-fp": StoredDocument("h5", "s", "processed", None),
-    "gone": StoredDocument("h6", "s", "processed", None),
-    "elsewhere": StoredDocument("h7", "t", "processed", None),
-    "held": StoredDocument("h9", "s", "quarantined", "fp"),
+    "same": StoredDocument("h1", "s", "processed", "fp", "default"),
+    "edited": StoredDocument("old", "s", "processed", "fp", "default"),
+    "failed": StoredDocument("h3", "s", "failed", "fp", "default"),
+    "resettled": StoredDocument("h4", "s", "processed", "other-fp", "default"),
+    "unknown-fp": StoredDocument("h5", "s", "processed", None, "default"),
+    "gone": StoredDocument("h6", "s", "processed", None, "default"),
+    "elsewhere": StoredDocument("h7", "t", "processed", None, "default"),
+    "held": StoredDocument("h9", "s", "quarantined", "fp", "default"),
 }
 _INCOMING = {
     "same": "h1",
@@ -53,6 +53,18 @@ def test_classify_partitions_the_corpus() -> None:
     assert delta.quarantined_unchanged == ["held"]
     assert delta.deleted == ["gone"]  # "elsewhere" is another scope's
     assert delta.stored_scopes == ["s", "t"]
+
+
+def test_the_unchanged_suffixes_are_reported_only_when_read() -> None:
+    # A registry that does not read the suffixes leaves them unknown: the
+    # run reads the records then.
+    unread = {
+        doc_id: stored._replace(suffix=None) for doc_id, stored in _STORED.items()
+    }
+    assert DocumentDelta.classify(_INCOMING, unread).unchanged_suffixes is None
+    read = {**_STORED, "held": _STORED["held"]._replace(suffix="tenant-b")}
+    delta = DocumentDelta.classify(_INCOMING, read)
+    assert delta.unchanged_suffixes == ["default", "tenant-b"]
 
 
 def test_without_a_scope_or_fingerprint() -> None:

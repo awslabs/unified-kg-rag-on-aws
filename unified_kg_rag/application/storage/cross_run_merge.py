@@ -610,8 +610,9 @@ class CrossRunMerge:
         # whole's summary holds the part's lines, the part's is the whole's),
         # nor for an id more than one delta item or stored copy ends under
         # (folded spellings: one summary would be extended, the others'
-        # lines lost). Those are summarized from their derived lines, as a
-        # full build does.
+        # lines lost). Nor for an edge with an endpoint a split parted (the
+        # delta edge's lines can belong to the edge the split moved them to).
+        # Those are summarized from their derived lines, as a full build does.
         parted = {i for pair in derived.split_from.items() for i in pair}
         stored_entities = [
             e.model_copy(update={"id": rekey.get(e.id, e.id)})
@@ -642,7 +643,16 @@ class CrossRunMerge:
             _single_additions(
                 [(final_id(r.id, relationship_remap), r) for r in relationships],
                 stored_relationships,
-                (),
+                {
+                    final_id(r.id, relationship_remap)
+                    for r in relationships
+                    if {r.source_id, r.target_id} & parted
+                }
+                | {
+                    r.id
+                    for r in derived.relationships
+                    if {r.source_id, r.target_id} & parted
+                },
                 derived.relationships,
             ),
             summarized={
