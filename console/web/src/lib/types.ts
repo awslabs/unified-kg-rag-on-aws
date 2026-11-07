@@ -265,7 +265,7 @@ export interface Multiplicity {
   method: string;
   alpha: number;
   primary_metric: string | null;
-  families: Record<string, { tests: number; interval_confidence: number }>;
+  families: Record<string, { tests: number; interval_confidence: number; resamples?: number }>;
   unadjusted?: string[];
 }
 
