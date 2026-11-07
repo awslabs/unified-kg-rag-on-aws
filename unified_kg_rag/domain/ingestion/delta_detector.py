@@ -71,6 +71,7 @@ from unified_kg_rag.domain.models import (
     DocumentDelta,
     settings_changed,
 )
+from unified_kg_rag.domain.retrieval.store_names import index_suffix
 from unified_kg_rag.shared import ConfigurationError, get_logger
 
 __all__ = [
@@ -117,13 +118,13 @@ def compute_content_hash(document: Document) -> str:
 
 
 def _document_suffix(document: Document) -> str | None:
-    """The ``index`` metadata value the document's artifacts inherit."""
-    value = document.metadata.get(Constants.INDEX.value)
-    if isinstance(value, str) and value:
-        return value
-    if isinstance(value, (list, tuple)) and value:
-        return str(value[0])
-    return None
+    """The index suffix the document's artifacts inherit from its ``index``
+    metadata, by the stores' own rule (``index_suffix``).
+
+    Raises:
+        ConfigurationError: The value is no safe name, which no store takes.
+    """
+    return index_suffix(document.metadata.get(Constants.INDEX.value))
 
 
 def assign_document_identity(

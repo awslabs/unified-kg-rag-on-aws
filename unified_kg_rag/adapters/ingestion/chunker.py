@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     ChunkLengthUnit,
     Config,
+    Constants,
     Document,
     ModelPurpose,
     ModelRole,
@@ -52,7 +53,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.prompts import TextChunkingPrompt
-from unified_kg_rag.ports.indexer import BaseIndexer
+from unified_kg_rag.domain.retrieval.store_names import index_suffix
 from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import generate_stable_id
@@ -770,21 +771,15 @@ class SimpleTextChunker(BaseChunker):
 
 
 def _document_suffix(doc: Document) -> str | None:
-    """The index suffix of ``doc``'s text units (``BaseIndexer.get_suffix``
-    of the ``index`` they copy from its metadata); ``None`` for one the
+    """The index suffix of ``doc``'s text units (the stores' rule,
+    ``index_suffix``, over the ``index`` they copy from its metadata); ``None`` for one the
     stores refuse (its indexing fails)."""
-    attributes = {"index": doc.metadata["index"]} if "index" in doc.metadata else {}
     try:
-        return BaseIndexer.get_suffix(_Attributed(attributes))
+        return index_suffix(doc.metadata.get(Constants.INDEX.value)) or (
+            Constants.DEFAULT_SUFFIX.value
+        )
     except ConfigurationError:
         return None
-
-
-class _Attributed:
-    """What ``BaseIndexer.get_suffix`` reads of an item."""
-
-    def __init__(self, attributes: dict[str, Any]) -> None:
-        self.attributes = attributes
 
 
 class IntelligentTextChunker(BaseChunker):

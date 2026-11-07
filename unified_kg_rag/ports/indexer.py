@@ -19,10 +19,13 @@ from unified_kg_rag.domain.models import (
     Relationship,
     SummaryNode,
     TextUnit,
-    validate_safe_name,
 )
-from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
-from unified_kg_rag.shared import ConfigurationError, get_logger
+from unified_kg_rag.domain.retrieval.store_names import (
+    graph_label,
+    index_suffix,
+    store_name,
+)
+from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
 
@@ -162,20 +165,8 @@ class BaseIndexer(ABC):
         if not hasattr(item, "attributes") or not isinstance(item.attributes, dict):
             return Constants.DEFAULT_SUFFIX.value
 
-        index_value = item.attributes.get(Constants.INDEX.value)
-        suffix = None
-
-        if isinstance(index_value, str) and index_value:
-            suffix = index_value
-        elif isinstance(index_value, (list | tuple)) and index_value:
-            suffix = str(index_value[0])
-        else:
-            return Constants.DEFAULT_SUFFIX.value
-
-        try:
-            return validate_safe_name(suffix, "index suffix")
-        except ValueError as e:
-            raise ConfigurationError(str(e)) from e
+        suffix = index_suffix(item.attributes.get(Constants.INDEX.value))
+        return suffix or Constants.DEFAULT_SUFFIX.value
 
     def _get_name(
         self, base: str, suffix: str | None, add_timestamp: bool = False
