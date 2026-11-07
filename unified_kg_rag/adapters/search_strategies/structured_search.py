@@ -265,8 +265,8 @@ class StructuredSearchStrategy(BaseSearchStrategy):
 
     def filtered_index_prefixes(self, strategy: SearchStrategy) -> list[str]:
         # Linking and the document-filter checks (entities), the path edges'
-        # check (relationships) and the passages (text units): indexes every
-        # fallback reads too.
+        # check (relationships) and the passages (text units): indexes local
+        # and mix read too (the graph's keys come with the graph retriever).
         o = self.config.indexing.opensearch
         return self._built_prefixes(
             o.entities_index_prefix,
@@ -295,22 +295,19 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             run.mode,
         )
         fallback_result: SearchResult | None = None
+        # The planner's calls (the fallback's count in the query's usage).
         with usage_scope() as meter:
             plan, linked = await self._planned(query, config, run)
-            if self.settings.mode == "augment":
-                answering = asyncio.ensure_future(
-                    self._answered(query, plan, linked, run)
-                )
-                falling_back = asyncio.ensure_future(
-                    self._run_fallback(query, config, run)
-                )
-                await gather_or_cancel([answering, falling_back])
-                answered, fallback_result = answering.result(), falling_back.result()
-            else:
-                answered = await self._answered(query, plan, linked, run)
-                if answered is None:
-                    fallback_result = await self._run_fallback(query, config, run)
             usage = meter.snapshot()
+        if self.settings.mode == "augment":
+            answering = asyncio.ensure_future(self._answered(query, plan, linked, run))
+            falling_back = asyncio.ensure_future(self._run_fallback(query, config, run))
+            await gather_or_cancel([answering, falling_back])
+            answered, fallback_result = answering.result(), falling_back.result()
+        else:
+            answered = await self._answered(query, plan, linked, run)
+            if answered is None:
+                fallback_result = await self._run_fallback(query, config, run)
 
         metadata: dict[str, Any] = {}
         if answered is None:
