@@ -617,7 +617,7 @@ From a `main` checkout (formats and keys no release had):
   `allowed_hosts`) mount the same server in a host's application; neither changes the chain given. Under
   `processing.ignore_errors` the error answer names its error in `metadata.error_type`. Guide:
   [MCP server](docs/guides/mcp.md).
-- Structured graph queries, opt-in and unmeasured (#PR): the `structured` search strategy answers counts, rankings,
+- Structured graph queries, opt-in and unmeasured (#630): the `structured` search strategy answers counts, rankings,
   lists, paths between two named entities and seed-entity properties from a query the graph store runs. One planner
   call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`; `search.output_ceilings.graph_query`)
   writes the question as a closed JSON plan over the graph's schema profile (declared types plus a sampled profile of
@@ -639,7 +639,7 @@ From a `main` checkout (formats and keys no release had):
   `search.auto_routable_strategies`. `GraphQueryPort` is exported for custom graph backends, and
   `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md §6.6,
   [guide](docs/guides/structured-queries.md)).
-- `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#PR): a generated, never committed, procurement
+- `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed, procurement
   world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`, `MAKES`), a
   document per vendor and buyer (part of those facts, and a chief executive only text states), the schema and seed
   config, and `eval_data.json` with count, ranking, two-hop, shared-buyer, yes/no, numeric and text-only control
