@@ -21,6 +21,7 @@ import io
 import itertools
 import logging
 import time
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -36,7 +37,7 @@ from unified_kg_rag.adapters.local.rerank import NoRerankFactory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer, RerankTrace
 from unified_kg_rag.adapters.search_strategies import SimpleSearchStrategy
-from unified_kg_rag.application.cli import run_rag_chain
+from unified_kg_rag.application.cli import run_evaluation, run_rag_chain
 from unified_kg_rag.application.cli.run_rag_chain import RAGChainRunner
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
@@ -47,7 +48,12 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationGroundTruth,
+    EvaluationMetric,
+    EvaluationMetricType,
     EvaluationQuery,
+    EvaluationReport,
+    EvaluationResult,
+    EvaluationSummary,
     EvaluatorType,
     RerankStage,
     RerankStatus,
@@ -58,6 +64,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.evaluation import EvaluationManager
+from unified_kg_rag.evaluation.comparison import paired_comparison
 from unified_kg_rag.shared import RerankModelError
 
 pytestmark = pytest.mark.unit
@@ -619,3 +626,113 @@ async def test_evaluation_results_and_summary_carry_the_rerank_status() -> None:
     assert [r.rerank_status for r in results] == ["applied", "failed", "failed", None]
     assert summary.rerank_status_counts == {"applied": 1, "failed": 2}
     assert results[1].model_dump(mode="json")["rerank_status"] == "failed"
+
+
+async def test_evaluation_results_and_summary_carry_degraded_answers() -> None:
+    config = Config()
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    chain = _FakeChain(
+        {
+            "q1": _rag_output({"degraded_error": "ThrottlingException"}),
+            "q2": _rag_output({}),
+        }
+    )
+    manager = EvaluationManager(config, rag_chain=chain)
+    queries = [EvaluationQuery(query_id=q, question=q) for q in chain.outputs]
+    results, _, summary = await manager.evaluate_dataset(
+        queries,
+        [
+            EvaluationGroundTruth(query_id=q, ground_truth="Vendor")
+            for q in chain.outputs
+        ],
+        show_progress=False,
+    )
+    assert [r.degraded_error for r in results] == ["ThrottlingException", None]
+    assert summary.degraded_error_counts == {"ThrottlingException": 1}
+
+
+def _summary(**fields: Any) -> EvaluationSummary:
+    return EvaluationSummary(
+        total_queries=100,
+        successful_evaluations=100,
+        failed_evaluations=0,
+        evaluation_start_time=datetime(2026, 1, 1),
+        evaluation_end_time=datetime(2026, 1, 1),
+        **fields,
+    )
+
+
+@pytest.mark.parametrize(
+    ("fields", "budget", "breached"),
+    [
+        # Reranking that failed counts against the budget over the queries
+        # it was attempted on (applied + failed).
+        ({"rerank_status_counts": {"applied": 91, "failed": 9}}, 1.0, False),
+        ({"rerank_status_counts": {"applied": 91, "failed": 9}}, 0.05, True),
+        ({"rerank_status_counts": {"applied": 91, "failed": 9}}, 0.1, False),
+        ({"rerank_status_counts": {"failed": 40, "disabled": 60}}, 1.0, True),
+        # Off or unbuilt reranking is no failed call.
+        ({"rerank_status_counts": {"disabled": 50, "unavailable": 50}}, 0.0, False),
+        ({"degraded_error_counts": {"ThrottlingException": 3}}, 0.02, True),
+        ({"degraded_error_counts": {"ThrottlingException": 3}}, 0.05, False),
+    ],
+)
+def test_degraded_answers_count_against_the_failure_budget(
+    fields: dict[str, Any], budget: float, breached: bool
+) -> None:
+    breaches = run_evaluation.failure_budget_breaches(_summary(**fields), budget)
+    assert bool(breaches) is breached
+
+
+def _rerank_run(statuses: list[str | None], degraded: int = 0) -> Any:
+    results = [
+        EvaluationResult(
+            query_id=f"q{i}",
+            question="?",
+            generated_answer="Vendor",
+            ground_truth="Vendor",
+            rerank_status=status,
+            degraded_error="ThrottlingException" if i < degraded else None,
+        )
+        for i, status in enumerate(statuses)
+    ]
+    reports = [
+        EvaluationReport(
+            query_id=r.query_id,
+            evaluator_type=EvaluatorType.ANSWER_MATCH,
+            metrics=[
+                EvaluationMetric(
+                    metric_type=EvaluationMetricType.ANSWER_CONTAINS, value=1.0
+                )
+            ],
+        )
+        for r in results
+    ]
+    return [(reports, results)]
+
+
+def test_a_comparison_warns_on_rerank_failures_and_when_they_differ() -> None:
+    clean = _rerank_run(["applied"] * 10)
+    throttled = _rerank_run(["applied"] * 9 + ["failed"], degraded=2)
+    comparison = paired_comparison(
+        {"local": clean, "local@arm": throttled}, resamples=200
+    )
+    warnings = comparison["warnings"]
+    assert any(
+        w.startswith("local@arm: reranking failed on 1/10 queries (10%)")
+        for w in warnings
+    )
+    assert any("local@arm: 2/10 answers (20%) were degraded" in w for w in warnings)
+    differ = [w for w in warnings if w.startswith("NOT COMPARABLE AS IS")]
+    assert len(differ) == 2 and "local 0/10 (0%)" in differ[0]
+    assert comparison["strategies"]["local@arm"]["rerank_status_counts"] == {
+        "applied": 9,
+        "failed": 1,
+    }
+    # The same failures on both sides: each named, no mismatch.
+    same = paired_comparison({"local": throttled, "mix": throttled}, resamples=200)
+    assert not [w for w in same["warnings"] if w.startswith("NOT COMPARABLE")]
+    # Reranking off on one side is not a failure rate of 0 to compare.
+    off = _rerank_run(["disabled"] * 10)
+    mixed = paired_comparison({"local": off, "local@arm": clean}, resamples=200)
+    assert not [w for w in mixed["warnings"] if "rerank" in w]

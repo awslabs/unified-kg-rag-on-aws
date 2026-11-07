@@ -28,10 +28,12 @@ from unified_kg_rag.evaluation.comparison import (
     DEFAULT_PRIMARY_METRIC,
     adjust_for_multiplicity,
     bootstrap_ci,
+    bootstrap_cis,
     family_resamples,
     holm_adjusted,
     paired_comparison,
     sign_flip_p_value,
+    sign_flip_p_values,
 )
 from unified_kg_rag.evaluation.gates import gate_breaches, parse_gate
 from unified_kg_rag.evaluation.report import comparison_markdown, delta_cell
@@ -120,6 +122,30 @@ class TestSignFlip:
             for _ in range(trials)
         )
         assert rejected / trials <= 0.06
+
+
+class TestBatched:
+    """A family's p-values and intervals are drawn together, one draw per
+    size for all its tests: exactly what one draw per test gives."""
+
+    def test_the_same_values_as_one_test_at_a_time(self) -> None:
+        rng = np.random.default_rng(3)
+        samples = [
+            rng.normal(0.2, 1, 40).tolist(),
+            rng.normal(0.0, 1, 40).tolist(),
+            (rng.random(40) < 0.5).astype(float).tolist(),  # fewer non-zero
+            [1.0, 0.0, -1.0, 1.0, 1.0],  # exact sign patterns
+            [0.0, 0.0],  # no non-zero delta
+            [0.7],  # one query
+            rng.normal(0.5, 1, 25).tolist(),
+        ]
+        kwargs = {"resamples": 9000, "seed": 7}
+        assert sign_flip_p_values(samples, **kwargs) == [
+            sign_flip_p_value(s, **kwargs) for s in samples
+        ]
+        assert bootstrap_cis(samples, confidence=0.99, **kwargs) == [
+            bootstrap_ci(s, confidence=0.99, **kwargs) for s in samples
+        ]
 
 
 class TestHolm:

@@ -6,8 +6,9 @@ import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n/i18n";
 import { fieldsOf, parseValue, type JsonSchema } from "../lib/schema";
 import { answerSegments, markerNumbers } from "../lib/citations";
-import type { AskResult, Citation, Delta, Multiplicity, Source, StrategyInfo } from "../lib/types";
+import type { AskResult, Citation, Comparison, Delta, Multiplicity, Source, StrategyInfo } from "../lib/types";
 import { conversationHistory, parseFilters } from "../pages/AskPage";
+import { intervalResamples } from "../pages/EvaluatePage";
 import { AnswerText, CitationList } from "./AnswerText";
 import { DeltaPlot, deltaInterval, deltaVerdict, higherIsBetter } from "./charts";
 import { citedBy, EvidenceTrace, excerptBody } from "./EvidenceTrace";
@@ -150,6 +151,16 @@ describe("helpers", () => {
     const multiplicity: Multiplicity = { method: "holm", alpha: 0.05, primary_metric: "answer_match/answer_contains", families: { secondary: { tests: 10, interval_confidence: 0.995 } } };
     expect(deltaInterval(delta, multiplicity, 0.95)).toEqual({ low: -0.01, high: 0.09, confidence: 0.995, adjusted: true });
     expect(deltaInterval(delta, null, 0.95)).toEqual({ low: 0.01, high: 0.07, confidence: 0.95, adjusted: false });
+  });
+  it("names the resamples the shown intervals read: the Holm families' own", () => {
+    const comparison = {
+      bootstrap: { resamples: 2000 },
+      multiplicity: { method: "holm", alpha: 0.05, primary_metric: null, families: { primary: { tests: 3, interval_confidence: 0.98, resamples: 2000 }, secondary: { tests: 120, interval_confidence: 0.9996, resamples: 48000 } }, unadjusted: ["closed_book"] },
+    } as unknown as Comparison;
+    const plain = (n: number) => String(n);
+    expect(intervalResamples(comparison, "mix", plain)).toBe("2000-48000");
+    expect(intervalResamples(comparison, "closed_book", plain)).toBe("2000");
+    expect(intervalResamples({ ...comparison, multiplicity: undefined }, "mix", plain)).toBe("2000");
   });
   it("shows the Holm p-value, the simultaneous interval and the primary metric", () => {
     const multiplicity: Multiplicity = {

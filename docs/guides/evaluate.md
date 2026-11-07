@@ -95,8 +95,11 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
 - `metadata.answer_type` says how `answer_match` reads a structured gold:
   `number` compares the first number the answer states (digits, number
   words, Korean and Han numerals before a counter: `세 곳`, `三社`) with
-  the gold's, `set` needs every one of `metadata.answer_items` (a list of
-  strings) in the answer in any layout; `metadata.decline_is_correct:
+  the gold's (list enumerators, citation markers, years, ordinals and a
+  negated number count nothing), `set` needs every one of
+  `metadata.answer_items` (a list of strings) in the answer in any layout,
+  and with `metadata.answer_candidates` (the names the answer picks from)
+  no other candidate; `metadata.decline_is_correct:
   true` scores a decline as the right answer (a question about something
   the data does not hold). `prepare-benchmark structural` writes them
   ([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match)).
@@ -185,7 +188,17 @@ statistics, scored/failed/skipped counts, abstentions, rerank and guardrail
 counts and a run manifest that records what was measured, so two runs can be
 compared: [Evaluation output](../reference/evaluation-output.md). The
 console prints the same summary; the failure budget
-(`--max-failure-rate`) applies to every run.
+(`--max-failure-rate`) applies to every run. It counts the answers that
+went out degraded as well as those that failed: queries whose rerank call
+failed (a throttled rerank model keeps the fused order; counted over the
+queries reranking was attempted on) and answers whose retrieval absorbed a
+step failure (`degraded_error_counts`), so at the default 1.0 a run whose
+every rerank call failed exits 1, and `--max-failure-rate 0.05` fails one
+where more than 5% did. A comparison names each run's rerank failures and
+degraded answers with their rates, and warns louder (`NOT COMPARABLE AS
+IS`) when those rates differ between the compared runs, since its deltas
+then measure the failures too. Reranking that is off or could not be built
+(`disabled`, `unavailable`) is no failed call.
 
 ## Comparing strategies
 
@@ -322,14 +335,32 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   run, so its deltas measure the overlay; the base strategies compare with
   the first as usual. Holm adjusts the arms' deltas with the strategies'.
 - The overlay is validated like a config file (an unknown key stops the
-  run, exit 2, unless `--allow-unknown-keys`); its `evaluation` section is
-  ignored with a warning, since every arm is scored as the base runs are.
+  run, exit 2, unless `--allow-unknown-keys`); its `evaluation` section and
+  `models.roles.evaluation` / `answer_span` are ignored with a warning,
+  since every arm is scored as the base runs are: an unset LLM judge is
+  chosen over the answer models of the base runs and of every arm (one
+  that wrote none of them when there is one) and pinned before the arms
+  are built, and the answer-span extractor is the run's.
+- A comparison whose runs were scored with different LLM judges, judge
+  efforts or ragas embedding models (an arm that changes
+  `models.embedding`, `--baseline-results` or `--from-results` runs of
+  other invocations) warns that its judged deltas measure the judges too.
 - The run manifest records each arm run's `arm` (name, overlay path and
   sha256, suffix) and `compared_runs`, so `--from-results` rebuilds the
   same pairs. A comparison whose arms differ in `search.citations.enabled`
   warns that the answer prompt differs too.
+- An arm retrieves on the base runs' query extractions (entities and
+  keywords, one call per question) when its overlay leaves them alone; one
+  that changes the extraction's model, the default tier's effort,
+  `search.output_ceilings.query_extraction`, the LLM provider (kind,
+  `base_url`, temperature, output cap), the Bedrock region or sets
+  `search.query_extraction_cache_size: 0` extracts on its own.
 - An empty overlay (`aa.yaml` above) is an A/A arm: its deltas are the
-  noise floor of each metric for this dataset and repeat count.
+  noise floor of each metric for this dataset and repeat count. It shares
+  the base runs' extractions, so that floor leaves out the extraction's
+  noise; an A/A overlay of `search: {query_extraction_cache_size: 0}`
+  extracts on its own and includes it, at one extra extraction call per
+  question and repeat.
 - Each arm costs what a strategy costs (its answers and warm-up), times
   the strategies listed.
 

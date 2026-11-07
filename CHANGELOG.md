@@ -596,7 +596,9 @@ From a `main` checkout (formats and keys no release had):
   alpha resamples (`multiplicity.families.<f>.resamples`; `evaluation.resamples` sets the base, 2,000): the Monte
   Carlo p-value is never below 1 / (1 + resamples), so with a fixed 2,000 a family of 100 or more tests (15 strategies
   x 7 metrics) could not reject at 0.05 however large the difference, and its simultaneous intervals read their tails
-  from a fraction of one resample. `--fail-if` reads the four new statistics, and the tables print `Holm p` (#620).
+  from a fraction of one resample. A family's tests of one size draw their resamples once for all of them (the same
+  values; 120 tests over 300 queries adjust in 4.5 s instead of 25 s), and the console's paired-delta help names the
+  families' resample counts. `--fail-if` reads the four new statistics, and the tables print `Holm p` (#620).
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
   rate's interval resamples queries. The default still judges the first repeat (#620).
@@ -686,9 +688,13 @@ From a `main` checkout (formats and keys no release had):
   repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)). Its items say how `answer_match` reads them:
   `metadata.answer_type: number` compares the answer's leading number (digits, English words, Korean native and Han
-  numerals before a counter such as 곳, 군데, 가지, 개사 or 社), `set` needs every one of `metadata.answer_items` in any
-  layout, and `metadata.decline_is_correct` scores a decline of an absent vendor as right; the localized counts carry
-  3곳 / 세 곳 and 3社 / 三社 aliases.
+  numerals before a counter such as 곳, 군데, 가지, 개사 or 社; list enumerators, citation markers, years, ordinals such
+  as 두 번째, 三つ目 and 第三, and negated numbers such as "not one", 一つではなく and 不是一家 count nothing; "not ...
+  any", 한 곳도 and 一社も are 0), `set` needs every one of `metadata.answer_items` in any layout and, with
+  `metadata.answer_candidates` (every vendor), no other candidate, so listing them all is no match, and
+  `metadata.decline_is_correct` scores a decline of an absent vendor as right; the localized counts carry 3곳 / 세 곳
+  and 3社 / 三社 aliases. `structural-config.yaml` sets `evaluation.answer_span: extracted` (EM and F1 on the short
+  span: one fast-model call per scored answer).
 - A local web console, opt-in (the `console` extra, `run-console`; #631): ask with a strategy picker (and how `auto`
   chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources they
   cite, follow-ups sent with the page's conversation (`RAGInput.history`), and each source the answer read on a
@@ -900,7 +906,11 @@ From a `main` checkout (formats and keys no release had):
   (`search.max_concurrency` at a time) only when it intervenes; interventions name word lists
   (`wordPolicy:customWords`, `wordPolicy:PROFANITY`) (#462, #471, #567, #583). See
   [guardrail](docs/guides/guardrail.md).
-- Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284).
+- Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284). In `run-eval`, queries
+  whose rerank call failed (a throttled rerank model keeps the fused order) and answers whose retrieval absorbed a step
+  failure (each result's `degraded_error`, the summary's `degraded_error_counts`) count against `--max-failure-rate`,
+  so at the default 1.0 a run whose every rerank call failed exits 1; a comparison names each run's rerank failures and
+  degraded answers with their rates and warns louder when the rates differ between the compared runs.
 - Query deadline: `search.query_timeout_seconds` bounds every query and stream (which must send a first chunk within
   `search.model_timeout_seconds`) and raises `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure);
   query-time model calls get their own clients (`search.model_timeout_seconds`, `model_max_attempts`; `backend:
@@ -1003,14 +1013,19 @@ From a `main` checkout (formats and keys no release had):
   `judge_effort` and, with an extracted span, its model and effort in `answer_scoring` (runs without them are warned
   about, not refused).
 - `run-eval --arm NAME=overlay.yaml[,suffix=SUFFIX]` (repeatable): a configuration arm answers the dataset with the
-  run's config under a YAML overlay (validated like a config file; the run's `evaluation` section is kept), as a chain
+  run's config under a YAML overlay (validated like a config file; the run's `evaluation` section and scoring models
+  are kept: an unset judge is chosen over the base and every arm's answer models and pinned first), as a chain
   and evaluation manager of its own, with every `--search-strategy`, interleaved with the base runs. Its runs
   (`<strategy>@NAME`) are compared with the same strategy's base run and Holm-adjusted with the other deltas; the
-  manifest records the overlay's path and sha256 and the comparison order, which `--from-results` keeps. An empty
-  overlay is an A/A arm, the noise floor. See [evaluation](docs/guides/evaluate.md#configuration-arms).
+  manifest records the overlay's path and sha256 and the comparison order, which `--from-results` keeps. An arm
+  shares the base runs' query extractions only when its overlay leaves them alone (the extraction model, the default
+  tier's effort, `search.output_ceilings.query_extraction`, the LLM provider and region, and a
+  `search.query_extraction_cache_size` above 0). An empty overlay is an A/A arm, the noise floor without the
+  extraction's noise (it shares the extractions). See [evaluation](docs/guides/evaluate.md#configuration-arms).
 - The `run-eval` judge defaults to Opus 5.5 on Bedrock (a judge judging its own answers shifted directness by
   -0.27): when the answer model, or the model that wrote re-judged answers, is Opus 5.5, an unset judge falls back
-  to the default tier or Sonnet 5.5; a configured judge that is the answer model is kept with a warning. The CDK
+  to the default tier or Sonnet 5.5; a configured judge that is the answer model is kept with a warning. A comparison
+  whose runs record different judges, judge efforts or ragas embedding models warns. The CDK
   stack's default Bedrock grant covers it (#533, #536).
 - Models: Claude Sonnet/Opus 5.5, Opus 4.6-4.8, Sonnet 4.6, Haiku 5.5 and OpenAI GPT models on Bedrock, free-form
   ids with `aws.bedrock.model_overrides`, reasoning effort per tier (#113, #117, #127, #128, #162, #179);

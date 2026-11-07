@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import string
 import unicodedata
+from collections.abc import Callable, Iterator
 
 from unified_kg_rag.shared.utils.scripts import (
     DENSE_SCRIPT_LETTERS,
@@ -585,7 +586,9 @@ _KOREAN_NUMBER = re.compile(
     + "|".join(_KOREAN_COUNTERS)
     + r")"
 )
-_KOREAN_NONE = re.compile(r"없(?:습니다|어요|다|음)")
+# "없습니다" on its own word ("벤더가 없습니다"), not closing a compound
+# adjective ("문제없습니다", no problem).
+_KOREAN_NONE = re.compile(r"(?<![가-힣])없(?:습니다|어요|다|음)")
 _HAN_NUMBER = re.compile(
     "["
     + "".join([*_HAN_DIGITS, *_HAN_MULTIPLIERS])
@@ -632,15 +635,124 @@ def _stands_alone(text: str, start: int, end: int) -> bool:
     )
 
 
+# What a number that is no count stands next to. A counter of either
+# language (and 番) may sit between the number and an ordinal or negation
+# suffix: "두 번째", "三つ目", "一つではなく", "한 곳이 아니라".
+_ANY_COUNTER = (
+    r"(?:"
+    + "|".join(sorted({*_KOREAN_COUNTERS, *_HAN_COUNTERS, "番"}, key=len, reverse=True))
+    + r")"
+)
+# An ordinal: Korean 째 ("두 번째", "2번째"), Japanese 目 ("三つ目", "3番目"),
+# Chinese and Japanese 第 before the number ("第三", "第3").
+_ORDINAL_AFTER = re.compile(rf"\s?{_ANY_COUNTER}?\s?(?:째|目)")
+_ORDINAL_BEFORE = re.compile(r"第\s?$")
+# The number itself negated: "not one but three", "不是一个", "一つではなく",
+# "한 곳이 아니라".
+_NEGATED_BEFORE = re.compile(r"(?:\bnot\s+|(?:不是|并非|並非|不止)\s?)$", re.IGNORECASE)
+_NEGATED_AFTER = re.compile(
+    rf"\s?{_ANY_COUNTER}?\s?(?:ではな|じゃな|でな|(?:이|가)?\s?아니)"
+)
+# A list enumerator ("1. Acme", "2) Beta", "(3) Gamma"): at the line start,
+# before the item's text.
+_ENUMERATOR_BEFORE = re.compile(r"(?:^|\n)[ \t]*[(\[]?$")
+_ENUMERATOR_AFTER = re.compile(r"[.)\]][ \t]+\S")
+# A citation marker ("[1]", "[2, 3]", "[4-6]").
+_CITATION_BEFORE = re.compile(r"\[[\d,\s–-]*$")
+_CITATION_AFTER = re.compile(r"[\d,\s–-]*\]")
+# A year: four digits before 년/年, after a preposition of time (with an
+# optional month) or opening an ISO date.
+_MONTHS = (
+    "january february march april may june july august september october "
+    "november december"
+).split()
+_YEAR_BEFORE = re.compile(
+    r"\b(?:in|as\s+of|since|until|till|from|before|after|during|circa)\s+"
+    r"(?:(?:early|mid|late|" + "|".join(_MONTHS) + r")[\s-]+(?:\d{1,2},?\s+)?)?$",
+    re.IGNORECASE,
+)
+_YEAR_AFTER = re.compile(r"\s?(?:년|年)|-\d{1,2}-\d{1,2}")
+# "no" before these words is no count of zero: "No single vendor
+# dominates", "no more than 5", "no longer".
+_NO_MODIFIES = re.compile(
+    r"\s+(?:single|other|more|fewer|less|longer|later|sooner|earlier|"
+    r"matter|doubt)\b",
+    re.IGNORECASE,
+)
+# "not ... any" states zero ("does not supply any buyers", "doesn't have
+# any").
+_NOT_ANY = re.compile(r"(?:\bnot|n't)\s+(?:\w+\s+){0,3}?any\b", re.IGNORECASE)
+# One with "even" after it is zero: "한 곳도 없습니다", "一社もありません",
+# "一家也没有".
+_NOT_EVEN_ONE = re.compile(rf"\s?{_ANY_COUNTER}?\s?(?:도|も|也|都)")
+# "No," / "No." answers a yes/no question; "one of them" is a partitive.
+_NO_POLARITY = re.compile(r"\s*[*_]*\s*[,.;:!?]")
+_ONE_OF = re.compile(r"\s+of\b", re.IGNORECASE)
+
+
+def _count_value(body: str, start: int, end: int, value: float) -> float | None:
+    """``value``, the number at ``body[start:end]``, as the count it states:
+    ``None`` when it states none (``_not_a_count``), 0 for one with "even"
+    after it ("한 곳도", "一社も")."""
+    if _not_a_count(body, start, end):
+        return None
+    if value == 1 and _NOT_EVEN_ONE.match(body, end):
+        return 0.0
+    return value
+
+
+def _not_a_count(body: str, start: int, end: int) -> bool:
+    """Whether the number at ``body[start:end]`` states no count: a list
+    enumerator, a citation marker, a year, an ordinal or a negated number
+    ("not one but three", "一つではなく")."""
+    before, after = body[:start], body[end:]
+    if _ENUMERATOR_BEFORE.search(before) and _ENUMERATOR_AFTER.match(after):
+        return True
+    if _CITATION_BEFORE.search(before) and _CITATION_AFTER.match(after):
+        return True
+    number = body[start:end]
+    if re.fullmatch(r"\d{4}", number) and (
+        _YEAR_AFTER.match(after) or _YEAR_BEFORE.search(before)
+    ):
+        return True
+    if _ORDINAL_BEFORE.search(before) or _ORDINAL_AFTER.match(after):
+        return True
+    return bool(_NEGATED_BEFORE.search(before) or _NEGATED_AFTER.match(after))
+
+
+def _english_value(match: re.Match[str]) -> int | None:
+    """The value of an ``_ENGLISH_NUMBER`` match, ``None`` when the word
+    states no count there ("No," answering yes/no, "no single", "one of")."""
+    after = match.string[match.end() :]
+    if match.group("zero"):
+        word = match.group("zero").lower()
+        if word == "no" and (_NO_POLARITY.match(after) or _NO_MODIFIES.match(after)):
+            return None
+        return 0
+    if match.group("unit"):
+        unit = match.group("unit").lower()
+        if unit == "one" and _ONE_OF.match(after):
+            return None
+        return _ENGLISH_UNITS.index(unit)
+    return _ENGLISH_TENS[match.group("tens").lower()] + (
+        _ENGLISH_UNITS.index(match.group("ones").lower()) if match.group("ones") else 0
+    )
+
+
 def leading_number(text: str) -> float | None:
-    """The first number ``text`` states, or ``None``: digits ("4,486",
-    "3곳", "3社"), an English number word ("Three", "twenty-one", "none"
-    or "no" for 0), a Korean native numeral before a counter ("세 곳", "열두
-    개사"; "없습니다" for 0) or a Han numeral before a counter ("三社").
+    """The first number ``text`` states as a count, or ``None``: digits
+    ("4,486", "3곳", "3社"), an English number word ("Three", "twenty-one",
+    "none" or "no" for 0), a Korean native numeral before a counter ("세 곳",
+    "열두 개사"; "없습니다" for 0) or a Han numeral before a counter ("三社").
     Markdown heading lines are skipped; a number inside a word ("Zortal13")
-    is none. A count answer states its number first ("Three vendors ...
-    Two of them ..." is 3), so a numeric gold is compared with this number,
-    not with every number the answer happens to name."""
+    is none, and so are numbers that count nothing: list enumerators ("1.
+    Acme"), citation markers ("[2]"), years ("as of 2024", "2024년"),
+    ordinals ("두 번째", "三つ目", "第三"), a negated number ("not one",
+    "一つではなく", "不是一个", "한 곳이 아니라"), "no" answering a yes/no
+    question or before "single", "more" and the like ("No single vendor"),
+    and "one of". A count answer states its number first ("Three vendors
+    ... Two of them ..." is 3), so a numeric gold is compared with this
+    number, not with every number the answer happens to name."""
     lines = [
         line
         for line in unicodedata.normalize("NFKC", text).splitlines()
@@ -648,38 +760,42 @@ def leading_number(text: str) -> float | None:
     ]
     body = "\n".join(lines)
     found: list[tuple[int, float]] = []
-    for match in _DIGITS.finditer(body):
-        if _stands_alone(body, match.start(), match.end()):
-            found.append((match.start(), float(match.group().replace(",", ""))))
-            break
-    for match in _ENGLISH_NUMBER.finditer(body):
-        if match.group("zero"):
-            value = 0
-        elif match.group("unit"):
-            value = _ENGLISH_UNITS.index(match.group("unit").lower())
-        else:
-            value = _ENGLISH_TENS[match.group("tens").lower()] + (
-                _ENGLISH_UNITS.index(match.group("ones").lower())
-                if match.group("ones")
-                else 0
-            )
-        found.append((match.start(), float(value)))
-        break
-    for match in _KOREAN_NUMBER.finditer(body):
-        if not (match.group("tens") or match.group("ones")):
-            continue
-        value = _KOREAN_NATIVE_TENS.get(match.group("tens") or "", 0) + (
-            _KOREAN_NATIVE_ONES.get(match.group("ones") or "", 0)
-        )
-        found.append((match.start(), float(value)))
-        break
-    if (none := _KOREAN_NONE.search(body)) is not None:
-        found.append((none.start(), 0.0))
-    for match in _HAN_NUMBER.finditer(body):
-        han = _han_value(match.group())
-        if han is not None:
-            found.append((match.start(), float(han)))
-            break
+
+    def first(
+        matches: Iterator[re.Match[str]],
+        read: Callable[[re.Match[str]], float | None],
+    ) -> None:
+        # The first match of one form that states a count.
+        for match in matches:
+            value = read(match)
+            if value is not None:
+                value = _count_value(body, match.start(), match.end(), value)
+            if value is not None:
+                found.append((match.start(), float(value)))
+                return
+
+    first(
+        _DIGITS.finditer(body),
+        lambda m: (
+            float(m.group().replace(",", ""))
+            if _stands_alone(body, m.start(), m.end())
+            else None
+        ),
+    )
+    first(_ENGLISH_NUMBER.finditer(body), _english_value)
+    first(
+        _KOREAN_NUMBER.finditer(body),
+        lambda m: (
+            _KOREAN_NATIVE_TENS.get(m.group("tens") or "", 0)
+            + _KOREAN_NATIVE_ONES.get(m.group("ones") or "", 0)
+            if m.group("tens") or m.group("ones")
+            else None
+        ),
+    )
+    first(_HAN_NUMBER.finditer(body), lambda m: _han_value(m.group()))
+    for zero in (_KOREAN_NONE.search(body), _NOT_ANY.search(body)):
+        if zero is not None:
+            found.append((zero.start(), 0.0))
     return min(found)[1] if found else None
 
 

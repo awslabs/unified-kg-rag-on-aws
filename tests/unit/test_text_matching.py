@@ -277,11 +277,56 @@ class TestLeadingNumber:
         assert leading_number(text) == number
 
     @pytest.mark.parametrize(
+        ("text", "number"),
+        [
+            # List enumerators and citation markers count nothing.
+            ("1. Acme\n2. Beta\n3. Gamma\nIn total, three vendors.", 3),
+            ("(1) Acme\n(2) Beta\nTwo vendors.", 2),
+            ("Acme [1], Beta [2] and Gamma [3]: three vendors.", 3),
+            # Years.
+            ("As of 2024, three vendors supply Buyer A.", 3),
+            ("In March 2024 it had 7 buyers.", 7),
+            ("2024년 기준 3곳입니다.", 3),
+            ("2024年時点で3社です。", 3),
+            ("It has 2003 employees.", 2003),
+            # Ordinals.
+            ("공급 벤더는 두 번째로 많은 네 곳입니다.", 4),
+            ("2번째로 많은 3곳입니다.", 3),
+            ("三つ目の供給元を含め、五社です。", 5),
+            ("3番目に多いのは4社です。", 4),
+            ("第三家供应商之后，共有五家。", 5),
+            # "no" and a negated number that modify something else.
+            ("No single vendor dominates; three vendors supply Buyer A.", 3),
+            ("No, three vendors supply it.", 3),
+            ("No more than 5 vendors.", 5),
+            ("One of them, Acme, is the largest; in total four vendors.", 4),
+            ("Not one but three vendors.", 3),
+            ("Buyer Aへの供給元は一つではなく、三社あります。", 3),
+            ("不是一家，而是三家。", 3),
+            ("한 곳이 아니라 세 곳입니다.", 3),
+            ("문제없습니다. 공급사는 세 곳입니다.", 3),
+            # Zero, stated with a negation.
+            ("Zortal does not supply any buyers.", 0),
+            ("Zortal doesn't have any buyers.", 0),
+            ("한 곳도 없습니다.", 0),
+            ("一社もありません。", 0),
+            ("一家也没有。", 0),
+        ],
+    )
+    def test_numbers_that_count_nothing_are_skipped(
+        self, text: str, number: float
+    ) -> None:
+        assert leading_number(text) == number
+
+    @pytest.mark.parametrize(
         "text",
         [
             "I could not find Zortal13 Holdings.",  # a number inside a word
             "네, 공급합니다.",  # "네" is yes, not four, without a counter
             "The 3rd vendor",
+            "1. Acme\n2. Beta",  # enumerators only
+            "As of 2024, it is unknown.",
+            "No, it does not.",
         ],
     )
     def test_none(self, text: str) -> None:

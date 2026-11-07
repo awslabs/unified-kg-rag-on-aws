@@ -88,8 +88,10 @@ a,b`), LLM이 필요 없는 세 개가 기본으로 켜져 있고 데이터셋 �
   `id`는 `query_id`로 써도 됩니다.
 - `metadata.answer_type`은 `answer_match`가 구조가 있는 정답을 읽는 방식을 정합니다.
   `number`는 답변이 처음 말한 수(숫자, 수 단어, 단위 앞의 고유어·한자 수사: `세 곳`,
-  `三社`)를 정답의 수와 비교하고, `set`은 `metadata.answer_items`(문자열 목록)의 항목이
-  순서나 형식과 관계없이 모두 답변에 있어야 맞습니다. `metadata.decline_is_correct: true`는
+  `三社`)를 정답의 수와 비교하고(목록 번호, 인용 표시, 연도, 서수, 부정된 수는 세지 않음),
+  `set`은 `metadata.answer_items`(문자열 목록)의 항목이 순서나 형식과 관계없이 모두 답변에
+  있어야 맞습니다. `metadata.answer_candidates`(답변이 고를 수 있는 이름)가 있으면 그 밖의
+  후보를 말하지 않아야 맞습니다. `metadata.decline_is_correct: true`는
   데이터에 없는 대상을 묻는 질문에서 답변 거절을 정답으로 채점합니다. `prepare-benchmark
   structural`이 이 필드를 씁니다([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match), 영문).
 - 코퍼스로 답할 수 없는 질문에는 `"metadata": {"answerable": false}`를 지정하세요. 어떤
@@ -166,7 +168,14 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 채점/실패/건너뜀 개수, 답변 거절, 재순위화와 가드레일 집계, 그리고 무엇을 측정했는지 기록해 두 실행을 비교할 수 있게 하는 실행
 매니페스트가 있습니다([Evaluation output](../reference/evaluation-output.md), 영문).
 콘솔에도 같은 요약이 출력되며, 실패 허용 기준(`--max-failure-rate`)은 모든 실행에
-적용됩니다.
+적용됩니다. 이 기준은 실패한 답변뿐 아니라 품질이 떨어진 채 나간 답변도 셉니다. 재순위화
+호출이 실패한 질의(재순위화 모델이 스로틀링되면 융합 순서를 그대로 씀, 재순위화를 시도한 질의
+기준)와 검색 단계의 실패를 전략이 흡수한 답변(`degraded_error_counts`)입니다. 그래서 기본값
+1.0에서는 모든 재순위화 호출이 실패한 실행이 종료 코드 1로 끝나고, `--max-failure-rate 0.05`는
+5%를 넘게 실패한 실행을 실패로 처리합니다. 비교 결과는 실행마다 재순위화 실패와 품질이 떨어진
+답변의 개수와 비율을 알리고, 비교한 실행 사이에 그 비율이 다르면 차이에 실패의 영향도 섞이므로
+더 강하게(`NOT COMPARABLE AS IS`) 경고합니다. 재순위화가 꺼져 있거나 만들 수 없는 경우
+(`disabled`, `unavailable`)는 실패한 호출이 아닙니다.
 
 ## 전략 비교
 
@@ -279,12 +288,25 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   첫 번째 전략과 비교합니다. Holm 보정은 비교군의 차이를 전략의 차이와 함께 보정합니다.
 - 오버레이는 구성 파일처럼 검증합니다(`--allow-unknown-keys`가 없으면 알 수 없는 키에서
   종료 코드 2로 멈춤). 모든 비교군은 기본 실행과 같은 방식으로 채점하므로 오버레이의
-  `evaluation` 섹션은 경고와 함께 무시합니다.
+  `evaluation` 섹션과 `models.roles.evaluation` / `answer_span`은 경고와 함께 무시합니다.
+  LLM 판정 모델을 지정하지 않았으면 기본 실행과 모든 비교군의 답변 모델을 함께 보고(가능하면
+  그중 어느 것도 아닌 모델로) 고른 뒤 비교군을 만들기 전에 고정하며, 답변 구간 추출 모델은
+  실행의 것을 씁니다.
+- 비교한 실행들의 LLM 판정 모델, 판정 추론 강도, ragas 임베딩 모델이 다르면(`models.embedding`을
+  바꾼 비교군, 다른 호출의 `--baseline-results`나 `--from-results` 실행) 판정 지표의 차이에
+  판정 모델의 차이도 섞인다고 경고합니다.
 - 실행 매니페스트는 비교군 실행마다 `arm`(이름, 오버레이 경로와 sha256, suffix)과
   `compared_runs`를 기록하므로 `--from-results`가 같은 짝을 다시 만듭니다. 비교군끼리
   `search.citations.enabled`가 다르면 답변 프롬프트도 다르다고 경고합니다.
+- 오버레이가 질의 추출(질문마다 한 번 호출하는 엔터티와 키워드)을 바꾸지 않으면 비교군은 기본
+  실행의 추출 결과로 검색합니다. 추출 모델, 기본 계층의 추론 강도(effort),
+  `search.output_ceilings.query_extraction`, LLM 제공자(kind, `base_url`, temperature, 출력
+  상한), Bedrock 리전을 바꾸거나 `search.query_extraction_cache_size: 0`을 지정한 비교군은 직접
+  추출합니다.
 - 빈 오버레이(위의 `aa.yaml`)는 A/A 비교군입니다. 그 차이가 이 데이터셋과 반복 횟수에서 지표마다의
-  잡음 수준입니다.
+  잡음 수준입니다. 기본 실행과 추출 결과를 공유하므로 이 잡음 수준에는 추출의 잡음이 빠집니다.
+  `search: {query_extraction_cache_size: 0}` 오버레이로 만든 A/A 비교군은 직접 추출해 그 잡음을
+  포함하며, 질문과 반복마다 추출 호출이 한 번 더 듭니다.
 - 비교군 하나는 전략 하나만큼(답변과 워밍업) 들며, 나열한 전략 수만큼 곱해집니다.
 
 ## 단언문, 길이 통제, 클로즈드북 기준선

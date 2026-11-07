@@ -26,7 +26,8 @@ A comparison adds `evaluation_comparison_<timestamp>.json`, `.csv` and `.md`
 
 Each row of `evaluation_results_*` is one answer: the question, answer,
 ground truth, retrieved contexts and source provenance, `response_time`,
-`usage`, `error` / `error_message`, `rerank_status`, `guardrail_blocked`,
+`usage`, `error` / `error_message`, `rerank_status`, `degraded_error`,
+`guardrail_blocked`,
 `category`, the query's `metadata`, and the chain's decline and
 sufficiency fields:
 
@@ -90,7 +91,13 @@ from the text, and under
   first line (`fallbacks`).
 - `rerank_status_counts`: queries per [rerank status](../guides/query.md#rerank-status); each
   result carries `rerank_status` (`null` when answer generation failed
-  first).
+  first). The `failed` ones count against `--max-failure-rate` over
+  `applied` + `failed`.
+- `degraded_error_counts`: answers whose retrieval absorbed a step failure
+  (a global map batch, a DRIFT follow-up, an iterative round, a step
+  `processing.ignore_errors` skipped), per error type; each result carries
+  `degraded_error`. They count against `--max-failure-rate` over every
+  query.
 - `guardrail_blocked_counts`: blocked queries per `input` / `output` (a
   blocked item is scored on the blocked message; a blocked answer drops its
   sources, so its retrieval metrics and the RAGAS context metrics
@@ -244,8 +251,11 @@ strategies, or `--repeats`) saves every run's files and adds
   a metric that only the failed query could score (one item with
   `expected_relationships`, say) is not filled either
   (`failed_answers` / `failed_queries`;
-  `guardrail_blocked_counts` counts blocks; `warnings` names strategies that
-  failed, or had blocked, different numbers, runs whose exact match and
+  `guardrail_blocked_counts` counts blocks, `rerank_status_counts` and
+  `degraded_answers` (of `answers`) the degraded ones; `warnings` names
+  strategies that failed, or had blocked, different numbers, each run with
+  rerank failures or degraded answers and its rate (louder, `NOT
+  COMPARABLE AS IS`, when the rates differ), runs whose exact match and
   token F1 read different `answer_span`s, and, with `answer_span:
   extracted`, each strategy whose extracted spans fell back to the first
   line (`answer_span_fallbacks`) and fallback rates that differ). A
@@ -647,8 +657,17 @@ list, top level or under `metadata`, which wins), taking the maximum.
   words, a Korean native numeral before a counter (`세 곳`, `열두 개사`;
   `없습니다` is 0) or a Han numeral before one (`三社`), with the gold's
   number, so `Three vendors ... Two of them ...` is 3 and does not match
-  the gold 2; `set` scores 1.0 when every one of `metadata.answer_items`
-  appears in the answer, in any order or layout (a numbered list too).
+  the gold 2. Numbers that count nothing are skipped: list enumerators
+  (`1. Acme`), citation markers (`[2]`), years (`as of 2024`, `2024년`,
+  `2024年`), ordinals (`두 번째`, `三つ目`, `第三`), a negated number
+  (`not one but three`, `一つではなく`, `不是一家`, `한 곳이 아니라`), and
+  `no` answering a yes/no question or before `single`, `more` and the like;
+  `not ... any`, `한 곳도`, `一社も` and `一家也` are 0. `set` scores 1.0
+  when every one of `metadata.answer_items` appears in the answer, in any
+  order or layout (a numbered list too); with `metadata.answer_candidates`
+  (the names the answer picks from, `prepare-benchmark structural` writes
+  every vendor) the candidates the answer names must be exactly those
+  items, so an answer listing every vendor scores 0.
   With `metadata.decline_is_correct` (a question about something the data
   does not hold) a decline scores 1 on every `answer_match` metric. A
   Korean counter (`곳`, `군데`, `가지`, `개사`) keeps a number's value like a

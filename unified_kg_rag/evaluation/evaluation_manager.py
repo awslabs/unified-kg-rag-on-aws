@@ -82,6 +82,7 @@ from unified_kg_rag.shared.usage import (
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 from .answer_match_evaluator import (
+    ANSWER_CANDIDATES_KEY,
     ANSWER_ITEMS_KEY,
     ANSWER_TYPE_KEY,
     ANSWER_TYPES,
@@ -493,6 +494,16 @@ class EvaluationManager:
                 f"{where}: 'metadata.{ANSWER_ITEMS_KEY}' must be a non-empty list "
                 "of strings with answer_type 'set'."
             )
+        candidates = item_metadata.get(ANSWER_CANDIDATES_KEY)
+        if candidates is not None and not (
+            answer_type == "set"
+            and isinstance(candidates, list)
+            and all(isinstance(c, str) and c.strip() for c in candidates)
+        ):
+            raise EvaluationException(
+                f"{where}: 'metadata.{ANSWER_CANDIDATES_KEY}' must be a list of "
+                "strings, with answer_type 'set'."
+            )
 
         final_metadata = {**base_metadata, **item_metadata}
         # Aliases sit next to ``answer`` as naturally as under ``metadata``.
@@ -845,6 +856,7 @@ class EvaluationManager:
                         and self._is_abstention(answer, rag_metadata),
                         **self._decline_details(rag_metadata),
                         rerank_status=(rag_metadata.get("rerank") or {}).get("status"),
+                        degraded_error=self._degraded_error(rag_metadata),
                         guardrail_blocked=self._guardrail_block(rag_metadata),
                         category=query.category,
                         usage=_answer_usage(rag_metadata.get("usage"), record),
@@ -927,6 +939,14 @@ class EvaluationManager:
         """
         support = Counter(mapping[u] for u in unit_ids if u in mapping)
         return sorted(support, key=lambda name: (-support[name], name))
+
+    @staticmethod
+    def _degraded_error(rag_metadata: Any) -> str | None:
+        """The type name of a step failure the strategy absorbed, if any."""
+        if not isinstance(rag_metadata, dict):
+            return None
+        degraded = rag_metadata.get("degraded_error")
+        return str(degraded) if degraded else None
 
     @staticmethod
     def _guardrail_block(rag_metadata: Any) -> Literal["input", "output"] | None:
@@ -1311,6 +1331,13 @@ class EvaluationManager:
                 sorted(
                     Counter(
                         r.rerank_status.value for r in results if r.rerank_status
+                    ).items()
+                )
+            ),
+            degraded_error_counts=dict(
+                sorted(
+                    Counter(
+                        r.degraded_error for r in results if r.degraded_error
                     ).items()
                 )
             ),

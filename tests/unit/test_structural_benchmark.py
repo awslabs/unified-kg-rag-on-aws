@@ -304,6 +304,49 @@ class TestStructuralScoring:
         )
         assert _score(item, f"{names[0]} and {names[1]} supply the most.") == 0
 
+    def test_the_top_three_names_no_other_candidate(self, tmp_path: Path) -> None:
+        # Listing every vendor, or a wrong one besides the gold three, used
+        # to score 1.0: every gold name appears in it.
+        item = _item(tmp_path, "top_three")
+        names = item["metadata"]["answer_items"]
+        candidates = item["metadata"]["answer_candidates"]
+        assert set(names) < set(candidates)
+        other = next(c for c in candidates if c not in names)
+        assert _score(item, "All vendors: " + ", ".join(candidates) + ".") == 0
+        assert (
+            _score(
+                item,
+                f"The top three are {names[0]}, {other} and {names[1]}; "
+                f"{names[2]} is fourth.",
+            )
+            == 0
+        )
+        assert _score(item, f"{names[1]}, {names[2]} and {names[0]}.") == 1.0
+
+    def test_candidates_need_a_set_answer(self, tmp_path: Path) -> None:
+        from unified_kg_rag.evaluation import EvaluationManager
+
+        data = tmp_path / "data.json"
+        for metadata in (
+            {"answer_type": "number", "answer_candidates": ["Acme"]},
+            {
+                "answer_type": "set",
+                "answer_items": ["Acme"],
+                "answer_candidates": "Acme",
+            },
+            {"answer_type": "set", "answer_items": ["Acme"], "answer_candidates": [""]},
+        ):
+            data.write_text(
+                json.dumps([{"question": "q", "answer": "a", "metadata": metadata}])
+            )
+            with pytest.raises(EvaluationException, match="answer_candidates"):
+                EvaluationManager.load_data(data)
+
+    def test_the_config_scores_the_extracted_span(self, tmp_path: Path) -> None:
+        structural.prepare(tmp_path, seed=0, size="small")
+        config = get_config(str(tmp_path / "structural-config.yaml"))
+        assert config.evaluation.answer_span == "extracted"
+
     def test_a_decline_answers_an_absent_vendor(self, tmp_path: Path) -> None:
         structural.prepare(tmp_path, seed=3, size="medium")
         absent = [

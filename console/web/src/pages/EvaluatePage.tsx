@@ -313,7 +313,7 @@ function RunView({ refName }: { refName: string }) {
           }
         >
           <p className="field-help" style={{ marginTop: 0 }}>
-            {t("evaluate.pairedHelp", { resamples: number(comparison.bootstrap?.resamples ?? 2000) })}{" "}
+            {t("evaluate.pairedHelp", { resamples: intervalResamples(comparison, shown, number) })}{" "}
             {comparison.multiplicity && !comparison.multiplicity.unadjusted?.includes(shown)
               ? t("evaluate.pairedHolmHelp", { alpha: number(comparison.multiplicity.alpha) })
               : t("evaluate.pairedPlainHelp")}
@@ -439,4 +439,23 @@ function RunView({ refName }: { refName: string }) {
       </div>
     </div>
   );
+}
+
+/** The resamples the shown intervals read: a Holm-adjusted comparison draws
+ * each family's from its own count (at least the base one, more for a large
+ * family), so the help names those, else the base count. */
+export function intervalResamples(
+  comparison: Comparison,
+  shown: string,
+  number: (value: number) => string,
+): string {
+  const base = comparison.bootstrap?.resamples ?? 2000;
+  const multiplicity = comparison.multiplicity;
+  const counts =
+    multiplicity && !multiplicity.unadjusted?.includes(shown)
+      ? Object.values(multiplicity.families).map((f) => f.resamples ?? base)
+      : [];
+  const low = Math.min(...counts, ...(counts.length ? [] : [base]));
+  const high = Math.max(...counts, ...(counts.length ? [] : [base]));
+  return low === high ? number(low) : `${number(low)}-${number(high)}`;
 }

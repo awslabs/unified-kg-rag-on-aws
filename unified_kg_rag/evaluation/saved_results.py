@@ -387,6 +387,45 @@ def citation_warnings(
     return warnings
 
 
+# The scoring models a run manifest records (``models``), as warnings name
+# them.
+_JUDGE_MODEL_KEYS = {
+    "evaluation_judge": "LLM judge (models.roles.evaluation)",
+    "judge_effort": "judge effort (evaluation.judge_effort)",
+    "evaluation_embedding": "ragas embedding model (models.embedding)",
+}
+
+
+def judge_warnings(
+    manifests: Sequence[tuple[str, dict[str, Any] | None]],
+) -> list[str]:
+    """Warnings when the compared runs were judged by different models: a
+    different LLM judge, judge effort or ragas embedding model (manifest
+    ``models``) scores the same answer differently, so the deltas of the
+    judged metrics measure the judges as well as the runs. A run that
+    records none (no LLM judge, or the embedding without ragas) is not
+    compared."""
+    warnings = []
+    for key, what in _JUDGE_MODEL_KEYS.items():
+        values: dict[str, list[str]] = {}
+        for label, manifest in manifests:
+            value = ((manifest or {}).get("models") or {}).get(key)
+            if value is not None:
+                values.setdefault(str(value), []).append(label)
+        if len(values) > 1:
+            listed = "; ".join(
+                f"{value}: {', '.join(dict.fromkeys(labels))}"
+                for value, labels in values.items()
+            )
+            warnings.append(
+                f"The compared runs were scored with different {what} "
+                f"({listed}): the deltas of the judged metrics measure the "
+                "judges as well as the runs. Re-score them with one "
+                "(run-eval --from-results --rescore, --judge-model)."
+            )
+    return warnings
+
+
 def rerank_unmetered(
     manifests: Sequence[tuple[str, dict[str, Any] | None]],
 ) -> set[str]:

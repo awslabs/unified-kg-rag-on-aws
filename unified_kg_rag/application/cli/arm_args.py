@@ -26,7 +26,7 @@ from unified_kg_rag.application.config import (
     resolve_relative_paths,
     unknown_keys,
 )
-from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models import Config, ModelRole
 from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.utils.validation import format_validation_errors
@@ -73,8 +73,9 @@ def arm_config(
     base: Config, spec: dict[str, Any], *, allow_unknown_keys: bool = False
 ) -> tuple[Config, list[str]]:
     """The arm's configuration: ``base`` with the overlay merged over it, the
-    run's ``evaluation`` section kept; and the warnings (an overlay that set
-    ``evaluation``, ignored).
+    run's ``evaluation`` section and scoring models (``models.roles``
+    ``evaluation`` and ``answer_span``, resolved) kept; and the warnings (an
+    overlay that set either, ignored).
 
     Raises:
         ConfigurationError: The overlay is no YAML mapping, sets an unknown
@@ -104,4 +105,19 @@ def arm_config(
         ) from e
     resolve_relative_paths(config, path)
     config.evaluation = base.evaluation.model_copy(deep=True)
+    # The models that score: the run's judge and answer-span extractor, not
+    # the ones the overlay's answer model or tiers would pick.
+    roles = (data.get("models") or {}).get("roles") or {}
+    scoring = {}
+    for role in (ModelRole.EVALUATION, ModelRole.ANSWER_SPAN):
+        model = base.model_id(role)
+        if config.model_id(role) != model and role.value in roles:
+            warnings.append(
+                f"--arm {spec['name']}: the overlay's models.roles.{role.value} "
+                f"is ignored; every arm is scored with the run's ({model})."
+            )
+        scoring[role.value] = model
+    config.models = config.models.model_copy(
+        update={"roles": config.models.roles.model_copy(update=scoring)}
+    )
     return config, warnings
