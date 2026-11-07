@@ -179,7 +179,7 @@ stored is read again: follow *Upgrading* in order.
 | `search.answer_prompt_style` | every strategy concise | `{global: comprehensive}`, merged under your map (#533) |
 | `search.global_search.evidence_tokens` | every cited report the budget holds | 4000; `null` removes the cap (#533) |
 | `search.local_search.text_unit_ranking` (local's text-unit order) | by how many expanded entities cite a unit (no setting) | `ppr`, HippoRAG 2's PageRank; `support` is the earlier order, which DRIFT's follow-ups keep (`search.drift_search.text_unit_ranking`) (#597, #602, #607) |
-| `evaluation.enabled_evaluators` | `langchain`, `ragas` | `answer_match`, `retrieval`, `graph_aware`; `ragas` is opt-in, `langchain` is removed (#121, #576, #PR) |
+| `evaluation.enabled_evaluators` | `langchain`, `ragas` | `answer_match`, `retrieval`, `graph_aware`; `ragas` is opt-in, `langchain` is removed (#121, #576, #620) |
 | `evaluation.max_context_tokens` | 8192 | `null`, the answer budget (#315) |
 | `run-eval` warm-up | none | one unscored, untimed query per strategy and run, not configurable (#529, #577) |
 | `logging.log_to_file` | `true` | `false`; the console carries every record (#520) |
@@ -346,7 +346,7 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
 14. Evaluation: list `ragas` in `evaluation.enabled_evaluators` (or `run-eval --evaluators ...,ragas`) to keep its
     scores, with the `eval` extra; a `--fail-if ragas/...` gate fails without it. The `langchain` evaluator is removed
     (a config naming it, or `evaluation.langchain_metrics`, loads with a WARNING and without it): gate on
-    `ragas/answer_correctness` instead of `langchain/correctness` (#PR). `graph_aware` coverage matches by entity
+    `ragas/answer_correctness` instead of `langchain/correctness` (#620). `graph_aware` coverage matches by entity
     key and can read lower than before on the same answers: run baselines again before comparing. Re-render static
     charts to get the SVG pages (#563, #576).
 
@@ -463,12 +463,12 @@ From a `main` checkout (formats and keys no release had):
   `graph.analysis.statistics.calculate_average_clustering: true`. A summary tree of more than 100,000 text units
   now fails its stage (`indexing.summary_tree.max_leaves_in_memory`): raise it with `fargate_memory`. The tree
   stored before stays in the build record, so `tree` keeps serving the text units it covers (#612).
-- #PR run directories: `run-eval` results land in `<outputs>/run_<timestamp>_<id>/`; scripts that read
+- #620 run directories: `run-eval` results land in `<outputs>/run_<timestamp>_<id>/`; scripts that read
   `<outputs>/evaluation_*` directly read the run subdirectory (the JSON output's `output_directory` names it), or set
   `evaluation.run_subdirectories: false`. A results directory that mixes runs of one strategy from several
   invocations (the earlier flat layout, filled by more than one `run-eval`) is refused by `--from-results` and
   `--baseline-results`: list the result files of one invocation, or add `--pool-runs`. Nothing re-runs.
-- #PR run order: a `run-eval` comparison is answered interleaved, so one stopped part-way saves no run (all finish
+- #620 run order: a `run-eval` comparison is answered interleaved, so one stopped part-way saves no run (all finish
   together); run `--run-order sequential` to complete an interrupted comparison by its missing strategies. With
   `--repeats N`, each repeat makes its own query extraction calls (fast model; one entity or keyword extraction per
   query and repeat instead of per query), and `repeat_stdev` can read higher than before on the same answers: it now
@@ -504,10 +504,10 @@ From a `main` checkout (formats and keys no release had):
   strategies only, every other metric, and the cost measures, each delta with `adjusted_p_value` and a simultaneous
   `adjusted_ci_low`/`adjusted_ci_high`. On simulated A/A comparisons ten unadjusted metrics showed a difference on noise
   in 30-40% of them, the Holm-adjusted family in about 5% or fewer. `--fail-if` reads the four new
-  statistics, and the tables print `Holm p` (#PR).
+  statistics, and the tables print `Holm p` (#620).
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
-  rate's interval resamples queries. The default still judges the first repeat (#PR).
+  rate's interval resamples queries. The default still judges the first repeat (#620).
 - RAPTOR summary tree, opt-in (#599; on multi-hop questions it answered within the noise of `naive`,
   [evidence](docs/concepts/defaults-and-evidence.md#raptor-summary-tree)): the `raptor` methodology adds a
   `summary_tree` ingestion stage after indexing that clusters the stored text units by their vectors (numpy k-means
@@ -842,7 +842,7 @@ From a `main` checkout (formats and keys no release had):
   (the manifest's `run_id`; `evaluation.run_subdirectories: false` for the flat layout), and `--from-results` /
   `--baseline-results` read a directory with its run subdirectories. They no longer pool unrelated runs silently: the
   saved runs of one strategy from several invocations, or with other settings, are refused (exit 2) unless
-  `--pool-runs` is given, with a warning naming what the pooled runs mix (#PR).
+  `--pool-runs` is given, with a warning naming what the pooled runs mix (#620).
 - `run-eval` answers the runs of a comparison interleaved: every query by every strategy and repeat before the next
   query, their order reversed on every other query (ABBA), in one batch. Answered one run after another, the later
   runs answered later, and two runs of one configuration differed by 0.5-5.8 s of latency per query; the drift now
@@ -851,12 +851,12 @@ From a `main` checkout (formats and keys no release had):
   `--baseline-results`) warns that its latency deltas measure time too. Each repeat extracts the query's entities and
   keywords again (`--repeat-extractions resample`, `evaluation.repeat_extractions`), so `repeat_stdev` includes the
   extraction's variance; `reuse` keeps one extraction for every repeat. Run manifests record `run_id`, `run_order`
-  and `repeat_extractions` (#PR).
+  and `repeat_extractions` (#620).
 - `run-eval` scores with the three LLM-free evaluators by default (`answer_match`, `retrieval`, `graph_aware`): a
   core install no longer exits 2 for want of the `eval` extra, and a run calls no judge unless asked.
   `run-eval --evaluators a,b` picks the evaluators of one run; `ragas` and `assertion` are opt-in. The `langchain`
   evaluator is removed; its `correctness` repeated `ragas`' `answer_correctness`. The `eval` extra keeps
-  `langchain-openai` as the security floor of the copy ragas depends on (#PR).
+  `langchain-openai` as the security floor of the copy ragas depends on (#620).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
