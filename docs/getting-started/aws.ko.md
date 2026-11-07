@@ -106,6 +106,7 @@ GitHub에서 이 모델을 내려받습니다. 네트워크에 접근할 수 없
 배포용 이미지(`docker/Dockerfile`)에는 두 extra 모두 빠져 있습니다(`unstructured`는 약 200MB 증가).
 Word 파일을 읽으려면 `--build-arg UV_EXTRAS="--extra docx"`로, `unstructured`를 쓰려면
 `"--extra unstructured"`로 빌드하세요. 후자는 이미지에 spaCy 모델도 설치합니다(프라이빗 VPC의 태스크는 모델을 내려받을 수 없음).
+`eval`도 빠져 있으므로 질의 태스크에서 ragas 심사 평가기를 쓰려면 `"--extra eval"`을 추가하세요.
 이미지의 `docker/config.yaml`에는 엔드포인트가 없으며 CDK 태스크 정의(task definition)가 주입합니다.
 
 **OWL/RDFS 온톨로지**를 추출 스키마로 쓰려면 `ontology` extra가 필요합니다

@@ -471,10 +471,11 @@ docker push "$REGISTRY/graphrag-app:latest"
 - Outside dev, push a unique version tag and deploy with
   `cdk deploy --all -c image_tag=<tag>`, so a pushed image cannot be swapped
   under the running task definition.
-- Extras: the image always installs `eval` (the `run-eval` judges of the
-  query task). The core install reads `.md` / `.html` files (Markdown as
-  written, HTML through the standard library's parser); add
-  `--build-arg UV_EXTRAS="--extra unstructured"` for unstructured's richer
+- Extras: the image installs none by default (`run-eval`'s default
+  evaluators are LLM-free); add `--build-arg UV_EXTRAS="--extra eval"` for
+  the ragas judge on the query task. The core install reads `.md` / `.html`
+  files (Markdown as written, HTML through the standard library's parser);
+  add `--extra unstructured` for unstructured's richer
   parsers (the build then also installs the spaCy model `en_core_web_sm`
   the extra needs, which a task in the private VPC could not download:
   without it each such file waited 120 s and failed), `--extra docx` to
