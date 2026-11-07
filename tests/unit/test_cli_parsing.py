@@ -813,6 +813,55 @@ def test_eval_evaluators_flag_picks_the_run_evaluators(config, capsys) -> None:
         assert message in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("flag", "config_value", "expected"),
+    [
+        (None, None, "answer_match/answer_contains"),
+        (None, "answer_match/token_f1", "answer_match/token_f1"),
+        (
+            "answer_match/exact_match",
+            "answer_match/token_f1",
+            "answer_match/exact_match",
+        ),
+    ],
+)
+async def test_eval_runner_declares_the_primary_metric(
+    config, mocker, tmp_path, flag, config_value, expected
+) -> None:
+    import json
+
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    config.evaluation.primary_metric = config_value
+    mocker.patch.object(run_evaluation, "display_ascii_art")
+    data = tmp_path / "eval.json"
+    data.write_text(json.dumps([{"question": "Who ships?", "answer": "Vendor"}]))
+    out = tmp_path / "out"
+    args = _eval_parser().parse_args(
+        [
+            "--data-path",
+            str(data),
+            "--output-directory",
+            str(out),
+            "--search-strategy",
+            "local,mix",
+            *(["--primary-metric", flag] if flag else []),
+        ]
+    )
+    assert (
+        await run_evaluation.EvaluationRunner(args, _StrategyChain(), config).run() == 0
+    )
+    (path,) = out.rglob("evaluation_comparison_*.json")
+    comparison = json.loads(path.read_text())
+    assert comparison["multiplicity"]["primary_metric"] == expected
+    assert comparison["deltas_vs_baseline"]["mix"][expected]["family"] == "primary"
+
+
+def test_eval_primary_metric_must_name_an_evaluator_metric(capsys) -> None:
+    with pytest.raises(SystemExit):
+        _eval_parser().parse_args(["--data-path", "d", "--primary-metric", "token_f1"])
+    assert "is not <evaluator>/<metric>" in capsys.readouterr().err
+
+
 async def test_eval_runner_scores_with_the_evaluators_flag(
     config, mocker, tmp_path
 ) -> None:
