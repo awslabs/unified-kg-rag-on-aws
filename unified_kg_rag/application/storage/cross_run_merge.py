@@ -77,17 +77,25 @@ def _single_additions(
     added: Sequence[tuple[str, Entity | Relationship]],
     stored: Sequence[Entity | Relationship],
     excluded: Collection[str],
+    derived: Sequence[Entity | Relationship],
 ) -> dict[str, str | None]:
     """``{final id: added description}`` of the ``added`` items (paired with
     the id each ends under) whose final id one delta item and at most one
-    ``stored`` copy end under, and which is not ``excluded``: the items
+    ``stored`` copy end under, which is not ``excluded``, and whose
+    ``derived`` item still cites every text unit the delta item cites (a
+    derivation that moved a unit's statement to another item, an edge of a
+    split entity, say, leaves the delta description stating it): the items
     :func:`extend_summaries` may extend."""
     reached = Counter(final for final, _ in added)
     held = Counter(item.id for item in stored)
+    cited = {item.id: set(item.text_unit_ids or []) for item in derived}
     return {
         final: item.description
         for final, item in added
-        if final not in excluded and reached[final] == 1 and held[final] <= 1
+        if final not in excluded
+        and reached[final] == 1
+        and held[final] <= 1
+        and set(item.text_unit_ids or []) <= cited.get(final, set())
     }
 
 
@@ -622,6 +630,7 @@ class CrossRunMerge:
                 [(final_id(e.id, entity_id_remap), e) for e in entities],
                 stored_entities,
                 parted,
+                derived.entities,
             ),
             summarized={
                 final_id(e.id, entity_id_remap) for e in entities if _is_summary(e)
@@ -634,6 +643,7 @@ class CrossRunMerge:
                 [(final_id(r.id, relationship_remap), r) for r in relationships],
                 stored_relationships,
                 (),
+                derived.relationships,
             ),
             summarized={
                 final_id(r.id, relationship_remap)

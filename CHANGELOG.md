@@ -441,7 +441,8 @@ From a `main` checkout (formats and keys no release had):
   every report once more; later resets reuse the answers (#539).
 - Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
   (#564, #589), also a run resumed after dying between its removal and its commit (#592), and a summary that kept
-  the lines of a spelling a later run split off or lost those of a spelling a run folded in (#624): reset once to
+  the lines of a spelling a later run split off or lost those of a spelling a run folded in (#624), or the line of
+  an edge a run's delta resolved under a spelling the stored graph keeps apart: reset once to
   summarize from the lines (one call per such item over the threshold), or leave it.
 - #565 changed the translation, description summary and gleaning prompts (gleaning re-keys every gleaned record,
   claims too): a reset translates, extracts and gleans every unit again, the cost of a first build; incremental runs
@@ -1308,6 +1309,10 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- With description summaries on, an incremental run no longer extends a stored summary with a delta edge's
+  description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
+  where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full
+  build's.
 - A document's doc-status registry namespace and its artifacts' index suffix follow one rule
   (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
   fails the loading stage naming it instead of keying the document's record under a namespace no index has (#628).
