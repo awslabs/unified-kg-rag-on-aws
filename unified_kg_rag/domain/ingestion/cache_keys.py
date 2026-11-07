@@ -55,7 +55,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -68,6 +68,7 @@ from unified_kg_rag.domain.models import (
     ChunkingStrategy,
     Config,
     ExtractionSettings,
+    IndexArtifact,
     ModelRole,
     PipelineStageType,
 )
@@ -1299,6 +1300,30 @@ def community_report_fingerprint(config: Config) -> str:
         CommunityReportPrompt,
         None,
     )
+
+
+def unbuilt_record_prefixes(
+    config: Config, building: Collection[IndexArtifact]
+) -> list[str]:
+    """The key prefixes (a fingerprint and the ``:`` of
+    ``contributions.record_key``) of the extraction records of the kinds a
+    run that builds ``building`` does not produce, under the settings
+    ``config`` would store them with: community-report answers without
+    ``COMMUNITY_REPORTS``, claim records (gleaned or not, with claims on)
+    without ``CLAIMS``. A full build keeps the records under them, so a run
+    that builds the artifact again reuses them."""
+    fingerprints: list[str] = []
+    if IndexArtifact.COMMUNITY_REPORTS not in building:
+        fingerprints.append(community_report_fingerprint(config))
+    if IndexArtifact.CLAIMS not in building:
+        # The claim section, its switch included, keys a claim record.
+        claims_on = config.model_copy(deep=True)
+        claims_on.processing.claim_extraction.enabled = True
+        fingerprints.extend(
+            unit_record_fingerprint(claims_on, gleaned=gleaned, claims=True)
+            for gleaned in (False, True)
+        )
+    return [f"{fingerprint}:" for fingerprint in fingerprints]
 
 
 def index_language(config: Config) -> str:

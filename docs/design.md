@@ -469,11 +469,15 @@ gets its models and stores from the run's `Providers` bundle.
 - **A record stays while a stored text unit names it.** A full build or
   reset whose text units were all written keeps only the records they name
   (`VectorIndexer.retain_extraction_records` copies them into a new index and
-  swaps the alias), except a rebuild to fewer methodologies, which stops
-  building an artifact the build record names and made from records
-  (entities, relationships, graph, reports, claims): it keeps every record,
-  so adding the methodology back extracts nothing again; an incremental run
-  deletes the records only removed text units named.
+  swaps the alias). It prunes only the kinds of record it produces: a
+  rebuild without community reports or without claims also keeps the
+  records under the report-answer and claim fingerprints this config would
+  store them with (`VectorIndexer.extraction_record_keys` lists them by key
+  prefix; a store that cannot keeps every record), however many such
+  rebuilds come between, and one that builds nothing from the records
+  (`raptor` alone) keeps every record, so adding the methodology (or claims)
+  back asks no model for them again; an incremental run deletes the records
+  only removed text units named.
 - **Chunk boundaries are records too.** The intelligent chunker stores each
   pre-chunk's boundary answer in the same index, keyed by
   `<cache_keys.chunk_boundary_fingerprint>:<SHA-256 of the pre-chunk>` (the

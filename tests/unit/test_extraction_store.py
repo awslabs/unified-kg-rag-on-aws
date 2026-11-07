@@ -28,7 +28,10 @@ from unified_kg_rag.application.ingestion.extraction_store import (
     with_record_keys,
 )
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.domain.ingestion.cache_keys import unit_record_fingerprint
+from unified_kg_rag.domain.ingestion.cache_keys import (
+    community_report_fingerprint,
+    unit_record_fingerprint,
+)
 from unified_kg_rag.domain.ingestion.contributions import (
     CHUNKS_RECORD_KIND,
     RECORD_KEYS_ATTRIBUTE,
@@ -47,6 +50,7 @@ from unified_kg_rag.domain.models import (
     Config,
     Entity,
     LanguageCode,
+    Methodology,
     Relationship,
     TextUnit,
     TextUnitExtraction,
@@ -912,6 +916,37 @@ class TestOpenSearchExtractionRecords:
         indexer.write_extraction_records({"k4": {}}, suffix="x")
         assert indexer.read_extraction_records(["k4"], suffix="x") == {"k4": {}}
 
+    def test_record_keys_are_listed_by_prefix(self, tmp_path) -> None:
+        indexer = _indexer(tmp_path / "vector.sqlite3")
+        assert indexer.extraction_record_keys(["ab:"], suffix="x") == set()
+        indexer.write_extraction_records(
+            {k: {} for k in ("ab:1", "ab:2", "ab;3", "abc:4", "cd:5", "a:6")},
+            suffix="x",
+        )
+        indexer.write_extraction_records({"ab:7": {}}, suffix="y")
+
+        assert indexer.extraction_record_keys(["ab:"], suffix="x") == {"ab:1", "ab:2"}
+        assert indexer.extraction_record_keys(["ab:", "cd:"], suffix="x") == {
+            "ab:1",
+            "ab:2",
+            "cd:5",
+        }
+        assert indexer.extraction_record_keys(["zz:"], suffix="x") == set()
+
+    def test_record_keys_are_read_a_page_at_a_time(self, tmp_path, mocker) -> None:
+        indexer = _indexer(tmp_path / "vector.sqlite3")
+        indexer.write_extraction_records(
+            {f"ab:{i:02d}": {} for i in range(25)}, suffix="x"
+        )
+        window = SimpleNamespace(max_result_window=10)
+        mocker.patch.object(indexer, "_limits", return_value=window)
+        search = mocker.spy(indexer.opensearch_client, "search")
+
+        keys = indexer.extraction_record_keys(["ab:"], suffix="x")
+
+        assert keys == {f"ab:{i:02d}" for i in range(25)}
+        assert search.call_count == 3
+
     def test_a_failed_retain_keeps_every_record(self, tmp_path, mocker) -> None:
         indexer = _indexer(tmp_path / "vector.sqlite3")
         indexer.write_extraction_records({"k1": {}, "k2": {}}, suffix="x")
@@ -1137,3 +1172,56 @@ class TestChunkBoundaryRecords:
     def test_a_failed_read_reads_nothing(self) -> None:
         store = ExtractionStore(Config(), lambda: _Broken())
         assert store.read_records({"default": ["b:1"]}) == {}
+
+
+class TestUnbuiltRecordKinds:
+    """A full build prunes only the kinds of record it produces
+    (``IndexingManager._unbuilt_record_keys``)."""
+
+    def _manager(self, vector: FakeVectorStore) -> IndexingManager:
+        config = Config()
+        config.indexing.methodologies = [Methodology.LIGHTRAG]
+        return IndexingManager(
+            config=config, vector_indexer=vector, graph_indexer=FakeGraphStore()
+        )
+
+    def _report_key(self, manager: IndexingManager) -> str:
+        return record_key(community_report_fingerprint(manager.config), "input")
+
+    def test_the_records_of_an_unbuilt_kind_stay(self) -> None:
+        vector = FakeVectorStore()
+        manager = self._manager(vector)
+        report = self._report_key(manager)
+        claims_on = manager.config.model_copy(deep=True)
+        claims_on.processing.claim_extraction.enabled = True
+        claim = record_key(
+            unit_record_fingerprint(claims_on, gleaned=True, claims=True), TEXT
+        )
+        old_report = record_key("0" * 12, "input")
+        vector.write_extraction_records(
+            {report: {}, claim: {}, old_report: {}, "graph:gone": {}}
+        )
+
+        manager.index_all_data(text_units=[_unit("t1")])
+
+        assert set(vector.read_extraction_records([report, claim, old_report])) == {
+            report,
+            claim,
+        }
+        assert vector.read_extraction_records(["graph:gone"]) == {}
+
+    @pytest.mark.parametrize("listing", [None, RuntimeError("down")])
+    def test_a_store_that_cannot_list_them_keeps_every_record(
+        self, mocker, listing
+    ) -> None:
+        vector = FakeVectorStore()
+        manager = self._manager(vector)
+        vector.write_extraction_records({self._report_key(manager): {}, "g:1": {}})
+        if isinstance(listing, Exception):
+            mocker.patch.object(vector, "extraction_record_keys", side_effect=listing)
+        else:
+            mocker.patch.object(vector, "extraction_record_keys", return_value=None)
+
+        manager.index_all_data(text_units=[_unit("t1")])
+
+        assert len(vector.extraction_records) == 2

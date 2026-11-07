@@ -926,6 +926,18 @@ class VectorIndexer(BaseIndexer):
         they were. Default keeps everything."""
         return IndexingStats()
 
+    def extraction_record_keys(
+        self, prefixes: list[str], suffix: str | None = None
+    ) -> set[str] | None:
+        """The keys of ``suffix``'s stored extraction records that start with
+        any of ``prefixes`` (a record fingerprint and its ``:``: the records
+        of one kind under one set of settings), which a full build that does
+        not produce that kind keeps (``retain_extraction_records``). Default
+        returns ``None``: the backend cannot tell, and such a build keeps
+        every record. Adapters that override it raise when the read
+        fails."""
+        return None
+
     def prepare_extraction_records(self, suffix: str | None = None) -> None:
         """Create ``suffix``'s extraction-record store unless it exists,
         before extraction, rather than failing every record write after it.

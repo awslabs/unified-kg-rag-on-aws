@@ -631,3 +631,76 @@ def test_a_reset_after_narrowing_with_no_change_keeps_the_extraction_records(
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert calls.since(before)["extraction"] == 0
     assert "lightrag" in _record(providers)["methodologies"]
+
+
+def test_two_lightrag_only_resets_keep_the_report_answers(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Regression: the first lightrag-only reset kept every record (its stored
+    # build record named the reports), the second found no report in the
+    # record and pruned the records to what its text units name, the report
+    # answers too: adding graphrag back asked a report again.
+    config, providers, _, calls = _setup(tmp_path)
+    source = _corpus(tmp_path)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert calls.kinds["report"] > 0
+    prefix = config.indexing.opensearch.extraction_records_index_prefix
+    records = len(e2e._stored(config, providers, prefix))
+
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    config.indexing.reset = True
+    for run in ("run-2", "run-3"):
+        context = e2e._ingest(config, providers, source, tmp_path / run)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+        assert "graphrag" not in _record(providers)["methodologies"]
+        assert len(e2e._stored(config, providers, prefix)) == records
+
+    config.indexing.reset = False
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    before = Counter(calls.kinds)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-4")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert calls.since(before)["extraction"] == 0
+    assert calls.since(before)["report"] == 0
+    assert _reports(config, providers)
+
+
+def test_two_claims_off_resets_keep_the_claim_records(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Regression: as above for claims: the second claims-off reset pruned
+    # the claim records, so turning claims back on asked every unit again.
+    from tests.integration.test_claim_convergence import _respond
+
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    config.processing.claim_extraction.enabled = True
+    asked = Counter[str]()
+
+    def respond(system: str, human: str) -> str:
+        if "claim extraction specialist" in system:
+            asked["claims"] += 1
+        return _respond(system, human)
+
+    server = FakeOllama(CountingResponder(respond), e2e.ANSWER, e2e.DIM)
+    providers = e2e._providers(config, server, e2e.FakeCrossEncoder("r"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "a.txt").write_text("Acme supplies Buyer.")
+    (source / "b.txt").write_text("Globex pays Depot and Acme.")
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert asked["claims"] > 0
+
+    config.processing.claim_extraction.enabled = False
+    config.indexing.reset = True
+    for run in ("run-2", "run-3"):
+        context = e2e._ingest(config, providers, source, tmp_path / run)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+
+    config.indexing.reset = False
+    config.processing.claim_extraction.enabled = True
+    before = Counter(asked)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-4")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert asked - before == Counter()

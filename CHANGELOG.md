@@ -764,7 +764,10 @@ From a `main` checkout (formats and keys no release had):
   (only the added model calls are new); removing one stops maintaining its artifacts without deleting them, and the
   next run records them gone, one with no document change too (in every suffix its documents hold); while the namespace holds other source scopes' documents, a run (`insert_documents` and `delete_documents` too) that would drop a methodology it holds for them is refused before any model call (exit 2), naming the scopes and the ways out (the namespace's methodologies, a namespace of its own, a reset), as one that would add a methodology by a rebuild is; the build record names the source scopes it holds (`source_scopes`, absent from older records), so a query's refusal advises a rebuild only where one is allowed; a reset to fewer methodologies keeps the extraction
   records, so adding one back extracts nothing again (#626), and so does any reset that builds nothing from them
-  (`raptor` alone, a second time too). Every strategy class declares
+  (`raptor` alone, a second time too) (#640); a reset prunes only the kinds of record it produces, so the report
+  answers stay through any number of resets without `graphrag`, and the claim records through any number with
+  claims off (the second such reset dropped them, and adding them back asked the model again); the
+  `VectorIndexer` port gains `extraction_record_keys`, whose "cannot" default keeps every record (#PR). Every strategy class declares
   `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that reads less declares its artifacts
   (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace that holds the text units, and
   `simple` sweeps only the indexes it holds (#607). A filter key is checked, after the methodology check, against the
