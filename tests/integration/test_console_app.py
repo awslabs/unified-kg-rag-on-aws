@@ -598,6 +598,7 @@ def test_secrets_are_never_written_or_shown(
         headers=HEADERS,
     )
     assert response.status_code == 422
+    assert response.json()["code"] == "credential_refused"
     assert "UKR__PROVIDERS__LLM__API_KEY" in response.json()["error"]
     text = (
         workspace / "config.yaml"

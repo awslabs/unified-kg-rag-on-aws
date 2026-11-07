@@ -125,8 +125,8 @@ export function SettingsPage({ onSaved }: { onSaved: () => void }) {
         </Notice>
       ) : null}
       {data.secrets_in_file.length ? (
-        <Notice tone="warn" title={t("settings.secretsTitle")}>
-          {t("settings.secrets", { keys: data.secrets_in_file.join(", ") })}
+        <Notice tone="warn" title={t("settings.credentialsTitle")}>
+          {t("settings.credentials", { keys: data.secrets_in_file.join(", ") })}
         </Notice>
       ) : null}
       {saved ? <Notice tone="good" title={t("settings.saved")}>{t("settings.savedHelp")}</Notice> : null}
@@ -363,7 +363,7 @@ function FieldEditor({
 
   let editor;
   if (field.kind === "secret") {
-    editor = <span className="field-help">{t("settings.secretField")}</span>;
+    editor = <span className="field-help">{t("settings.credentialField")}</span>;
   } else if (field.kind === "boolean") {
     editor = (
       <label className="check">

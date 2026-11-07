@@ -337,7 +337,7 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
 
     @app.exception_handler(SecretRefused)
     async def _secret(_: Request, e: SecretRefused) -> JSONResponse:
-        return _error(422, "secret", str(e), kind="secret")
+        return _error(422, "credential_refused", str(e))
 
     @app.exception_handler(EndpointNotConfirmed)
     async def _endpoints(_: Request, e: EndpointNotConfirmed) -> JSONResponse:
