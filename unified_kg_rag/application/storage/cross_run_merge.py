@@ -678,8 +678,10 @@ class CrossRunMerge:
         # belong to a part it split into. Until nothing more is held or
         # parted: a re-key can cascade (another spelling joins, its edges
         # move, their other ends join), and a round less leaves a moved
-        # entity ranked without the edges not yet read.
-        for attempt in range(_DERIVE_ROUNDS):
+        # entity ranked without the edges not yet read. The last of the
+        # _DERIVE_ROUNDS rounds returns whatever it reached.
+        attempt = 0
+        while True:
             unit_ids = sorted(
                 {
                     u
@@ -720,7 +722,7 @@ class CrossRunMerge:
             )
             rewired = sorted(moved)
             done = not any(held) and not parted
-            if not done and attempt == _DERIVE_ROUNDS - 1:
+            if not done and attempt >= _DERIVE_ROUNDS - 1:
                 # Out of rounds: an entity some of whose stored edges were
                 # not read keeps its stored links in its rank (rewired, they
                 # would not count).
@@ -745,8 +747,7 @@ class CrossRunMerge:
             items = self._next_round_items(
                 suffix, items, held, parted, derived, sibling_ids, blocked, attempt
             )
-        m.underived_items += len(set(derived.underived))
-        return derived
+            attempt += 1
 
     def _held_by_others(
         self,
