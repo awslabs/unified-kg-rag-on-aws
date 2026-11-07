@@ -132,6 +132,7 @@ PAIRS = [
     (GraphExpansionRetriever, BaseGraphRAGRetriever),
     (FakeGraphQueryRetriever, BaseGraphRAGRetriever),
     (FakeGraphQueryRetriever, GraphQueryPort),
+    (NeptuneRetriever, GraphQueryPort),
 ]
 
 

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import functools
+import time
 import weakref
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +18,7 @@ from gremlin_python.process.traversal import P, Traversal
 from unified_kg_rag.adapters.aws.neptune import (
     CUSTOM_VERTEX_IDS,
     NeptuneClient,
+    is_evaluation_timeout,
     neptune_pool_size,
     neptune_request_error,
     sample_vertex_query,
@@ -25,9 +27,18 @@ from unified_kg_rag.adapters.aws.neptune import (
     vertex_id_switch_query,
     vertex_ids,
 )
+from unified_kg_rag.adapters.graph_query.gremlin import (
+    HYDRATE_BATCH,
+    GremlinQuery,
+    decode_profile,
+    hydrate_traversal,
+    named_vertex_ids,
+    profile_traversal,
+)
 from unified_kg_rag.adapters.retrieval.base import seed_shares
 from unified_kg_rag.adapters.retrievers.graph_expansion import (
     GraphExpansionRetriever,
+    edge_kinds_filter,
     edge_source_kinds,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
@@ -38,7 +49,17 @@ from unified_kg_rag.adapters.storage.filter_schema import (
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
 from unified_kg_rag.domain.models import Config, GraphEdge, SearchQuery
+from unified_kg_rag.domain.models.graph_query import (
+    GraphProfile,
+    GraphQueryRequest,
+    GraphQueryResult,
+)
+from unified_kg_rag.domain.retrieval.graph_query import build_profile
 from unified_kg_rag.shared import StoreConnectionError, get_logger
+from unified_kg_rag.shared.exceptions import (
+    GraphQueryError,
+    GraphQueryExecutionError,
+)
 from unified_kg_rag.shared.logging import warn_once
 from unified_kg_rag.shared.utils import safe_float_parse
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
@@ -394,6 +415,118 @@ class NeptuneRetriever(GraphExpansionRetriever):
             if isinstance(row, dict)
         ]
 
+    # --- GraphQueryPort (the structured strategy, docs/design.md §6.6) -----
+
+    def _backend(self) -> str:
+        return str(self._config.providers.graph.kind)
+
+    def _query_timeout_ms(self, seconds: float) -> int:
+        """A structured query's server-side limit: never past the client's
+        own wait (search.store_timeout_seconds)."""
+        return int(min(seconds, self._config.search.store_timeout_seconds) * 1000)
+
+    async def adescribe(
+        self,
+        suffix: str | None,
+        *,
+        sample_vertices: int,
+        edges_per_vertex: int,
+        max_examples: int,
+    ) -> GraphProfile:
+        label = self._get_label(self._neptune_config.entity_label_prefix, suffix)
+        timeout_ms = self._query_timeout_ms(self._config.search.store_timeout_seconds)
+        rows = await self._execute_traversal(
+            functools.partial(
+                profile_traversal,
+                label=label,
+                sample=sample_vertices,
+                edges_per_vertex=edges_per_vertex,
+                timeout_ms=timeout_ms,
+            ),
+            degrade=False,
+        )
+        vertices, edges = decode_profile(rows)
+        return build_profile(
+            vertices,
+            edges,
+            sampled=len(vertices) >= sample_vertices,
+            max_examples=max_examples,
+        )
+
+    async def aexecute(self, request: GraphQueryRequest) -> GraphQueryResult:
+        started = time.monotonic()
+        label = self._get_label(
+            self._neptune_config.entity_label_prefix, request.suffix
+        )
+        filters = self._scope_filters_to_label(label, request.filters)
+        timeout_ms = self._query_timeout_ms(request.timeout_seconds)
+        query = GremlinQuery(
+            request,
+            label,
+            apply_filters=lambda traversal: self._apply_filters(traversal, filters),
+            edge_rule=edge_kinds_filter(filters),
+            timeout_ms=timeout_ms,
+        )
+        digest: list[str] = []
+
+        def build(g: GraphTraversalSource) -> Traversal:
+            traversal = query.build(g)
+            digest.append(query.digest(g))
+            logger.debug("Structured query bytecode: %s", traversal.bytecode)
+            return traversal
+
+        rows = await self._execute_traversal(build, degrade=False)
+        fields = query.decode(rows)
+        ids = named_vertex_ids(
+            fields, request.operation == "group" and request.group_key is None
+        )
+        vertices = await self._hydrate(label, ids, request.hydrate, timeout_ms)
+        return GraphQueryResult(
+            operation=request.operation,
+            vertices=vertices,
+            backend=self._backend(),
+            compiled_digest=digest[0] if digest else "",
+            elapsed_ms=(time.monotonic() - started) * 1000,
+            **fields,
+        )
+
+    async def _hydrate(
+        self, label: str, ids: list[str], keys: tuple[str, ...], timeout_ms: int
+    ) -> dict[str, dict[str, list[Any]]]:
+        """The ``keys`` of ``label``'s vertices among ``ids``, by their id
+        property (a vertex stored twice: one copy)."""
+        found: dict[str, dict[str, list[Any]]] = {}
+        if not ids or not keys:
+            return found
+        batches = [
+            ids[i : i + HYDRATE_BATCH] for i in range(0, len(ids), HYDRATE_BATCH)
+        ]
+        parts = await gather_or_cancel(
+            self._execute_traversal(
+                functools.partial(
+                    hydrate_traversal,
+                    label=label,
+                    ids=batch,
+                    keys=keys,
+                    timeout_ms=timeout_ms,
+                ),
+                degrade=False,
+            )
+            for batch in batches
+        )
+        for row in (row for part in parts for row in part):
+            if not isinstance(row, dict):
+                continue
+            props = row.get("props") or {}
+            found.setdefault(
+                str(row.get("id")),
+                {
+                    str(k): list(v) if isinstance(v, list) else [v]
+                    for k, v in props.items()
+                },
+            )
+        return found
+
     def _settled(self, label: str) -> bool:
         """Whether ``label`` was found settled in the configured mode (and
         not being switched) on an earlier query."""
@@ -548,7 +681,10 @@ class NeptuneRetriever(GraphExpansionRetriever):
         return projected
 
     async def _execute_traversal(
-        self, build: Callable[[GraphTraversalSource], Traversal]
+        self,
+        build: Callable[[GraphTraversalSource], Traversal],
+        *,
+        degrade: bool = True,
     ) -> list[Any]:
         """Run the traversal ``build`` makes from the client's current source.
 
@@ -556,7 +692,10 @@ class NeptuneRetriever(GraphExpansionRetriever):
         moment, so a query never sends on a connection another query dropped
         meanwhile (``reset`` closes it and empties its pool). On an unusable
         connection the source the request used is dropped, so the next query
-        reconnects.
+        reconnects. A failure that leaves the store usable degrades to no
+        rows, or, without ``degrade`` (a structured query, which falls back
+        instead), raises ``GraphQueryExecutionError``; a ``GraphQueryError``
+        raised building the traversal (a checker refusal) passes as is.
         """
         closed = StoreConnectionError("The Neptune retriever is closed.")
         if self._closed:
@@ -604,6 +743,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
                 )
             return result
         except Exception as e:
+            if isinstance(e, GraphQueryError):
+                raise
             # Fatal errors (an unusable connection, a refused configuration)
             # must reach `aretrieve`, which re-raises them; swallowing them
             # here turned a broken Neptune into a silent "no seed nodes found".
@@ -614,5 +755,17 @@ class NeptuneRetriever(GraphExpansionRetriever):
                 if error is e:
                     raise
                 raise error from e
+            if not degrade:
+                timed_out = is_evaluation_timeout(e)
+                raise GraphQueryExecutionError(
+                    "The graph store "
+                    + (
+                        "stopped the query at its time limit"
+                        if timed_out
+                        else "failed the query"
+                    )
+                    + f": {(str(e).splitlines() or [type(e).__name__])[0][:200]}",
+                    timed_out=timed_out,
+                ) from e
             logger.error("Gremlin traversal execution failed: %s", e)
             return []

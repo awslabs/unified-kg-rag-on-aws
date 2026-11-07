@@ -114,6 +114,28 @@ def is_timeout(exc: BaseException) -> bool:
     return any(isinstance(current, TimeoutError) for current in causes(exc))
 
 
+# The status Gremlin Server answers a traversal that ran past its
+# evaluationTimeout with, and the code Neptune names in its message.
+_EVALUATION_TIMEOUT_STATUS = 598
+_EVALUATION_TIMEOUT_CODES = ("TimeLimitExceededException",)
+
+
+def is_evaluation_timeout(exc: BaseException) -> bool:
+    """Whether ``exc`` (or a cause) is the server stopping a traversal at
+    its time limit (``evaluationTimeout`` or ``neptune_query_timeout``): the
+    server answered, so the connection is fine."""
+    for current in causes(exc):
+        if isinstance(current, GremlinServerError) and (
+            getattr(current, "status_code", None) == _EVALUATION_TIMEOUT_STATUS
+            or any(
+                code in str(current.status_message)
+                for code in _EVALUATION_TIMEOUT_CODES
+            )
+        ):
+            return True
+    return False
+
+
 def neptune_request_error(
     exc: Exception,
     timeout_seconds: float | None,
