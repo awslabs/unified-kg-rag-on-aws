@@ -629,7 +629,8 @@ From a `main` checkout (formats and keys no release had):
   read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and top rows
   are exact. The result table, the entities and paths
   it names (with seed provenance) and their passages are fused (buckets `structured_query_result`,
-  `structured_entities`, `structured_relationships`, `structured_text_units`, `structured_text_hits`); counts are
+  `structured_entities`, `structured_relationships`, `structured_text_units`, `structured_text_hits`), the table
+  numbered `[n]` like any evidence section and its citation naming the documents of its evidence rows; counts are
   exact unless a document filter or seed-property condition makes code check up to `max_scan_rows` matches ("at
   least N" past it), and a count or an aggregate cites its first matches as entities. Filter keys are checked
   against the fallback that would run too. Without a structured answer the query runs `search.structured.fallback_strategy` (`local`) and

@@ -773,7 +773,14 @@ async def test_a_count_cites_matches_as_evidence(name: str) -> None:
     assert graph.requests[-1].operation == "tuples"
     if name != "max_rank_of_buyers":  # the aggregate's own rows serve
         assert graph.requests[-1].limit == Config().search.structured.rows_in_context
-    assert _table(result).metadata["entity_ids"]
+    table = _table(result).metadata
+    assert table["entity_ids"]
+    # Its citation's lineage: the units the evidence rows cite, the most
+    # cited first.
+    cited = [u for r in entities for u in r.metadata.get("text_unit_ids") or []]
+    assert set(table["text_unit_ids"]) == set(cited)
+    counts = [cited.count(u) for u in table["text_unit_ids"]]
+    assert counts == sorted(counts, reverse=True)
 
 
 async def test_under_filters_no_stored_value_reaches_the_planner() -> None:

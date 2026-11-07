@@ -2954,7 +2954,9 @@ the model-written plan text the output guardrail screens).
    result is aggregated in code (`aggregate_bindings`).
 7. *Results*: one `query_result` result (section type `query_result`, its
    own context budget share `search.token_manager.type_budgets.query_result`)
-   holding the code-rendered plan and the result table; one entity result
+   holding the code-rendered plan and the result table, numbered `[n]` like
+   any evidence section (§7.1), its citation's lineage (`text_unit_ids`) the
+   units its evidence entities cite, the most cited first; one entity result
    per returned vertex (the graph projection, with `source_kinds`, `iri` and
    the entities-index document's filters, so `seed_provenance` applies);
    relationship results for a path's edges (the relationships-index

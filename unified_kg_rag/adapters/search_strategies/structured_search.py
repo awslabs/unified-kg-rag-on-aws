@@ -871,6 +871,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             if vertex_id in result.vertices
         ]
         provenance = self._provenance(entities)
+        lineage = self._lineage(entities)
         table = RetrievalResult(
             content=render_answer(
                 plan,
@@ -891,6 +892,9 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 "exact": not answer.truncated,
                 "entity_ids": vertex_ids,
                 "backend": result.backend,
+                # The result's citation names the documents its evidence
+                # rows rest on (application/retrieval/citations.py).
+                **({"text_unit_ids": lineage} if lineage else {}),
                 **({"provenance": provenance} if provenance else {}),
             },
         )
@@ -933,6 +937,17 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             retriever_type=SectionType.ENTITY.value,
             metadata=node,
         )
+
+    @staticmethod
+    def _lineage(entities: list[RetrievalResult]) -> list[str]:
+        """The text units the evidence entities cite, the ones most of them
+        cite first (then by id): the query result's lineage, which its
+        citation resolves to documents under the caller's filters."""
+        cited: dict[str, int] = {}
+        for entity in entities:
+            for unit in entity.metadata.get("text_unit_ids") or []:
+                cited[str(unit)] = cited.get(str(unit), 0) + 1
+        return sorted(cited, key=lambda unit: (-cited[unit], unit))
 
     @staticmethod
     def _provenance(entities: list[RetrievalResult]) -> dict[str, Any] | None:

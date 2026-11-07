@@ -102,7 +102,9 @@ Without a document filter or a seed-property condition the graph store
 computes counts and groups over every match: they are exact, and a ranking
 or a list keeps the exact top, since every store cuts its page in the
 plan's order. A count, an aggregate or a yes still cites the first matches
-by rank as entities, with their passages. Two kinds of
+by rank as entities, with their passages. The result table is numbered
+`[n]` like the other evidence sections, and its citation names the
+documents those entities come from. Two kinds of
 conditions cannot be evaluated inside the graph: document filters
 (`attr_<key>`, `attributes.filters.<key>`; graph vertices hold none) and
 seed properties (one JSON string per vertex). With either, the store

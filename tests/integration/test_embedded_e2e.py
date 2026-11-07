@@ -305,6 +305,12 @@ def _ask_every_strategy(
         if strategy is SearchStrategy.STRUCTURED:
             assert out.metadata["structured"]["status"] == "answered"
             assert out.metadata["structured"]["linked"]["x"]
+            # The query result is numbered like any evidence section, and
+            # its citation names the documents its rows rest on.
+            (table,) = [c for c in out.citations if c.section_type == "query_result"]
+            assert table.documents, table
+            assert table.text_unit_ids, table
+            assert set(table.text_unit_ids) <= stored_ids
         # AUTO is routed by the model's answer ("local").
         expected = "local" if strategy is SearchStrategy.AUTO else strategy.value
         assert out.metadata["search_strategy"] == expected
