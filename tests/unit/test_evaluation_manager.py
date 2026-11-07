@@ -1466,22 +1466,28 @@ class TestAbstention:
             [
                 ("A?", "Vendor ships.", local, {}),
                 ("B?", NO_CONTEXT_ANSWER, {**local, "abstained": True}, {}),
-                # Detected from the exact text when the flag is absent.
-                ("C?", NO_CONTEXT_ANSWER, {"search_strategy": "global"}, {}),
+                # The flag decides, in any language; the text never does.
+                (
+                    "C?",
+                    "관련 정보를 찾지 못했습니다.",
+                    {"search_strategy": "global", "abstained": True},
+                    {},
+                ),
+                ("D?", NO_CONTEXT_ANSWER, {"search_strategy": "global"}, {}),
             ],
         )
-        assert [r.abstained for r in results] == [False, True, True]
+        assert [r.abstained for r in results] == [False, True, True, False]
         stats = summary.abstention_statistics
         # completed = abstained + answered: "answered" means not declined,
         # as in answer_match's coverage.
-        assert stats["completed"] == 3
-        assert stats["abstained"] == 2 and stats["answered"] == 1
-        assert stats["abstention_rate"] == pytest.approx(2 / 3)
+        assert stats["completed"] == 4
+        assert stats["abstained"] == 2 and stats["answered"] == 2
+        assert stats["abstention_rate"] == pytest.approx(2 / 4)
         assert stats["per_strategy"]["local"]["abstention_rate"] == 0.5
-        assert stats["per_strategy"]["global"]["abstention_rate"] == 1.0
+        assert stats["per_strategy"]["global"]["abstention_rate"] == 0.5
         assert "unanswerable" not in stats
         # An abstention on an answerable item is still graded (a miss).
-        assert summary.metric_statistics["answer_contains"]["count"] == 3
+        assert summary.metric_statistics["answer_contains"]["count"] == 4
 
     async def test_saved_results_keep_decline_and_sufficiency_fields(
         self, config: Config, tmp_path

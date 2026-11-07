@@ -807,6 +807,10 @@ From a `main` checkout (formats and keys no release had):
   when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617).
 
 ### Changed
+- The fixed reply to a query retrieval found nothing for (and to a decline that left no text) is written in the
+  question's language, one sentence per supported language told by its script and function words (English, the
+  0.2.3 reply, or the index language when they do not tell); evaluation counts a decline by `metadata.abstained`
+  alone, no longer by the English text (#PR).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch

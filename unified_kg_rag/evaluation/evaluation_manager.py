@@ -33,7 +33,6 @@ from unified_kg_rag.application.bootstrap import (
     resolve_extraction_schema,
 )
 from unified_kg_rag.application.retrieval.rag_chain import (
-    NO_CONTEXT_ANSWER,
     GraphRAGChain,
     RAGInput,
     RAGOutput,
@@ -743,10 +742,10 @@ class EvaluationManager:
     def _is_abstention(answer: Any, rag_metadata: Any) -> bool:
         """True for a declined answer: the chain's ``abstained`` flag (the
         no-context reply, a ``[NO_ANSWER]`` decline, the insufficient-context
-        policy), or the exact no-context text."""
-        if isinstance(rag_metadata, dict) and rag_metadata.get("abstained"):
-            return True
-        return isinstance(answer, str) and answer.strip() == NO_CONTEXT_ANSWER
+        policy). The reply's text is not read: it is in the query's
+        language, and an answer that happens to read the same is no
+        decline."""
+        return isinstance(rag_metadata, dict) and bool(rag_metadata.get("abstained"))
 
     @staticmethod
     def _decline_details(rag_metadata: Any) -> dict[str, Any]:

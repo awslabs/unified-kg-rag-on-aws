@@ -3271,7 +3271,10 @@ about 19 paragraphs a question.
 
 **Decline marker** (`search.abstention`, applied by `GraphRAGChain`). The
 chain already answered an empty context with a fixed reply
-(`metadata.abstained`), but a model that declines in its own words was
+(`metadata.abstained`; `domain/retrieval/no_context.py`, one sentence per
+`LanguageCode`, picked by the question's script and, among the Latin-script
+languages, by disjoint function-word lists; the index language, else
+English, when they do not tell), but a model that declines in its own words was
 invisible to evaluation. With `mode: mark` the answer step appends
 `ABSTENTION_INSTRUCTIONS` (`domain/prompts/retrieval.py`) to the system
 prompt of whichever answer prompt runs (concise, comprehensive or a
