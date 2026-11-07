@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 # unified-kg-rag-on-aws data-plane image: the same image runs the Step Functions ingestion task
-# (run-ingestion) and ad-hoc run-rag / run-eval (the CDK QueryTask), so it
-# always installs the `eval` extra (run-eval's LangChain and RAGAS judges).
+# (run-ingestion) and ad-hoc run-rag / run-eval (the CDK QueryTask). run-eval's
+# default evaluators are LLM-free and need no extra; the opt-in ragas judge
+# needs the `eval` extra (about 390 MB: ragas, datasets, pandas, pyarrow,
+# langchain-community), so it is opt-in here too (UV_EXTRAS below).
 # Built with uv for reproducible, locked dependency resolution.
 # Base image pinned by tag and digest (multi-arch index) so a re-pushed tag
 # cannot change the build. Bump both together, and re-check the apt pins below.
@@ -26,7 +28,8 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Optional extras, added to `eval`. The default image parses
+# Optional extras (none by default). The ragas judge of run-eval needs the
+# `eval` extra (--extra eval). The default image parses
 # .pdf/.txt/.csv/.json/.md/.html; Word (.docx) needs the small `docx` extra
 # (--extra docx). The `unstructured` extra, the richer Markdown and HTML
 # parser, adds ~30 packages (spaCy, thinc, pypdfium2, ...) and about 200 MB,
@@ -43,13 +46,13 @@ ARG UV_EXTRAS=""
 # Install dependencies first (cached layer) using only the lock + metadata.
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev --extra eval ${UV_EXTRAS}
+    uv sync --frozen --no-install-project --no-dev ${UV_EXTRAS}
 
 # Now the source, then the project itself, installed into the venv (not
 # editable), so the runtime stage needs only /app/.venv.
 COPY unified_kg_rag ./unified_kg_rag
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable --extra eval ${UV_EXTRAS}
+    uv sync --frozen --no-dev --no-editable ${UV_EXTRAS}
 
 FROM ${BASE_IMAGE} AS runtime
 
@@ -70,9 +73,10 @@ RUN apt-get update \
         zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 
-# GIT_PYTHON_REFRESH=quiet: GitPython (pulled in transitively by ragas) probes
-# for a git binary at import time; the data plane never uses git, so silence the
-# probe rather than ship git in the image.
+# GIT_PYTHON_REFRESH=quiet: GitPython (pulled in transitively by ragas, in an
+# image built with the eval extra) probes for a git binary at import time;
+# the data plane never uses git, so silence the probe rather than ship git in
+# the image.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     GIT_PYTHON_REFRESH=quiet

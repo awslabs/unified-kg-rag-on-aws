@@ -116,7 +116,8 @@ one of the run fails at once with the same error.
 The deployed image (`docker/Dockerfile`) installs neither extra (`unstructured`
 adds about 200 MB): build with `--build-arg UV_EXTRAS="--extra docx"` to read
 Word files, or `"--extra unstructured"`, which also installs the spaCy model
-in the image (a task in the private VPC cannot download it). The image's
+in the image (a task in the private VPC cannot download it). It leaves out
+`eval` as well: add `"--extra eval"` to run the ragas judge on the query task. The image's
 `docker/config.yaml` holds no endpoints; the CDK task definitions inject them.
 
 **OWL/RDFS ontologies** as the extraction schema need the `ontology` extra

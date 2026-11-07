@@ -129,11 +129,12 @@ jobs:
           if-no-files-found: ignore
 
   core-install:
-    # The default install has neither the eval, the viz, the ontology nor the
-    # mcp extra: check the public API, the CLIs and the embedded end-to-end
-    # runs (a JSONL seed graph's too) and the static charts work without them,
-    # and that run-eval, the interactive renderer, an owl schema source, an rdf
-    # seed source and run-mcp-server fail naming the extra instead.
+    # The default install has none of the eval, viz, ontology, mcp, console,
+    # otel and cross-encoder extras: check the public API, every console
+    # script in a process of its own, the embedded end-to-end runs (a JSONL
+    # seed graph's too) and the static charts work without them, and that
+    # run-eval, the interactive renderer, an owl schema source, an rdf seed
+    # source, run-mcp-server and run-console fail naming the extra instead.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -154,9 +155,10 @@ jobs:
       - name: Check the extras are absent
         run: >-
           uv run --frozen --no-dev --group test python -c "import importlib.util as u, sys;
-          present = [m for m in ('datasets', 'docx', 'langchain',
+          present = [m for m in ('datasets', 'docx', 'fastapi', 'langchain',
           'langchain_community', 'langchain_openai', 'langgraph', 'mcp',
-          'pandas', 'pyvis', 'ragas', 'rdflib')
+          'multipart', 'opentelemetry', 'pandas', 'pyvis', 'ragas', 'rdflib',
+          'sentence_transformers', 'uvicorn')
           if u.find_spec(m)]; sys.exit(f'installed: {present}' if present else 0)"
 
       - name: Public API, extra errors and embedded end to end
@@ -169,9 +171,11 @@ jobs:
           tests/unit/test_layering.py
           tests/unit/test_mcp_server_cli.py
           tests/unit/test_mcp_tools.py
+          tests/unit/test_run_console.py
           tests/unit/test_owl_schema_source.py
           tests/unit/test_seed_sources.py
           tests/unit/test_rdf_seed_source.py
+          tests/integration/test_cli_entry_points.py
           tests/integration/test_embedded_e2e.py
           tests/integration/test_seed_graph_embedded.py
           tests/integration/test_seed_properties_embedded.py
@@ -318,7 +322,9 @@ jobs:
       - name: Sync dependencies
         # --frozen: resolve nothing, install exactly what the committed lock
         # pins, so this also proves the lock itself is installable on the floor.
-        run: uv sync --python 3.11 --frozen --extra otel --extra eval --extra viz --extra ontology
+        # The extras the quality job installs, so the mcp, docx and console
+        # tests run on the floor too instead of skipping.
+        run: uv sync --python 3.11 --frozen --extra otel --extra eval --extra viz --extra ontology --extra mcp --extra docx --extra console
 
       - name: pytest
         run: uv run --python 3.11 --frozen pytest -q -n logical
@@ -383,7 +389,9 @@ jobs:
   console-smoke:
     # One browser pass through the console on the demo workspace with the
     # fake models (no AWS, no model): on pushes to main, and on pull
-    # requests that touch the console (it installs a browser).
+    # requests that touch the console (it installs a browser), what it
+    # renders (the answer and its citations: RAGOutput in rag_chain.py, the
+    # citation and retrieval models), the dependencies, or this workflow.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -400,7 +408,7 @@ jobs:
         run: |
           if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "console=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "origin/$BASE_REF...HEAD" | grep -qE '^(console/|unified_kg_rag/application/cli/(console/|run_console\.py))'; then
+          elif git diff --name-only "origin/$BASE_REF...HEAD" | grep -qE '^(console/|unified_kg_rag/application/cli/(console/|run_console\.py)|unified_kg_rag/application/retrieval/(rag_chain|citations)\.py|unified_kg_rag/domain/retrieval/citations\.py|unified_kg_rag/domain/models/(citation|retrieval)\.py|pyproject\.toml|uv\.lock|\.github/workflows/quality\.yml)'; then
             echo "console=true" >> "$GITHUB_OUTPUT"
           else
             echo "console=false" >> "$GITHUB_OUTPUT"
@@ -528,9 +536,15 @@ jobs:
         # dependency or a broken entrypoint fails here, not at deploy time.
         run: docker run --rm unified-kg-rag:ci
 
-      - name: Check the image has the eval extra
-        # The CDK query task runs run-eval, whose default judges need it.
-        run: docker run --rm unified-kg-rag:ci python -c "import datasets, langchain_openai, pandas, ragas"
+      - name: Check the image leaves the eval extra out
+        # run-eval's default evaluators are LLM-free; the ragas judge's eval
+        # extra (about 390 MB) is opt-in (UV_EXTRAS, the docker-unstructured
+        # job builds it), and run-eval names it when a run selects ragas.
+        run: >-
+          docker run --rm unified-kg-rag:ci python -c
+          "import importlib.util as u, sys;
+          present = [m for m in ('ragas', 'datasets', 'pandas', 'langchain_community') if u.find_spec(m)];
+          sys.exit(f'eval extra installed: {present}' if present else 0)"
 
       - name: Check the runtime image layout
         # No uv and no AWS CLI (the corpus sync is docker/s3_sync.py); the
@@ -559,16 +573,17 @@ jobs:
           --exit-code 1 --ignorefile /trivyignore.yaml unified-kg-rag:ci
 
   docker-unstructured:
-    # The image with the opt-in unstructured extra (Markdown and HTML), which
-    # also bakes in the spaCy model unstructured tokenizes with: a private
-    # VPC cannot download it at the first file. Built only (no push), with
-    # the same rate-limit fallback as the docker job.
+    # The image with the opt-in extras: unstructured (Markdown and HTML),
+    # which also bakes in the spaCy model unstructured tokenizes with (a
+    # private VPC cannot download it at the first file), and eval (run-eval's
+    # ragas judge). Built only (no push), with the same rate-limit fallback as
+    # the docker job.
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Build the image with the unstructured extra
+      - name: Build the image with the unstructured and eval extras
         run: |
           set -o pipefail
           base=$(sed -n 's|^ARG BASE_IMAGE=public\.ecr\.aws/docker/library/\(.*@sha256:[0-9a-f]\{64\}\)$|\1|p' docker/Dockerfile)
@@ -576,7 +591,7 @@ jobs:
           base_arg=()
           for attempt in 1 2 3 4 5; do
             if docker build -f docker/Dockerfile "${base_arg[@]}" \
-                --build-arg "UV_EXTRAS=--extra unstructured" \
+                --build-arg "UV_EXTRAS=--extra unstructured --extra eval" \
                 -t unified-kg-rag:ci-unstructured . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
               exit 0
             fi
@@ -592,8 +607,11 @@ jobs:
           docker run --rm --network none unified-kg-rag:ci-unstructured
           python -c "import en_core_web_sm; en_core_web_sm.load()"
 
+      - name: Check the image has the eval extra
+        run: docker run --rm unified-kg-rag:ci-unstructured python -c "import datasets, langchain_openai, pandas, ragas"
+
       - name: Scan the image for fixable vulnerabilities
-        # As in the docker job, over the extra's ~30 more packages.
+        # As in the docker job, over the extras' packages.
         run: >-
           docker run --rm
           -v /var/run/docker.sock:/var/run/docker.sock

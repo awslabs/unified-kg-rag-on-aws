@@ -31,11 +31,29 @@ def test_the_default_image_is_built_and_run() -> None:
     assert "UV_EXTRAS" not in runs
 
 
+def test_the_eval_extra_is_opt_in_in_the_image() -> None:
+    # run-eval's default evaluators are LLM-free: the default image installs
+    # no extra, and the opt-in image is the one built with the eval extra.
+    dockerfile = (_WORKFLOW.parents[2] / "docker" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    syncs = [line for line in dockerfile.splitlines() if "uv sync" in line]
+    assert len(syncs) == 2
+    assert all("--extra" not in line and "${UV_EXTRAS}" in line for line in syncs)
+    default = " ".join(step.get("run", "") for step in _steps("docker"))
+    assert "'ragas', 'datasets', 'pandas'" in default and "sys.exit" in default
+    extras = " ".join(step.get("run", "") for step in _steps("docker-unstructured"))
+    assert (
+        'ci-unstructured python -c "import datasets, langchain_openai, pandas, ragas"'
+        in extras
+    )
+
+
 def test_the_unstructured_image_is_built_with_its_spacy_model() -> None:
     steps = _steps("docker-unstructured")
     build, check = (step.get("run", "") for step in steps[1:3])
     assert "docker build -f docker/Dockerfile" in build
-    assert '--build-arg "UV_EXTRAS=--extra unstructured"' in build
+    assert '--build-arg "UV_EXTRAS=--extra unstructured --extra eval"' in build
     # Checked inside the image it built, with no network.
     assert "ci-unstructured" in build and "ci-unstructured" in check
     assert "--network none" in check and "import en_core_web_sm" in check

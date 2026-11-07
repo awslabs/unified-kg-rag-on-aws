@@ -1,7 +1,7 @@
 # Dependabot version updates. Security *alerts* are already enabled on the
 # repository and drive the fix(deps) history; scheduled version updates keep
-# both uv locks current and move the SHA-pinned workflow actions, which no
-# other path can do.
+# both uv locks and the console's npm lock current and move the SHA-pinned
+# workflow actions, which no other path can do.
 #
 # Every entry waits `cooldown.default-days` after a release before proposing
 # it, so a compromised or broken release is usually yanked before it reaches a
@@ -80,6 +80,26 @@ updates:
       # when the newest jsii admits it.
       - dependency-name: "typeguard"
         versions: [">=3.0.0"]
+
+  # The console's web client (console/web/package.json, package-lock.json).
+  # Its dependencies are bundled into the built client run-console serves;
+  # its devDependencies (Vite, TypeScript, ESLint, Vitest, Playwright) only
+  # build and test it. The console-web job runs npm audit on every change.
+  - package-ecosystem: "npm"
+    directory: "/console/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "fix(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      console-web:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # Workflow actions are pinned to commit SHAs (see .github/workflows/*.yml), so
   # they are invisible to every other update path.

@@ -10,12 +10,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import botocore.session
 import networkx as nx
 import pytest
+from botocore.stub import Stubber
 
 from tests.integration import test_embedded_e2e as embedded
 from tests.integration.test_document_changes_api import _ok, setup  # noqa: F401
 from unified_kg_rag import describe_namespace, export_graph
+from unified_kg_rag.adapters.doc_status.dynamodb import DynamoDBDocStatusStore
 from unified_kg_rag.application.cli import run_describe
 from unified_kg_rag.application.storage import inspection
 from unified_kg_rag.shared.exceptions import ConfigurationError
@@ -168,3 +171,60 @@ def test_run_describe_prints_one_json_document(
         sys, "argv", ["run-describe", "--suffix", "tenant_x", "--output-format", "json"]
     )
     assert run_describe.main() == 2
+
+
+# The registry adapter's own constructor (no_aws forbids building one).
+_DYNAMODB_INIT = DynamoDBDocStatusStore.__init__
+
+
+class _DeniedSession:
+    """A boto3 session whose DynamoDB client is denied its first call, as
+    the deployed query task's role is (it holds no DynamoDB grant). A
+    stubbed client: nothing is sent."""
+
+    region_name = "us-west-2"
+
+    def client(self, service_name: str, **_: Any) -> Any:
+        client = botocore.session.get_session().create_client(
+            service_name,
+            region_name=self.region_name,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",  # nosec B106 - a stubbed client
+        )
+        stubber = Stubber(client)
+        stubber.add_client_error(
+            "describe_table",
+            service_error_code="AccessDeniedException",
+            service_message="not authorized to perform: dynamodb:DescribeTable",
+        )
+        stubber.activate()
+        return client
+
+
+def test_describe_reports_an_unreadable_registry_and_the_rest(
+    ingested, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    config, providers = ingested
+    monkeypatch.setattr(DynamoDBDocStatusStore, "__init__", _DYNAMODB_INIT)
+    monkeypatch.setattr(
+        providers,
+        "build_doc_status",
+        lambda: DynamoDBDocStatusStore(config, boto_session=_DeniedSession()),  # type: ignore[arg-type]
+    )
+
+    description = describe_namespace(config, providers=providers)
+
+    assert description.registry is None
+    assert description.registry_unavailable is not None
+    assert "AccessDeniedException" in description.registry_unavailable
+    assert description.methodologies == ["graphrag", "lightrag", "hipporag"]
+    assert {"local", "mix"} <= set(description.strategies)
+
+    # run-describe prints the rest and says the registry is unavailable.
+    monkeypatch.setattr(run_describe, "load_cli_config", lambda _args: config)
+    monkeypatch.setattr(inspection, "build_providers", lambda _c: providers)
+    monkeypatch.setattr(sys, "argv", ["run-describe"])
+    assert run_describe.main() == 0
+    printed = " ".join(capsys.readouterr().out.split())
+    assert "Doc-status registry: unavailable" in printed
+    assert "Strategies:" in printed

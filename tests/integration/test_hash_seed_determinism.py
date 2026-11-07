@@ -247,7 +247,6 @@ def run(work: Path, source_scope: str | None = None) -> dict[str, Any]:
     return out
 
 
-@pytest.mark.timeout(600)
 def _run_subprocess(work: Path, out: Path, seed: str, *scope: str) -> dict[str, Any]:
     subprocess.run(
         [sys.executable, "-m", MODULE, str(work), str(out), *scope],
@@ -259,6 +258,9 @@ def _run_subprocess(work: Path, out: Path, seed: str, *scope: str) -> dict[str, 
     return json.loads(out.read_text("utf-8"))
 
 
+# Two subprocess builds, each bounded by its own 500 s timeout: a marker on
+# the helper had no effect, so the test ran under the default 120 s.
+@pytest.mark.timeout(1100)
 def test_outputs_do_not_depend_on_the_hash_seed(tmp_path: Path) -> None:
     # One work directory for both runs: by default document ids derive from
     # the source directory.

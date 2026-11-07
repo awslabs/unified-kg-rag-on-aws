@@ -14,7 +14,14 @@ an issue with the report when one is behind:
 - the ADOT collector sidecar (iac/stacks/compute_stack.py): the latest
   release, and whether the pinned tag still has the pinned digest;
 - the AWS CDK CLI CI installs (``npm install -g aws-cdk@...`` in
-  .github/workflows/quality.yml): the latest npm release.
+  .github/workflows/quality.yml): the latest npm release;
+- the Trivy image the image scans run (``aquasec/trivy:...@sha256:...`` in
+  .github/workflows/quality.yml, one pin for every job): the latest release,
+  and whether the pinned tag still has the pinned digest;
+- the apt pins of docker/Dockerfile (``libgomp1=...``, ``zlib1g=...``): the
+  version the base image's Debian repositories now offer (a superseded
+  version leaves the repository and the build fails), and whether the base
+  image already ships the pinned version (the pin can go).
 
 Usage::
 
@@ -23,7 +30,9 @@ Usage::
 Exit status 0 when every pin is current, 1 when one is behind (the report
 says which), 2 when a lookup failed. Image digests come from
 ``docker buildx imagetools inspect``; release versions from the GitHub API
-(``GITHUB_TOKEN``, if set, raises its rate limit) and the npm registry.
+(``GITHUB_TOKEN``, if set, raises its rate limit) and the npm registry; the
+apt versions from ``apt-cache policy`` in the pinned base image (``docker
+run``).
 ``tests/unit/test_check_pins.py`` keeps the pin patterns matching the files.
 """
 
@@ -57,12 +66,21 @@ _COLLECTOR_VERSION = re.compile(r'^COLLECTOR_VERSION = "(?P<version>v[0-9.]+)"$'
 _COLLECTOR_DIGEST = re.compile(rf'^\s+"(?P<digest>{_DIGEST})"$', re.M)
 _COLLECTOR_REPOSITORY = "public.ecr.aws/aws-observability/aws-otel-collector"
 _CDK_CLI = re.compile(r"npm install -g aws-cdk@(?P<version>[0-9.]+)")
+_TRIVY_IMAGE = re.compile(
+    rf"(?P<repo>aquasec/trivy):(?P<version>[0-9.]+)@(?P<digest>{_DIGEST})"
+)
+# A package of the runtime stage's `apt-get install` line, pinned: one per
+# line, `        name=version \`.
+_APT_PIN = re.compile(
+    r"^\s+(?P<package>[a-z0-9][a-z0-9.+-]*)=(?P<version>\S+) \\$", re.M
+)
 
 UV_RELEASES = "https://api.github.com/repos/astral-sh/uv/releases/latest"
 ADOT_RELEASES = (
     "https://api.github.com/repos/aws-observability/aws-otel-collector/releases/latest"
 )
 CDK_CLI_LATEST = "https://registry.npmjs.org/aws-cdk/latest"
+TRIVY_RELEASES = "https://api.github.com/repos/aquasecurity/trivy/releases/latest"
 
 
 @dataclass(frozen=True)
@@ -75,6 +93,11 @@ class Pins:
     collector_version: str
     collector_digest: str
     cdk_cli_version: str
+    trivy_repo: str
+    trivy_version: str
+    trivy_digest: str
+    # (package, version) of each apt pin, in the Dockerfile's order.
+    apt_pins: tuple[tuple[str, str], ...]
 
 
 def _match(pattern: re.Pattern[str], text: str, where: Path) -> re.Match[str]:
@@ -95,6 +118,18 @@ def read_pins(root: Path = REPO_ROOT) -> Pins:
     )
     base = _match(_BASE_IMAGE, dockerfile, DOCKERFILE)
     uv = _match(_UV_IMAGE, dockerfile, DOCKERFILE)
+    trivy = _match(_TRIVY_IMAGE, quality, QUALITY_WORKFLOW)
+    others = {m.group(0) for m in _TRIVY_IMAGE.finditer(quality)} - {trivy.group(0)}
+    if others:
+        raise ValueError(
+            f"{QUALITY_WORKFLOW.relative_to(REPO_ROOT)}: the image scans pin "
+            f"different Trivy images: {sorted({trivy.group(0), *others})}"
+        )
+    apt = tuple((m["package"], m["version"]) for m in _APT_PIN.finditer(dockerfile))
+    if not apt:
+        raise ValueError(
+            f"{DOCKERFILE.relative_to(REPO_ROOT)}: no pin matches {_APT_PIN.pattern}"
+        )
     return Pins(
         base_ref=base["ref"],
         base_digest=base["digest"],
@@ -104,6 +139,10 @@ def read_pins(root: Path = REPO_ROOT) -> Pins:
         collector_version=_match(_COLLECTOR_VERSION, compute, COMPUTE_STACK)["version"],
         collector_digest=_match(_COLLECTOR_DIGEST, compute, COMPUTE_STACK)["digest"],
         cdk_cli_version=_match(_CDK_CLI, quality, QUALITY_WORKFLOW)["version"],
+        trivy_repo=trivy["repo"],
+        trivy_version=trivy["version"],
+        trivy_digest=trivy["digest"],
+        apt_pins=apt,
     )
 
 
@@ -118,6 +157,9 @@ class Lookups:
     digest: Callable[[str], str]
     latest_release: Callable[[str], str]
     latest_npm: Callable[[str], str]
+    # (image, packages) -> {package: (installed, candidate)} as apt-cache
+    # policy reports them in that image ("(none)": not installed).
+    apt_policy: Callable[[str, tuple[str, ...]], dict[str, tuple[str, str]]]
 
 
 def check(pins: Pins, lookups: Lookups) -> list[str]:
@@ -164,6 +206,38 @@ def check(pins: Pins, lookups: Lookups) -> list[str]:
             f"{pins.cdk_cli_version}, .github/workflows/quality.yml and "
             "iac/README.md)."
         )
+    latest_trivy = lookups.latest_release(TRIVY_RELEASES).lstrip("v")
+    if _version(latest_trivy) > _version(pins.trivy_version):
+        behind.append(
+            f"- Trivy {latest_trivy} is released (pinned: {pins.trivy_version}, "
+            "the image scans in .github/workflows/quality.yml and "
+            ".github/workflows/pin-freshness.yml reads it from there)."
+        )
+    trivy = f"{pins.trivy_repo}:{pins.trivy_version}"
+    trivy_digest = lookups.digest(trivy)
+    if trivy_digest != pins.trivy_digest:
+        behind.append(
+            f"- `{trivy}` now has digest `{trivy_digest}` (pinned: "
+            f"`{pins.trivy_digest}`): the tag was re-pushed; check why before "
+            "taking it."
+        )
+    base = f"{pins.base_ref}@{pins.base_digest}"
+    policy = lookups.apt_policy(base, tuple(name for name, _ in pins.apt_pins))
+    for name, pinned in pins.apt_pins:
+        installed, candidate = policy[name]
+        if candidate != pinned:
+            behind.append(
+                f"- apt `{name}`: the base image's repositories now offer "
+                f"`{candidate}` (pinned: `{pinned}`, docker/Dockerfile). Bump "
+                "the pin: a superseded version leaves the repository and the "
+                "image build fails."
+            )
+        elif installed == pinned:
+            behind.append(
+                f"- apt `{name}`: the base image already ships the pinned "
+                f"`{pinned}` (a security upgrade the base digest now "
+                "includes): drop it from docker/Dockerfile's apt-get line."
+            )
     return behind
 
 
@@ -190,7 +264,48 @@ def _image_digest(ref: str) -> str:
     return str(digest)
 
 
-_ALLOWED_URLS = frozenset({UV_RELEASES, ADOT_RELEASES, CDK_CLI_LATEST})
+def _apt_policy(image: str, packages: tuple[str, ...]) -> dict[str, tuple[str, str]]:
+    """``apt-cache policy`` of ``packages`` in ``image``, after an update:
+    {package: (installed, candidate)}."""
+    out = subprocess.run(  # nosec B603 B607 - fixed argv, no shell on the host
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--entrypoint",
+            "sh",
+            image,
+            "-c",
+            'apt-get update -qq > /dev/null && apt-cache policy "$@"',
+            "sh",
+            *packages,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    ).stdout
+    return parse_apt_policy(out, packages)
+
+
+def parse_apt_policy(
+    text: str, packages: tuple[str, ...]
+) -> dict[str, tuple[str, str]]:
+    """{package: (installed, candidate)} from ``apt-cache policy`` output."""
+    found: dict[str, tuple[str, str]] = {}
+    for block in re.split(r"^(?=\S+:$)", text, flags=re.M):
+        header = re.match(r"^(\S+):$", block, re.M)
+        installed = re.search(r"^\s+Installed: (\S+)$", block, re.M)
+        candidate = re.search(r"^\s+Candidate: (\S+)$", block, re.M)
+        if header and installed and candidate:
+            found[header.group(1)] = (installed.group(1), candidate.group(1))
+    missing = [p for p in packages if p not in found]
+    if missing:
+        raise ValueError(f"apt-cache policy reported no candidate for {missing}")
+    return found
+
+
+_ALLOWED_URLS = frozenset({UV_RELEASES, ADOT_RELEASES, CDK_CLI_LATEST, TRIVY_RELEASES})
 
 
 def _get_json(url: str) -> dict[str, object]:
@@ -217,7 +332,10 @@ def _latest_npm(url: str) -> str:
 
 
 NETWORK = Lookups(
-    digest=_image_digest, latest_release=_latest_release, latest_npm=_latest_npm
+    digest=_image_digest,
+    latest_release=_latest_release,
+    latest_npm=_latest_npm,
+    apt_policy=_apt_policy,
 )
 
 

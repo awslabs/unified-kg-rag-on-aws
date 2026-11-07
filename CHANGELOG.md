@@ -65,7 +65,7 @@ stored is read again: follow *Upgrading* in order.
   (`run-mcp-server`), `console` (`run-console`: FastAPI, Uvicorn, python-multipart). A feature whose
   extra is missing fails naming it: the CLIs exit 2 before any work, the library raises `ConfigurationError` (also
   under `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer need no extra; the container
-  image installs `eval` (#467, #472, #520, #576).
+  image installs none (`--build-arg UV_EXTRAS="--extra eval"` adds the ragas judge) (#467, #472, #520, #576).
 - No longer dependencies: `graspologic` (Leiden runs on `graspologic-native`), `bokeh` (with `contourpy`, `tornado`,
   `xyzservices`), `umap-learn`, `scikit-learn`, `nest-asyncio`; `langchain` comes only with `eval` (#225, #226,
   #465, #520, #576). Security floors follow the package that pulls the pinned one in: `pillow` in `eval`, `llvmlite`
@@ -402,7 +402,8 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     removed (a config naming it, or `evaluation.langchain_metrics`, loads with a WARNING and without it): gate on
     `ragas/answer_correctness` instead of `langchain/correctness`. `graph_aware` coverage matches by entity key and
     can read lower than before on the same answers: run baselines again before comparing. Re-render static charts
-    to get the SVG pages (#563, #576, #620).
+    to get the SVG pages (#563, #576, #620). The container image leaves the `eval` extra out: a query task that runs
+    ragas needs an image built with `--build-arg UV_EXTRAS="--extra eval"` (about 390 MB more).
 16. A Python script that runs ingestion (`DataIngestionPipeline`, `DirectoryLoader.deduplicate_documents`, the
     graph resolver) must keep its entry point behind `if __name__ == "__main__":`: the deduplication and fuzzy
     matching worker processes now start from a forkserver, which imports the main module, instead of forking a
@@ -767,7 +768,9 @@ From a `main` checkout (formats and keys no release had):
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
-  (`--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#628). See
+  (`--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#628). A
+  registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported unavailable, with
+  the reason in `registry_unavailable` and a warning, and the rest is still described. See
   [inspect and export](docs/guides/inspect.md).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
@@ -1032,7 +1035,9 @@ From a `main` checkout (formats and keys no release had):
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs with the CMK and
   `log_retention_days` (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot
   the instances after the deploy (#617). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue
-  when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617).
+  when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617); it also
+  checks the Trivy image and the Dockerfile's apt pins, and builds and scans the image, so a fix released after the
+  last pull request lands in the same issue. Dependabot also moves the console's npm lock.
 - Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
   (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).
@@ -1454,7 +1459,8 @@ Deployment (CDK).
 - Releases attach SHA-256 checksums and a CycloneDX SBOM of the locked dependencies, with a signed build provenance
   attestation of the distributions (`gh attestation verify`) (#617).
 - IaC: the ingestion role cannot change OpenSearch cluster settings or plugin configuration (writes under
-  `_cluster`, `_plugins` and `_opendistro` are denied); the logger-credential semgrep finding is suppressed on each
+  `_cluster`, `_plugins` and `_opendistro` are denied), nor write snapshot repositories, templates, ingest pipelines
+  or stored scripts (`_snapshot`, `_index_template`, `_component_template`, `_template`, `_ingest`, `_scripts`); the logger-credential semgrep finding is suppressed on each
   matched line, not the whole package (#617).
 - A failed query step (routing, query processing, follow-up rewrite, context optimization, the answer and its
   stream, conversation memory) or claim extraction step logs its error as its type and a digest, its text at DEBUG,
