@@ -34,6 +34,7 @@ from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
+    Methodology,
     PipelineConfig,
     PipelineContext,
     PipelineStageStatus,
@@ -225,3 +226,109 @@ def test_a_reset_cannot_run_document_changes(setup) -> None:
     config.indexing.reset = True
     with pytest.raises(ConfigurationError, match="cannot reset"):
         pipeline.insert_documents([{"id": "a", "text": "Vendor."}])
+
+
+def test_an_added_methodology_is_refused_with_advice_that_works(
+    tmp_path: Path,
+) -> None:
+    # Regression: a methodology added to an API-fed namespace failed the
+    # loading stage, after the run took the lease, advising a run of "the
+    # whole corpus" the api scope does not have.
+    asked: list[str] = []
+
+    def respond(system: str, human: str) -> str:
+        asked.append(system)
+        return _respond(system, human)
+
+    config = _config(tmp_path / "stores", tmp_path / "viz")
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    providers = _providers(
+        config, FakeOllama(respond, ANSWER, DIM), FakeCrossEncoder("rerank")
+    )
+
+    def pipeline_of() -> DataIngestionPipeline:
+        pipeline = DataIngestionPipeline(
+            config,
+            PipelineConfig(
+                stages_enabled=dict.fromkeys(PipelineStageType, True),
+                local_directory=tmp_path / "cache",
+            ),
+            providers=providers,
+        )
+        for stage in pipeline.stages:
+            if isinstance(stage, ps.GraphResolutionStage):
+                stage.resolver.entity_resolver.use_process_pool = False
+                stage.resolver.relationship_resolver.use_process_pool = False
+        return pipeline
+
+    def methodologies() -> list[str]:
+        indexer = providers.build_vector_indexer()
+        try:
+            return list((indexer.read_build_record(None) or {})["methodologies"])
+        finally:
+            indexer.close()
+
+    documents = {
+        "contracts/supply.txt": "Vendor supplies widgets to Buyer.",
+        "ticket-1.txt": "Depot stores widgets for Vendor.",
+    }
+    pipeline = pipeline_of()
+    try:
+        _ok(
+            pipeline.insert_documents(
+                [{"id": key, "text": text} for key, text in documents.items()]
+            )
+        )
+    finally:
+        pipeline.close()
+
+    config.indexing.methodologies = [Methodology.LIGHTRAG, Methodology.GRAPHRAG]
+    pipeline = pipeline_of()
+    try:
+        asked.clear()
+        for call in (
+            lambda: pipeline.insert_documents([{"id": "b", "text": "Carrier."}]),
+            lambda: pipeline.delete_documents(["ticket-1.txt"]),
+        ):
+            with pytest.raises(ConfigurationError, match="does not hold") as refused:
+                call()
+            assert "indexing.methodologies: lightrag" in str(refused.value)
+            assert "source_scope: 'api'" in str(refused.value)
+        assert asked == []
+        assert set(_records(providers)) == set(documents)
+        assert not config.indexing.reset
+
+        # The advice: a run over a directory of the namespace's documents,
+        # each a file named by its id (ids the parser reads), in the api
+        # scope, adds it from the stored extractions.
+        corpus = tmp_path / "corpus"
+        for key, text in documents.items():
+            (corpus / key).parent.mkdir(parents=True, exist_ok=True)
+            (corpus / key).write_text(text)
+        config.processing.document_parsing.source_scope = "api"
+        _ok(pipeline.run(corpus))
+        assert not any("knowledge graph extraction expert" in s for s in asked)
+        assert "graphrag" in methodologies()
+        assert set(_records(providers)) == set(documents)
+        # Inserts run again once the namespace holds what they build.
+        config.processing.document_parsing.source_scope = None
+        _ok(pipeline.insert_documents([{"id": "b", "text": "Carrier ships."}]))
+        assert set(_records(providers)) == {*documents, "b"}
+    finally:
+        pipeline.close()
+
+
+def test_delete_documents_closes_a_registry_it_builds(
+    setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A pipeline built without its registry builds one to check the ids:
+    # it was left open.
+    _, providers, pipeline = setup
+    built = providers.build_doc_status()
+    closed: list[bool] = []
+    monkeypatch.setattr(built, "close", lambda: closed.append(True))
+    monkeypatch.setattr(pipeline, "_doc_status", None)
+    monkeypatch.setattr(providers, "build_doc_status", lambda: built)
+    with pytest.raises(DocumentNotFoundError):
+        pipeline.delete_documents(["never-inserted"])
+    assert closed == [True]

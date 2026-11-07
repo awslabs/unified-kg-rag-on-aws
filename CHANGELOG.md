@@ -778,7 +778,8 @@ From a `main` checkout (formats and keys no release had):
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
   doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
-  (#628). See [Python library](docs/guides/python-library.md#documents-from-memory).
+  (#628), and a methodology the namespace does not hold yet raises `ConfigurationError` before the run, naming the
+  methodologies held and the directory run that adds it. See [Python library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents

@@ -1607,8 +1607,13 @@ delta, never as a full build), deletes only the named ones and refuses one
 the scope does not hold (`DocumentNotFoundError`); no mass-deletion
 question is asked, since the caller named them. A call needs the registry
 (without it every run is a full build of its documents) and refuses
-`indexing.reset`, or a run the pipeline would rebuild to add a methodology:
-either would rebuild the namespace from the call's documents alone. The
+`indexing.reset`, or a run the pipeline would rebuild to add a methodology
+(read from the build record before the lease, `missing_artifacts`):
+either would rebuild the namespace from the call's documents alone. A
+rebuild of an API scope from its stored text units is not offered: the
+units are chunks, not the documents, and their boundaries depend on the
+chunker; the refusal names the methodologies held and the directory run
+that adds one. The
 staged document's `file_path` becomes its id after identity is assigned,
 so its text units name the id, not the temporary directory.
 
