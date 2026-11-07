@@ -140,6 +140,15 @@ def test_code_spans_and_fences_are_not_links(tmp_path: Path) -> None:
     )
 
 
+def test_a_link_inside_an_html_comment_is_checked(tmp_path: Path) -> None:
+    # A commented-out placeholder (a recording to add later) must resolve
+    # once uncommented; a code span inside the comment is still no link.
+    files = {
+        "a.md": "# A\n\n<!-- ![demo](./assets/demo.gif)\n`[x](gone.md)` -->\n",
+    }
+    assert _failures(tmp_path, files) == ["a.md:3: missing target: ./assets/demo.gif"]
+
+
 def test_untracked_files_are_not_checked(tmp_path: Path) -> None:
     git_tree(tmp_path, {"a.md": "# A"})
     (tmp_path / "local.md").write_text("[x](missing.md)", encoding="utf-8")

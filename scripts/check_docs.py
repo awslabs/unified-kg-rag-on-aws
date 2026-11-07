@@ -203,9 +203,10 @@ def fragments(path: Path) -> frozenset[str]:
     return frozenset(out)
 
 
-def _paragraphs(text: str) -> list[tuple[int, str]]:
+def _paragraphs(text: str, *, comments: bool = False) -> list[tuple[int, str]]:
     """The ``(first line, text)`` of each paragraph outside fenced code, with
-    code spans and comments blanked (offsets and newlines kept)."""
+    code spans blanked, and HTML comments unless ``comments`` (offsets and
+    newlines kept)."""
     paragraphs: list[list[tuple[int, str]]] = []
     for number, line in prose_lines(text):
         if not line.strip():
@@ -217,19 +218,21 @@ def _paragraphs(text: str) -> list[tuple[int, str]]:
     out = []
     for paragraph in paragraphs:
         body = "\n".join(line for _, line in paragraph)
-        for pattern in (_CODE_SPAN, _COMMENT):
+        for pattern in (_CODE_SPAN,) if comments else (_CODE_SPAN, _COMMENT):
             body = pattern.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), body)
         out.append((paragraph[0][0], body))
     return out
 
 
-def links(text: str) -> list[tuple[int, str, bool]]:
-    """The ``(line, target, is_image)`` of every link outside code.
+def links(text: str, *, comments: bool = False) -> list[tuple[int, str, bool]]:
+    """The ``(line, target, is_image)`` of every link outside code, and with
+    ``comments`` also inside HTML comments (a commented-out image or link,
+    such as a placeholder for a recording, must resolve once uncommented).
 
     Paragraphs are scanned whole, so a link whose text wraps is found.
     """
     out = []
-    for first, body in _paragraphs(text):
+    for first, body in _paragraphs(text, comments=comments):
         found = [(m.start(), m.group(1), True) for m in _IMAGE.finditer(body)]
         found += [(m.start(), m.group(1), False) for m in _LINK.finditer(body)]
         found += [(m.start(), m.group(1), True) for m in _IMG_SRC.finditer(body)]
@@ -334,7 +337,8 @@ def check_links(root: Path = REPO_ROOT) -> Report:
     tracked = {p.resolve() for p in files if not p.is_symlink()}
     for md in (p for p in files if p.suffix == ".md"):
         rel = md.relative_to(root).as_posix()
-        for number, target, image in links(md.read_text(encoding="utf-8")):
+        text = md.read_text(encoding="utf-8")
+        for number, target, image in links(text, comments=True):
             base = md.parent
             if target.startswith(REPO_URL):
                 target, base = target[len(REPO_URL) :], root
@@ -342,7 +346,7 @@ def check_links(root: Path = REPO_ROOT) -> Report:
                 continue
             report.counts["images" if image else "links"] += 1
             _check_target(root, md, f"{rel}:{number}", target, base, report, tracked)
-        for number, code_path in code_paths(md.read_text(encoding="utf-8")):
+        for number, code_path in code_paths(text):
             if code_path in EXTERNAL_PATHS:
                 continue
             report.counts["code paths"] += 1
