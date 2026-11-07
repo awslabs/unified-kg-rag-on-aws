@@ -61,6 +61,7 @@ from unified_kg_rag.domain.models import (
     EvaluationResult,
     EvaluatorType,
 )
+from unified_kg_rag.domain.retrieval.citations import strip_markers
 from unified_kg_rag.shared import get_logger
 
 from .text_matching import phrase_in_text
@@ -209,6 +210,10 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         self, result: EvaluationResult
     ) -> tuple[list[EvaluationMetric], dict[str, Any]]:
         answer = result.generated_answer or ""
+        if self.config.search.citations.enabled:
+            # The answer's words: its citation markers ([1]) are no
+            # coverage and no length (as answer_match reads it).
+            answer = strip_markers(answer)
         expected_entities = result.metadata.get("expected_entities", []) or []
         expected_relationships = result.metadata.get("expected_relationships", []) or []
         source_types = set(result.retrieved_source_types)

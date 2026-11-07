@@ -228,6 +228,21 @@ class TestPairwiseJudge:
         assert out["criteria"]["comprehensiveness"]["candidate_win_rate"] == 0.5
         assert out["criteria"]["directness"]["candidate_win_rate"] == 0.25
 
+    def test_the_judge_reads_answers_without_citation_markers(self, mocker) -> None:
+        # A citations-on arm against a citations-off one: the markers are no
+        # content and no length.
+        judge = self._judge(mocker)
+        out = asyncio.run(
+            judge.acompare(
+                [_result("a", "Depot stores it.")],
+                [_result("a", "Depot stores it [1][2].")],
+            )
+        )
+        assert {c["answer2"] for c in judge.chain.calls} | {
+            c["answer1"] for c in judge.chain.calls
+        } == {"Depot stores it."}
+        assert out["judged"] == 1
+
     def test_a_malformed_verdict_fails_the_pair(self, mocker) -> None:
         # Before, a missing criterion became a silent tie.
         judge = self._judge(mocker)
