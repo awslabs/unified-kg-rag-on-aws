@@ -67,8 +67,8 @@ _NEPTUNE_FAMILIES = {
 # schema, another name), and CloudFormation changes no export another stack
 # imports: the upgrade deploy keeps them (legacy_doc_status_table).
 LEGACY_DOC_STATUS_EXPORTS = (
-    "ExportsOutputFnGetAttDocStatusTable4F466A9BArn66824127",
-    "ExportsOutputRefDocStatusTable4F466A9B2F8E5F2F",
+    "ExportsOutputFnGetAttDocStatusTable4F466A9BArn66824127",  # pragma: allowlist secret - a CDK export id
+    "ExportsOutputRefDocStatusTable4F466A9B2F8E5F2F",  # pragma: allowlist secret - a CDK export id
 )
 
 
