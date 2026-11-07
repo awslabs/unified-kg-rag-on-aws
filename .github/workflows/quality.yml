@@ -168,6 +168,7 @@ jobs:
           tests/unit/test_static_renderer.py
           tests/unit/test_layering.py
           tests/unit/test_mcp_server_cli.py
+          tests/unit/test_mcp_tools.py
           tests/unit/test_owl_schema_source.py
           tests/unit/test_seed_sources.py
           tests/unit/test_rdf_seed_source.py

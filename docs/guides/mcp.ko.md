@@ -99,15 +99,19 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | `mcp.max_concurrent_calls` | `4` | 동시에 실행하는 호출 수. 나머지는 제한 시간 안에서 기다림 |
 
 모든 호출은 `search.query_timeout_seconds`(기본 180초) 안에서 실행되고, 넘으면 시간
-초과 메시지로 실패합니다. 도구는 대화 메모리를 유지하지 않습니다. 모든 키는
+초과 메시지로 실패합니다. 호출 슬롯을 기다린 시간도 여기에 포함됩니다. 응답의 레코드는
+`mcp.max_response_chars`로 제한되지만 MCP 메시지는 결과를 두 번(구조화된 콘텐츠와 그 JSON
+텍스트) 담으므로 실제 메시지는 그 2~4배까지 될 수 있습니다. 도구는 대화 메모리를 유지하지 않습니다. 모든 키는
 [설정 레퍼런스](../reference/configuration.md#mcp)(영문)에 있습니다.
 
 ## HTTP와 원격 배포
 
 `--transport streamable-http`는 `http://127.0.0.1:8000/mcp`에서 상태 없는(stateless)
-엔드포인트를 제공합니다. 루프백 주소에서는 `Host`와 `Origin` 헤더를 검사하므로 웹
-페이지가 DNS 리바인딩으로 접근할 수 없습니다. **서버는 호출자를 인증하지 않습니다.**
-다른 주소에 바인딩하려면 `--allow-remote`가 필요합니다.
+엔드포인트를 제공합니다(POST만 받으며 GET과 DELETE에는 405). 어떤 루프백 주소든 그 주소나
+루프백 이름을 가리키는 `Host`와 `Origin`만 받으므로 웹 페이지가 DNS 리바인딩으로 접근할 수
+없습니다(다른 `Host`는 421, 다른 `Origin`은 403). **서버는 호출자를 인증하지 않습니다.**
+다른 주소에 바인딩하려면 `--allow-remote`가 필요하며, 이때 헤더 검사는 앞단의 프록시에
+맡깁니다.
 
 ```bash
 run-mcp-server --config-path config.yaml --transport streamable-http \
@@ -120,14 +124,17 @@ Gateway나 AgentCore Runtime 뒤, 모든 요청을 인증하는 리버스 프록
 정책은 질의 태스크의 역할(저장소 읽기 권한과 전략이 호출하는 모델)과 같습니다.
 AgentCore나 CDK 스택의 질의 태스크에서 실행하는 구성은 아직 AWS에서 검증하지 않았습니다.
 
-호스트 애플리케이션이 서버를 직접 마운트할 수도 있습니다.
+호스트 애플리케이션이 서버를 직접 마운트할 수도 있습니다. `build_mcp_app`은 상태 없는
+ASGI 애플리케이션을 돌려줍니다. `allowed_hosts`(프록시가 전달하는 `Host` 값)를 주면
+`Host`/`Origin` 검사가 켜지고, 없으면 꺼집니다. `mcp.strategies`를 설정했다면 체인을
+`allowed_strategies`로 만드세요(더 많은 전략을 허용하는 체인은 도구가 거부합니다).
 
 ```python
-from unified_kg_rag import GraphRAGChain, build_mcp_server, get_config
+from unified_kg_rag import GraphRAGChain, build_mcp_app, get_config
 
-chain = GraphRAGChain(get_config("config.yaml"))
-server = build_mcp_server(chain, namespace="default")
-app = server.streamable_http_app(stateless_http=True, json_response=True)
+config = get_config("config.yaml")
+chain = GraphRAGChain(config, allowed_strategies=config.mcp.strategies)
+app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"])
 # Serve `app` with any ASGI server behind authentication; close the chain
 # (await chain.aclose()) when the application stops.
 ```
@@ -145,8 +152,9 @@ app = server.streamable_http_app(stateless_http=True, json_response=True)
   로그에 있습니다.
 - **신뢰할 수 없는 텍스트.** 청크 텍스트, 설명, 답변은 코퍼스나 모델에서 나옵니다. 도구
   설명은 에이전트에게 이를 지시가 아닌 데이터로 다루라고 알리고, 도구는 이를 구조화된
-  필드로 돌려줍니다. 코퍼스에 심어 둔 텍스트가 할 수 있는 일은 에이전트가 같은
-  네임스페이스에 읽기 전용 호출을 더 하게 만드는 것까지입니다. `kg_search`와 `kg_answer`는
+  필드로 돌려줍니다. 서버에는 쓰기 경로가 없으므로 심어 둔 텍스트로 서버가 무언가를 바꾸게
+  할 수는 없습니다. 다만 다른 도구를 가진 에이전트를 움직일 수는 있으며, 이는 에이전트
+  자체의 보호 장치가 막아야 합니다. `kg_search`와 `kg_answer`는
   설정된 [가드레일](./guardrail.md)(영문)을 거치고, 그래프 도구는 모델을 호출하지 않으며
   저장된 텍스트를 그대로 돌려줍니다.
 

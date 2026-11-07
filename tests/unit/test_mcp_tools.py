@@ -2,21 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """The MCP tool logic (``application/cli/mcp_tools.py``) over a fake chain:
 the namespace scope, argument bounds, filters, record shaping, size caps,
-error messages, telemetry and the untrusted-text boundary. No MCP SDK."""
+error messages, logs and the untrusted-text boundary. No MCP SDK and no
+OpenTelemetry SDK: the core-install CI job runs it (the span test is in
+``test_mcp_telemetry.py``)."""
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
-)
 
 from unified_kg_rag.adapters.retrieval.base import graph_relevance
 from unified_kg_rag.application.cli import mcp_tools
@@ -25,7 +21,6 @@ from unified_kg_rag.application.cli.mcp_tools import (
     KnowledgeGraphTools,
     describe_error,
 )
-from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.application.retrieval import graph_lookup
 from unified_kg_rag.application.retrieval.rag_chain import (
     ProcessedQuery,
@@ -36,14 +31,12 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 from unified_kg_rag.domain.models import (
     Config,
     GraphEdge,
-    ObservabilityConfig,
     RetrievalResult,
     SearchQuery,
     SearchResult,
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
-from unified_kg_rag.shared import observability
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
     InvalidFilterError,
@@ -272,6 +265,9 @@ async def test_calls_never_use_conversation_memory() -> None:
 
 async def test_only_offered_strategies_run() -> None:
     chain = FakeChain()
+    chain.allowed_strategies = frozenset(  # type: ignore[attr-defined]
+        {SearchStrategy.LOCAL, SearchStrategy.MIX}
+    )
     tools = _tools(chain, strategies=["local", "mix"])
     assert tools.default_strategy is SearchStrategy.LOCAL
     await tools.search("q")
@@ -285,17 +281,21 @@ async def test_only_offered_strategies_run() -> None:
             await tools.search("q", strategy=refused)
 
 
-def test_the_offered_strategies_bind_the_chain() -> None:
-    chain = FakeChain()
-    _tools(chain)
-    assert getattr(chain, "allowed_strategies", None) is None
-    _tools(chain, strategies=["auto", "local"])
-    assert chain.allowed_strategies == {SearchStrategy.AUTO, SearchStrategy.LOCAL}
-    # A chain that already allows more than the server offers is refused.
-    wider = FakeChain()
-    wider.allowed_strategies = frozenset(SearchStrategy)  # type: ignore[attr-defined]
-    with pytest.raises(ConfigurationError, match="mcp.strategies does not"):
-        _tools(wider, strategies=["local"])
+def test_the_offered_strategies_need_a_chain_built_for_them() -> None:
+    # The caller's chain is never changed: one that allows any strategy, or
+    # more than the server offers, is refused.
+    for allowed in (None, frozenset(SearchStrategy)):
+        chain = FakeChain()
+        chain.allowed_strategies = allowed  # type: ignore[attr-defined]
+        with pytest.raises(ConfigurationError, match="allowed_strategies="):
+            _tools(chain, strategies=["auto", "local"])
+        assert chain.allowed_strategies == allowed
+    narrow = FakeChain()
+    narrow.allowed_strategies = frozenset({SearchStrategy.LOCAL})  # type: ignore[attr-defined]
+    _tools(narrow, strategies=["auto", "local"])
+    assert narrow.allowed_strategies == {SearchStrategy.LOCAL}
+    # Without mcp.strategies any chain serves.
+    _tools(FakeChain())
 
 
 @pytest.mark.parametrize(
@@ -623,34 +623,6 @@ def test_the_hops_of_a_graph_walk_score_invert_graph_relevance(
 # --- telemetry -------------------------------------------------------------
 
 
-async def test_the_tool_span_captures_arguments_only_when_allowed() -> None:
-    def spans(**settings: Any) -> list[dict[str, Any]]:
-        exporter = InMemorySpanExporter()
-        provider = TracerProvider()
-        provider.add_span_processor(SimpleSpanProcessor(exporter))
-        configure_observability(
-            ObservabilityConfig(enabled=True, **settings), tracer_provider=provider
-        )
-        return exporter  # type: ignore[return-value]
-
-    try:
-        exporter = spans()
-        await _tools().search("Where is account 1234 stored?")
-        (span,) = [s for s in exporter.get_finished_spans() if s.name == "kg_rag.mcp.tool"]  # type: ignore[attr-defined]
-        attributes = dict(span.attributes or {})
-        assert attributes["mcp.tool.name"] == "kg_search"
-        assert "input.value" not in attributes
-        observability.uninstall()
-
-        exporter = spans(capture_content=True, redact_patterns=[r"\d{4}"])
-        await _tools().search("Where is account 1234 stored?")
-        (span,) = [s for s in exporter.get_finished_spans() if s.name == "kg_rag.mcp.tool"]  # type: ignore[attr-defined]
-        captured = json.loads(dict(span.attributes or {})["input.value"])
-        assert captured["query"] == "Where is account [REDACTED] stored?"
-    finally:
-        observability.uninstall()
-
-
 async def test_logs_carry_a_digest_of_the_query_not_its_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -658,3 +630,137 @@ async def test_logs_carry_a_digest_of_the_query_not_its_text(
     await _tools().search("the confidential question")
     assert "confidential" not in caplog.text
     assert "MCP tool kg_search answered" in caplog.text
+
+
+async def test_a_refusal_the_error_answer_absorbed_keeps_its_message() -> None:
+    # processing.ignore_errors: the chain answers its error answer, naming
+    # the error's type; a refusal the caller can act on keeps its message.
+    class Absorbing(FakeChain):
+        def __init__(self, error_type: str, message: str) -> None:
+            super().__init__(error=True, error_type=error_type)
+            self.message = message
+
+        async def asearch(self, rag_input: RAGInput) -> SearchOutput:
+            output = await super().asearch(rag_input)
+            output.search_results.metadata["error"] = self.message
+            return output
+
+    refusal = "auto may run only local, and none of them serves it"
+    with pytest.raises(mcp_tools._ReportedCallerError) as raised:
+        await _tools(Absorbing("MethodologyNotIndexedError", refusal)).search("q")
+    assert describe_error(raised.value) == (refusal, True)
+    with pytest.raises(mcp_tools._DegradedQueryError) as failed:
+        await _tools(Absorbing("StoreConnectionError", "https://vpc-x")).search("q")
+    assert describe_error(failed.value) == (INTERNAL_ERROR_MESSAGE, False)
+
+
+async def test_the_schema_is_resolved_once_and_its_error_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolved: list[int] = []
+
+    async def resolve(chain: Any) -> Any:
+        resolved.append(1)
+        return None, "SchemaSourceError"
+
+    async def describe(chain: Any, suffix: str | None, *, schema: Any) -> Any:
+        return graph_lookup.NamespaceDescription(
+            namespace=str(suffix),
+            methodologies=[],
+            artifacts=[],
+            strategies=[],
+            schema=schema[0],
+            schema_error=schema[1],
+        )
+
+    monkeypatch.setattr(graph_lookup, "resolve_schema", resolve)
+    monkeypatch.setattr(graph_lookup, "describe_namespace", describe)
+    tools = _tools()
+    first = await tools.describe_schema()
+    second = await tools.describe_schema()
+    assert resolved == [1]
+    assert (first.schema_error, second.schema_error) == ("SchemaSourceError",) * 2
+    assert first.extraction_schema is None
+
+
+async def test_one_deadline_covers_the_slot_wait_and_the_work() -> None:
+    import asyncio
+
+    class SlowChain(FakeChain):
+        async def asearch(self, rag_input: RAGInput) -> SearchOutput:
+            await asyncio.sleep(0.3)
+            return await super().asearch(rag_input)
+
+    config = Config()
+    config.search.query_timeout_seconds = 0.5
+    tools = KnowledgeGraphTools(
+        SlowChain(config),  # type: ignore[arg-type]
+        settings=McpServerConfig(max_concurrent_calls=1),
+    )
+    # The second call waits 0.3 s for the slot, then works 0.3 s: past the
+    # 0.5 s deadline in all, though each part is within it.
+    first, second = await asyncio.gather(
+        tools.search("q"), tools.search("q"), return_exceptions=True
+    )
+    assert not isinstance(first, BaseException)
+    assert isinstance(second, QueryTimeoutError)
+    assert "slot" in str(second)
+
+
+async def test_fetched_items_report_no_relevance_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def find(chain: Any, suffix: str | None, **kwargs: Any) -> Any:
+        return "name", [_entity("Depot")]
+
+    async def walk(
+        chain: Any, suffix: str | None, entity_id: str, **kwargs: Any
+    ) -> Any:
+        return graph_lookup.Neighbourhood(
+            neighbours=[_entity("Vendor")],
+            hops={"e-Vendor": 1},
+            relationships=[_relationship()],
+        )
+
+    monkeypatch.setattr(graph_lookup, "find_entities", find)
+    monkeypatch.setattr(graph_lookup, "neighbourhood", walk)
+    (entity,) = (await _tools().get_entity(name="Depot")).records
+    assert entity.score is None
+    result = await _tools().neighbors(name="Depot")
+    relationship = result.records[-1]
+    assert relationship.kind == "relationship" and relationship.score is None
+    # A neighbour keeps its graph-walk score.
+    assert result.records[0].score == 0.8
+
+
+async def test_exact_lookups_read_the_value_in_nfc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import unicodedata
+
+    from unified_kg_rag.application.retrieval import methodology_check
+    from unified_kg_rag.domain.models import IndexArtifact
+
+    asked: list[dict[str, Any] | None] = []
+
+    class Retriever:
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            asked.append(query.filters)
+            return [_entity("한빛물류")]
+
+    class Chain:
+        config = Config()
+
+        def _get_retriever(self, role: Any) -> Retriever:
+            return Retriever()
+
+    async def artifacts(*_args: Any, **_kwargs: Any) -> frozenset[IndexArtifact]:
+        return frozenset(IndexArtifact)
+
+    monkeypatch.setattr(methodology_check, "namespace_artifacts", artifacts)
+    decomposed = unicodedata.normalize("NFD", "urn:example:한빛물류")
+    match, _ = await graph_lookup.find_entities(
+        Chain(), None, iri=decomposed, limit=1  # type: ignore[arg-type]
+    )
+    assert match == "iri"
+    assert asked == [{"iri": "urn:example:한빛물류"}]

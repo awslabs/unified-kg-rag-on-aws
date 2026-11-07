@@ -105,16 +105,21 @@ read from its own server and namespace, with the store roles of the
 | `mcp.max_concurrent_calls` | `4` | Calls run at once; others wait within the deadline |
 
 Every call runs under `search.query_timeout_seconds` (180 s by default) and
-fails with a timeout message past it. The tools keep no conversation
+fails with a timeout message past it; the wait for a call slot counts
+toward it. A response's records are capped by `mcp.max_response_chars`,
+and the MCP message carries them twice (structured content and its JSON
+text), so the message is up to about 2-4 times that. The tools keep no conversation
 memory. All keys: [Configuration reference](../reference/configuration.md#mcp).
 
 ## HTTP and remote deployment
 
 `--transport streamable-http` serves a stateless endpoint at
-`http://127.0.0.1:8000/mcp`. On a loopback address the server checks the
-`Host` and `Origin` headers, so a web page cannot reach it through DNS
-rebinding. **The server authenticates no caller.** Binding another address
-needs `--allow-remote`:
+`http://127.0.0.1:8000/mcp` (POST only; a GET or DELETE gets 405). On any
+loopback address the server accepts only a `Host` and an `Origin` naming
+that address or a loopback name, so a web page cannot reach it through DNS
+rebinding (421 for a foreign `Host`, 403 for a foreign `Origin`). **The
+server authenticates no caller.** Binding another address needs
+`--allow-remote`, and there it leaves the headers to the proxy in front:
 
 ```bash
 run-mcp-server --config-path config.yaml --transport streamable-http \
@@ -129,14 +134,18 @@ access to the stores and the models the strategies call) is the policy it
 needs. Hosting on AgentCore or the CDK stack's query task is not yet
 verified on AWS.
 
-A host application can mount the server itself:
+A host application can mount the server itself. `build_mcp_app` returns
+the stateless ASGI application; `allowed_hosts` (the `Host` values the
+proxy forwards) turns the `Host`/`Origin` checks on, and without it they
+are off. With `mcp.strategies` set, build the chain with
+`allowed_strategies` (the tools refuse a chain that allows more):
 
 ```python
-from unified_kg_rag import GraphRAGChain, build_mcp_server, get_config
+from unified_kg_rag import GraphRAGChain, build_mcp_app, get_config
 
-chain = GraphRAGChain(get_config("config.yaml"))
-server = build_mcp_server(chain, namespace="default")
-app = server.streamable_http_app(stateless_http=True, json_response=True)
+config = get_config("config.yaml")
+chain = GraphRAGChain(config, allowed_strategies=config.mcp.strategies)
+app = build_mcp_app(chain, namespace="default", allowed_hosts=["mcp.example.com"])
 # Serve `app` with any ASGI server behind authentication; close the chain
 # (await chain.aclose()) when the application stops.
 ```
@@ -155,9 +164,10 @@ app = server.streamable_http_app(stateless_http=True, json_response=True)
   caller as a generic message; the server log has the details.
 - **Untrusted text.** Chunk text, descriptions and answers come from the
   corpus or a model. The tool descriptions tell the agent to treat them as
-  data, and the tools return them in structured fields. Text planted in
-  the corpus can at most lead an agent to more read-only calls on the
-  same namespace. `kg_search` and `kg_answer` pass through the configured
+  data, and the tools return them in structured fields. The server offers
+  no write path, so planted text cannot make it change anything; it may
+  still steer an agent that holds other tools, which the agent's own
+  safeguards must cover. `kg_search` and `kg_answer` pass through the configured
   [guardrail](./guardrail.md); the graph tools make no model call and
   return stored text as it is.
 

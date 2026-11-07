@@ -484,8 +484,13 @@ From a `main` checkout (formats and keys no release had):
   may ask and costs (`mcp.strategies` binds the chain's new `allowed_strategies`: `auto` routes, and falls back, only
   within it, and is refused before any model call when the namespace serves none of it); every call runs under
   `search.query_timeout_seconds` and returns its model `usage`. The graph
-  tools read the stores through the chain's retrievers and make no model call. `build_mcp_server` (package root)
-  mounts the same server in a host's ASGI application. Guide: [MCP server](docs/guides/mcp.md).
+  tools read the stores through the chain's retrievers and make no model call; they look names, IRIs and ids up in
+  NFC (and a name again in NFKC), as search composes a query. Over HTTP only POST is served (405 otherwise), and on
+  any loopback address the `Host` and `Origin` headers must name it or a loopback name (421/403). `build_mcp_server`
+  and `build_mcp_app` (package root; the latter the stateless ASGI application, its `Host`/`Origin` checks on with
+  `allowed_hosts`) mount the same server in a host's application; neither changes the chain given. Under
+  `processing.ignore_errors` the error answer names its error in `metadata.error_type`. Guide:
+  [MCP server](docs/guides/mcp.md).
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
   after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
   mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index

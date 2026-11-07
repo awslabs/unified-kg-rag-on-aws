@@ -69,6 +69,105 @@ def _sdk() -> tuple[Any, Any, Any]:
     return MCPServer, ToolAnnotations, ToolError
 
 
+def _host_entry(host: str) -> str:
+    """``host`` as a ``Host`` header names it, any port (``[::1]:*``)."""
+    bare = host.strip("[]")
+    return f"[{bare}]:*" if ":" in bare else f"{bare}:*"
+
+
+def loopback_hosts(host: str) -> list[str]:
+    """The ``Host`` values a server bound to the loopback ``host`` accepts:
+    that address and the usual loopback names, any port."""
+    return list(
+        dict.fromkeys([_host_entry(host), "127.0.0.1:*", "localhost:*", "[::1]:*"])
+    )
+
+
+def _security(
+    allowed_hosts: list[str] | None, allowed_origins: list[str] | None
+) -> Any:
+    """The SDK's ``TransportSecuritySettings``: the ``Host`` (and
+    ``Origin``) checks on with ``allowed_hosts``, off without. Passed
+    explicitly, since the SDK turns its own loopback-only check on for an
+    unset host, which refuses every proxied request."""
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    if allowed_hosts is None:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    origins = allowed_origins
+    if origins is None:
+        origins = [
+            f"{scheme}://{entry}"
+            for entry in allowed_hosts
+            for scheme in ("http", "https")
+        ]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(allowed_hosts),
+        allowed_origins=list(origins),
+    )
+
+
+def _post_only(app: Any, path: str) -> Any:
+    """``app`` answering 405 to anything but POST on ``path``: a stateless
+    server has no session to delete and no stream to resume, and a GET
+    would otherwise hold an event stream open for as long as the client
+    keeps it."""
+
+    async def guarded(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if (
+            scope.get("type") == "http"
+            and scope.get("path", "").rstrip("/") == path.rstrip("/")
+            and scope.get("method") != "POST"
+        ):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 405,
+                    "headers": [(b"allow", b"POST"), (b"content-length", b"0")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b""})
+            return
+        await app(scope, receive, send)
+
+    return guarded
+
+
+def build_mcp_app(
+    chain: GraphRAGChain | KnowledgeGraphTools,
+    *,
+    namespace: str | None = None,
+    settings: McpServerConfig | None = None,
+    allowed_hosts: list[str] | None = None,
+    allowed_origins: list[str] | None = None,
+    path: str = "/mcp",
+) -> Any:
+    """A stateless streamable-HTTP ASGI application of
+    :func:`build_mcp_server`'s server, to mount in a host application
+    behind an authenticating proxy.
+
+    ``allowed_hosts`` (``Host`` values such as ``"mcp.example.com"`` or
+    ``"127.0.0.1:*"``) turns the SDK's ``Host``/``Origin`` checks on, with
+    ``allowed_origins`` (default: ``http://`` and ``https://`` of each
+    host); without it they are off, as behind a proxy that forwards its own
+    ``Host``. Only POST reaches the server (405 otherwise). Run the
+    application's lifespan (any ASGI server does); the caller closes the
+    chain.
+
+    Raises:
+        ConfigurationError: The ``mcp`` extra is not installed.
+    """
+    server = build_mcp_server(chain, namespace=namespace, settings=settings)
+    app = server.streamable_http_app(
+        streamable_http_path=path,
+        stateless_http=True,
+        json_response=True,
+        transport_security=_security(allowed_hosts, allowed_origins),
+    )
+    return _post_only(app, path)
+
+
 def mcp_extra_error() -> str | None:
     """The message naming the ``mcp`` extra when its SDK is not installed,
     else ``None`` (a CLI checks it before building a chain)."""

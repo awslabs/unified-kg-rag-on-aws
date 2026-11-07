@@ -21,7 +21,6 @@ import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
@@ -251,6 +250,10 @@ class SchemaToolResult(BaseModel):
         description="The entity and relationship types and patterns of the "
         "configured extraction schema (null when unreadable)",
     )
+    schema_error: str | None = Field(
+        default=None,
+        description="Why the extraction schema could not be read (its error type)",
+    )
     filter_keys: list[str] = Field(
         default_factory=list, description="The filter keys a search may give"
     )
@@ -260,23 +263,31 @@ class SchemaToolResult(BaseModel):
     limits: dict[str, int] = Field(description="The server's bounds on arguments")
 
 
+class _DegradedQueryError(GraphRAGException):
+    """The chain returned its error answer (``processing.ignore_errors``)."""
+
+
+class _ReportedCallerError(GraphRAGException):
+    """A caller-correctable error the chain absorbed into its error answer
+    (``processing.ignore_errors``): its message is the caller's."""
+
+
 # Errors whose message is for the caller: an argument, a filter or a
 # strategy to change, a namespace without an index, the deadline.
 _CALLER_ERRORS: tuple[type[BaseException], ...] = (
+    _ReportedCallerError,
     ToolArgumentError,
     InvalidFilterError,
     MethodologyNotIndexedError,
     IndexNotFoundError,
     QueryTimeoutError,
 )
+# The caller errors the chain's error answer names by type (error_type).
+_CALLER_ERROR_NAMES = frozenset(e.__name__ for e in _CALLER_ERRORS[1:])
 INTERNAL_ERROR_MESSAGE = (
     "The call failed inside the server (a store or model error); the server "
     "log has the details."
 )
-
-
-class _DegradedQueryError(GraphRAGException):
-    """The chain returned its error answer (``processing.ignore_errors``)."""
 
 
 def describe_error(exc: BaseException) -> tuple[str, bool]:
@@ -414,10 +425,11 @@ class KnowledgeGraphTools:
     ``namespace`` is the suffix served (``None``: the config's
     ``processing.document_parsing.index_value``, else ``default``);
     ``settings`` the ``mcp`` section (the chain config's by default). The
-    chain is the caller's: :meth:`aclose` closes it. With ``mcp.strategies``
-    set, the chain's ``allowed_strategies`` becomes that list (a chain that
-    already allows others is refused), so no query of the chain runs
-    another strategy, ``auto``'s route included.
+    chain is the caller's (never changed here): :meth:`aclose` closes it.
+    With ``mcp.strategies`` set, the chain must have been built with
+    ``allowed_strategies`` within that list (``GraphRAGChain(config,
+    allowed_strategies=config.mcp.strategies)``), so no query of it runs
+    another strategy, ``auto``'s route included; another chain is refused.
     """
 
     def __init__(
@@ -448,17 +460,26 @@ class KnowledgeGraphTools:
         if self.settings.strategies:
             # Enforced where the chain resolves the strategy: auto routes
             # only among these, its routing fallback included, and refuses
-            # before the router call when the namespace serves none.
+            # before the router call when the namespace serves none. The
+            # chain is the caller's, so it must have been built so.
             offered = frozenset(self.strategies)
             held = getattr(chain, "allowed_strategies", None)
-            if held is not None and not held <= offered:
+            if held is None or not held <= offered:
                 raise ConfigurationError(
-                    "The chain allows strategies mcp.strategies does not: "
-                    + ", ".join(sorted(s.value for s in held - offered))
+                    "mcp.strategies limits the strategies, but the chain "
+                    + (
+                        "allows any"
+                        if held is None
+                        else "also allows "
+                        + ", ".join(sorted(s.value for s in held - offered))
+                    )
+                    + ": build it with GraphRAGChain(config, "
+                    "allowed_strategies=config.mcp.strategies)"
                 )
-            chain.allowed_strategies = held or offered
         self._slots = asyncio.Semaphore(self.settings.max_concurrent_calls)
         self._deadline = config.search.query_timeout_seconds
+        # The resolved extraction schema and why it could not be, once read.
+        self._schema: tuple[ExtractionSchema | None, str | None] | None = None
 
     # -- argument checks -------------------------------------------------
 
@@ -523,41 +544,27 @@ class KnowledgeGraphTools:
 
     # -- the call wrapper ------------------------------------------------
 
-    @asynccontextmanager
-    async def _slot(self) -> Any:
-        """A call slot (``mcp.max_concurrent_calls``), waited for within the
-        deadline."""
+    async def _within_deadline(self, run: Callable[[], Awaitable[_R]]) -> _R:
+        """``run`` in a call slot (``mcp.max_concurrent_calls``), the wait
+        for the slot and the work under one deadline
+        (``search.query_timeout_seconds``): a call never takes longer, the
+        chain's own deadline inside it included."""
+        seconds = self._deadline
         try:
-            if self._deadline is None:
-                await self._slots.acquire()
-            else:
-                await asyncio.wait_for(self._slots.acquire(), self._deadline)
-        except TimeoutError:
-            assert self._deadline is not None
-            raise QueryTimeoutError(
-                f"No call slot became free within {self._deadline:g} s "
-                "(mcp.max_concurrent_calls).",
-                timeout_seconds=self._deadline,
-            ) from None
-        try:
-            yield
-        finally:
-            self._slots.release()
-
-    async def _within_deadline(self, work: Awaitable[_T]) -> _T:
-        """``work`` under the query deadline (the graph tools; the chain
-        applies its own to kg_search and kg_answer)."""
-        if self._deadline is None:
-            return await work
-        try:
-            return await asyncio.wait_for(work, self._deadline)
+            async with asyncio.timeout(seconds) as scope:
+                async with self._slots:
+                    return await run()
         except QueryTimeoutError:
             raise
         except TimeoutError:
+            if not scope.expired():
+                raise
+            assert seconds is not None
             raise QueryTimeoutError(
-                f"The call did not finish within {self._deadline:g} s "
-                "(search.query_timeout_seconds).",
-                timeout_seconds=self._deadline,
+                f"The call did not finish within {seconds:g} s "
+                "(search.query_timeout_seconds, the wait for a call slot "
+                "included).",
+                timeout_seconds=seconds,
             ) from None
 
     async def _call(
@@ -577,8 +584,7 @@ class KnowledgeGraphTools:
         query = arguments.get("query") or arguments.get("name") or ""
         with observability.span("kg_rag.mcp.tool", attributes) as span:
             try:
-                async with self._slot():
-                    result = await run()
+                result = await self._within_deadline(run)
             except BaseException as e:
                 logger.info(
                     "MCP tool %s failed after %.2fs (%s): %s",
@@ -701,8 +707,14 @@ class KnowledgeGraphTools:
 
     @staticmethod
     def _checked(output: RAGOutput | SearchOutput) -> None:
-        if output.metadata.get("error"):
-            raise _DegradedQueryError("The query failed (processing.ignore_errors).")
+        """Raise for the chain's error answer: the caller's message for an
+        error the caller can act on, a generic one otherwise."""
+        if not output.metadata.get("error"):
+            return
+        if output.metadata.get("error_type") in _CALLER_ERROR_NAMES:
+            message = output.search_results.metadata.get("error")
+            raise _ReportedCallerError(str(message or "The query was refused."))
+        raise _DegradedQueryError("The query failed (processing.ignore_errors).")
 
     @staticmethod
     def _query_fields(output: RAGOutput | SearchOutput) -> dict[str, Any]:
@@ -839,17 +851,19 @@ class KnowledgeGraphTools:
             suffix = self._suffix(namespace)
             bounded = self._bounded("limit", limit, 1, self.settings.max_top_k, 5)
             with usage_scope() as meter:
-                match, hits = await self._within_deadline(
-                    self._find(suffix, given, bounded)
-                )
+                match, hits = await self._find(suffix, given, bounded)
                 records = [
                     self._from_result(
                         i, hit.model_copy(update={"retriever_type": "entity"})
                     )
                     for i, hit in enumerate(hits, 1)
                 ]
+                if match != "search":
+                    # A fetch by value has no relevance to report.
+                    for record in records:
+                        record.score = None
                 kept, omitted = self._capped(records)
-                await self._within_deadline(self._resolve_documents(suffix, kept))
+                await self._resolve_documents(suffix, kept)
             return EntityToolResult(
                 namespace=suffix,
                 match=match,
@@ -921,11 +935,12 @@ class KnowledgeGraphTools:
                 names.update({str(r.source_id): r.name for r in records})
                 offset = len(records)
                 if found.relationships:
+                    # Read by their endpoints, not ranked by a query: no score.
                     records += [
                         self._from_result(
                             offset + i,
                             r.model_copy(update={"retriever_type": "relationship"}),
-                        )
+                        ).model_copy(update={"score": None})
                         for i, r in enumerate(found.relationships, 1)
                     ]
                 else:
@@ -947,7 +962,7 @@ class KnowledgeGraphTools:
                 )
 
             with usage_scope() as meter:
-                result = await self._within_deadline(walk())
+                result = await walk()
             result.usage = meter.snapshot()
             return result
 
@@ -963,8 +978,11 @@ class KnowledgeGraphTools:
 
         async def run() -> SchemaToolResult:
             suffix = self._suffix(namespace)
-            described = await self._within_deadline(
-                graph_lookup.describe_namespace(self.chain, suffix)
+            if self._schema is None:
+                # Resolved once: a schema source may read a file or S3.
+                self._schema = await graph_lookup.resolve_schema(self.chain)
+            described = await graph_lookup.describe_namespace(
+                self.chain, suffix, schema=self._schema
             )
             offered = set(self.strategies)
             return SchemaToolResult(
@@ -974,6 +992,7 @@ class KnowledgeGraphTools:
                 strategies=[s.value for s in described.strategies if s in offered],
                 build=described.build,
                 extraction_schema=described.schema_,
+                schema_error=described.schema_error,
                 filter_keys=described.filter_keys,
                 namespaces=self.namespaces,
                 limits={

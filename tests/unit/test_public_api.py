@@ -46,6 +46,7 @@ PUBLIC_API = sorted(
         "SearchResult",
         "SearchStrategy",
         "SearchType",
+        "build_mcp_app",
         "build_mcp_server",
         "configure_event_loop",
         "get_config",

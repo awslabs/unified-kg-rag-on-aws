@@ -38,7 +38,12 @@ from unified_kg_rag.application.cli.conventions import (
 )
 from unified_kg_rag.application.cli.display import console
 from unified_kg_rag.application.cli.help_text import doc_epilog
-from unified_kg_rag.application.cli.mcp_server import build_mcp_server, mcp_extra_error
+from unified_kg_rag.application.cli.mcp_server import (
+    build_mcp_app,
+    build_mcp_server,
+    loopback_hosts,
+    mcp_extra_error,
+)
 from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
 from unified_kg_rag.application.cli.preflight import (
     missing_endpoints_error,
@@ -163,6 +168,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+async def serve_http(tools: KnowledgeGraphTools, host: str, port: int) -> None:
+    """Serve ``tools`` over stateless streamable HTTP on ``host:port``.
+
+    Stateless: the tools keep no session state (an AgentCore Runtime MCP
+    server is stateless too). On a loopback address the ``Host`` and
+    ``Origin`` headers must name it or another loopback name (DNS
+    rebinding: a web page cannot reach the server through a name it
+    controls), whatever loopback address it is; on another address,
+    reached through a proxy, they are not checked. uvicorn's logs,
+    access lines included, go to the logging setup (stderr).
+    """
+    import uvicorn
+
+    app = build_mcp_app(
+        tools, allowed_hosts=loopback_hosts(host) if is_loopback(host) else None
+    )
+    config = uvicorn.Config(app, host=host, port=port, log_config=None)
+    await uvicorn.Server(config).serve()
+
+
 async def serve(args: argparse.Namespace, config: Config) -> int:
     """Build the chain and the server, and serve until the transport ends."""
     loop = asyncio.get_running_loop()
@@ -170,7 +195,6 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
     chain = GraphRAGChain(config=config, allowed_strategies=config.mcp.strategies)
     try:
         tools = KnowledgeGraphTools(chain, namespace=args.suffix)
-        server = build_mcp_server(tools)
         logger.info(
             "Serving namespace '%s' read-only over %s (tools: %s)",
             tools.namespace,
@@ -178,16 +202,9 @@ async def serve(args: argparse.Namespace, config: Config) -> int:
             ", ".join(config.mcp.tools),
         )
         if args.transport == "stdio":
-            await server.run_stdio_async()
+            await build_mcp_server(tools).run_stdio_async()
         else:
-            # Stateless: no session state to keep or route to, as the tools
-            # keep none (an AgentCore Runtime MCP server is stateless too).
-            await server.run_streamable_http_async(
-                host=args.host,
-                port=args.port,
-                stateless_http=True,
-                json_response=True,
-            )
+            await serve_http(tools, args.host, args.port)
         return 0
     finally:
         await chain.aclose()

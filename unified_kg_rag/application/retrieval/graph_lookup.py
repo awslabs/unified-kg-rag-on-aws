@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import unicodedata
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
@@ -113,7 +114,16 @@ async def find_entities(
     the names with the index's analyzer (the configured language analyzer:
     ``nori``, ``cjk``, ...) returns the best-scored ones (``search``). No
     embedding is computed: a name lookup costs no model call.
+
+    The exact lookups read the value in NFC, as indexed text is (and as
+    ``RAGInput`` composes a query): decomposed Hangul matches its composed
+    name. Without an exact match, a name is looked up again in NFKC, and
+    searched in NFKC, so a full-width ``Ｄｅｐｏｔ`` or a compatibility
+    character finds the name it stands for.
     """
+    entity_id, iri, name = (
+        unicodedata.normalize("NFC", v) if v else v for v in (entity_id, iri, name)
+    )
     given = [v for v in (entity_id, iri, name) if v]
     if len(given) != 1:
         raise ValueError("give exactly one of entity_id, iri and name")
@@ -133,9 +143,17 @@ async def find_entities(
         return match, _ranked(hits)[:limit]
     if name is None:
         return "none", []
+    folded = unicodedata.normalize("NFKC", name)
+    if folded != name:
+        # A full-width or compatibility spelling of a stored name.
+        hits = await retriever.aretrieve(
+            _fetch(prefix, suffix, {"name.keyword": folded}, limit)
+        )
+        if hits:
+            return "name", _ranked(hits)[:limit]
     hits = await retriever.aretrieve(
         SearchQuery(
-            query=name,
+            query=folded,
             search_type=SearchType.LEXICAL,
             top_k=limit,
             index_prefixes=[prefix],
@@ -330,12 +348,33 @@ class NamespaceDescription(BaseModel):
 _BUILD_KEYS = ("pipeline_id", "mode", "built_at", "documents", "package_version")
 
 
+async def resolve_schema(
+    chain: GraphRAGChain,
+) -> tuple[ExtractionSchema | None, str | None]:
+    """The extraction schema the chain's configuration resolves to, or
+    ``None`` and the error's type when its source cannot be read. A schema
+    source may read a file or an S3 object: it runs off the loop, and a
+    caller keeps the result rather than resolving it again."""
+    try:
+        resolved = await asyncio.to_thread(
+            resolve_extraction_schema, chain.config, providers=chain.providers
+        )
+        return resolved.processing.graph_extraction.extraction_schema(), None
+    except Exception as e:  # noqa: BLE001 - reported, not fatal
+        logger.warning("Could not resolve the extraction schema: %s", e)
+        return None, type(e).__name__
+
+
 async def describe_namespace(
-    chain: GraphRAGChain, suffix: str | None
+    chain: GraphRAGChain,
+    suffix: str | None,
+    *,
+    schema: tuple[ExtractionSchema | None, str | None] | None = None,
 ) -> NamespaceDescription:
     """What the namespace of ``suffix`` holds (its build record, else the
     configured methodologies), the strategies that serves, its last build
-    and the extraction schema the configuration resolves to."""
+    and the extraction schema the configuration resolves to (``schema``,
+    :func:`resolve_schema`'s result, when the caller holds it)."""
     artifacts = await methodology_check.namespace_artifacts(chain, suffix)
     retriever = _document_retriever(chain)
     record: dict[str, Any] | None = None
@@ -343,17 +382,7 @@ async def describe_namespace(
         record = await retriever.aread_build_record(suffix)
     except Exception as e:  # noqa: BLE001 - the record is optional
         logger.debug("Reading the build record failed: %s", e)
-    schema: ExtractionSchema | None = None
-    error: str | None = None
-    try:
-        # A schema source may read a file or an S3 object: off the loop.
-        resolved = await asyncio.to_thread(
-            resolve_extraction_schema, chain.config, providers=chain.providers
-        )
-        schema = resolved.processing.graph_extraction.extraction_schema()
-    except Exception as e:  # noqa: BLE001 - reported, not fatal
-        logger.warning("Could not resolve the extraction schema: %s", e)
-        error = type(e).__name__
+    resolved, error = schema if schema is not None else await resolve_schema(chain)
     fields = retriever.filter_fields()
     return NamespaceDescription(
         namespace=namespace_name(chain, suffix),
@@ -365,7 +394,7 @@ async def describe_namespace(
             if isinstance(record, dict)
             else None
         ),
-        schema=schema,
+        schema=resolved,
         schema_error=error,
         filter_keys=fields.describe() if fields is not None else [],
     )

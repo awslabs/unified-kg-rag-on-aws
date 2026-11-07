@@ -2926,8 +2926,8 @@ search's key points; `kg_answer` never cites one, as the chain does not).
 
 **Layer placement.** The server is a driving adapter in the entry-point
 layer, next to the other CLIs (§2.1): `application/cli/mcp_tools.py` holds
-the tool logic and result models and imports no MCP SDK (it is tested on a
-core install), `application/cli/mcp_server.py` binds it to the SDK's
+the tool logic and result models and imports no MCP SDK (its tests,
+`tests/unit/test_mcp_tools.py`, run on a core install too), `application/cli/mcp_server.py` binds it to the SDK's
 `MCPServer` (imported lazily; a missing SDK is a `ConfigurationError`
 naming the extra), and `application/cli/run_mcp_server.py` is the console
 script. The tools call only the public chain (`asearch` and `ainvoke`,
@@ -2938,18 +2938,30 @@ chain's own retrievers (as `methodology_check` and `filter_validation` do)
 with text-less fetches by id and the graph walk: the same read paths the
 strategies use, so every backend that serves queries (Neptune, OpenSearch,
 the embedded SQLite stores) serves the tools. `tests/unit/test_layering.py`
-is unchanged and its allowlist stays empty. `build_mcp_server` is exported
-from the package root for a host that mounts the server in its own ASGI
-application.
+is unchanged and its allowlist stays empty. `build_mcp_server` and
+`build_mcp_app` (the stateless HTTP application with its `Host`/`Origin`
+checks set) are exported from the package root for a host that mounts the
+server in its own ASGI application. Neither changes the chain it is given:
+with `mcp.strategies` set, the chain must be built with
+`allowed_strategies` within it, and another is refused.
 
 **Transport.** stdio by default: the agent starts the server as a child
 process and owns its lifetime, there is no listening socket, and stdout
 carries only protocol messages (the banner and the logs go to stderr).
 Streamable HTTP (`--transport streamable-http`) is stateless (no session,
-every call stands alone) and binds `127.0.0.1:8000` by default, where the
-SDK checks the `Host` and `Origin` headers against loopback names (a web
-page cannot reach it through DNS rebinding). Binding any other address
-needs `--allow-remote`. The server has **no authentication**: it does not
+every call stands alone, so only POST is served: a GET, which would hold
+an event stream open, and a DELETE get 405) and binds `127.0.0.1:8000` by
+default. On any loopback address (all of `127.0.0.0/8`, `::1`,
+`localhost`) the server passes the SDK explicit `Host` and `Origin`
+allowlists naming that address and the loopback names, so a web page cannot
+reach it through DNS rebinding: a foreign `Host` gets 421 and a foreign
+`Origin` 403. (The SDK turns its own check on only for exactly `127.0.0.1`,
+`localhost` and `::1`, and for an unset host, which also refused every
+request a proxy forwarded with its own `Host`.) Binding any other address
+needs `--allow-remote`, and there the headers are not checked: the proxy in
+front owns them (`build_mcp_app(allowed_hosts=...)` checks them for a host
+application that wants it). uvicorn's logs, access lines included, go to
+the logging setup on stderr. The server has **no authentication**: it does not
 check who calls it, and the documentation claims nothing it cannot enforce.
 A remote deployment puts it behind something that authenticates every
 request and only forwards authenticated ones (AgentCore Runtime or Gateway
@@ -2987,11 +2999,12 @@ checked again in the tool: `top_k` and `limit` by `mcp.max_top_k`,
 `max_hops` by `mcp.max_hops`, neighbours by `mcp.max_neighbors`, the query
 by `mcp.max_query_chars`. Each record's text is cut to `mcp.max_text_chars`
 and a response past `mcp.max_response_chars` drops its lowest-ranked
-records (`truncated`, `omitted`). Each call runs under the query deadline
-(`search.query_timeout_seconds`: the chain's own for `kg_search` and
-`kg_answer`, the same seconds around the store reads of the others), and at
-most `mcp.max_concurrent_calls` run at once; the others wait inside their
-deadline. The tools are stateless: no conversation memory (`use_memory` is
+records (`truncated`, `omitted`); the MCP message carries the result
+twice (structured content and its JSON text), so it is up to about 2-4
+times that on the wire. Each call runs under one deadline
+(`search.query_timeout_seconds`) that covers the wait for one of the
+`mcp.max_concurrent_calls` slots and the work, the chain's own deadline
+inside it included, so no call takes longer. The tools are stateless: no conversation memory (`use_memory` is
 off), so no caller reaches another caller's history.
 
 **Usage, telemetry and redaction.** `kg_search` and `kg_answer` return the
@@ -3004,15 +3017,17 @@ which the chain's `kg_rag.query` span nests. Its arguments are recorded as
 INFO logs carry a digest of the query (`text_digest`), never its text. A
 caller-correctable error (an invalid argument or filter, a strategy the
 namespace does not hold, the deadline) is returned as a tool error with its
-message; any other failure returns a generic message and is logged with its
-traceback on the server, so a store endpoint or a stack trace never reaches
-the caller.
+message, also under `processing.ignore_errors`, whose error answer names
+the error's type (`metadata.error_type`); any other failure returns a
+generic message and is logged with its traceback on the server, so a store
+endpoint or a stack trace never reaches the caller.
 
 **Untrusted text.** Chunk text, descriptions and answers are corpus or model
 text, and the server instructions and every tool description say to treat
 them as data, not instructions. The tools return them in structured fields,
-never as a prompt. Text planted in the corpus that persuades an agent to
-call more tools reaches only more read-only calls on the same namespace.
+never as a prompt. The server offers no write path, so text planted in the
+corpus cannot make it change anything; it may still steer an agent that
+holds other tools (a shell, a mailer), which is the agent's to guard.
 `kg_search` and `kg_answer` pass through the configured guardrail as any
 query does (the query screened, the answer screened); the graph tools make
 no model call and return stored text as it is, so the guardrail does not

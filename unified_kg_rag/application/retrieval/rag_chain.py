@@ -417,7 +417,8 @@ class RAGOutput(BaseModel):
     ``sources`` lists the documents and graph elements the answer's context
     was built from; ``search_results`` holds the raw retrieval results.
     ``metadata["error"]`` is ``True`` on the degraded answer returned for a
-    failed query when ``processing.ignore_errors`` is set.
+    failed query when ``processing.ignore_errors`` is set, with the error's
+    class name in ``metadata["error_type"]``.
     ``metadata["usage"]`` counts the query's model calls (``llm_calls``,
     ``input_tokens``, ``output_tokens``, ``cache_hits``, and the same
     ``by_role`` and ``by_model``; ``domain.models.LLMUsage``). With a guardrail
@@ -1958,7 +1959,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 search=search,
                 answer=DEFAULT_ERROR_MESSAGE,
                 strategy="error",
-                metadata={"error": True},
+                # The error's type, for a caller that tells a refused query
+                # (a strategy or filter to change, the deadline) apart.
+                metadata={"error": True, "error_type": type(e).__name__},
                 search_metadata={"error": str(e)},
             )
         finally:

@@ -308,6 +308,7 @@ module = [
     # [mcp] extra only.
     "mcp.*",
     "mcp_types.*",
+    "uvicorn.*",
     "snowballstemmer",
     "datasets.*",
     "lxml.*",

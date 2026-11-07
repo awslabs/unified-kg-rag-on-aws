@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,7 @@ from unified_kg_rag.adapters.aws import bedrock as bedrock_module
 from unified_kg_rag.adapters.aws import token_counter as token_counter_module
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.cli import mcp_tools
-from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools, describe_error
 from unified_kg_rag.application.retrieval import methodology_check
 from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 from unified_kg_rag.domain.models import (
@@ -47,7 +48,10 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
-from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
+from unified_kg_rag.shared.exceptions import (
+    GraphRAGException,
+    MethodologyNotIndexedError,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -246,11 +250,10 @@ async def test_kg_describe_schema_lists_what_the_namespace_holds(
 async def test_auto_runs_only_an_offered_strategy(index: Index) -> None:
     # The router would answer "local"; with mix the only offered strategy
     # auto may route to, auto runs mix and asks no router.
-    chain = index.chain()
+    offered = [SearchStrategy.AUTO, SearchStrategy.MIX]
+    chain = index.chain(allowed_strategies=offered)
     try:
-        tools = KnowledgeGraphTools(
-            chain, settings=McpServerConfig(strategies=["auto", "mix"])
-        )
+        tools = KnowledgeGraphTools(chain, settings=McpServerConfig(strategies=offered))
         calls = len(index.server.chat_models)
         result = await tools.search("Who stores the widgets for Vendor?")
         assert result.strategy == "mix"
@@ -260,6 +263,7 @@ async def test_auto_runs_only_an_offered_strategy(index: Index) -> None:
         await chain.aclose()
 
 
+@pytest.mark.parametrize("ignore_errors", [False, True])
 @pytest.mark.parametrize(
     ("offered", "routable"),
     [
@@ -271,20 +275,50 @@ async def test_auto_runs_only_an_offered_strategy(index: Index) -> None:
     ],
 )
 async def test_auto_with_no_offered_strategy_served_is_refused_before_any_call(
-    index: Index, offered: list[str], routable: list[str] | None
+    index: Index, offered: list[str], routable: list[str] | None, ignore_errors: bool
 ) -> None:
     config = index.config.model_copy(deep=True)
+    config.processing.ignore_errors = ignore_errors
     if routable is not None:
         config.search.auto_routable_strategies = [SearchStrategy(s) for s in routable]
-    chain = GraphRAGChain(config, providers=index.providers)
+    strategies = [SearchStrategy(s) for s in offered]
+    chain = GraphRAGChain(
+        config, providers=index.providers, allowed_strategies=strategies
+    )
     try:
-        tools = KnowledgeGraphTools(chain, settings=McpServerConfig(strategies=offered))
+        tools = KnowledgeGraphTools(
+            chain, settings=McpServerConfig(strategies=strategies)
+        )
         calls = len(index.server.chat_models), len(index.server.embed_models)
-        with pytest.raises(MethodologyNotIndexedError, match="auto may run only"):
+        # Under processing.ignore_errors the chain absorbs the refusal into
+        # its error answer; the caller still gets its message.
+        with pytest.raises(GraphRAGException, match="auto may run only") as raised:
             await tools.answer("Who stores the widgets for Vendor?")
+        assert describe_error(raised.value)[1] is True
         assert (len(index.server.chat_models), len(index.server.embed_models)) == calls
     finally:
         await chain.aclose()
+
+
+@pytest.mark.parametrize(
+    ("given", "match", "found"),
+    [
+        # Decomposed Hangul (NFD), as some keyboards and file systems give it.
+        (unicodedata.normalize("NFD", "한빛물류"), "name", "한빛물류"),
+        # Full-width Latin: an exact name after NFKC.
+        ("Ｄｅｐｏｔ", "name", "Depot"),
+        # Full-width, other case: the NFKC name search finds it.
+        ("ＤＥＰＯＴ", "search", "Depot"),
+    ],
+)
+async def test_graph_tools_normalise_names_as_search_does(
+    tools: KnowledgeGraphTools, given: str, match: str, found: str
+) -> None:
+    result = await tools.get_entity(name=given)
+    assert result.match == match
+    assert found in [r.name for r in result.records]
+    walked = await tools.neighbors(name=given)
+    assert walked.entity is not None and walked.entity.name == found
 
 
 async def test_the_chain_refuses_a_strategy_outside_its_allowlist(
@@ -504,3 +538,136 @@ def test_stdout_carries_only_protocol_messages_and_eof_exits_0(
     assert set(replies) == {1, 2}
     assert replies[2]["result"]["structuredContent"]["records"][0]["name"] == "Depot"
     assert "Serving namespace 'default'" in stderr
+
+
+# --- HTTP ------------------------------------------------------------------
+
+_INIT = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "test", "version": "0"},
+    },
+}
+_HEADERS = {
+    "Accept": "application/json, text/event-stream",
+    "Content-Type": "application/json",
+}
+
+
+@requires_mcp
+def test_a_mounted_app_checks_the_hosts_it_is_given(index: Index) -> None:
+    from starlette.testclient import TestClient
+
+    from unified_kg_rag.application.cli.mcp_server import build_mcp_app
+
+    chain = index.chain()
+
+    proxied = {"Host": "mcp.internal.example"}
+
+    def post(client: Any, headers: dict[str, str]) -> int:
+        return int(
+            client.post("/mcp", json=_INIT, headers={**_HEADERS, **headers}).status_code
+        )
+
+    try:
+        # Behind a proxy (no allowed_hosts): its forwarded Host is served.
+        with TestClient(build_mcp_app(chain)) as client:
+            assert post(client, proxied) == 200
+        checked = build_mcp_app(chain, allowed_hosts=["mcp.internal.example"])
+        with TestClient(checked) as client:
+            assert [
+                post(client, headers)
+                for headers in (
+                    proxied,
+                    {"Host": "evil.example"},
+                    {**proxied, "Origin": "http://evil.example"},
+                    {**proxied, "Origin": "https://mcp.internal.example"},
+                )
+            ] == [200, 421, 403, 200]
+            # Stateless: no event stream to open, no session to delete.
+            assert client.get("/mcp", headers=proxied).status_code == 405
+            assert client.delete("/mcp", headers=proxied).status_code == 405
+    finally:
+        chain.close()
+
+
+def _free_port(host: str) -> int:
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind((host, 0))
+        return int(probe.getsockname()[1])
+
+
+@requires_mcp
+@pytest.mark.slow
+@pytest.mark.timeout(240)
+def test_http_on_any_loopback_address_refuses_foreign_hosts_and_origins(
+    index: Index, tmp_path: Path
+) -> None:
+    import socket
+    import subprocess
+    import time
+
+    import httpx
+
+    # 127.0.0.2: a loopback address the SDK's own check does not cover.
+    host = "127.0.0.2"
+    port = _free_port(host)
+    environment = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(tmp_path),
+        "AWS_EC2_METADATA_DISABLED": "true",
+        "PYTHONPATH": os.getcwd(),
+    }
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "unified_kg_rag.application.cli.run_mcp_server",
+            "--config-path",
+            str(_stdio_config(index, tmp_path)),
+            "--transport",
+            "streamable-http",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=tmp_path,
+        env=environment,
+    )
+    try:
+        for _ in range(120):
+            try:
+                socket.create_connection((host, port), timeout=1).close()
+                break
+            except OSError:
+                assert process.poll() is None, process.communicate()[1][-2000:]
+                time.sleep(0.5)
+        url = f"http://{host}:{port}/mcp"
+
+        def post(**headers: str) -> int:
+            return httpx.post(
+                url, json=_INIT, headers={**_HEADERS, **headers}, timeout=30
+            ).status_code
+
+        assert post() == 200
+        assert post(Host="evil.example") == 421
+        assert post(Origin="http://evil.example") == 403
+        assert post(Origin=f"http://{host}:{port}") == 200
+        assert httpx.get(url, timeout=10).status_code == 405
+    finally:
+        process.terminate()
+        out, err = process.communicate(timeout=60)
+    assert process.returncode == 143, err[-2000:]
+    # The access log goes to stderr: stdout stays empty.
+    assert out == ""
+    assert "POST /mcp" in err
