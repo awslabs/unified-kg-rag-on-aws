@@ -72,7 +72,7 @@ class ContextSection(BaseModel):
         default=None,
         description="The section's citation number [n] in a numbered context "
         "(optimize_context(number_sections=True)); None for a synthesized "
-        "section, and in an unnumbered context",
+        "section that names no evidence, and in an unnumbered context",
     )
 
 
@@ -233,7 +233,7 @@ class TokenManager:
         ``spare_budget_first`` names the section types that take budget other
         types leave unused before the rest share it (``_select_per_type``).
         ``number_sections`` gives every selected section but a synthesized
-        one a citation marker ``[1]``, ``[2]``, ... in the order
+        one that names no evidence (``is_citable``) a citation marker ``[1]``, ``[2]``, ... in the order
         ``build_context_string`` renders them, in place of its id prefix
         (docs/design.md §7.1).
         """
@@ -346,7 +346,7 @@ class TokenManager:
         markers = [
             (
                 _MARKER_PLACEHOLDER
-                if number_sections and not (result.metadata or {}).get("synthesized")
+                if number_sections and self.is_citable(result.metadata)
                 else None
             )
             for result in results
@@ -373,6 +373,15 @@ class TokenManager:
                 zip(results, counts, markers, strict=True)
             )
         ]
+
+    @staticmethod
+    def is_citable(metadata: dict[str, Any] | None) -> bool:
+        """Whether a result gets a citation marker in a numbered context:
+        retrieved evidence, or a synthesized result that names the evidence
+        it was written from (``citable``: global search's key points,
+        DRIFT's intermediate answers)."""
+        metadata = metadata or {}
+        return not metadata.get("synthesized") or bool(metadata.get("citable"))
 
     @staticmethod
     def _section_type(result: RetrievalResult) -> SectionType:

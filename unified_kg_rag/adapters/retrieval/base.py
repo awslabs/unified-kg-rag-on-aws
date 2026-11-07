@@ -226,6 +226,50 @@ def _text_unit_ids(result: RetrievalResult) -> list[str]:
     return [str(i) for i in (result.metadata or {}).get("text_unit_ids") or []]
 
 
+def _listed(value: Any) -> list[str]:
+    """A stored id list as strings (a graph store may return a list as its
+    JSON string, or one id as the value)."""
+    if isinstance(value, str) and value.startswith("["):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return [value]
+    if isinstance(value, list | tuple):
+        return [str(v) for v in value if v not in (None, "")]
+    return [str(value)] if value not in (None, "") else []
+
+
+def evidence_lineage(results: Iterable[RetrievalResult]) -> dict[str, list[str]]:
+    """The text units and documents ``results`` rest on, each once in
+    order: a passage's own unit, a graph item's or report's
+    ``text_unit_ids``, and their ``document_ids``. The lineage of a
+    synthesized result (global search's key point, DRIFT's intermediate
+    answer) is that of the evidence it was written from, so the answer can
+    cite it as MS GraphRAG's reduce cites ``[Data: Reports (...)]``."""
+    units: dict[str, None] = {}
+    documents: dict[str, None] = {}
+    for result in results:
+        metadata = result.metadata or {}
+        if result.retriever_type == SectionType.TEXT.value:
+            own = result.chunk_id or metadata.get("id") or result.source
+            units.update(dict.fromkeys(_listed(own)))
+        else:
+            units.update(dict.fromkeys(_listed(metadata.get("text_unit_ids"))))
+        attributes = metadata.get("attributes")
+        documents.update(
+            dict.fromkeys(
+                _listed(metadata.get("document_ids"))
+                or _listed(metadata.get("document_id"))
+                or (
+                    _listed(attributes.get("document_id"))
+                    if isinstance(attributes, dict)
+                    else []
+                )
+            )
+        )
+    return {"text_unit_ids": list(units), "document_ids": list(documents)}
+
+
 def _graph_edge(hit: RetrievalResult) -> GraphEdge | None:
     """A relationships-index hit as a ``GraphEdge`` (``None`` without both
     endpoints)."""

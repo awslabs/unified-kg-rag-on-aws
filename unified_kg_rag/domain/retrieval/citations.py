@@ -8,7 +8,8 @@ language. A marker is read the same in every answer language: after NFKC
 normalization (full-width ``［１］`` becomes ``[1]``), square or lenticular
 brackets (``【1】``) around one or more ASCII numbers separated by commas,
 semicolons or ``、`` (``[1, 2]``, ``[1、2]``), or a short range (``[1-3]``,
-up to :data:`MAX_RANGE` numbers). Adjacent markers (``[1][3]``) are two.
+up to :data:`MAX_RANGE` numbers). A number has at most three digits, so a
+bracketed year (``[2020]``) is text. Adjacent markers (``[1][3]``) are two.
 
 :class:`CitationMarkerScanner` reads the same markers from an answer that
 arrives in chunks: a marker split across chunks is held back until it
@@ -37,7 +38,9 @@ MAX_MARKER_CHARS = 48
 
 _OPEN = "[【"
 _CLOSE = "]】"
-_NUMBER = r"[0-9]{1,4}"
+# Up to three digits, as :func:`strip_markers` reads them: a bracketed year
+# ("[2020]") is text, not a citation of section 2020.
+_NUMBER = r"[0-9]{1,3}"
 _SEPARATOR = r"\s*[,;、]\s*"
 _RANGE = r"\s*[-–~]\s*"
 _ITEM = rf"{_NUMBER}(?:{_RANGE}{_NUMBER})?"

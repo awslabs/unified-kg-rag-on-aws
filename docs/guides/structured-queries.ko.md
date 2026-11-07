@@ -163,5 +163,6 @@ Gremlin)는 지원하지 않습니다. 계약은 계획입니다.
 질의 역할에는 Neptune 쓰기 권한이 없습니다
 ([운영](../operations.md#query-access-and-tenant-isolation), 영문). 필터는 접근
 제어가 아니므로 접미사는 여전히 인증된 주체에서 정해야 합니다
-([범위](../concepts/scopes-and-namespaces.ko.md)). 출력 가드레일을 켜면 메타데이터와
-결과 표에 돌려주는 모델 작성 계획 텍스트도 답변처럼 검사합니다.
+([범위](../concepts/scopes-and-namespaces.ko.md)). 출력 가드레일을 켜면 모델이 쓴 계획
+텍스트를 돌려주는 모든 곳에서 답변처럼 검사합니다. 검색과 답변의 메타데이터, 결과 표, 보고하는
+질의 결과 출처(콘솔, MCP `kg_answer`, `run-rag --output-format json`이 보여 줌)가 여기에 해당합니다.

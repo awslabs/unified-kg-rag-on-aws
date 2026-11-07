@@ -175,5 +175,7 @@ time limit; the deployed query role has no Neptune write grant
 ([Operations](../operations.md#query-access-and-tenant-isolation)). Filters
 are not access control: the suffix still has to be set from the
 authenticated principal ([Scopes](../concepts/scopes-and-namespaces.md)).
-With the output guardrail on, the model-written plan text returned in the
-metadata and the result table is screened as an answer is.
+With the output guardrail on, the model-written plan text is screened as an
+answer is wherever it is returned: the search and answer metadata, the
+result table and the reported query-result source (the console, MCP
+`kg_answer` and `run-rag --output-format json` show it).

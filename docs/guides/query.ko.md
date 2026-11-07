@@ -148,8 +148,11 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 모든 답변은 근거가 된 문서를 인용합니다(`search.citations`, 기본값은 켜짐). 답변
 컨텍스트는 근거 항목(본문 조각, 엔티티, 관계, 클레임, 커뮤니티 보고서, 요약)에 `[1]`, `[2]`,
 ... 번호를 붙이고, 답변 프롬프트는 모델에게 이 표식으로 인용하라고 지시합니다. 표식은 답변
-언어와 관계없이 ASCII로 씁니다. 전역 검색의 핵심 요점과 DRIFT의 중간 답변은 모델이 쓴
-글이므로 번호가 없습니다.
+언어와 관계없이 ASCII로 씁니다. 전역 검색의 핵심 요점과 DRIFT의 중간 답변에도 하나씩 번호가
+붙습니다. 각 항목은 MS GraphRAG의 `[Data: Reports (...)]`처럼 그 글의 바탕이 된 보고서(또는
+로컬 컨텍스트)의 문서를 밝히며, 근거 예산 때문에 보고서가 컨텍스트에서 빠져도 마찬가지입니다.
+모델이 쓴 글이므로 출처로는 나열하지 않습니다. 표식의 숫자는 세 자리까지이므로 `[2020]` 같은
+괄호 속 연도는 본문으로 남습니다.
 
 ```text
 창고는 공급사의 부품을 보관합니다 [1][3].
@@ -162,7 +165,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 텍스트 단위 중 최대 `search.citations.lineage_units`개의 문서를 밝힙니다. 이 정보는 질의마다
 한 번 묶어서 읽고, 질의의 필터와 접미사를 그대로 적용하므로 필터가 제외한 문서는 드러나지
 않습니다. 컨텍스트에 없던 번호를 답변이 쓰면 인용이 아니라
-`metadata.unknown_citation_markers`에 남습니다.
+`metadata.unknown_citation_markers`에 남습니다. 저장소 읽기는 답변 호출과 동시에 진행합니다.
+후속 질문을 다시 쓸 때는 이전 답변의 표식을 빼고 읽습니다.
 
 - `run-rag`는 답변 아래에 인용한 출처를 출력하고, `--output-format json`은 모든 인용을
   담습니다.

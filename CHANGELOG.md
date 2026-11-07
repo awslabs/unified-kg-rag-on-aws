@@ -582,14 +582,19 @@ From a `main` checkout (formats and keys no release had):
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
   rate's interval resamples queries. The default still judges the first repeat (#620).
 - Document citations (#627): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages, entities,
-  relationships, claims, reports, summaries; not model-written key points or intermediate answers) in every strategy,
-  and the answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those
+  relationships, claims, reports, summaries) in every strategy, and global search's key points and DRIFT's
+  intermediate answers one section each, with the text units and documents of the reports (or the local context)
+  each was written from, as MS GraphRAG's reduce cites `[Data: Reports (...)]`: a cited point names those documents
+  even when the evidence budget left its reports out of the context, and stays model-written (screened, never a
+  source). The answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those
   markers, ASCII in every answer language. `RAGOutput.citations` lists one `Citation` per number: whether the answer
   cites it, its documents (`CitedDocument`: document id, file name, path relative to the corpus root, pages), text
   units, chunk id, title, seed-graph provenance and IRI; a graph section names the documents of up to
   `search.citations.lineage_units` (10) of its text units, read in one batched fetch under the query's suffix and
-  filters, so an excluded or another tenant's document is never named. A number the context did not show is reported
-  in `metadata.unknown_citation_markers`, never as a citation; a blocked answer has none. `CitationMarkerScanner`
+  filters, so an excluded or another tenant's document is never named, alongside the answer
+  call. A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation
+  (a marker has at most three digits: a bracketed year such as `[2020]` is text); a blocked answer has none. Earlier
+  answers reach the follow-up rewrite without their markers. `CitationMarkerScanner`
   reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`. The
   document converter keeps where each PDF page starts and text units store `page_start` / `page_end`, `relative_path`
   and `document_id` in their attributes (ids and texts unchanged). `run-rag` prints the cited sources and its JSON
@@ -605,7 +610,10 @@ From a `main` checkout (formats and keys no release had):
   `kg_neighbors`, `kg_describe_schema`), each annotated read-only, over stdio or stateless streamable HTTP (loopback
   by default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
-  seed-graph provenance). The namespace is fixed at start (`--suffix`, else `index_value`) unless
+  seed-graph provenance; a text record's document id as its text unit stores it; a structured query's
+  `query_result` with its table up to 6000 characters and the entities it returned). `kg_answer` takes the caller's
+  conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the server keeps
+  none). The namespace is fixed at start (`--suffix`, else `index_value`) unless
   `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the `mcp.max_*` bounds limit what a call
   may ask and costs (`mcp.strategies` binds the chain's new `allowed_strategies`: `auto` routes, and falls back, only
   within it, and is refused before any model call when the namespace serves none of it); every call runs under
@@ -634,7 +642,9 @@ From a `main` checkout (formats and keys no release had):
   its first matches as entities. Filter keys are checked against the fallback that would run too. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
   `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
-  `auto` routes to it only once it is in `search.auto_routable_strategies`. `GraphQueryPort` is exported for custom
+  `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the model-written plan text is screened wherever
+  it is returned: the search and answer metadata, the result table and the query-result source the console, MCP and
+  `run-rag` JSON show. `GraphQueryPort` is exported for custom
   graph backends, and `search.token_manager.type_budgets.query_result` sizes the result's context share
   (docs/design.md §6.6, [guide](docs/guides/structured-queries.md)).
 - `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed,

@@ -21,6 +21,7 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    evidence_lineage,
 )
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
@@ -61,6 +62,9 @@ from unified_kg_rag.shared.utils import (
 from unified_kg_rag.shared.utils.concurrency import gather_bounded
 
 logger = get_logger(__name__)
+
+# The source id of each ranked key point (``_KEY_POINTS_SOURCE_<rank>``).
+_KEY_POINTS_SOURCE = "synthesized_key_points"
 
 
 class _MapPoint:
@@ -690,10 +694,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         MAP — rate the key points of each token-sized batch of reports (0-100).
         FILTER+RANK — drop low-scored points, sort by score descending.
         PACK — take ranked points up to ``max_map_reduce_tokens``.
-        REDUCE — hand the ranked, packed points to the answer model as one
-        context section.
+        REDUCE — hand the ranked, packed points to the answer model, one
+        citable context section each (``_reduce_from_points``).
 
-        The result is the key-points item followed by the reports the
+        The result is the key points followed by the reports the
         packed points cite (``_evidence``), best point first: the evidence the
         points came from, for the answer budget left over and the reported
         sources (whole reports up to ``evidence_tokens`` when it is set). Below
@@ -780,7 +784,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         if self.global_search_config.evidence_tokens is not None:
             evidence = await asyncio.to_thread(self._cap_evidence, evidence)
             stats["global_evidence_reports"] = len(evidence)
-        return self._reduce_from_points(packed_points, evidence)
+        return self._reduce_from_points(packed_points, evidence, batches)
 
     def _map_batches(
         self, reports: list[RetrievalResult]
@@ -806,28 +810,33 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         return batches, sum(costs)
 
     @classmethod
+    def _credited(
+        cls, point: _MapPoint, batches: list[list[RetrievalResult]]
+    ) -> list[int]:
+        """The ordinals in its batch of the reports ``point`` credits: those
+        of its batch it cites by id (their ordinal in the batch,
+        ``_format_reports``), or its whole batch when it cites none of them
+        (no ids, or ids the batch does not hold)."""
+        if not 0 <= point.batch < len(batches):
+            return []
+        batch = batches[point.batch]
+        cited = set(point.report_ids)
+        return [
+            i for i in range(len(batch)) if cls._report_ordinal(i) in cited
+        ] or list(range(len(batch)))
+
+    @classmethod
     def _evidence(
         cls, points: list[_MapPoint], batches: list[list[RetrievalResult]]
     ) -> list[RetrievalResult]:
-        """The reports the packed points came from, best point first.
-
-        A point credits the reports of its batch it cites by id (their
-        ordinal in the batch, ``_format_reports``); one that cites none of
-        them (no ids, or ids the batch does not hold) credits its whole
-        batch. Each report scores its best crediting point (0-1). Crediting
-        every report of a batch made a point drawn from one report put up to
-        a dozen unrelated ones in the answer context and sources.
+        """The reports the packed points came from (``_credited``), best
+        point first. Each report scores its best crediting point (0-1).
+        Crediting every report of a batch made a point drawn from one report
+        put up to a dozen unrelated ones in the answer context and sources.
         """
         best: dict[tuple[int, int], int] = {}
         for point in points:
-            if not 0 <= point.batch < len(batches):
-                continue
-            batch = batches[point.batch]
-            cited = set(point.report_ids)
-            credited = [
-                i for i in range(len(batch)) if cls._report_ordinal(i) in cited
-            ] or range(len(batch))
-            for i in credited:
+            for i in cls._credited(point, batches):
                 key = (point.batch, i)
                 best[key] = max(best.get(key, 0), point.score)
         return [
@@ -1027,34 +1036,56 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         return packed
 
     def _reduce_from_points(
-        self, points: list[_MapPoint], results: list[RetrievalResult]
+        self,
+        points: list[_MapPoint],
+        results: list[RetrievalResult],
+        batches: list[list[RetrievalResult]] | None = None,
     ) -> list[RetrievalResult]:
-        """The ranked ``points`` as one context section, before ``results``.
+        """The ranked ``points``, one context section each, before
+        ``results``.
 
         The answer model reads the points directly: it already synthesizes
         from its context, so a separate reduce call would only add a call and
-        a second rewrite that can drop or contradict facts.
+        a second rewrite that can drop or contradict facts. Each point is a
+        section of its own with the lineage of the reports it credits
+        (``_credited``: their text units and documents), so the answer
+        cites it ``[n]`` as MS GraphRAG's reduce cites ``[Data: Reports
+        (...)]``, and the citation names the reports' documents even when
+        the evidence budget left the reports themselves out of the context.
         """
-        synthesis_input = "\n\n".join(
-            f"- (relevance {p.score}) {p.description}" for p in points
-        )
-        points_result = RetrievalResult(
-            content=(
-                "Key points from the community reports, ranked by relevance "
-                "to the query (0-100):\n\n" + synthesis_input
-            ),
-            score=1.0,
-            source="synthesized_key_points",
-            retriever_type=SectionType.GENERAL.value,
-            metadata={
-                # Map-LLM output, not retrieved evidence: in the answer
-                # context, excluded from the reported sources.
-                "synthesized": True,
-                "source_results_count": len(results),
-                "ranked_key_points": len(points),
-            },
-        )
-        return [points_result] + results
+        batches = batches or []
+        out: list[RetrievalResult] = []
+        for rank, point in enumerate(points, start=1):
+            credited = [batches[point.batch][i] for i in self._credited(point, batches)]
+            lineage = evidence_lineage(credited)
+            cites = bool(lineage["text_unit_ids"] or lineage["document_ids"])
+            out.append(
+                RetrievalResult(
+                    content=(
+                        "Key point from the community reports (relevance "
+                        f"{point.score}/100): {point.description}"
+                    ),
+                    score=point.score / 100.0,
+                    source=f"{_KEY_POINTS_SOURCE}_{rank}",
+                    retriever_type=SectionType.GENERAL.value,
+                    metadata={
+                        # Map-LLM output, not retrieved evidence: in the
+                        # answer context (citable by its reports' lineage),
+                        # screened by the output guardrail, never reported as
+                        # a source.
+                        "synthesized": True,
+                        "citable": cites,
+                        "key_point_rank": rank,
+                        "ranked_key_points": len(points),
+                        "source_results_count": len(results),
+                        "report_ids": [
+                            str(r.source) for r in credited if r.source is not None
+                        ],
+                        **lineage,
+                    },
+                )
+            )
+        return out + results
 
     def _was_map_reduce_applied(self, final_results: list[RetrievalResult]) -> bool:
         if not self.global_search_config.enable_map_reduce:

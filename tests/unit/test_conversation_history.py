@@ -122,7 +122,7 @@ _TURNS = [
     {"role": "user", "content": "Who stores the widgets?"},
     {"role": "assistant", "content": "Depot stores them [1]."},
     {"role": "user", "content": "창고는 어디에 있나요?"},
-    {"role": "assistant", "content": "倉庫は港の近くにあります。"},
+    {"role": "assistant", "content": "倉庫は港の近くにあります［２］。"},
 ]
 
 
@@ -137,8 +137,10 @@ async def test_the_callers_history_reaches_the_rewrite(config: Config) -> None:
     chain, store, prompts = _chain(config)
     out = await chain.ainvoke(_query(_TURNS))
     (rewrite,) = _rewrites(prompts)
+    # The answers' citation markers numbered their own turn's context: the
+    # rewrite reads the answers without them.
     assert (
-        "Human: Who stores the widgets?\nAI: Depot stores them [1].\n"
+        "Human: Who stores the widgets?\nAI: Depot stores them.\n"
         "Human: 창고는 어디에 있나요?\nAI: 倉庫は港の近くにあります。"
     ) in rewrite
     assert out.processed_query.standalone_query == (

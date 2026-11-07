@@ -50,7 +50,7 @@ Ctrl-C.
 | Tool | What it does | Model calls |
 |---|---|---|
 | `kg_search` | Retrieval only: the ranked supporting content for a query (any language), with `strategy`, `search_type`, `top_k` and `filters` as in `run-rag --mode search` | The strategy's query processing, the query embedding, the rerank |
-| `kg_answer` | The full RAG answer, the sources the answer model saw, `usage` and the abstention fields (`abstained`, `abstention_reason`) | The above and the answer |
+| `kg_answer` | The full RAG answer, the sources the answer model saw, `usage` and the abstention fields (`abstained`, `abstention_reason`); for a follow-up question, pass the conversation so far as `history` (below) | The above, the follow-up rewrite with a `history`, and the answer |
 | `kg_get_entity` | Entities by `id`, `iri` or `name` (exact first; without an exact name, the closest names, `match: search`) | None |
 | `kg_neighbors` | The entities within `max_hops` of one entity and the relationships among them | None |
 | `kg_describe_schema` | The methodologies and strategies the namespace holds, its last build, the extraction schema's types and patterns, the filter keys and the server's limits | None |
@@ -69,12 +69,12 @@ and ontology tooling exchange:
 
 | Field | Holds |
 |---|---|
-| `rank`, `kind`, `score` | Position (1 is best), the item's kind (`text`, `entity`, `relationship`, `community`, `claim`, `summary`) and its relevance score |
-| `chunk_id`, `text`, `text_truncated` | The chunk (text unit) id of a text record; the text, cut to `mcp.max_text_chars` |
-| `source_id`, `name`, `type` | The stored item's id; an entity's or report's name, a relationship as `A -> B`; the entity or relationship type |
+| `rank`, `kind`, `score` | Position (1 is best), the item's kind (`text`, `entity`, `relationship`, `community`, `claim`, `summary`, `query_result` for a [structured graph query](./structured-queries.md)'s result table) and its relevance score |
+| `chunk_id`, `text`, `text_truncated` | The chunk (text unit) id of a text record; the text, cut to `mcp.max_text_chars` (a `query_result`'s table to 6000 characters, as the console shows it, or `mcp.max_text_chars` if more) |
+| `source_id`, `name`, `type` | The stored item's id; an entity's or report's name, a relationship as `A -> B`, a `query_result`'s plan description; the entity or relationship type |
 | `document_id`, `document_name`, `documents` | The source document: its id where stored, its file name (never its path); for a graph item, the file names of the chunks it was extracted from |
 | `text_unit_ids` | The chunks a graph item was extracted from (the first 20) |
-| `entities` | References (`id`, `name`, `type`, `iri`): the entity itself, a relationship's or claim's endpoints, or the entities of the same response that cite this chunk |
+| `entities` | References (`id`, `name`, `type`, `iri`): the entity itself, a relationship's or claim's endpoints, the entities a `query_result` returned (ids), or the entities of the same response that cite this chunk |
 | `provenance`, `synthesized` | Seed-graph provenance (`kind`, `seed_graphs`, `iri`); `true` for model-written text such as global search's key points |
 | `attributes` | Kind-specific scalars: `rank`, `weight`, `in_schema`, `type_iri`, `predicate_iri`, `hops` |
 | `citation`, `cited` | `kg_answer` only: the `[n]` marker the answer context gave the record and whether the answer cites it ([citations](./query.md#citations)); `null` for a synthesized record and in `kg_search` |
@@ -110,7 +110,12 @@ fails with a timeout message past it; the wait for a call slot counts
 toward it. A response's records are capped by `mcp.max_response_chars`,
 and the MCP message carries them twice (structured content and its JSON
 text), so the message is up to about 2-4 times that. The tools keep no conversation
-memory. All keys: [Configuration reference](../reference/configuration.md#mcp).
+memory: for a follow-up question, `kg_answer` takes the conversation so far
+as `history`, a list of `{role: user | assistant, content}` turns, oldest
+first (at most `memory.max_messages_per_conversation` turns, each up to
+`mcp.max_response_chars` characters), which the follow-up rewrite reads as
+`RAGInput.history` ([conversation history](./query.md#history-from-the-caller)),
+screened by the input guardrail like the query. All keys: [Configuration reference](../reference/configuration.md#mcp).
 
 ## HTTP and remote deployment
 

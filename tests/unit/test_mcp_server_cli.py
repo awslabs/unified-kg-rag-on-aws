@@ -161,3 +161,50 @@ def test_the_server_lists_read_only_tools_only() -> None:
         for word in ("ingest", "delete", "write", "update", "reset")
     )
     assert mcp_server.SERVER_NAME == "unified-kg-rag"
+
+
+@requires_mcp
+def test_kg_answer_takes_a_bounded_history_over_the_protocol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from mcp import Client
+
+    from tests.unit.test_mcp_tools import FakeChain
+    from unified_kg_rag.application.retrieval import graph_lookup
+
+    async def names(chain: object, suffix: object, units: list[str]) -> dict:
+        return {}
+
+    monkeypatch.setattr(graph_lookup, "text_unit_file_names", names)
+    chain = FakeChain()
+    server = build_mcp_server(chain)  # type: ignore[arg-type]
+    turns = [
+        {"role": "user", "content": "창고는 어디에 있나요?"},
+        {"role": "assistant", "content": "倉庫は港の近くにあります。"},
+    ]
+
+    async def run() -> tuple[dict, dict, bool]:
+        async with Client(server, mode="legacy") as client:
+            tools = {t.name: t for t in (await client.list_tools()).tools}
+            answered = await client.call_tool(
+                "kg_answer", {"query": "And who runs it?", "history": turns}
+            )
+            assert not answered.is_error, answered.content
+            refused = await client.call_tool(
+                "kg_answer",
+                {"query": "q", "history": [{"role": "user", "content": "q"}] * 21},
+            )
+            return (
+                tools["kg_answer"].input_schema["properties"],
+                tools["kg_search"].input_schema["properties"],
+                refused.is_error,
+            )
+
+    answer_schema, search_schema, refused = asyncio.run(run())
+    assert "history" in answer_schema and "history" not in search_schema
+    assert refused
+    (rag_input,) = chain.inputs
+    assert rag_input.history is not None
+    assert [t.model_dump() for t in rag_input.history] == turns

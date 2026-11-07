@@ -242,7 +242,11 @@ async def test_every_report_of_the_cut_is_mapped(depth: int, cut: set[str]) -> N
     # Two reports of 10 tokens per 20-token map call.
     assert result.metadata["global_map_call_count"] == (len(cut) + 1) // 2
     assert result.metadata["global_level_capped"] is False
-    assert {r.metadata["community_id"] for r in result.results[1:]} == cut
+    assert {
+        r.metadata["community_id"]
+        for r in result.results
+        if not r.metadata.get("synthesized")
+    } == cut
 
 
 async def test_the_cut_is_a_browse_without_query_text() -> None:

@@ -9,8 +9,9 @@
 2. ACTIONS — for ``n_depth`` rounds, the ``k_followups`` open follow-up queries
    whose parent answer scored best run as local searches (not reranked);
    each local context is answered with its own score and follow-up queries.
-3. REDUCE — the ranked intermediate answers are one synthesized context
-   section and the local evidence behind them, reranked once, follows it;
+3. REDUCE — the ranked intermediate answers are synthesized context
+   sections, each citable by the evidence it was written from, and the
+   local evidence behind them, reranked once, follows them;
    the answer model reduces them into the answer.
 
 ``search.max_concurrency`` primer calls and actions run at a time.
@@ -28,6 +29,7 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    evidence_lineage,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
@@ -77,6 +79,9 @@ class _Answer:
     score: int
     follow_ups: list[str] = field(default_factory=list)
     evidence: list[RetrievalResult] = field(default_factory=list)
+    # What the answer was written from: the primer fold's reports, or the
+    # sections of the action's local context (its lineage).
+    read: list[RetrievalResult] = field(default_factory=list)
     # The non-fatal error that left the answer without text, if any.
     error: Exception | None = None
 
@@ -240,8 +245,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if evidence
             else []
         )
-        synthesized = await self._answers_item(answers)
-        results = ([synthesized] if synthesized else []) + fused
+        results = await self._answers_items(answers) + fused
 
         processing_time = time.time() - start_time
         logger.info(
@@ -394,6 +398,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 score=parse_llm_score(payload.get("score", 0)),
                 follow_ups=_follow_ups(payload),
                 evidence=list(fold),
+                read=list(fold),
             )
 
         primed = await gather_or_cancel(prime(fold) for fold in folds)
@@ -456,7 +461,18 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 self.drift_config.local_context_tokens,
             )
             context = self.token_manager.build_context_string(optimized)
-            answer = _Answer(query=follow_up, text="", score=0, evidence=local.results)
+            answer = _Answer(
+                query=follow_up,
+                text="",
+                score=0,
+                evidence=local.results,
+                read=[
+                    local.results[s.result_index]
+                    for s in optimized.sections
+                    if s.result_index is not None
+                    and 0 <= s.result_index < len(local.results)
+                ],
+            )
             if not local.results:
                 return answer
             stats["drift_llm_calls"] += 1
@@ -502,37 +518,55 @@ class DriftSearchStrategy(BaseSearchStrategy):
     # Reduce
     # ------------------------------------------------------------------ #
 
-    async def _answers_item(self, answers: list[_Answer]) -> RetrievalResult | None:
-        """The intermediate answers, best first, within ``max_answer_tokens``.
+    async def _answers_items(self, answers: list[_Answer]) -> list[RetrievalResult]:
+        """The intermediate answers, best first, within ``max_answer_tokens``,
+        one context section each.
 
-        LLM output rather than retrieved evidence: the answer model reads it,
-        but it is never reported as a source.
+        LLM output rather than retrieved evidence: the answer model reads
+        them, but they are never reported as sources. Each carries the
+        lineage of what it was written from (its fold's reports, or its
+        local context: their text units and documents), so the answer cites
+        it ``[n]`` as MS GraphRAG's DRIFT reduce cites ``[Data: Sources
+        (...)]``.
         """
         ranked = sorted(
             (a for a in answers if a.text), key=lambda a: a.score, reverse=True
         )
         if not ranked:
-            return None
-        entries = [f"- (score {a.score}) Q: {a.query}\n  A: {a.text}" for a in ranked]
+            return []
+        entries = [
+            f"Intermediate answer (score {a.score}/100) to: {a.query}\n{a.text}"
+            for a in ranked
+        ]
         costs = await asyncio.to_thread(self.token_manager.count_tokens_many, entries)
-        packed: list[str] = []
+        packed: list[tuple[_Answer, str]] = []
         used = 0
-        for entry, cost in zip(entries, costs, strict=True):
+        for answer, entry, cost in zip(ranked, entries, costs, strict=True):
             if packed and used + cost > self.drift_config.max_answer_tokens:
                 break
-            packed.append(entry)
+            packed.append((answer, entry))
             used += cost
-        return RetrievalResult(
-            content=(
-                "Intermediate answers to the question and its follow-up "
-                "questions, ranked by how well each addresses the question "
-                "(0-100):\n\n" + "\n\n".join(packed)
-            ),
-            score=1.0,
-            source="synthesized_drift_answers",
-            retriever_type=SectionType.GENERAL.value,
-            metadata={"synthesized": True, "intermediate_answers": len(packed)},
-        )
+        items: list[RetrievalResult] = []
+        for rank, (answer, entry) in enumerate(packed, start=1):
+            lineage = evidence_lineage(answer.read)
+            items.append(
+                RetrievalResult(
+                    content=entry,
+                    score=answer.score / 100.0,
+                    source=f"synthesized_drift_answers_{rank}",
+                    retriever_type=SectionType.GENERAL.value,
+                    metadata={
+                        "synthesized": True,
+                        "citable": bool(
+                            lineage["text_unit_ids"] or lineage["document_ids"]
+                        ),
+                        "intermediate_answer_rank": rank,
+                        "intermediate_answers": len(packed),
+                        **lineage,
+                    },
+                )
+            )
+        return items
 
     @staticmethod
     def _dedupe(results: list[RetrievalResult]) -> list[RetrievalResult]:

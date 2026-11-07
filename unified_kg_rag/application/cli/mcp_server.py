@@ -226,8 +226,9 @@ def _descriptions(tools: KnowledgeGraphTools) -> dict[str, str]:
             "Answer a question from the knowledge graph index (retrieval and "
             "a generated answer) and return the sources the answer used, the "
             "model usage, and whether the answer abstained because the index "
-            "does not cover the question. Costs model calls; prefer "
-            "kg_search when you write the answer yourself."
+            "does not cover the question. For a follow-up question, pass the "
+            "conversation so far as history (the server keeps none). Costs "
+            "model calls; prefer kg_search when you write the answer yourself."
         ),
         "kg_get_entity": (
             "Look up entities of the knowledge graph by id, IRI or name (give "
@@ -377,6 +378,37 @@ def build_mcp_server(
         ),
         *namespace_parameter,
     ]
+    turn_chars = limits.max_response_chars
+
+    class HistoryTurn(BaseModel):
+        """One earlier message of the caller's conversation."""
+
+        role: Literal["user", "assistant"] = Field(
+            description="Who wrote it: the user, or the assistant"
+        )
+        content: str = Field(
+            max_length=turn_chars,
+            description="The message text (an earlier answer as returned)",
+        )
+
+    answer_parameters = [
+        *query_parameters,
+        _parameter(
+            "history",
+            Annotated[
+                list[HistoryTurn] | None,
+                Field(
+                    max_length=tools.max_history_turns,
+                    description=(
+                        "The conversation so far, oldest turn first, to answer "
+                        "a follow-up question from (the server keeps none); "
+                        "screened by the input guardrail as the query is"
+                    ),
+                ),
+            ],
+            None,
+        ),
+    ]
     entity_parameters = [
         _parameter(
             key,
@@ -417,7 +449,7 @@ def build_mcp_server(
 
     specs: dict[str, tuple[list[inspect.Parameter], type[BaseModel], Any]] = {
         "kg_search": (query_parameters, SearchToolResult, search),
-        "kg_answer": (query_parameters, AnswerToolResult, answer),
+        "kg_answer": (answer_parameters, AnswerToolResult, answer),
         "kg_get_entity": (
             [
                 *entity_parameters,

@@ -1788,7 +1788,8 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   and follow-up queries. *Actions:* for `n_depth` rounds the best-scored open
   follow-ups each run the local search (without rerank) and are answered with
   a score and new follow-ups. *Reduce:* the intermediate answers (one
-  synthesized section, never a reported source) and the evidence (each
+  synthesized section each, citable by the lineage of what it read, never a
+  reported source; §7.1) and the evidence (each
   primer fold's reports, each action's local search results), reranked
   once, go to the answer model. Without reports or primer follow-ups,
   the question itself is the one follow-up.
@@ -1882,9 +1883,10 @@ query deadline cancels them and starts no queued one) extracts key points scored
 each naming its `report_ids` (MS GraphRAG's `[Data: Reports (ids)]`; a
 report's id in the prompt is its ordinal in the batch, mapped back). Points
 at or below `map_relevance_threshold` are dropped, the rest ranked, packed
-into `max_map_reduce_tokens` and handed to the answer model as one
-synthesized section (no separate reduce call: it only added a rewrite that
-could drop facts), followed by the reports they cite; a
+into `max_map_reduce_tokens` and handed to the answer model as synthesized
+sections, one per point with the lineage of the reports it credits (§7.1;
+no separate reduce call: it only added a rewrite that could drop facts),
+followed by the reports they cite; a
 point citing none of its batch's reports credits the whole batch.
 `evidence_tokens` caps the cited report text (whole reports, best point
 first) at 4000 tokens by default; null keeps the reports the answer's
@@ -3083,7 +3085,10 @@ internals. Layers, each independent of the next:
    chains and local stores have no such layer, which is why 1 to 5 exist.
 7. *Output*: the output guardrail screens the model-written plan text
    returned in `metadata.structured` and in the query-result section (as it
-   screens `iterative`'s follow-up queries); errors name the plan field,
+   screens `iterative`'s follow-up queries), and the chain gives the same
+   screened text to the copies made before the screening: the answer's
+   `metadata.structured` and `metadata.iterative` and the query-result
+   source's text and metadata (`_refresh_screened_copies`); errors name the plan field,
    not store internals.
 
 Why a plan cannot leave its suffix: the label is no plan value; every
@@ -3218,8 +3223,20 @@ releases and returns no citations):
   reports and is added to entity and relationship lines (about 3 tokens; a
   section is counted with a `[999]` placeholder so the budget holds). A
   synthesized section (global search's key points, DRIFT's intermediate
-  answers) is model output, not evidence: it gets no marker and no citation,
-  as it is not a source.
+  answers) is model output, not evidence, and never a source; each point or
+  answer is a section of its own carrying the lineage of what it was written
+  from (`evidence_lineage`: the text units and documents of the reports a
+  point credits, of a primer fold's reports or of the sections of an
+  action's local context) and flagged `citable`, so it gets a marker and its
+  citation resolves that lineage like a report's: MS GraphRAG's reduce
+  cites `[Data: Reports (...)]` and DRIFT's `[Data: Sources (...)]`, and the
+  documents are named even when `evidence_tokens` left the reports out. A
+  synthesized section without lineage gets no marker. Its text is screened
+  by the output guardrail as before. A marker has at most three digits,
+  read and stripped alike, so a bracketed year (`[2020]`) is text; an
+  earlier answer reaches the follow-up rewrite without its markers
+  (`history_buffer`). The lineage read runs alongside the answer call
+  (`_answer_with_citations_step`; a failed answer cancels it).
 - **Prompt.** `CITATION_INSTRUCTIONS` is appended to the system prompt of
   whichever answer prompt runs (concise, comprehensive or a `custom_prompts`
   override), like the abstention text: cite the supporting items after each
@@ -3458,7 +3475,7 @@ writes memory; no tool takes an index name, an endpoint or a file path.
 | Tool | Runs | Model calls | Returns |
 |---|---|---|---|
 | `kg_search` | `GraphRAGChain.asearch` | those of the strategy's query processing (the `auto` router, query entities or keywords), the query embedding, the rerank | ranked supporting-content records |
-| `kg_answer` | `GraphRAGChain.ainvoke` | the above plus the answer | the answer, its sources as records, `usage`, `abstained`/`abstention_reason`, `blocked`, the strategy run |
+| `kg_answer` | `GraphRAGChain.ainvoke` (with the caller's `history`, if given) | the above plus the follow-up rewrite (with a `history`) and the answer | the answer, its sources as records, `usage`, `abstained`/`abstention_reason`, `blocked`, the strategy run |
 | `kg_get_entity` | the entities index by `id`, `iri` or exact `name.keyword`; without an exact match, a lexical search of `name` | none | up to `limit` entities, how they matched |
 | `kg_neighbors` | the graph walk from one entity (`max_hops`, the configured per-hop budget) and its incident relationships | none | the neighbours (hop distance, path) and the relationships with their text units and documents |
 | `kg_describe_schema` | the namespace's build record and held artifacts, the resolved extraction schema | none (a schema source may read its file or S3 object once) | held methodologies, the strategies they serve, the build, entity and relationship types and patterns, the filter keys |
@@ -3476,9 +3493,19 @@ come from, resolved in one fetch by id), `text_unit_ids`, `entities` (each
 for a relationship, and for a chunk the entities of the same response that
 cite it), `provenance` (a seed graph's `kind`, `seed_graphs` and `iri`, as
 in `RAGOutput.sources`) and `synthesized` (model-written, such as global
-search's key points; `kg_answer` never cites one, as the chain does not).
-A `kg_answer` record also carries its `citation` (the `[n]` marker of §7.1)
-and `cited` (whether the answer uses it).
+search's key points: a `kg_search` record only, since the chain cites a
+key point by its reports' lineage but never reports it as a source). A
+`query_result` record (the structured strategy's table, §6.6) keeps its
+table up to 6000 characters, as the console shows it, names its plan
+description and lists the entities it returned. A text record's
+`document_id` is read where the text unit stores it
+(`attributes.document_id`), as `RAGOutput.sources` reads it. A
+`kg_answer` record also carries its `citation` (the `[n]` marker of §7.1)
+and `cited` (whether the answer uses it). `kg_answer` takes the caller's
+conversation as an optional `history` (at most
+`memory.max_messages_per_conversation` turns of up to
+`mcp.max_response_chars` characters), passed as `RAGInput.history` (§7.2):
+the server stays stateless.
 
 **Layer placement.** The server is a driving adapter in the entry-point
 layer, next to the other CLIs (§2.1): `application/cli/mcp_tools.py` holds
