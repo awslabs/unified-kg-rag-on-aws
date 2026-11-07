@@ -222,3 +222,69 @@ def test_run_ingestion_has_a_flag_for_the_integrity_question_alone() -> None:
     parser = CommandLineInterface._setup_arguments()
     args = parser.parse_args(["--source-directory", ".", "--confirm-integrity"])
     assert args.confirm_integrity and not args.yes and not args.confirm_reset
+
+
+class _StreamingChain(_Chain):
+    """Streams its answer in chunks that split a citation marker."""
+
+    def __init__(self, output: RAGOutput, chunks: list[str]) -> None:
+        super().__init__(output)
+        self.chunks = chunks
+        self.inputs: list[Any] = []
+
+    async def ainvoke(self, rag_input: Any, *_: Any, **kwargs: Any) -> RAGOutput:
+        self.inputs.append(rag_input)
+        for chunk in self.chunks:
+            kwargs["on_answer_chunk"](chunk)
+        return self.output
+
+
+async def test_chunks_carry_the_markers_they_close(tmp_path: Path) -> None:
+    chunks = ["Vendor ships [1", ", 2] and", " stores [3]", "."]
+    output = _output()
+    output.answer = "".join(chunks)
+    chain = _StreamingChain(output, chunks)
+    service = AskService(
+        Config, ConsoleStore(tmp_path / "s.sqlite3"), chain_factory=lambda _c: chain
+    )
+    events = await _drain(service, "q")
+    markers = [e["markers"] for e in events if e["kind"] == "chunk"]
+    assert markers == [[], [1, 2], [3], []]
+    assert "".join(e["text"] for e in events if e["kind"] == "chunk") == output.answer
+    await service.close()
+
+
+async def test_a_follow_up_passes_the_page_s_conversation_as_history(
+    tmp_path: Path,
+) -> None:
+    chain = _StreamingChain(_output(), [])
+    service = AskService(
+        Config, ConsoleStore(tmp_path / "s.sqlite3"), chain_factory=lambda _c: chain
+    )
+    turns = [
+        {"role": "user", "content": "Who ships?"},
+        {"role": "assistant", "content": "Vendor [1]."},
+    ]
+    request = AskRequest(query="Where to?", history=turns)
+    _ = [e async for e in service.ask(request)]
+    sent = chain.inputs[0]
+    assert [t.model_dump() for t in sent.history] == turns
+    assert not sent.use_memory and sent.conversation_id is None
+    # A question without one sends none (not an empty conversation).
+    _ = [e async for e in service.ask(AskRequest(query="q"))]
+    assert chain.inputs[1].history is None
+    await service.close()
+
+
+def test_history_is_bounded_and_only_user_or_assistant() -> None:
+    from pydantic import ValidationError
+
+    from unified_kg_rag.application.cli.console.ask import MAX_HISTORY_TURNS
+
+    with pytest.raises(ValidationError):
+        AskRequest(query="q", history=[{"role": "system", "content": "x"}])
+    with pytest.raises(ValidationError):
+        AskRequest(
+            query="q",
+            history=[{"role": "user", "content": "x"}] * (MAX_HISTORY_TURNS + 1),
+        )

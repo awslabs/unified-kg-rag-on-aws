@@ -5,9 +5,15 @@ question answered as a stream of events, and its record for the dashboard.
 
 Events (``kind`` plus fields): ``start`` (the query id, the trace id when
 tracing is on), ``chunk`` (answer text as the answer model streams it,
-``GraphRAGChain.ainvoke(on_answer_chunk=...)``), then ``result`` (the
-answer, its sources with their provenance, how ``auto`` routed, rerank
-status, usage, cost and latency) or ``error``.
+``GraphRAGChain.ainvoke(on_answer_chunk=...)``, with the citation markers
+it completes, read by ``CitationMarkerScanner`` so a marker split across
+chunks counts once it closes), then ``result`` (the answer, its citations,
+its sources with their provenance and context markers, how ``auto``
+routed, rerank status, usage, cost and latency) or ``error``.
+
+A follow-up carries the conversation itself (``RAGInput.history``): the
+page keeps its turns, so a chain rebuilt after a settings save or an
+ingestion, or a config without conversation memory, still continues it.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ import os
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -26,12 +32,14 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodo
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.retrieval.rag_chain import (
     ROUTING_KEY,
+    ConversationTurn,
     GraphRAGChain,
     RAGInput,
     RAGOutput,
 )
 from unified_kg_rag.domain.models import Config, Constants, SearchStrategy, SearchType
 from unified_kg_rag.domain.models.usage import LLMUsage
+from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
 from unified_kg_rag.evaluation.comparison import answer_cost_usd
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
@@ -46,6 +54,17 @@ logger = get_logger(__name__)
 
 EXCERPT_CHARACTERS = 600
 MAX_QUESTION_CHARACTERS = 4000
+# A follow-up's history as the page sends it; the chain bounds it further
+# (memory.max_messages_per_conversation, memory.max_history_tokens).
+MAX_HISTORY_TURNS = 100
+MAX_TURN_CHARACTERS = 100_000
+
+
+class AskTurn(BaseModel):
+    """One earlier message of the page's conversation."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=MAX_TURN_CHARACTERS)
 
 
 class AskRequest(BaseModel):
@@ -55,8 +74,7 @@ class AskRequest(BaseModel):
     search_strategy: SearchStrategy = SearchStrategy.AUTO
     search_type: SearchType = SearchType.HYBRID
     top_k: int = Field(default=10, ge=1, le=100)
-    conversation_id: str | None = Field(default=None, max_length=128)
-    use_memory: bool = False
+    history: list[AskTurn] | None = Field(default=None, max_length=MAX_HISTORY_TURNS)
     filters: dict[str, Any] | None = None
     suffix: str | None = Field(default=None, max_length=128)
 
@@ -144,6 +162,26 @@ def link_sources(sources: list[dict[str, Any]]) -> None:
         if source["kind"] in ("entity", "relationship") and units:
             source["supported_by"] = [by_unit[u] for u in units if u in by_unit]
             source["unread_passages"] = sum(1 for u in units if u not in by_unit)
+
+
+def mark_sources(
+    sources: list[dict[str, Any]], citations: list[dict[str, Any]]
+) -> None:
+    """Give each source the context marker it was shown under (``marker``,
+    ``None`` for none) and each citation the rank of its source
+    (``source_rank``, ``None`` for a section reported as no source, a
+    synthesized summary): the answer's ``[n]`` links to the trail through
+    them. A citation names its source by the source's id, in context order."""
+    unclaimed: dict[Any, list[dict[str, Any]]] = {}
+    for source in sources:
+        source["marker"] = None
+        unclaimed.setdefault(source["id"], []).append(source)
+    for citation in citations:
+        candidates = unclaimed.get(citation.get("source_id")) or []
+        shown = candidates.pop(0) if candidates else None
+        citation["source_rank"] = shown["rank"] if shown else None
+        if shown is not None:
+            shown["marker"] = citation["marker"]
 
 
 class AskService:
@@ -369,21 +407,30 @@ class AskService:
                     "trace_url": trace_url(trace_id, self.trace_url_template, config),
                 }
             )
+            scanner = CitationMarkerScanner()
             output = await chain.ainvoke(
                 RAGInput(
                     query=request.query,
                     search_strategy=request.search_strategy,
                     search_type=request.search_type,
                     top_k=request.top_k,
-                    conversation_id=request.conversation_id,
-                    use_memory=request.use_memory,
+                    history=(
+                        None
+                        if request.history is None
+                        else [
+                            ConversationTurn(role=t.role, content=t.content)
+                            for t in request.history
+                        ]
+                    ),
                     filters=request.filters,
                     suffix=request.suffix,
                 ),
                 on_answer_chunk=lambda text: queue.put_nowait(
-                    {"kind": "chunk", "text": text}
+                    {"kind": "chunk", "text": text, "markers": scanner.feed(text)}
                 ),
             )
+            if tail := scanner.finish():
+                queue.put_nowait({"kind": "chunk", "text": "", "markers": tail})
         return output, trace_id
 
     @staticmethod
@@ -391,6 +438,8 @@ class AskService:
         metadata = output.metadata or {}
         sources = [source_view(i, s) for i, s in enumerate(output.sources, start=1)]
         link_sources(sources)
+        citations = [c.model_dump(mode="json") for c in output.citations]
+        mark_sources(sources, citations)
         usage_data = metadata.get("usage")
         cost: float | None = None
         unpriced: list[str] = []
@@ -406,7 +455,8 @@ class AskService:
         error = bool(metadata.get("error"))
         return {
             "answer": output.answer,
-            "conversation_id": output.conversation_id,
+            "citations": citations,
+            "unknown_citation_markers": metadata.get("unknown_citation_markers") or [],
             "strategy": metadata.get("search_strategy"),
             "routing": metadata.get(ROUTING_KEY),
             "abstained": bool(metadata.get("abstained")),

@@ -4,9 +4,10 @@
  * The provenance trace: the sources an answer read, ranked, hung on one
  * rail. Opening a source draws its trail: the passages that state it (arcs
  * to their stations), the file and chunk they come from, seed-graph
- * evidence, and the way into the graph.
+ * evidence, and the way into the graph. A source the answer cites carries
+ * its context marker [n]; the answer's markers open it here.
  */
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../i18n/i18n";
 import type { Source } from "../lib/types";
 import { Highlighted } from "./Highlighted";
@@ -31,6 +32,11 @@ export interface EvidenceTraceProps {
   sources: Source[];
   question: string;
   onOpenInGraph?: (source: Source) => void;
+  /** The context markers the answer cites. */
+  cited?: ReadonlySet<number>;
+  /** The open source's rank, when the page controls it (an answer's [n]). */
+  open?: number | null;
+  onOpenChange?: (rank: number | null) => void;
 }
 
 /** The ranks of the graph sources that cite passage `rank`. */
@@ -38,10 +44,15 @@ export function citedBy(sources: Source[], rank: number): number[] {
   return sources.filter((s) => s.supported_by?.includes(rank)).map((s) => s.rank);
 }
 
-export function EvidenceTrace({ sources, question, onOpenInGraph }: EvidenceTraceProps) {
+export function EvidenceTrace({ sources, question, onOpenInGraph, cited, open: controlled, onOpenChange }: EvidenceTraceProps) {
   const { t, number } = useI18n();
   const [filter, setFilter] = useState<KindFilter>("all");
-  const [open, setOpen] = useState<number | null>(null);
+  const [own, setOwn] = useState<number | null>(null);
+  const open = controlled === undefined ? own : controlled;
+  const setOpen = (rank: number | null) => {
+    setOwn(rank);
+    onOpenChange?.(rank);
+  };
   const container = useRef<HTMLDivElement>(null);
   const [arcs, setArcs] = useState<string[]>([]);
   const [all, setAll] = useState(false);
@@ -92,6 +103,13 @@ export function EvidenceTrace({ sources, question, onOpenInGraph }: EvidenceTrac
     setArcs(paths);
   }, [open, linked, shown.length]);
 
+  // A source opened from the answer's [n] is brought into view.
+  useEffect(() => {
+    if (open === null) return;
+    const card = container.current?.querySelector<HTMLElement>(`[data-rank="${open}"]`);
+    card?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [open]);
+
   if (!sources.length) {
     return (
       <div className="empty">
@@ -128,6 +146,7 @@ export function EvidenceTrace({ sources, question, onOpenInGraph }: EvidenceTrac
                 source={source}
                 question={question}
                 open={open === source.rank}
+                cited={source.marker != null && !!cited?.has(source.marker)}
                 linked={linked.has(source.rank)}
                 sources={sources}
                 onToggle={() => setOpen(open === source.rank ? null : source.rank)}
@@ -151,6 +170,7 @@ function SourceCard({
   source,
   question,
   open,
+  cited,
   linked,
   sources,
   onToggle,
@@ -160,6 +180,7 @@ function SourceCard({
   source: Source;
   question: string;
   open: boolean;
+  cited: boolean;
   linked: boolean;
   sources: Source[];
   onToggle: () => void;
@@ -182,6 +203,11 @@ function SourceCard({
       >
         <span className="source-head">
           <span className="source-rank">#{source.rank}</span>
+          {source.marker != null ? (
+            <span className={`marker${cited ? " marker-cited" : ""}`} title={t(cited ? "ask.trace.markerCited" : "ask.trace.marker", { marker: source.marker })}>
+              [{source.marker}]
+            </span>
+          ) : null}
           <span className="source-title">{title}</span>
           <span className="source-kind">{t(`ask.kind.${source.kind}`)}</span>
           {source.relation ? <span className="badge">{source.relation}</span> : null}

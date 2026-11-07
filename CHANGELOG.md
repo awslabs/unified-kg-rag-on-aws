@@ -649,23 +649,24 @@ From a `main` checkout (formats and keys no release had):
   (status, fallback reasons, valid-plan, repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)).
 - A local web console, opt-in (the `console` extra, `run-console`; #PR): ask with a strategy picker (and how `auto`
-  chose), the answer streamed as the answer model writes it, and each source the answer read on a provenance trace
-  back to its passage, file, seed graph and IRI and into the graph; ingest a workspace folder or an upload with a
-  methodology profile, with live stage progress and a stop the pipeline checkpoints; run and compare evaluations
-  (paired deltas with intervals, gates, cost, declines, win rates by answer length) and open saved runs; explore
-  the exported graph (search, neighbourhoods, communities, degree, schema conformance, seed versus document
-  evidence); a dashboard of the questions and jobs run through it (time, tokens, cost per strategy, model and
-  role); and edit the config file with validation, a diff before saving and secrets never shown or written. Jobs
-  run the unchanged `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs
-  `--allow-remote`), requires a per-launch access token, refuses paths outside its directories and cross-site requests, and loads nothing from another
-  host. The web client (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, and
-  `console/demo/demo.py` prepares a synthetic corpus, a dataset and a config for fake, Ollama or Bedrock models
-  ([Console](docs/guides/console.md)).
+  chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources they
+  cite, follow-ups sent with the page's conversation (`RAGInput.history`), and each source the answer read on a
+  provenance trace back to its passage, file, seed graph and IRI and into the graph; ingest a workspace folder or an
+  upload with a methodology profile, with live stage progress and a stop the pipeline checkpoints; run and compare
+  evaluations (paired deltas with intervals, gates, cost, declines, win rates by answer length) and open saved runs;
+  explore the exported graph (search, neighbourhoods, communities, degree, schema conformance, seed versus document
+  evidence); a dashboard of the questions and jobs run through it (time, tokens, cost per strategy, model and role);
+  and edit the config file with validation, a diff before saving and secrets never shown or written. Jobs run the
+  unchanged `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs
+  `--allow-remote`), requires a per-launch access token, refuses paths outside its directories and cross-site
+  requests, and loads nothing from another host. The web client (`console/web/`, Vite, React, TypeScript) is in
+  English and nine more languages, and `console/demo/demo.py` prepares a synthetic corpus, a dataset and a config for
+  fake, Ollama or Bedrock models ([Console](docs/guides/console.md)).
 - `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose inputs
   changed (#PR).
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
-  streams them, and an `auto` query's output carries `metadata["routing"]` (how the strategy was chosen, among
-  which candidates) (#PR).
+  streams them (the output, its citations included, is that of an unstreamed answer), and an `auto` query's output
+  carries `metadata["routing"]` (how the strategy was chosen, among which candidates) (#PR).
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
   after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
   mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index

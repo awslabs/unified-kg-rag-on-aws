@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 import { useRef, useState } from "react";
+import { AnswerText, CitationList } from "../components/AnswerText";
 import { EvidenceTrace } from "../components/EvidenceTrace";
 import { StrategyPicker } from "../components/StrategyPicker";
 import { Notice, PageHead, Sheet } from "../components/ui";
@@ -8,7 +9,7 @@ import { useI18n } from "../i18n/i18n";
 import { errorMessage, get, stream } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
-import type { AskEvent, AskResult, Source, Status, StrategyInfo } from "../lib/types";
+import type { AskEvent, AskResult, Citation, Source, Status, StrategyInfo } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
 interface Turn {
@@ -20,6 +21,23 @@ interface Turn {
   result?: AskResult;
   error?: { kind: string; message: string };
   traceUrl?: string | null;
+}
+
+// The earlier turns a follow-up sends (the chain bounds them further by
+// memory.max_messages_per_conversation and memory.max_history_tokens).
+const HISTORY_TURNS = 25;
+
+/** The conversation a follow-up carries (`RAGInput.history`): each earlier
+ * question and its final answer, oldest first. A turn without an answer
+ * (failed, stopped, blocked) is left out: it is no history. */
+export function conversationHistory(turns: { question: string; result?: AskResult; status: string }[]): { role: "user" | "assistant"; content: string }[] {
+  return turns
+    .filter((turn) => turn.status === "done" && turn.result && !turn.result.blocked && !turn.result.error)
+    .slice(-HISTORY_TURNS)
+    .flatMap((turn) => [
+      { role: "user" as const, content: turn.question },
+      { role: "assistant" as const, content: turn.result?.answer ?? "" },
+    ]);
 }
 
 /** Filters typed as `key: value` lines (a number or true/false is typed). */
@@ -46,7 +64,8 @@ export function AskPage({ status }: { status: Status | null }) {
   const [filterText, setFilterText] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
-  const [conversation, setConversation] = useState<string | null>(null);
+  // The source open in the trace (its rank), set by an answer's [n].
+  const [openRank, setOpenRank] = useState<number | null>(null);
   const abort = useRef<AbortController | null>(null);
   const counter = useRef(0);
   const busy = turns.some((turn) => turn.status === "streaming");
@@ -59,8 +78,10 @@ export function AskPage({ status }: { status: Status | null }) {
     if (!text || busy) return;
     counter.current += 1;
     const id = counter.current;
+    const history = followUp ? conversationHistory(turns) : [];
     setTurns((all) => [...all, { id, question: text, requested: strategy, text: "", status: "streaming" }]);
     setSelected(id);
+    setOpenRank(null);
     setQuery("");
     const controller = new AbortController();
     abort.current = controller;
@@ -72,8 +93,7 @@ export function AskPage({ status }: { status: Status | null }) {
           search_strategy: strategy,
           search_type: searchType,
           top_k: topK,
-          use_memory: followUp,
-          conversation_id: followUp ? conversation : null,
+          history: history.length ? history : null,
           filters: parseFilters(filterText),
         },
         controller.signal,
@@ -82,7 +102,6 @@ export function AskPage({ status }: { status: Status | null }) {
         else if (event.kind === "chunk") update(id, (turn) => ({ ...turn, text: turn.text + event.text }));
         else if (event.kind === "result") {
           update(id, (turn) => ({ ...turn, status: "done", result: event, text: event.answer }));
-          if (followUp && event.conversation_id) setConversation(event.conversation_id);
         } else if (event.kind === "error") update(id, (turn) => ({ ...turn, status: "error", error: { kind: event.error_kind, message: event.message } }));
       }
     } catch (e) {
@@ -97,6 +116,11 @@ export function AskPage({ status }: { status: Status | null }) {
   }
 
   const current = turns.find((turn) => turn.id === selected) ?? turns[turns.length - 1];
+  const select = (id: number, rank: number | null = null) => {
+    setSelected(id);
+    setOpenRank(rank);
+  };
+  const cited = new Set((current?.result?.citations ?? []).filter((c) => c.cited).map((c) => c.marker));
   const openInGraph = (source: Source) => {
     if (!current) return;
     setTrail({ question: current.question, source, sources: current.result?.sources ?? [] });
@@ -120,8 +144,8 @@ export function AskPage({ status }: { status: Status | null }) {
               className="button button-small"
               onClick={() => {
                 setTurns([]);
-                setConversation(null);
                 setSelected(null);
+                setOpenRank(null);
               }}
             >
               {t("ask.newConversation")}
@@ -219,7 +243,13 @@ export function AskPage({ status }: { status: Status | null }) {
           </section>
           <div className="thread" aria-live="polite">
             {turns.map((turn) => (
-              <TurnView key={turn.id} turn={turn} selected={turn.id === current?.id} onSelect={() => setSelected(turn.id)} />
+              <TurnView
+                key={turn.id}
+                turn={turn}
+                selected={turn.id === current?.id}
+                onSelect={() => select(turn.id)}
+                onOpenCitation={(citation) => select(turn.id, citation.source_rank)}
+              />
             ))}
           </div>
         </div>
@@ -227,7 +257,15 @@ export function AskPage({ status }: { status: Status | null }) {
         <Sheet title={t("ask.evidence")} aside={current?.result ? <span className="muted">{t("ask.evidenceFor", { question: truncate(current.question, 48) })}</span> : null}>
           {current?.result ? (
             <div className="evidence-scroll" tabIndex={0} aria-label={t("ask.evidence")}>
-              <EvidenceTrace key={current.id} sources={current.result.sources} question={current.question} onOpenInGraph={openInGraph} />
+              <EvidenceTrace
+                key={current.id}
+                sources={current.result.sources}
+                question={current.question}
+                onOpenInGraph={openInGraph}
+                cited={cited}
+                open={openRank}
+                onOpenChange={setOpenRank}
+              />
             </div>
           ) : (
             <div className="empty">
@@ -246,7 +284,17 @@ function truncate(text: string, length: number): string {
   return text.length > length ? `${text.slice(0, length - 1)}…` : text;
 }
 
-function TurnView({ turn, selected, onSelect }: { turn: Turn; selected: boolean; onSelect: () => void }) {
+function TurnView({
+  turn,
+  selected,
+  onSelect,
+  onOpenCitation,
+}: {
+  turn: Turn;
+  selected: boolean;
+  onSelect: () => void;
+  onOpenCitation: (citation: Citation) => void;
+}) {
   const { t, number, usd, seconds } = useI18n();
   const result = turn.result;
   return (
@@ -268,9 +316,16 @@ function TurnView({ turn, selected, onSelect }: { turn: Turn; selected: boolean;
           </Notice>
         ) : (
           <p className={`answer-text${turn.status === "streaming" ? " streaming" : ""}`}>
-            {turn.text || (turn.status === "streaming" ? <span className="muted">{t("ask.retrieving")}</span> : "")}
+            {turn.text ? (
+              <AnswerText text={turn.text} citations={result?.citations} onOpen={onOpenCitation} />
+            ) : turn.status === "streaming" ? (
+              <span className="muted">{t("ask.retrieving")}</span>
+            ) : (
+              ""
+            )}
           </p>
         )}
+        {result && !turn.error ? <CitationList citations={result.citations} onOpen={onOpenCitation} /> : null}
         {turn.status === "stopped" ? <p className="muted">{t("ask.stopped")}</p> : null}
         {result?.abstained ? (
           <div style={{ marginTop: 12 }}>

@@ -53,6 +53,37 @@ export interface Source {
   community_id?: string | null;
   supported_by?: number[];
   unread_passages?: number;
+  /** The context marker [n] the answer model saw it under. */
+  marker: number | null;
+}
+
+export interface CitedDocument {
+  document_id: string | null;
+  file_name: string | null;
+  file_path: string | null;
+  page: number | null;
+  page_end: number | null;
+  text_unit_ids: string[];
+}
+
+/** One numbered context section (`RAGOutput.citations`), with the rank of
+ * the source it was reported as (null for a summary the model read). */
+export interface Citation {
+  marker: number;
+  cited: boolean;
+  section_type: string;
+  source_id: string | null;
+  title: string | null;
+  document_id: string | null;
+  file_name: string | null;
+  file_path: string | null;
+  page: number | null;
+  page_end: number | null;
+  chunk_id: string | null;
+  text_unit_ids: string[];
+  documents: CitedDocument[];
+  iri: string | null;
+  source_rank: number | null;
 }
 
 export interface Usage {
@@ -67,7 +98,8 @@ export interface Usage {
 
 export interface AskResult {
   answer: string;
-  conversation_id: string | null;
+  citations: Citation[];
+  unknown_citation_markers: number[];
   strategy: string | null;
   routing: { decided_by: "router" | "only_candidate" | "fallback"; candidates: string[] } | null;
   abstained: boolean;
@@ -84,7 +116,7 @@ export interface AskResult {
   total_results: number | null;
   context_sections_included: number | null;
   context_sections_excluded: number | null;
-  processed_query: { original_query: string; final_query: string; translated_query: string | null; entities: string[] };
+  processed_query: { original_query: string; final_query: string; translated_query: string | null; standalone_query?: string | null; entities: string[] };
   sources: Source[];
   namespace: string;
   trace_id: string | null;
@@ -93,7 +125,7 @@ export interface AskResult {
 
 export type AskEvent =
   | { kind: "start"; query_id: string; trace_id: string | null; trace_url: string | null }
-  | { kind: "chunk"; text: string }
+  | { kind: "chunk"; text: string; markers: number[] }
   | ({ kind: "result" } & AskResult)
   | { kind: "error"; error_kind: string; message: string };
 

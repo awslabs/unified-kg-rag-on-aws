@@ -68,6 +68,8 @@ RELATION_TYPES: dict[tuple[str, str], str] = {
 _WORD = re.compile(r"[\w$%.,']+", re.UNICODE)
 _DENSE = re.compile(r"[぀-ヿ㐀-鿿가-힯]")
 _SENTENCE = re.compile(r"(?<=[.!?。！？])\s+|\n+")
+# The marker that opens a numbered context section ("[3] ...").
+_SECTION = re.compile(r"\[([0-9]{1,4})\] ")
 _STOP = frozenset(
     "a an and are as at be by did do does for from has have how in is it its "
     "of on or the to was were what when where which who whom why with".split()
@@ -186,30 +188,57 @@ def community_report(human: str) -> str:
     )
 
 
-def best_sentences(question: str, text: str, limit: int) -> list[str]:
+def _marked_sentences(text: str) -> list[tuple[str, int | None]]:
+    """``text``'s sentences, each with the context marker of the numbered
+    section it is in (``[n] `` opens a section, which runs to the next one
+    or the next block header; ``None`` outside one)."""
+    marked: list[tuple[str, int | None]] = []
+    marker: int | None = None
+    for line in text.splitlines():
+        opened = _SECTION.match(line)
+        if opened:
+            marker, line = int(opened.group(1)), line[opened.end() :]
+        elif line.startswith("#"):
+            marker = None  # a block header ("##### Entities")
+        marked.extend((sentence, marker) for sentence in _sentences(line))
+    return marked
+
+
+def best_sentences(
+    question: str, text: str, limit: int
+) -> list[tuple[str, int | None]]:
     """The ``limit`` sentences of ``text`` that share the most tokens with
-    ``question`` (ties keep their order), skipping lines of markup."""
+    ``question`` (ties keep their order), skipping lines of markup, each with
+    the marker of its context section."""
     wanted = set(tokens(question))
     scored = []
-    for position, sentence in enumerate(_sentences(text)):
+    for position, (sentence, marker) in enumerate(_marked_sentences(text)):
         if sentence.startswith(("<", "#", "|", "-", "[", "{", "**")):
             continue
         overlap = len(wanted & set(tokens(sentence)))
         if overlap:
-            scored.append((-overlap, position, sentence))
+            scored.append((-overlap, position, sentence, marker))
     picked = sorted(scored)[:limit]
-    unique: list[str] = []
-    for _, _, sentence in sorted(picked, key=lambda item: item[1]):
-        if sentence not in unique:
-            unique.append(sentence)
+    unique: list[tuple[str, int | None]] = []
+    seen: set[str] = set()
+    for _, _, sentence, marker in sorted(picked, key=lambda item: item[1]):
+        if sentence not in seen:
+            seen.add(sentence)
+            unique.append((sentence, marker))
     return unique
 
 
+def _cited(sentence: str, marker: int | None) -> str:
+    """``sentence`` citing its section as the answer prompt asks ([n])."""
+    return sentence if marker is None else f"{sentence} [{marker}]"
+
+
 def answer(human: str) -> str:
-    """The answer step: the context sentences closest to the question."""
+    """The answer step: the context sentences closest to the question, each
+    citing the numbered section it comes from."""
     question = _between(human, 'Query: "', '"\n') or human[:200]
     context = _between(human, "<context>", "</context>")
-    picked = best_sentences(question, context, 3)
+    picked = [_cited(*item) for item in best_sentences(question, context, 3)]
     if not picked:
         return (
             "The provided context does not say. It covers the documents "
@@ -218,6 +247,18 @@ def answer(human: str) -> str:
     return picked[0] + (
         "\n\n" + "\n".join(f"- {s}" for s in picked[1:]) if picked[1:] else ""
     )
+
+
+def rewrite(human: str) -> str:
+    """The follow-up rewrite: the latest message, naming the entities the
+    conversation names when the message names none."""
+    message = _between(human, "<query>\n", "\n</query>").strip()
+    if _names_in(message):
+        return message
+    named = _names_in(
+        _between(human, "<conversation_history>", "</conversation_history>")
+    )
+    return f"{message} ({', '.join(named)})" if named else message
 
 
 def judge(human: str) -> str:
@@ -271,6 +312,8 @@ def respond(system: str, human: str) -> tuple[str, bool]:
     if "knowledge-graph editor" in system:
         descriptions = _between(human, "<descriptions>", "</descriptions>")
         return " ".join(dict.fromkeys(_sentences(descriptions)))[:600], False
+    if "rewrite the latest user message" in system:
+        return rewrite(human), False
     if "search strategy selector" in system:
         return route(_between(human, 'Query: "', '"') or human), False
     if "specialized entity extraction expert" in system:
@@ -290,7 +333,7 @@ def respond(system: str, human: str) -> tuple[str, bool]:
         question = _between(human, 'User Question: "', '"')
         points = [
             {"description": s, "score": 80 - 10 * i, "report_ids": []}
-            for i, s in enumerate(best_sentences(question, human, 3))
+            for i, (s, _) in enumerate(best_sentences(question, human, 3))
         ]
         return json.dumps({"points": points}), False
     if "DRIFT search primer" in system:

@@ -4276,7 +4276,22 @@ stays authoritative (the client replaces the streamed text with its
 `answer`). It streams nothing when the output guardrail screens answers
 (nothing may be shown before screening) or when the answer is read for
 the `[NO_ANSWER]` token (`search.abstention`), so a decline is never shown
-half-written. `astream` is unchanged; it yields no sources.
+half-written. `astream` is unchanged; it yields no sources. A streamed
+answer is the unstreamed one: its text is the chunks joined, so
+`citations` and `unknown_citation_markers` come out the same
+(`test_answer_chunks.py`). Each `chunk` event carries the markers that
+chunk closes, read by `CitationMarkerScanner` (a marker split across chunks
+counts once it closes); the `result` event gives each source the marker
+it was shown under and each citation the rank of its source, so the
+page links an answer's `[n]` to that source in the trace.
+
+**Follow-ups.** The page keeps the conversation and sends it with a
+follow-up as `RAGInput.history` (each answered question and its final
+answer; failed, stopped and blocked turns left out), not a conversation
+id in the chain's memory: a settings save or an ingestion rebuilds the
+chain, which would drop an in-process memory, and a config with memory
+off still continues the conversation. The chain bounds and screens the
+history as it does for any caller.
 
 **Settings.** The page edits the YAML file the console was started with
 (`--config-path`), field by field (each with its `Field(description=...)`

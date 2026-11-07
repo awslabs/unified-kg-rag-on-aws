@@ -105,9 +105,14 @@ the tokens in and out, the model calls, the cost (when `evaluation.prices`
 prices the models), the rerank status and the trace link. A declined
 answer says why (no context, the model's `[NO_ANSWER]`, an insufficient
 context under the decline policy); a blocked one says the guardrail
-blocked it. Follow-ups keep the conversation unless unticked. Search
-options set the results per search, the search type and `key: value`
-filters.
+blocked it. The answer's citation markers (`[1]`, `[2, 3]`) open the
+source they cite in the provenance trace, and the sources the answer cites
+are listed under it with their file and pages; a number the context did
+not show is struck through. Follow-ups continue the conversation unless
+unticked: the page sends the earlier questions and answers with the
+question (`RAGInput.history`), so the conversation survives a settings
+save or an ingestion. Search options set the results per search, the
+search type and `key: value` filters.
 
 The right column is the **provenance trace**, the console's signature: a
 rail with every source the answer model read, in rank order, filterable by
@@ -116,7 +121,8 @@ draws its trail: an entity or relationship lists the passages of the same
 answer that state it (arcs to their stations on the rail) and how many of
 its passages the answer did not read; a passage names its file and chunk
 and the graph sources that cite it; a seed-graph statement shows its seed
-graph and IRI. **Show in the graph** opens the Graph page on that entity
+graph and IRI. A source carries the context marker it was shown under,
+highlighted when the answer cites it. **Show in the graph** opens the Graph page on that entity
 (or edge, or community), with the trail continued above the graph back to
 the question.
 

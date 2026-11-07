@@ -178,3 +178,52 @@ async def test_a_truncated_answer_fails_streamed_as_unstreamed(
     assert outcomes[0] == outcomes[1]
     if ignore_errors:
         assert outcomes[0] == (DEFAULT_ERROR_MESSAGE, True)
+
+
+_CITED_ANSWER = "Vendor supplies Buyer [1] under the agreement [1, 7]."
+
+
+class _CitingFactory(_StreamingModelFactory):
+    """Streams an answer citing the context's [1] and an unknown [7], the
+    list marker split across word chunks."""
+
+    def get_model(self, model_id: Any, **kwargs: Any) -> Any:
+        self.get_model_calls += 1
+        return GenericFakeChatModel(
+            messages=itertools.repeat(AIMessage(content=_CITED_ANSWER))
+        )
+
+
+async def test_a_streamed_answer_has_the_citations_of_an_unstreamed_one(
+    config: Config,
+) -> None:
+    from unified_kg_rag.domain.retrieval.citations import (
+        CitationMarkerScanner,
+        cited_markers,
+    )
+
+    assert config.search.citations.enabled
+    outputs = []
+    chunks: list[str] = []
+    for callback in (None, chunks.append):
+        chain, _, _ = _make_chain(
+            config.model_copy(deep=True), factory=_CitingFactory()
+        )
+        outputs.append(await chain.ainvoke(_input(), on_answer_chunk=callback))
+    unstreamed, streamed = outputs
+    assert streamed.answer == unstreamed.answer == "".join(chunks) == _CITED_ANSWER
+    assert streamed.citations == unstreamed.citations
+    assert [c.marker for c in streamed.citations if c.cited] == [1]
+    assert (
+        streamed.metadata["unknown_citation_markers"]
+        == unstreamed.metadata["unknown_citation_markers"]
+        == [7]
+    )
+    # The chunks split "[1, 7]"; read with the scanner they still give the
+    # answer's markers.
+    assert not any("[1, 7]" in chunk for chunk in chunks)
+    scanner = CitationMarkerScanner()
+    for chunk in chunks:
+        scanner.feed(chunk)
+    scanner.finish()
+    assert scanner.markers == cited_markers(_CITED_ANSWER) == [1, 7]

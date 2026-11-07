@@ -5,8 +5,10 @@ import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n/i18n";
 import { fieldsOf, parseValue, type JsonSchema } from "../lib/schema";
-import type { Source, StrategyInfo } from "../lib/types";
-import { parseFilters } from "../pages/AskPage";
+import { answerSegments, markerNumbers } from "../lib/citations";
+import type { AskResult, Citation, Source, StrategyInfo } from "../lib/types";
+import { conversationHistory, parseFilters } from "../pages/AskPage";
+import { AnswerText, CitationList } from "./AnswerText";
 import { deltaVerdict, higherIsBetter } from "./charts";
 import { citedBy, EvidenceTrace, excerptBody } from "./EvidenceTrace";
 import { queryTerms } from "./Highlighted";
@@ -28,6 +30,7 @@ function source(rank: number, kind: string, extra: Partial<Source> = {}): Source
     source_kinds: [],
     iri: null,
     provenance: null,
+    marker: null,
     ...extra,
   };
 }
@@ -162,5 +165,113 @@ describe("upload batches", () => {
     const big = [{ size: 80 * 2 ** 20 }, { size: 80 * 2 ** 20 }, { size: 1 }];
     expect(batches(big).map((b) => b.length)).toEqual([1, 2]);
     expect(batches([])).toEqual([]);
+  });
+});
+
+function citation(marker: number, extra: Partial<Citation> = {}): Citation {
+  return {
+    marker,
+    cited: true,
+    section_type: "text",
+    source_id: `id-${marker}`,
+    title: null,
+    document_id: null,
+    file_name: `doc-${marker}.txt`,
+    file_path: null,
+    page: null,
+    page_end: null,
+    chunk_id: null,
+    text_unit_ids: [],
+    documents: [],
+    iri: null,
+    source_rank: marker,
+    ...extra,
+  };
+}
+
+describe("citation markers", () => {
+  it("reads the server's marker grammar", () => {
+    expect(markerNumbers("[1, 3]")).toEqual([1, 3]);
+    expect(markerNumbers("[2-4]")).toEqual([2, 3, 4]);
+    expect(markerNumbers("［２］")).toEqual([2]);
+    expect(markerNumbers("【1、2】")).toEqual([1, 2]);
+    // A reversed or long range is its two ends, not every number between.
+    expect(markerNumbers("[5-2]")).toEqual([5, 2]);
+    expect(markerNumbers("[1-500]")).toEqual([1, 500]);
+  });
+
+  it("cuts an answer into text and markers; an open marker stays text", () => {
+    expect(answerSegments("Vendor ships [1][3].")).toEqual([
+      { text: "Vendor ships " },
+      { marker: "[1]", numbers: [1] },
+      { marker: "[3]", numbers: [3] },
+      { text: "." },
+    ]);
+    // A bracketed year is text (four digits), as is a marker still streaming.
+    expect(answerSegments("In [2020] it shipped [1")).toEqual([{ text: "In [2020] it shipped [1" }]);
+  });
+});
+
+describe("AnswerText", () => {
+  it("links each cited marker to its source; an unknown one is marked", () => {
+    const opened = vi.fn();
+    renderIn(<AnswerText text="Vendor ships [1, 9] and stores [2]." citations={[citation(1), citation(2, { source_rank: null })]} onOpen={opened} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open source [1] in the provenance trail: doc-1.txt" }));
+    expect(opened).toHaveBeenCalledWith(expect.objectContaining({ marker: 1 }));
+    expect(screen.getByTitle("[9] is not a section of this answer's context")).toHaveClass("cite-unknown");
+    // A summary the model read has no source to open.
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByText("[2]")).toHaveClass("cite");
+  });
+
+  it("shows a streaming answer's markers unlinked", () => {
+    renderIn(<AnswerText text="Vendor ships [1]" />);
+    expect(screen.getByText("[1]")).toHaveClass("cite-pending");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("lists the cited sources with their pages", () => {
+    const opened = vi.fn();
+    renderIn(
+      <CitationList
+        citations={[citation(1, { file_path: "docs/manual.pdf", page: 3, page_end: 4 }), citation(2, { cited: false })]}
+        onOpen={opened}
+      />,
+    );
+    expect(screen.getByText("Cited in this answer")).toBeInTheDocument();
+    expect(screen.getByText("docs/manual.pdf")).toBeInTheDocument();
+    expect(screen.getByText(/p\. 3–4/)).toBeInTheDocument();
+    expect(screen.queryByText("doc-2.txt")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button"));
+    expect(opened).toHaveBeenCalledWith(expect.objectContaining({ marker: 1 }));
+  });
+});
+
+describe("EvidenceTrace markers", () => {
+  it("opens the source the page names and badges the cited markers", () => {
+    const marked = [source(1, "text", { marker: 2 }), source(2, "text", { marker: 1 })];
+    const { container } = renderIn(<EvidenceTrace sources={marked} question="" cited={new Set([2])} open={1} />);
+    expect(container.querySelector('[data-rank="1"]')).toHaveClass("open");
+    expect(screen.getByTitle("Context marker [2], cited by the answer")).toHaveClass("marker-cited");
+    expect(screen.getByTitle("Context marker [1]")).not.toHaveClass("marker-cited");
+  });
+});
+
+describe("conversationHistory", () => {
+  const result = (answer: string, extra: Partial<AskResult> = {}) => ({ answer, blocked: false, error: false, ...extra }) as AskResult;
+  it("carries each answered question and its final answer, oldest first", () => {
+    expect(
+      conversationHistory([
+        { question: "Who ships?", status: "done", result: result("Vendor [1].") },
+        { question: "Blocked?", status: "done", result: result("Refused.", { blocked: true }) },
+        { question: "Stopped?", status: "stopped" },
+        { question: "Where to?", status: "done", result: result("The depot [2].") },
+      ]),
+    ).toEqual([
+      { role: "user", content: "Who ships?" },
+      { role: "assistant", content: "Vendor [1]." },
+      { role: "user", content: "Where to?" },
+      { role: "assistant", content: "The depot [2]." },
+    ]);
   });
 });

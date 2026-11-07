@@ -150,6 +150,41 @@ def test_a_question_streams_its_answer_then_the_result(client: Any) -> None:
     assert all(s["file_name"] for s in passages.values())
     linked = [s for s in result["sources"] if s.get("supported_by")]
     assert linked and all(r in passages for s in linked for r in s["supported_by"])
+    # The answer cites its context; the chunks' markers are the answer's.
+    cited = [c for c in result["citations"] if c["cited"]]
+    assert cited and result["unknown_citation_markers"] == []
+    streamed = [m for e in events if e["kind"] == "chunk" for m in e["markers"]]
+    assert sorted(set(streamed)) == sorted(c["marker"] for c in cited)
+    by_rank = {s["rank"]: s for s in result["sources"]}
+    for citation in result["citations"]:
+        if citation["source_rank"] is not None:
+            assert by_rank[citation["source_rank"]]["marker"] == citation["marker"]
+    assert all(c["source_rank"] for c in cited)
+
+
+def test_a_follow_up_carries_the_conversation_as_history(client: Any) -> None:
+    first = _ask(client, query="Who carries the lidar units?", search_strategy="local")
+    answer = first[-1]["answer"]
+    follow_up = _ask(
+        client,
+        query="Where to?",
+        search_strategy="local",
+        history=[
+            {"role": "user", "content": "Who carries the lidar units?"},
+            {"role": "assistant", "content": answer},
+        ],
+    )[-1]
+    assert follow_up["kind"] == "result", follow_up
+    # The rewrite read the history: the standalone question names the
+    # carrier the first answer named.
+    assert follow_up["processed_query"]["original_query"] == "Where to?"
+    assert "Umbra Freight" in follow_up["processed_query"]["standalone_query"]
+    response = client.post(
+        "/api/ask",
+        json={"query": "q", "history": [{"role": "system", "content": "x"}]},
+        headers=HEADERS,
+    )
+    assert response.status_code == 422
 
 
 def test_questions_are_recorded_for_history_and_the_dashboard(client: Any) -> None:

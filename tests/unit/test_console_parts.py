@@ -13,6 +13,7 @@ import pytest
 from unified_kg_rag.application.cli.console import dashboard, jobs, settings_api, stages
 from unified_kg_rag.application.cli.console.ask import (
     link_sources,
+    mark_sources,
     source_view,
     trace_url,
 )
@@ -468,3 +469,20 @@ def test_a_saved_run_is_traced_to_the_console_job_that_wrote_it(tmp_path: Path) 
     assert console_job_of(job) == job.name
     assert console_job_of(job / "run_20261107_000001_12345678") == job.name
     assert console_job_of(tmp_path / "elsewhere" / "run_1") is None
+
+
+def test_citations_name_the_source_they_were_shown_as() -> None:
+    sources = [
+        {"rank": 1, "id": "u-2", "kind": "text"},
+        {"rank": 2, "id": "e-1", "kind": "entity"},
+        {"rank": 3, "id": "u-9", "kind": "text"},
+    ]
+    citations = [
+        {"marker": 1, "source_id": "e-1"},
+        {"marker": 2, "source_id": "u-2"},
+        # A synthesized summary the model read is no reported source.
+        {"marker": 3, "source_id": "summary"},
+    ]
+    mark_sources(sources, citations)
+    assert [c["source_rank"] for c in citations] == [2, 1, None]
+    assert [s["marker"] for s in sources] == [2, 1, None]
