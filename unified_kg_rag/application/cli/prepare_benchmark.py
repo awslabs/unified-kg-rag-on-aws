@@ -141,12 +141,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--size",
-        choices=["small", "medium"],
+        choices=["small", "medium", "large"],
         default="small",
         help=(
             "structural only: the world's size (small: 8 vendors, 6 buyers, "
             "up to 4 questions a template; medium: 40 vendors, 30 buyers, "
-            "up to 25 a template; default small)"
+            "up to 25 a template; large: 400 vendors, 300 buyers, so a "
+            "seed-filtered count scans past search.structured.max_scan_rows; "
+            "default small)"
         ),
     )
     add_assertion_arguments(parser)

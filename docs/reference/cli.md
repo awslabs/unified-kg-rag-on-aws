@@ -199,7 +199,7 @@ Guide: [Benchmarks](../guides/benchmarks.md). Also takes the [provider flags](#p
 | `--unanswerable` `N` | — | Also write N unanswerable questions of the full split (metadata.answerable: false), leaving out any whose answerable twin is sampled or whose removed supporting paragraph's exact text is in the pooled corpus; the counts are reported (default: none). |
 | `--hops` `HOPS` | — | Hop counts to sample from: a list (3,4) filters both answerable and unanswerable questions; quotas (2=50,3=50,4=100) draw exactly that many answerable questions per hop count, instead of --limit (default: every hop count, sampled as one pool). |
 | `--seed` | `0` | Sampling seed; for structural, the generated world's (default 0). |
-| `--size` | `small` | structural only: the world's size (small: 8 vendors, 6 buyers, up to 4 questions a template; medium: 40 vendors, 30 buyers, up to 25 a template; default small). |
+| `--size` | `small` | structural only: the world's size (small: 8 vendors, 6 buyers, up to 4 questions a template; medium: 40 vendors, 30 buyers, up to 25 a template; large: 400 vendors, 300 buyers, so a seed-filtered count scans past search.structured.max_scan_rows; default small). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 | `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `--version` | — | Print the version and exit. |

@@ -189,3 +189,19 @@ def test_run_eval_reports_what_the_structured_arm_did() -> None:
         "exact_rate": 0.5,
     }
     assert structured_statistics([_result(None)]) == {}
+
+
+def test_absent_entities_and_other_languages_are_asked() -> None:
+    world = structural.generate_world(seed=2, size="medium")
+    found = structural.questions(world, seed=2, size="medium")
+    names = {node.name for node in world.nodes.values()}
+    absent = [q for q in found if q.template == "absent_entity"]
+    assert absent and all(q.answer in ("no", "0") for q in absent)
+    for q in absent:
+        vendor = q.plan["nodes"][0]["mention"]
+        assert vendor not in names and vendor in q.question
+    korean = [q for q in found if q.template == "multilingual_ko"]
+    japanese = [q for q in found if q.template == "multilingual_ja"]
+    assert korean and japanese
+    assert {q.answer for q in korean if not q.answer.isdigit()} <= {"예", "아니요"}
+    assert {q.answer for q in japanese if not q.answer.isdigit()} <= {"はい", "いいえ"}

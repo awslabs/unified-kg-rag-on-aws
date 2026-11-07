@@ -55,12 +55,16 @@ logger = get_logger(__name__)
 
 BENCHMARK_NAME = "structural"
 SEED_GRAPH_NAME = "structural"
-Size = Literal["small", "medium"]
+Size = Literal["small", "medium", "large"]
 
 # (vendors, buyers, products, questions per template)
 SIZES: dict[str, tuple[int, int, int, int]] = {
     "small": (8, 6, 6, 4),
     "medium": (40, 30, 20, 25),
+    # Past search.structured.max_scan_rows (5,000): a vendor supplies up to
+    # half the buyers, so a country's supply pairs outnumber the cap and a
+    # seed-filtered count is a lower bound.
+    "large": (400, 300, 30, 25),
 }
 COUNTRIES = ("Norland", "Sudmark", "Westria", "Ostavia", "Kaldera", "Brimor")
 _PREFIXES = ("Al", "Bri", "Cor", "Dun", "El", "Far", "Gal", "Hol", "Is", "Jor")
@@ -86,6 +90,8 @@ TEMPLATES = (
     "supplies_yes_no",
     "max_employees",
     "text_only_ceo",
+    "absent_entity",
+    "multilingual",
 )
 
 
@@ -224,6 +230,15 @@ class _Gold:
             sampled=False,
         )
 
+    # Questions a template generates at most (its candidates are drawn
+    # shuffled until it has them, or it has tried ten times as many).
+    budget = 1_000_000
+
+    def candidates(self, items: list[Any], rng: random.Random) -> list[Any]:
+        shuffled = list(items)
+        rng.shuffle(shuffled)
+        return shuffled[: self.budget * 10]
+
     def answer(
         self, plan: dict[str, Any], linked: dict[str, list[str]] | None = None
     ) -> QueryAnswer:
@@ -238,7 +253,7 @@ class _Gold:
 
 def _count_suppliers(gold: _Gold, rng: random.Random) -> list[_Question]:
     out = []
-    for buyer in gold.world.of_type("BUYER"):
+    for buyer in gold.candidates(gold.world.of_type("BUYER"), rng)[: gold.budget]:
         plan = {
             "nodes": [
                 {"var": "v", "types": ["VENDOR"]},
@@ -393,12 +408,18 @@ def _top_three(gold: _Gold, rng: random.Random) -> list[_Question]:
 def _two_hop_products(gold: _Gold, rng: random.Random) -> list[_Question]:
     """The vendor that supplies a buyer and makes a product (two hops
     through it), where exactly one does."""
-    out = []
-    pairs = list(
-        itertools.product(gold.world.of_type("BUYER"), gold.world.of_type("PRODUCT"))
+    out: list[_Question] = []
+    pairs = gold.candidates(
+        list(
+            itertools.product(
+                gold.world.of_type("BUYER"), gold.world.of_type("PRODUCT")
+            )
+        ),
+        rng,
     )
-    rng.shuffle(pairs)
     for buyer, product in pairs:
+        if len(out) >= gold.budget:
+            break
         plan = {
             "nodes": [
                 {"var": "b", "mention": buyer.name},
@@ -427,9 +448,12 @@ def _two_hop_products(gold: _Gold, rng: random.Random) -> list[_Question]:
 
 
 def _shared_buyer(gold: _Gold, rng: random.Random) -> list[_Question]:
-    out = []
+    out: list[_Question] = []
     vendors = gold.world.of_type("VENDOR")
-    for first, second in itertools.combinations(vendors, 2):
+    pairs = gold.candidates(list(itertools.combinations(vendors, 2)), rng)
+    for first, second in pairs:
+        if len(out) >= gold.budget:
+            break
         plan = {
             "nodes": [
                 {"var": "a", "mention": first.name},
@@ -455,11 +479,13 @@ def _shared_buyer(gold: _Gold, rng: random.Random) -> list[_Question]:
 
 def _supplies_yes_no(gold: _Gold, rng: random.Random) -> list[_Question]:
     out = []
-    pairs = list(
-        itertools.product(gold.world.of_type("VENDOR"), gold.world.of_type("BUYER"))
+    pairs = gold.candidates(
+        list(
+            itertools.product(gold.world.of_type("VENDOR"), gold.world.of_type("BUYER"))
+        ),
+        rng,
     )
-    rng.shuffle(pairs)
-    for vendor, buyer in pairs:
+    for vendor, buyer in pairs[: gold.budget * 4]:
         plan = {
             "nodes": [
                 {"var": "v", "mention": vendor.name},
@@ -521,6 +547,7 @@ def _max_employees(gold: _Gold, rng: random.Random) -> list[_Question]:
 
 
 def _text_only_ceo(gold: _Gold, rng: random.Random) -> list[_Question]:
+    vendors = gold.candidates(gold.world.of_type("VENDOR"), rng)[: gold.budget]
     return [
         _Question(
             "text_only_ceo",
@@ -530,8 +557,115 @@ def _text_only_ceo(gold: _Gold, rng: random.Random) -> list[_Question]:
             None,
             [_document_name(vendor)],
         )
-        for vendor in gold.world.of_type("VENDOR")
+        for vendor in vendors
     ]
+
+
+def _absent_name(world: World, rng: random.Random) -> str:
+    """A vendor name no node of ``world`` has."""
+    taken = {node.name for node in world.nodes.values()}
+    while True:
+        name = f"Zor{rng.choice(_ROOTS)}{rng.randint(10, 99)} Holdings"
+        if name not in taken:
+            return name
+
+
+def _absent_entity(gold: _Gold, rng: random.Random) -> list[_Question]:
+    """Questions about a vendor no data names: the answer is no (or none),
+    and a strategy that links the name to a similar entity gets it wrong."""
+    out = []
+    for buyer in gold.candidates(gold.world.of_type("BUYER"), rng)[: gold.budget]:
+        absent = _absent_name(gold.world, rng)
+        exists = {
+            "nodes": [
+                {"var": "v", "mention": absent},
+                {"var": "b", "mention": buyer.name},
+            ],
+            "edges": [{"types": ["SUPPLIES"]}],
+            "returns": {"kind": "exists"},
+        }
+        assert gold.answer(exists, {"v": [], "b": [buyer.id]}).exists is False
+        if rng.random() < 0.5:
+            out.append(
+                _Question(
+                    "absent_entity",
+                    f"Does {absent} supply {buyer.name}?",
+                    "no",
+                    [],
+                    exists,
+                )
+            )
+        else:
+            count = {
+                **exists,
+                "returns": {"kind": "count_distinct", "vars": ["b"]},
+                "nodes": [
+                    {"var": "v", "mention": absent},
+                    {"var": "b", "types": ["BUYER"]},
+                ],
+            }
+            out.append(
+                _Question(
+                    "absent_entity",
+                    f"How many buyers does {absent} supply?",
+                    "0",
+                    ["zero", "none", "no buyers"],
+                    count,
+                )
+            )
+    return out
+
+
+# Korean and Japanese forms of two templates (answers as answer_match reads
+# yes/no in those languages).
+_LOCALIZED = {
+    "ko": (
+        "{buyer}에 공급하는 벤더는 몇 곳입니까?",
+        "{vendor}은(는) {buyer}에 공급합니까?",
+        ("예", "아니요"),
+    ),
+    "ja": (
+        "{buyer}に供給しているベンダーは何社ですか？",
+        "{vendor}は{buyer}に供給していますか？",
+        ("はい", "いいえ"),
+    ),
+}
+
+
+def _multilingual(gold: _Gold, rng: random.Random) -> list[_Question]:
+    out = []
+    counts = _count_suppliers(gold, rng)
+    yes_no = _supplies_yes_no(gold, rng)
+    by_name = {node.name: node for node in gold.world.nodes.values()}
+    for index, language in enumerate(sorted(_LOCALIZED)):
+        count_text, yes_no_text, (yes, no) = _LOCALIZED[language]
+        for q in counts[index :: len(_LOCALIZED)]:
+            buyer = q.question.removeprefix("How many vendors supply ").rstrip("?")
+            assert buyer in by_name
+            out.append(
+                _Question(
+                    f"multilingual_{language}",
+                    count_text.format(buyer=buyer),
+                    q.answer,
+                    [a for a in q.aliases if a.isdigit()],
+                    q.plan,
+                )
+            )
+        for q in yes_no[index :: len(_LOCALIZED)]:
+            vendor, buyer = (
+                q.question.removeprefix("Does ").rstrip("?").split(" supply ")
+            )
+            out.append(
+                _Question(
+                    f"multilingual_{language}",
+                    yes_no_text.format(vendor=vendor, buyer=buyer),
+                    yes if q.answer == "yes" else no,
+                    [],
+                    q.plan,
+                )
+            )
+    rng.shuffle(out)
+    return out
 
 
 _GENERATORS: dict[str, Callable[[_Gold, random.Random], list[_Question]]] = {
@@ -544,6 +678,8 @@ _GENERATORS: dict[str, Callable[[_Gold, random.Random], list[_Question]]] = {
     "supplies_yes_no": _supplies_yes_no,
     "max_employees": _max_employees,
     "text_only_ceo": _text_only_ceo,
+    "absent_entity": _absent_entity,
+    "multilingual": _multilingual,
 }
 
 
@@ -552,6 +688,7 @@ def questions(world: World, seed: int = 0, size: Size = "small") -> list[_Questi
     per template, sampled by ``seed``."""
     per_template = SIZES[size][3]
     gold = _Gold(world)
+    gold.budget = per_template
     found: list[_Question] = []
     for template in TEMPLATES:
         rng = random.Random(f"structural-{seed}-{size}-{template}")
@@ -683,6 +820,11 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
             "metadata": {
                 "benchmark": BENCHMARK_NAME,
                 "template": q.template,
+                "language": (
+                    q.template.rsplit("_", 1)[1]
+                    if q.template.startswith("multilingual_")
+                    else "en"
+                ),
                 "graph_question": q.plan is not None,
                 **({"gold_plan": q.plan} if q.plan is not None else {}),
             },
@@ -692,7 +834,13 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
     (output_dir / "eval_data.json").write_text(
         json.dumps(dataset, ensure_ascii=False, indent=2), "utf-8"
     )
-    per_template = {t: sum(1 for q in found if q.template == t) for t in TEMPLATES}
+
+    def family(template: str) -> str:
+        return "multilingual" if template.startswith("multilingual_") else template
+
+    per_template = {
+        t: sum(1 for q in found if family(q.template) == t) for t in TEMPLATES
+    }
     logger.info("Structural benchmark: %s questions %s", len(found), per_template)
     return {
         "benchmark": BENCHMARK_NAME,

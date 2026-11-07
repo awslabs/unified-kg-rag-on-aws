@@ -141,8 +141,14 @@ every `SUPPLIES` and `MAKES` edge), `corpus/` (one document per vendor and
 buyer, stating part of those edges, the products and the chief executive),
 `structural-config.yaml` (the extraction schema and the seed graph entry)
 and `eval_data.json`. `--size small` writes 8 vendors and up to 4 questions
-a template, `medium` 40 vendors and up to 25 (about 160 questions; templates
-whose answer would tie or be ambiguous in a world are left out for it).
+a template, `medium` 40 vendors and up to 25 (about 200 questions; templates
+whose answer would tie or be ambiguous in a world are left out for it), and
+`large` 400 vendors and 300 buyers, whose seed-filtered counts scan more
+matches than `search.structured.max_scan_rows` (the truncated "at least N"
+case; a few minutes to generate). Every size also asks about vendors no
+data names (`absent_entity`: the answer is no, or 0) and asks two templates
+in Korean and Japanese (`multilingual_ko`, `multilingual_ja`, with `예` /
+`아니요` and `はい` / `いいえ` as yes/no; `metadata.language`).
 Each graph question's gold answer is computed by the reference executor over
 the generated graph from the template's plan (`metadata.gold_plan`); a
 number has its digit and word forms as `answer_aliases`, and the top three
