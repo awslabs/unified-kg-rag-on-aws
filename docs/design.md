@@ -3102,6 +3102,8 @@ for a relationship, and for a chunk the entities of the same response that
 cite it), `provenance` (a seed graph's `kind`, `seed_graphs` and `iri`, as
 in `RAGOutput.sources`) and `synthesized` (model-written, such as global
 search's key points; `kg_answer` never cites one, as the chain does not).
+A `kg_answer` record also carries its `citation` (the `[n]` marker of §7.1)
+and `cited` (whether the answer uses it).
 
 **Layer placement.** The server is a driving adapter in the entry-point
 layer, next to the other CLIs (§2.1): `application/cli/mcp_tools.py` holds
