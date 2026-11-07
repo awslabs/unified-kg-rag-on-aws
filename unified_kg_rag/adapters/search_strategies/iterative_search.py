@@ -105,10 +105,6 @@ ROUND_TEXT_BUCKET = "iterative_round_{}_text"
 _CONTROLLER_KEYS = ("sufficient", "next_queries", "bridge_entities")
 _DECOMPOSITION_KEYS = ("steps",)
 _STEP_KEYS = ("answer",)
-# Bridge entities one round follows at most (the most follow-up queries a
-# round may ask for, each naming one): a controller that lists more does
-# not multiply the round's lookups.
-_MAX_BRIDGE_ENTITIES = 5
 # A decomposition step's reference to an earlier step's answer: #1, #2, ...
 _STEP_REFERENCE = re.compile(r"#(\d+)")
 
@@ -450,7 +446,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
     ) -> tuple[list[str], list[str]]:
         """The follow-up queries not searched yet (at most
         ``max_next_queries``) and the bridge entities not followed yet (at
-        most ``_MAX_BRIDGE_ENTITIES``), recorded as searched and followed."""
+        most ``max_bridge_entities``), recorded as searched and followed."""
         asked = {_query_key(q) for q in run.searched}
         fresh: list[str] = []
         for text in queries:
@@ -461,7 +457,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                 fresh.append(text)
         names: list[str] = []
         for name in bridges:
-            if len(names) >= _MAX_BRIDGE_ENTITIES:
+            if len(names) >= self.settings.max_bridge_entities:
                 break
             key = compact_name_key(name)
             if key and key not in run.bridge_keys:

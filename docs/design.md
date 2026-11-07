@@ -1970,7 +1970,7 @@ through the strategy registry, so there is no dispatch on the base:
    part of the measured ranking, so the two concurrent searches are kept. The base's rerank types (`text` for both bases) are reranked
    against the question and the follow-up queries joined, and each section
    type keeps the larger of round 0's count of it and the type quota
-   (`TYPE_QUOTA`), so a round-0 item leaves only when a new one outranks
+   (`search.local_search.type_quota`), so a round-0 item leaves only when a new one outranks
    it. Back to 2 while rounds remain (`max_rounds`, 2); the last round is
    judged too, so the final verdict is known.
 5. *Answer.* The chain packs the final candidates into the usual token

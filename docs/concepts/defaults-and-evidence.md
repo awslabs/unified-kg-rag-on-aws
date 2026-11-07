@@ -712,3 +712,11 @@ excludes zero.
   repaired copy.
 - **Costs are upper bounds** when the prompt cache hit, and they use the
   dated list prices above.
+- **Settings no run compared.** `search.local_search.type_quota` (only its
+  entity and relationship floors follow MS GraphRAG),
+  `search.local_search.entity_candidates_per_focus`,
+  `search.hybrid.normalization_window` and
+  `search.iterative_search.max_bridge_entities` keep the values they were
+  written with. The type quota decides what a short-chunk corpus's context
+  holds (its type budgets never bound on MuSiQue), so it is the first to
+  measure there.

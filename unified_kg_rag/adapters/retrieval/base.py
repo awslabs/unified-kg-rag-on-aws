@@ -419,25 +419,6 @@ class BaseSearchStrategy(ABC):
     # Section types that take the context budget other types leave unused
     # before the rest share it (``TokenManager.optimize_context``).
     spare_context_budget_first: ClassVar[tuple[SectionType, ...]] = ()
-    # Fusion slots reserved per section type in local search and DRIFT, as
-    # (multiple of the query's top_k, floor): max(multiple * top_k, floor).
-    # Without them one type (usually entities, which arrive with many
-    # near-tie fusion scores) takes the whole flat top_k cut and crowds out
-    # the chunks that carry the answer; MS GraphRAG's local search assembles
-    # per-section budgets the same way (top_k_entities and
-    # top_k_relationships 10). The floor keeps enough of each type at a small
-    # top_k. What the context then holds of each type is
-    # search.token_manager.type_budgets. Only the entity and relationship
-    # floors follow upstream; the text, community and claim values are
-    # unmeasured choices (no A/B in docs/concepts/defaults-and-evidence.md),
-    # so a change needs one.
-    TYPE_QUOTA: ClassVar[dict[SectionType, tuple[float, int]]] = {
-        SectionType.TEXT: (2.0, 20),
-        SectionType.ENTITY: (1.0, 10),
-        SectionType.RELATIONSHIP: (1.0, 10),
-        SectionType.COMMUNITY: (0.5, 2),
-        SectionType.CLAIM: (0.5, 2),
-    }
 
     def __init__(
         self,
@@ -927,16 +908,14 @@ class BaseSearchStrategy(ABC):
         }
 
     def _per_type_quota(self, top_k: int) -> dict[str, int]:
-        """Reserved fusion slots per section type for ``top_k`` (``TYPE_QUOTA``).
+        """Reserved fusion slots per section type for ``top_k``
+        (``search.local_search.type_quota``).
 
-        Shared by local search and DRIFT (whose iterations are local searches,
-        as in MS GraphRAG) so one flat top_k cut cannot let a single section
-        type crowd out the others.
+        Shared by local search, DRIFT (whose iterations are local searches,
+        as in MS GraphRAG), ppr and iterative, so one flat top_k cut cannot
+        let a single section type crowd out the others.
         """
-        return {
-            section_type.value: max(int(multiple * top_k), floor)
-            for section_type, (multiple, floor) in self.TYPE_QUOTA.items()
-        }
+        return self.config.search.local_search.type_quota.slots(top_k)
 
     async def _expand_via_graph(
         self,

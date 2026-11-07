@@ -449,6 +449,14 @@ async def test_a_round_follows_at_most_five_bridge_entities() -> None:
 
     (seeded,) = later.queries
     assert seeded.entity_focus == bridges[:5]
+    # search.iterative_search.max_bridge_entities sets the cap.
+    script = _Script(controller=[_verdict(False, bridges), SUFFICIENT])
+    strategy, _, later, _, _ = _strategy(
+        script, max_next_queries=0, max_bridge_entities=2
+    )
+    await strategy.asearch(_query())
+    (seeded,) = later.queries
+    assert seeded.entity_focus == bridges[:2]
 
 
 async def test_the_controller_reads_the_answer_s_budget_by_default() -> None:

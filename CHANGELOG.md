@@ -115,8 +115,7 @@ stored is read again: follow *Upgrading* in order.
 - Removed settings that change behaviour where you had set them (each loads with a WARNING):
   `search.reranking.enabled: false` no longer turns reranking off (set `providers.rerank.kind: none`);
   `search.fusion.method: weighted` fuses by RRF (weighted fusion is gone); `fixing.enabled: false` no longer stops
-  output fixing; `search.local_search.type_quota` is the constant `BaseSearchStrategy.TYPE_QUOTA` (the mix is
-  `search.token_manager.type_budgets`); `cache.chunking` (an entry over 1,000 items or 50 MB is always chunked);
+  output fixing; `cache.chunking` (an entry over 1,000 items or 50 MB is always chunked);
   `indexing.opensearch.persist_embedding_cache` (the S3 embedding cache is gone: an incremental run embeds only its
   delta) (#344, #468, #577).
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
@@ -805,6 +804,9 @@ From a `main` checkout (formats and keys no release had):
   `log_retention_days` (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot
   the instances after the deploy (#617). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue
   when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617).
+- Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
+  (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
+  `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#PR).
 
 ### Changed
 - The fixed reply to a query retrieval found nothing for (and to a decline that left no text) is written in the
