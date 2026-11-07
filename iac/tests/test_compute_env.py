@@ -539,6 +539,14 @@ _CLUSTER_WRITES = [
     ("PUT", "/_plugins/_ism/policies/p"),
     ("DELETE", "/_plugins/_ism/policies/p"),
     ("PUT", "/_opendistro/_security/api/rolesmapping/all_access"),
+    ("PUT", "/_snapshot/repository"),
+    ("POST", "/_snapshot/repository/snapshot/_restore"),
+    ("PUT", "/_index_template/graphrag"),
+    ("PUT", "/_component_template/graphrag"),
+    ("PUT", "/_template/graphrag"),
+    ("PUT", "/_ingest/pipeline/rewrite"),
+    ("DELETE", "/_ingest/pipeline/rewrite"),
+    ("POST", "/_scripts/painless"),
 ]
 
 

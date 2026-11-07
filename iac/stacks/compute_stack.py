@@ -260,7 +260,10 @@ class ComputeStack(Stack):
         # alias, _bulk, _refresh, _search requests); it never changes the
         # cluster's settings or a plugin's configuration (security, ISM,
         # ...), so those writes are denied, by the legacy _opendistro path
-        # too.
+        # too. Nor does it write snapshot repositories, index or component
+        # templates (by the legacy _template path too), ingest pipelines or
+        # stored scripts: a template or a default pipeline would rewrite
+        # every index or document the app creates, so these are denied too.
         role.add_to_policy(
             iam.PolicyStatement(
                 effect=iam.Effect.DENY,
@@ -274,6 +277,12 @@ class ComputeStack(Stack):
                     f"{domain_arn}/_cluster/*",
                     f"{domain_arn}/_plugins/*",
                     f"{domain_arn}/_opendistro/*",
+                    f"{domain_arn}/_snapshot/*",
+                    f"{domain_arn}/_index_template/*",
+                    f"{domain_arn}/_component_template/*",
+                    f"{domain_arn}/_template/*",
+                    f"{domain_arn}/_ingest/*",
+                    f"{domain_arn}/_scripts/*",
                 ],
             )
         )
