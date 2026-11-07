@@ -80,7 +80,7 @@ allowlist of exceptions is empty; keep it so).
   manager, driven by the CLIs). Of the application it imports only
   `application.retrieval` and `application.bootstrap`, reaches the stores only
   through the chain (`GraphRAGChain.check_filter_*`) and imports no store
-  adapter. The LLM judges (`ragas`, `langchain`) need the `eval` extra.
+  adapter. The `ragas` LLM judge needs the `eval` extra (`assertion` needs none).
 - **Registries over hardcoded dispatch**: search strategies register via
   `@register_strategy` (`adapters/retrieval/strategy_registry.py`). Follow this
   pattern — and `ParserFactory.register_loader` / `@register_renderer` —
@@ -140,9 +140,9 @@ The rules to keep in mind:
   `--pairwise-judge`). `docs/reference/cli.md` lists every flag; it is
   generated from the parsers by `scripts/gen_cli_reference.py`, so change a
   flag's `help=` and regenerate (a unit test fails when it is stale).
-- **Evaluation**: `ragas` (LLM judge, on by default), `langchain` and
-  `assertion` (opt-in LLM judges) plus three LLM-free evaluators (on by
-  default): `graph_aware` (entity/relationship coverage = recall, from
+- **Evaluation**: three LLM-free evaluators (the defaults; `run-eval
+  --evaluators` picks per run) plus `ragas` and `assertion` (opt-in LLM
+  judges): `graph_aware` (entity/relationship coverage = recall, from
   ground-truth `expected_entities`/`expected_relationships`; precision/F1
   intentionally not emitted — see the evaluator docstring), `retrieval`
   (hit@k/recall@k/MRR against `reference_sources`) and `answer_match` (exact
