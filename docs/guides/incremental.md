@@ -326,6 +326,12 @@ settings do not retry it).
 Attempt bookkeeping, resumed runs and the limits of the scheme:
 [Operator Runbook: Quarantined documents](../operations.md#quarantined-documents).
 
+An incremental run's community report answers live only in its stage cache
+(only a full build stores them in the extraction store, where a later reset
+finds them): a run killed after community detection and started again under
+a new pipeline id asks those reports again. Run the same pipeline id again to
+reuse them.
+
 ## Concurrent runs
 
 With the registry, a run holds its index namespace's write lease from its
