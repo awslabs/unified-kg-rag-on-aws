@@ -74,8 +74,11 @@ uv run python console/demo/demo.py --models fake
 
 The script prints the console's address with its access token. The
 workspace is `.console-demo/` (`--workspace` to change it). Running
-the script again rewrites the corpus and the config, and the ingestion
-finds nothing new. `--prepare-only` stops before starting the console;
+the script again rewrites the corpus and keeps the config it wrote the first
+time, with whatever Settings saved into it (prices, models, directories),
+after checking it loads; with the fake models it serves them on the port
+the kept config names. `--reset-config` writes the demo's config again
+(also the way to switch `--models`). The ingestion finds nothing new. `--prepare-only` stops before starting the console;
 `--no-ingest` skips the ingestion.
 
 ## Reach it on a remote host
