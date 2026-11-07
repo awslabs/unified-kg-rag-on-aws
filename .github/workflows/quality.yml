@@ -383,7 +383,9 @@ jobs:
   console-smoke:
     # One browser pass through the console on the demo workspace with the
     # fake models (no AWS, no model): on pushes to main, and on pull
-    # requests that touch the console (it installs a browser).
+    # requests that touch the console (it installs a browser), what it
+    # renders (the answer and its citations: RAGOutput in rag_chain.py, the
+    # citation and retrieval models), the dependencies, or this workflow.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -400,7 +402,7 @@ jobs:
         run: |
           if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "console=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "origin/$BASE_REF...HEAD" | grep -qE '^(console/|unified_kg_rag/application/cli/(console/|run_console\.py))'; then
+          elif git diff --name-only "origin/$BASE_REF...HEAD" | grep -qE '^(console/|unified_kg_rag/application/cli/(console/|run_console\.py)|unified_kg_rag/application/retrieval/(rag_chain|citations)\.py|unified_kg_rag/domain/retrieval/citations\.py|unified_kg_rag/domain/models/(citation|retrieval)\.py|pyproject\.toml|uv\.lock|\.github/workflows/quality\.yml)'; then
             echo "console=true" >> "$GITHUB_OUTPUT"
           else
             echo "console=false" >> "$GITHUB_OUTPUT"
