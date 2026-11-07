@@ -31,9 +31,11 @@ from unified_kg_rag.application.cli.conventions import (
     json_output,
     print_json,
     print_status,
+    setup_cli_logging,
     usage_error,
 )
 from unified_kg_rag.application.cli.display import (
+    PRODUCT_NAME,
     console,
     display_ascii_art,
     display_pipeline_results,
@@ -75,7 +77,6 @@ from unified_kg_rag.shared import (
     PipelineInterrupted,
     StoreConnectionError,
     get_logger,
-    setup_logging,
 )
 from unified_kg_rag.shared.utils.validation import format_validation_errors
 
@@ -164,7 +165,8 @@ class CommandLineInterface:
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = ArgumentParser(
             allow_abbrev=False,
-            description="GraphRAG Data Ingestion Pipeline - Process documents and build knowledge graphs",
+            description=f"{PRODUCT_NAME}: parse documents and build the "
+            "knowledge graph and indexes the selected methodologies read",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
                 "guides/ingest.md#examples",
@@ -389,7 +391,7 @@ class IngestionPipelineRunner:
             except ValidationError as e:
                 usage_error(f"--retire-source-scope: {e}")
         self.json_output = json_output(args)
-        setup_logging(self.config, stream=sys.stderr if self.json_output else None)
+        setup_cli_logging(self.config, args)
         self.pipeline: DataIngestionPipeline | None = None
         # Whether the run reported its result (a stop after it came while
         # the run closed its connections: nothing is left to resume).
@@ -446,7 +448,7 @@ class IngestionPipelineRunner:
     def _display_run_info(self) -> None:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         info_lines = [
-            "[bold blue]Graph RAG Document Processing Pipeline[/bold blue]",
+            "[bold blue]Ingestion pipeline[/bold blue]",
             f"[dim]Timestamp:[/dim] '{timestamp}'",
             f"[dim]Cache Directory:[/dim] "
             f"'{markup_safe(self.args.cache_directory.absolute())}'",

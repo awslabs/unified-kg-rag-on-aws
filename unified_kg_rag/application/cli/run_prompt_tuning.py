@@ -35,6 +35,7 @@ from unified_kg_rag.application.cli.conventions import (
     failed,
     json_output,
     print_json,
+    setup_cli_logging,
     stoppable,
     usage_error,
 )
@@ -50,7 +51,7 @@ from unified_kg_rag.application.prompts.tuner import PromptTuner, SchemaDraft
 from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
 from unified_kg_rag.domain.ingestion.corpus_language import corpus_source_language
 from unified_kg_rag.domain.models import Config
-from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
+from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.utils import event_loop
 
 logger = get_logger(__name__)
@@ -272,7 +273,7 @@ def main() -> int:
         _check_outputs(args, config)
         if error := missing_extras_error(config, seeds=False):
             usage_error(error)
-        setup_logging(config, stream=sys.stderr if as_json else None)
+        setup_cli_logging(config, args)
         # Loads the schema source: a broken one fails before any model call.
         tuner = PromptTuner(config)
 

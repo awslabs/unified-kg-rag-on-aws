@@ -124,6 +124,58 @@ def test_every_cli_offers_json_output(cli: str) -> None:
 
 
 @pytest.mark.parametrize("cli", ALL_PARSERS)
+def test_every_cli_has_version_and_log_level(cli: str, capsys) -> None:
+    from unified_kg_rag import __version__
+
+    parser = ALL_PARSERS[cli]()
+    with pytest.raises(SystemExit) as exited:
+        parser.parse_args(["--version"])
+    assert exited.value.code == 0
+    assert capsys.readouterr().out.strip().endswith(__version__)
+    action = next(a for a in parser._actions if "--log-level" in a.option_strings)
+    assert action.default is None
+    assert list(action.choices or []) == [
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL",
+    ]
+    # Case-insensitive, as logging.level is.
+    assert action.type("debug") == "DEBUG"
+
+
+@pytest.mark.parametrize(
+    ("flags", "config", "level", "log_format"),
+    [
+        ([], {}, "INFO", "plain"),
+        (["--log-level", "warning"], {}, "WARNING", "plain"),
+        # A deployment that sets the format keeps it; JSON output keeps JSON
+        # records (on stderr).
+        ([], {"logging": {"log_format": "structured"}}, "INFO", "structured"),
+        (["--output-format", "json"], {}, "INFO", "structured"),
+        (["--log-level", "ERROR"], {"logging": {"level": "DEBUG"}}, "ERROR", "plain"),
+    ],
+)
+def test_cli_logging_follows_the_flags(
+    mocker, flags: list[str], config: dict, level: str, log_format: str
+) -> None:
+    from unified_kg_rag.application.cli import conventions
+
+    setup = mocker.patch.object(conventions, "setup_logging")
+    args = PARSERS["run-visualization"]().parse_args(["--data-path", "g.json", *flags])
+    conventions.setup_cli_logging(Config(**config), args)
+    (loaded, overrides), kwargs = setup.call_args
+    effective = {
+        "level": loaded.logging.level,
+        "log_format": loaded.logging.log_format,
+        **(overrides or {}),
+    }
+    assert (effective["level"], effective["log_format"]) == (level, log_format)
+    assert (kwargs["stream"] is sys.stderr) is ("json" in flags)
+
+
+@pytest.mark.parametrize("cli", ALL_PARSERS)
 def test_flag_abbreviations_are_rejected(cli: str) -> None:
     # A prefix such as --output-dir must not silently match a longer flag.
     assert ALL_PARSERS[cli]().allow_abbrev is False

@@ -30,11 +30,13 @@ from unified_kg_rag.application.cli.conventions import (
     exits_on_sigterm,
     json_output,
     print_json,
+    setup_cli_logging,
     usage_error,
 )
 from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.cli.query_args import positive_int
+from unified_kg_rag.domain.models import Config
 from unified_kg_rag.evaluation.benchmarks import musique
 from unified_kg_rag.shared import EvaluationException
 
@@ -134,6 +136,8 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     as_json = json_output(args)
+    if args.benchmark != "assertions":  # which loads its configuration
+        setup_cli_logging(Config(), args)
     if args.benchmark == "assertions":
         _assertions(args, as_json)
         return

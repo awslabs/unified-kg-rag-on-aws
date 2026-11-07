@@ -43,10 +43,12 @@ from unified_kg_rag.application.cli.conventions import (
     failure_fields,
     json_output,
     print_json,
+    setup_cli_logging,
     stoppable,
     usage_error,
 )
 from unified_kg_rag.application.cli.display import (
+    PRODUCT_NAME,
     console,
     display_ascii_art,
     markup_safe,
@@ -126,7 +128,6 @@ from unified_kg_rag.shared import (
     MethodologyNotIndexedError,
     get_logger,
     observability,
-    setup_logging,
 )
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
@@ -312,7 +313,8 @@ class CommandLineInterface:
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = ArgumentParser(
             allow_abbrev=False,
-            description="GraphRAG Evaluation System - Assess retrieval and generation performance",
+            description=f"{PRODUCT_NAME}: evaluate retrieval and answers on a "
+            "dataset, and compare strategies",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
                 "guides/evaluate.md#examples",
@@ -539,7 +541,9 @@ class CommandLineInterface:
             "--verbose",
             "-v",
             action="store_true",
-            help="Enable detailed logging output for debugging.",
+            help="(deprecated: use --log-level DEBUG, which it sets) Log at "
+            "DEBUG. --verbose means more of a result's detail in run-rag; the "
+            "log level of every CLI is --log-level",
         )
         add_config_arguments(parser)
         add_output_format_argument(parser)
@@ -1802,9 +1806,14 @@ def main() -> None:
                 load_cli_config(args),
                 args,
             )
-        setup_logging(config, stream=sys.stderr if json_output(args) else None)
+        json_output(args)
+        setup_cli_logging(config, args)
         if args.verbose:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)
+            logger.warning(
+                "run-eval --verbose is deprecated and will be removed: use "
+                "--log-level DEBUG (every CLI's log level flag)."
+            )
 
         if args.from_results is not None:
             # Rebuilt from saved answers: no chain, no store, no answer call.

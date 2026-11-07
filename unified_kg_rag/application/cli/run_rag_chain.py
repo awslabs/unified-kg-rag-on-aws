@@ -32,10 +32,12 @@ from unified_kg_rag.application.cli.conventions import (
     interruptible,
     json_output,
     print_json,
+    setup_cli_logging,
     stoppable,
     usage_error,
 )
 from unified_kg_rag.application.cli.display import (
+    PRODUCT_NAME,
     console,
     display_ascii_art,
     markup_safe,
@@ -71,7 +73,6 @@ from unified_kg_rag.shared import (
     NullMetricsSink,
     QueryTimeoutError,
     get_logger,
-    setup_logging,
 )
 from unified_kg_rag.shared.utils import event_loop
 
@@ -272,7 +273,9 @@ class CommandLineInterface:
     def _setup_arguments() -> argparse.ArgumentParser:
         parser = ArgumentParser(
             allow_abbrev=False,
-            description="GraphRAG Chain - Retrieval-augmented generation using knowledge graphs",
+            description=f"{PRODUCT_NAME}: answer a question (or, with --mode "
+            "search, retrieve) from the knowledge graph and indexes run-ingestion "
+            "built, with the GraphRAG, LightRAG, HippoRAG or RAPTOR strategies",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=doc_epilog(
                 "guides/query.md#examples",
@@ -407,7 +410,7 @@ class RAGChainRunner:
         # JSON mode keeps stdout machine-parseable (pipeable to jq): the banner,
         # status lines and logs all go to stderr; only the JSON goes to stdout.
         self.json_output = json_output(args)
-        setup_logging(self.config, stream=sys.stderr if self.json_output else None)
+        setup_cli_logging(self.config, args)
         self.metrics_sink = self._build_metrics_sink()
         self.rag_chain: GraphRAGChain | None = None
         self.interactive_commands: dict[str, Callable[..., Any]] = {
@@ -505,7 +508,7 @@ class RAGChainRunner:
         console.print("[bold]Initializing RAG chain...[/bold]")
         try:
             self.rag_chain = GraphRAGChain(config=self.config)
-            console.print("[green]GraphRAG chain initialized successfully![/green]")
+            console.print("[green]Query chain initialized.[/green]")
         except Exception as e:
             logger.exception("Failed to initialize RAG chain: %s", e)
             console.print(f"[red]Error during initialization: {markup_safe(e)}[/red]")
@@ -513,7 +516,8 @@ class RAGChainRunner:
 
     async def _interactive_mode(self) -> None:
         console.print(
-            "[bold blue]\nGraph RAG Interactive Mode[/bold blue]\nType 'quit', 'exit' to end, or 'help' for commands."
+            "[bold blue]\nInteractive mode[/bold blue]\nType 'quit', 'exit' to end, "
+            "or 'help' for commands."
         )
         console.print("---")
 

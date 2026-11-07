@@ -49,9 +49,10 @@ from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any, NoReturn, ParamSpec, TypeVar
 
+from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.display import console
 from unified_kg_rag.application.cli.launch import wants_json
-from unified_kg_rag.shared import observability
+from unified_kg_rag.shared import observability, setup_logging
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -401,7 +402,12 @@ def _stopped_in_teardown(signum: int, _frame: object) -> None:
     _exit_stopped(128 + signum)
 
 
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
 def add_output_format_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the flags every CLI has: ``--output-format``, ``--log-level``
+    and ``--version``."""
     parser.add_argument(
         "--output-format",
         default="text",
@@ -410,6 +416,41 @@ def add_output_format_argument(parser: argparse.ArgumentParser) -> None:
         "stdout (for a run that failed or was stopped before it, a status with "
         "the exit code and the error) and everything else to stderr",
     )
+    add_log_level_and_version_arguments(parser)
+
+
+def add_log_level_and_version_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add ``--log-level`` and ``--version`` (a CLI whose stdout is a
+    protocol, run-mcp-server, takes these without ``--output-format``)."""
+    parser.add_argument(
+        "--log-level",
+        type=str.upper,
+        choices=LOG_LEVELS,
+        help="Log level of this run (default: logging.level, INFO; DEBUG logs "
+        "hold user and corpus text). With --output-format text the logs are "
+        "plain lines unless logging.log_format is set",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Print the version and exit",
+    )
+
+
+def setup_cli_logging(config: Any, args: argparse.Namespace) -> None:
+    """``setup_logging`` for a CLI run: ``--log-level`` over
+    ``logging.level``; with ``--output-format json`` the logs go to stderr,
+    and in text mode, unless ``logging.log_format`` is set (a deployment
+    sets ``structured``), they are plain lines, not JSON records between
+    the CLI's own output."""
+    overrides: dict[str, Any] = {}
+    if level := getattr(args, "log_level", None):
+        overrides["level"] = level
+    as_json = getattr(args, "output_format", "text") == "json"
+    if not as_json and "log_format" not in config.logging.model_fields_set:
+        overrides["log_format"] = "plain"
+    setup_logging(config, overrides or None, stream=sys.stderr if as_json else None)
 
 
 def json_output(args: argparse.Namespace) -> bool:

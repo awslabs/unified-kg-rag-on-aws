@@ -32,7 +32,7 @@ the [Configuration Reference](./configuration.md).
 
 ## `run-ingestion`
 
-GraphRAG Data Ingestion Pipeline - Process documents and build knowledge graphs
+Unified Knowledge Graph RAG on AWS: parse documents and build the knowledge graph and indexes the selected methodologies read
 
 Guide: [Ingestion](../guides/ingest.md). Also takes the [provider flags](#provider-flags).
 
@@ -58,13 +58,15 @@ Guide: [Ingestion](../guides/ingest.md). Also takes the [provider flags](#provid
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 | `--suffix` | — | Index suffix (namespace) the run writes: processing.document_parsing.index_value (default: the config's, else 'default'). Query it with run-rag/run-eval --suffix. |
 | `--methodologies` `LIST` | — | Comma-separated methodologies to build (graphrag, lightrag, hipporag, raptor): indexing.methodologies. |
 | `--reset` | off | Rebuild the namespace from the whole corpus instead of applying a delta (indexing.reset: true for this run only, so a config file need not be edited back). |
 
 ## `run-rag`
 
-GraphRAG Chain - Retrieval-augmented generation using knowledge graphs
+Unified Knowledge Graph RAG on AWS: answer a question (or, with --mode search, retrieve) from the knowledge graph and indexes run-ingestion built, with the GraphRAG, LightRAG, HippoRAG or RAPTOR strategies
 
 Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider-flags).
 
@@ -82,6 +84,8 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 | `--disable-query-processing` | off | Skip query translation and the query-side entity and keyword extraction (no LLM call before retrieval). mix and hybrid then have no high- or low-level keywords: a question shorter than search.lightrag_search.raw_query_fallback_max_len characters (a CJK or Hangul character counting 4) is searched as its own low-level keyword, a longer one retrieves no entities or relationships. |
 | `--filters` | — | Attribute filters as space-separated 'key:value' pairs (a repeated --filters adds its pairs); a boolean or numeric field takes its type's value (in_schema:false, rank:2). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 | `--metrics-sink` | `none` | Where to send query metrics: 'none' (default) or 'cloudwatch' (CloudWatch EMF to stdout: query_latency_ms of each --mode rag query under unified_kg_rag/query, with an Environment dimension when UKR_METRICS_ENVIRONMENT is set and a Strategy dimension; not with --output-format json). |
 | `--verbose`, `-v` | off | Show query-processing details, sources and metrics. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
@@ -89,7 +93,7 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 
 ## `run-eval`
 
-GraphRAG Evaluation System - Assess retrieval and generation performance
+Unified Knowledge Graph RAG on AWS: evaluate retrieval and answers on a dataset, and compare strategies
 
 Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#provider-flags).
 
@@ -117,10 +121,12 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 | `--pairwise-repeats` | — | Which repeats --pairwise-judge judges (default: evaluation.pairwise_repeats, 'first'): the first repeat's answers, or 'all', repeat r against repeat r (the judge's calls times --repeats; each query's repeats averaged first). |
 | `--closed-book` | off | Also answer every question with the answer model alone, no retrieval (the 'closed_book' arm, compared with the first strategy like another strategy and judged by --pairwise-judge): its scores bound what the model knows without the corpus. One answer call per question and repeat; its retrieval and context metrics score an empty source list, and --fail-if skips it. |
 | `--max-failure-rate` | `1.0` | Exit non-zero when the fraction of queries whose answer generation failed, or the fraction of attempted values of any metric that failed, exceeds this value (0.0-1.0). Skipped metrics do not count. Default 1.0 = fail only when all queries, or all attempts of a metric, failed. |
-| `--verbose`, `-v` | off | Enable detailed logging output for debugging. |
+| `--verbose`, `-v` | off | (deprecated: use --log-level DEBUG, which it sets) Log at DEBUG. --verbose means more of a result's detail in run-rag; the log level of every CLI is --log-level. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 
 ## `run-visualization`
 
@@ -136,6 +142,8 @@ Guide: [Visualization](../guides/visualize.md).
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 
 ## `run-describe`
 
@@ -170,6 +178,8 @@ Guide: [Domain adaptation](../guides/domain-adaptation.md#prompt-tuning-run-prom
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 
 ## `prepare-benchmark`
 
@@ -188,6 +198,8 @@ Guide: [Benchmarks](../guides/benchmarks.md). Also takes the [provider flags](#p
 | `--hops` `HOPS` | — | Hop counts to sample from: a list (3,4) filters both answerable and unanswerable questions; quotas (2=50,3=50,4=100) draw exactly that many answerable questions per hop count, instead of --limit (default: every hop count, sampled as one pool). |
 | `--seed` | `0` | Sampling seed (default 0). |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 | `--source-directory` | — | assertions: directory of .txt/.md files to generate from (the corpus you ingest); required for assertions. |
 | `--questions-per-class` | `10` | assertions: questions to keep per class (default 10). |
 | `--classes` | `data_local`, `data_global`, `data_linked`, `activity_local`, `activity_global` | assertions: comma-separated question classes (default all: data_local,data_global,data_linked,activity_local,activity_global); only the data_* classes get assertions. |

@@ -94,20 +94,18 @@ _STATUS_MAP = {
 }
 
 
-def display_ascii_art(version: str = "1.0.0") -> None:
-    ascii_art = f"""
-[bold blue]
-   ██████╗ ██████╗  █████╗ ██████╗ ██╗  ██╗     ██████╗  █████╗  ██████╗
-  ██╔════╝ ██╔══██╗██╔══██╗██╔══██╗██║  ██║     ██╔══██╗██╔══██╗██╔════╝
-  ██║  ███╗██████╔╝███████║██████╔╝███████║     ██████╔╝███████║██║  ███╗
-  ██║   ██║██╔══██╗██╔══██║██╔══██╗██╔══██║     ██╔══██╗██╔══██║██║   ██║
-  ╚██████╔╝██║  ██║██║  ██║██║  ██║██║  ██║     ██║  ██║██║  ██║╚██████╔╝
-   ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝
-[/bold blue]
+# The product name the CLIs' banner and descriptions use (README title).
+PRODUCT_NAME = "Unified Knowledge Graph RAG on AWS"
 
-[dim]Built by AWS Professional Services | Version {version}[/dim]
-"""
-    console.print(Panel(ascii_art, expand=False, border_style="dim"))
+
+def display_ascii_art(version: str = "1.0.0") -> None:
+    """Print the banner: the product name and version (the function keeps
+    its name; the banner spelled "GRAPH RAG", one of its methodologies)."""
+    banner = (
+        f"[bold blue]{PRODUCT_NAME}[/bold blue]\n"
+        f"[dim]Built by AWS Professional Services | Version {version}[/dim]"
+    )
+    console.print(Panel(banner, expand=False, border_style="dim"))
 
 
 def display_pipeline_results(

@@ -46,6 +46,7 @@ from unified_kg_rag.application.cli.conventions import (
     failure_fields,
     json_output,
     print_json,
+    setup_cli_logging,
     usage_error,
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
@@ -61,7 +62,6 @@ from unified_kg_rag.shared import (
     ConfigurationError,
     DataProcessingError,
     get_logger,
-    setup_logging,
 )
 
 logger = get_logger(__name__)
@@ -270,7 +270,7 @@ def main() -> int:
             config = load_cli_config(args)
         if not args.data_path.is_file():
             usage_error(f"visualization data not found: '{args.data_path}'")
-        setup_logging(config, stream=sys.stderr if as_json else None)
+        setup_cli_logging(config, args)
         failures: dict[str, str] = {}
         written = run_visualization(
             args.data_path,

@@ -925,6 +925,11 @@ From a `main` checkout (formats and keys no release had):
   writes vectors embeds one probe text before its first model stage and stops (exit 2) when the model returns
   another dimension than `models.embedding.dimension`, naming the setting, where every vector write failed at the
   indexing stage after the extraction was paid for (one embedding call per run) (#PR).
+- Every CLI takes `--log-level` (over `logging.level`) and `--version`; with `--output-format text` the console logs
+  are plain lines unless `logging.log_format` is set (they were JSON records between the CLI's own output whenever
+  stdout was not a terminal; the CDK tasks set `structured` and keep them), and `prepare-benchmark assertions` logs
+  to stderr with `--output-format json`. The banner and the `--help` descriptions name the product (they said "GRAPH
+  RAG" and "GraphRAG", one of its methodologies) (#PR).
 - `run-ingestion --suffix`, `--methodologies a,b` and `--reset` set `processing.document_parsing.index_value`,
   `indexing.methodologies` and `indexing.reset` for one run, validated as the config keys are (a bad value exits
   2); `run-ingestion` and `run-rag` print the run's index namespace (suffix and `indexing.additional_suffix`) as
@@ -1124,6 +1129,11 @@ From a `main` checkout (formats and keys no release had):
   deprecation WARNING when set and will be removed: maximizing modularity on the coarse upper levels merges unrelated
   communities (it lost global search accuracy in testing, which is why it has been off by default since #141). They
   still apply; set `graph.community_detection.resolution` instead (#(PR)).
+- `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and will be removed: the default Claude 5.x
+  models always reason, so tune their depth with `aws.bedrock.default_effort` / `fast_effort`. It still turns
+  thinking on for models that opt in (#577).
+- `run-eval --verbose` logs a deprecation WARNING and will be removed: use `--log-level DEBUG`, which every CLI
+  takes (`--verbose` means more of each result in `run-rag`) (#PR).
 
 ### Fixed
 Bugs present in 0.2.3.

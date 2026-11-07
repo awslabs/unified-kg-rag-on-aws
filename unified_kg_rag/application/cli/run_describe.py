@@ -32,6 +32,7 @@ from unified_kg_rag.application.cli.conventions import (
     failed,
     json_output,
     print_json,
+    setup_cli_logging,
 )
 from unified_kg_rag.application.cli.display import console
 from unified_kg_rag.application.cli.help_text import doc_epilog
@@ -48,7 +49,7 @@ from unified_kg_rag.application.storage.inspection import (
     describe_namespace,
     export_graph,
 )
-from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
+from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import StoreConnectionError
 
 logger = get_logger(__name__)
@@ -149,7 +150,7 @@ def main() -> int:
     try:
         with exit_on_config_error():
             config = apply_provider_arguments(load_cli_config(args), args)
-        setup_logging(config, stream=sys.stderr if as_json else None)
+        setup_cli_logging(config, args)
         if error := missing_extras_error(config, seeds=False):
             return failed(EXIT_USAGE, error)
         description = describe_namespace(config, args.suffix)
