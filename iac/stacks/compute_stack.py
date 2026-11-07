@@ -281,7 +281,7 @@ class ComputeStack(Stack):
         # The app only reads and writes cache objects (stage checkpoints and
         # their LLM responses); expiry is the bucket lifecycle's job, so the role
         # gets no s3:DeleteObject*.
-        storage.doc_status_table.grant_read_write_data(role)
+        storage.doc_status_table_for(self).grant_read_write_data(role)
         storage.cache_bucket.grant_read(role)
         storage.cache_bucket.grant_put(role)
         if self.corpus_bucket is not None:

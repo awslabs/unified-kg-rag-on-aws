@@ -339,6 +339,17 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    `dev`) with your usual `-c` flags and the new `image_tag`, then `cdk deploy --all`; a plain `--all` stops at
    `GraphRagCompute` ("Cannot delete export ...") and rolls back unchanged. Container Insights series restart under
    the renamed ingestion task family (#558).
+7. A deployed stack, in three deploys with your usual `-c` flags and the new `image_tag`, and `-c
+   legacy_doc_status_table=<the 0.2.3 registry table>` (`graphrag-doc-status` in `dev`, `<env>-graphrag-doc-status`
+   otherwise, or the `doc_status_table` you set) on the first two: `cdk deploy GraphRagOrchestration --exclusively`
+   (`GraphRag<Env>Orchestration` outside `dev`), then `cdk deploy --all`, then `cdk deploy --all` without
+   `legacy_doc_status_table`. The registry table is replaced (another key schema and name), and the 0.2.3 compute
+   and observability stacks import its ARN and name: without the setting the storage stack fails ("Cannot update
+   export ...DocStatusTable... as it is in use") and rolls back unchanged; without the first deploy `GraphRagCompute`
+   stops at "Cannot delete export ...". The old table is retained where `removal_destroy` is off (delete it in step
+   12) and deleted with the stack update where it is on. A 0.2.3 `doc_status_table` of your own needs a new name
+   too, as CloudFormation replaces no custom-named table under its own name. Container Insights series restart
+   under the renamed ingestion task family (#558, #PR).
 8. On that deploy: pass `-c owner=aws-proserve` to keep the `owner` tag; without `use_cmk`, delete a leftover
    `GraphRagSecurity` stack (CDK metadata only) with `aws cloudformation delete-stack`; dry-run the TLS policy
    change (`aws opensearch update-domain-config ... --dry-run`) to see whether it runs blue/green; in a

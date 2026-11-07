@@ -196,6 +196,7 @@ did-you-mean hint.
 | `opensearch_nori_package` | `false` | Associate the AWS-provided `analysis-nori` plugin package of the domain's engine version (a custom resource; associating and dissociating are blue/green deployments), so the domain has the `nori` analyzer. Re-run once with `indexing.reset: true` afterwards ([Korean with Nori](../docs/operations.md#korean-with-nori)) |
 | `opensearch_korean_analyzer` | `cjk` (`nori` with `opensearch_nori_package`) | Analyzer of Korean text (`UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO`). `nori` needs the Nori package (`opensearch_nori_package`, or associated by hand); a change needs one `indexing.reset: true` run |
 | `doc_status_table` | `graphrag-doc-status-v2` (dev) / `<env>-graphrag-doc-status-v2` | Doc-status table (`UKR__AWS__DYNAMODB__TABLE_NAME`); changing it creates a new, empty registry |
+| `legacy_doc_status_table` | — | Only for the deploy that upgrades a 0.2.3 stack set: its registry table (`graphrag-doc-status` in dev, `<env>-graphrag-doc-status` otherwise, or the `doc_status_table` it set). The storage stack keeps exporting that table's ARN and name, which the 0.2.3 compute and observability stacks import, while it replaces the table; deploy once more without it (CHANGELOG *Upgrading*) |
 | `cache_bucket_name` | — | Reuse an S3 cache bucket |
 | `corpus_bucket_name` | — | A bucket the corpus (or an evaluation dataset) is read from: both task roles get read access and, in `private` mode, the S3 endpoint allows it |
 

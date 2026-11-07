@@ -60,6 +60,17 @@ _NEPTUNE_FAMILIES = {
     "neptune1.4": neptune.ParameterGroupFamily.NEPTUNE_1_4,
 }
 
+# The exports of the doc-status table a 0.2.3 stack set holds (CDK's names
+# for the table's ARN, which the compute stack imports, and its name, which
+# the observability stack imports), by output logical id; the export name is
+# "<storage stack name>:<id>". The 0.2.3 table is replaced (another key
+# schema, another name), and CloudFormation changes no export another stack
+# imports: the upgrade deploy keeps them (legacy_doc_status_table).
+LEGACY_DOC_STATUS_EXPORTS = (
+    "ExportsOutputFnGetAttDocStatusTable4F466A9BArn66824127",
+    "ExportsOutputRefDocStatusTable4F466A9B2F8E5F2F",
+)
+
 
 class StorageStack(Stack):
     def __init__(
@@ -123,6 +134,43 @@ class StorageStack(Stack):
         )
         CfnOutput(self, "CacheBucketName", value=self.cache_bucket.bucket_name)
         CfnOutput(self, "DocStatusTableName", value=self.doc_status_table.table_name)
+        if legacy := self.config.legacy_doc_status_table:
+            # The 0.2.3 stacks' imports, at their 0.2.3 values: the deploy
+            # that replaces the table changes no export they import, and the
+            # stacks that imported them reference the new table by name
+            # (doc_status_table_for). Deployed again without the setting,
+            # the exports take the new table's values (nothing imports them
+            # by then).
+            arn_id, name_id = LEGACY_DOC_STATUS_EXPORTS
+            for output_id, value in (
+                (
+                    arn_id,
+                    self.format_arn(
+                        service="dynamodb", resource="table", resource_name=legacy
+                    ),
+                ),
+                (name_id, legacy),
+            ):
+                CfnOutput(
+                    self,
+                    output_id,
+                    value=value,
+                    export_name=f"{self.stack_name}:{output_id}",
+                )
+
+    def doc_status_table_for(self, scope: Construct) -> dynamodb.ITable:
+        """The doc-status table as another stack (``scope``) references it:
+        the table (a cross-stack export of its ARN or name), or while a
+        0.2.3 stack set is upgraded (``legacy_doc_status_table``) the table
+        by its configured name, which needs no export."""
+        if self.config.legacy_doc_status_table is None:
+            return self.doc_status_table
+        return dynamodb.Table.from_table_attributes(
+            scope,
+            "DocStatusTableByName",
+            table_name=self.config.doc_status_table,
+            encryption_key=self.kms_key,
+        )
 
     # ------------------------------------------------------------- S3 cache
     def _resolve_cache_bucket(self) -> s3.IBucket:
