@@ -13,6 +13,7 @@ sample the extraction's variance too. All fakes, no AWS.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -20,14 +21,14 @@ from typing import Any
 import pytest
 
 from unified_kg_rag.application.cli import run_evaluation
-from unified_kg_rag.application.retrieval import rag_chain
+from unified_kg_rag.application.retrieval import query_processing, rag_chain
 from unified_kg_rag.application.retrieval.rag_chain import (
     _ExtractionCache,
     extraction_cache_scope,
 )
 from unified_kg_rag.domain.models import Config, EvaluatorType
 from unified_kg_rag.evaluation.saved_results import interleaving_warnings
-from unified_kg_rag.shared.usage import record_llm_call
+from unified_kg_rag.shared.usage import record_llm_call, usage_scope
 
 LATENCY = "latency/response_time_seconds"
 
@@ -264,3 +265,87 @@ async def test_a_baseline_from_another_run_is_warned_about(
     )
     comparison = _comparison(second)
     assert any("2 separate run-eval invocations" in w for w in comparison["warnings"])
+
+
+class _KeywordModel:
+    """The keyword extraction prompt chain: slow enough that interleaved
+    arms ask while the first call is still in flight."""
+
+    def __init__(self, fail_first: bool = False) -> None:
+        self.calls = 0
+        self.fail_first = fail_first
+
+    async def ainvoke(self, inputs: dict[str, Any], config: Any = None) -> str:
+        self.calls += 1
+        await asyncio.sleep(0.02)
+        if self.fail_first and self.calls == 1:
+            raise RuntimeError("throttled")
+        return json.dumps({"high_level_keywords": ["h"], "low_level_keywords": ["l"]})
+
+
+class _ExtractingChain:
+    """What query_processing reads of a GraphRAGChain to extract keywords."""
+
+    ignore_errors = False
+
+    def __init__(self, size: int = 8, *, fail_first: bool = False) -> None:
+        self.config = Config()
+        self._extractions = _ExtractionCache(size)
+        self.model = _KeywordModel(fail_first)
+
+    def _extraction_key(self, prompt: Any, query: str, language: str) -> Any:
+        return query_processing.extraction_key(self, prompt, query, language)
+
+    def _cached_extraction(self, key: Any) -> Any:
+        return query_processing.cached_extraction(self, key)
+
+    def _cache_extraction(self, key: Any, value: Any) -> None:
+        query_processing.cache_extraction(self, key, value)
+
+    def _get_chain_for_prompt(self, *args: Any, **kwargs: Any) -> Any:
+        return self.model
+
+
+async def _two_arms(chain: _ExtractingChain, scopes: tuple[str, str]) -> list[Any]:
+    async def arm(scope: str) -> Any:
+        with extraction_cache_scope(scope), usage_scope() as meter:
+            keywords = await query_processing.extract_dual_keywords(
+                chain, "Who ships widgets?", "English"
+            )
+        return keywords, meter.snapshot()["cache_hits"]
+
+    return list(await asyncio.gather(*(arm(s) for s in scopes)))
+
+
+class TestInFlightExtractions:
+    """The interleaved arms of one repeat ask the same question at the same
+    time: both missed the cache and each paid for its own extraction, with
+    keywords of their own. In flight, the second now waits for the first."""
+
+    async def test_concurrent_arms_of_a_scope_share_one_call(self) -> None:
+        chain = _ExtractingChain()
+        (first, hits_1), (second, hits_2) = await _two_arms(chain, ("r1", "r1"))
+        assert chain.model.calls == 1
+        assert first == second == (["h"], ["l"])
+        # The payer counts the call, the other a cache hit.
+        assert sorted((hits_1, hits_2)) == [0, 1]
+
+    async def test_other_scopes_and_no_cache_extract_their_own(self) -> None:
+        chain = _ExtractingChain()
+        await _two_arms(chain, ("r1", "r2"))
+        assert chain.model.calls == 2
+        uncached = _ExtractingChain(size=0)
+        await _two_arms(uncached, ("r1", "r1"))
+        assert uncached.model.calls == 2
+
+    async def test_a_failed_first_call_leaves_the_others_to_extract(self) -> None:
+        chain = _ExtractingChain(fail_first=True)
+        results = await asyncio.gather(
+            *(
+                query_processing.extract_dual_keywords(chain, "Q?", "English")
+                for _ in range(2)
+            ),
+            return_exceptions=True,
+        )
+        assert chain.model.calls == 2
+        assert [type(r) for r in results].count(tuple) == 1

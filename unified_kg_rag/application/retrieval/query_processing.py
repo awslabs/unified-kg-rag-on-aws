@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.output_parsers import StrOutputParser
@@ -368,23 +368,57 @@ async def extract_query_entities(
     """The entities the query names (entity extraction), from the
     extraction cache when this question was extracted before."""
     key = chain._extraction_key(EntityExtractionPrompt, query, target_language)
+
+    async def extract() -> tuple[str, ...]:
+        extractor = chain._get_chain_for_prompt(
+            EntityExtractionPrompt,
+            StrOutputParser(),
+            output_ceiling=chain.config.search.output_ceilings.query_extraction,
+        )
+        raw = await extractor.ainvoke(
+            {"query": query, "target_language": target_language}, config
+        )
+        if not isinstance(raw, str):
+            return ()
+        # Not split at the ASCII comma alone: a Chinese or Japanese list
+        # separates its items with 、 or ，.
+        entities = tuple(split_entity_list(raw))
+        chain._cache_extraction(key, entities)
+        return entities
+
+    return list(await shared_extraction(chain, key, extract))
+
+
+async def shared_extraction(
+    chain: GraphRAGChain,
+    key: tuple[str, ...],
+    extract: Callable[[], Awaitable[Any]],
+) -> Any:
+    """The extraction of ``key``: cached, or the one in flight in this
+    extraction scope (another query of the scope started it: wait for it,
+    a cache hit), or ``extract()``'s. Interleaved run-eval arms of one
+    repeat ask the same question together, so the first pays for the call
+    and the others share its keywords (under ABBA the payer alternates);
+    a failed or cancelled first call leaves each waiter to extract on its
+    own."""
     if (cached := chain._cached_extraction(key)) is not None:
-        return list(cached)
-    extractor = chain._get_chain_for_prompt(
-        EntityExtractionPrompt,
-        StrOutputParser(),
-        output_ceiling=chain.config.search.output_ceilings.query_extraction,
-    )
-    raw = await extractor.ainvoke(
-        {"query": query, "target_language": target_language}, config
-    )
-    if not isinstance(raw, str):
-        return []
-    # Not split at the ASCII comma alone: a Chinese or Japanese list
-    # separates its items with 、 or ，.
-    entities = split_entity_list(raw)
-    chain._cache_extraction(key, tuple(entities))
-    return entities
+        return cached
+    cache: _ExtractionCache | None = getattr(chain, "_extractions", None)
+    if cache is None or not hasattr(cache, "claim"):
+        return await extract()
+    future, owner = cache.claim(key)
+    if not owner and future is not None:
+        value = await asyncio.shield(future)
+        if value is not None:
+            _record_hit(chain, key)
+            return value
+        return await extract()
+    value = None
+    try:
+        value = await extract()
+        return value
+    finally:
+        cache.release(key, future, value)
 
 
 def extraction_key(
@@ -413,11 +447,15 @@ def cached_extraction(chain: GraphRAGChain, key: tuple[str, ...]) -> Any:
     cache: _ExtractionCache | None = getattr(chain, "_extractions", None)
     hit = cache.get(key) if cache is not None else None
     if hit is not None:
-        logger.debug("Reused the cached %s for query %s", key[0], text_digest(key[3]))
-        # A model call the query did not make (shared.usage), under the
-        # id the call's usage is recorded by.
-        record_cache_hit(ModelPurpose.QUERY.value, _usage_model_id(chain, key[1]))
+        _record_hit(chain, key)
     return hit
+
+
+def _record_hit(chain: GraphRAGChain, key: tuple[str, ...]) -> None:
+    logger.debug("Reused the cached %s for query %s", key[0], text_digest(key[3]))
+    # A model call the query did not make (shared.usage), under the
+    # id the call's usage is recorded by.
+    record_cache_hit(ModelPurpose.QUERY.value, _usage_model_id(chain, key[1]))
 
 
 def _usage_model_id(chain: GraphRAGChain, model_id: str) -> str:
@@ -445,26 +483,29 @@ async def extract_dual_keywords(
     """
     try:
         key = chain._extraction_key(KeywordsExtractionPrompt, query, target_language)
-        if (cached := chain._cached_extraction(key)) is not None:
-            high, low = cached
-            return list(high), list(low)
-        extractor = chain._get_chain_for_prompt(
-            KeywordsExtractionPrompt,
-            StrOutputParser(),
-            output_ceiling=chain.config.search.output_ceilings.query_extraction,
-        )
-        raw = await extractor.ainvoke(
-            {"query": query, "target_language": target_language}, config
-        )
-        # Strict: with ignore_errors=False a broken keyword extraction
-        # surfaces instead of silently yielding empty keyword lists.
-        try:
-            payload = parse_llm_json(raw, strict=True, answer_keys=_KEYWORD_LEVELS)
-            hl_keywords, ll_keywords = _keyword_lists(payload)
-        except (ValueError, LanguageModelError) as e:
-            raise _keyword_json_error(chain, e) from e
-        chain._cache_extraction(key, (tuple(hl_keywords), tuple(ll_keywords)))
-        return hl_keywords, ll_keywords
+
+        async def extract() -> tuple[tuple[str, ...], tuple[str, ...]]:
+            extractor = chain._get_chain_for_prompt(
+                KeywordsExtractionPrompt,
+                StrOutputParser(),
+                output_ceiling=chain.config.search.output_ceilings.query_extraction,
+            )
+            raw = await extractor.ainvoke(
+                {"query": query, "target_language": target_language}, config
+            )
+            # Strict: with ignore_errors=False a broken keyword extraction
+            # surfaces instead of silently yielding empty keyword lists.
+            try:
+                payload = parse_llm_json(raw, strict=True, answer_keys=_KEYWORD_LEVELS)
+                hl_keywords, ll_keywords = _keyword_lists(payload)
+            except (ValueError, LanguageModelError) as e:
+                raise _keyword_json_error(chain, e) from e
+            value = (tuple(hl_keywords), tuple(ll_keywords))
+            chain._cache_extraction(key, value)
+            return value
+
+        high, low = await shared_extraction(chain, key, extract)
+        return list(high), list(low)
     except Exception as e:
         if not chain.ignore_errors:
             raise
