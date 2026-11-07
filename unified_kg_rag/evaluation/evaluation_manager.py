@@ -81,6 +81,10 @@ from unified_kg_rag.shared.usage import (
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 from .answer_match_evaluator import (
+    ANSWER_ITEMS_KEY,
+    ANSWER_TYPE_KEY,
+    ANSWER_TYPES,
+    DECLINE_IS_CORRECT_KEY,
     SPAN_FALLBACK_KEY,
     AnswerMatchEvaluator,
     answer_scoring,
@@ -462,6 +466,27 @@ class EvaluationManager:
         if not isinstance(item_metadata.get("answerable", True), bool):
             raise EvaluationException(
                 f"{where}: 'metadata.answerable' must be true or false."
+            )
+
+        if not isinstance(item_metadata.get(DECLINE_IS_CORRECT_KEY, False), bool):
+            raise EvaluationException(
+                f"{where}: 'metadata.{DECLINE_IS_CORRECT_KEY}' must be true or false."
+            )
+        answer_type = item_metadata.get(ANSWER_TYPE_KEY)
+        if answer_type is not None and answer_type not in ANSWER_TYPES:
+            raise EvaluationException(
+                f"{where}: 'metadata.{ANSWER_TYPE_KEY}' must be one of "
+                f"{', '.join(sorted(ANSWER_TYPES))}."
+            )
+        items = item_metadata.get(ANSWER_ITEMS_KEY)
+        if answer_type == "set" and not (
+            isinstance(items, list)
+            and items
+            and all(isinstance(i, str) and i.strip() for i in items)
+        ):
+            raise EvaluationException(
+                f"{where}: 'metadata.{ANSWER_ITEMS_KEY}' must be a non-empty list "
+                "of strings with answer_type 'set'."
             )
 
         final_metadata = {**base_metadata, **item_metadata}
