@@ -251,6 +251,66 @@ def test_strategies_mark_what_the_namespace_does_not_hold(client: Any) -> None:
     assert found["local"]["routable"] and not found["drift"]["routable"]
 
 
+def test_the_namespace_s_methodologies_come_from_its_build_record(
+    client: Any,
+) -> None:
+    status = client.get("/api/status").json()
+    held = client.get("/api/namespace/methodologies").json()
+    assert held["namespace"] == "default" and held["recorded"] is True
+    assert set(status["methodologies"]) <= set(held["held"])
+    fresh = client.get(
+        "/api/namespace/methodologies", params={"suffix": "never-built"}
+    ).json()
+    assert fresh == {
+        "namespace": "never-built",
+        "recorded": False,
+        "held": [],
+        "dropped": [],
+    }
+    assert held["dropped"] == []  # the config builds what it holds
+    narrowed = client.get(
+        "/api/namespace/methodologies", params={"methodologies": "lightrag"}
+    ).json()
+    assert narrowed["dropped"] == ["graphrag"]
+    bad = client.get("/api/namespace/methodologies", params={"suffix": "../x"})
+    assert bad.status_code == 400 and bad.json()["code"] == "invalid"
+
+
+def test_an_ingestion_that_narrows_the_namespace_is_refused_unconfirmed(
+    client: Any,
+) -> None:
+    held = client.get("/api/namespace/methodologies").json()["held"]
+    keep = [m for m in held if m != "graphrag"]
+    assert "graphrag" in held and keep
+    assert (
+        _upload(client, "narrow", {"a.txt": "Vendor ships to Buyer."}).status_code
+        == 200
+    )
+    refused = client.post(
+        "/api/jobs/ingest",
+        json={"corpus": "uploads:narrow", "methodologies": keep},
+        headers=HEADERS,
+    )
+    assert refused.status_code == 409, refused.text
+    body = refused.json()
+    assert body["code"] == "narrowing" and "graphrag" in body["methodologies"]
+    assert not any(
+        j["params"].get("corpus") == "uploads:narrow"
+        for j in client.get("/api/jobs").json()["jobs"]
+    )
+
+
+def test_a_question_with_an_unsafe_suffix_is_refused_with_a_message(
+    client: Any,
+) -> None:
+    response = client.post(
+        "/api/ask", json={"query": "Who?", "suffix": "../etc"}, headers=HEADERS
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "invalid" and "suffix" in body["error"]
+
+
 def test_changes_need_the_console_header_and_the_same_origin(client: Any) -> None:
     assert client.post("/api/ask", json={"query": "x"}).status_code == 403
     response = client.post(
@@ -385,7 +445,9 @@ def test_datasets_are_found_and_previewed(client: Any) -> None:
     assert bad.status_code == 422
 
 
-def test_an_evaluation_job_runs_the_cli_and_its_run_is_saved(client: Any) -> None:
+def test_an_evaluation_job_runs_the_cli_and_its_run_is_saved(
+    client: Any, workspace: Path
+) -> None:
     job = client.post(
         "/api/jobs/evaluate",
         json={
@@ -399,7 +461,15 @@ def test_an_evaluation_job_runs_the_cli_and_its_run_is_saved(client: Any) -> Non
     assert job["total_runs"] == 2
     done = _wait(client, job["id"])
     assert done["status"] == "succeeded", done
-    assert done["progress"] == {"done": 2, "total": 2}
+    progress = done["progress"]
+    assert (progress["done"], progress["total"]) == (2, 2)
+    # Counted from the answer batch's log lines (both runs, interleaved).
+    answers = progress["answers"]
+    assert (
+        answers["done"]
+        == answers["total"]
+        == 2 * len(json.loads((workspace / "datasets" / "demo-eval.json").read_text()))
+    )
     assert done["result"]["gate_failures"] == []
     assert "--output-directory" in done["command"]
     runs = client.get("/api/evaluations").json()["runs"]
@@ -781,10 +851,22 @@ def test_saving_new_output_directories_moves_the_roots(
         },
         headers=HEADERS,
     ).json()
+    # Moving a directory the console serves is confirmed first.
+    refused = client.post(
+        "/api/config/save",
+        json={"text": preview["text"], "base_sha": view["sha"]},
+        headers=HEADERS,
+    )
+    assert refused.status_code == 409 and refused.json()["code"] == "directories"
+    assert refused.json()["paths"] == ["evaluation.outputs_directory"]
     assert (
         client.post(
             "/api/config/save",
-            json={"text": preview["text"], "base_sha": view["sha"]},
+            json={
+                "text": preview["text"],
+                "base_sha": view["sha"],
+                "confirm_directories": ["evaluation.outputs_directory"],
+            },
             headers=HEADERS,
         ).status_code
         == 200

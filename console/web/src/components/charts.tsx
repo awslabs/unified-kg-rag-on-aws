@@ -5,7 +5,7 @@
  * next to its mark or in a table, so colour never carries it alone. */
 import { useState } from "react";
 import { useI18n } from "../i18n/i18n";
-import type { Delta } from "../lib/types";
+import type { Delta, Multiplicity } from "../lib/types";
 
 /** Whether a higher value of `metric` is better (true), worse (false) or
  * neither (null: answer length). */
@@ -15,46 +15,82 @@ export function higherIsBetter(metric: string): boolean | null {
   return true;
 }
 
-export function deltaVerdict(metric: string, delta: Delta): "better" | "worse" | "neutral" {
+/** Whether a delta counts, and which way: with a Holm-adjusted p-value
+ * (a comparison that adjusts for multiplicity), when it is below the
+ * comparison's alpha; else (an older comparison, a delta without per-query
+ * pairs, a closed-book arm) when its interval excludes zero. */
+export function deltaVerdict(metric: string, delta: Delta, alpha?: number | null): "better" | "worse" | "neutral" {
   const direction = higherIsBetter(metric);
   if (direction === null) return "neutral";
-  if (delta.ci_low > 0) return direction ? "better" : "worse";
-  if (delta.ci_high < 0) return direction ? "worse" : "better";
+  let sign: number;
+  if (delta.adjusted_p_value != null && alpha != null) {
+    sign = delta.adjusted_p_value < alpha ? Math.sign(delta.mean_delta) : 0;
+  } else {
+    sign = delta.ci_low > 0 ? 1 : delta.ci_high < 0 ? -1 : 0;
+  }
+  if (sign > 0) return direction ? "better" : "worse";
+  if (sign < 0) return direction ? "worse" : "better";
   return "neutral";
 }
 
+/** The interval a row draws: the family's simultaneous one when the
+ * comparison adjusted it, with its confidence, else the plain one. */
+export function deltaInterval(delta: Delta, multiplicity: Multiplicity | null | undefined, confidence: number): { low: number; high: number; confidence: number; adjusted: boolean } {
+  const family = delta.family ? multiplicity?.families[delta.family] : undefined;
+  if (family && delta.adjusted_ci_low != null && delta.adjusted_ci_high != null) {
+    return { low: delta.adjusted_ci_low, high: delta.adjusted_ci_high, confidence: family.interval_confidence, adjusted: true };
+  }
+  return { low: delta.ci_low, high: delta.ci_high, confidence, adjusted: false };
+}
+
 /** One row per metric: the mean paired delta and its interval on the
- * row's own scale (metrics differ in unit), zero marked. */
-export function DeltaPlot({ deltas, confidence = 0.95 }: { deltas: [string, Delta][]; confidence?: number }) {
+ * row's own scale (metrics differ in unit), zero marked; with a
+ * comparison that adjusts for multiplicity, the Holm p-value and the
+ * family's simultaneous interval, the primary metric marked. */
+export function DeltaPlot({ deltas, confidence = 0.95, multiplicity }: { deltas: [string, Delta][]; confidence?: number; multiplicity?: Multiplicity | null }) {
   const { t, number, percent } = useI18n();
   const width = 220;
   const pad = 10;
+  const adjusted = deltas.some(([, d]) => d.adjusted_p_value != null) && multiplicity != null;
+  const alpha = multiplicity?.alpha ?? null;
   return (
     <div className="table-wrap" tabIndex={0}>
       <table className="table">
-        <caption className="visually-hidden">{t("chart.deltaCaption", { confidence: percent(confidence) })}</caption>
+        <caption className="visually-hidden">
+          {adjusted ? t("chart.deltaCaptionHolm", { alpha: number(alpha ?? 0.05) }) : t("chart.deltaCaption", { confidence: percent(confidence) })}
+        </caption>
         <thead>
           <tr>
             <th>{t("evaluate.metric")}</th>
-            <th>{t("chart.interval", { confidence: percent(confidence) })}</th>
+            <th>{adjusted ? t("chart.intervalAdjusted") : t("chart.interval", { confidence: percent(confidence) })}</th>
             <th className="num">{t("evaluate.delta")}</th>
             <th className="num">{t("evaluate.ci")}</th>
+            {adjusted ? <th className="num">{t("chart.holmP")}</th> : null}
             <th className="num">{t("evaluate.winsTiesLosses")}</th>
           </tr>
         </thead>
         <tbody>
           {deltas.map(([metric, delta]) => {
-            const extent = Math.max(Math.abs(delta.ci_low), Math.abs(delta.ci_high), Math.abs(delta.mean_delta)) || 1;
+            const interval = deltaInterval(delta, multiplicity, confidence);
+            const extent = Math.max(Math.abs(interval.low), Math.abs(interval.high), Math.abs(delta.mean_delta)) || 1;
             const x = (v: number) => pad + ((v + extent) / (2 * extent)) * (width - 2 * pad);
-            const verdict = deltaVerdict(metric, delta);
+            const verdict = deltaVerdict(metric, delta, alpha);
             const digits = Math.abs(delta.mean_delta) < 0.01 && delta.mean_delta !== 0 ? 4 : 3;
+            const primary = delta.family === "primary";
             return (
               <tr key={metric}>
-                <td className="mono">{metric}</td>
+                <td className="mono">
+                  {metric}
+                  {primary ? (
+                    <span className="badge" style={{ marginLeft: 6 }} title={t("chart.primaryHelp")}>
+                      {t("chart.primary")}
+                    </span>
+                  ) : null}
+                </td>
                 <td>
                   <svg className="chart" width={width} height={22} role="img" aria-label={t("chart.deltaRow", { metric, delta: number(delta.mean_delta, { maximumFractionDigits: digits }) })}>
                     <line className="zero" x1={x(0)} x2={x(0)} y1={2} y2={20} />
-                    <line className={`ci ${verdict}`} x1={x(delta.ci_low)} x2={x(delta.ci_high)} y1={11} y2={11} />
+                    <line className={`ci ${verdict}`} x1={x(interval.low)} x2={x(interval.high)} y1={11} y2={11} />
                     <circle className={`ci-dot ${verdict}`} cx={x(delta.mean_delta)} cy={11} r={4.5} />
                   </svg>
                 </td>
@@ -64,8 +100,12 @@ export function DeltaPlot({ deltas, confidence = 0.95 }: { deltas: [string, Delt
                   {verdict !== "neutral" ? <span className={`badge ${verdict === "better" ? "badge-good" : "badge-bad"}`} style={{ marginLeft: 6 }}>{t(`chart.${verdict}`)}</span> : null}
                 </td>
                 <td className="num">
-                  [{number(delta.ci_low, { maximumFractionDigits: digits })}, {number(delta.ci_high, { maximumFractionDigits: digits })}]
+                  [{number(interval.low, { maximumFractionDigits: digits })}, {number(interval.high, { maximumFractionDigits: digits })}]
+                  {adjusted ? <span className="muted"> {interval.adjusted ? percent(interval.confidence, 1) : t("chart.unadjusted")}</span> : null}
                 </td>
+                {adjusted ? (
+                  <td className="num">{delta.adjusted_p_value != null ? number(delta.adjusted_p_value, { maximumFractionDigits: 3 }) : "—"}</td>
+                ) : null}
                 <td className="num">
                   {delta.wins}/{delta.ties}/{delta.losses}
                 </td>

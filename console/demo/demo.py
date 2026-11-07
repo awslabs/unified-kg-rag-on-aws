@@ -3,7 +3,9 @@
 """Prepare the console demo and start the console on 127.0.0.1.
 
 Writes a small synthetic corpus and a matching ``run-eval`` dataset
-(``corpus.py``) into a workspace, a config for the chosen models, ingests
+(``corpus.py``) into a workspace, a config for the chosen models (once:
+a restart keeps it, with what Settings saved; ``--reset-config`` writes it
+again), ingests
 the corpus into the embedded SQLite stores (``run-ingestion``) and starts
 ``run-console`` on the loopback interface. Needs the ``console`` extra:
 ``uv sync --extra console``.
@@ -41,6 +43,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -141,6 +144,52 @@ def demo_config(
     return config
 
 
+def kept_model_port(config_path: Path) -> int | None:
+    """The loopback port the fake models answer on in an existing demo
+    config (``providers.llm.base_url``), so a restart serves them where the
+    kept config looks; ``None`` when it names none."""
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    llm = (
+        ((data.get("providers") or {}).get("llm") or {})
+        if isinstance(data, dict)
+        else {}
+    )
+    url = llm.get("base_url") if isinstance(llm, dict) else None
+    if not isinstance(url, str):
+        return None
+    parts = urlsplit(url)
+    return parts.port if parts.hostname in ("127.0.0.1", "localhost") else None
+
+
+def check_config(config_path: Path) -> None:
+    """Exit naming the problem if the kept config does not load as a run
+    loads it (``--reset-config`` writes the demo's again)."""
+    from unified_kg_rag.application.config import get_config
+    from unified_kg_rag.shared.exceptions import ConfigurationError
+
+    try:
+        get_config(config_path)
+    except ConfigurationError as e:
+        raise SystemExit(
+            f"{config_path} does not load: {e}\nFix it, or pass --reset-config "
+            "to write the demo's config again."
+        ) from e
+
+
+def write_config(
+    config_path: Path, models: str, *, model_base_url: str | None, region: str | None
+) -> None:
+    config_path.write_text(
+        "# Written by console/demo/demo.py; edit it in the console's Settings.\n"
+        + yaml.safe_dump(
+            demo_config(models, model_base_url=model_base_url, region=region),
+            sort_keys=False,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _script(name: str) -> str:
     """A console script of this environment (next to its interpreter)."""
     found = Path(sys.executable).with_name(name)
@@ -198,6 +247,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--no-ingest", action="store_true", help="Skip the ingestion")
     parser.add_argument(
+        "--reset-config",
+        action="store_true",
+        help=(
+            "Write the demo's config again over <workspace>/config.yaml (by "
+            "default an existing one, with what Settings saved, is kept)"
+        ),
+    )
+    parser.add_argument(
         "--prepare-only", action="store_true", help="Prepare and ingest, then exit"
     )
     parser.add_argument(
@@ -211,26 +268,46 @@ def main(argv: list[str] | None = None) -> int:
     workspace = args.workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     source, dataset = write_corpus(workspace)
+    config_path = workspace / "config.yaml"
+    # The config is the user's once written: what Settings saved survives a
+    # restart. --reset-config writes the demo's again.
+    keep = config_path.exists() and not args.reset_config
+    if keep:
+        check_config(config_path)
+        print(
+            f"Keeping {config_path} (--reset-config writes the demo's again)",
+            flush=True,
+        )
     server = None
     base_url = args.model_base_url
     if args.models == "fake":
-        server, _ = fake_models.serve(
-            port=args.model_port,
-            dimensions=FAKE_DIMENSIONS,
-            chunk_delay=args.chunk_delay,
-        )
+        port = args.model_port
+        if keep and not port:
+            # Where the kept config looks for the fake models.
+            port = kept_model_port(config_path) or 0
+        try:
+            server, _ = fake_models.serve(
+                port=port,
+                dimensions=FAKE_DIMENSIONS,
+                chunk_delay=args.chunk_delay,
+            )
+        except OSError as e:
+            raise SystemExit(
+                f"The fake models cannot listen on port {port}: {e}. Pass "
+                "--model-port with a free port and --reset-config."
+            ) from e
         base_url = f"http://127.0.0.1:{server.server_address[1]}"
         print(f"Fake models on {base_url}", flush=True)
-    config_path = workspace / "config.yaml"
-    config_path.write_text(
-        "# Written by console/demo/demo.py; edit it in the console's Settings.\n"
-        + yaml.safe_dump(
-            demo_config(args.models, model_base_url=base_url, region=args.region),
-            sort_keys=False,
-            allow_unicode=True,
-        ),
-        encoding="utf-8",
-    )
+        if keep and kept_model_port(config_path) != server.server_address[1]:
+            print(
+                f"Note: {config_path} sends its model calls elsewhere; pass "
+                "--reset-config to point it at these fake models.",
+                flush=True,
+            )
+    if not keep:
+        write_config(
+            config_path, args.models, model_base_url=base_url, region=args.region
+        )
     try:
         if not args.no_ingest:
             ingest(workspace, config_path, source)
@@ -264,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if server is not None:
             server.shutdown()
+            server.server_close()
 
 
 if __name__ == "__main__":

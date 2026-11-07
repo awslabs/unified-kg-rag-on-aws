@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -40,6 +41,9 @@ from unified_kg_rag.application.cli.console.ask import AskRequest, AskService
 from unified_kg_rag.application.cli.console.jobs import (
     JobConflict,
     JobManager,
+    NarrowingNotConfirmed,
+    dropped_methodologies,
+    ingest_config,
     namespace_of,
 )
 from unified_kg_rag.application.cli.console.paths import (
@@ -52,6 +56,7 @@ from unified_kg_rag.application.cli.console.paths import (
     walk_files,
 )
 from unified_kg_rag.application.cli.console.settings_api import (
+    DirectoriesNotConfirmed,
     EndpointNotConfirmed,
     SecretRefused,
     SettingsFile,
@@ -62,7 +67,12 @@ from unified_kg_rag.application.config import get_config
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
 )
-from unified_kg_rag.domain.models import Config, Methodology, ModelRole
+from unified_kg_rag.domain.models import (
+    Config,
+    Methodology,
+    ModelRole,
+    validate_path_segment,
+)
 from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import ConfigurationError, DataProcessingError
@@ -123,6 +133,7 @@ class IngestBody(BaseModel):
     confirm_reset: bool = False
     confirm_deletions: bool = False
     confirm_integrity: bool = False
+    confirm_narrowing: bool = False
 
 
 class EvaluateBody(BaseModel):
@@ -144,6 +155,7 @@ class SaveBody(BaseModel):
     text: str = Field(max_length=2_000_000)
     base_sha: str = Field(min_length=64, max_length=64)
     confirm_endpoints: list[str] = Field(default_factory=list, max_length=50)
+    confirm_directories: list[str] = Field(default_factory=list, max_length=10)
 
 
 class UploadTooLarge(ConfigurationError):
@@ -175,8 +187,15 @@ class ConsoleState:
             config_path=options.config_path,
             load_config=self.load_config,
             on_ingest_end=self.ask.reset,
+            read_held=self._held,
         )
         self._build_roots()
+
+    async def _held(self, namespace: str) -> list[str] | None:
+        """The methodologies ``namespace``'s build record holds (None: no
+        record)."""
+        held = await self.ask.held_methodologies(namespace)
+        return list(held["held"]) if held["recorded"] else None
 
     def _build_roots(self) -> None:
         """The directories from the options and the config (again after the
@@ -343,9 +362,29 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
     async def _endpoints(_: Request, e: EndpointNotConfirmed) -> JSONResponse:
         return _error(409, "endpoints", str(e), paths=e.paths)
 
+    @app.exception_handler(DirectoriesNotConfirmed)
+    async def _directories(_: Request, e: DirectoriesNotConfirmed) -> JSONResponse:
+        return _error(409, "directories", str(e), paths=e.paths)
+
+    @app.exception_handler(RequestValidationError)
+    async def _invalid_body(_: Request, e: RequestValidationError) -> JSONResponse:
+        # As every other refusal: a message the page can show, not a list.
+        details = "; ".join(
+            f"{'.'.join(str(p) for p in error.get('loc', ())[1:]) or 'body'}: "
+            f"{error.get('msg')}"
+            for error in e.errors()
+        )
+        return _error(422, "invalid", details)
+
     @app.exception_handler(JobConflict)
     async def _conflict(_: Request, e: JobConflict) -> JSONResponse:
         return _error(409, "job_conflict", str(e), job_id=e.job_id)
+
+    @app.exception_handler(NarrowingNotConfirmed)
+    async def _narrowing(_: Request, e: NarrowingNotConfirmed) -> JSONResponse:
+        return _error(
+            409, "narrowing", str(e), namespace=e.namespace, methodologies=e.dropped
+        )
 
     @app.exception_handler(UploadTooLarge)
     async def _too_large(_: Request, e: UploadTooLarge) -> JSONResponse:
@@ -416,7 +455,7 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
 
     @app.get("/api/strategies")
     async def strategies(suffix: str | None = None) -> dict[str, Any]:
-        found = await state.ask.strategies(suffix)
+        found = await state.ask.strategies(_suffix(suffix))
         for item in found:
             guide = next(
                 (
@@ -554,6 +593,7 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
             confirm_reset=body.confirm_reset,
             confirm_deletions=body.confirm_deletions,
             confirm_integrity=body.confirm_integrity,
+            confirm_narrowing=body.confirm_narrowing,
         )
         return state.jobs.get(job.id)
 
@@ -657,9 +697,26 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
             text=body.text,
             base_sha=body.base_sha,
             confirm_endpoints=body.confirm_endpoints,
+            confirm_directories=body.confirm_directories,
         )
         state.reload()
         return result
+
+    @app.get("/api/namespace/methodologies")
+    async def namespace_methodologies(
+        suffix: str | None = None, methodologies: str | None = None
+    ) -> dict[str, Any]:
+        """What the index namespace of ``suffix`` (default: the config's)
+        holds, as its build record names it, and which of those an
+        ingestion of ``methodologies`` (comma-separated; default: the
+        config's) would drop: the Ingest page starts from the first and
+        confirms the second."""
+        config, _ = ingest_config(
+            state.load_config(),
+            [m for m in (methodologies or "").split(",") if m] or None,
+        )
+        held = await state.ask.held_methodologies(_suffix(suffix))
+        return {**held, "dropped": dropped_methodologies(held["held"], config)}
 
     @app.get("/api/methodologies")
     async def methodologies() -> dict[str, Any]:
@@ -676,6 +733,20 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
 
     _mount_web(app, options.web_directory)
     return app
+
+
+def _suffix(value: str | None) -> str | None:
+    """``value`` if it is a safe index namespace name.
+
+    Raises:
+        ConfigurationError: It is not.
+    """
+    if value is None:
+        return None
+    try:
+        return validate_path_segment(value, "suffix")
+    except ValueError as e:
+        raise ConfigurationError(str(e)) from e
 
 
 def _models(config: Config) -> dict[str, str | None]:

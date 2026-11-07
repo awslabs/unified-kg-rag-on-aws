@@ -63,6 +63,28 @@ class EndpointNotConfirmed(ConfigurationError):
         self.paths = paths
 
 
+# The keys whose directories the console reads (and writes) as roots of its
+# own: changing one opens another directory to the page. Confirmed on Save.
+DIRECTORY_KEYS = (
+    "evaluation.outputs_directory",
+    "graph.visualization.outputs_directory",
+)
+
+
+class DirectoriesNotConfirmed(ConfigurationError):
+    """A save that moves a directory the console serves without confirming
+    it."""
+
+    def __init__(self, paths: list[str]) -> None:
+        super().__init__(
+            "the change moves a directory the console reads and writes ("
+            + ", ".join(paths)
+            + "): it opens that directory to anyone with this console's "
+            "address; confirm the directories to save it"
+        )
+        self.paths = paths
+
+
 def _flat(data: Any, prefix: str = "") -> dict[str, Any]:
     if not isinstance(data, dict):
         return {prefix: data}
@@ -88,6 +110,16 @@ def endpoint_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str,
                 {"path": path, "from": before.get(path), "to": after.get(path)}
             )
     return changes
+
+
+def directory_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, Any]]:
+    """The directories the console serves that ``new`` moves from ``old``."""
+    before, after = _flat(old), _flat(new)
+    return [
+        {"path": path, "from": before.get(path), "to": after.get(path)}
+        for path in DIRECTORY_KEYS
+        if before.get(path) != after.get(path)
+    ]
 
 
 class SecretRefused(ConfigurationError):
@@ -379,17 +411,24 @@ class SettingsFile:
             "text": new_text,
             "diff": diff,
             "endpoint_changes": endpoint_changes(base, new_data),
+            "directory_changes": directory_changes(base, new_data),
             "changed": new_text != current,
             "comments_dropped": comments_dropped,
             **validate(new_data, self.path),
         }
 
     def save(
-        self, *, text: str, base_sha: str, confirm_endpoints: list[str] | None = None
+        self,
+        *,
+        text: str,
+        base_sha: str,
+        confirm_endpoints: list[str] | None = None,
+        confirm_directories: list[str] | None = None,
     ) -> dict[str, Any]:
         """Write ``text`` to the file if it validates, the file did not
-        change since ``base_sha`` was read, and every provider endpoint it
-        changes is in ``confirm_endpoints``.
+        change since ``base_sha`` was read, every provider endpoint it
+        changes is in ``confirm_endpoints`` and every served directory it
+        moves (``DIRECTORY_KEYS``) in ``confirm_directories``.
 
         Raises:
             SecretRefused: ``text`` sets a secret.
@@ -414,6 +453,9 @@ class SettingsFile:
         changed = [c["path"] for c in endpoint_changes(parse(current), data)]
         if changed and sorted(confirm_endpoints or []) != changed:
             raise EndpointNotConfirmed(changed)
+        moved = [c["path"] for c in directory_changes(parse(current), data)]
+        if moved and sorted(confirm_directories or []) != sorted(moved):
+            raise DirectoriesNotConfirmed(moved)
         # Written whole or not at all: a temporary file beside it, renamed
         # over it.
         temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")

@@ -26,9 +26,10 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodology
+from unified_kg_rag.application.cli.console.jobs import namespace_of
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.retrieval.rag_chain import (
     ROUTING_KEY,
@@ -37,13 +38,21 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     RAGInput,
     RAGOutput,
 )
-from unified_kg_rag.domain.models import Config, Constants, SearchStrategy, SearchType
+from unified_kg_rag.domain.ingestion.methodologies import stored_artifacts
+from unified_kg_rag.domain.models import (
+    Config,
+    SearchStrategy,
+    SearchType,
+    validate_path_segment,
+)
+from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.domain.models.usage import LLMUsage
 from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
 from unified_kg_rag.evaluation.comparison import answer_cost_usd
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
+    IndexNotFoundError,
     InvalidFilterError,
     MethodologyNotIndexedError,
     QueryTimeoutError,
@@ -79,6 +88,12 @@ class AskRequest(BaseModel):
     history: list[AskTurn] | None = Field(default=None, max_length=MAX_HISTORY_TURNS)
     filters: dict[str, Any] | None = None
     suffix: str | None = Field(default=None, max_length=128)
+
+    @field_validator("suffix")
+    @classmethod
+    def _safe_suffix(cls, value: str | None) -> str | None:
+        # An index namespace names store indexes and cache paths.
+        return None if value is None else validate_path_segment(value, "suffix")
 
 
 def trace_url(trace_id: str | None, template: str | None, config: Config) -> str | None:
@@ -323,6 +338,26 @@ class AskService:
             )
         return views
 
+    async def held_methodologies(self, suffix: str | None = None) -> dict[str, Any]:
+        """What the index namespace of ``suffix`` holds, from the build
+        record ingestion wrote on it (``GraphRAGChain.aread_build_record``):
+        ``recorded`` false (and nothing ``held``) when it has none that
+        names its artifacts (never built, or built before methodology
+        profiles). A store error raises."""
+        async with self._using() as (chain, config):
+            record = await chain.aread_build_record(suffix)
+            namespace = namespace_of(config, suffix)
+        artifacts = stored_artifacts(record)
+        return {
+            "namespace": namespace,
+            "recorded": artifacts is not None,
+            "held": (
+                [m.value for m in methodologies_holding(artifacts)]
+                if artifacts is not None
+                else []
+            ),
+        }
+
     async def ask(self, request: AskRequest) -> AsyncIterator[dict[str, Any]]:
         """Answer ``request`` as events (see the module docstring); the
         question is recorded whatever the outcome."""
@@ -345,7 +380,9 @@ class AskService:
                         chain, config, request, query_id, queue
                     )
                 record["trace_id"] = trace_id
-                result = self._result(output, config, time.perf_counter() - started)
+                result = self._result(
+                    output, config, time.perf_counter() - started, request.suffix
+                )
                 result["trace_id"] = trace_id
                 result["trace_url"] = trace_url(
                     record.get("trace_id"), self.trace_url_template, config
@@ -450,7 +487,9 @@ class AskService:
         return output, trace_id
 
     @staticmethod
-    def _result(output: RAGOutput, config: Config, latency: float) -> dict[str, Any]:
+    def _result(
+        output: RAGOutput, config: Config, latency: float, suffix: str | None = None
+    ) -> dict[str, Any]:
         metadata = output.metadata or {}
         sources = [source_view(i, s) for i, s in enumerate(output.sources, start=1)]
         link_sources(sources)
@@ -495,8 +534,7 @@ class AskService:
             "context_sections_excluded": metadata.get("context_sections_excluded"),
             "processed_query": output.processed_query.model_dump(mode="json"),
             "sources": sources,
-            "namespace": config.processing.document_parsing.index_value
-            or Constants.DEFAULT_SUFFIX.value,
+            "namespace": namespace_of(config, suffix),
         }
 
 
@@ -505,6 +543,8 @@ def _error_kind(error: Exception) -> str:
         return "invalid_filter"
     if isinstance(error, MethodologyNotIndexedError):
         return "not_indexed"
+    if isinstance(error, IndexNotFoundError):
+        return "index_not_found"
     if isinstance(error, QueryTimeoutError):
         return "timeout"
     if isinstance(error, StoreConnectionError):

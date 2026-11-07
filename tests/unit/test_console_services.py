@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """The console's job manager and question service on their own: one job per
 namespace under concurrent requests, jobs a crashed console left running,
-pipeline ids, retired chains closed once idle, blocked answers recorded."""
+pipeline ids, retired chains closed once idle, blocked answers recorded,
+evaluation progress from the answer batch, what a namespace holds and an
+ingestion that would narrow it."""
 
 from __future__ import annotations
 
@@ -20,12 +22,14 @@ from unified_kg_rag.application.cli.console.jobs import (
     JobConflict,
     JobManager,
     JobStatus,
+    NarrowingNotConfirmed,
     _pipeline_id,
     confirmation_needed,
 )
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.retrieval.rag_chain import ProcessedQuery, RAGOutput
-from unified_kg_rag.domain.models import Config, SearchQuery, SearchResult
+from unified_kg_rag.domain.models import Config, Methodology, SearchQuery, SearchResult
+from unified_kg_rag.shared.exceptions import StoreConnectionError
 
 pytestmark = pytest.mark.unit
 
@@ -288,3 +292,204 @@ def test_history_is_bounded_and_only_user_or_assistant() -> None:
             query="q",
             history=[{"role": "user", "content": "x"}] * (MAX_HISTORY_TURNS + 1),
         )
+
+
+def _log_line(event: str) -> str:
+    # run-eval's JSON log format (--output-format json), as the console runs it.
+    return f'{{"event": "{event}", "logger": "unified_kg_rag.adapters.llm.langchain", "level": "info"}}\n'
+
+
+@pytest.mark.parametrize(
+    ("run_order", "expected"),
+    [
+        # One batch of every run's answers; no run is saved before it ends.
+        ("interleaved", {"done": 12, "total": 40}),
+        # A batch per run: the first done (20), the second at 5, of 20 each.
+        ("sequential", {"done": 25, "total": 40}),
+    ],
+)
+async def test_evaluation_progress_counts_answers_from_the_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, run_order: str, expected: Any
+) -> None:
+    config = Config()
+    config.evaluation.run_order = run_order  # type: ignore[assignment]
+    manager = _manager(tmp_path)
+    manager.load_config = lambda: config
+
+    async def launch(job: Any) -> None:
+        manager.jobs[job.id] = job
+
+    monkeypatch.setattr(manager, "_launch", launch)
+    dataset = tmp_path / "d.json"
+    dataset.write_text('[{"question": "q"}]')
+    job = await manager.start_evaluate(
+        dataset=dataset, dataset_ref="workspace:d.json", strategies=["local", "mix"]
+    )
+    assert job.params["run_order"] == run_order
+    before = manager.get(job.id)["progress"]
+    assert before == {"done": 0, "total": 2, "answers": None}
+    lines = (
+        [
+            "Starting processing for 'Answer Generation': 40 items, up to 5 at a time",
+            "Progress 'Answer Generation': 4/40 items (10%), 2.00 items/s, ETA 18s",
+            "Progress 'Answer Generation': 12/40 items (30%), 2.00 items/s, ETA 14s",
+        ]
+        if run_order == "interleaved"
+        else [
+            "Starting processing for 'Answer Generation': 20 items, up to 5 at a time",
+            "Progress 'Answer Generation': 18/20 items (90%), 2.00 items/s, ETA 1s",
+            "Completed 'Answer Generation': 20 results, 0 failed",
+            "Starting processing for 'Answer Generation': 20 items, up to 5 at a time",
+            "Progress 'Answer Generation': 5/20 items (25%), 2.00 items/s, ETA 8s",
+        ]
+    )
+    with job.log_path.open("a", encoding="utf-8") as log:
+        # Another batch's lines (a judge) are not answers.
+        log.write(_log_line("Progress 'RAGAS Evaluation': 3/9 items (33%)"))
+        for line in lines[:2]:
+            log.write(_log_line(line))
+    manager.get(job.id)  # read part of the log, then the rest
+    with job.log_path.open("a", encoding="utf-8") as log:
+        for line in lines[2:]:
+            log.write(_log_line(line))
+        log.write('{"event": "Progress \'Answer Gen')  # a line still being written
+    progress = manager.get(job.id)["progress"]
+    assert progress["answers"] == expected
+    assert progress["done"] == 0  # no summary saved yet
+
+
+# -- what a namespace holds, and narrowing it ------------------------------------
+
+
+class _RecordChain(_Chain):
+    """Reads a fixed build record (per suffix)."""
+
+    def __init__(self, records: dict[str | None, Any]) -> None:
+        super().__init__(_output())
+        self.records = records
+
+    async def aread_build_record(self, suffix: str | None) -> Any:
+        return self.records.get(suffix)
+
+
+async def test_held_methodologies_come_from_the_namespace_s_build_record(
+    tmp_path: Path,
+) -> None:
+    from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
+
+    lightrag = sorted(
+        a.value for a in METHODOLOGY_PROFILES[Methodology.LIGHTRAG].required
+    )
+    chain = _RecordChain({"tenant-a": {"artifacts": lightrag}, "old": {"mode": "x"}})
+    service = AskService(
+        Config, ConsoleStore(tmp_path / "s.sqlite3"), chain_factory=lambda _c: chain
+    )
+    held = await service.held_methodologies("tenant-a")
+    assert held["namespace"] == "tenant-a" and held["recorded"] is True
+    # LightRAG's artifacts (HippoRAG 2 reads a subset of them), not GraphRAG's.
+    assert "lightrag" in held["held"] and "graphrag" not in held["held"]
+    # No record, or one from before methodology profiles: nothing recorded.
+    for suffix in (None, "old"):
+        held = await service.held_methodologies(suffix)
+        assert held["recorded"] is False and held["held"] == []
+    assert (await service.held_methodologies(None))["namespace"] == "default"
+    await service.close()
+
+
+async def test_an_ingestion_that_drops_held_methodologies_needs_a_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # HippoRAG 2 is held on LightRAG's artifacts alone (no build of its own).
+    held: dict[str, Any] = {"default": ["graphrag", "lightrag", "hipporag"]}
+    asked: list[str] = []
+
+    async def read_held(namespace: str) -> list[str] | None:
+        asked.append(namespace)
+        value = held.get(namespace)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    manager = _manager(tmp_path)
+    manager.read_held = read_held
+
+    async def launch(job: Any) -> None:
+        manager.jobs[job.id] = job
+        job.status = JobStatus.SUCCEEDED  # free the namespace again
+
+    monkeypatch.setattr(manager, "_launch", launch)
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    start = {"corpus": corpus, "corpus_ref": "workspace:corpus"}
+    with pytest.raises(NarrowingNotConfirmed) as refused:
+        await manager.start_ingest(**start, methodologies=["lightrag"])
+    assert refused.value.dropped == ["graphrag"]
+    assert refused.value.namespace == "default"
+    assert "every corpus" in str(refused.value)
+    job = await manager.start_ingest(
+        **start, methodologies=["lightrag"], confirm_narrowing=True
+    )
+    assert job.params["confirm_narrowing"] is True
+    # Building what it holds (or more) asks nothing; nor does leaving out a
+    # methodology whose artifacts the run still builds.
+    await manager.start_ingest(
+        **start, methodologies=["graphrag", "lightrag", "raptor"]
+    )
+    await manager.start_ingest(**start)
+    # The namespace the run writes is the one checked.
+    await manager.start_ingest(
+        **start, methodologies=["lightrag"], index_value="tenant-b"
+    )
+    assert asked[-1] == "tenant-b"
+    # An unreadable record does not refuse: the run meets the store error.
+    held["tenant-c"] = StoreConnectionError("down")
+    await manager.start_ingest(
+        **start, methodologies=["lightrag"], index_value="tenant-c"
+    )
+
+
+async def test_the_result_names_the_namespace_the_question_searched(
+    tmp_path: Path,
+) -> None:
+    service = AskService(
+        Config,
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=lambda _c: _Chain(_output()),
+    )
+    events = [e async for e in service.ask(AskRequest(query="q", suffix="tenant-a"))]
+    assert events[-1]["namespace"] == "tenant-a"
+    events = [e async for e in service.ask(AskRequest(query="q"))]
+    assert events[-1]["namespace"] == "default"
+    await service.close()
+
+
+class _FailingChain(_Chain):
+    def __init__(self, error: Exception) -> None:
+        super().__init__(_output())
+        self.error = error
+
+    async def ainvoke(self, *_: Any, **__: Any) -> RAGOutput:
+        raise self.error
+
+
+async def test_a_missing_index_is_reported_as_such(tmp_path: Path) -> None:
+    from unified_kg_rag.shared.exceptions import IndexNotFoundError
+
+    service = AskService(
+        Config,
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=lambda _c: _FailingChain(IndexNotFoundError("no index 'x'")),
+    )
+    events = await _drain(service, "q")
+    assert events[-1]["kind"] == "error"
+    assert events[-1]["error_kind"] == "index_not_found"
+    await service.close()
+
+
+@pytest.mark.parametrize("suffix", ["../etc", "a/b", "", "x" * 129, "-lead", "a..b"])
+def test_a_question_s_suffix_must_be_a_safe_namespace_name(suffix: str) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        AskRequest(query="q", suffix=suffix)
+    assert AskRequest(query="q", suffix="tenant_a-1.v2").suffix == "tenant_a-1.v2"

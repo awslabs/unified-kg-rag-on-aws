@@ -51,6 +51,29 @@ test("ask, follow the trail into the graph, visit every page", async ({ page, ba
     await page.goto(path);
     await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
   }
+  // Ingest starts from what the namespace holds; building less asks first.
+  await page.goto("/ingest");
+  await expect(page.getByText(/^The namespace default holds /)).toBeVisible();
+  await page.locator("label.source").first().click();
+  const graphrag = page.getByRole("checkbox", { name: /^GraphRAG/ });
+  await expect(graphrag).toBeChecked();
+  await graphrag.uncheck();
+  await expect(page.getByText("This run removes methodologies from default")).toBeVisible();
+  const start = page.getByRole("button", { name: "Start ingestion" });
+  await expect(start).toBeDisabled();
+  await page.getByRole("checkbox", { name: /^Remove GraphRAG/ }).check();
+  await expect(start).toBeEnabled();
+  await graphrag.check();
+  await expect(page.getByText("This run removes methodologies from default")).toBeHidden();
+
+  // An evaluation counts its answers, then compares with Holm-adjusted p-values.
+  await page.goto("/evaluate");
+  await page.getByRole("button", { name: "Start evaluation" }).click();
+  await expect(page.getByText(/answers ·/).first()).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText("2 of 2 runs done")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole("columnheader", { name: "Holm p" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("td .badge", { hasText: "primary" }).first()).toBeVisible();
+
   await page.goto("/settings");
   await page.getByLabel("Language").first().selectOption("ko");
   await expect(page.locator("html")).toHaveAttribute("lang", "ko");

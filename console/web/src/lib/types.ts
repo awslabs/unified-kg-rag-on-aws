@@ -164,7 +164,8 @@ export interface JobRecord {
   plan: string[];
   total_runs: number;
   confirmation?: "integrity" | "reset" | "deletions" | null;
-  progress?: { stages?: StageProgress[]; done: number; total: number } | null;
+  // An evaluation's answers so far (from its log) beside its saved runs.
+  progress?: { stages?: StageProgress[]; done: number; total: number; answers?: { done: number; total: number } | null } | null;
   log?: string[];
 }
 
@@ -250,6 +251,22 @@ export interface Delta {
   wins: number;
   ties: number;
   losses: number;
+  // The sign-flip p-value, and (comparisons that adjust for multiplicity)
+  // its Holm-adjusted value over the delta's family with the family's
+  // simultaneous (Bonferroni) interval.
+  p_value?: number;
+  family?: "primary" | "secondary" | "cost";
+  adjusted_p_value?: number;
+  adjusted_ci_low?: number;
+  adjusted_ci_high?: number;
+}
+
+export interface Multiplicity {
+  method: string;
+  alpha: number;
+  primary_metric: string | null;
+  families: Record<string, { tests: number; interval_confidence: number }>;
+  unadjusted?: string[];
 }
 
 export interface Comparison {
@@ -263,6 +280,7 @@ export interface Comparison {
   };
   warnings?: string[];
   bootstrap?: { confidence?: number; resamples?: number };
+  multiplicity?: Multiplicity;
   pairwise_vs_baseline?: Record<string, { criteria: Record<string, { candidate_win_rate: number | null }>; lengths?: { buckets: Record<string, { pairs: number; criteria: Record<string, { candidate_win_rate: number | null }> }> } }>;
   closed_book_arms?: string[];
 }

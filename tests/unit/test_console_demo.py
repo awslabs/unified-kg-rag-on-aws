@@ -79,3 +79,34 @@ def test_the_fake_models_answer_every_prompt_kind() -> None:
     vector = fake.embed("Kestrel Depot", 16)
     assert len(vector) == 16 and abs(sum(v * v for v in vector) - 1) < 1e-9
     assert fake.respond("unknown system prompt", "x") == ("", False)
+
+
+def test_a_restart_keeps_the_config_settings_saved(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import yaml
+
+    demo = load("demo")
+    args = ["--models", "fake", "--workspace", str(tmp_path), "--no-ingest"]
+    assert demo.main([*args, "--prepare-only"]) == 0
+    path = tmp_path / "config.yaml"
+    written = yaml.safe_load(path.read_text())
+    port = demo.kept_model_port(path)
+    assert port and written["providers"]["llm"]["base_url"].endswith(f":{port}")
+    # What Settings saves (here: a price) survives the next start.
+    written["evaluation"]["prices"]["demo-model"]["input_per_million_tokens"] = 9.5
+    path.write_text(yaml.safe_dump(written))
+    assert demo.main([*args, "--prepare-only"]) == 0
+    kept = yaml.safe_load(path.read_text())
+    assert kept["evaluation"]["prices"]["demo-model"]["input_per_million_tokens"] == 9.5
+    # The fake models answer where the kept config looks.
+    assert f"Fake models on http://127.0.0.1:{port}" in capsys.readouterr().out
+    assert demo.main([*args, "--prepare-only", "--reset-config"]) == 0
+    reset = yaml.safe_load(path.read_text())
+    assert (
+        reset["evaluation"]["prices"]["demo-model"]["input_per_million_tokens"] == 3.0
+    )
+    # A kept config that does not load stops the demo, naming the way out.
+    path.write_text("search:\n  no_such_key: 1\n")
+    with pytest.raises(SystemExit, match="--reset-config"):
+        demo.main([*args, "--prepare-only"])
