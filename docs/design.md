@@ -625,13 +625,26 @@ gets its models and stores from the run's `Providers` bundle.
 - **Community graph.** `GraphBuilder` builds an undirected graph with one edge
   per entity pair; relationships of other types or directions between the pair
   share it, with the summed weight, so Leiden sees the pair's total strength.
-- **Hierarchy (deliberate divergence).** Level 0 is one Leiden partition of the
-  whole entity graph; each coarser level partitions the graph of the previous
-  level's communities, up to `max_levels`. Because modularity's resolution
-  limit grows level-0 communities with the corpus beyond what one report can
-  describe, a community over `max_cluster_size` (default 20) members is
-  partitioned again on its own subgraph. Level-0
-  communities under `min_community_size` merge into their strongest neighbour.
+- **Hierarchy (MS GraphRAG parity below, deliberate divergence above).**
+  One Leiden pass partitions the whole entity graph. Because modularity's
+  resolution limit grows its communities with the corpus beyond what one
+  report can describe, a community over `max_cluster_size` (default 20)
+  members is partitioned again on its own subgraph, recursively, and stays
+  the parent of its pieces, as graspologic's `hierarchical_leiden` (MS
+  GraphRAG's `cluster_graph`) keeps it; the pass over the whole graph is
+  the best partition at its scale, and regrouping the pieces afresh with
+  one pass over their cluster graph recovered planted and LFR benchmark
+  partitions worse (level purity 0.55-0.92 against 0.85-1.00 before the
+  split; `tests/unit/test_community_hierarchy_quality.py`, which also checks
+  the first pass against `graspologic_native.hierarchical_leiden`). Leaves
+  are level 0 and a split community sits at its height above them. Where
+  MS GraphRAG stops at the first pass, coarser levels above the highest of
+  these communities partition the graph of the current top communities the
+  same way (a group over `max_cluster_size` communities split and kept as
+  the parent of its pieces), up to `max_levels`; a partition that puts
+  every linked community under one root is no level. Leaf communities
+  under `min_community_size` merge into their strongest neighbour, and a
+  split community is the union of the pieces it keeps.
   A connected component smaller than `min_community_size` (an isolated
   entity, a pair) gets no community or report; only these are skipped, unlike
   MS GraphRAG's `use_lcc`, which drops every component but the largest. On an
@@ -645,6 +658,11 @@ gets its models and stores from the run's `Providers` bundle.
   parent identical to its only child is never created, so each distinct
   community is reported once. A Leiden failure fails the stage instead of
   truncating the hierarchy.
+- **Leiden runs (deviation).** `trials` 3 and `extra_forced_iterations` 2
+  (the best of three seeded runs, two more refinement passes) where MS
+  GraphRAG runs one trial of one iteration (`graphs/hierarchical_leiden.py`).
+  Not measured against upstream's; it costs Leiden time only (no model
+  call).
 - **Determinism.** Leiden's partition depends on insertion order and
   `graspologic_native` returns labels in a per-process order, so the clustering
   (`domain/ingestion/community_clustering.py`) sorts nodes and edges and

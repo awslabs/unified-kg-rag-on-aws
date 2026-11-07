@@ -2553,20 +2553,24 @@ class CommunityDetectionConfig(BaseModel):
     trials: int = Field(
         default=3,
         ge=1,
-        description="Number of independent Leiden runs to find best partition",
+        description="Number of independent Leiden runs to find best partition "
+        "(MS GraphRAG runs 1).",
     )
     extra_forced_iterations: int = Field(
         default=2,
         ge=0,
-        description="Additional optimization iterations after convergence",
+        description="Additional optimization iterations after convergence "
+        "(MS GraphRAG runs 0).",
     )
     max_cluster_size: int = Field(
         default=20,
         ge=2,
-        description="Maximum members per community: entities at level 0, "
-        "child communities above. A larger Leiden community is re-partitioned "
+        description="Maximum members per community before it is split: "
+        "entities at level 0, child communities above. A larger Leiden "
+        "community is re-partitioned "
         "on its own subgraph, recursively, until every piece fits or Leiden "
-        "finds no finer split; the next level regroups the pieces. Without the "
+        "finds no finer split, and stays the parent of its pieces (as in MS "
+        "GraphRAG's hierarchical Leiden). Without the "
         "bound, modularity's resolution limit grows communities with the "
         "corpus beyond what one report's max_report_context_tokens can "
         "describe (or a parent's roll-up can summarize). MS GraphRAG's default "

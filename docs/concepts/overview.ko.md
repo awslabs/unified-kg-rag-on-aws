@@ -156,10 +156,11 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   개는 에지 두 개입니다. MS GraphRAG는 관계를 출발점과 도착점으로 묶고(`extract_graph.py`),
   LightRAG는 정렬한 양 끝점 쌍을 에지 키로 씁니다(`operate.py`)
   ([설계 문서 §4.2](../design.md#42-graph-identity-and-merging-stages-5-7), 영문).
-- **커뮤니티 계층.** 레벨 0은 그래프 전체에 대한 Leiden 분할 하나이고, 그보다 상위 레벨은
-  커뮤니티 그래프를 다시 분할하며, 구성원이 20개를 넘는 커뮤니티는 다시 나눕니다.
-  `min_community_size`보다 작은 연결 요소만 커뮤니티를 받지 않습니다. MS GraphRAG는
-  `max_cluster_size` 10으로 계층적 Leiden을 실행하고, 기본값(`use_lcc`)으로는 가장 큰 연결
+- **커뮤니티 계층.** 그래프 전체에 대한 Leiden 분할 하나에서 구성원이 20개를 넘는
+  커뮤니티는 다시 나누고, 나눈 커뮤니티는 조각들의 부모로 남깁니다(MS GraphRAG의 계층적
+  Leiden과 같음). 그 위의 상위 레벨은 커뮤니티 그래프를 다시 분할합니다.
+  `min_community_size`보다 작은 연결 요소만 커뮤니티를 받지 않습니다. MS GraphRAG는 첫
+  분할에서 멈추고, `max_cluster_size` 10을 쓰며, 기본값(`use_lcc`)으로는 가장 큰 연결
   요소만 군집화합니다(`config/defaults.py`)
   ([설계 문서 §4.3](../design.md#43-communities-stages-10-11), 영문).
 - **글리닝.** 기본 라운드는 MS GraphRAG의 1회(`max_gleanings`)가 아니라 3회이고, 텍스트

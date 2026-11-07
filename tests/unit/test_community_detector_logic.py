@@ -34,6 +34,7 @@ from unified_kg_rag.domain.ingestion.community_clustering import (
     entity_subgraph,
     find_optimal_resolution,
     leiden,
+    leiden_communities,
     merge_small_communities,
     partition_dict_to_communities,
 )
@@ -260,13 +261,23 @@ class TestMaxClusterSize:
                 assert set().union(*(c.nodes for c in children)) == community.nodes
                 assert all(c.parent_id == community.community_id for c in children)
 
-    def test_parents_have_at_most_max_cluster_size_children(self) -> None:
-        # 40 one-clique leaves in a ring: one pass over their cluster graph
-        # groups more than 4 leaves under some parents.
+    def test_split_communities_are_parents_and_coarser_levels_follow(
+        self,
+    ) -> None:
+        # One pass groups two or three neighbouring cliques (the resolution
+        # limit); each such community is split into its cliques and stays
+        # their parent, as in graspologic's hierarchical Leiden.
+        first_pass = {
+            frozenset(members)
+            for members in leiden_communities(
+                _ring_of_cliques(), 1.0, _detector().community_detection_config
+            ).values()
+        }
         cd = self._run(_ring_of_cliques(), 4)
-        parents = [c for c in cd.all_communities.values() if c.children_ids]
-        assert len(parents) > 1
-        assert max(len(c.children_ids) for c in parents) <= 4
+        level_1 = {
+            frozenset(c.nodes) for c in cd.all_communities.values() if c.level == 1
+        }
+        assert first_pass == level_1
         # The hierarchy still converges: deeper levels regroup the parents.
         assert max(c.level for c in cd.all_communities.values()) >= 2
 

@@ -77,9 +77,13 @@ def leiden(
 ) -> dict[Any, int]:
     """Leiden partition of ``graph``: node -> community label.
 
-    Same algorithm, arguments and result as ``graspologic.partition.leiden``
-    on an undirected networkx graph (modularity, randomness 0.001, edge
-    ``weight`` defaulting to 1.0); isolated nodes are not in the result. It
+    With its defaults, the same algorithm, arguments and result as
+    ``graspologic.partition.leiden`` on an undirected networkx graph
+    (modularity, randomness 0.001, edge ``weight`` defaulting to 1.0, one
+    trial, no extra iteration); isolated nodes are not in the result. The
+    stage passes ``CommunityDetectionConfig.trials`` (3) and
+    ``extra_forced_iterations`` (2), where MS GraphRAG runs one trial of one
+    iteration: a deliberate deviation (docs/design.md §4.3). It
     calls ``graspologic_native`` directly because importing any graspologic
     module runs ``graspologic/__init__``, which takes ~10 s and imports boto3
     through gensim and smart_open.
@@ -253,15 +257,68 @@ def small_component_nodes(
     return small
 
 
+class ClusterNode:
+    """A community of the hierarchy under construction: its ``members`` (the
+    nodes of the graph partitioned: entities, or the communities of the level
+    below) and the finer communities it was split into (``children``, none
+    for a leaf)."""
+
+    __slots__ = ("members", "children", "level")
+
+    def __init__(
+        self,
+        members: set[Any],
+        children: list["ClusterNode"] | None = None,
+        level: int = 0,
+    ) -> None:
+        self.members = members
+        self.children: list[ClusterNode] = children or []
+        self.level = level
+
+
+def _postorder(roots: list[ClusterNode]) -> list[ClusterNode]:
+    """Every node under ``roots``, each after its children (iteratively: a
+    chain of splits can be deeper than the recursion limit)."""
+    order: list[ClusterNode] = []
+    stack = list(roots)
+    while stack:
+        node = stack.pop()
+        order.append(node)
+        stack.extend(node.children)
+    order.reverse()
+    return order
+
+
+def _leaves(roots: list[ClusterNode]) -> list[ClusterNode]:
+    return [node for node in _postorder(roots) if not node.children]
+
+
 def base_partition(
     graph: nx.Graph, config: CommunityDetectionConfig, *, entity_level: bool = True
 ) -> list[set[Any]]:
+    """The finest communities of ``graph`` (the leaves of
+    :func:`partition_tree`), in canonical order."""
+    return sorted(
+        (
+            leaf.members
+            for leaf in _leaves(
+                partition_tree(graph, config, entity_level=entity_level)
+            )
+        ),
+        key=community_sort_key,
+    )
+
+
+def partition_tree(
+    graph: nx.Graph, config: CommunityDetectionConfig, *, entity_level: bool = True
+) -> list[ClusterNode]:
     """Partition ``graph`` into communities: the entity graph
     (``entity_level``), or a cluster graph of the level below.
 
-    The communities come back in canonical order (see
-    ``partition_dict_to_communities``), because the next level's cluster
-    graph numbers its nodes by position in this list.
+    The roots are one Leiden partition of ``graph``; a root over
+    ``max_cluster_size`` members is split (:func:`split_large_communities`)
+    and stays the parent of its pieces, as graspologic's
+    ``hierarchical_leiden`` (MS GraphRAG's clustering) keeps it.
 
     Raises:
         GraphError: Leiden failed. Silently falling back would truncate the
@@ -277,7 +334,7 @@ def base_partition(
             "Graph has no weighted edges. Treating each node as a separate "
             "community."
         )
-        return [{node} for node in sorted(graph.nodes(), key=str)]
+        return [ClusterNode({node}) for node in sorted(graph.nodes(), key=str)]
 
     if config.auto_resolution:
         resolution = find_optimal_resolution(graph, config)
@@ -286,25 +343,53 @@ def base_partition(
 
     communities = leiden_communities(graph, resolution, config)
 
-    # Every level is bounded by max_cluster_size: in entities at level 0,
-    # in child communities above (a node of a cluster graph is a whole
-    # community), so a parent's roll-up packs a bounded number of child
-    # report summaries. Only entity communities are held to
-    # min_community_size: merging cluster-graph nodes would fold a level
-    # into the one below it.
-    communities = split_large_communities(
+    # Every leaf is bounded by max_cluster_size: in entities at level 0, in
+    # child communities above (a node of a cluster graph is a whole
+    # community), so a leaf report and a parent's roll-up pack a bounded
+    # number of entities or child report summaries. Only entity communities
+    # are held to min_community_size: merging cluster-graph nodes would fold
+    # a level into the one below it.
+    roots = split_large_communities(
         communities, graph, resolution, config.max_cluster_size, config
     )
-    if entity_level:
-        if config.min_community_size > 1:
-            communities = merge_small_communities(
-                communities,
-                graph,
-                config.min_community_size,
-                config.max_cluster_size,
-            )
+    if entity_level and config.min_community_size > 1:
+        roots = _merge_small_leaves(roots, graph, config)
+    return sorted(roots, key=lambda root: community_sort_key(root.members))
 
-    return sorted(communities.values(), key=community_sort_key)
+
+def _merge_small_leaves(
+    roots: list[ClusterNode], graph: nx.Graph, config: CommunityDetectionConfig
+) -> list[ClusterNode]:
+    """Merge the leaves under ``min_community_size`` into their strongest
+    neighbour (``merge_small_communities``) and re-derive the parents: each
+    is the union of its remaining children, a parent left with one child is
+    that child, and one left with none is gone."""
+    leaves = sorted(_leaves(roots), key=lambda leaf: community_sort_key(leaf.members))
+    merged = merge_small_communities(
+        {i: set(leaf.members) for i, leaf in enumerate(leaves)},
+        graph,
+        config.min_community_size,
+        config.max_cluster_size,
+    )
+    kept: dict[int, ClusterNode | None] = {}
+    for i, leaf in enumerate(leaves):
+        members = merged.get(i)
+        if members is not None:
+            leaf.members = members
+        kept[id(leaf)] = leaf if members is not None else None
+    for node in _postorder(roots):
+        if not node.children:
+            continue
+        children = [
+            child for child in (kept[id(c)] for c in node.children) if child is not None
+        ]
+        if len(children) < 2:
+            kept[id(node)] = children[0] if children else None
+            continue
+        node.children = children
+        node.members = set().union(*(child.members for child in children))
+        kept[id(node)] = node
+    return [root for root in (kept[id(r)] for r in roots) if root is not None]
 
 
 def leiden_communities(
@@ -338,8 +423,10 @@ def split_large_communities(
     resolution: float,
     max_size: int,
     config: CommunityDetectionConfig,
-) -> dict[int, set[Any]]:
-    """Re-partition every community above ``max_size`` members, recursively.
+) -> list[ClusterNode]:
+    """Re-partition every community above ``max_size`` members, recursively:
+    the trees of ``communities`` (one root each), whose leaves fit
+    ``max_size`` or have no finer partition.
 
     Modularity has a resolution limit: on a large graph, one Leiden pass
     merges well-separated groups into communities that grow with the
@@ -348,17 +435,22 @@ def split_large_communities(
     with ``max_cluster_size`` the same way), and a parent's roll-up only
     the child summaries that fit its token budget. Leiden run on the
     community's own subgraph judges it against that subgraph alone, so it
-    splits. A community Leiden leaves whole (one piece) stays as it is.
+    splits. A community Leiden leaves whole (one piece) stays a leaf.
+
+    The split community stays as the parent of its pieces, as in
+    graspologic's ``hierarchical_leiden``: the pass over the whole graph is
+    the best partition at its scale, and regrouping the pieces afresh (one
+    Leiden pass over their cluster graph) recovered it worse on planted and
+    LFR benchmark graphs (``test_community_hierarchy_quality``).
     """
-    done: list[set[Any]] = []
-    pending = list(communities.values())
+    roots = [ClusterNode(set(nodes)) for nodes in communities.values()]
+    pending = list(roots)
     split = 0
     while pending:
-        nodes = pending.pop()
-        if len(nodes) <= max_size:
-            done.append(nodes)
+        node = pending.pop()
+        if len(node.members) <= max_size:
             continue
-        subgraph = graph.subgraph(nodes)
+        subgraph = graph.subgraph(node.members)
         pieces = (
             list(leiden_communities(subgraph, resolution, config).values())
             if subgraph.size(weight="weight") > 0
@@ -368,20 +460,20 @@ def split_large_communities(
             logger.info(
                 "Community of %s members has no finer partition; keeping "
                 "it above max_cluster_size %s",
-                len(nodes),
+                len(node.members),
                 max_size,
             )
-            done.append(nodes)
             continue
         split += 1
-        pending.extend(pieces)
+        node.children = [ClusterNode(piece) for piece in pieces]
+        pending.extend(node.children)
     if split:
         logger.info(
             "Split %s communities above max_cluster_size %s",
             split,
             max_size,
         )
-    return dict(enumerate(sorted(done, key=community_sort_key)))
+    return roots
 
 
 def partition_dict_to_communities(
@@ -574,88 +666,170 @@ def build_cluster_graph(partition: list[set[str]], graph: nx.Graph) -> nx.Graph:
     return cluster_graph
 
 
+def _set_heights(roots: list[ClusterNode], base: int = 0) -> None:
+    """Set each node's ``level`` to ``base`` plus its height (0 for a leaf)."""
+    for node in _postorder(roots):
+        node.level = base + (
+            1 + max(child.level - base for child in node.children)
+            if node.children
+            else 0
+        )
+
+
+def _truncate(roots: list[ClusterNode], max_levels: int) -> list[ClusterNode]:
+    """``roots`` without the nodes at level ``max_levels`` or above (their
+    children become roots)."""
+    kept: list[ClusterNode] = []
+    stack = list(roots)
+    while stack:
+        node = stack.pop()
+        if node.level >= max_levels:
+            stack.extend(node.children)
+        else:
+            kept.append(node)
+    return sorted(kept, key=lambda root: community_sort_key(root.members))
+
+
+def _tree_partitions(roots: list[ClusterNode]) -> list[list[set[Any]]]:
+    """The hierarchy under ``roots`` as :func:`build_hierarchy` returns it.
+
+    Level ``L`` holds every node at level ``L`` or below whose parent is
+    above ``L`` (or which is a root): a node at level ``L`` groups its
+    children, a lower one stands alone (``hierarchical_communities`` lets
+    it stand for itself, so it is no new community).
+    """
+    nodes = _postorder(roots)
+    parent_level: dict[int, int] = {}
+    for node in nodes:
+        for child in node.children:
+            parent_level[id(child)] = node.level
+
+    def frontier(level: int) -> list[ClusterNode]:
+        return sorted(
+            (
+                node
+                for node in nodes
+                if node.level <= level and parent_level.get(id(node), level + 1) > level
+            ),
+            key=lambda node: community_sort_key(node.members),
+        )
+
+    below = frontier(0)
+    partitions: list[list[set[Any]]] = [[set(node.members) for node in below]]
+    for level in range(1, max((root.level for root in roots), default=0) + 1):
+        index = {id(node): i for i, node in enumerate(below)}
+        current = frontier(level)
+        partitions.append(
+            [
+                (
+                    {index[id(child)] for child in node.children}
+                    if node.level == level
+                    else {index[id(node)]}
+                )
+                for node in current
+            ]
+        )
+        below = current
+    return partitions
+
+
+def _coarsen(
+    roots: list[ClusterNode], graph: nx.Graph, config: CommunityDetectionConfig
+) -> list[ClusterNode] | None:
+    """Group ``roots`` (entity communities) into coarser communities, all
+    above the highest root: a partition tree of their cluster graph, or
+    ``None`` when it has none worth a level."""
+    cluster_graph = build_cluster_graph([root.members for root in roots], graph)
+    if cluster_graph.number_of_nodes() < 2:
+        logger.info(
+            "Cluster graph has only %s nodes, stopping the hierarchy",
+            cluster_graph.number_of_nodes(),
+        )
+        return None
+    logger.info(
+        "Created cluster graph with %s nodes and %s edges",
+        cluster_graph.number_of_nodes(),
+        cluster_graph.number_of_edges(),
+    )
+    if cluster_graph.size(weight="weight") == 0:
+        # No edge joins two communities: the normal top of the hierarchy,
+        # not the edgeless input partition_tree warns of.
+        logger.info("No edges between the top communities, stopping the hierarchy")
+        return None
+
+    groups = partition_tree(cluster_graph, config, entity_level=False)
+    # Judged over the communities an edge joins to another: an isolated one
+    # (an entity without relationships, a component of its own) is never
+    # merged, so it must not make a single root over the others read as a
+    # partition (and a level of its own, shifting every depth global search
+    # cuts at). Such a root is no level, but the pieces it was split into
+    # may be.
+    linked = {node for node in cluster_graph if cluster_graph.degree(node) > 0}
+    while True:
+        holding = [group for group in groups if group.members & linked]
+        if len(holding) != 1 or not holding[0].children:
+            break
+        groups = [g for g in groups if g is not holding[0]] + holding[0].children
+    if len(holding) < 2 or all(len(group.members) == 1 for group in holding):
+        logger.info("No meaningful coarser partition, stopping the hierarchy")
+        return None
+
+    # Every new community sits above every current root, so a level is one
+    # scale: the roots of shallow and deep split trees are side by side
+    # below the first coarser level.
+    _set_heights(groups, base=max(root.level for root in roots) + 1)
+    lifted: dict[int, ClusterNode] = {}
+    for node in _postorder(groups):
+        # A cluster-graph community over root indices -> one over entities.
+        if not node.children and len(node.members) == 1:
+            lifted[id(node)] = roots[next(iter(node.members))]
+            continue
+        children = (
+            [lifted[id(child)] for child in node.children]
+            if node.children
+            else [roots[i] for i in sorted(node.members)]
+        )
+        lifted[id(node)] = ClusterNode(
+            set().union(*(child.members for child in children)), children, node.level
+        )
+    return sorted(
+        (lifted[id(group)] for group in groups),
+        key=lambda root: community_sort_key(root.members),
+    )
+
+
 def build_hierarchy(
     graph: nx.Graph, config: CommunityDetectionConfig
 ) -> tuple[list[list[set[Any]]], float]:
     """The partitions of the entity ``graph`` at each level of the
-    community hierarchy, the finest first (a level partitions the cluster
-    graph of the one below), and the modularity of the finest."""
-    base = base_partition(graph, config)
+    community hierarchy, the finest first (a level partitions the
+    communities of the one below), and the modularity of the finest.
 
-    base_modularity = graph_modularity(graph, base)
-
+    The lowest levels are the partition tree of the entity graph (a split
+    community over its pieces, :func:`partition_tree`), at its leaves'
+    heights; above the highest of its roots, each round partitions the
+    graph of the current top communities the same way, up to
+    ``max_levels`` levels.
+    """
+    max_levels = config.max_levels
+    roots = partition_tree(graph, config)
+    _set_heights(roots)
+    roots = _truncate(roots, max_levels)
+    leaves = [leaf.members for leaf in _leaves(roots)]
+    base_modularity = graph_modularity(graph, leaves)
     logger.info(
         "Base partition found with %s communities and modularity %.4f",
-        len(base),
+        len(leaves),
         base_modularity,
     )
 
-    partitions = [base]
-    max_levels = config.max_levels
-
-    current_partition = base
-    # The graph to coarsen at the NEXT level. Level 1 coarsens the original
-    # entity graph; level >= 2 must coarsen the PREVIOUS level's cluster
-    # graph (whose nodes are previous-level community indices), because the
-    # partition members at level >= 2 are cluster indices, not entity ids.
-    current_graph = graph
-
-    for level in range(1, max_levels):
-        logger.info("Creating level %s communities...", level)
-
-        cluster_graph = build_cluster_graph(current_partition, current_graph)
-
-        if cluster_graph.number_of_nodes() < 2:
-            logger.info(
-                "Cluster graph has only %s nodes, stopping hierarchy at level %s",
-                cluster_graph.number_of_nodes(),
-                level - 1,
-            )
+    while roots and max(root.level for root in roots) + 1 < max_levels:
+        coarser = _coarsen(roots, graph, config)
+        if coarser is None:
             break
+        roots = _truncate(coarser, max_levels)
 
-        logger.info(
-            "Created cluster graph with %s nodes and %s edges",
-            cluster_graph.number_of_nodes(),
-            cluster_graph.number_of_edges(),
-        )
-        if cluster_graph.size(weight="weight") == 0:
-            # No edge joins two communities: the normal top of the
-            # hierarchy, not the edgeless input base_partition warns of.
-            logger.info(
-                "No edges between the communities of level %s, stopping "
-                "hierarchy construction",
-                level - 1,
-            )
-            break
-
-        next_partition = base_partition(cluster_graph, config, entity_level=False)
-        # Judged over the communities an edge joins to another: an isolated
-        # one (an entity without relationships, a component of its own) is
-        # never merged, so it must not make a single root over the others
-        # read as a partition (and a level of its own, shifting every depth
-        # global search cuts at).
-        linked = {node for node in cluster_graph if cluster_graph.degree(node) > 0}
-        merged = sum(1 for members in next_partition if members & linked)
-
-        if next_partition and 1 < merged < len(linked):
-            logger.info(
-                "Selected partition with %s communities for level %s",
-                len(next_partition),
-                level,
-            )
-        else:
-            logger.info(
-                "No meaningful partition found at level %s, stopping hierarchy construction",
-                level,
-            )
-            break
-
-        partitions.append(next_partition)
-        current_partition = next_partition
-        # Coarsen the cluster graph we just built next, so deeper levels
-        # aggregate over the previous level rather than the entity graph.
-        current_graph = cluster_graph
-
+    partitions = _tree_partitions(roots)
     logger.info("Hierarchy construction completed with %s levels", len(partitions))
     return partitions, base_modularity
 
