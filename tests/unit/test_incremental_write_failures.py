@@ -157,6 +157,47 @@ def test_a_failure_without_an_id_fails_the_whole_commit() -> None:
     assert set(_statuses(store).values()) == {DocStatus.FAILED}
 
 
+def test_a_failed_id_no_document_owns_fails_the_whole_commit(caplog) -> None:
+    # Unattributable (an id no lineage of this run owns): recording any
+    # document PROCESSED could leave the artifact missing for good.
+    store = FakeDocStatusStore()
+    with caplog.at_level("WARNING"):
+        _record(store, {"vector_relationships": _stats(10, ["r-a", "r-unknown"])})
+
+    assert set(_statuses(store).values()) == {DocStatus.FAILED}
+    assert "belong to no document of this run" in caplog.text
+
+
+def test_a_record_over_the_registry_item_limit_fails_before_any_write() -> None:
+    # A document with more text units than one registry record holds fails
+    # the write-ahead with every oversized document named, and nothing of
+    # the delta is recorded (no PENDING record a later run would act on).
+    from unified_kg_rag.domain.models import DocumentDelta
+    from unified_kg_rag.shared.exceptions import DataProcessingError
+
+    store = FakeDocStatusStore(max_record_ids=2)
+    store.put(
+        DocStatusRecord(
+            doc_id="doc-a",
+            content_hash="h",
+            status=DocStatus.PROCESSED,
+            text_unit_ids=["t-a"],
+        )
+    )
+    indexer = IncrementalIndexer(store, _Manager())  # type: ignore[arg-type]
+    lineages = [
+        DocumentLineage(doc_id="doc-a", file_path="a.txt", text_unit_ids=["t-a"]),
+        DocumentLineage(
+            doc_id="doc-big", file_path="big.txt", text_unit_ids=["t1", "t2", "t3"]
+        ),
+    ]
+
+    with pytest.raises(DataProcessingError, match=r"big.txt \(3 text units\)"):
+        indexer.write_ahead(DocumentDelta(changed=["doc-a"], new=["doc-big"]), lineages)
+
+    assert _statuses(store) == {"doc-a": DocStatus.PROCESSED}
+
+
 def test_clean_writes_record_every_document_processed() -> None:
     store = FakeDocStatusStore()
     _record(store, {"vector_entities": _stats(10, [])})
