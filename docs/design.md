@@ -4217,7 +4217,9 @@ with an empty allowlist), started by `run-console`
 (`application/cli/run_console.py`). It imports the application layer
 (`GraphRAGChain`, `get_config`, the ingestion pipeline's stage table),
 evaluation's comparison helpers (`answer_cost_usd`), domain models and
-the shared kernel, and no adapter (`test_console_imports.py`). Its
+the shared kernel, and of the adapters only the two public registries the
+facade exports from (`strategy_registry`, `ParserFactory`; pinned by
+`test_run_console.py`). Its
 packages, FastAPI, Uvicorn and python-multipart, are the `console` extra;
 without them `run-console` exits 2 naming the extra. The web client is a
 Vite + React + TypeScript app in `console/web/` (source and npm lockfile

@@ -107,6 +107,15 @@ wheels = [
 ]
 
 [[package]]
+name = "annotated-doc"
+version = "0.0.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/8e/38aa427ed5402449e226975b649c5dc73ccadfefeb95e6aecb8f8ea4b6b6/annotated_doc-0.0.5.tar.gz", hash = "sha256:c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb", size = 10758, upload-time = "2026-07-28T13:50:58.129Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/30/e900b21425a860e195f32e37657aa1f7c7f2b1bfb26f03ca209b90933c06/annotated_doc-0.0.5-py3-none-any.whl", hash = "sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101", size = 5302, upload-time = "2026-07-28T13:50:57.239Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -830,6 +839,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cc/28/c14e053b6762b1044f34a13aab6859bbf40456d37d23aa286ac24cfd9a5d/executing-2.2.1.tar.gz", hash = "sha256:3632cc370565f6648cc328b32435bd120a1e4ebb20c77e3fdde9a13cd1e533c4", size = 1129488, upload-time = "2025-09-01T09:48:10.866Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/ea/53f2148663b321f21b5a606bd5f191517cf40b7072c0497d3c92c4a13b1e/executing-2.2.1-py2.py3-none-any.whl", hash = "sha256:760643d3452b4d777d295bb167ccc74c64a81df23fb5e08eff250c425a4b2017", size = 28317, upload-time = "2025-09-01T09:48:08.5Z" },
+]
+
+[[package]]
+name = "fastapi"
+version = "0.162.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e9/eb/2cf8c80abf09b2800aef0a83b41066fbfda8ee5495b7a08b9d1af40f7046/fastapi-0.162.0.tar.gz", hash = "sha256:6a22c1e2e6e32e0633ee7e170f00009a29b8228b16feb219ee42f32fd8d88a8f", size = 527867, upload-time = "2026-10-23T18:47:33.264Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/4f/3f2c25c9b43970b5e9a08beb5e04776247edea684ddc0930f4f02f0bb6cb/fastapi-0.162.0-py3-none-any.whl", hash = "sha256:3785963de305dd09912426cb81f2d230fce98ab3521cdfe97265c8d14983128c", size = 148912, upload-time = "2026-10-23T18:47:31.734Z" },
 ]
 
 [[package]]
@@ -4381,6 +4407,11 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+console = [
+    { name = "fastapi" },
+    { name = "python-multipart" },
+    { name = "uvicorn" },
+]
 cross-encoder = [
     { name = "sentence-transformers" },
 ]
@@ -4427,6 +4458,7 @@ viz = [
 dev = [
     { name = "black" },
     { name = "boto3-stubs" },
+    { name = "fastapi" },
     { name = "hypothesis" },
     { name = "isort" },
     { name = "langchain-ollama" },
@@ -4441,9 +4473,11 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+    { name = "python-multipart" },
     { name = "ruff" },
     { name = "snowballstemmer" },
     { name = "types-boto3", extra = ["full"] },
+    { name = "uvicorn" },
 ]
 test = [
     { name = "hypothesis" },
@@ -4464,6 +4498,7 @@ requires-dist = [
     { name = "charset-normalizer", specifier = ">=3.4.0" },
     { name = "datasets", marker = "extra == 'eval'", specifier = ">=4.0.0" },
     { name = "datasketch", specifier = ">=2.0.0" },
+    { name = "fastapi", marker = "extra == 'console'", specifier = ">=0.120.0" },
     { name = "graspologic-native", specifier = ">=1.2.1" },
     { name = "gremlinpython", specifier = ">=3.6.3,<3.8.0" },
     { name = "httpx", marker = "extra == 'local'", specifier = ">=0.28.1" },
@@ -4493,6 +4528,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6.21.4" },
     { name = "python-docx", marker = "extra == 'docx'", specifier = ">=1.1.2" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
+    { name = "python-multipart", marker = "extra == 'console'", specifier = ">=0.0.20" },
     { name = "pyvis", marker = "extra == 'viz'", specifier = ">=0.3.2" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "ragas", marker = "extra == 'eval'", specifier = ">=0.4.3,<0.5.0" },
@@ -4505,13 +4541,15 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'local'", specifier = ">=0.12.0" },
     { name = "tqdm", specifier = ">=4.70.0" },
     { name = "unstructured", extras = ["md"], marker = "extra == 'unstructured'", specifier = ">=0.24.1" },
+    { name = "uvicorn", marker = "extra == 'console'", specifier = ">=0.35.0" },
 ]
-provides-extras = ["cross-encoder", "docx", "eval", "local", "mcp", "ontology", "otel", "unstructured", "viz"]
+provides-extras = ["console", "cross-encoder", "docx", "eval", "local", "mcp", "ontology", "otel", "unstructured", "viz"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "black", specifier = ">=25.9.0" },
     { name = "boto3-stubs", specifier = "~=1.43.66" },
+    { name = "fastapi", specifier = ">=0.120.0" },
     { name = "hypothesis", specifier = ">=6.165.2" },
     { name = "isort", specifier = ">=5.12.0" },
     { name = "langchain-ollama", specifier = ">=1.0.0,<2.0.0" },
@@ -4526,9 +4564,11 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.12.0" },
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "ruff", specifier = ">=0.16.1" },
     { name = "snowballstemmer", specifier = ">=2.2" },
     { name = "types-boto3", extras = ["full"], specifier = ">=1.43.71" },
+    { name = "uvicorn", specifier = ">=0.35.0" },
 ]
 test = [
     { name = "hypothesis", specifier = ">=6.165.2" },

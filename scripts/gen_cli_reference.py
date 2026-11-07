@@ -53,6 +53,7 @@ COMMANDS: list[tuple[str, tuple[str, str], str]] = [
         "benchmark",
     ),
     ("run-mcp-server", ("MCP server", "guides/mcp.md"), "mcp_server"),
+    ("run-console", ("Console", "guides/console.md"), "console"),
 ]
 
 HEADER = """\
@@ -83,6 +84,7 @@ the [Configuration Reference](./configuration.md).
 def _parsers() -> dict[str, Callable[[], argparse.ArgumentParser]]:
     from unified_kg_rag.application.cli import (
         prepare_benchmark,
+        run_console,
         run_describe,
         run_evaluation,
         run_ingestion_pipeline,
@@ -101,6 +103,7 @@ def _parsers() -> dict[str, Callable[[], argparse.ArgumentParser]]:
         "prompt_tuning": run_prompt_tuning._build_parser,
         "benchmark": prepare_benchmark._parser,
         "mcp_server": run_mcp_server.build_parser,
+        "console": run_console._build_parser,
     }
 
 

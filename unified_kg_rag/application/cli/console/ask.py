@@ -1,0 +1,386 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""The Ask page's server side: one ``GraphRAGChain`` per loaded config, a
+question answered as a stream of events, and its record for the dashboard.
+
+Events (``kind`` plus fields): ``start`` (the query id, the trace id when
+tracing is on), ``chunk`` (answer text as the answer model streams it,
+``GraphRAGChain.ainvoke(on_answer_chunk=...)``), then ``result`` (the
+answer, its sources with their provenance, how ``auto`` routed, rerank
+status, usage, cost and latency) or ``error``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import os
+import time
+import uuid
+from collections.abc import AsyncIterator, Callable
+from typing import Any
+
+from pydantic import BaseModel, Field, ValidationError
+
+from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodology
+from unified_kg_rag.application.cli.console.store import ConsoleStore
+from unified_kg_rag.application.retrieval.rag_chain import (
+    ROUTING_KEY,
+    GraphRAGChain,
+    RAGInput,
+    RAGOutput,
+)
+from unified_kg_rag.domain.models import Config, Constants, SearchStrategy, SearchType
+from unified_kg_rag.domain.models.usage import LLMUsage
+from unified_kg_rag.evaluation.comparison import answer_cost_usd
+from unified_kg_rag.shared import get_logger, observability
+from unified_kg_rag.shared.exceptions import (
+    ConfigurationError,
+    InvalidFilterError,
+    MethodologyNotIndexedError,
+    QueryTimeoutError,
+    StoreConnectionError,
+)
+
+logger = get_logger(__name__)
+
+EXCERPT_CHARACTERS = 600
+MAX_QUESTION_CHARACTERS = 4000
+
+
+class AskRequest(BaseModel):
+    """One question from the Ask page."""
+
+    query: str = Field(min_length=1, max_length=MAX_QUESTION_CHARACTERS)
+    search_strategy: SearchStrategy = SearchStrategy.AUTO
+    search_type: SearchType = SearchType.HYBRID
+    top_k: int = Field(default=10, ge=1, le=100)
+    conversation_id: str | None = Field(default=None, max_length=128)
+    use_memory: bool = False
+    filters: dict[str, Any] | None = None
+    suffix: str | None = Field(default=None, max_length=128)
+
+
+def trace_url(trace_id: str | None, template: str | None, config: Config) -> str | None:
+    """Where the query's trace opens: ``template`` with ``{trace_id}``, else
+    Langfuse's trace page when the Langfuse backend is on."""
+    if not trace_id:
+        return None
+    if template:
+        return template.replace("{trace_id}", trace_id)
+    if (
+        config.observability.enabled
+        and config.observability.backend.value == "langfuse"
+    ):
+        host = os.environ.get("LANGFUSE_HOST") or os.environ.get("LANGFUSE_BASE_URL")
+        if host:
+            return f"{host.rstrip('/')}/trace/{trace_id}"
+    return None
+
+
+def _listed(value: Any) -> list[str]:
+    if isinstance(value, list | tuple | set):
+        return [str(v) for v in value if v not in (None, "")]
+    if isinstance(value, str) and value:
+        return [value]
+    return []
+
+
+def source_view(rank: int, source: dict[str, Any]) -> dict[str, Any]:
+    """One source as the Ask page shows it: what it is, where it comes
+    from (file, chunk, text units, seed graph, IRI) and the graph ids it
+    links to."""
+    metadata: dict[str, Any] = source.get("metadata") or {}
+    raw_attributes = metadata.get("attributes")
+    attributes: dict[str, Any] = (
+        raw_attributes if isinstance(raw_attributes, dict) else {}
+    )
+    kind = str(metadata.get("section_type") or "text")
+    view: dict[str, Any] = {
+        "rank": rank,
+        "kind": kind,
+        "id": source.get("source"),
+        "score": source.get("score"),
+        "excerpt": str(source.get("content") or "")[:EXCERPT_CHARACTERS],
+        "truncated": bool(metadata.get("truncated")),
+        "document_ids": _listed(metadata.get("document_ids")),
+        "file_name": attributes.get("file_name") or metadata.get("file_name"),
+        "chunk_id": metadata.get("chunk_id"),
+        "text_unit_ids": _listed(metadata.get("text_unit_ids")),
+        "source_kinds": _listed(metadata.get("source_kinds")),
+        "iri": metadata.get("iri") if isinstance(metadata.get("iri"), str) else None,
+        "provenance": metadata.get("provenance"),
+    }
+    if kind == "entity":
+        view.update(
+            title=metadata.get("name"),
+            entity_type=metadata.get("type"),
+            node_ids=[source.get("source")],
+        )
+    elif kind == "relationship":
+        view.update(
+            title=f"{metadata.get('source_name')} → {metadata.get('target_name')}",
+            relation=metadata.get("type"),
+            node_ids=[metadata.get("source_id"), metadata.get("target_id")],
+            edge_id=source.get("source"),
+        )
+    elif kind == "community":
+        view.update(
+            title=metadata.get("name"), community_id=metadata.get("community_id")
+        )
+    else:
+        view.update(title=view["file_name"] or source.get("source"))
+    return view
+
+
+def link_sources(sources: list[dict[str, Any]]) -> None:
+    """Join the graph sources to the passages of the same answer: each
+    entity or relationship lists the ranks of the text sources it cites
+    (``supported_by``) and how many cited passages the answer did not read
+    (``unread_passages``)."""
+    by_unit = {s["id"]: s["rank"] for s in sources if s["kind"] == "text" and s["id"]}
+    for source in sources:
+        units = source.get("text_unit_ids") or []
+        if source["kind"] in ("entity", "relationship") and units:
+            source["supported_by"] = [by_unit[u] for u in units if u in by_unit]
+            source["unread_passages"] = sum(1 for u in units if u not in by_unit)
+
+
+class AskService:
+    """The chain of the current config and the questions asked through it."""
+
+    def __init__(
+        self,
+        load_config: Callable[[], Config],
+        store: ConsoleStore,
+        *,
+        trace_url_template: str | None = None,
+        chain_factory: Callable[[Config], GraphRAGChain] | None = None,
+    ) -> None:
+        self.load_config = load_config
+        self.store = store
+        self.trace_url_template = trace_url_template
+        self._chain_factory = chain_factory or (
+            lambda config: GraphRAGChain(config=config)
+        )
+        self._chain: GraphRAGChain | None = None
+        self._config: Config | None = None
+        self._lock = asyncio.Lock()
+        self._retired: list[GraphRAGChain] = []
+
+    async def chain(self) -> tuple[GraphRAGChain, Config]:
+        async with self._lock:
+            if self._chain is None:
+                config = self.load_config()
+                # Built off the loop: it builds the model and store clients.
+                self._chain = await asyncio.to_thread(self._chain_factory, config)
+                self._config = config
+            assert self._config is not None
+            return self._chain, self._config
+
+    def reset(self) -> None:
+        """Build the chain again at the next question (the config was
+        saved, or an ingestion changed the index)."""
+        if self._chain is not None:
+            self._retired.append(self._chain)
+        self._chain = None
+        self._config = None
+
+    async def close(self) -> None:
+        chains = [*self._retired, *([self._chain] if self._chain else [])]
+        self._retired.clear()
+        self._chain = None
+        for chain in chains:
+            with contextlib.suppress(Exception):
+                await chain.aclose()
+
+    async def strategies(self, suffix: str | None = None) -> list[dict[str, Any]]:
+        """Every strategy, its methodology, whether ``auto`` routes to it and
+        whether the namespace holds what it reads."""
+        chain, config = await self.chain()
+        routable = {s.value for s in config.search.auto_routable_strategies}
+        views = []
+        for strategy in SearchStrategy:
+            available, reason = True, None
+            try:
+                await chain.acheck_methodology(strategy, suffix)
+            except MethodologyNotIndexedError as e:
+                available, reason = False, str(e)
+            except Exception as e:  # noqa: BLE001 - shown, not fatal
+                available, reason = False, str(e)
+            methodology = None
+            if strategy is not SearchStrategy.AUTO:
+                with contextlib.suppress(Exception):
+                    found = strategy_methodology(strategy, config)
+                    methodology = found.value if found else None
+            views.append(
+                {
+                    "name": strategy.value,
+                    "methodology": methodology,
+                    "routable": strategy.value in routable,
+                    "available": available,
+                    "reason": reason,
+                }
+            )
+        return views
+
+    async def ask(self, request: AskRequest) -> AsyncIterator[dict[str, Any]]:
+        """Answer ``request`` as events (see the module docstring); the
+        question is recorded whatever the outcome."""
+        query_id = uuid.uuid4().hex[:12]
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        started = time.perf_counter()
+        record: dict[str, Any] = {
+            "id": query_id,
+            "created": time.time(),
+            "question": request.query,
+            "requested_strategy": request.search_strategy.value,
+            "suffix": request.suffix,
+            "outcome": "failed",
+        }
+
+        async def run() -> None:
+            try:
+                chain, config = await self.chain()
+                with observability.span(
+                    "kg_rag.console.ask",
+                    {"kg_rag.search_strategy": request.search_strategy.value},
+                ):
+                    ids = observability.current_trace_ids()
+                    trace_id = ids[0] if ids else None
+                    record["trace_id"] = trace_id
+                    queue.put_nowait(
+                        {
+                            "kind": "start",
+                            "query_id": query_id,
+                            "trace_id": trace_id,
+                            "trace_url": trace_url(
+                                trace_id, self.trace_url_template, config
+                            ),
+                        }
+                    )
+                    output = await chain.ainvoke(
+                        RAGInput(
+                            query=request.query,
+                            search_strategy=request.search_strategy,
+                            search_type=request.search_type,
+                            top_k=request.top_k,
+                            conversation_id=request.conversation_id,
+                            use_memory=request.use_memory,
+                            filters=request.filters,
+                            suffix=request.suffix,
+                        ),
+                        on_answer_chunk=lambda text: queue.put_nowait(
+                            {"kind": "chunk", "text": text}
+                        ),
+                    )
+                result = self._result(output, config, time.perf_counter() - started)
+                result["trace_id"] = record.get("trace_id")
+                result["trace_url"] = trace_url(
+                    record.get("trace_id"), self.trace_url_template, config
+                )
+                record.update(
+                    strategy=result["strategy"],
+                    latency_seconds=result["latency_seconds"],
+                    outcome=(
+                        "error"
+                        if result["error"]
+                        else ("abstained" if result["abstained"] else "answered")
+                    ),
+                    abstained=result["abstained"],
+                    rerank_status=(result.get("rerank") or {}).get("status"),
+                    usage=result.get("usage"),
+                    cost_usd=result.get("cost_usd"),
+                    error=result.get("error_message"),
+                )
+                queue.put_nowait({"kind": "result", **result})
+            except asyncio.CancelledError:
+                record.update(
+                    outcome="cancelled", latency_seconds=time.perf_counter() - started
+                )
+                raise
+            except Exception as e:  # noqa: BLE001 - reported to the page
+                kind = _error_kind(e)
+                if kind == "failure":
+                    logger.exception("Console question %s failed", query_id)
+                record.update(
+                    error=str(e), latency_seconds=time.perf_counter() - started
+                )
+                queue.put_nowait(
+                    {"kind": "error", "error_kind": kind, "message": str(e)}
+                )
+            finally:
+                with contextlib.suppress(Exception):
+                    self.store.record_query(record)
+                queue.put_nowait(None)
+
+        task = asyncio.create_task(run(), name=f"ask-{query_id}")
+        try:
+            while (event := await queue.get()) is not None:
+                yield event
+        finally:
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+
+    @staticmethod
+    def _result(output: RAGOutput, config: Config, latency: float) -> dict[str, Any]:
+        metadata = output.metadata or {}
+        sources = [source_view(i, s) for i, s in enumerate(output.sources, start=1)]
+        link_sources(sources)
+        usage_data = metadata.get("usage")
+        cost: float | None = None
+        unpriced: list[str] = []
+        if isinstance(usage_data, dict):
+            try:
+                usd, missing = answer_cost_usd(
+                    LLMUsage.model_validate(usage_data), config.evaluation.prices
+                )
+                cost, unpriced = usd, sorted(missing)
+            except ValidationError:
+                usage_data = None
+        detail = (output.search_results.metadata or {}) if output.search_results else {}
+        error = bool(metadata.get("error"))
+        return {
+            "answer": output.answer,
+            "conversation_id": output.conversation_id,
+            "strategy": metadata.get("search_strategy"),
+            "routing": metadata.get(ROUTING_KEY),
+            "abstained": bool(metadata.get("abstained")),
+            "abstention_reason": metadata.get("abstention_reason"),
+            "blocked": bool(metadata.get("blocked")),
+            "guardrail": metadata.get("guardrail"),
+            "error": error,
+            "error_message": (
+                str(detail.get("error")) if error and detail.get("error") else None
+            ),
+            "rerank": metadata.get("rerank"),
+            "usage": usage_data,
+            "cost_usd": cost,
+            "unpriced_models": unpriced,
+            "prices_configured": bool(config.evaluation.prices),
+            "latency_seconds": latency,
+            "processing_seconds": metadata.get("processing_time"),
+            "total_results": metadata.get("total_results"),
+            "context_sections_included": metadata.get("context_sections_included"),
+            "context_sections_excluded": metadata.get("context_sections_excluded"),
+            "processed_query": output.processed_query.model_dump(mode="json"),
+            "sources": sources,
+            "namespace": config.processing.document_parsing.index_value
+            or Constants.DEFAULT_SUFFIX.value,
+        }
+
+
+def _error_kind(error: Exception) -> str:
+    if isinstance(error, InvalidFilterError):
+        return "invalid_filter"
+    if isinstance(error, MethodologyNotIndexedError):
+        return "not_indexed"
+    if isinstance(error, QueryTimeoutError):
+        return "timeout"
+    if isinstance(error, StoreConnectionError):
+        return "store_unreachable"
+    if isinstance(error, ConfigurationError):
+        return "configuration"
+    return "failure"

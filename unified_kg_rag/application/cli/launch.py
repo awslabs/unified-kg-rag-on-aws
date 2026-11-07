@@ -111,3 +111,9 @@ def run_mcp_server() -> Any:
     # It runs the query path for every tool call, often several at once.
     one_blas_thread()
     return _run("run_mcp_server")
+
+
+def run_console() -> Any:
+    # Its questions run concurrently in one process, as run-eval's do.
+    one_blas_thread()
+    return _run("run_console")

@@ -227,3 +227,6 @@ docs/benchmarks.md
 
 # Local-only publish-prep artifacts — not part of the published project
 .awslabs/
+
+# The console demo workspace (console/demo/demo.py)
+.console-demo/

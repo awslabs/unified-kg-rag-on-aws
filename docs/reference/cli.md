@@ -28,6 +28,7 @@ the [Configuration Reference](./configuration.md).
 - [`run-prompt-tuning`](#run-prompt-tuning)
 - [`prepare-benchmark`](#prepare-benchmark)
 - [`run-mcp-server`](#run-mcp-server)
+- [`run-console`](#run-console)
 - [Provider flags](#provider-flags)
 
 ## `run-ingestion`
@@ -232,6 +233,24 @@ Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider
 | `--version` | — | Print the version and exit. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+
+## `run-console`
+
+Local web console: ask, ingest, evaluate, explore the graph, see usage and cost, edit the configuration
+
+Guide: [Console](../guides/console.md).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--source-directory` | — | Workspace the console reads corpora and datasets from, and writes uploads to (its uploads/ folder); nothing outside it, the cache directory and the evaluation outputs is read or written (default: the working directory). |
+| `--cache-directory` | — | Directory of the ingestion jobs' pipeline caches and of the console's own records (console/: questions asked, jobs, their logs) (default: cache). |
+| `--host` | `127.0.0.1` | Address to bind (default 127.0.0.1). Any other needs --allow-remote; the console has no login, so put an authenticating reverse proxy in front of it. |
+| `--port` | `8501` | Port to bind (default 8501; 0 picks a free one). |
+| `--allow-remote` | off | Allow a --host other than a loopback address. Anyone who can reach the port can then query, ingest and edit the configuration. |
+| `--trace-url` `TEMPLATE` | — | Link each answer to its trace: a URL with {trace_id}, e.g. http://localhost:16686/trace/{trace_id} for Jaeger (default with observability.backend langfuse: LANGFUSE_HOST/trace/{trace_id}). |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 
 ## Provider flags
 
