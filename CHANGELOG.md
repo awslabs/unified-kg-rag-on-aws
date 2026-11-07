@@ -582,39 +582,24 @@ From a `main` checkout (formats and keys no release had):
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
   rate's interval resamples queries. The default still judges the first repeat (#620).
 - Document citations (#627): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages, entities,
-  relationships, claims, reports, summaries; not model-written key points or intermediate answers) in every strategy,
-  and the answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those
+  relationships, claims, reports, summaries) in every strategy, and global search's key points and DRIFT's
+  intermediate answers one section each, with the text units and documents of the reports (or the local context)
+  each was written from, as MS GraphRAG's reduce cites `[Data: Reports (...)]`: a cited point names those documents
+  even when the evidence budget left its reports out of the context, and stays model-written (screened, never a
+  source). The answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those
   markers, ASCII in every answer language. `RAGOutput.citations` lists one `Citation` per number: whether the answer
   cites it, its documents (`CitedDocument`: document id, file name, path relative to the corpus root, pages), text
   units, chunk id, title, seed-graph provenance and IRI; a graph section names the documents of up to
   `search.citations.lineage_units` (10) of its text units, read in one batched fetch under the query's suffix and
-  filters, so an excluded or another tenant's document is never named. A number the context did not show is reported
-  in `metadata.unknown_citation_markers`, never as a citation; a blocked answer has none. `CitationMarkerScanner`
+  filters, so an excluded or another tenant's document is never named, alongside the answer
+  call. A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation
+  (a marker has at most three digits: a bracketed year such as `[2020]` is text); a blocked answer has none. Earlier
+  answers reach the follow-up rewrite without their markers. `CitationMarkerScanner`
   reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`. The
   document converter keeps where each PDF page starts and text units store `page_start` / `page_end`, `relative_path`
   and `document_id` in their attributes (ids and texts unchanged). `run-rag` prints the cited sources and its JSON
   output carries every citation. The retrieval evaluator adds `citation_precision` and `citation_recall` against
   `reference_sources` ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
-- Document citations (#627): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages,
-  entities, relationships, claims, reports, summaries) in every strategy, and global search's key points and DRIFT's
-  intermediate answers one section each, with the text units and documents of the reports (or the local context)
-  each was written from, as MS GraphRAG's reduce cites `[Data: Reports (...)]`: a cited point names those documents
-  even when the evidence budget left its reports out of the context, and stays model-written (screened, never a
-  source). The answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to
-  cite them with those markers, ASCII in every answer language. `RAGOutput.citations` lists one `Citation` per
-  number: whether the answer cites it, its documents (`CitedDocument`: document id, file name, path relative to the
-  corpus root, pages), text units, chunk id, title, seed-graph provenance and IRI; a graph section names the
-  documents of up to `search.citations.lineage_units` (10) of its text units, read in one batched fetch under the
-  query's suffix and filters, so an excluded or another tenant's document is never named, alongside the answer
-  call. A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation
-  (a marker has at most three digits: a bracketed year such as `[2020]` is text); a blocked answer has none. Earlier
-  answers reach the follow-up rewrite without their markers.
-  `CitationMarkerScanner` reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation`
-  marker and `cited`. The document converter keeps where each PDF page
-  starts and text units store `page_start` / `page_end`, `relative_path` and `document_id` in their attributes
-  (ids and texts unchanged). `run-rag` prints the cited sources and its JSON output carries every citation. The
-  retrieval evaluator adds `citation_precision` and `citation_recall` against `reference_sources`
-  ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
 - `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the
   follow-up rewrite reads where it reads memory otherwise, bounded to `memory.max_messages_per_conversation` turns
   and `memory.max_history_tokens` (4,000, estimated) and screened by the input guardrail like the query (a masked
@@ -657,7 +642,9 @@ From a `main` checkout (formats and keys no release had):
   its first matches as entities. Filter keys are checked against the fallback that would run too. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
   `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
-  `auto` routes to it only once it is in `search.auto_routable_strategies`. `GraphQueryPort` is exported for custom
+  `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the model-written plan text is screened wherever
+  it is returned: the search and answer metadata, the result table and the query-result source the console, MCP and
+  `run-rag` JSON show. `GraphQueryPort` is exported for custom
   graph backends, and `search.token_manager.type_budgets.query_result` sizes the result's context share
   (docs/design.md §6.6, [guide](docs/guides/structured-queries.md)).
 - `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed,
@@ -668,36 +655,6 @@ From a `main` checkout (formats and keys no release had):
   scan cap, each graph gold answer computed by the reference executor from its plan (`metadata.gold_plan`). `run-eval`
   keeps each answer's `structured` record and reports `structured_statistics` (status, fallback reasons, valid-plan,
   repair, truncation and exact rates), per arm under a comparison
-  call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`; `search.output_ceilings.graph_query`)
-  writes the question as a closed JSON plan over the graph's schema profile (declared types plus a sampled profile of
-  what the suffix holds), never query text; code validates it (one repair call with the refusal), links the names it
-  mentions through the hybrid entity search (a name without a name match needs a lexical hit, so an absent
-  entity links nothing and falls back), compiles it to Gremlin bytecode (Neptune, Gremlin Server) or
-  parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled form against a
-  read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer, and runs it
-  read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and top rows
-  are exact. The result table, the entities and paths
-  it names (with seed provenance) and their passages are fused (buckets `structured_query_result`,
-  `structured_entities`, `structured_relationships`, `structured_text_units`, `structured_text_hits`), the table
-  numbered `[n]` like any evidence section and its citation naming the documents of its evidence rows; counts are
-  exact unless a document filter or seed-property condition makes code check up to `max_scan_rows` matches ("at
-  least N" past it), and a count or an aggregate cites its first matches as entities. Filter keys are checked
-  against the fallback that would run too. Without a structured answer the query runs `search.structured.fallback_strategy` (`local`) and
-  records why in `metadata["structured"]`; `mode: augment` runs it beside the graph query. Served by every
-  namespace holding the graph, on every graph store; `auto` routes to it only once it is in
-  `search.auto_routable_strategies`. With the output guardrail on, the model-written plan text is screened wherever
-  it is returned: the search and answer metadata, the result table and the query-result source the console, MCP and
-  `run-rag` JSON show. `GraphQueryPort` is exported for custom graph backends, and
-  `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md §6.6,
-  [guide](docs/guides/structured-queries.md)).
-- `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed, procurement
-  world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`, `MAKES`), a
-  document per vendor and buyer (part of those facts, and a chief executive only text states), the schema and seed
-  config, and `eval_data.json` with count, ranking, two-hop, shared-buyer, yes/no, numeric and text-only control
-  templates (`category`), absent-entity negatives, Korean and Japanese variants and a `large` size past the scan cap,
-  each graph gold answer computed by the reference executor from its plan
-  (`metadata.gold_plan`). `run-eval` keeps each answer's `structured` record and reports `structured_statistics`
-  (status, fallback reasons, valid-plan, repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)).
 - A local web console, opt-in (the `console` extra, `run-console`; #631): ask with a strategy picker (and how `auto`
   chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources they
