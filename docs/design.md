@@ -2816,7 +2816,7 @@ do not hold.
 |---|---|---|
 | **Bedrock** | `adapters/aws/bedrock.py`, `bedrock_models.py` (capability catalog) | LLM, embedding and rerank; inference-profile resolution, provider-aware request shaping (adaptive thinking and `effort` on Claude 4.6+, `reasoning.effort` on OpenAI GPT), prompt caching where supported; any model id works through curated rows, provider-family defaults and `aws.bedrock.model_overrides` |
 | **Neptune** | `adapters/aws/neptune.py` | Gremlin over `wss://` with SigV4 (`ws://` for a local Gremlin Server); batch upsert and delete, `indexing.neptune.index_concurrency` concurrent batches; every indexer request is retried over a new connection and safe to repeat (vertices and edges are created or matched by id); an edge whose endpoint vertex is missing fails and keeps its stored copy; communities are vertices only (no `MemberOf` edges: an entity names its communities in `community_ids`) |
-| **OpenSearch** | `adapters/aws/opensearch.py` | kNN (HNSW, `lucene` engine by default, which supports `cosinesimil` on OpenSearch 2.13) and BM25, sync and async SigV4 clients, alias management, bulk upsert and delete, per-language analyzers |
+| **OpenSearch** | `adapters/aws/opensearch.py` | kNN (HNSW, `lucene` engine by default, which supports `cosinesimil` on every OpenSearch 2.x version; §8.5) and BM25, sync and async SigV4 clients, alias management, bulk upsert and delete, per-language analyzers |
 | **S3** | `adapters/aws/s3_cache.py` | Stage-cache sync (the bucket's default encryption unless `aws.s3.encryption` forces one) |
 | **DynamoDB** | `adapters/doc_status/dynamodb.py` | The doc-status registry |
 
@@ -3146,6 +3146,79 @@ on port 8000 at `/mcp`, stateless) with Runtime inbound authorization, or
 behind AgentCore Gateway; the IAM policy is the query task role's (read
 access to the stores, the models the strategies call). Both need a
 real-AWS verification before they are documented as supported.
+
+### 8.5 OpenSearch engine version
+
+The CDK domain runs OpenSearch 2.19 (`OPENSEARCH_VERSION`,
+`iac/stacks/storage_stack.py`), the last 2.x line, and the local stack
+(`docker/compose.local.yaml`) runs the same minor version. The application
+itself is version-agnostic within 2.x: it works on 2.13 clusters as before.
+
+- **Why 2.19, not 3.x.** OpenSearch Service upgrades any 2.x domain to 2.19
+  in one step, and reaches 3.x only from 2.19. 2.19 has the longer support
+  window (extended support to 2030-11-07, against 2028-11-07 for 2.13), and
+  it is the version the opt-in vector storage keys were measured on
+  ([On-disk vector recall](concepts/defaults-and-evidence.md#on-disk-vector-recall)).
+  3.x is a major version with breaking changes (index-level
+  `index.knn.algo_param.ef_construction`, `m` and `space_type` settings
+  fail its upgrade check; the app sets `ef_search` only, which is not on
+  that list) and is left for a later, separately rehearsed step.
+- **Upgrade in place, never replaced.** The domain carries the
+  `EnableVersionUpgrade` update policy (`enable_version_upgrade=True`), so a
+  changed `EngineVersion` is an in-place blue/green upgrade: same endpoint,
+  ARN and indices. Without the policy CloudFormation replaces the domain (a
+  new, empty one; the old one retained and billed outside dev). The
+  service takes its own snapshot before upgrading and restores it if the
+  upgrade fails; a completed upgrade cannot be rolled back (the way back is
+  a manual snapshot restored on a new 2.13 domain).
+- **Nori.** Optional plugins are version-specific and the service upgrades
+  an associated one with the domain (an upgrade fails when the target
+  version lacks the plugin). `Custom::OpenSearchNoriPackage` depends on the
+  domain, so it updates after the upgrade: its new `EngineVersion` resolves
+  the 2.19 `analysis-nori` package (a new physical id), finds it already
+  active and completes; the update's cleanup then dissociates the 2.13
+  package only if it is still listed. Indices that use the `nori` analyzer
+  keep working, since the analyzer name is unchanged.
+- **What 2.19 enables, and what stays off.** Defaults are unchanged, so an
+  upgraded domain needs no reindex and a 2.13 cluster keeps working:
+  - The opt-in `vector_mode` / `compression_level` keys (2.17+) and faiss
+    with `cosinesimil` (2.19) now work on the CDK domain. They stay opt-in:
+    they change the mapping (a reset rebuild), and their memory saving pays
+    off only at millions of vectors while costing recall (the measurement
+    above). The default stays `lucene` HNSW with `cosinesimil`.
+  - No version detection is added: the run's index-creation probe already
+    asks the live cluster whether it takes the configured mapping, before
+    the first model call, and names the version a refused key needs.
+  - The server-side `hybrid` query with a normalization or
+    score-ranker (RRF) search pipeline is not adopted. The retriever fuses a
+    lexical and a kNN search itself (`OpenSearchRetriever`, §7), which the
+    embedded engine reproduces exactly (`tests/integration/test_store_parity.py`)
+    and which the multi-bucket `HybridScorer` RRF builds on; a pipeline
+    would split the ranking path by backend for no measured gain.
+  - The 2.18 default-engine change (nmslib to faiss) does not apply: the
+    mapping always names its engine.
+- **Failure modes.** An upgrade blocked by its pre-checks (red indices,
+  over 90% disk, JVM pressure over 75%, a running snapshot) or a failed
+  upgrade (the service restores its pre-upgrade snapshot) fails the stack
+  update with the domain on 2.13. A
+  slow upgrade (15 minutes to hours) holds the stack update; ingestion and
+  queries keep running against the domain with higher latency. A
+  dissociation that fails in the cleanup leaves the stack updated and the
+  extra package associated ([operations runbook](operations.md#upgrading-opensearch)).
+  A completed upgrade cannot be undone, so a rollback of the same stack
+  update cannot return the domain to 2.13: the runbook upgrades with a
+  stack update that changes nothing else. A stack deployed before the
+  update policy existed (0.2.3) gets the policy in an earlier deploy that
+  keeps 2.13: CloudFormation documents the policy only for an update of
+  `EngineVersion` under it, not for one that adds it at the same time,
+  where a replacement (a new, empty domain) cannot be ruled out.
+- **Security and cost.** No IAM, network or encryption change. The same
+  instance types (Graviton r6g/m6g) run 2.19. The upgrade's blue/green
+  deployment doubles the nodes while it runs, but with an unchanged
+  instance type the service bills only the larger cluster, so the upgrade
+  itself costs nothing extra.
+  On 2.17+ the default 8 GiB dedicated master type is sized for up to 30
+  data nodes and 15,000 shards (10 and 10,000 before).
 
 ---
 
