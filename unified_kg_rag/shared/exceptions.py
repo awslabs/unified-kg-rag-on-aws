@@ -89,6 +89,12 @@ class IndexNotFoundError(GraphRAGException):
     """No store index exists for the queried suffix (not ingested, or a typo)."""
 
 
+class DocumentNotFoundError(GraphRAGException, LookupError):
+    """``DataIngestionPipeline.delete_documents`` named a document the
+    doc-status registry does not hold for the run's index namespace and
+    source scope. Raised before anything is written."""
+
+
 class InvalidFilterError(GraphRAGException, ValueError):
     """A caller search filter names a key no target index or label declares."""
 

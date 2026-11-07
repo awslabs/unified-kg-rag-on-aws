@@ -1573,6 +1573,30 @@ before its request is sent. A run that indexes nothing (an empty delta)
 writes no build record and no extraction settings, so it writes nothing but
 its lease.
 
+### 5.7 Document changes from memory
+
+`DataIngestionPipeline.insert_documents(documents)` and
+`delete_documents(ids)` run named changes of one source scope (`"api"` by
+default) through the incremental path above, so a service can keep a
+namespace current without a corpus directory. Each call stages its
+documents as pre-parsed `Document` JSON in a temporary directory, with
+`file_path` `<root>/<id>` so the id is the document's relative path and
+registry key (`compute_doc_id(id, namespace, scope)`), sets
+`document_parsing.source_scope` for the call and runs the pipeline without
+the parsing stage (the loading stage reads the staged JSON). The loading
+stage hands `filter_to_delta` the ids to delete (none for an insert):
+`detect_delta` then moves the scope's stored documents the call does not
+hold from `deleted` to `kept` (and `unchanged`: downstream, a kept document
+is an unchanged one, so the graph stages treat the run as an incremental
+delta, never as a full build), deletes only the named ones and refuses one
+the scope does not hold (`DocumentNotFoundError`); no mass-deletion
+question is asked, since the caller named them. A call needs the registry
+(without it every run is a full build of its documents) and refuses
+`indexing.reset`, or a run the pipeline would rebuild to add a methodology:
+either would rebuild the namespace from the call's documents alone. The
+staged document's `file_path` becomes its id after identity is assigned,
+so its text units name the id, not the temporary directory.
+
 ---
 
 <a id="6-retrieval-two-methodologies"></a>

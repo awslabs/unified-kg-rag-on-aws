@@ -691,6 +691,11 @@ From a `main` checkout (formats and keys no release had):
   its own `cross-encoder` extra, since it pulls in PyTorch (the CUDA build on Linux, several GB): `local` alone runs
   with reranking off, logged once; `local` declares `httpx`, which its adapters import (#(PR)). See [local
   mode](docs/guides/local-mode.md).
+- Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
+  adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
+  each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
+  doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
+  (#(PR)). See [Python library](docs/guides/python-library.md#documents-from-memory).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,

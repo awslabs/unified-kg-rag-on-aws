@@ -200,6 +200,10 @@ and `runs_since_clustering`; no alarm watches them
 A run only diffs, and treats as deleted, the documents of its own scope: its
 index suffix and its corpus source
 ([Scopes and namespaces: Source scope](../concepts/scopes-and-namespaces.md#source-scope)).
+From Python, `DataIngestionPipeline.insert_documents` and `delete_documents`
+run documents given from memory as named changes instead: what a call
+names is added, updated or deleted, and the scope's other documents are
+kept ([Python library: Documents from memory](./python-library.md#documents-from-memory)).
 
 ### Keep the corpus in place
 

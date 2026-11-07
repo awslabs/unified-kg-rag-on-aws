@@ -165,6 +165,9 @@ against the 10 it clustered, 16.3x (max_community_growth: 1.5). ...
 
 실행은 자기 범위, 즉 인덱스 접미사와 코퍼스 소스에 속한 문서만 비교하고 삭제 대상으로
 봅니다([범위와 네임스페이스: 소스 범위](../concepts/scopes-and-namespaces.ko.md#소스-범위)).
+Python에서 `DataIngestionPipeline.insert_documents`와 `delete_documents`는 메모리에 있는
+문서를 이름을 붙인 변경으로 실행합니다. 호출이 지정한 문서만 추가·갱신·삭제하고, 같은 범위의
+다른 문서는 그대로 둡니다([Python library: Documents from memory](./python-library.md#documents-from-memory), 영문).
 
 ### 코퍼스를 제자리에 두기
 

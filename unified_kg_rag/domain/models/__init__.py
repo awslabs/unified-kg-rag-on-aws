@@ -36,6 +36,7 @@ from .document import (
     DocumentDelta,
     DocumentLineage,
     ExtractionSettings,
+    InputDocument,
     StoredDocument,
     settings_changed,
 )
@@ -113,6 +114,7 @@ __all__ = [
     "DocStatusRecord",
     "Document",
     "DocumentDelta",
+    "InputDocument",
     "StoredDocument",
     "settings_changed",
     "DocumentLineage",

@@ -34,6 +34,7 @@ PUBLIC_API = sorted(
         "DataIngestionPipeline",
         "EvaluationManager",
         "GraphRAGChain",
+        "InputDocument",
         "MemoryManager",
         "Methodology",
         "MetricsSink",
@@ -58,6 +59,7 @@ PUBLIC_API = sorted(
         # Errors
         "ConfigurationError",
         "ConfirmationDeclinedError",
+        "DocumentNotFoundError",
         "GraphRAGException",
         "IndexNotFoundError",
         "InvalidFilterError",

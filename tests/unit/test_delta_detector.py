@@ -8,6 +8,7 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.domain.ingestion.delta_detector import (
+    DocumentChanges,
     compute_content_hash,
     compute_doc_id,
     detect_delta,
@@ -19,6 +20,7 @@ from unified_kg_rag.domain.ingestion.delta_detector import (
 )
 from unified_kg_rag.domain.models import DocStatus, DocStatusRecord, Document
 from unified_kg_rag.ports import DocStatusPort
+from unified_kg_rag.shared import DocumentNotFoundError
 
 pytestmark = pytest.mark.unit
 
@@ -99,6 +101,40 @@ class TestDetectDelta:
         assert delta.changed == [b_id]
         assert delta.deleted == [c_id]
         assert delta.new == []
+
+
+class TestDocumentChanges:
+    """A run of document changes (insert_documents / delete_documents)
+    keeps what it does not name and deletes only what it names."""
+
+    def _store(self) -> tuple[FakeDocStatusStore, list[str]]:
+        store = FakeDocStatusStore()
+        ids = [compute_doc_id(p) for p in ("/a.txt", "/b.txt", "/c.txt")]
+        for doc_id in ids:
+            store.put(DocStatusRecord(doc_id=doc_id, content_hash="h"))
+        return store, ids
+
+    def test_absent_documents_are_kept_and_unchanged(self) -> None:
+        store, (a, b, c) = self._store()
+        delta, _ = detect_delta(
+            [_doc("/b.txt", "B-new")], store, changes=DocumentChanges()
+        )
+        assert delta.changed == [b]
+        assert delta.deleted == []
+        assert sorted(delta.kept) == sorted([a, c])
+        assert set(delta.kept) <= set(delta.unchanged)
+
+    def test_only_the_named_documents_are_deleted(self) -> None:
+        store, (a, b, c) = self._store()
+        delta, _ = detect_delta([], store, changes=DocumentChanges(delete={c: "c.txt"}))
+        assert delta.deleted == [c]
+        assert sorted(delta.kept) == sorted([a, b])
+
+    def test_a_document_not_held_is_refused(self) -> None:
+        store, _ = self._store()
+        missing = compute_doc_id("/z.txt")
+        with pytest.raises(DocumentNotFoundError, match="'z.txt'"):
+            detect_delta([], store, changes=DocumentChanges(delete={missing: "z.txt"}))
 
 
 class _CountingStore(FakeDocStatusStore):
