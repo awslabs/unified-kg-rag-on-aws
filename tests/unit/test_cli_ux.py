@@ -581,3 +581,49 @@ async def test_run_rag_exits_2_for_a_suffix_nothing_was_ingested_under(
         await runner._run_query(RAGInput(query="hi"))
     assert exited.value.code == 2
     assert "No indices found for suffix 'tenant-b'" in capsys.readouterr().err
+
+
+# --- run-eval: tables -----------------------------------------------------
+
+
+def test_comparison_and_statistics_tables_never_cut_a_metric_name(
+    monkeypatch,
+) -> None:
+    # On an 80-column terminal "answer_match/answer_contains" printed as
+    # "answer_match/answer_contai…".
+    import io
+    from datetime import datetime
+
+    from rich.console import Console
+
+    from unified_kg_rag.application.cli import run_evaluation
+    from unified_kg_rag.domain.models import EvaluationSummary
+
+    out = io.StringIO()
+    monkeypatch.setattr(
+        run_evaluation, "console", Console(file=out, width=80, color_system=None)
+    )
+    name = "answer_match/answer_contains"
+    delta = {"mean_delta": 0.0, "ci_low": 0.0, "ci_high": 0.0, "pairs": 2}
+    comparison = {
+        "baseline": "local",
+        "strategies": {
+            s: {"metrics": {name: {"mean": 0.5}}, "routed_strategies": {}}
+            for s in ("local", "mix", "hybrid")
+        },
+        "deltas_vs_baseline": {"mix": {name: delta}, "hybrid": {name: delta}},
+    }
+    run_evaluation.EvaluationRunner._print_comparison(comparison, 1.0)
+    stats = {"mean": 0.5, "median": 0.5, "stdev": 0.0, "min": 0.5, "max": 0.5}
+    summary = EvaluationSummary(
+        total_queries=2,
+        successful_evaluations=2,
+        failed_evaluations=0,
+        metric_statistics={name: {**stats, "count": 2}},
+        evaluation_start_time=datetime(2026, 1, 1),
+        evaluation_end_time=datetime(2026, 1, 1),
+    )
+    run_evaluation.EvaluationRunner._print_summary(summary, 1.0)
+    text = out.getvalue()
+    assert text.count(name) == 2
+    assert "…" not in text

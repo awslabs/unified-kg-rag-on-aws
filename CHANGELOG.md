@@ -927,6 +927,8 @@ From a `main` checkout (formats and keys no release had):
   indexing stage after the extraction was paid for (one embedding call per run) (#PR).
 - `run-rag --suffix` that nothing was ingested under (a typo) exits 2, not 1, and the message lists the suffixes
   ingested on the store (#PR).
+- `run-eval`'s comparison and statistics tables fold a long metric name or value onto the next line instead of
+  cutting it ("answer_match/answer_contai…") (#PR).
 - Every CLI takes `--log-level` (over `logging.level`) and `--version`; with `--output-format text` the console logs
   are plain lines unless `logging.log_format` is set (they were JSON records between the CLI's own output whenever
   stdout was not a terminal; the CDK tasks set `structured` and keep them), and `prepare-benchmark assertions` logs

@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -554,6 +554,17 @@ class CommandLineInterface:
         return self.parser.parse_args()
 
 
+# The widest a metric column is kept at; a longer name folds.
+_METRIC_COLUMN_MAX = 32
+
+
+def _widest(names: Iterable[str]) -> int:
+    """The width a table's metric column is kept at: its longest name, up
+    to ``_METRIC_COLUMN_MAX`` (longer ones fold onto the next line), so a
+    metric name is never cut to fit the terminal."""
+    return min(max((len(name) for name in names), default=6), _METRIC_COLUMN_MAX)
+
+
 class EvaluationRunner:
     def __init__(
         self,
@@ -807,7 +818,12 @@ class EvaluationRunner:
                 show_header=True,
                 header_style="bold magenta",
             )
-            table.add_column("Metric")
+            # Never cut ("answer_match/answer_contai…"): a long name folds.
+            table.add_column(
+                "Metric",
+                min_width=_widest(summary.metric_statistics),
+                overflow="fold",
+            )
             table.add_column("Mean", style="green")
             table.add_column("Median", style="green")
             table.add_column("StdDev", style="cyan")
@@ -870,15 +886,20 @@ class EvaluationRunner:
             show_header=True,
             header_style="bold magenta",
         )
-        table.add_column("Metric")
+        keys = baseline_metric_keys(comparison)
+        # Never cut ("answer_match/answer_contai…"): a long name or value
+        # folds onto the next line instead.
+        table.add_column("Metric", min_width=_widest(keys), overflow="fold")
         closed = set(comparison.get("closed_book_arms") or ())
         for strategy in strategies:
             marked = f"{strategy} (no retrieval)" if strategy in closed else strategy
-            table.add_column(markup_safe(marked), style="green")
+            table.add_column(markup_safe(marked), style="green", overflow="fold")
         for strategy, label in pairs.items():
-            table.add_column(f"{strategy} - {label} [CI]", style="cyan")
+            table.add_column(
+                f"{strategy} - {label} [CI]", style="cyan", overflow="fold"
+            )
         primary = (comparison.get("multiplicity") or {}).get("primary_metric")
-        for key in baseline_metric_keys(comparison):
+        for key in keys:
             row = [markup_safe(f"{key} (primary)" if key == primary else key)]
             for strategy in strategies:
                 stats = strategies[strategy]["metrics"].get(key)
