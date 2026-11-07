@@ -33,6 +33,7 @@ from .graph_extraction import (
     GraphExtractionPrompt,
     GraphRefinementPrompt,
 )
+from .graph_query import GraphQueryPlanPrompt
 from .retrieval import (
     AnswerGenerationPrompt,
     CommunityRelevancePrompt,
@@ -75,6 +76,7 @@ __all__ = [
     "DriftPrimerPrompt",
     "EntityExtractionPrompt",
     "GlobalMapPrompt",
+    "GraphQueryPlanPrompt",
     "GraphExtractionPrompt",
     "GraphRefinementPrompt",
     "IterativeControllerPrompt",

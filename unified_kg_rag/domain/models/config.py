@@ -374,6 +374,7 @@ class ModelRole(str, Enum):
     DRIFT_PRIMER = "drift_primer"
     DRIFT_ACTION = "drift_action"
     QUERY_CONTROLLER = "query_controller"
+    GRAPH_QUERY = "graph_query"
     EVALUATION = "evaluation"
     ANSWER_SPAN = "answer_span"
     PAIRWISE_OVERLAP = "pairwise_overlap"
@@ -414,6 +415,10 @@ _ROLE_DESCRIPTIONS: dict[ModelRole, tuple[ModelTier, str]] = {
         "fast",
         "judges whether iterative search's context answers the question and "
         "names the follow-up queries",
+    ),
+    ModelRole.GRAPH_QUERY: (
+        "default",
+        "writes the structured strategy's graph query plan (search.structured)",
     ),
     ModelRole.EVALUATION: ("default", "judges answers in run-eval"),
     ModelRole.ANSWER_SPAN: (
@@ -489,6 +494,7 @@ class RoleModelsConfig(BaseModel):
     drift_primer: str | None = _role_field(ModelRole.DRIFT_PRIMER)
     drift_action: str | None = _role_field(ModelRole.DRIFT_ACTION)
     query_controller: str | None = _role_field(ModelRole.QUERY_CONTROLLER)
+    graph_query: str | None = _role_field(ModelRole.GRAPH_QUERY)
     evaluation: str | None = _EVALUATION_ROLE_FIELD
     answer_span: str | None = _role_field(ModelRole.ANSWER_SPAN)
     pairwise_overlap: str | None = _role_field(ModelRole.PAIRWISE_OVERLAP)
@@ -4757,6 +4763,14 @@ class QueryOutputCeilingsConfig(BaseModel):
             "answers one number"
         ),
     )
+    graph_query: int | None = Field(
+        default=4096,
+        ge=1,
+        description=(
+            "max_tokens of the structured strategy's plan call (models.roles."
+            "graph_query), which answers one JSON plan of a few hundred tokens"
+        ),
+    )
 
 
 class AbstentionConfig(BaseModel):
@@ -5585,6 +5599,15 @@ class CustomPromptConfig(BaseModel):
         default=None,
         description="Custom human prompt for iterative search's controller",
     )
+    graph_query_system: str | None = Field(
+        default=None,
+        description="Custom system prompt for the structured strategy's "
+        "planner, which writes the question as a graph query plan (JSON)",
+    )
+    graph_query_human: str | None = Field(
+        default=None,
+        description="Custom human prompt for the structured strategy's planner",
+    )
     drift_action_system: str | None = Field(
         default=None,
         description="Custom system prompt for answering a DRIFT follow-up query "
@@ -5710,6 +5733,7 @@ _REQUIRED_PROMPT_VARIABLES: dict[str, frozenset[str]] = {
     "entity_extraction": frozenset({"query"}),
     "global_map": frozenset({"query", "reports"}),
     "graph_extraction": frozenset({"input_text"}),
+    "graph_query": frozenset({"query", "schema"}),
     "graph_refinement": frozenset({"text", "entities", "relationships"}),
     "iterative_controller": frozenset({"query", "context"}),
     "keywords_extraction": frozenset({"query"}),

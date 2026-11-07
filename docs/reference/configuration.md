@@ -160,6 +160,7 @@ Per-role overrides: a model id or a tier name per role.
 | `drift_primer` | string \| null (min length 1) | `null` | Model that writes DRIFT's primer and follow-ups: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `drift_action` | string \| null (min length 1) | `null` | Model that answers each DRIFT follow-up: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `query_controller` | string \| null (min length 1) | `null` | Model that judges whether iterative search's context answers the question and names the follow-up queries: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
+| `graph_query` | string \| null (min length 1) | `null` | Model that writes the structured strategy's graph query plan (search.structured): a model id, or a tier name ('default' / 'fast'). null runs it on the 'default' tier. |
 | `evaluation` | string \| null (min length 1) | `null` | Model of the run-eval LLM judges (the ragas and assertion evaluators and --pairwise-judge): a model id, or a tier name ('default' / 'fast'). null = anthropic.claude-opus-5-5 on Bedrock, a model other than the default answer model; when the answer model is that model, the default tier's model or else Claude Sonnet 5.5, whichever is not (run-eval logs the choice at INFO): a judge favours its own answers (measured on 50 global questions: Sonnet 5.5 judging its own answers against Opus 5.5's shifted the directness win rate by -0.27 [-0.38, -0.16] against a GPT-5.5 judge). It costs about twice the default tier per token (on-demand, us-west-2, 2026-11: $4 / $20 per million input / output tokens against $2 / $10). With another provider, null runs it on the 'default' tier. 'default' restores the judge of earlier versions, the answer model (run-eval warns when a configured judge is the answer model). |
 | `answer_span` | string \| null (min length 1) | `null` | Model that extracts the short answer span run-eval scores exact match and token F1 on (evaluation.answer_span: extracted): a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
 | `pairwise_overlap` | string \| null (min length 1) | `null` | Model that splits two answers into shared and unique statements for run-eval --pairwise-mode differential: a model id, or a tier name ('default' / 'fast'). null runs it on the 'fast' tier. |
@@ -793,6 +794,7 @@ max_tokens of the short-answer query calls
 | `strategy_selection` | integer \| null (≥ 1) | `4096` | max_tokens of the auto router call (models.roles.strategy_selection), which answers one strategy name |
 | `query_extraction` | integer \| null (≥ 1) | `4096` | max_tokens of the query entity extraction (local, drift) and the dual-keyword extraction (mix, hybrid) |
 | `community_relevance` | integer \| null (≥ 1) | `4096` | max_tokens of each report rating of global search's dynamic selection (search.global_search.use_dynamic_selection), which answers one number |
+| `graph_query` | integer \| null (≥ 1) | `4096` | max_tokens of the structured strategy's plan call (models.roles.graph_query), which answers one JSON plan of a few hundred tokens |
 
 ### `search.abstention`
 
@@ -971,6 +973,8 @@ Custom prompt configuration
 | `drift_hyde_human` | string \| null | `null` | Custom human prompt for the DRIFT query expansion (HyDE) |
 | `iterative_controller_system` | string \| null | `null` | Custom system prompt for iterative search's controller, which judges whether the context answers the question and names the bridge entities and follow-up queries |
 | `iterative_controller_human` | string \| null | `null` | Custom human prompt for iterative search's controller |
+| `graph_query_system` | string \| null | `null` | Custom system prompt for the structured strategy's planner, which writes the question as a graph query plan (JSON) |
+| `graph_query_human` | string \| null | `null` | Custom human prompt for the structured strategy's planner |
 | `drift_action_system` | string \| null | `null` | Custom system prompt for answering a DRIFT follow-up query from its local-search context |
 | `drift_action_human` | string \| null | `null` | Custom human prompt for answering a DRIFT follow-up query from its local-search context |
 | `query_rewrite_system` | string \| null | `null` | Custom system prompt for rewriting a follow-up message as a standalone question from the conversation history |
