@@ -5,7 +5,7 @@ import functools
 import re
 import time
 import unicodedata
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -432,35 +432,125 @@ def _cjk_date_value(text: str, *, end: bool) -> str | None:
         return None
 
 
-# The status of a claim whose statements disagree: the claim prompt's word
-# for conflicting information, lowercase as resolved statuses are stored.
-DISPUTED_STATUS = "disputed"
-# The status that states nothing about the claim's truth (the prompt's
+# The claim prompt's statuses (TRUE, FALSE, DISPUTED, UNKNOWN), lowercase
+# as claims are stored. A claim whose statements disagree is disputed;
+# unknown states nothing about the claim's truth (the prompt's
 # "insufficient information"): it never disagrees with another.
-_UNKNOWN_STATUS = "unknown"
+TRUE_STATUS = "true"
+FALSE_STATUS = "false"
+DISPUTED_STATUS = "disputed"
+UNKNOWN_STATUS = "unknown"
+CLAIM_STATUSES = (TRUE_STATUS, FALSE_STATUS, DISPUTED_STATUS, UNKNOWN_STATUS)
+
+# What a model writes for a status outside the vocabulary (another casing,
+# punctuation, MS GraphRAG's SUSPECTED, a word of the answer language),
+# casefolded and stripped of punctuation and spaces.
+_STATUS_WORDS = {
+    TRUE_STATUS: (
+        "true",
+        "yes",
+        "fact",
+        "factual",
+        "confirmed",
+        "established",
+        "verified",
+        "참",
+        "사실",
+        "真",
+        "真实",
+        "真實",
+        "真実",
+        "事実",
+        "正しい",
+        "本当",
+    ),
+    FALSE_STATUS: (
+        "false",
+        "no",
+        "untrue",
+        "denied",
+        "contradicted",
+        "negated",
+        "refuted",
+        "거짓",
+        "허위",
+        "假",
+        "虚假",
+        "虛假",
+        "偽",
+        "誤り",
+        "虚偽",
+    ),
+    DISPUTED_STATUS: (
+        "disputed",
+        "suspected",
+        "contested",
+        "conflicting",
+        "uncertain",
+        "alleged",
+        "unverified",
+        "논란",
+        "분쟁",
+        "의심",
+        "争议",
+        "有争议",
+        "爭議",
+        "有爭議",
+        "疑い",
+        "係争",
+        "争い",
+    ),
+    UNKNOWN_STATUS: (
+        "unknown",
+        "none",
+        "na",
+        "insufficient",
+        "unclear",
+        "unspecified",
+        "알수없음",
+        "불명",
+        "모름",
+        "未知",
+        "不明",
+        "不详",
+        "不詳",
+    ),
+}
+_STATUS_BY_WORD = {
+    word: status for status, words in _STATUS_WORDS.items() for word in words
+}
+_STATUS_NOISE = re.compile(r"[\W_]+")
+
+
+def claim_status(raw: str | None) -> str:
+    """The stored claim status (one of ``CLAIM_STATUSES``) a model's
+    ``raw`` status names: the prompt's ``TRUE``, ``FALSE``, ``DISPUTED`` or
+    ``UNKNOWN``, read case-, punctuation- and space-insensitively
+    (``"True."`` is ``true``, MS GraphRAG's ``SUSPECTED`` is ``disputed``,
+    ``"참"`` is ``true``); ``unknown`` for a missing or unrecognised one."""
+    word = _STATUS_NOISE.sub("", unicodedata.normalize("NFKC", raw or "")).casefold()
+    return _STATUS_BY_WORD.get(word, UNKNOWN_STATUS)
 
 
 def merge_claim_statuses(statuses: Iterable[str | None]) -> str | None:
-    """The status of one claim stated with ``statuses``: the status they all
-    state (case aside; its most frequent spelling, the smallest on a tie),
-    ``disputed`` when two of them disagree (``TRUE`` and ``FALSE``, say), and
-    ``unknown`` (or None) only when nothing else is stated. An ``unknown``
-    or missing status adds nothing to a known one.
+    """The status of one claim stated with ``statuses`` (each read with
+    :func:`claim_status`): the status they all state, ``disputed`` when two
+    of them disagree (``true`` and ``false``, say), and ``unknown`` only
+    when nothing else is stated (None when no status is given). An
+    ``unknown`` status adds nothing to a known one.
 
     Independent of the statements' order and associative: merging a merged
     claim's status with more statements' gives what merging every statement
     gives, so an incremental run that folds a stored claim's status with a
     delta's (``merge_claims``) agrees with a full build.
     """
-    present = [s for s in statuses if s]
-    known = [s for s in present if s.casefold() != _UNKNOWN_STATUS]
-    if len({s.casefold() for s in known}) > 1:
-        return DISPUTED_STATUS
-    candidates = known or present
-    if not candidates:
+    present = {claim_status(s) for s in statuses if s}
+    if not present:
         return None
-    counts = Counter(candidates)
-    return min(counts, key=lambda s: (-counts[s], s))
+    known = present - {UNKNOWN_STATUS}
+    if len(known) > 1:
+        return DISPUTED_STATUS
+    return next(iter(known)) if known else UNKNOWN_STATUS
 
 
 def _cjk_year(found: re.Match[str]) -> int:
@@ -666,10 +756,11 @@ def resolve_single_claim(
             "subject_name": resolved_subject_name,
             "object_id": ids_by_key[entity_key(object_name)] if object_name else None,
             "object_name": object_name or claim.object_name,
-            # Lowercase, as stored and as entity types are: a merge counts
-            # "TRUE" and "true" as one status.
+            # Lowercase, as stored and as entity types are; the status read
+            # into the prompt's vocabulary (claim_status): a merge counts
+            # "TRUE" and "true." as one status.
             "type": claim.type.lower(),
-            "status": claim.status.lower() if claim.status else claim.status,
+            "status": claim_status(claim.status) if claim.status else claim.status,
         }
     )
 

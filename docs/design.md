@@ -446,7 +446,9 @@ gets its models and stores from the run's `Providers` bundle.
   record lists no entity is not asked), and an object not listed there is
   kept as the literal name the claim states (`object_id` empty), though
   another document states that entity. Statements of one claim whose
-  statuses disagree merge into `disputed` (`merge_claim_statuses`). Each unit's statement is resolved
+  statuses disagree merge into `disputed` (`merge_claim_statuses`); a
+  model's status is read into the prompt's four (`claim_status`: `true`,
+  `false`, `disputed`, `unknown`, as stored) at extraction and in each merge. Each unit's statement is resolved
   on its own, and resolution merges the statements that resolve to one
   claim id.
 - **The extraction store** keeps each record, keyed by
@@ -709,7 +711,13 @@ gets its models and stores from the run's `Providers` bundle.
   that input, so `report_references.split_data_references` takes them out
   of the prose and the finding keeps the record ids
   (`CommunityFinding.entity_ids` / `relationship_ids`); claims and
-  sub-community reports are not numbered.
+  sub-community reports are not numbered. The stored report keeps its
+  findings, ids included, in an unindexed field (`findings`, mapped
+  `enabled: false`; an earlier index gets it in the preflight's additive
+  mapping update), so a retrieved report and its reported source name the
+  records each finding rests on (`report_references.report_cited_ids`).
+  An incremental commit points them at the ids the cross-run merge kept,
+  as it does a community's members. A report stored before cites none.
 - **Sub-community roll-up (deviation).** When a parent's own context was
   cut, its children's report summaries (biggest child first, each with its
   rating) are added to that context under a second budget of
@@ -1601,8 +1609,13 @@ delta, never as a full build), deletes only the named ones and refuses one
 the scope does not hold (`DocumentNotFoundError`); no mass-deletion
 question is asked, since the caller named them. A call needs the registry
 (without it every run is a full build of its documents) and refuses
-`indexing.reset`, or a run the pipeline would rebuild to add a methodology:
-either would rebuild the namespace from the call's documents alone. The
+`indexing.reset`, or a run the pipeline would rebuild to add a methodology
+(read from the build record before the lease, `missing_artifacts`):
+either would rebuild the namespace from the call's documents alone. A
+rebuild of an API scope from its stored text units is not offered: the
+units are chunks, not the documents, and their boundaries depend on the
+chunker; the refusal names the methodologies held and the directory run
+that adds one. The
 staged document's `file_path` becomes its id after identity is assigned,
 so its text units name the id, not the temporary directory.
 

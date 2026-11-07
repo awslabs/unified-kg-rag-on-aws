@@ -192,6 +192,31 @@ def test_each_interruption_point_fires(case: dict) -> None:
     assert _check_follow_up(**case)
 
 
+# One claim (Vendor rates Depot) stated by units whose statuses disagree
+# (incremental_runs._claim_status): c.txt's first unit TRUE, its second
+# "true." (one status), a.txt's UNKNOWN (adds nothing), b.txt's second
+# FALSE (disputes it). Each check compares the claims' statuses too.
+_STATUS_BEFORE: Corpus = {
+    "/corpus/c.txt": [[(_V, _D, 3)], [(_V, _D, 3), (_C, _B, 1)]],
+    "/corpus/a.txt": [[(_V, _D, 3)]],
+}
+_STATUS_DISPUTED: Corpus = {
+    **_STATUS_BEFORE,
+    "/corpus/b.txt": [[(_C, _B, 1)], [(_V, _D, 3)]],
+}
+
+
+@pytest.mark.parametrize("follow", ["same", "new_docs_removed"])
+@pytest.mark.parametrize("point", POINTS)
+def test_an_interrupted_run_converges_on_the_claims_status(
+    point: str, follow: str
+) -> None:
+    corpus = _follow_up(follow, _STATUS_BEFORE, _STATUS_DISPUTED)
+    (status,) = {state[1] for state in expected_state(corpus)["claims"].values()}
+    assert status == ("disputed" if follow == "same" else "true")
+    _check_follow_up(_STATUS_BEFORE, _STATUS_DISPUTED, point, 1, follow)
+
+
 # --- seed graphs ------------------------------------------------------------------
 
 _SCHEMA = Config().processing.graph_extraction.extraction_schema()

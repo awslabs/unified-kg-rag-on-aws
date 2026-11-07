@@ -95,6 +95,16 @@ finally:
   not hold in the scope. Without the registry, or with `indexing.reset`,
   both raise `ConfigurationError`: a full build of the given documents
   would replace the rest of the namespace.
+- A methodology added to `indexing.methodologies` that builds what the
+  namespace does not hold (`graphrag`'s communities and reports on a
+  `lightrag` namespace) is refused too, before any model call: adding it
+  rebuilds the namespace from every document, and a call holds only its
+  own. Keep the methodologies the namespace holds for these calls, or add
+  it with one `run` over a directory holding every document of the
+  namespace as a file named by its id, with `source_scope` the documents'
+  scope (`"api"`): it reuses the stored extractions, but deletes a
+  document it does not read (an id without a file extension the parser
+  reads). A namespace of its own (`index_value`) extracts them again.
 
 ## Inspect and export a namespace
 

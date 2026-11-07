@@ -32,7 +32,15 @@ from unified_kg_rag.domain.ingestion.merge import (
     merge_claims,
     remove_claim_text_units,
 )
-from unified_kg_rag.domain.models import Claim, Config, Document, Entity, TextUnit
+from unified_kg_rag.domain.models import (
+    Claim,
+    CommunityFinding,
+    CommunityReport,
+    Config,
+    Document,
+    Entity,
+    TextUnit,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -239,7 +247,7 @@ def test_remapped_claims_are_rekeyed_and_merged() -> None:
     first, second = delta("e-acme-2", "a.txt"), delta("e-acme-3", "b.txt")
     remap = {"default": {"e-acme-2": "e-acme", "e-acme-3": "e-acme"}}
 
-    _, (claim,) = _remap_references(None, [first, second], remap)
+    _, (claim,), _ = _remap_references(None, [first, second], remap)
 
     expected = resolved_claim_id(
         _claim("x").model_copy(update={"subject_id": "e-acme"})
@@ -247,3 +255,33 @@ def test_remapped_claims_are_rekeyed_and_merged() -> None:
     assert claim.id == expected
     assert claim.subject_id == "e-acme"
     assert claim.text_unit_ids == ["tu-a.txt", "tu-b.txt"]
+
+
+def test_remapped_report_findings_cite_the_ids_the_merge_kept() -> None:
+    # A delta report's findings cite the run's entities; one that merged
+    # into a stored entity under another id is written only under that id.
+    report = CommunityReport(
+        id="cr-1",
+        name="Acme",
+        community_id="c-1",
+        findings=[
+            CommunityFinding(
+                summary="Acme supplies Buyer",
+                entity_ids=["e-acme-2", "e-buyer", "e-acme-3"],
+                relationship_ids=["r-2", "r-3"],
+            )
+        ],
+    )
+    other = report.model_copy(
+        update={"id": "cr-2", "attributes": {"index": "tenant-b"}}
+    )
+    remap = {"default": {"e-acme-2": "e-acme", "e-acme-3": "e-acme", "r-2": "r-1"}}
+
+    _, _, (remapped, untouched) = _remap_references(None, None, remap, [report, other])
+
+    assert remapped.findings[0].entity_ids == ["e-acme", "e-buyer"]
+    assert remapped.findings[0].relationship_ids == ["r-1", "r-3"]
+    assert remapped.findings[0].summary == "Acme supplies Buyer"
+    # Another suffix's remap only applies to its own items.
+    assert untouched.findings == report.findings
+    assert report.findings[0].entity_ids[0] == "e-acme-2"  # not mutated

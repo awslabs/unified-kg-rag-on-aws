@@ -227,15 +227,49 @@ def _remap_claims(
     return list(by_key.values())
 
 
+def _remap_report_findings(
+    reports: list[CommunityReport], id_remap_by_suffix: dict[str, dict[str, str]]
+) -> list[CommunityReport]:
+    """Point the record ids the reports' findings cite at the ids the
+    cross-run merge kept."""
+    remapped = []
+    for report in reports:
+        remap = id_remap_by_suffix.get(BaseIndexer.get_suffix(report), {})
+        if remap and report.findings:
+            report = report.model_copy(
+                update={
+                    "findings": [
+                        finding.model_copy(
+                            update={
+                                "entity_ids": _remap_ids(finding.entity_ids, remap),
+                                "relationship_ids": _remap_ids(
+                                    finding.relationship_ids, remap
+                                ),
+                            }
+                        )
+                        for finding in report.findings
+                    ]
+                }
+            )
+        remapped.append(report)
+    return remapped
+
+
 def _remap_references(
     communities: list[Community] | None,
     claims: list[Claim] | None,
     id_remap_by_suffix: dict[str, dict[str, str]],
-) -> tuple[list[Community] | None, list[Claim] | None]:
-    """Point communities' members and claims' subjects/objects at the ids the
-    cross-run merge kept, so none references an id that is never written."""
+    community_reports: list[CommunityReport] | None = None,
+) -> tuple[list[Community] | None, list[Claim] | None, list[CommunityReport] | None]:
+    """Point communities' members, claims' subjects/objects and the records
+    community reports' findings cite at the ids the cross-run merge kept, so
+    none references an id that is never written."""
     if not id_remap_by_suffix:
-        return communities, claims
+        return communities, claims, community_reports
+    if community_reports is not None:
+        community_reports = _remap_report_findings(
+            community_reports, id_remap_by_suffix
+        )
     remapped_communities = None
     if communities is not None:
         remapped_communities = []
@@ -254,8 +288,12 @@ def _remap_references(
                 else community
             )
     if claims is None:
-        return remapped_communities, None
-    return remapped_communities, _remap_claims(claims, id_remap_by_suffix)
+        return remapped_communities, None, community_reports
+    return (
+        remapped_communities,
+        _remap_claims(claims, id_remap_by_suffix),
+        community_reports,
+    )
 
 
 class IncrementalIndexer:
@@ -594,8 +632,8 @@ class IncrementalIndexer:
                 entities, relationships, text_units or ()
             )
             entities, relationships = merged.entities, merged.relationships
-            communities, claims = _remap_references(
-                communities, claims, merged.id_remap_by_suffix
+            communities, claims, community_reports = _remap_references(
+                communities, claims, merged.id_remap_by_suffix, community_reports
             )
             self.community_drift = self._measure_drift(
                 entities, communities, unclustered_entities

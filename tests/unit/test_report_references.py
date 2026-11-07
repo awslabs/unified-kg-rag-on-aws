@@ -17,7 +17,11 @@ import pytest
 
 from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
-from unified_kg_rag.domain.ingestion.report_references import split_data_references
+from unified_kg_rag.domain.ingestion.report_references import (
+    REPORT_FINDINGS_FIELD,
+    report_cited_ids,
+    split_data_references,
+)
 from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
 from unified_kg_rag.domain.prompts import CommunityReportPrompt
 
@@ -162,3 +166,24 @@ def test_the_prompt_asks_for_evidence_and_references_only() -> None:
     assert "[Data: ...] references keep their exact ASCII form" in human
     for speculative in ("strategic", "actionable", "quantified", "opportunities"):
         assert speculative not in (system + human).lower()
+
+
+def test_a_stored_reports_cited_ids_are_read_from_its_findings() -> None:
+    metadata = {
+        REPORT_FINDINGS_FIELD: [
+            {"summary": "a", "entity_ids": ["e1", "e2"], "relationship_ids": ["r1"]},
+            {"summary": "b", "entity_ids": ["e2", "e3", ""], "relationship_ids": []},
+            "not a finding",
+            {"summary": "c", "entity_ids": "e9", "relationship_ids": ["r2", "r1"]},
+        ]
+    }
+    assert report_cited_ids(metadata) == (["e1", "e2", "e3"], ["r1", "r2"])
+
+
+@pytest.mark.parametrize(
+    "metadata", [{}, {REPORT_FINDINGS_FIELD: None}, {REPORT_FINDINGS_FIELD: "x"}]
+)
+def test_a_report_stored_without_findings_cites_nothing(
+    metadata: dict[str, Any],
+) -> None:
+    assert report_cited_ids(metadata) == ([], [])

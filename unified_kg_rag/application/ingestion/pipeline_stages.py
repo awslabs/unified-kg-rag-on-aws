@@ -144,6 +144,7 @@ from unified_kg_rag.ports.indexer import BaseIndexer, GraphIndexer
 from unified_kg_rag.shared import (
     ConfigurationError,
     ConfirmationDeclinedError,
+    NamespaceLeaseError,
     PipelineStageError,
     get_logger,
     observability,
@@ -1748,7 +1749,25 @@ class _VisualizationExport:
         incremental delta's."""
         export = self.config.graph.visualization.export_data
         delta = context.incremental_delta
-        if export and delta is not None and delta.unchanged:
+        others = (
+            [s for s in delta.stored_scopes if s != context.incremental_scope]
+            if delta is not None and not self.config.indexing.reset
+            else []
+        )
+        if export and others:
+            # The namespace holds other source scopes' documents, which this
+            # run's graph does not: exporting it would replace the
+            # namespace's visualization data with this corpus's part.
+            logger.info(
+                "Visualization skipped: the index namespace also holds the "
+                "documents of %d other source scope(s), which this run's "
+                "graph does not. Export the whole namespace's graph with "
+                "run-describe --output-path (GraphML or JSON Lines), or give "
+                "each corpus its own namespace "
+                "(processing.document_parsing.index_value).",
+                len(others),
+            )
+        elif export and delta is not None and delta.unchanged:
             # An incremental run's graph holds only the delta's documents:
             # exporting it would replace the full graph's visualization data
             # with a fragment.
@@ -2774,7 +2793,7 @@ class IndexingStage(_RegistryStage):
                 ),
             )
         else:
-            self._record_removed_artifacts(text_units)
+            self._record_removed_artifacts(text_units, delta)
 
         metrics = {
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},
@@ -2864,12 +2883,15 @@ class IndexingStage(_RegistryStage):
         (none where the stored record predates them).
         """
         delta = context.incremental_delta
-        # A delta of new documents only (the registry knew none of the
-        # scope's documents) built the suffix from nothing: a full build.
+        # A delta of new documents only into a namespace the registry held
+        # nothing of built the suffix from nothing: a full build. One beside
+        # other source scopes' documents (stored_scopes) added to them.
         incremental = (
             delta is not None
             and not self.config.indexing.reset
-            and bool(delta.changed or delta.unchanged or delta.deleted)
+            and bool(
+                delta.changed or delta.unchanged or delta.deleted or delta.stored_scopes
+            )
         )
         suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units} or {
             self.config.processing.document_parsing.index_value
@@ -2939,7 +2961,9 @@ class IndexingStage(_RegistryStage):
                 counters[suffix] = written.communities
         return counters
 
-    def _record_removed_artifacts(self, text_units: list[TextUnit]) -> None:
+    def _record_removed_artifacts(
+        self, text_units: list[TextUnit], delta: DocumentDelta | None = None
+    ) -> None:
         """Drop from each suffix's stored build record the artifacts this
         run's methodologies no longer build (``artifacts_to_build``).
 
@@ -2947,7 +2971,10 @@ class IndexingStage(_RegistryStage):
         indices keep the one of the run that did), but a run under a
         narrower profile stops maintaining the removed methodologies'
         artifacts all the same: unrecorded, their strategies would still be
-        served until a run with a delta. Best-effort, as ``record_build``.
+        served until a run with a delta. The suffixes are the configured
+        one and those the registry records of the ``delta``'s unchanged
+        documents name (a document with an index value of its own).
+        Best-effort, as ``record_build``.
         """
         building = artifacts_to_build(self.config)
         vector_indexer = self.indexing_manager.vector_indexer
@@ -2955,6 +2982,20 @@ class IndexingStage(_RegistryStage):
             self.config.processing.document_parsing.index_value
             or Constants.DEFAULT_SUFFIX.value
         }
+        if delta is not None and delta.unchanged:
+            try:
+                records = self._build_doc_status_store().get_many(delta.unchanged)
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - best-effort, as the record
+                logger.warning(
+                    "Could not read the unchanged documents' index suffixes; "
+                    "only '%s' records the methodologies no longer built: %s",
+                    ", ".join(sorted(suffixes)),
+                    e,
+                )
+            else:
+                suffixes |= {r.suffix for r in records.values() if r.suffix}
         for suffix in sorted(suffixes):
             stored = vector_indexer.read_build_record(suffix)
             held = stored_artifacts(stored)

@@ -39,6 +39,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KINDS,
 )
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
+from unified_kg_rag.domain.ingestion.report_references import REPORT_FINDINGS_FIELD
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     SUMMARY_TREE_META,
@@ -1142,6 +1143,11 @@ class OpenSearchIndexer(VectorIndexer):
             "max_cut_depth": max_cut_depth(report),
             "parent_community_id": report.parent_community_id,
             "child_community_ids": list(report.child_community_ids),
+            # The findings with the record ids each cites (report_cited_ids),
+            # unindexed: their text is searched in full_content.
+            REPORT_FINDINGS_FIELD: [
+                finding.model_dump(mode="json") for finding in report.findings
+            ],
         }
 
     def index_community_reports(
@@ -2859,10 +2865,26 @@ class OpenSearchIndexer(VectorIndexer):
     ) -> list[dict[str, Any]]:
         """Every stored text unit of ``suffix`` but the seed graphs' (see
         the port), in id order; ``text_embedding`` as a float32 array."""
-        return self._scan(
+        return [
+            unit
+            for page in self.scan_text_unit_pages(
+                suffix, fields=fields, page_size=page_size
+            )
+            for unit in page
+        ]
+
+    def scan_text_unit_pages(
+        self,
+        suffix: str | None,
+        *,
+        fields: list[str],
+        page_size: int | None = None,
+    ) -> Iterator[list[dict[str, Any]]]:
+        """:meth:`scan_text_units` a page at a time (see the port)."""
+        return self._scan_pages(
             self.opensearch_config.text_units_index_prefix,
             suffix,
-            fields,
+            {"includes": ["id", *fields]},
             page_size=page_size,
             exclude={"exists": {"field": "source_kind"}},
             vector_fields=("text_embedding",),
@@ -3416,6 +3438,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "max_cut_depth": {"type": "integer"},
                 "parent_community_id": {"type": "keyword"},
                 "child_community_ids": {"type": "keyword"},
+                REPORT_FINDINGS_FIELD: {"type": "object", "enabled": False},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )

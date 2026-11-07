@@ -713,7 +713,9 @@ class DataIngestionPipeline:
             ConfigurationError: The doc-status registry is off (without it a
                 run is a full build of its documents, which would replace
                 every other document of the index namespace), the run would
-                rebuild the namespace (``indexing.reset``), or
+                rebuild the namespace (``indexing.reset``, or a methodology
+                of ``indexing.methodologies`` the namespace does not hold
+                yet, which only a rebuild from every document adds), or
                 ``document_loading`` is not an enabled stage.
             ValueError: No document, a repeated id, or an invalid document
                 (``pydantic.ValidationError``).
@@ -769,8 +771,17 @@ class DataIngestionPipeline:
         doc_ids = {
             compute_doc_id(name, namespace, source_scope): name for name in names
         }
-        registry = self._doc_status or self.providers.build_doc_status()
-        held = registry.get_many(list(doc_ids))
+        registry = self._doc_status
+        if registry is None:
+            built = self.providers.build_doc_status()
+            try:
+                held = built.get_many(list(doc_ids))
+            finally:
+                close = getattr(built, "close", None)
+                if callable(close):
+                    close()
+        else:
+            held = registry.get_many(list(doc_ids))
         missing = [name for doc_id, name in doc_ids.items() if doc_id not in held]
         if missing:
             raise DocumentNotFoundError(
@@ -848,6 +859,41 @@ class DataIngestionPipeline:
                 "insert_documents and delete_documents need the "
                 "document_loading stage (pipeline_config.stages_enabled)"
             )
+        self._check_no_added_methodology(source_scope)
+
+    def _check_no_added_methodology(self, source_scope: str) -> None:
+        """Refuse a run of document changes whose methodologies build a
+        corpus-wide artifact the namespace does not hold: :meth:`run` adds
+        it by a rebuild from the whole corpus (``_rebuild_for_added_artifacts``),
+        which a set of changes is not. Read before the run takes the lease,
+        so it fails before any model call."""
+        indexer = self.providers.build_vector_indexer()
+        try:
+            record = indexer.read_build_record(
+                self.config.processing.document_parsing.index_value
+            )
+        finally:
+            indexer.close()
+        missing = missing_artifacts(record, self.config)
+        if not missing:
+            return
+        held = (record or {}).get("methodologies") or []
+        raise ConfigurationError(
+            f"indexing.methodologies builds {', '.join(sorted(a.value for a in missing))}, "
+            "which the index namespace does not hold: adding a methodology "
+            "rebuilds the namespace from every document, and "
+            "insert_documents and delete_documents run only the documents "
+            "they are given. Run them with the methodologies the namespace "
+            f"holds (indexing.methodologies: {', '.join(map(str, held)) or 'as built'}); "
+            "or add the methodology with DataIngestionPipeline.run over a "
+            "directory holding every document of the namespace, each a file "
+            "named by its id, with processing.document_parsing.source_scope: "
+            f"{source_scope!r}: it reuses the stored extractions, but deletes "
+            "a document the run does not read (an id without a file "
+            "extension the parser reads); or insert the documents into an "
+            "index namespace of their own (processing.document_parsing."
+            "index_value), which extracts them again."
+        )
 
     def _stage_document(self, given: InputDocument, root: Path, number: int) -> None:
         """Write ``given`` under ``root`` as the ``Document`` the parsing

@@ -25,6 +25,8 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     kmeans,
     kmeans_clusters,
     leaf_digest,
+    leaf_entries_digest,
+    leaf_entry,
     node_id,
     reduce_dimensions,
     soft_labels,
@@ -195,6 +197,17 @@ def test_identity_and_digests_are_order_free() -> None:
     assert leaf_digest([a, ("b", "text b", {})]) != leaf_digest([a, b])
     assert summary_input_key("fp", "Korean", ["가", "나"]) != summary_input_key(
         "fp", "English", ["가", "나"]
+    )
+
+
+def test_a_streamed_leaf_digest_is_the_stored_one() -> None:
+    # The stage streams the text units and keeps one entry a leaf: the
+    # digest must stay the one stored trees hold, or every tree is built
+    # again once after an upgrade.
+    leaves = [("b", "텍스트 b", {"category": "x"}), ("a", "text a", {})]
+    assert leaf_digest(leaves) == "1e67697b0fd505f7fe14978e918d0c30"
+    assert leaf_entries_digest(leaf_entry(*leaf) for leaf in leaves) == (
+        leaf_digest(leaves)
     )
 
 

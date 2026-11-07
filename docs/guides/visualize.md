@@ -32,7 +32,10 @@ Ingestion itself renders nothing. Another renderer plugs in through
   a full build, a reset, or an incremental run in which every document is new
   or changed. An incremental run that skips unchanged documents writes
   nothing (it logs an INFO line) and leaves an earlier file in place; run one
-  full build (`indexing.reset: true`) to visualize the whole graph.
+  full build (`indexing.reset: true`) to visualize the whole graph. Nor does
+  a run into a namespace that holds other source scopes' documents (a second
+  corpus, `insert_documents`): its graph is one corpus's part; export the
+  whole namespace with `run-describe --output-path` (GraphML or JSON Lines).
 - **Where.** `graph.visualization.outputs_directory`, by default
   `<cache directory>/<pipeline_id>/visualization/`. S3 cache sync uploads the
   `.json` only; re-render the HTML locally.

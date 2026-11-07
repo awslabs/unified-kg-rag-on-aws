@@ -441,7 +441,8 @@ From a `main` checkout (formats and keys no release had):
   every report once more; later resets reuse the answers (#539).
 - Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
   (#564, #589), also a run resumed after dying between its removal and its commit (#592), and a summary that kept
-  the lines of a spelling a later run split off or lost those of a spelling a run folded in (#624): reset once to
+  the lines of a spelling a later run split off or lost those of a spelling a run folded in (#624), or the line of
+  an edge a run's delta resolved under a spelling the stored graph keeps apart: reset once to
   summarize from the lines (one call per such item over the threshold), or leave it.
 - #565 changed the translation, description summary and gleaning prompts (gleaning re-keys every gleaned record,
   claims too): a reset translates, extracts and gleans every unit again, the cost of a first build; incremental runs
@@ -725,7 +726,9 @@ From a `main` checkout (formats and keys no release had):
   only once a tree build fails; a full build without `raptor` deletes the tree's indices; a partial tree is built
   again under `refresh: on_reset`; the leaves' vectors are read as float32 arrays (about 15 KiB per leaf read instead
   of 40-60 KiB, about 50 KiB at the build's peak) and `max_leaves_in_memory` is checked before they are read, at a
-  default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#608). Failed summaries and, with
+  default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#608), the leaf digest that tells a current
+  tree streaming the texts a page at a time (ids, attributes and text hashes kept;
+  `VectorIndexer.scan_text_unit_pages`). Failed summaries and, with
   `refresh: on_reset`, the text units no summary covers are EMF metrics (`total_tree_summaries_failed`,
   `total_tree_uncovered_leaves`) on the CDK dashboard's "Summary tree (EMF)" widget (#603). See
   [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
@@ -743,8 +746,9 @@ From a `main` checkout (formats and keys no release had):
   query by the config and is not cached (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()`
   are public (#619). Adding a methodology to an incremental namespace rebuilds it once from its stored extractions
   (only the added model calls are new); removing one stops maintaining its artifacts without deleting them, and the
-  next run records them gone, one with no document change too; a reset to fewer methodologies keeps the extraction
-  records, so adding one back extracts nothing again (#626). Every strategy class declares
+  next run records them gone, one with no document change too (in every suffix its documents hold); a reset to fewer methodologies keeps the extraction
+  records, so adding one back extracts nothing again (#626), and so does any reset that builds nothing from them
+  (`raptor` alone, a second time too). Every strategy class declares
   `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that reads less declares its artifacts
   (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace that holds the text units, and
   `simple` sweeps only the indexes it holds (#607). A filter key is checked, after the methodology check, against the
@@ -775,7 +779,8 @@ From a `main` checkout (formats and keys no release had):
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
   doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
-  (#628). See [Python library](docs/guides/python-library.md#documents-from-memory).
+  (#628), and a methodology the namespace does not hold yet raises `ConfigurationError` before the run, naming the
+  methodologies held and the directory run that adds it. See [Python library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
@@ -1099,7 +1104,8 @@ From a `main` checkout (formats and keys no release had):
   `langchain-openai` as the security floor of the copy ragas depends on (#620).
 - The document deduplication and fuzzy entity matching worker processes start from a forkserver (`spawn` where
   the platform has none) instead of forking the run, whose I/O and client-pool threads may hold a lock the forked
-  worker would wait on forever; see *Upgrading* for scripts (#628).
+  worker would wait on forever; see *Upgrading* for scripts (#628). The forkserver imports both pools' modules
+  whichever starts it (the second pool's workers each imported theirs again).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
@@ -1142,7 +1148,10 @@ From a `main` checkout (formats and keys no release had):
 - Community reports: the prompt allows only what the data supports (MS GraphRAG's evidence rule, no "strategic
   value" or "actionable intelligence" asks), numbers the entities and relationships it packs and asks each finding
   for `[Data: Entities (...); Relationships (...)]` references, kept as the cited record ids on the finding
-  (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618).
+  (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618). The report stores
+  them (an unindexed `findings` field): a retrieved report, and its source's metadata, name the records each finding
+  cites (`report_cited_ids`), pointed at the ids an incremental merge kept; a report stored before cites none until
+  it is regenerated.
 - Claims resolve only against the entities of their own text units, and ties of names, types and statuses break
   deterministically, so builds do not depend on document order (#398, #402, #404, #442).
 - `indexing.reset` rebuilds without taking the suffix offline (new indices and an alias swap) and a failed reset
@@ -1301,6 +1310,16 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- A run into a namespace that holds other source scopes' documents no longer exports `visualization_data.json`
+  from its own corpus's graph (or fails to, `Communities must be detected before exporting`): it logs an INFO line
+  pointing at `run-describe --output-path` and leaves the earlier file in place.
+- A source scope's first run into a namespace that holds other scopes' documents is recorded as the incremental
+  build it is: the build record kept only that run's documents and artifacts as a full build, restarted the
+  community counters and dropped the full build it was applied on.
+- With description summaries on, an incremental run no longer extends a stored summary with a delta edge's
+  description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
+  where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full
+  build's.
 - A document's doc-status registry namespace and its artifacts' index suffix follow one rule
   (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
   fails the loading stage naming it instead of keying the document's record under a namespace no index has (#628).
@@ -1320,7 +1339,10 @@ Ingestion and incremental indexing.
   object is kept under one `NONE` literal instead of dropped or split in two; a unit whose record states no entity
   is not asked (its claims could resolve to nothing); and a claim whose statements disagree (`TRUE` and `FALSE`) is
   `disputed`, in a full build and incrementally, where a majority vote read a tie as `FALSE` and an incremental run
-  kept the stored status whatever the new documents said (#624).
+  kept the stored status whatever the new documents said (#624). A status is read into the prompt's vocabulary
+  (`true`, `false`, `disputed`, `unknown`, as stored: `True.` is `true`, MS GraphRAG's `SUSPECTED` is `disputed`, an
+  unrecognised word `unknown`) at extraction and in every merge, so a stored off-vocabulary status no longer
+  disputes the same one.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

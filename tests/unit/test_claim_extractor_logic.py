@@ -48,6 +48,27 @@ def text_unit() -> TextUnit:
 # _parse_claim_data
 # --------------------------------------------------------------------------- #
 class TestParseClaimData:
+    @pytest.mark.parametrize(
+        ("raw", "status"),
+        [("Suspected", "disputed"), ("true.", "true"), (None, "unknown")],
+    )
+    def test_the_status_is_read_into_the_prompts_vocabulary(
+        self, extractor, text_unit, raw: str | None, status: str
+    ) -> None:
+        # Off-vocabulary statuses were stored as written, so "true." and
+        # "TRUE" disagreed in a merge and a status filter missed them.
+        claim = extractor._parse_claim_data(
+            {
+                "subject": "Acme",
+                "object": "Beta",
+                "claim_type": "ACQUISITION",
+                "description": "Acme acquired Beta",
+                "claim_status": raw,
+            },
+            text_unit,
+        )
+        assert claim is not None and claim.status == status
+
     def test_valid_claim(self, extractor, text_unit) -> None:
         claim = extractor._parse_claim_data(
             {
@@ -63,7 +84,7 @@ class TestParseClaimData:
         assert claim.subject_name == "Acme"
         assert claim.object_name == "Beta"
         assert claim.type == "ACQUISITION"
-        assert claim.status == "TRUE"
+        assert claim.status == "true"  # stored lowercase (claim_status)
         assert claim.text_unit_ids == ["t1"]
 
     def test_missing_subject_returns_none(self, extractor, text_unit) -> None:
@@ -111,7 +132,7 @@ class TestParseClaimData:
         assert claim is not None
         assert claim.subject_name == "Vendor Co"
         assert claim.type == "DELIVERY"
-        assert claim.status == "TRUE"
+        assert claim.status == "true"
         assert claim.description == "Ships parts monthly\nOn time"
         assert claim.source_text == "Vendor ships parts.\nDelivery is monthly."
         assert "[" not in claim.description

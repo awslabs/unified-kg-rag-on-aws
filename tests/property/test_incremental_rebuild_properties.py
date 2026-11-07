@@ -53,6 +53,7 @@ from hypothesis import strategies as st
 
 import unified_kg_rag.adapters.ingestion.gleaner as gleaner_module
 import unified_kg_rag.adapters.ingestion.graph_extractor as extractor_module
+from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.fixtures.fakes.summarizer import AtomSetSummarizer
@@ -83,7 +84,11 @@ from unified_kg_rag.domain.ingestion.contributions import (
     record_keys,
     record_payload,
 )
-from unified_kg_rag.domain.ingestion.delta_detector import detect_delta, document_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import (
+    DocumentChanges,
+    detect_delta,
+    document_doc_id,
+)
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
@@ -521,6 +526,52 @@ def _summarized_extract(corpus: dict[str, Any]):
     return units, records, entities, edges
 
 
+# A run whose delta resolves "Vendor Inc" into "Vendor" where the stored
+# graph keeps them apart (see the example of the summaries test).
+_SPLIT_EDGE_A = [
+    (
+        [],
+        [
+            ("Vendor", "Vendor Inc", 2),
+            ("(주)벤더", "Vendor", 2),
+            ("Vendor", "Depot", 3),
+        ],
+        [("Vendor", "Vendor Inc", 2), ("Vendor", "Depot", 1)],
+    ),
+    (
+        ["Vendor", "Carrier"],
+        [],
+        [
+            ("(주)벤더", "ベンダー株式会社", 1),
+            ("Vendor", "Vendor Inc", 3),
+            ("Vendor", "Depot", 3),
+        ],
+    ),
+]
+_SPLIT_EDGE_B = [
+    (
+        ["Vendor Inc"],
+        [("Vendor", "Vendor Inc", 2), ("Vendor", "Depot", 1), ("Vendor", "Carrier", 1)],
+        [("Vendor", "Vendor Inc", 3)],
+    )
+]
+_SPLIT_EDGE_C = [
+    (
+        [],
+        [("Vendor Inc", "Depot", 1)],
+        [
+            ("Vendor Inc", "Vendor", 1),
+            ("(주)벤더", "Carrier", 2),
+            ("Carrier", "ベンダー株式会社", 2),
+        ],
+    ),
+    (
+        ["(주)벤더", "ベンダー株式会社"],
+        [("ベンダー株式会社", "Buyer", 1)],
+        [("(주)벤더", "Carrier", 3)],
+    ),
+]
+
 # Both spellings of a name in one unit ("Vendor Inc" is "Vendor"'s compact
 # key, and the same type here, so they stay one entity).
 _TWO_SPELLINGS = [(["Vendor", "Vendor Inc"], [("Vendor Inc", "Depot", 1)], [])]
@@ -561,6 +612,20 @@ _TWO_SPELLINGS = [(["Vendor", "Vendor Inc"], [("Vendor Inc", "Depot", 1)], [])]
         },
     ]
 )
+# c.txt's Vendor Inc -> Depot edge resolves into Vendor -> Depot in the
+# delta, but a.txt's Vendor -> Vendor Inc edge keeps the spellings apart in
+# the stored graph: the derivation splits the edge off, and the stored
+# summary was extended with the delta's description, c.txt's line included.
+@example(
+    rounds=[
+        {
+            _PATHS[0]: _SPLIT_EDGE_A,
+            _PATHS[1]: None,
+            _PATHS[2]: None,
+        },
+        {_PATHS[0]: _SPLIT_EDGE_A, _PATHS[1]: _SPLIT_EDGE_B, _PATHS[2]: _SPLIT_EDGE_C},
+    ]
+)
 def test_incremental_rounds_match_a_full_build_with_summaries(rounds) -> None:
     """With every description summarized, an incremental run's summaries
     (stored ones extended with what a delta adds) equal a full build's."""
@@ -581,6 +646,104 @@ def test_incremental_rounds_match_a_full_build_with_summaries(rounds) -> None:
         assert {
             e.id: entity_state(e) for e in vector.data.get("entities", {}).values()
         } == expected[0]
+
+
+# One call of the insert/delete API (DocumentChanges): each path kept as
+# stored, deleted, or given new content (added or updated).
+_change = st.fixed_dictionaries(
+    {path: st.sampled_from(["keep", "delete"]) | _content for path in _PATHS}
+)
+
+
+def _run_changes(
+    inc: IncrementalIndexer,
+    stored: dict[str, Any],
+    change: dict[str, Any],
+    extract: Callable[[dict[str, Any]], Any],
+) -> None:
+    """One ``insert_documents``/``delete_documents`` call, wired like the
+    pipeline runs it: ``detect_delta`` with the named deletions, the given
+    documents' delta committed, every other stored document kept.
+    ``stored`` (path -> content) follows the call."""
+    given = {p: c for p, c in change.items() if c not in ("keep", "delete")}
+    deleted = [p for p, c in change.items() if c == "delete" and p in stored]
+    documents = [_document(path, content) for path, content in given.items()]
+    changes = DocumentChanges(
+        delete={
+            document_doc_id(_document(path, stored[path])): path for path in deleted
+        }
+    )
+    delta, fingerprints = detect_delta(documents, inc.doc_status, changes=changes)
+    assert set(delta.deleted) == set(changes.delete)
+    assert inc.remove_changed_and_deleted(delta)
+    for path in deleted:
+        del stored[path]
+    stored.update(given)
+    to_extract = set(delta.new + delta.changed)
+    extracted = [d for d in documents if document_doc_id(d) in to_extract]
+    if not extracted:
+        return
+    units, records, entities, edges = extract(
+        {d.file_path: given[d.file_path] for d in extracted}
+    )
+    inc.indexing_manager.vector_indexer.write_extraction_records(
+        {
+            record_keys(unit)["graph"]: record_payload(record)
+            for unit, record in zip(units, records, strict=True)
+        }
+    )
+    inc.commit(
+        lineages=build_document_lineage(documents=extracted, text_units=units),
+        fingerprints=fingerprints,
+        text_units=units,
+        entities=entities,
+        relationships=edges,
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(
+    max_examples=200,
+    deadline=None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+@given(changes=st.lists(_change, min_size=1, max_size=5))
+# Vendor's summary grows by an insert and shrinks back by a delete of the
+# document that added a line under its other spelling.
+@example(
+    changes=[
+        {_PATHS[0]: "keep", _PATHS[1]: _TWO_SPELLINGS, _PATHS[2]: "keep"},
+        {
+            _PATHS[0]: "keep",
+            _PATHS[1]: "keep",
+            _PATHS[2]: [(["Vendor"], [], []), (["Vendor Inc"], [], [])],
+        },
+        {_PATHS[0]: "keep", _PATHS[1]: "delete", _PATHS[2]: "keep"},
+    ]
+)
+def test_insert_and_delete_calls_match_a_full_build_with_summaries(changes) -> None:
+    """Named changes (the insert/delete API: the documents a call does not
+    name are kept) leave the summarized stores a full build of what the
+    calls left would."""
+    graph = FakeGraphStore()
+    vector = FakeVectorStore(opensearch_config=_SUMMARIZING.indexing.opensearch)
+    manager = IndexingManager(
+        config=_SUMMARIZING, vector_indexer=vector, graph_indexer=graph
+    )
+    manager._description_summarizer = AtomSetSummarizer(_SUMMARIZING)
+    inc = IncrementalIndexer(FakeDocStatusStore(), manager)
+    stored: dict[str, Any] = {}
+    for change in changes:
+        _run_changes(inc, stored, change, _summarized_extract)
+        expected = _expected_state(dict(stored), _summarized_extract)
+        assert _graph_state(graph) == expected
+        assert {
+            e.id: entity_state(e) for e in vector.data.get("entities", {}).values()
+        } == expected[0]
+        assert {record.file_path for record in all_records(inc.doc_status)} == set(
+            stored
+        )
 
 
 # --- strict extraction schema ---------------------------------------------------

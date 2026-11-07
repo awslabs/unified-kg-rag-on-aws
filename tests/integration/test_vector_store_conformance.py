@@ -22,13 +22,19 @@ from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory, HashingEmbe
 from tests.fixtures.store_backends import (
     BACKENDS,
     INDEX_ADMIN,
+    RETRIEVERS,
     SUFFIX_SCOPED_VECTOR_IDS,
     StoreHarness,
     backends,
     open_harness,
 )
+from unified_kg_rag.domain.ingestion.report_references import (
+    REPORT_FINDINGS_FIELD,
+    report_cited_ids,
+)
 from unified_kg_rag.domain.models import (
     Claim,
+    CommunityFinding,
     CommunityReport,
     Config,
     Entity,
@@ -36,6 +42,10 @@ from unified_kg_rag.domain.models import (
     IndexBuildRecord,
     Methodology,
     Relationship,
+    RetrievalResult,
+    RetrieverRole,
+    SearchQuery,
+    SearchType,
     TextUnit,
 )
 from unified_kg_rag.domain.models.config import LanguageCode
@@ -2072,3 +2082,97 @@ def test_describe_indices_counts_each_live_index(harness: StoreHarness) -> None:
         meta = described["entities"]["meta"]
         assert isinstance(meta["embedding_dimension"], int)
         assert "embedding_model_id" in meta
+
+
+def _report_with_findings() -> CommunityReport:
+    return _reports()[0].model_copy(
+        update={
+            "findings": [
+                CommunityFinding(
+                    summary="Vendor supplies Buyer",
+                    explanation="Vendor supplies widgets to Buyer.",
+                    entity_ids=["e-vendor", "e-buyer"],
+                    relationship_ids=["r-supplies"],
+                ),
+                CommunityFinding(
+                    summary="Depot stores widgets",
+                    explanation="Vendor ships widgets from the Depot.",
+                    entity_ids=["e-depot", "e-vendor"],
+                    relationship_ids=["r-ships"],
+                ),
+            ]
+        }
+    )
+
+
+def _report_hits(harness: StoreHarness) -> list[RetrievalResult]:
+    prefix = harness.config.indexing.opensearch.community_reports_index_prefix
+    (hits,) = harness.retrieve(
+        RetrieverRole.DOCUMENT,
+        SearchQuery(
+            query="Vendor widgets",
+            search_type=SearchType.LEXICAL,
+            top_k=5,
+            retrieval_multiplier=1,
+            index_prefixes=[prefix],
+        ),
+    )
+    return hits
+
+
+@pytest.mark.parametrize("harness", backends(RETRIEVERS), indirect=True)
+@pytest.mark.parametrize("mode", ["index", "upsert"])
+def test_a_report_hit_names_the_records_its_findings_cite(
+    harness: StoreHarness, mode: str
+) -> None:
+    # The findings' [Data: ...] references were resolved to record ids and
+    # then never stored: a retrieved report could not say what it rests on.
+    _write(harness, "community_reports", mode, [_report_with_findings()])
+    (hit,) = _report_hits(harness)
+    assert report_cited_ids(hit.metadata) == (
+        ["e-vendor", "e-buyer", "e-depot"],
+        ["r-supplies", "r-ships"],
+    )
+    assert [f["summary"] for f in hit.metadata[REPORT_FINDINGS_FIELD]] == [
+        "Vendor supplies Buyer",
+        "Depot stores widgets",
+    ]
+
+
+@pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
+def test_incremental_run_maps_the_findings_of_an_earlier_reports_index(
+    harness: StoreHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    indexer = harness.vector_indexer
+    client = indexer.opensearch_client
+    prefix = harness.config.indexing.opensearch.community_reports_index_prefix
+    current_mapping = indexer._get_community_reports_mapping
+    current_doc = indexer._prepare_community_report_doc
+
+    def earlier_mapping() -> dict[str, Any]:
+        mapping = current_mapping()
+        del mapping["mappings"]["properties"][REPORT_FINDINGS_FIELD]
+        return mapping
+
+    def earlier_doc(report: CommunityReport, embeddings: Any) -> dict[str, Any]:
+        doc = current_doc(report, embeddings)
+        doc.pop(REPORT_FINDINGS_FIELD)
+        return doc
+
+    monkeypatch.setattr(indexer, "_get_community_reports_mapping", earlier_mapping)
+    monkeypatch.setattr(indexer, "_prepare_community_report_doc", earlier_doc)
+    _write(harness, "community_reports", "index", _reports())
+    monkeypatch.undo()
+    # A report stored before cites nothing.
+    (hit,) = _report_hits(harness)
+    assert report_cited_ids(hit.metadata) == ([], [])
+
+    name = client.get_index_name_by_alias(indexer._get_name(prefix, None))
+    indexer.check_index_settings("default")  # the run's preflight maps it
+    assert client.get_index_mappings(name)["properties"][REPORT_FINDINGS_FIELD] == {
+        "type": "object",
+        "enabled": False,
+    }
+    _write(harness, "community_reports", "upsert", [_report_with_findings()])
+    (hit,) = _report_hits(harness)
+    assert report_cited_ids(hit.metadata)[1] == ["r-supplies", "r-ships"]

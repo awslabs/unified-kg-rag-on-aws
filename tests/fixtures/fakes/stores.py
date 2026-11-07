@@ -500,6 +500,15 @@ class FakeVectorStore(_Recorder):
     ) -> list[dict[str, Any]] | None:
         return None
 
+    def scan_text_unit_pages(
+        self,
+        suffix: str | None,
+        *,
+        fields: list[str],
+        page_size: int | None = None,
+    ) -> Iterator[list[dict[str, Any]]] | None:
+        return None
+
     def read_summary_nodes(
         self, suffix: str | None, *, fields: list[str]
     ) -> list[dict[str, Any]] | None:

@@ -36,7 +36,8 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     TreeBuild,
     TreeSettings,
     build_tree,
-    leaf_digest,
+    leaf_entries_digest,
+    leaf_entry,
     partition_key,
 )
 from unified_kg_rag.domain.models import (
@@ -64,6 +65,9 @@ logger = get_logger(__name__)
 # Leaves read with their vectors at a time (a page of 1,024-dimension
 # vectors is about 2 MB of JSON).
 _VECTOR_PAGE = 250
+# Text units read at a time for the leaf digest (their text, without
+# vectors).
+_DIGEST_PAGE = 1_000
 
 
 class SummaryTreeStage(_RegistryStage):
@@ -154,10 +158,12 @@ class SummaryTreeStage(_RegistryStage):
         self, indexer: VectorIndexer, suffix: str, context: PipelineContext
     ) -> dict[str, Any]:
         tree = self.config.indexing.summary_tree
-        rows = indexer.scan_text_units(
-            suffix, fields=["text", self._translated_field, "attributes"]
+        pages = indexer.scan_text_unit_pages(
+            suffix,
+            fields=["text", self._translated_field, "attributes"],
+            page_size=_DIGEST_PAGE,
         )
-        if rows is None:
+        if pages is None:
             logger.warning(
                 "The vector store (%s) cannot page its text units: no summary "
                 "tree is built for '%s'",
@@ -165,17 +171,23 @@ class SummaryTreeStage(_RegistryStage):
                 suffix,
             )
             return {"status": "unsupported"}
+        # A page of text at a time: only the ids, attributes and text hashes
+        # are kept (the size check runs before any text or vector is held).
+        rows: list[dict[str, Any]] = []
+        entries: list[tuple[str, str, str]] = []
+        for page in pages:
+            for row in page:
+                entries.append(
+                    leaf_entry(
+                        str(row["id"]), self._leaf_text(row), self._leaf_filters(row)
+                    )
+                )
+                rows.append({"id": row["id"], "attributes": row.get("attributes")})
         if not rows:
             logger.info("'%s' holds no text unit: no summary tree to build", suffix)
             return {"status": "no_text_units"}
-        digest = leaf_digest(
-            (str(row["id"]), self._leaf_text(row), self._leaf_filters(row))
-            for row in rows
-        )
-        for row in rows:
-            # Only the ids and attributes are needed past the digest.
-            row.pop("text", None)
-            row.pop(self._translated_field, None)
+        digest = leaf_entries_digest(entries)
+        del entries
         fingerprint = summary_tree_fingerprint(self.config)
         stored = indexer.read_summary_tree_record(suffix)
         current = (
