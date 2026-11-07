@@ -22,6 +22,7 @@ import pytest
 
 from unified_kg_rag.application.cli import (
     prepare_benchmark,
+    run_describe,
     run_evaluation,
     run_ingestion_pipeline,
     run_mcp_server,
@@ -79,6 +80,7 @@ PARSERS: dict[str, Callable[[], argparse.ArgumentParser]] = {
     "run-rag": run_rag_chain.CommandLineInterface._setup_arguments,
     "run-eval": run_evaluation.CommandLineInterface._setup_arguments,
     "run-visualization": run_visualization._build_parser,
+    "run-describe": run_describe._build_parser,
     "run-prompt-tuning": run_prompt_tuning._build_parser,
     "prepare-benchmark": prepare_benchmark._parser,
 }
@@ -701,6 +703,7 @@ def test_a_launchers_blas_default_does_not_outlive_the_test() -> None:
         ("run_rag", "run_rag_chain"),
         ("run_eval", "run_evaluation"),
         ("run_visualization", "run_visualization"),
+        ("run_describe", "run_describe"),
         ("run_prompt_tuning", "run_prompt_tuning"),
         ("prepare_benchmark", "prepare_benchmark"),
         ("run_mcp_server", "run_mcp_server"),
@@ -825,6 +828,7 @@ def test_a_printed_json_result_is_not_followed_by_a_status(capsys, monkeypatch) 
         run_rag_chain.main,
         run_evaluation.main,
         run_visualization.main,
+        run_describe.main,
         run_prompt_tuning.main,
         prepare_benchmark.main,
         run_mcp_server.main,

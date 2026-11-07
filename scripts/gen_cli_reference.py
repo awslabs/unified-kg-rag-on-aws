@@ -38,6 +38,7 @@ COMMANDS: list[tuple[str, tuple[str, str], str]] = [
     ("run-rag", ("Querying", "guides/query.md"), "rag"),
     ("run-eval", ("Evaluation", "guides/evaluate.md"), "eval"),
     ("run-visualization", ("Visualization", "guides/visualize.md"), "visualization"),
+    ("run-describe", ("Inspect and export", "guides/inspect.md"), "describe"),
     (
         "run-prompt-tuning",
         (
@@ -82,6 +83,7 @@ the [Configuration Reference](./configuration.md).
 def _parsers() -> dict[str, Callable[[], argparse.ArgumentParser]]:
     from unified_kg_rag.application.cli import (
         prepare_benchmark,
+        run_describe,
         run_evaluation,
         run_ingestion_pipeline,
         run_mcp_server,
@@ -95,6 +97,7 @@ def _parsers() -> dict[str, Callable[[], argparse.ArgumentParser]]:
         "rag": run_rag_chain.CommandLineInterface._setup_arguments,
         "eval": run_evaluation.CommandLineInterface._setup_arguments,
         "visualization": run_visualization._build_parser,
+        "describe": run_describe._build_parser,
         "prompt_tuning": run_prompt_tuning._build_parser,
         "benchmark": prepare_benchmark._parser,
         "mcp_server": run_mcp_server.build_parser,

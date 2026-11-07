@@ -1,0 +1,170 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""``describe_namespace``, ``export_graph`` and ``run-describe`` on a
+namespace the embedded stores hold (no container, no AWS)."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+import networkx as nx
+import pytest
+
+from tests.integration import test_embedded_e2e as embedded
+from tests.integration.test_document_changes_api import _ok, setup  # noqa: F401
+from unified_kg_rag import describe_namespace, export_graph
+from unified_kg_rag.application.cli import run_describe
+from unified_kg_rag.application.storage import inspection
+from unified_kg_rag.shared.exceptions import ConfigurationError
+
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
+
+# The fixture that patches every AWS client to fail.
+no_aws = embedded.no_aws
+
+KOREAN = "공급자는 Vendor 이며 Buyer 에게 납품한다."
+
+
+@pytest.fixture
+def ingested(setup):  # noqa: F811 - the fixture
+    config, providers, pipeline = setup
+    _ok(
+        pipeline.insert_documents(
+            [
+                {
+                    "id": "contracts/supply.txt",
+                    "text": "Vendor supplies widgets to Buyer.",
+                    "filters": {"category": "contract"},
+                },
+                {"id": "ko/공급.txt", "text": KOREAN},
+                {"id": "ticket-1", "text": "Depot stores widgets for Vendor."},
+            ]
+        )
+    )
+    return config, providers
+
+
+def test_describe_names_what_the_namespace_holds(ingested) -> None:
+    config, providers = ingested
+
+    description = describe_namespace(config, providers=providers)
+
+    assert description.exists and description.suffix == "default"
+    assert description.artifacts_from == "build_record"
+    assert description.methodologies == ["graphrag", "lightrag", "hipporag"]
+    assert {"local", "mix", "global", "ppr"} <= set(description.strategies)
+    assert "tree" not in description.strategies
+    indices = {index.kind: index for index in description.indices}
+    assert indices["text_units"].documents == 3
+    assert indices["entities"].documents == 3
+    assert indices["entities"].embedding_model_id == "synthetic-embed"
+    assert indices["summary_nodes"].index is None
+    assert description.build is not None
+    assert description.build["documents"] == 3
+    assert description.registry == {"processed": 3}
+
+
+def test_describe_a_namespace_that_holds_nothing(ingested) -> None:
+    config, providers = ingested
+    description = describe_namespace(config, "tenant_x", providers=providers)
+    assert not description.exists
+    assert description.artifacts_from == "config"
+    with pytest.raises(ConfigurationError, match="suffix"):
+        describe_namespace(config, "../x", providers=providers)
+
+
+def test_jsonl_export_streams_every_kind_with_provenance(
+    ingested, tmp_path: Path
+) -> None:
+    config, providers = ingested
+    path = tmp_path / "out" / "graph.jsonl"
+
+    exported = export_graph(config, path, providers=providers, page_size=1)
+
+    records = [json.loads(line) for line in path.read_text("utf-8").splitlines()]
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        by_type.setdefault(record["kind"], []).append(record)
+    assert exported.counts["text_units"] == 3 and exported.counts["entities"] == 3
+    assert {r["documents"][0] for r in by_type["text_unit"]} == {
+        "contracts/supply.txt",
+        "ko/공급.txt",
+        "ticket-1",
+    }
+    # Text is left out unless asked for; no vector is written.
+    assert all("text" not in r for r in by_type["text_unit"])
+    assert not [k for r in records for k in r if k.endswith("_embedding")]
+    vendor = next(r for r in by_type["entity"] if r["name"] == "Vendor")
+    assert vendor["type"] == "organization"
+    assert set(vendor["documents"]) == {
+        "contracts/supply.txt",
+        "ko/공급.txt",
+        "ticket-1",
+    }
+    assert by_type["relationship"] and all(
+        r["documents"] for r in by_type["relationship"]
+    )
+    assert "community" in by_type
+    # Korean is written as text, not escaped.
+    assert "ko/공급.txt" in path.read_text("utf-8")
+
+
+def test_graphml_export_reads_back_as_a_graph(ingested, tmp_path: Path) -> None:
+    config, providers = ingested
+    path = tmp_path / "graph.graphml"
+
+    export_graph(config, path, format="graphml", providers=providers)
+
+    graph = nx.read_graphml(path)
+    entities = {n for n, d in graph.nodes(data=True) if d.get("kind") == "entity"}
+    names = {graph.nodes[n]["name"] for n in entities}
+    assert names == {"Vendor", "Buyer", "Depot"}
+    assert any(d.get("kind") == "community" for _, d in graph.nodes(data=True))
+    relationship_edges = [
+        (u, v) for u, v, d in graph.edges(data=True) if d.get("type") != "parent_of"
+    ]
+    assert relationship_edges and all(
+        u in entities and v in entities for u, v in relationship_edges
+    )
+    vendor = next(n for n in entities if graph.nodes[n]["name"] == "Vendor")
+    assert "ticket-1" in json.loads(graph.nodes[vendor]["documents"])
+
+
+def test_max_items_bounds_each_kind(ingested, tmp_path: Path) -> None:
+    config, providers = ingested
+    exported = export_graph(
+        config, tmp_path / "g.jsonl", providers=providers, max_items=1, page_size=1
+    )
+    assert exported.counts["entities"] == 1
+    assert "entities" in exported.truncated
+    with pytest.raises(ConfigurationError, match="format"):
+        export_graph(config, tmp_path / "g.x", providers=providers, format="csv")  # type: ignore[arg-type]
+
+
+def test_run_describe_prints_one_json_document(
+    ingested, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    config, providers = ingested
+    monkeypatch.setattr(run_describe, "load_cli_config", lambda _args: config)
+    monkeypatch.setattr(inspection, "build_providers", lambda _c: providers)
+    out = tmp_path / "graph.jsonl"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run-describe", "--output-format", "json", "--output-path", str(out)],
+    )
+
+    assert run_describe.main() == 0
+
+    document = json.loads(capsys.readouterr().out)
+    assert document["methodologies"] == ["graphrag", "lightrag", "hipporag"]
+    assert document["export"]["counts"]["entities"] == 3
+    assert out.is_file()
+    # A namespace without an index is a usage error (exit 2).
+    monkeypatch.setattr(
+        sys, "argv", ["run-describe", "--suffix", "tenant_x", "--output-format", "json"]
+    )
+    assert run_describe.main() == 2

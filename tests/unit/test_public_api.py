@@ -54,6 +54,8 @@ PUBLIC_API = sorted(
         "build_mcp_app",
         "build_mcp_server",
         "configure_event_loop",
+        "describe_namespace",
+        "export_graph",
         "get_config",
         "setup_logging",
         # Errors

@@ -1597,6 +1597,22 @@ either would rebuild the namespace from the call's documents alone. The
 staged document's `file_path` becomes its id after identity is assigned,
 so its text units name the id, not the temporary directory.
 
+### 5.8 Inspection and export
+
+`application/storage/inspection.py` reads a namespace through two
+`VectorIndexer` methods with "cannot" defaults: `describe_indices(suffix)`
+(each index's live index, item count and `_meta`) and
+`scan_items(kind, suffix, page_size=)`, a generator of pages in id order
+without vector fields (search-after on `id`, one page read per page
+consumed). `describe_namespace` joins them with the build record's
+artifacts (`held_artifacts`), the strategies they serve
+(`methodology_check.servable_strategies`, `routable_strategies`) and the
+registry's records; `export_graph` writes text units first, keeping a map
+of text unit id to document `file_path`, then entities, relationships,
+community reports and claims, each with the documents of the text units it
+cites, as JSON Lines or GraphML, so memory holds one page and that map.
+`run-describe` is the CLI.
+
 ---
 
 <a id="6-retrieval-two-methodologies"></a>

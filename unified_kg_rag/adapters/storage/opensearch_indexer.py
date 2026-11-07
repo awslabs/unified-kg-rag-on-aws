@@ -7,7 +7,7 @@ import time
 import uuid
 from array import array
 from collections import OrderedDict, defaultdict
-from collections.abc import Callable, Collection, Hashable, Mapping
+from collections.abc import Callable, Collection, Hashable, Iterator, Mapping
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
@@ -56,10 +56,12 @@ from unified_kg_rag.domain.models.config import DEFAULT_INDEX_SETTINGS
 from unified_kg_rag.domain.models.provider_config import BEDROCK
 from unified_kg_rag.domain.retrieval.index_prefixes import index_artifacts
 from unified_kg_rag.ports.indexer import (
+    STORED_ITEM_KINDS,
     AnnotatedKind,
     IndexingStats,
     SchemaAnnotation,
     StoredAnnotation,
+    StoredItemKind,
     VectorIndexer,
 )
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
@@ -2725,13 +2727,37 @@ class OpenSearchIndexer(VectorIndexer):
         of ``vector_fields`` is read as a float32 array, a page at a time:
         as parsed (a list of float objects) a 1,024-dimension vector takes
         about 32 KiB, eight times its array."""
+        return [
+            source
+            for page in self._scan_pages(
+                alias_prefix,
+                suffix,
+                {"includes": ["id", *fields]},
+                page_size=page_size,
+                exclude=exclude,
+                vector_fields=vector_fields,
+            )
+            for source in page
+        ]
+
+    def _scan_pages(
+        self,
+        alias_prefix: str,
+        suffix: str | None,
+        source_filter: dict[str, Any],
+        *,
+        page_size: int | None = None,
+        exclude: dict[str, Any] | None = None,
+        vector_fields: Collection[str] = (),
+    ) -> Iterator[list[dict[str, Any]]]:
+        """The pages :meth:`_scan` reads, each read once the one before it
+        is consumed; ``source_filter`` is the search's ``_source``."""
         alias_name = self._get_name(alias_prefix, suffix)
         index_name = self._live_index(alias_name)
         if not index_name:
-            return []
+            return
         window = self._limits(index_name).max_result_window
         size = min(window, page_size) if page_size else window
-        found: list[dict[str, Any]] = []
         after: str | None = None
         while True:
             clauses: dict[str, Any] = {}
@@ -2745,20 +2771,76 @@ class OpenSearchIndexer(VectorIndexer):
                     "size": size,
                     "query": {"bool": clauses} if clauses else {"match_all": {}},
                     "sort": [{"id": {"order": "asc"}}],
-                    "_source": {"includes": ["id", *fields]},
+                    "_source": source_filter,
                     "track_total_hits": False,
                 },
             )
             page = list(response.get("hits", {}).get("hits", []))
+            found: list[dict[str, Any]] = []
             for hit in page:
                 source = {**(hit.get("_source") or {}), "id": str(hit["_id"])}
                 for name in vector_fields:
                     if isinstance(value := source.get(name), list) and value:
                         source[name] = np.asarray(value, dtype=np.float32)
                 found.append(source)
+            if found:
+                yield found
             if len(page) < size:
-                return found
+                return
             after = str((page[-1].get("_source") or {}).get("id") or page[-1]["_id"])
+
+    def _kind_spec(self, kind: StoredItemKind) -> _ItemSpec:
+        return self._spec(kind.replace("_", " "))
+
+    def describe_indices(self, suffix: str | None) -> list[dict[str, Any]]:
+        """Each index of ``suffix`` (see the port): its live index, how
+        many documents it holds and its ``_meta``."""
+        described = []
+        for kind in STORED_ITEM_KINDS:
+            alias = self._get_name(self._kind_spec(kind).alias_prefix, suffix)
+            index_name = self._live_index(alias)
+            entry: dict[str, Any] = {
+                "kind": kind,
+                "alias": alias,
+                "index": index_name,
+                "documents": None,
+                "meta": {},
+            }
+            if index_name:
+                response = self.opensearch_client.search(
+                    index=alias,
+                    body={
+                        "size": 0,
+                        "query": {"match_all": {}},
+                        "track_total_hits": True,
+                    },
+                )
+                total = response.get("hits", {}).get("total")
+                entry["documents"] = (
+                    total.get("value") if isinstance(total, dict) else total
+                )
+                entry["meta"] = dict(
+                    self._index_mappings(index_name).get("_meta") or {}
+                )
+            described.append(entry)
+        return described
+
+    def scan_items(
+        self,
+        kind: StoredItemKind,
+        suffix: str | None,
+        *,
+        page_size: int | None = None,
+    ) -> Iterator[list[dict[str, Any]]]:
+        """The stored items of ``kind`` of ``suffix`` without their vectors
+        (see the port)."""
+        spec = self._kind_spec(kind)
+        return self._scan_pages(
+            spec.alias_prefix,
+            suffix,
+            {"excludes": list(spec.vector_fields)},
+            page_size=page_size,
+        )
 
     def scan_text_units(
         self,

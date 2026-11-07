@@ -696,6 +696,11 @@ From a `main` checkout (formats and keys no release had):
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
   doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
   (#(PR)). See [Python library](docs/guides/python-library.md#documents-from-memory).
+- `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
+  strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
+  its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
+  (`--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#(PR)). See
+  [inspect and export](docs/guides/inspect.md).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,

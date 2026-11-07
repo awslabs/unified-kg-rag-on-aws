@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The provider flags of run-ingestion, run-rag, run-eval and
+"""The provider flags of run-ingestion, run-rag, run-eval, run-describe and
 run-prompt-tuning (run-visualization calls no model or store: it has none).
 
 Parsing only, plus the runners' config loading: nothing is built.
@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from unified_kg_rag.application.cli import (
+    run_describe,
     run_evaluation,
     run_ingestion_pipeline,
     run_prompt_tuning,
@@ -36,6 +37,7 @@ _PARSERS = {
         ["--data-path", "eval.json"],
     ),
     "run-prompt-tuning": (run_prompt_tuning._build_parser, ["--source-directory", "s"]),
+    "run-describe": (run_describe._build_parser, []),
 }
 
 

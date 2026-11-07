@@ -96,6 +96,16 @@ finally:
   both raise `ConfigurationError`: a full build of the given documents
   would replace the rest of the namespace.
 
+## Inspect and export a namespace
+
+`describe_namespace(config, suffix)` returns what an index namespace holds
+(methodologies, servable strategies, indices with their item counts and
+embedding model, the build record, the registry's records by status), and
+`export_graph(config, path, suffix=..., format="jsonl" | "graphml")`
+streams its graph with the provenance of every item to a file; both read
+the stores only. `run-describe` prints them
+([Inspect and export](./inspect.md)).
+
 ## Results and errors
 
 - A failed stage sets the returned `PipelineContext`'s `status` to `FAILED`

@@ -34,7 +34,7 @@
 | 사용 방법 | [증분 인덱싱](./guides/incremental.ko.md) | 레지스트리 켜기, 코퍼스나 설정을 바꿀 때 일어나는 일, 재구축과 두 가지 재구축 신호, 삭제 범위와 대량 삭제, 코퍼스 옮기기, 실패한 문서와 격리된 문서, 동시 실행 |
 | 사용 방법 | [도메인 적응](./guides/domain-adaptation.ko.md) | 엔티티 유형, 프롬프트 튜닝, 사용자 정의 프롬프트 재정의와 그 검사, 재정의할 수 없는 프롬프트 |
 | 사용 방법 | [Extraction schema](./guides/extraction-schema.md), [Ontology](./guides/ontology.md), [Seed graphs](./guides/seed-graphs.md)(영문) | 스키마 모드, 유형과 패턴 선언, 저장하는 스키마 필드와 그 필터, 스키마를 바꾸면 다시 실행되는 것. OWL/RDFS 온톨로지에서 스키마 읽기. 이미 가진 지식 그래프 합치기, 시드가 스키마와 문서를 만날 때의 규칙, 수명 주기와 비용 |
-| 사용 방법 | [평가](./guides/evaluate.ko.md), [Benchmarks](./guides/benchmarks.md)(영문), [Visualization](./guides/visualize.md)(영문) | 평가기와 필요한 필드, 데이터 형식, 전략의 짝지은 비교, 비용과 가격, 다시 만들기·다시 판정하기·CI 게이트. MuSiQue를 코퍼스와 데이터셋으로 변환. 내보낸 그래프 렌더링 |
+| 사용 방법 | [평가](./guides/evaluate.ko.md), [Benchmarks](./guides/benchmarks.md)(영문), [Visualization](./guides/visualize.md)(영문), [Inspect and export](./guides/inspect.md)(영문) | 평가기와 필요한 필드, 데이터 형식, 전략의 짝지은 비교, 비용과 가격, 다시 만들기·다시 판정하기·CI 게이트. MuSiQue를 코퍼스와 데이터셋으로 변환. 내보낸 그래프 렌더링. 네임스페이스가 담은 내용과 그래프를 GraphML·JSON Lines로 내보내기 |
 | 사용 방법 | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md)(영문) | 질의와 답변 검사, 컨텍스트 근거 검사. Jaeger, Langfuse, Phoenix, CloudWatch로 추적, 전송 제한과 개인정보 |
 | 사용 방법 | [Using the library from Python](./guides/python-library.md)(영문) | Python에서 수집과 질의, 구분해 처리할 결과와 오류, 비동기 코드, 닫기, 로깅, 백엔드 주입 |
 | 사용 방법 | [MCP 서버](./guides/mcp.ko.md) | 인덱스를 읽기 전용 MCP 도구로 에이전트에 제공. 도구와 레코드, 범위와 한도, 인증 프록시 뒤의 HTTP, 비용과 텔레메트리 |

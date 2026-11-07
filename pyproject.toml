@@ -94,6 +94,7 @@ run-rag = "unified_kg_rag.application.cli.launch:run_rag"
 run-eval = "unified_kg_rag.application.cli.launch:run_eval"
 run-visualization = "unified_kg_rag.application.cli.launch:run_visualization"
 run-prompt-tuning = "unified_kg_rag.application.cli.launch:run_prompt_tuning"
+run-describe = "unified_kg_rag.application.cli.launch:run_describe"
 prepare-benchmark = "unified_kg_rag.application.cli.launch:prepare_benchmark"
 run-mcp-server = "unified_kg_rag.application.cli.launch:run_mcp_server"
 

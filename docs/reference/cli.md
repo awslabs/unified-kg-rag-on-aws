@@ -24,6 +24,7 @@ the [Configuration Reference](./configuration.md).
 - [`run-rag`](#run-rag)
 - [`run-eval`](#run-eval)
 - [`run-visualization`](#run-visualization)
+- [`run-describe`](#run-describe)
 - [`run-prompt-tuning`](#run-prompt-tuning)
 - [`prepare-benchmark`](#prepare-benchmark)
 - [`run-mcp-server`](#run-mcp-server)
@@ -133,6 +134,23 @@ Guide: [Visualization](../guides/visualize.md).
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
 
+## `run-describe`
+
+Describe an index namespace (methodologies, servable strategies, indices, build record, registry) and optionally export its graph.
+
+Guide: [Inspect and export](../guides/inspect.md). Also takes the [provider flags](#provider-flags).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--suffix` | — | Index suffix to describe (default: the config's processing.document_parsing.index_value, else 'default'). |
+| `--output-path` | — | Also export the namespace's graph to this file (entities, relationships, communities, claims, with the text units and documents they cite). |
+| `--export-format` | `jsonl` | Export format: jsonl (one record per line, every stored field but the vectors) or graphml (entities as nodes, relationships as edges, communities as nodes linked to their parent). |
+| `--max-items` | — | Export at most this many items of each kind (default: all). |
+| `--include-text` | off | Export each text unit's text too (jsonl only). |
+| `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
+| `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
+| `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+
 ## `run-prompt-tuning`
 
 Generate domain-adapted custom_prompts from a corpus sample.
@@ -197,7 +215,7 @@ Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider
 
 ## Provider flags
 
-Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`, `prepare-benchmark`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
+Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-describe`, `run-prompt-tuning`, `prepare-benchmark`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
 
 | Flag | Default | Description |
 |---|---|---|
