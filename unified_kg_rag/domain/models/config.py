@@ -18,6 +18,8 @@ from pydantic import (
     ConfigDict,
     Field,
     ModelWrapValidatorHandler,
+    NonNegativeFloat,
+    PositiveFloat,
     PrivateAttr,
     SecretStr,
     StringConstraints,
@@ -1269,9 +1271,18 @@ class OpenSearchConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_anonymous_auth(self) -> "OpenSearchConfig":
-        if self.allow_anonymous and (self.use_iam or self.username):
+        basic = bool(self.username or self.password)
+        if self.allow_anonymous and (self.use_iam or basic):
             raise ValueError(
                 "allow_anonymous cannot be combined with use_iam or username/password"
+            )
+        # IAM signing replaces basic auth: the credentials would be ignored.
+        if self.use_iam and basic:
+            raise ValueError(
+                "use_iam cannot be combined with username/password: requests "
+                "are SigV4-signed and the basic-auth credentials would be "
+                "ignored (unset UKR__AWS__OPENSEARCH__USERNAME/PASSWORD, or "
+                "set use_iam: false)"
             )
         return self
 
@@ -2584,10 +2595,10 @@ class CommunityDetectionConfig(BaseModel):
             "which cost global search accuracy in testing."
         ),
     )
-    auto_resolution_candidates: list[float] = Field(
+    auto_resolution_candidates: list[PositiveFloat] = Field(
         default_factory=lambda: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0],
         description="Resolution values swept when auto_resolution is enabled; the "
-        "one maximizing modularity is chosen.",
+        "one maximizing modularity is chosen. Each must be above 0.",
     )
     auto_resolution_max_nodes: int = Field(
         default=10000,
@@ -3681,7 +3692,7 @@ class FusionConfig(BaseModel):
             "[-3.75, +1.5] and -2.25 [-5.25, +0.5])."
         ),
     )
-    fusion_weights: dict[str, float] = Field(
+    fusion_weights: dict[str, NonNegativeFloat] = Field(
         default_factory=dict,
         description=(
             "Per-source-bucket weights: reciprocal rank fusion scales each "
@@ -3699,7 +3710,8 @@ class FusionConfig(BaseModel):
             "fused within each), ppr (ppr_passages, ppr_seed_text_units, "
             "ppr_facts) and tree (tree_text_units, tree_summaries, "
             "tree_graph_summaries, tree_graph_text_units). A "
-            "bucket without a key weighs 1.0 (the default: none). A weight on "
+            "bucket without a key weighs 1.0 (the default: none); a weight is "
+            "0 or more (0 drops the bucket's contribution). A weight on "
             "the former bucket opensearch_all applies to vector_all, with a "
             "warning; one on the retired opensearch_community_reports, "
             "opensearch_candidate_community_reports or "

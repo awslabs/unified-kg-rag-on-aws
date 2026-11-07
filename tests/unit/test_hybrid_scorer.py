@@ -118,6 +118,18 @@ class TestRenamedFusionBuckets:
         assert "'opensearch_all' is renamed" in caplog.text
         assert "'vector_all'" in caplog.text
 
+    @pytest.mark.parametrize("weight", [-1.0, -0.01])
+    def test_a_negative_weight_is_refused(self, weight: float) -> None:
+        # It would subtract a bucket's ranks from the fused score.
+        with pytest.raises(ValueError, match="greater than or equal to 0"):
+            Config.model_validate(
+                {"search": {"fusion": {"fusion_weights": {"text_units": weight}}}}
+            )
+        # 0 turns the bucket off.
+        Config.model_validate(
+            {"search": {"fusion": {"fusion_weights": {"text_units": 0.0}}}}
+        )
+
     def test_the_new_name_wins_over_the_old_one(self) -> None:
         weights = {"opensearch_all": 2.0, "vector_all": 0.5}
         config = Config.model_validate(

@@ -336,6 +336,10 @@ def test_local_preset_skips_anonymous_access_for_authenticated_opensearch() -> N
     config = Config(backend="local", aws={"opensearch": {"username": "admin"}})
     assert config.aws.opensearch.allow_anonymous is False
     assert config.aws.opensearch.username == "admin"
+    # A password alone (the username from elsewhere) counts too: the preset
+    # no longer meets it with anonymous access, which refuses it.
+    config = Config(backend="local", aws={"opensearch": {"password": "pw"}})
+    assert config.aws.opensearch.allow_anonymous is False
 
 
 def test_preset_does_not_mutate_its_template() -> None:

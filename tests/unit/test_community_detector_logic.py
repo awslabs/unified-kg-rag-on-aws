@@ -2070,3 +2070,10 @@ def test_isolated_entities_do_not_decide_the_hierarchy(isolated: int) -> None:
         graph.add_node(f"x{i}", name=f"X{i}")
     partitions, _ = build_hierarchy(graph, Config().graph.community_detection)
     assert len(partitions) == 1
+
+
+@pytest.mark.parametrize("candidate", [0.0, -0.5])
+def test_auto_resolution_candidates_must_be_positive(candidate: float) -> None:
+    # Leiden takes a resolution above 0; the sweep would fail on each level.
+    with pytest.raises(ValidationError, match="greater than 0"):
+        CommunityDetectionConfig(auto_resolution_candidates=[1.0, candidate])

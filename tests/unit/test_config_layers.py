@@ -215,11 +215,30 @@ def test_each_env_override_survives_every_flag_combination(
     path = {"none": None, "image": _IMAGE_CONFIG, "local": local_file}[config_file]
     raw, expected = _SAMPLES[env_var]
     monkeypatch.setenv(env_var, raw)
+    if config_file == "image" and env_var in _BASIC_AUTH_VARS:
+        # The image signs with IAM, which a username or password beside it
+        # is refused with (test below): basic auth turns IAM off.
+        monkeypatch.setenv("UKR__AWS__OPENSEARCH__USE_IAM", "false")
     loaded = _load(path)
     assert _get(loaded, _path(env_var)) == expected
     for args in _flag_namespaces():
         config = apply_provider_arguments(loaded, args)
         assert _get(config, _path(env_var)) == expected, args
+
+
+_BASIC_AUTH_VARS = frozenset(
+    {"UKR__AWS__OPENSEARCH__USERNAME", "UKR__AWS__OPENSEARCH__PASSWORD"}
+)
+
+
+@pytest.mark.parametrize("env_var", sorted(_BASIC_AUTH_VARS))
+def test_basic_auth_on_the_iam_image_config_is_refused(
+    env_var: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The signed requests would ignore the credentials.
+    monkeypatch.setenv(env_var, _SAMPLES[env_var][0])
+    with pytest.raises(ValueError, match="use_iam cannot be combined"):
+        _load(_IMAGE_CONFIG)
 
 
 def test_env_wins_over_the_file(

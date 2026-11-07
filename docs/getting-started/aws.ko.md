@@ -125,6 +125,9 @@ Functions로 수집하면 `.md` / `.html` 파일은 경고와 함께 건너뛰�
    UKR__AWS__OPENSEARCH__PASSWORD=your_opensearch_password
    ```
 
+   인증 방식은 하나만 씁니다. `use_iam: true`와 사용자 이름이나 비밀번호를 함께 설정하면 서명한 요청이 이를 무시하므로
+   설정 검증에서 실패합니다.
+
 ## IAM 권한
 
 CLI를 실행하는 주체에는 Bedrock(설정한 모델 ID와 임베딩에 대한 `InvokeModel`,

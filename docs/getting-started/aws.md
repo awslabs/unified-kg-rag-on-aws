@@ -136,6 +136,9 @@ model in the image (a task in the private VPC cannot download it). The image's
    UKR__AWS__OPENSEARCH__PASSWORD=your_opensearch_password
    ```
 
+   One method only: `use_iam: true` with a username or password set fails
+   validation, since the signed requests would ignore them.
+
 ## IAM permissions
 
 The principal running the CLIs needs Bedrock (`InvokeModel`,
