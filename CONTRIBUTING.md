@@ -138,8 +138,8 @@ detect-secrets, which scans ASH's file list, finds nothing: run it from a clone 
 
 ### Pins Dependabot does not move
 
-[Dependabot](./.github/dependabot.yml) updates both uv locks, the SHA-pinned workflow actions and the local store
-images in `docker/compose.local.yaml`. These pins it cannot read; bump them by hand, together where they must match:
+[Dependabot](./.github/dependabot.yml) updates both uv locks, the console's npm lock (`console/web`), the SHA-pinned
+workflow actions and the local store images in `docker/compose.local.yaml`. These pins it cannot read; bump them by hand, together where they must match:
 
 - The uv version, `version: "0.12.23"` under every `astral-sh/setup-uv` step in `.github/workflows/` (Dependabot moves
   the action's SHA, not this input), and the `ghcr.io/astral-sh/uv` image `docker/Dockerfile` copies uv from
