@@ -237,6 +237,9 @@ def _structural(args: argparse.Namespace, as_json: bool) -> None:
         counts = structural.prepare(
             args.output_directory, seed=args.seed, size=args.size
         )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Benchmark preparation interrupted by user.[/yellow]")
+        sys.exit(EXIT_INTERRUPTED)
     except EvaluationException as e:
         usage_error(str(e))
     except OSError as e:
