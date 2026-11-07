@@ -23,6 +23,7 @@ from langchain_core.exceptions import OutputParserException
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
+from tests.fixtures.fakes.retrievers import StaticRetriever, hit
 from unified_kg_rag.adapters.aws import neptune as neptune_module
 from unified_kg_rag.adapters.aws.neptune import NeptuneClient
 from unified_kg_rag.adapters.evaluators.base import BaseGraphRAGEvaluator
@@ -30,7 +31,6 @@ from unified_kg_rag.adapters.llm.langchain import RobustXMLOutputParser
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
-from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
@@ -42,7 +42,6 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
-    RetrievalResult,
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
@@ -71,29 +70,10 @@ def _assert_no_secret(caplog: pytest.LogCaptureFixture) -> None:
         assert fragment not in text, text
 
 
-class _FakeRetriever:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.fail = fail
-
-    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
-        return IndexLimits()
-
-    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-        if self.fail:
-            raise RuntimeError("backend unavailable")
-        return [
-            RetrievalResult(
-                content="Vendor and Buyer signed the supply agreement.",
-                score=0.9,
-                source="doc-1",
-                retriever_type="document",
-                metadata={"id": "doc-1", "text_unit_ids": []},
-            )
-        ]
-
-
 def _chain(config: Config, *, fail: bool = False) -> GraphRAGChain:
-    retriever = _FakeRetriever(fail=fail)
+    retriever = StaticRetriever(
+        [hit("Vendor and Buyer signed the supply agreement.")], fail=fail
+    )
     chain = GraphRAGChain(
         config=config,
         model_factory=ScriptedLLMFactory(

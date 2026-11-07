@@ -20,6 +20,7 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from tests.fixtures.fakes.retrievers import StaticRetriever
 from unified_kg_rag.adapters.retrieval.token_manager import (
     EMPTY_CONTEXT_PLACEHOLDER,
     OptimizedContext,
@@ -240,19 +241,11 @@ def test_sources_empty_when_model_saw_no_context(config: Config) -> None:
 # --------------------------------------------------------------------------- #
 
 
-class _FakeRetriever:
-    def __init__(self, results: list[RetrievalResult]) -> None:
-        self._results = results
-
-    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
-        return [r.model_copy(deep=True) for r in self._results]
-
-
 async def test_full_chain_sources_are_budgeted_selection_without_vectors(
     config: Config,
 ) -> None:
     hits = [_text_result(i, words=100, score=0.9 - i * 0.1) for i in range(4)]
-    retriever = _FakeRetriever(hits)
+    retriever = StaticRetriever(hits)
     chain = _chain(
         config,
         model_factory=ScriptedLLMFactory(lambda _system, _human: _CANNED_ANSWER),

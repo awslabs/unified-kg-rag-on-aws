@@ -24,6 +24,7 @@ import json
 
 import pytest
 
+from tests.fixtures.fakes.gremlin import RecordingTraversal
 from unified_kg_rag.adapters.storage.neptune_codec import (
     community_properties,
     item_properties,
@@ -33,20 +34,6 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
 from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]
-
-
-class RecordingTraversal:
-    """Chainable fake that records every step name it receives."""
-
-    def __init__(self, calls: list[str]) -> None:
-        self._calls = calls
-
-    def __getattr__(self, name: str):
-        def _step(*args, **kwargs):
-            self._calls.append(name)
-            return self
-
-        return _step
 
 
 @pytest.fixture

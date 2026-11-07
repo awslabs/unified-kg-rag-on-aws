@@ -74,6 +74,38 @@ class FakeRetriever:
         ]
 
 
+def hit(content: str, source: str = "doc-1", score: float = 0.9) -> RetrievalResult:
+    """One document hit, as a document retriever returns it."""
+    return RetrievalResult(
+        content=content,
+        score=score,
+        source=source,
+        retriever_type="document",
+        metadata={"id": source, "text_unit_ids": []},
+    )
+
+
+class StaticRetriever:
+    """Answers every query with copies of ``results`` (or raises
+    ``RuntimeError("backend unavailable")`` with ``fail``); records the
+    queries in ``calls``. For the chain tests that need a retriever, not a
+    store."""
+
+    def __init__(self, results: list[RetrievalResult], *, fail: bool = False) -> None:
+        self.results = results
+        self.fail = fail
+        self.calls: list[SearchQuery] = []
+
+    async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+        return IndexLimits()
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        self.calls.append(query)
+        if self.fail:
+            raise RuntimeError("backend unavailable")
+        return [r.model_copy(deep=True) for r in self.results]
+
+
 def opensearch_fields_for(config: Config, prefixes: Collection[str]) -> FilterFields:
     """The filter keys the OpenSearch indices of ``prefixes`` declare: what
     ``OpenSearchRetriever.filter_fields_for`` answers, for a fake standing in
