@@ -121,8 +121,19 @@ async def settle(tasks: Sequence[asyncio.Future[Any]], within: float | None) -> 
 
 
 # The modules the forkserver imports when it starts (process_pool's
-# ``preload``), so each worker it forks has them already.
+# ``preload`` and preload_in_forkserver's), so each worker it forks has them
+# already.
 _FORKSERVER_PRELOAD: list[str] = []
+
+
+def preload_in_forkserver(*modules: str) -> None:
+    """Have the forkserver import ``modules`` when it starts, whichever
+    pool starts it: a module whose tasks run in a :func:`process_pool`
+    registers itself when it is imported, before any pool starts. The
+    server starts with the first pool of the process and reads the list
+    once, so a pool whose modules only its own ``preload`` named imports
+    them per worker when an earlier pool started the server."""
+    _FORKSERVER_PRELOAD.extend(m for m in modules if m not in _FORKSERVER_PRELOAD)
 
 
 def process_pool(
@@ -149,9 +160,10 @@ def process_pool(
     behind ``if __name__ == "__main__":`` (the console scripts do).
 
     ``preload`` names the modules the tasks live in: the forkserver imports
-    them once, when it starts (the first pool of the process), and every
-    worker forked from it has them, so a pool does not pay their import per
-    worker (seconds for the ingestion modules).
+    them once, when it starts (the first pool of the process), with those
+    :func:`preload_in_forkserver` registered, and every worker forked from
+    it has them, so a pool does not pay their import per worker (seconds
+    for the ingestion modules).
     """
     method = (
         "forkserver"
@@ -159,11 +171,12 @@ def process_pool(
         else "spawn"
     )
     context = multiprocessing.get_context(method)
-    if method == "forkserver" and preload:
+    if method == "forkserver":
         # Read when the server starts; a pool after that finds its modules
-        # there if an earlier one named them, else imports them per worker.
-        _FORKSERVER_PRELOAD.extend(m for m in preload if m not in _FORKSERVER_PRELOAD)
-        context.set_forkserver_preload(list(_FORKSERVER_PRELOAD))
+        # there if they were registered by then, else imports them per worker.
+        preload_in_forkserver(*preload)
+        if _FORKSERVER_PRELOAD:
+            context.set_forkserver_preload(list(_FORKSERVER_PRELOAD))
     return ProcessPoolExecutor(
         max_workers=max_workers,
         mp_context=context,

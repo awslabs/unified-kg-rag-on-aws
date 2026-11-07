@@ -1104,7 +1104,8 @@ From a `main` checkout (formats and keys no release had):
   `langchain-openai` as the security floor of the copy ragas depends on (#620).
 - The document deduplication and fuzzy entity matching worker processes start from a forkserver (`spawn` where
   the platform has none) instead of forking the run, whose I/O and client-pool threads may hold a lock the forked
-  worker would wait on forever; see *Upgrading* for scripts (#628).
+  worker would wait on forever; see *Upgrading* for scripts (#628). The forkserver imports both pools' modules
+  whichever starts it (the second pool's workers each imported theirs again).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch

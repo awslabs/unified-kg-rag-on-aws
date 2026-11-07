@@ -15,11 +15,16 @@ from unified_kg_rag.shared.exceptions import ConfigurationError
 from unified_kg_rag.shared.utils import default_max_workers
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
+    preload_in_forkserver,
     process_pool,
     shut_down_after,
 )
 
 logger = get_logger(__name__)
+
+# Its pool's tasks live here: imported by the forkserver whichever pool of
+# the run (document loading, graph resolution) starts it.
+preload_in_forkserver(__name__)
 
 
 def compute_minhash(

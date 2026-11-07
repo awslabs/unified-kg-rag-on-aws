@@ -35,11 +35,16 @@ from unified_kg_rag.shared import GraphError, get_logger
 from unified_kg_rag.shared.utils import entity_key, text_digest
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
+    preload_in_forkserver,
     process_pool,
     shut_down_after,
 )
 
 logger = get_logger(__name__)
+
+# Its pool's tasks live here: imported by the forkserver whichever pool of
+# the run (document loading, graph resolution) starts it.
+preload_in_forkserver(__name__)
 
 # Emit a progress log line every N completed items in the resolver's parallel
 # loop. The resolver was historically the stage that could run for hours while
