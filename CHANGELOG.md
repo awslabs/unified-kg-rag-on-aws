@@ -193,6 +193,11 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   `--source-directory`. An abbreviated flag is rejected (exit 2) (#333).
 - `run-ingestion --repair-metadata` is removed (it repaired nothing): use `--verify-metadata` and `--force-rebuild`
   or a new `--pipeline-id` (#248).
+- `run-rag --use-memory` is removed (an `--interactive` session always keeps its memory and a single `--query` has
+  none), and `run-rag` / `run-eval --enable-thinking` (the default Claude 5.x models always reason: tune their depth
+  with `aws.bedrock.default_effort` / `fast_effort`; from Python, `RAGInput.enable_thinking` still turns thinking on
+  for a model that opts in). Either flag fails with exit 2 saying so; run-eval results no longer record
+  `enable_thinking` (#(PR)).
 - Exit codes: `2` for a usage or configuration error before any work (also one met while running), `1` for a failed
   run, `130` for Ctrl-C, `143` for SIGTERM (#333, #344).
 - `--output-format json` prints one JSON document on stdout (a status document on failure, argparse errors included)
@@ -1050,9 +1055,6 @@ From a `main` checkout (formats and keys no release had):
   uses an S3 Bucket Key (#617).
 
 ### Deprecated
-- `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and will be removed: the default Claude 5.x
-  models always reason, so tune their depth with `aws.bedrock.default_effort` / `fast_effort`. It still turns
-  thinking on for models that opt in (#577).
 
 ### Fixed
 Bugs present in 0.2.3.

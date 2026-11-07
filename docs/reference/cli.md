@@ -70,9 +70,7 @@ Guide: [Querying](../guides/query.md). Also takes the [provider flags](#provider
 | `--interactive`, `-i` | off | Launch interactive chat mode for continuous conversation (always 'rag' mode, memory on; not with --output-format json). |
 | `--mode` | `rag` | Set the execution mode: 'rag' for full generation, 'search' for retrieval only (a single --query only; --interactive always generates). |
 | `--conversation-id` | — | Name the conversation. Memory is kept in this process only: it carries over between --interactive turns, not between separate run-rag invocations. |
-| `--use-memory` | off | Enable conversation memory, kept in this process only (auto-enabled in interactive mode; a single --query starts with no history). |
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
-| `--enable-thinking` | off | (deprecated) Enable thinking mode for language model reasoning. No-op for models that always reason (Claude 4.7+ / 5.x, the defaults, and OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
 | `--search-strategy` | `auto` | Choose the search strategy. One of `auto`, `drift`, `global`, `local`, `simple`, `mix`, `hybrid`, `naive`, `iterative`, `ppr`, `tree`. |
 | `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
 | `--top-k` | `10` | Set the maximum number of search results. |
@@ -101,7 +99,6 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 | `--judge-model` `MODEL_ID` | — | Model of the LLM judges for this run (models.roles.evaluation): the pairwise judge and the ragas/assertion evaluators. |
 | `--output-directory` | — | Directory to save evaluation results (default: evaluation.outputs_directory), in a subdirectory of its own per run-eval invocation, run_<timestamp>_<id> (evaluation.run_subdirectories). Accepts a local path or an s3://bucket/prefix/ URI (results are uploaded after the run; a failed upload exits non-zero). |
 | `--suffix` | — | Index suffix to query (default: the config's processing.document_parsing.index_value, as ingestion writes, else 'default'); must match the index_value the corpus was ingested with. |
-| `--enable-thinking` | off | (deprecated) Enable thinking mode for language model reasoning. No-op for models that always reason (Claude 4.7+ / 5.x, the defaults, and OpenAI GPT); tune their depth with aws.bedrock.default_effort / fast_effort in the config. |
 | `--search-strategy` | `auto` | Search strategy, or a comma-separated list (e.g. local,mix,global) to answer the same queries with each and compare them pairwise against the first. Give the flag once: a second one is a usage error. |
 | `--search-type` | `hybrid` | Search method: hybrid (default) fuses a lexical (BM25) and a vector (embedding kNN) search of each index, lexical and vector run one of them alone. The lexical side searches the first 150 words of the question (a Hangul, Han or Kana character counts as a word) and, on OpenSearch, tolerates typos only in questions of up to 10 words with no Hangul, Han or Kana; the vector side embeds the whole question. |
 | `--top-k` | `10` | Set the maximum number of search results. |
@@ -125,7 +122,7 @@ Guide: [Evaluation](../guides/evaluate.md). Also takes the [provider flags](#pro
 
 Render graph visualizations from exported data (no ingestion).
 
-Guide: [Visualization](../guides/visualize.md). Also takes the [provider flags](#provider-flags).
+Guide: [Visualization](../guides/visualize.md).
 
 | Flag | Default | Description |
 |---|---|---|
@@ -200,7 +197,7 @@ Guide: [MCP server](../guides/mcp.md). Also takes the [provider flags](#provider
 
 ## Provider flags
 
-Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-visualization`, `run-prompt-tuning`, `prepare-benchmark`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
+Taken by `run-ingestion`, `run-rag`, `run-eval`, `run-prompt-tuning`, `prepare-benchmark`, `run-mcp-server`. Override the config's provider selection (see docs/guides/local-mode.md).
 
 | Flag | Default | Description |
 |---|---|---|

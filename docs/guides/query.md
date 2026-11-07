@@ -341,8 +341,9 @@ Conversation memory lives in the process (`MemoryManager`, limits in the
   it). Chains share it only through one `MemoryManager(config)` passed as
   `memory_manager=`.
 - Separate `run-rag --query` invocations start with no history, so
-  `--use-memory` and `--conversation-id` do nothing there (`run-rag` logs a
-  WARNING); use `--interactive` for multi-turn from the CLI.
+  `--conversation-id` does nothing there (`run-rag` logs a WARNING); use
+  `--interactive`, which always keeps the session's memory, for multi-turn
+  from the CLI.
 - A follow-up is rewritten from the history as a standalone question before
   retrieval (one `models.roles.query_rewrite` call per turn with history;
   prompt key `query_rewrite`), so "what about its suppliers?" names the

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 
+from unified_kg_rag.application.cli.conventions import add_removed_flag
 from unified_kg_rag.domain.models import (
     Config,
     SearchStrategy,
@@ -76,21 +77,10 @@ class _StrategyListOnce(argparse.Action):
         setattr(namespace, self.dest, values)
 
 
-def warn_deprecated_query_arguments(args: argparse.Namespace) -> None:
-    """Log a WARNING for each deprecated query flag ``args`` sets (call it
-    once logging is set up)."""
-    if getattr(args, "enable_thinking", False):
-        logger.warning(
-            "--enable-thinking is deprecated and will be removed: the default "
-            "models (Claude 5.x) always reason, so it has no effect on them. "
-            "Tune their depth with aws.bedrock.default_effort / fast_effort."
-        )
-
-
 def add_query_arguments(
     parser: argparse.ArgumentParser, *, multiple_strategies: bool = False
 ) -> None:
-    """Add the index suffix, thinking, strategy, search type and width flags.
+    """Add the index suffix, strategy, search type and width flags.
 
     With ``multiple_strategies`` (run-eval), ``--search-strategy`` takes a
     comma-separated list and parses to a list of names.
@@ -102,15 +92,11 @@ def add_query_arguments(
         "processing.document_parsing.index_value, as ingestion writes, else "
         "'default'); must match the index_value the corpus was ingested with",
     )
-    parser.add_argument(
+    add_removed_flag(
+        parser,
         "--enable-thinking",
-        action="store_true",
-        help=(
-            "(deprecated) Enable thinking mode for language model reasoning. "
-            "No-op for models that always reason (Claude 4.7+ / 5.x, the "
-            "defaults, and OpenAI GPT); tune their depth with "
-            "aws.bedrock.default_effort / fast_effort in the config"
-        ),
+        "the default models (Claude 5.x) always reason; tune their depth with "
+        "aws.bedrock.default_effort / fast_effort in the config",
     )
     if multiple_strategies:
         parser.add_argument(

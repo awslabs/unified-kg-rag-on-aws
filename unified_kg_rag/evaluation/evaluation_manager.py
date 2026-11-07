@@ -139,7 +139,6 @@ def _require_eval_extra(evaluator_type: EvaluatorType) -> None:
 _WARM_UP_QUESTION = "What does the indexed collection cover?"
 _WARM_UP_KEYS = (
     "suffix",
-    "enable_thinking",
     "search_strategy",
     "search_type",
     "top_k",

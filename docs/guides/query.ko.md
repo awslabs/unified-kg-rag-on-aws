@@ -301,9 +301,9 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
   `conversation_id`를 다시 쓰는 `GraphRAGChain` 하나의 호출 사이에서 이어집니다(다른
   테넌트나 사용자의 턴은 섞이지 않음). 체인끼리는 같은 `MemoryManager(config)`를
   `memory_manager=`로 넘겨야만 공유합니다.
-- `run-rag --query`를 따로 실행하면 매번 이력 없이 시작하므로 `--use-memory`와
-  `--conversation-id`가 효과가 없습니다(`run-rag`가 WARNING을 남김). CLI에서 여러 턴을
-  이어 가려면 `--interactive`를 쓰세요.
+- `run-rag --query`를 따로 실행하면 매번 이력 없이 시작하므로 `--conversation-id`가
+  효과가 없습니다(`run-rag`가 WARNING을 남김). CLI에서 여러 턴을 이어 가려면 세션의
+  메모리를 늘 유지하는 `--interactive`를 쓰세요.
 - 검색 전에 후속 질문을 대화 이력으로 독립된 질문으로 다시 씁니다(이력이 있는 턴마다
   `models.roles.query_rewrite` 호출 한 번, 프롬프트 키 `query_rewrite`). 그래서 "그 회사의
   공급업체는?"도 앞선 턴의 엔티티 이름이 들어간 질문이 됩니다. 재작성은 최근

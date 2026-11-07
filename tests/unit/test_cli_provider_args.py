@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The provider flags of run-ingestion, run-rag, run-eval, run-prompt-tuning
-and run-visualization.
+"""The provider flags of run-ingestion, run-rag, run-eval and
+run-prompt-tuning (run-visualization calls no model or store: it has none).
 
 Parsing only, plus the runners' config loading: nothing is built.
 """
@@ -36,8 +36,16 @@ _PARSERS = {
         ["--data-path", "eval.json"],
     ),
     "run-prompt-tuning": (run_prompt_tuning._build_parser, ["--source-directory", "s"]),
-    "run-visualization": (run_visualization._build_parser, ["--data-path", "v.json"]),
 }
+
+
+def test_run_visualization_takes_no_provider_flag() -> None:
+    # It renders exported data: a provider flag would change nothing.
+    with pytest.raises(SystemExit) as stopped:
+        run_visualization._build_parser().parse_args(
+            ["--data-path", "v.json", "--backend", "local"]
+        )
+    assert stopped.value.code == 2
 
 
 @pytest.mark.parametrize("cli", sorted(_PARSERS))

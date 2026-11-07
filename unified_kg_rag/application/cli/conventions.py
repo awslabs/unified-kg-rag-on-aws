@@ -114,6 +114,25 @@ class ArgumentParser(argparse.ArgumentParser):
         usage_error(message)
 
 
+def add_removed_flag(parser: argparse.ArgumentParser, flag: str, reason: str) -> None:
+    """Make ``flag``, removed from this release, a usage error (exit 2) that
+    says why and what replaces it, instead of argparse's "unrecognized
+    arguments"; it is left out of ``--help``. It takes no value: a value
+    after it is then the unknown argument argparse names."""
+
+    class _Removed(argparse.Action):
+        def __call__(self, parser: Any, *_: Any) -> None:
+            parser.error(f"{flag} was removed: {reason}")
+
+    parser.add_argument(
+        flag,
+        nargs=0,
+        action=_Removed,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+
+
 def exits_on_sigterm(main: Callable[_P, _R]) -> Callable[_P, _R]:
     """Decorate a CLI ``main``: SIGTERM exits it with ``128 + SIGTERM`` (143),
     running ``finally`` blocks on the way out, and Ctrl-C (SIGINT) with 130.

@@ -64,7 +64,6 @@ from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
     positive_int,
     query_suffix,
-    warn_deprecated_query_arguments,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.application.retrieval.rag_chain import (
@@ -1251,7 +1250,6 @@ class EvaluationRunner:
                 eval_data_path=eval_data_path,
                 base_metadata={
                     "suffix": query_suffix(self.args, self.config),
-                    "enable_thinking": self.args.enable_thinking,
                     # A comparison sets each run's strategy itself (below).
                     "search_strategy": None if comparing else strategies[0],
                     "search_type": self.args.search_type,
@@ -1780,7 +1778,6 @@ def main() -> None:
                 args,
             )
         setup_logging(config, stream=sys.stderr if json_output(args) else None)
-        warn_deprecated_query_arguments(args)
         if args.verbose:
             logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)
 

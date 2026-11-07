@@ -136,7 +136,7 @@ The console prints the same summary.
   included; regions, endpoints, credentials, paths, timeouts and other
   operational knobs left out), so the same evaluation hashes the same in
   every environment. The `run-eval` query flags (`--suffix`, `--top-k`,
-  `--search-type`, `--retrieval-multiplier`, `--enable-thinking`) are not
+  `--search-type`, `--retrieval-multiplier`) are not
   configuration: they are in the CLI arguments, not in the hash;
 - `index`: per queried suffix, the ingestion run that last wrote its vector
   indices (`pipeline_id`, `mode`, `built_at`, `documents`, the extraction
@@ -364,7 +364,7 @@ The full rules of `--from-results`, `--baseline-results` and `--fail-if`
   invocation's: runs of several `run_id`s (or one with and one without; or,
   saved before `run_id` was recorded, more runs than their
   `cli_args.repeats`), or runs that differ in a query flag (`suffix`,
-  `top_k`, `search_type`, `retrieval_multiplier`, `enable_thinking`),
+  `top_k`, `search_type`, `retrieval_multiplier`),
   `retrieval_config_sha256`, `git_sha`, the `index` build or the answer
   model are refused (exit 2) by `--from-results` and `--baseline-results`
   unless `--pool-runs` is given, which pools them with a warning naming what
