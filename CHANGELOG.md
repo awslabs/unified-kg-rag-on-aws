@@ -908,6 +908,10 @@ From a `main` checkout (formats and keys no release had):
   printed a header alone, and an answer is followed by one line naming its source files and counting its graph
   elements; `--verbose` lists every source with its score and text, in `--interactive` mode too (which printed
   the details on every answer) (#PR).
+- A LightRAG keyword extraction whose answer is no usable JSON fails naming the model role and model that answered
+  and the three ways out (`models.roles.entity_extraction`, `processing.ignore_errors`, `--disable-query-processing`)
+  instead of the parser's `Expecting value: line 1 column 1` (a `LanguageModelError` now, not a
+  `json.JSONDecodeError`) (#PR).
 - `run-ingestion` failures say why: a run a stage failed names the first failed stage's error (it named the stage
   alone; the cause was only in the logs) and prints the next step, the pipeline id to resume with; and a run that
   writes vectors embeds one probe text before its first model stage and stops (exit 2) when the model returns

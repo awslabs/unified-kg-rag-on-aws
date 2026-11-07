@@ -36,6 +36,7 @@ from unified_kg_rag.domain.prompts import (
     KeywordsExtractionPrompt,
     TranslationPrompt,
 )
+from unified_kg_rag.shared import LanguageModelError
 
 pytestmark = pytest.mark.unit
 
@@ -216,10 +217,11 @@ async def test_keyword_failure_propagates_without_ignore_errors(
     factory.outputs[KeywordsExtractionPrompt] = "not json"
     chain = _chain_with(same_language_config, factory)
     chain.ignore_errors = False
-    with pytest.raises(json.JSONDecodeError):
+    with pytest.raises(LanguageModelError, match="model role entity_extraction") as e:
         await chain._process_query_step(
             {"query": "q", "resolved_strategy": SearchStrategy.MIX}
         )
+    assert isinstance(e.value.__cause__, json.JSONDecodeError)
 
 
 async def test_auto_routed_to_local_extracts_entities(
