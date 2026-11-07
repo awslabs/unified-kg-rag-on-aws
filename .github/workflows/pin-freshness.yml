@@ -3,12 +3,14 @@ name: pin-freshness
 # Weekly check of the pins Dependabot does not move (the data-plane base
 # image and uv image digests, the apt pins, the ADOT collector sidecar, the
 # AWS CDK CLI, the Trivy image): scripts/check_pins.py compares each with
-# upstream. The data-plane image is also built and scanned with Trivy as the
-# quality workflow's docker job scans it, so a fix released after the last
-# pull request (a Debian security update the base digest lacks, say) is
-# reported before the next pull request fails on it. When a pin is behind or
-# the scan finds a fixable HIGH or CRITICAL vulnerability, the report goes
-# into an open issue (one, updated each week until it is resolved).
+# upstream. The data-plane image with the opt-in extras (unstructured and
+# eval: a superset of the default image's packages) is also built and scanned
+# with Trivy as the quality workflow's docker-unstructured job scans it, so a
+# fix released after the last pull request (a Debian security update the base
+# digest lacks, say) is reported before the next pull request fails on it.
+# When a pin is behind, the scan finds a fixable HIGH or CRITICAL
+# vulnerability or the image does not build, the report goes into an open
+# issue (one, updated each week until it is resolved).
 
 on:
   schedule:
@@ -25,7 +27,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
       issues: write # open or update the report issue
@@ -51,10 +53,11 @@ jobs:
 
       - name: Build and scan the image
         id: scan
-        # As the quality workflow's docker job, with its pinned Trivy image
-        # (read from there, so there is one pin). Exit 1 from Trivy = a
-        # fixable HIGH or CRITICAL finding (reported below); a build that
-        # fails, or any other Trivy error, fails the job.
+        # As the quality workflow's docker-unstructured job, with its pinned
+        # Trivy image (read from there, so there is one pin). Exit 1 from
+        # Trivy = a fixable HIGH or CRITICAL finding (reported below); a
+        # build that fails is reported too and fails the job (after the
+        # issue step), and any other Trivy error fails the job.
         run: |
           set -o pipefail
           # The docker job's fallback: after a public.ecr.aws 429, pull the
@@ -64,15 +67,24 @@ jobs:
           base_arg=()
           built=false
           for attempt in 1 2 3; do
-            if docker build -f docker/Dockerfile "${base_arg[@]}" -t unified-kg-rag:weekly . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+            if docker build -f docker/Dockerfile "${base_arg[@]}" \
+                --build-arg "UV_EXTRAS=--extra unstructured --extra eval" \
+                -t unified-kg-rag:weekly . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
               built=true
               break
             fi
-            grep -qiE 'toomanyrequests|429 Too Many Requests' "$RUNNER_TEMP/build.log" || exit 1
+            grep -qiE 'toomanyrequests|429 Too Many Requests' "$RUNNER_TEMP/build.log" || break
             base_arg=(--build-arg "BASE_IMAGE=docker.io/library/$base")
             sleep $((attempt * 20))
           done
-          [ "$built" = true ] || exit 1
+          if [ "$built" != true ]; then
+            echo "build_failed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo
+              echo "The data-plane image (with the unstructured and eval extras) does not build: see the weekly run's log ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            } >> "$RUNNER_TEMP/pins.md"
+            exit 1
+          fi
           trivy=$(grep -oE 'aquasec/trivy:[0-9.]+@sha256:[0-9a-f]{64}' .github/workflows/quality.yml | sort -u)
           [ "$(printf '%s\n' "$trivy" | wc -l)" -eq 1 ] || { echo "quality.yml pins more than one Trivy image"; exit 1; }
           set +e
@@ -82,7 +94,7 @@ jobs:
             "$trivy" \
             image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
             --exit-code 1 --ignorefile /trivyignore.yaml --format table \
-            unified-kg-rag:weekly > "$RUNNER_TEMP/scan.txt"
+            --table-mode detailed unified-kg-rag:weekly > "$RUNNER_TEMP/scan.txt"
           status=$?
           set -e
           [ "$status" -le 1 ] || { cat "$RUNNER_TEMP/scan.txt"; exit "$status"; }
@@ -102,7 +114,11 @@ jobs:
           fi
 
       - name: Open or update the issue
-        if: steps.pins.outputs.behind == 'true' || steps.scan.outputs.findings == 'true'
+        # Also after a failed build (the scan step failed, so !cancelled()).
+        if: >-
+          ${{ !cancelled() && (steps.pins.outputs.behind == 'true'
+          || steps.scan.outputs.findings == 'true'
+          || steps.scan.outputs.build_failed == 'true') }}
         env:
           GH_TOKEN: ${{ github.token }}
           TITLE: "Pinned images and tools are behind upstream"
