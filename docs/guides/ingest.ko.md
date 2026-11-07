@@ -43,7 +43,10 @@
 
 실행에는 [방법론 프로필](#방법론-프로필)에 필요한 단계가 들어갑니다. `--enabled-stages`로 단계를
 직접 나열하면 그 목록이 우선합니다. 나열한 단계는 실행하고 나열하지 않은 단계는 실행하지 않으며,
-나열하지 않은 단계 때문에 인덱스에서 빠지는 방법론이 있으면 WARNING으로 알려 줍니다.
+나열하지 않은 단계 때문에 인덱스에서 빠지는 방법론이 있으면 WARNING으로 알려 줍니다. 선택한
+방법론 어느 것도 필요로 하지 않는 단계를 나열하면(`graphrag` 없이 `community_detection`,
+`raptor` 없이 `summary_tree`) 모델을 호출하기 전에 실행을 멈추고(종료 코드 2),
+`indexing.methodologies`(`--methodologies`)에 추가할 방법론을 메시지에 알려 줍니다.
 
 ## 예시
 
@@ -208,8 +211,9 @@ indexing:
   네임스페이스를 재구축하지 않습니다. 이 단계는 저장소만 읽으므로, 업그레이드로 앞 단계의 캐시
   키가 바뀌었어도 네임스페이스를 만든 파이프라인 id로 `--enabled-stages summary_tree`를 실행할
   수 있고 앞 단계는 실행하지 않습니다. 어느 쪽이든 그 실행의 `indexing.methodologies`에 `raptor`가
-  있어야 합니다. `raptor` 없이 `--enabled-stages summary_tree`로 실행하면 트리는 쓰지만 빌드 기록에
-  남기지 않으므로 `tree`는 계속 거절됩니다.
+  있어야 합니다(`run-ingestion --methodologies graphrag,lightrag,raptor --enabled-stages
+  summary_tree`). `raptor` 없이 `--enabled-stages summary_tree`로 실행하면 시작하기 전에
+  거절됩니다.
 - **증분 실행.** 저장된 텍스트 유닛으로 트리를 다시 만들어 교체합니다. 자식이 그대로인 군집은
   저장된 요약을 그대로 쓰고(모델 호출 없음), 군집화는 작은 델타로는 거의 바뀌지 않는 노드 id
   표본에서 시작하므로 대부분의 군집이 살아남습니다. 삭제된 문서의 요약과 그 위의 모든 요약은

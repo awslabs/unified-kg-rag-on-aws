@@ -46,7 +46,10 @@ In run order; `--enabled-stages` / `--resume-from-stage` take the **names**
 A run includes the stages its [methodology profile](#methodology-profiles)
 needs. An explicit `--enabled-stages` list wins: a listed stage runs and an
 unlisted one does not, and a WARNING names each selected methodology that an
-unlisted stage leaves out of the index.
+unlisted stage leaves out of the index. A listed stage that no selected
+methodology needs (`community_detection` without `graphrag`, `summary_tree`
+without `raptor`) stops the run before any model call (exit 2): the message
+names the methodology to add to `indexing.methodologies` (`--methodologies`).
 
 ## Examples
 
@@ -246,9 +249,9 @@ indexing:
   `--enabled-stages summary_tree` run works under the pipeline id that
   built the namespace even when an upgrade changed the earlier stages'
   cache keys, and it runs no earlier stage. Either way `raptor` must be in
-  `indexing.methodologies` of that run: an `--enabled-stages summary_tree`
-  run without it writes a tree but does not record it in the build record,
-  so `tree` is still refused.
+  `indexing.methodologies` of that run (`run-ingestion --methodologies
+  graphrag,lightrag,raptor --enabled-stages summary_tree`): an
+  `--enabled-stages summary_tree` run without it is refused before it starts.
 - **Incremental runs** rebuild the tree from the stored text units and swap
   it in. A cluster whose children are unchanged takes its stored summary (no
   model call); the clustering starts from a sample of the node ids that a

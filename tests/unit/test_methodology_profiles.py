@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models.methodology import (
     methodologies_holding,
 )
 from unified_kg_rag.domain.retrieval import index_prefixes
+from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
 
@@ -236,16 +237,34 @@ def test_an_explicit_stage_list_wins_and_warns(caplog) -> None:
         pipe._initialize_stages()
     assert "enabled stages" not in caplog.text
 
-    # A listed stage no selected methodology needs runs, with a warning.
-    caplog.clear()
+
+def test_a_listed_stage_no_selected_methodology_needs_is_refused() -> None:
+    # It would pay for what no query reads (community reports for a
+    # lightrag-only namespace, a tree the build record does not list):
+    # refused when the pipeline is built, before any model call.
     pipe = _pipeline_for_init(_config(L))
     pipe.pipeline_config.stages_enabled = dict.fromkeys(S, True) | {
         S.DOCUMENT_PARSING: False
     }
-    with caplog.at_level(logging.WARNING):
-        stages, _ = pipe._initialize_stages()
-    assert "community_detection" in {s.name for s in stages}
-    assert "no selected methodology" in caplog.text
+    with pytest.raises(ConfigurationError) as refused:
+        pipe._initialize_stages()
+    message = str(refused.value)
+    assert "Stage 'community_detection'" in message
+    assert "indexing.methodologies: lightrag" in message
+    assert "add graphrag to indexing.methodologies" in message
+    assert "--methodologies lightrag,graphrag" in message
+
+    pipe = _pipeline_for_init(Config())
+    pipe.pipeline_config.stages_enabled = {s: s is S.SUMMARY_TREE for s in S}
+    with pytest.raises(ConfigurationError) as refused:
+        pipe._initialize_stages()
+    assert "Stage 'summary_tree'" in str(refused.value)
+    assert "--methodologies graphrag,lightrag,raptor" in str(refused.value)
+    # With raptor selected the same list runs.
+    pipe = _pipeline_for_init(_config(G, L, R))
+    pipe.pipeline_config.stages_enabled = {s: s is S.SUMMARY_TREE for s in S}
+    stages, _ = pipe._initialize_stages()
+    assert [s.name for s in stages] == ["summary_tree"]
 
 
 # --- config ----------------------------------------------------------------
@@ -981,6 +1000,8 @@ async def test_the_refusal_says_what_adding_the_methodology_costs() -> None:
     assert "include it in indexing.methodologies" in str(refused.value)
     assert "no re-extraction" in str(refused.value)
     assert "--enabled-stages" not in str(refused.value)
+    # The command it gives selects raptor with what the config selects.
+    assert "--methodologies graphrag,lightrag,raptor" in str(refused.value)
     assert "rebuilt" not in str(refused.value)
     # A graph methodology on a raptor-only namespace extracts every unit.
     with pytest.raises(MethodologyNotIndexedError) as refused:

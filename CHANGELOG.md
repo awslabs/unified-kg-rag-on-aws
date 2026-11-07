@@ -661,6 +661,11 @@ From a `main` checkout (formats and keys no release had):
   (#609, #619); `run-eval` refuses one before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only
   among the strategies it serves. A failed read of the record serves that query by the config and is not cached
   (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()` are public (#619).
+  holds and what adding the methodology costs (for `raptor`, the tree alone, with the `run-ingestion
+  --methodologies ... --enabled-stages summary_tree` command that builds it) (#609, #PR); an `--enabled-stages`
+  stage no selected methodology needs (`summary_tree` without `raptor`) stops the run before any model call (exit 2),
+  naming the methodology to add to `indexing.methodologies` (#PR); `run-eval` refuses one
+  before its first answer (exit 2, as `run-rag`) (#613), and `auto` routes only among the strategies it serves.
   Adding a methodology to an incremental namespace rebuilds it once from its stored
   extractions (only the added model calls are new); removing one stops maintaining its artifacts without deleting
   them, and the next run records them gone, one with no document change too; a reset to fewer methodologies keeps

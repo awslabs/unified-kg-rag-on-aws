@@ -90,6 +90,7 @@ from unified_kg_rag.domain.ingestion.methodologies import (
     selected_stages,
     stage_methodologies,
     stage_switched_off,
+    stages_for,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
 from unified_kg_rag.domain.models import (
@@ -106,6 +107,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageType,
     validate_path_segment,
 )
+from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES, Methodology
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
@@ -582,12 +584,25 @@ class DataIngestionPipeline:
                 )
             return False
         if stage_type not in needed:
-            logger.warning(
-                "Stage '%s' is in the run's enabled stages, but no selected "
-                "methodology (indexing.methodologies: %s) needs it: it runs, "
-                "and the index records nothing it builds",
-                stage_type.value,
-                ", ".join(m.value for m in self.config.effective_methodologies),
+            # It would run (and pay its model calls) for an artifact the
+            # build record does not list, so no strategy could read it.
+            selected = [m.value for m in self.config.effective_methodologies]
+            readers = [
+                m.value
+                for m in Methodology
+                if stage_type in stages_for(METHODOLOGY_PROFILES[m].required)
+            ]
+            how = "leave the stage out of --enabled-stages"
+            if readers:
+                flag = ",".join([*selected, readers[0]])
+                how = (
+                    f"add {' or '.join(readers)} to indexing.methodologies "
+                    f"(run-ingestion --methodologies {flag}), or {how}"
+                )
+            raise ConfigurationError(
+                f"Stage '{stage_type.value}' is in the run's enabled stages, but "
+                "no selected methodology needs it (indexing.methodologies: "
+                f"{', '.join(selected)}), so nothing it builds would be read: {how}."
             )
         return True
 
