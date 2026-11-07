@@ -147,6 +147,14 @@ images in `docker/compose.local.yaml`. These pins it cannot read; bump them by h
 - The container base image, the `BASE_IMAGE` ARG default in `docker/Dockerfile` (tag and digest; Dependabot does not
   resolve an ARG in `FROM`).
 - The AWS CDK CLI, `npm install -g aws-cdk@…` in the `iac` job of `quality.yml`, and that job's `node-version`.
+- The ADOT collector sidecar, `COLLECTOR_VERSION` and `COLLECTOR_DIGEST` in `iac/stacks/compute_stack.py`.
+- The Trivy image the `docker` jobs scan with (`aquasec/trivy`, tag and digest, in `quality.yml`).
+
+The weekly [`pin-freshness`](./.github/workflows/pin-freshness.yml) workflow runs `scripts/check_pins.py`, which
+compares the base image, uv, ADOT and CDK CLI pins with upstream and opens (or updates) one issue listing those that
+are behind. The image scan (Trivy, `--severity HIGH,CRITICAL --ignore-unfixed`) fails a pull request on a fixable HIGH or
+CRITICAL finding in either image; bump the pin that clears it, or accept it in
+[`.trivyignore.yaml`](./.trivyignore.yaml) with its reason and an expiry.
 
 ### Tests
 

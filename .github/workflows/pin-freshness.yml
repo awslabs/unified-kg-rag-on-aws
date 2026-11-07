@@ -1,0 +1,61 @@
+name: pin-freshness
+
+# Weekly check of the pins Dependabot does not move (the data-plane base
+# image and uv image digests, the ADOT collector sidecar, the AWS CDK CLI):
+# scripts/check_pins.py compares each with upstream. When one is behind, the
+# report goes into an open issue (one, updated each week until the pins are
+# bumped), so a fixed base image CVE does not wait for someone to look.
+
+on:
+  schedule:
+    - cron: "41 4 * * 1" # Mondays 04:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pin-freshness
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write # open or update the report issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare the pins with upstream
+        id: pins
+        # Exit 1 = a pin is behind (reported below), 2 = a lookup failed
+        # (fails the job, so a broken check does not pass silently).
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python3 scripts/check_pins.py --report "$RUNNER_TEMP/pins.md"
+          status=$?
+          set -e
+          [ "$status" -le 1 ] || exit "$status"
+          echo "behind=$([ "$status" -eq 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/pins.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the issue
+        if: steps.pins.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "Pinned images and tools are behind upstream"
+        run: |
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "in:title \"$TITLE\"" --json number,title \
+            --jq "map(select(.title == env.TITLE)) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/pins.md"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$RUNNER_TEMP/pins.md"
+          fi

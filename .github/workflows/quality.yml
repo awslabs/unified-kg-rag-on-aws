@@ -436,6 +436,32 @@ jobs:
         # The CDK query task runs run-eval, whose default judges need it.
         run: docker run --rm unified-kg-rag:ci python -c "import datasets, langchain_openai, pandas, ragas"
 
+      - name: Check the runtime image layout
+        # No uv and no AWS CLI (the corpus sync is docker/s3_sync.py); the
+        # app user cannot write the venv, only its own directories.
+        run: >-
+          docker run --rm unified-kg-rag:ci sh -c
+          '! command -v uv && ! command -v aws
+          && ! touch /app/.venv/probe 2>/dev/null
+          && touch /app/cache/probe /app/outputs/probe /app/logs/probe
+          && python /usr/local/lib/unified-kg-rag/s3_sync.py --help > /dev/null'
+
+      - name: Scan the image for fixable vulnerabilities
+        # Trivy over the image just built: fails on a HIGH or CRITICAL finding
+        # that has a fix, which a base-image digest or a lock bump clears
+        # (.trivyignore.yaml lists the accepted ones, each with its reason and
+        # expiry). The image is pinned by digest and run directly, not through
+        # trivy-action, whose tags were hijacked in March 2026 (GHSA-69fq-xp46-6x23);
+        # 0.76.1 is a release after it. The vulnerability database is
+        # downloaded at run time.
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$PWD/.trivyignore.yaml:/trivyignore.yaml:ro"
+          aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+          image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
+          --exit-code 1 --ignorefile /trivyignore.yaml unified-kg-rag:ci
+
   docker-unstructured:
     # The image with the opt-in unstructured extra (Markdown and HTML), which
     # also bakes in the spaCy model unstructured tokenizes with: a private
@@ -469,3 +495,13 @@ jobs:
         run: >-
           docker run --rm --network none unified-kg-rag:ci-unstructured
           python -c "import en_core_web_sm; en_core_web_sm.load()"
+
+      - name: Scan the image for fixable vulnerabilities
+        # As in the docker job, over the extra's ~30 more packages.
+        run: >-
+          docker run --rm
+          -v /var/run/docker.sock:/var/run/docker.sock
+          -v "$PWD/.trivyignore.yaml:/trivyignore.yaml:ro"
+          aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+          image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
+          --exit-code 1 --ignorefile /trivyignore.yaml unified-kg-rag:ci-unstructured
