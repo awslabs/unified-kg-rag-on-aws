@@ -219,7 +219,7 @@ class SQLiteQuery:
             select += [f"{e}.source_id" for e in edges] + ["NULL"] * pad
             select.append(str(len(edges)))
         sql = (
-            f"SELECT {', '.join(select)} FROM vertices AS b0 "
+            f"SELECT {', '.join(select)} FROM vertices AS b0 "  # nosec B608 - compiled aliases and ? marks; values bound, statement checked
             + " ".join(joins)
             + " WHERE "
             + " AND ".join(where)
@@ -245,7 +245,7 @@ class SQLiteQuery:
         limit = max(1, request.limit) + 1
         if request.operation == "count":
             return (
-                walk + f"SELECT count(*) FROM (SELECT DISTINCT {picked} FROM w)",
+                f"{walk}SELECT count(*) FROM (SELECT DISTINCT {picked} FROM w)",  # nosec B608 - compiled aliases and ? marks; values bound, statement checked
                 params,
             )
         if request.operation == "tuples":
@@ -254,7 +254,7 @@ class SQLiteQuery:
             ids = ", ".join(f"w.n{index[v]}" for v in request.vars)
             first = f"n{index[request.vars[0]]}"
             return (
-                walk + f"SELECT DISTINCT {ids}, kg_rank(v.props) AS r FROM w "
+                f"{walk}SELECT DISTINCT {ids}, kg_rank(v.props) AS r FROM w "  # nosec B608 - compiled aliases and ? marks; values bound, statement checked
                 f"JOIN vertices AS v ON v.label = ? AND v.id = w.{first} "
                 f"ORDER BY r DESC, {ids} LIMIT ?",
                 [*params, self.label, limit],
@@ -262,7 +262,7 @@ class SQLiteQuery:
         if request.operation == "paths":
             cols = [c for c in columns if c[0] in "pxts"]
             return (
-                walk + f"SELECT DISTINCT {', '.join(cols)}, k FROM w "
+                f"{walk}SELECT DISTINCT {', '.join(cols)}, k FROM w "  # nosec B608 - compiled aliases and ? marks; values bound, statement checked
                 f"ORDER BY k, {', '.join(cols)} LIMIT ?",
                 [*params, limit],
             )
@@ -270,18 +270,19 @@ class SQLiteQuery:
         group = f"n{index[request.group_var]}"
         counted = ", ".join(f"w.n{index[v]}" for v in request.vars)
         if request.group_key is None:
-            inner = f"SELECT DISTINCT w.{group} AS g, {counted} FROM w"
+            # nosemgrep: python.django.security.injection.tainted-sql-string.tainted-sql-string - compiled aliases only
+            inner = f"SELECT DISTINCT w.{group} AS g, {counted} FROM w"  # nosec B608 - compiled aliases and ? marks; values bound, statement checked
             inner_params: list[Any] = []
         else:
             inner = (
-                f"SELECT DISTINCT kg_key(v.props) AS g, {counted} FROM w "
+                f"SELECT DISTINCT kg_key(v.props) AS g, {counted} FROM w "  # nosec B608 - compiled aliases and ? marks; values bound, statement checked
                 f"JOIN vertices AS v ON v.label = ? AND v.id = w.{group}"
             )
             inner_params = [self.label]
         direction = "DESC" if request.order == "desc" else "ASC"
         key = "q.g" if request.group_key is None else "kg_sortable(q.g)"
         return (
-            walk + f"SELECT q.g, count(*) FROM ({inner}) AS q WHERE q.g IS NOT NULL "
+            f"{walk}SELECT q.g, count(*) FROM ({inner}) AS q WHERE q.g IS NOT NULL "  # nosec B608 - compiled aliases and ? marks; values bound, statement checked
             f"GROUP BY q.g ORDER BY count(*) {direction}, {key} LIMIT ?",
             [*params, *inner_params, limit],
         )

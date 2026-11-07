@@ -253,8 +253,9 @@ class SQLiteGraphStore:
                         check_same_thread=False,
                         isolation_level=None,
                     )
+                    # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query, python.lang.security.audit.formatted-sql-query.formatted-sql-query - an int() value
                     connection.execute(
-                        f"PRAGMA busy_timeout = {int(self.timeout_seconds * 1000)}"  # nosemgrep: python.lang.security.audit.formatted-sql-query.formatted-sql-query - int() value
+                        f"PRAGMA busy_timeout = {int(self.timeout_seconds * 1000)}"
                     )
                     connection.execute("PRAGMA query_only = ON")
                 self._read_only = connection
