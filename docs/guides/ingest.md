@@ -68,7 +68,17 @@ run-ingestion --source-directory ./documents --config-path config.yaml \
 # Run only specific stages
 run-ingestion --source-directory ./documents --config-path config.yaml \
   --enabled-stages DOCUMENT_PARSING,TEXT_CHUNKING,GRAPH_EXTRACTION
+
+# Write the namespace tenant-a with LightRAG only, rebuilt from the whole
+# corpus once (query it with run-rag --suffix tenant-a)
+run-ingestion --source-directory ./documents --config-path config.yaml \
+  --suffix tenant-a --methodologies lightrag --reset
 ```
+
+`--suffix`, `--methodologies` and `--reset` set
+`processing.document_parsing.index_value`, `indexing.methodologies` and
+`indexing.reset` for that run only; the banner prints the run's
+**Index Namespace** as `run-rag` does.
 
 ## Resume vs. force-rebuild
 

@@ -291,7 +291,7 @@ def test_rag_runner_suffix_line_names_the_additional_suffix(
     runner = run_rag_chain.RAGChainRunner(
         _rag_parser().parse_args(["-q", "hi", *flags])
     )
-    assert runner._get_suffix_display() == f"[dim]Index/Label Suffix:[/dim] {shown}"
+    assert runner._get_suffix_display() == f"[dim]Index Namespace:[/dim] {shown}"
 
 
 @pytest.mark.parametrize(

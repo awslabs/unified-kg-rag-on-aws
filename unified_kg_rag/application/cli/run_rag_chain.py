@@ -50,6 +50,7 @@ from unified_kg_rag.application.cli.provider_args import (
 )
 from unified_kg_rag.application.cli.query_args import (
     add_query_arguments,
+    namespace_name,
     query_suffix,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
@@ -57,7 +58,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
 )
-from unified_kg_rag.domain.models import Constants, SearchStrategy
+from unified_kg_rag.domain.models import SearchStrategy
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     ConfigurationError,
@@ -328,16 +329,13 @@ class RAGChainRunner:
         )
 
     def _get_suffix_display(self) -> str:
-        """The suffix line: what the store names end in, the index suffix
-        queried plus ``indexing.additional_suffix`` (store_names)."""
+        """The namespace line: what the store names end in, the index suffix
+        queried plus ``indexing.additional_suffix`` (as run-ingestion names
+        the namespace it writes)."""
         chosen = query_suffix(self.args, self.config)
-        suffix = chosen or Constants.DEFAULT_SUFFIX.value
-        if additional := self.config.indexing.additional_suffix:
-            suffix = f"{suffix}-{additional}"
+        name = namespace_name(chosen, self.config)
         color = "orange3" if chosen else "gray"
-        return (
-            f"[dim]Index/Label Suffix:[/dim] [{color}]{markup_safe(suffix)}[/{color}]"
-        )
+        return f"[dim]Index Namespace:[/dim] [{color}]{markup_safe(name)}[/{color}]"
 
     async def run(self) -> None:
         # Only run-ingestion loads the seed graphs.

@@ -58,6 +58,9 @@ Guide: [Ingestion](../guides/ingest.md). Also takes the [provider flags](#provid
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--suffix` | — | Index suffix (namespace) the run writes: processing.document_parsing.index_value (default: the config's, else 'default'). Query it with run-rag/run-eval --suffix. |
+| `--methodologies` `LIST` | — | Comma-separated methodologies to build (graphrag, lightrag, hipporag, raptor): indexing.methodologies. |
+| `--reset` | off | Rebuild the namespace from the whole corpus instead of applying a delta (indexing.reset: true for this run only, so a config file need not be edited back). |
 
 ## `run-rag`
 

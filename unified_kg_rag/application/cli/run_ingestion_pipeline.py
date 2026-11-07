@@ -47,13 +47,15 @@ from unified_kg_rag.application.cli.provider_args import (
     add_provider_arguments,
     apply_provider_arguments,
 )
-from unified_kg_rag.application.config import load_cli_dotenv
+from unified_kg_rag.application.cli.query_args import namespace_name, suffix_arg
+from unified_kg_rag.application.config import load_cli_dotenv, resolve_relative_paths
 from unified_kg_rag.application.ingestion.pipeline import (
     DataIngestionPipeline,
     run_token_usage,
 )
 from unified_kg_rag.domain.ingestion.methodologies import writes_graph_store
 from unified_kg_rag.domain.models import (
+    Config,
     PipelineConfig,
     PipelineContext,
     PipelineStageStatus,
@@ -61,6 +63,7 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     validate_path_segment,
 )
+from unified_kg_rag.domain.models.config import merge_over
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     ConfigurationError,
@@ -73,6 +76,7 @@ from unified_kg_rag.shared import (
     get_logger,
     setup_logging,
 )
+from unified_kg_rag.shared.utils.validation import format_validation_errors
 
 logger = get_logger(__name__)
 
@@ -110,6 +114,45 @@ def _stage_name_arg(value: str) -> str:
         raise argparse.ArgumentTypeError(str(e)) from e
     assert normalized is not None
     return normalized
+
+
+def _methodology_list(value: str) -> list[str]:
+    """A comma-separated methodology list; the configuration validates the
+    names (an unknown one is a usage error naming the valid ones)."""
+    names = [name.strip() for name in value.split(",")]
+    if not all(names):
+        raise argparse.ArgumentTypeError(f"empty methodology name in '{value}'")
+    return names
+
+
+def apply_namespace_arguments(config: Config, args: argparse.Namespace) -> Config:
+    """``config`` with ``--suffix``, ``--methodologies`` and ``--reset``
+    applied (validated as the config file's keys are); ``config`` itself
+    when none is given.
+
+    Raises:
+        ConfigurationError: A value the configuration refuses (an unknown
+            methodology, a selection a switch leaves nothing of).
+    """
+    overrides: dict[str, Any] = {}
+    if suffix := getattr(args, "suffix", None):
+        overrides["processing"] = {"document_parsing": {"index_value": suffix}}
+    indexing: dict[str, Any] = {}
+    if methodologies := getattr(args, "methodologies", None):
+        indexing["methodologies"] = methodologies
+    if getattr(args, "reset", False):
+        indexing["reset"] = True
+    if indexing:
+        overrides["indexing"] = indexing
+    if not overrides:
+        return config
+    try:
+        updated = Config.model_validate(merge_over(config.as_input(), overrides))
+    except ValidationError as e:
+        raise ConfigurationError(format_validation_errors("", e)) from e
+    if config_path := getattr(args, "config_path", None):
+        resolve_relative_paths(updated, config_path)
+    return updated
 
 
 class CommandLineInterface:
@@ -273,6 +316,31 @@ class CommandLineInterface:
             "Repeatable; added to "
             "indexing.retire_source_scopes. Never this run's own scope.",
         )
+        namespace = parser.add_argument_group(
+            "index namespace",
+            "Override what the run writes; each flag applies to this run only.",
+        )
+        namespace.add_argument(
+            "--suffix",
+            type=suffix_arg,
+            help="Index suffix (namespace) the run writes: "
+            "processing.document_parsing.index_value (default: the config's, "
+            "else 'default'). Query it with run-rag/run-eval --suffix",
+        )
+        namespace.add_argument(
+            "--methodologies",
+            type=_methodology_list,
+            metavar="LIST",
+            help="Comma-separated methodologies to build (graphrag, lightrag, "
+            "hipporag, raptor): indexing.methodologies",
+        )
+        namespace.add_argument(
+            "--reset",
+            action="store_true",
+            help="Rebuild the namespace from the whole corpus instead of "
+            "applying a delta (indexing.reset: true for this run only, so a "
+            "config file need not be edited back)",
+        )
         add_config_arguments(parser)
         add_output_format_argument(parser)
         add_provider_arguments(parser)
@@ -306,9 +374,8 @@ class IngestionPipelineRunner:
     def __init__(self, args: argparse.Namespace):
         self.args = args
         with exit_on_config_error():
-            self.config = apply_provider_arguments(
-                load_cli_config(args),
-                args,
+            self.config = apply_namespace_arguments(
+                apply_provider_arguments(load_cli_config(args), args), args
             )
         retired = getattr(args, "retire_source_scope", None) or []
         if retired:
@@ -391,8 +458,14 @@ class IngestionPipelineRunner:
                 f"'{markup_safe(self.args.source_directory.absolute())}'",
             )
 
+        parsing = self.config.processing.document_parsing
+        namespace = namespace_name(parsing.index_value, self.config)
         info_lines.extend(
             [
+                f"[dim]Index Namespace:[/dim] '{markup_safe(namespace)}'",
+                "[dim]Methodologies:[/dim] "
+                + ", ".join(m.value for m in self.config.effective_methodologies),
+                f"[dim]Reset:[/dim] {self.config.indexing.reset}",
                 f"[dim]Force Rebuild:[/dim] {self.args.force_rebuild}",
                 f"[dim]S3 Sync:[/dim] {self.args.s3_sync}",
                 f"[dim]Continue on Error:[/dim] {self.args.continue_on_error}",

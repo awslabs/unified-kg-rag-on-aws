@@ -11,12 +11,14 @@ scope)**는 실행이 비교하는 코퍼스 소스를 정하고, **네임스페
 
 코퍼스의 인덱스와 그래프 레이블 이름은 모두 `<prefix>-<suffix>`이며
 `indexing.additional_suffix`를 지정하면 `-<additional_suffix>`가 붙습니다. 이
-`<suffix>`가 **인덱스 접미사**입니다. 수집은
-`processing.document_parsing.index_value`에서 가져오고(플래그 없음), `run-rag`와
+`<suffix>`가 **인덱스 접미사**이고, CLI는 그 결과를 실행의 **Index Namespace**로
+출력합니다. 수집은 `run-ingestion --suffix`로 다른 값을 지정하지 않으면
+`processing.document_parsing.index_value`에서 가져오고, `run-rag`와
 `run-eval`은 `--suffix`로 다른 값을 지정하지 않으면 설정 파일의 같은 `index_value`를
 질의합니다. Python에서는 `RAGInput.suffix`로 고릅니다(체인은 `index_value`를 읽지
 않음). 모두 기본값은 `default`입니다.
-테넌트나 코퍼스 버전마다 인덱스 접미사와 설정 파일을 하나씩 두고,
+테넌트나 코퍼스 버전마다 인덱스 접미사를 하나씩 두고(수집과 질의에 같은 `--suffix`나 같은
+설정 파일),
 `indexing.additional_suffix`는 양쪽에서 같게 하세요. 증분 인덱싱과 삭제는 인덱스 접미사
 단위입니다([증분 인덱싱](../guides/incremental.ko.md)).
 
