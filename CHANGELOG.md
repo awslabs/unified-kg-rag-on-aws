@@ -1310,6 +1310,9 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- A source scope's first run into a namespace that holds other scopes' documents is recorded as the incremental
+  build it is: the build record kept only that run's documents and artifacts as a full build, restarted the
+  community counters and dropped the full build it was applied on.
 - With description summaries on, an incremental run no longer extends a stored summary with a delta edge's
   description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
   where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full

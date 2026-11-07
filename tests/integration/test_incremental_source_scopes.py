@@ -669,3 +669,29 @@ def test_runs_a_stage_stops_before_indexing_keep_retrying_the_delta(
         # The new document's attempt record: no text units, nothing counted.
         assert (new.status, new.text_unit_ids) == (DocStatus.PENDING, [])
     assert stack.texts() == {A_TEXT}
+
+
+def test_a_new_scope_beside_another_is_recorded_as_an_incremental_build(
+    registry, tmp_path
+) -> None:
+    # A new scope's first run (all its documents new) was recorded as a
+    # full build of the suffix: one document, a fresh full-build lineage
+    # and community counters, and only the artifacts the run built, as if
+    # the other scope's documents were not there.
+    stack = ScopeStack(registry, tmp_path)
+    first = stack.run(
+        write_corpus(tmp_path / "src-a", {"a.txt": A_TEXT, "c.txt": A_TEXT + " Depot."})
+    )
+    full = stack.vectors.read_build_record(None)
+    assert full is not None and full["mode"] == "full" and full["documents"] == 2
+
+    second = stack.run(write_corpus(tmp_path / "src-b", {"b.txt": B_TEXT}))
+    assert second.incremental_delta.new and not second.incremental_delta.unchanged
+    record = stack.vectors.read_build_record(None)
+    assert record is not None
+    assert record["mode"] == "incremental"
+    assert record["documents"] == 1  # the run's own, on top of the full build
+    assert record["full_build"]["pipeline_id"] == first.pipeline_id
+    assert record["full_build"]["documents"] == 2
+    assert record["artifacts"] == full["artifacts"]
+    assert record["communities"]["runs_since"] == 1

@@ -2865,12 +2865,15 @@ class IndexingStage(_RegistryStage):
         (none where the stored record predates them).
         """
         delta = context.incremental_delta
-        # A delta of new documents only (the registry knew none of the
-        # scope's documents) built the suffix from nothing: a full build.
+        # A delta of new documents only into a namespace the registry held
+        # nothing of built the suffix from nothing: a full build. One beside
+        # other source scopes' documents (stored_scopes) added to them.
         incremental = (
             delta is not None
             and not self.config.indexing.reset
-            and bool(delta.changed or delta.unchanged or delta.deleted)
+            and bool(
+                delta.changed or delta.unchanged or delta.deleted or delta.stored_scopes
+            )
         )
         suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units} or {
             self.config.processing.document_parsing.index_value
