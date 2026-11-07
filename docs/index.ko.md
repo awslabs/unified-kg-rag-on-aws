@@ -5,7 +5,7 @@
 `unified-kg-rag-on-aws` 문서를 하려는 일에 따라 정리했습니다. 처음이라면
 [개요](./concepts/overview.ko.md)부터 읽으세요. 한국어 문서는 README, 이 페이지, 개요,
 검색, 범위와 네임스페이스, 시작하기 두 문서, 설정·수집·다국어 코퍼스·질의·증분 인덱싱·도메인 적응·평가
-가이드와 옮긴 절 목록인 사용자 가이드이며, "(영문)"으로 표시한 문서는 영문으로만 제공합니다.
+가이드이며, "(영문)"으로 표시한 문서는 영문으로만 제공합니다.
 
 ## 여기서 시작하기
 
@@ -90,7 +90,7 @@
 | 글리닝(gleaning) | 첫 추출에서 빠진 것을 모델에 다시 묻는 추가 추출 라운드 |
 | 커뮤니티(community), 커뮤니티 리포트(community report) | 엔티티를 Leiden으로 묶은 군집과, `global`과 `drift`가 읽는 LLM 작성 요약 |
 | 방법론(methodology), 전략(strategy) | GraphRAG, LightRAG, HippoRAG 2, RAPTOR 중 하나(인덱스가 가진 것, `indexing.methodologies`), 그리고 질의마다 고르는 실제 검색 알고리즘(`local`, `mix`, `ppr` 등) |
-| 인덱스 접미사(index suffix) | 모든 인덱스와 그래프 레이블 이름의 `<suffix>` 부분(`processing.document_parsing.index_value`. 지정하면 뒤에 `-<indexing.additional_suffix>`가 붙음). 테넌트나 코퍼스 버전마다 하나 |
+| 인덱스 접미사(index suffix) | 모든 인덱스와 그래프 레이블 이름 `<prefix>-<suffix>`의 `<suffix>` 부분. `processing.document_parsing.index_value`에서 옴(`indexing.additional_suffix`를 지정하면 그 뒤에 붙으며 네임스페이스에 포함됨). 테넌트나 코퍼스 버전마다 하나 |
 | 문서 상태 레지스트리(doc-status registry) | 문서마다 해시와 텍스트 단위를 기록해 증분 수집을 가능하게 하는 DynamoDB(또는 SQLite) 테이블 |
 | 네임스페이스(namespace) | 인덱스 접미사에 `indexing.additional_suffix`와 기본값이 아닌 인덱스·레이블 접두사의 태그를 더한 것, 그리고 그 이름이 가리키는 인덱스 묶음. 한 번에 한 실행만 쓸 수 있음(쓰기 임대(lease)). 메시지에서는 index namespace라고 부름 |
 | 소스 범위(source scope) | 실행이 비교하고 삭제하는 코퍼스 출처(기본값은 소스 디렉터리). 문서 ID와 텍스트 단위 ID가 여기서 나옴 |

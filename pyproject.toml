@@ -8,14 +8,14 @@ build-backend = "hatchling.build"
 name = "unified-kg-rag-on-aws"
 # Version is sourced from unified_kg_rag.__version__ via [tool.hatch.version].
 dynamic = ["version"]
-description = "AWS-native Knowledge Graph RAG on Bedrock, Neptune & OpenSearch — GraphRAG and LightRAG over one hexagonal ingestion, indexing, and hybrid-search stack."
+description = "AWS-native Knowledge Graph RAG on Bedrock, Neptune & OpenSearch: GraphRAG, LightRAG, HippoRAG 2 and RAPTOR over one ingestion, indexing and hybrid-search stack, chosen per query."
 readme = "README.md"
 requires-python = ">=3.11, <3.13"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "Amazon.com, Inc. or its affiliates"},
 ]
-keywords = ["aws", "bedrock", "graphrag", "hexagonal-architecture", "knowledge-graph", "lightrag", "neptune", "opensearch", "rag"]
+keywords = ["aws", "bedrock", "graphrag", "hexagonal-architecture", "hipporag", "knowledge-graph", "lightrag", "neptune", "opensearch", "rag", "raptor"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

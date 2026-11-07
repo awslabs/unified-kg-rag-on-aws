@@ -30,9 +30,8 @@ from urllib.parse import unquote
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The pages with a Korean twin (``<page>.ko.md`` next to ``<page>.md``), as
-# repo-relative paths without the suffix: the Tier-1 pages, plus the user
-# guide, kept as the index of its moved sections. Adding a ``.ko.md`` file
-# that is not listed here fails the check.
+# repo-relative paths without the suffix: the Tier-1 pages. Adding a
+# ``.ko.md`` file that is not listed here fails the check.
 TRANSLATED_PAGES = [
     "README",
     "docs/index",
