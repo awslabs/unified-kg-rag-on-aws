@@ -463,8 +463,9 @@ class BaseSearchStrategy(ABC):
     def query_language(self, query: SearchQuery) -> str:
         """The language (its name, ``"Korean"``) the strategy's own prompts
         write in (follow-up queries, intermediate answers, map points): the
-        query's ``query_language``, which the chain sets (the requested
-        language, else the index's), else the index language
+        query's ``query_language``, which the chain sets to the index
+        language whatever answer language was requested
+        (``query_processing.query_language``), else the index language
         (``index_language``), so its searches match the indexed text."""
         language = query.metadata.get("query_language")
         if isinstance(language, str) and language:

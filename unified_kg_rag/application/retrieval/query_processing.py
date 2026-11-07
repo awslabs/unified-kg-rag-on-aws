@@ -135,9 +135,10 @@ def _query_language(chain: GraphRAGChain, inputs: dict[str, Any]) -> tuple[str, 
 
     The language is the requested one, else the one the index was built
     in (``index_language``): the source language when the stage is
-    disabled (entity names and text stay as written, so query entities
-    and keywords extracted in the target language would match nothing),
-    the target language otherwise (equal to the source for a no-op).
+    disabled, the target language otherwise (equal to the source for a
+    no-op). It is the translation's language only: the query's entities
+    and keywords are extracted in the index language whatever was
+    requested (``_extraction_language``).
     """
     requested_language = inputs.get("target_language")
     translation = chain.config.processing.translation
@@ -146,6 +147,21 @@ def _query_language(chain: GraphRAGChain, inputs: dict[str, Any]) -> tuple[str, 
     )
     language = requested_language or index_language(chain.config)
     return language_name(language), skip_translation
+
+
+def _extraction_language(chain: GraphRAGChain) -> str:
+    """The language (its name) the query's entities and keywords are
+    extracted in: the index's (``index_language``), not a requested one.
+
+    They search the entity, relationship, report and claim indexes, which
+    hold the index language only (just the text units carry a
+    ``translated_text_<language>`` per additional target), so an entity
+    extracted in a requested language would match neither their BM25 nor
+    their ``compact_name_key`` seeds. The requested language reaches the
+    text units through the translated query and the answer through the
+    query itself (the answer prompt writes in the query's language).
+    """
+    return language_name(index_language(chain.config))
 
 
 def start_query_inputs(
@@ -165,17 +181,18 @@ def start_query_inputs(
     """
     question = chain._question(inputs)
     target_language, skip_translation = _query_language(chain, inputs)
+    extraction_language = _extraction_language(chain)
     coroutines: dict[str, Awaitable[Any]] = {}
     if entities:
         coroutines["entities"] = chain._extract_query_entities(
-            question, target_language, config
+            question, extraction_language, config
         )
-    # The keyword prompt writes its keywords in the target language
-    # itself, so it reads the untranslated question and runs alongside
-    # the translation instead of after it.
+    # The keyword prompt writes its keywords in the index language itself,
+    # so it reads the untranslated question and runs alongside the
+    # translation instead of after it.
     if keywords:
         coroutines["keywords"] = chain._extract_dual_keywords(
-            question, target_language, config
+            question, extraction_language, config
         )
     if translation and not skip_translation:
         coroutines["translation"] = chain._translate_query(
@@ -306,11 +323,14 @@ def needs_dual_keywords(state: dict[str, Any], config: Config) -> bool:
 
 
 def query_language(chain: GraphRAGChain, inputs: dict[str, Any]) -> str:
-    """The language (its name, ``"Korean"``) the query is processed into:
-    the requested one, else the language the index was built in
-    (``_query_language``). A strategy that writes its own searches (the
-    follow-up queries of ``iterative``) writes them in it."""
-    return _query_language(chain, inputs)[0]
+    """The language (its name, ``"Korean"``) a strategy's own prompts write
+    in (``SearchQuery.metadata["query_language"]``): the index's, as the
+    query's entities and keywords (``_extraction_language``), whatever
+    language was requested. Their output either searches the indexes
+    (DRIFT's and iterative's follow-up queries, iterative's bridge names)
+    or is context for the answer model (DRIFT's intermediate answers,
+    global's map points), which answers in the query's language itself."""
+    return _extraction_language(chain)
 
 
 def _refusal_text(text: str) -> str:

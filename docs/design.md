@@ -2007,8 +2007,9 @@ the settings in `search.iterative_search`.
 
 **Languages.** The chain passes the query's language in
 `SearchQuery.metadata["query_language"]` (`query_processing.query_language`:
-the requested language, else the index's, which is the source language when
-translation is off and the target language when it is on); the controller,
+the index language, which is the source language when translation is off
+and the target language when it is on, whatever language the query
+requested); the controller,
 decomposition and step prompts write their queries and bridge names in it,
 names as the context writes them. Nothing in the strategy parses text but
 JSON and `#n`; dedupe uses case folding and `compact_name_key`, which drops
@@ -2878,20 +2879,28 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   is disabled or a no-op, unless the caller asks for a language
   (`RAGInput.target_language`). Its entities and keywords are extracted in
   the language the index was built in: `source_language` when the stage is
-  disabled, `target_language` otherwise.
+  disabled, `target_language` otherwise, also when the query requests
+  another language. The requested language is the translation's only: the
+  text units carry one `translated_text_<language>` field per additional
+  target, which their lexical search reads, but the entity, relationship,
+  report and claim indexes hold the index language alone, so an entity or
+  keyword in the requested language would match neither their BM25 nor
+  their `compact_name_key` seeds. The answer prompt writes in the query's
+  language.
 - **One index language.** `cache_keys.index_language(config)` is the one
   rule: `target_language` when translation runs, else `source_language`.
   Extraction, gleaning, description summaries, community reports (the
   report prompt names it) and the summary tree write in it, the text units
   are embedded in it, and the graph indexes' text fields are analyzed for it
-  (`OpenSearchIndexer.language`). The chain records the query's language in
-  `SearchQuery.metadata["query_language"]` (the requested one, else the
-  index language); a strategy's own prompts (DRIFT's primer and actions,
-  global's map points, iterative's controller) read it through
-  `BaseSearchStrategy.query_language`, falling back to the index language.
-  DRIFT's HyDE writes in the index language whatever was requested: its
-  hypothetical report only searches the community reports, which are
-  written in it.
+  (`OpenSearchIndexer.language`). The chain records the language a
+  strategy's own prompts write in as `SearchQuery.metadata["query_language"]`:
+  the index language, whatever was requested, since their output either
+  searches the indexes (DRIFT's and iterative's follow-up queries) or is
+  context for the answer model, which answers in the query's language
+  (DRIFT's intermediate answers, global's map points). DRIFT's primer and
+  actions, global's map points and iterative's controller read it through
+  `BaseSearchStrategy.query_language`, falling back to the index language;
+  DRIFT's HyDE writes in the index language too.
   The extraction-record and answer fingerprints key the index language
   under their earlier `target_language` field, so a translated index keeps
   its records. Where the translation settings do not say it (translation

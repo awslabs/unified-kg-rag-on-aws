@@ -29,9 +29,13 @@ language with `target_language`.
 translation runs and in `source_language` otherwise. Every component follows
 it: extraction, gleaning, description summaries, community reports and the
 summary tree are written in it, the text units are embedded in it, the
-entity, relationship, claim and report indexes are analyzed for it, and
-DRIFT and global search write their follow-up queries and map points in it
-(or in a query's requested language). With `enabled: false`,
+entity, relationship, claim and report indexes are analyzed for it, and a
+query's entities and keywords, DRIFT's and iterative's follow-up queries and
+global search's map points are written in it. A language a query requests
+(`RAGInput.target_language`) is the query translation's only: the text units
+carry a `translated_text_<language>` field per additional target, which its
+lexical search reads, while the graph indexes hold the index language alone.
+The answer is written in the language of the query. With `enabled: false`,
 `target_language` therefore has no effect but the translated-text fields'
 mapping.
 

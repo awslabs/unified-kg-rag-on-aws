@@ -199,8 +199,12 @@ async def test_prompts_get_language_names_not_codes(
             "resolved_strategy": SearchStrategy.LOCAL,
         }
     )
-    languages = {inputs["target_language"] for _, inputs in factory.calls}
-    assert languages == {expected}
+    languages = {cls: inputs["target_language"] for cls, inputs in factory.calls}
+    # The translation goes into the requested language; the entities are
+    # extracted in the index language (English here) whatever it is.
+    assert languages.get(TranslationPrompt, expected) == expected
+    assert (TranslationPrompt in languages) is (requested is not None)
+    assert languages[EntityExtractionPrompt] == "English"
 
 
 async def test_keyword_failure_propagates_without_ignore_errors(
