@@ -1591,10 +1591,11 @@ class TestReportClaims:
         community = _community(["v", "b", "c"])
         full = cd._prepare_report_input(community)
         cost = sum(
-            estimate_token_count(cd._format_entity_line(e)) for e in full["entities"]
+            estimate_token_count(cd._format_entity_line(e, n))
+            for n, e in enumerate(full["entities"], 1)
         ) + sum(
-            estimate_token_count(cd._format_relationship_line(r))
-            for r in full["relationships"]
+            estimate_token_count(cd._format_relationship_line(r, n))
+            for n, r in enumerate(full["relationships"], 1)
         )
         # Room for everything but the claim: the edge whose endpoint the
         # claim is about no longer fits.

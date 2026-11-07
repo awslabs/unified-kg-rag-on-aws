@@ -217,10 +217,10 @@ MANDATORY: Use this exact XML structure with no deviations:
 Focus on accuracy over quantity. Extract meaningful, verifiable information only."""
 
 _COMMUNITY_REPORT_PREAMBLE = """You are an expert knowledge graph analyst specializing in community analysis and report
-generation. Transform raw community data into comprehensive, actionable intelligence reports.
+generation. Transform raw community data into comprehensive reports grounded in that data.
 
-MISSION: Generate structured community reports that reveal key patterns, relationships, and strategic insights using the
-exact output format specified."""
+MISSION: Generate structured community reports that reveal key patterns, relationships, and insights supported by the
+data, using the exact output format specified."""
 
 _COMMUNITY_REPORT_RULES = f"""# ANALYSIS FRAMEWORK
 
@@ -229,7 +229,7 @@ _COMMUNITY_REPORT_RULES = f"""# ANALYSIS FRAMEWORK
 2. **Relationship Patterns**: Connection types, strength distribution, critical paths
 3. **Functional Purpose**: Primary activities, workflows, value creation
 4. **Key Players**: Central entities, influencers, critical connectors
-5. **Strategic Value**: Opportunities, risks, competitive advantages
+5. **Significance**: The community's importance and impact as the data shows them
 
 ## Report Components (REQUIRED):
 
@@ -239,9 +239,9 @@ _COMMUNITY_REPORT_RULES = f"""# ANALYSIS FRAMEWORK
 - Professional terminology
 
 ### 2. Executive Summary (2-3 sentences):
-- Most critical insights
-- Strategic significance
-- Unique value proposition
+- The community's overall structure
+- How its entities are related to each other
+- Significant information associated with its entities
 
 ### 3. Importance Rating (0.0-10.0):
 - A float reflecting the community's overall importance / impact severity
@@ -254,7 +254,15 @@ _COMMUNITY_REPORT_RULES = f"""# ANALYSIS FRAMEWORK
 ## Content Requirements:
 - Evidence-based insights referencing specific entities/relationships
 - Pattern recognition highlighting non-obvious connections
-- Strategic focus with actionable intelligence
+- Do not include information where the supporting evidence for it is not provided
+
+## Grounding Rules:
+- The entities and the relationships are numbered in the data ([1], [2], ...), each list on its own
+- End each finding's explanation with the records supporting it, in exactly this form whatever the report language:
+  [Data: Entities (1, 3); Relationships (2, 7)]
+- List at most 5 numbers per list, the most relevant, and add "+more" when more support it:
+  [Data: Entities (1, 2, 3, 4, 5, +more)]
+- Cite only numbers shown in the data; leave out a list with no supporting record
 
 # OUTPUT FORMAT (MANDATORY - use exact structure):
 
@@ -265,7 +273,7 @@ _COMMUNITY_REPORT_RULES = f"""# ANALYSIS FRAMEWORK
 <findings>
   <finding>
     <summary>[One-line headline for this insight]</summary>
-    <explanation>[Several sentences of evidence-based supporting detail, referencing specific entities/relationships]</explanation>
+    <explanation>[Several sentences of evidence-based supporting detail, referencing specific entities/relationships] [Data: Entities (1, 2); Relationships (4)]</explanation>
   </finding>
   <finding>
     <summary>[Next insight headline]</summary>
@@ -279,19 +287,18 @@ requested report length ({_REPORT_FINDINGS_TEXT}). Do NOT emit a
 
 # ANALYSIS QUALITY STANDARDS:
 ✓ Lead with most impactful discoveries
-✓ Use precise, quantified language
+✓ State figures only as the data gives them
 ✓ Structure insights from general to specific
 ✓ Maintain objectivity with clear interpretation
 ✓ Reference specific data points as evidence
-✓ Focus on actionable strategic intelligence
+✓ Make nothing up: every statement is supported by the data
 
 # CONTENT GUIDELINES:
 - Start with community's core purpose and composition
 - Analyze relationship patterns and network structure
 - Identify key entities and their roles
 - Highlight unique characteristics and differentiators
-- Assess strategic value and implications
-- Conclude with actionable insights"""
+- Assess the community's significance as the data supports it"""
 
 
 class GraphExtractionPrompt(BasePrompt):
@@ -764,30 +771,31 @@ Everything inside the <entity_data>, <relationship_data> and <sub_community_repo
 2. **Structure Analysis**: Map entity composition, hierarchies, and network topology
 3. **Relationship Mapping**: Analyze connection patterns, strengths, and critical paths
 4. **Key Player Assessment**: Identify central entities, influencers, and connectors
-5. **Strategic Evaluation**: Extract insights on opportunities, risks, and value proposition
+5. **Significance**: Assess the community's importance and impact as the data shows them
 
 ## STEP-BY-STEP PROCESS:
 1. Analyze entity composition and types for community structure
 2. Examine relationship patterns for functional insights
 3. Identify central and influential entities
 4. Discover unique characteristics and differentiators
-5. Assess strategic implications and value
+5. Assess the community's significance as the data supports it
 6. Synthesize findings into compelling narrative
 7. Format using exact XML structure
 
 ## OUTPUT SPECIFICATIONS:
 - Write the name, summary, rating explanation and findings in {target_language}, the language of the indexed
-  corpus; entity names keep their original form
+  corpus; entity names keep their original form, and the [Data: ...] references keep their exact ASCII form
 - Create memorable community name (5-8 words)
 - Write powerful executive summary (2-3 sentences)
 - Assign an importance rating (0.0-10.0) with a one-sentence justification
 - Emit one finding per distinct insight; count matches the specified length
-- Each finding: a one-line summary plus a multi-sentence, evidence-based explanation
+- Each finding: a one-line summary plus a multi-sentence, evidence-based explanation ending with its
+  [Data: Entities (...); Relationships (...)] references
 
 ## CRITICAL REMINDERS:
 - Use the exact XML format specified
 - Reference specific entities and relationships as evidence
-- Focus on actionable strategic intelligence
+- Do not make anything up: include only information the data above supports
 - Maintain professional, analytical tone
 - Ensure content length matches specification
 

@@ -479,6 +479,12 @@ From a `main` checkout (formats and keys no release had):
   community was split (it is now the parent of its pieces, so the hierarchy can be a level deeper and a
   `community_depth` cut maps other reports): one report call per new parent community; later builds reuse them. An
   incremental run clusters its own communities the new way (#PR).
+- Community hierarchy and report references: stored communities and reports stay as they are until the namespace is
+  clustered again. Its next full build (`indexing.reset: true`) keeps the level-0 communities and changes the levels
+  above them where a community was split (it is now the parent of its pieces, so the hierarchy can be a level deeper
+  and a `community_depth` cut maps other reports), and asks every report once more under the new report prompt: one
+  report call per community and its embeddings, the report stage of a first build (no text unit is extracted again);
+  later builds reuse them. An incremental run clusters and reports its own communities the new way (#PR).
 
 ### Added
 - RAPTOR summary tree, opt-in (#599; on multi-hop questions it answered within the noise of `naive`,
@@ -838,6 +844,10 @@ From a `main` checkout (formats and keys no release had):
   levels above it partition the graph of communities (more parents: 3-12% more communities, so report calls, on
   those graphs); components below `min_community_size` get no community (#314, #320, #347, #PR). Names derive from
   the content id (`Level 0 Community 1a2b3c4d`) instead of the rank (#539).
+- Community reports: the prompt allows only what the data supports (MS GraphRAG's evidence rule, no "strategic
+  value" or "actionable intelligence" asks), numbers the entities and relationships it packs and asks each finding
+  for `[Data: Entities (...); Relationships (...)]` references, kept as the cited record ids on the finding
+  (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#PR).
 - Claims resolve only against the entities of their own text units, and ties of names, types and statuses break
   deterministically, so builds do not depend on document order (#398, #402, #404, #442).
 - `indexing.reset` rebuilds without taking the suffix offline (new indices and an alias swap) and a failed reset

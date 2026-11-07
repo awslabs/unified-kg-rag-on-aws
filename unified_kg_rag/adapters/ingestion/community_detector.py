@@ -40,6 +40,11 @@ from unified_kg_rag.domain.ingestion.contributions import (
     record_key,
 )
 from unified_kg_rag.domain.ingestion.graph_builder import edge_relationships
+from unified_kg_rag.domain.ingestion.report_references import (
+    DATASET_ENTITIES,
+    DATASET_RELATIONSHIPS,
+    split_data_references,
+)
 from unified_kg_rag.domain.ingestion.seed_graph import seed_only
 from unified_kg_rag.domain.models import (
     Community,
@@ -66,6 +71,17 @@ logger = get_logger(__name__)
 
 # The tag of the report prompt's claim block (``_claims_section``).
 _CLAIM_DATA_TAGS = frozenset({"claim_data"})
+
+
+def _bullet(number: int | None) -> str:
+    """A report input line's bullet: numbered (``- [3] ``) when the prompt
+    cites it."""
+    return "- " if number is None else f"- [{number}] "
+
+
+def _number_tokens(number: int) -> int:
+    """The estimated tokens a line's number adds to it."""
+    return estimate_token_count(_bullet(number)) - estimate_token_count(_bullet(None))
 
 
 class ReportRecords(Protocol):
@@ -660,7 +676,11 @@ class CommunityDetector:
                         "generated_at": generated_at.isoformat(),
                     }
                 report = self._create_community_report(
-                    community, result, graph_attributes, generated_at=made_at
+                    community,
+                    result,
+                    graph_attributes,
+                    generated_at=made_at,
+                    report_input=report_inputs[index],
                 )
                 if index in keys:
                     report.attributes = {
@@ -862,9 +882,16 @@ class CommunityDetector:
             never left with no context)."""
             nonlocal used_tokens
             new = [eid for eid in dict.fromkeys(ids) if eid not in packed]
-            cost = sum(price(eid)[2] for eid in new)
+            # Each line is numbered in packing order (the findings cite the
+            # numbers), so its number is known here.
+            cost = sum(
+                price(eid)[2] + _number_tokens(len(entities) + 1 + i)
+                for i, eid in enumerate(new)
+            )
             if rel is not None:
-                cost += estimate_token_count(self._format_relationship_line(rel))
+                cost += estimate_token_count(
+                    self._format_relationship_line(rel)
+                ) + _number_tokens(len(relationships) + 1)
             if used_tokens + cost > token_budget and not first:
                 return False
             for eid in new:
@@ -887,6 +914,8 @@ class CommunityDetector:
                 "target": self.graph.nodes[v].get("name", v),
                 "type": data.get("type", "related"),
                 "description": data.get("description", ""),
+                # Not in the prompt: what a finding's reference resolves to.
+                "id": data.get("id"),
             }
             if not admit([u, v], rel):
                 truncated = True
@@ -979,13 +1008,18 @@ class CommunityDetector:
         return "\n".join(lines)
 
     @staticmethod
-    def _format_entity_line(entity: dict[str, Any]) -> str:
-        return f"- {entity['name']} ({entity['type']}): {entity['description']}"
+    def _format_entity_line(entity: dict[str, Any], number: int | None = None) -> str:
+        return (
+            f"{_bullet(number)}{entity['name']} ({entity['type']}): "
+            f"{entity['description']}"
+        )
 
     @staticmethod
-    def _format_relationship_line(rel: dict[str, Any]) -> str:
+    def _format_relationship_line(
+        rel: dict[str, Any], number: int | None = None
+    ) -> str:
         return (
-            f"- {rel['source']} -> {rel['target']} "
+            f"{_bullet(number)}{rel['source']} -> {rel['target']} "
             f"({rel['type']}): {rel['description']}"
         )
 
@@ -1024,11 +1058,14 @@ class CommunityDetector:
         return [
             {
                 "community_id": r["community_id"],
+                # Numbered from 1, the ids a finding's [Data: ...] cites.
                 "entities": "\n".join(
-                    cls._format_entity_line(e) for e in r["entities"]
+                    cls._format_entity_line(e, n)
+                    for n, e in enumerate(r["entities"], 1)
                 ),
                 "relationships": "\n".join(
-                    cls._format_relationship_line(rel) for rel in r["relationships"]
+                    cls._format_relationship_line(rel, n)
+                    for n, rel in enumerate(r["relationships"], 1)
                 ),
                 "claims": cls._claims_section(r.get("claims", [])),
                 "sub_community_reports": r.get("sub_community_reports", ""),
@@ -1045,9 +1082,12 @@ class CommunityDetector:
         graph_attributes: dict[str, Any],
         *,
         generated_at: datetime | None = None,
+        report_input: Mapping[str, Any] | None = None,
     ) -> CommunityReport:
         """The report of ``community`` from the model's ``result``, made at
-        ``generated_at`` (now by default; a reused answer's own time)."""
+        ``generated_at`` (now by default; a reused answer's own time); its
+        findings' references resolve against ``report_input`` (the packed
+        input the prompt numbered)."""
         report_config = self.community_detection_config.report_generation
 
         name = coerce_llm_text(result.get("community_name"))
@@ -1057,7 +1097,7 @@ class CommunityDetector:
             ),
             join=True,
         )
-        findings = self._extract_findings(result)
+        findings = self._extract_findings(result, report_input)
         rating = self._extract_rating(result)
         rating_explanation = coerce_llm_text(
             result.get("rating_explanation"), join=True
@@ -1123,13 +1163,39 @@ class CommunityDetector:
             return 0.0
 
     @classmethod
-    def _extract_findings(cls, result: dict[str, Any]) -> list[CommunityFinding]:
+    def _extract_findings(
+        cls,
+        result: dict[str, Any],
+        report_input: Mapping[str, Any] | None = None,
+    ) -> list[CommunityFinding]:
         """Parse the <findings>/<finding> block into structured findings.
 
         The XML parser collapses a single repeated child tag to a scalar and
         multiple to a list, so normalize both ``{"finding": {...}}`` and
         ``{"finding": [{...}, ...]}`` (and the rare bare-list) shapes.
+
+        A finding's ``[Data: Entities (...); Relationships (...)]``
+        references leave its text and become the ids of the records of
+        ``report_input`` they number (from 1, in packing order); a number
+        outside the input is dropped.
         """
+        packed = report_input or {}
+        records = {
+            DATASET_ENTITIES: [e.get("id") for e in packed.get("entities", ())],
+            DATASET_RELATIONSHIPS: [
+                r.get("id") for r in packed.get("relationships", ())
+            ],
+        }
+
+        def resolve(cited: dict[str, list[int]], dataset: str) -> list[str]:
+            ids = records[dataset]
+            resolved = (
+                ids[number - 1]
+                for number in cited.get(dataset, ())
+                if 0 < number <= len(ids)
+            )
+            return list(dict.fromkeys(str(i) for i in resolved if i))
+
         findings_block = result.get("findings")
         raw_findings: list[Any]
         if isinstance(findings_block, dict):
@@ -1148,8 +1214,17 @@ class CommunityDetector:
             else:
                 summary = coerce_llm_text(item, join=True)
                 explanation = ""
+            summary, in_summary = split_data_references(summary)
+            explanation, cited = split_data_references(explanation)
+            for dataset, numbers in in_summary.items():
+                cited[dataset] = list(dict.fromkeys(cited.get(dataset, []) + numbers))
             if summary or explanation:
                 findings.append(
-                    CommunityFinding(summary=summary, explanation=explanation)
+                    CommunityFinding(
+                        summary=summary,
+                        explanation=explanation,
+                        entity_ids=resolve(cited, DATASET_ENTITIES),
+                        relationship_ids=resolve(cited, DATASET_RELATIONSHIPS),
+                    )
                 )
         return findings

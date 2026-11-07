@@ -688,7 +688,19 @@ gets its models and stores from the run's `Providers` bundle.
   the tuning point for larger reports: the defaults (4000, 20) are kept for
   cost. Reports are generated bottom-up. The prompt returns a structured
   report (summary, 0-10 rating with explanation, findings); `full_content`
-  for embedding and search is rendered from it, with no second call.
+  for embedding and search is rendered from it, with no second call. As MS
+  GraphRAG's prompt (`prompts/index/community_report.py`), it allows only
+  what the data supports ("Do not include information where the supporting
+  evidence for it is not provided") and asks each finding for its
+  references, `[Data: Entities (1, 3); Relationships (2, +more)]`, at most 5
+  numbers a list; the entities and relationships are numbered in packing
+  order, from 1, in place of GraphRAG's `human_readable_id`. The syntax
+  stays ASCII in every report language (full-width brackets and commas a
+  CJK answer may use are read too). The numbers name records only within
+  that input, so `report_references.split_data_references` takes them out
+  of the prose and the finding keeps the record ids
+  (`CommunityFinding.entity_ids` / `relationship_ids`); claims and
+  sub-community reports are not numbered.
 - **Sub-community roll-up (deviation).** When a parent's own context was
   cut, its children's report summaries (biggest child first, each with its
   rating) are added to that context under a second budget of

@@ -19,6 +19,17 @@ class CommunityFinding(BaseModel):
     explanation: str = Field(
         "", description="Multi-sentence supporting detail for the finding"
     )
+    entity_ids: list[str] = Field(
+        default_factory=list,
+        description="Ids of the entities the finding cites as its evidence "
+        "(its [Data: Entities (...)] references, resolved against the "
+        "report's input)",
+    )
+    relationship_ids: list[str] = Field(
+        default_factory=list,
+        description="Ids of the relationships the finding cites as its "
+        "evidence ([Data: Relationships (...)])",
+    )
 
 
 class CommunityReport(Named):
