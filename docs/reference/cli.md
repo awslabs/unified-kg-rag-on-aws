@@ -252,6 +252,8 @@ Guide: [Console](../guides/console.md).
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 | `--output-format` | `text` | 'text' (default) for people; 'json' prints one JSON result to stdout (for a run that failed or was stopped before it, a status with the exit code and the error) and everything else to stderr. |
+| `--log-level` | — | Log level of this run (default: logging.level, INFO; DEBUG logs hold user and corpus text). With --output-format text the logs are plain lines unless logging.log_format is set. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
+| `--version` | — | Print the version and exit. |
 
 ## Provider flags
 

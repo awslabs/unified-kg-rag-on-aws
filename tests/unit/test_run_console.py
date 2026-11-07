@@ -60,6 +60,7 @@ def test_a_missing_extra_is_named(
     assert exc.value.code == 2
     status = json.loads(capsys.readouterr().out)
     assert status["exit_code"] == 2 and "uv sync --extra console" in status["error"]
+    assert (status["status"], status["error_type"]) == ("failed", "UsageError")
 
 
 def test_a_missing_workspace_is_a_usage_error(tmp_path: Path) -> None:
@@ -150,6 +151,36 @@ def test_a_port_in_use_fails(
         busy.close()
     assert code == 1
     assert "Cannot listen" in capsys.readouterr().out
+
+
+@requires_console
+def test_a_port_in_use_fails_with_the_json_failure_schema(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    busy = socket.socket()
+    busy.bind(("127.0.0.1", 0))
+    busy.listen()
+    try:
+        code = run_console.main(
+            [
+                "--source-directory",
+                str(tmp_path),
+                "--cache-directory",
+                str(tmp_path / "c"),
+                "--port",
+                str(busy.getsockname()[1]),
+                "--output-format",
+                "json",
+            ]
+        )
+    finally:
+        busy.close()
+    out, err = capsys.readouterr()
+    assert code == 1
+    status = json.loads(out)
+    assert status["status"] == "failed" and status["exit_code"] == 1
+    assert status["error_type"] == "OSError"
+    assert "Cannot listen" in err
 
 
 @requires_console

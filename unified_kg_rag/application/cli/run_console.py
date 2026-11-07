@@ -28,14 +28,17 @@ from unified_kg_rag.application.cli.conventions import (
     ArgumentParser,
     add_output_format_argument,
     exits_on_sigterm,
+    failed,
     json_output,
     print_json,
+    setup_cli_logging,
     usage_error,
 )
 from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.config import get_config, load_cli_dotenv
-from unified_kg_rag.shared import ConfigurationError, get_logger, setup_logging
+from unified_kg_rag.domain.models import Config
+from unified_kg_rag.shared import ConfigurationError, get_logger
 
 logger = get_logger(__name__)
 
@@ -199,8 +202,9 @@ def main(argv: list[str] | None = None) -> int:
     config_path = Path(args.config_path).resolve() if args.config_path else None
     try:
         config = get_config(config_path, allow_unknown_keys=args.allow_unknown_keys)
-        setup_logging(config, stream=sys.stderr)
+        setup_cli_logging(config, args)
     except (ConfigurationError, FileNotFoundError) as e:
+        setup_cli_logging(Config(), args)
         # The console still starts: its Settings page shows the error.
         console.print(
             f"[yellow]The configuration does not load: {markup_safe(e)}[/yellow]"
@@ -230,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         console.print(
             f"[red]Cannot listen on {markup_safe(args.host)}:{args.port}: {markup_safe(e)}[/red]"
         )
-        return EXIT_FAILURE
+        return failed(EXIT_FAILURE, e)
     port = sock.getsockname()[1]
     host = f"[{args.host.strip('[]')}]" if ":" in args.host else args.host
     # The token rides in the address once; the page then keeps it in an
@@ -265,7 +269,8 @@ def main(argv: list[str] | None = None) -> int:
     server = uvicorn.Server(
         uvicorn.Config(
             create_app(options),
-            log_level="warning",
+            # Uvicorn's own records: --log-level when given.
+            log_level=(args.log_level or "WARNING").lower(),
             access_log=False,
             lifespan="on",
             timeout_graceful_shutdown=60,
