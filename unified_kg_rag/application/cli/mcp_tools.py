@@ -111,8 +111,11 @@ class SupportingContent(BaseModel):
 
     rank: int = Field(description="1 for the best-ranked record")
     kind: str = Field(
-        description="text, entity, relationship, community, claim, summary or "
-        "query_result (a structured graph query's result table)"
+        description="text, entity, relationship, community, claim, summary, "
+        "query_result (a structured graph query's result table), or, in "
+        "kg_answer, key_point or intermediate_answer (a model-written section "
+        "the answer cites: global search's key point, DRIFT's intermediate "
+        "answer)"
     )
     chunk_id: str | None = Field(
         default=None, description="The chunk (text unit) id, for a text record"
@@ -172,7 +175,7 @@ class SupportingContent(BaseModel):
     citation: int | None = Field(
         default=None,
         description="kg_answer: the [n] marker the answer context gave this "
-        "record (RAGOutput.citations); None for a synthesized one",
+        "record (RAGOutput.citations)",
     )
     cited: bool | None = Field(
         default=None, description="kg_answer: whether the answer cites [citation]"
@@ -419,7 +422,12 @@ def _record(
         name = _str(metadata.get("name"))
     elif kind == "query_result":
         name = _str(metadata.get("plan_description")) or _str(metadata.get("operation"))
-        entities = [EntityRef(id=i) for i in _ids(metadata.get("entity_ids"))]
+        names = metadata.get("entity_names")
+        names = names if isinstance(names, list) else []
+        entities = [
+            EntityRef(id=i, name=_str(names[n]) if n < len(names) else None)
+            for n, i in enumerate(_ids(metadata.get("entity_ids")))
+        ]
     if kind == "text" and chunk_id is None:
         chunk_id = item_id
     file_name = graph_lookup.file_name(dict(metadata)) if kind == "text" else None
@@ -701,18 +709,17 @@ class KnowledgeGraphTools:
     ) -> None:
         """Fill each graph record's ``documents``: the file names of its
         text units, resolved in one fetch by id."""
-        units = [
-            unit
-            for record in records
-            if record.kind != "text"
-            for unit in record.text_unit_ids
+        # A cited model-written record names its citation's documents.
+        resolved = [
+            r
+            for r in records
+            if r.kind != "text" and not (r.synthesized and r.citation is not None)
         ]
+        units = [unit for record in resolved for unit in record.text_unit_ids]
         if not units:
             return
         names = await graph_lookup.text_unit_file_names(self.chain, suffix, units)
-        for record in records:
-            if record.kind == "text":
-                continue
+        for record in resolved:
             found = [names[u] for u in record.text_unit_ids if u in names]
             record.documents = list(dict.fromkeys(found))
             if record.document_name is None and len(record.documents) == 1:
@@ -774,6 +781,55 @@ class KnowledgeGraphTools:
             max_text_chars=self.settings.max_text_chars,
             truncated=bool(metadata.get("truncated")),
         )
+
+    def _unsourced_citations(
+        self, output: RAGOutput, matched: set[int]
+    ) -> list[SupportingContent]:
+        """A record for each citation no source is: a model-written section
+        (global search's key point, DRIFT's intermediate answer) the answer
+        model was given and may cite, never reported as a source. It
+        carries its screened text and the documents its citation names
+        (resolved with the caller's filters)."""
+        written = {
+            str(r.source): r
+            for r in output.search_results.results
+            if (r.metadata or {}).get("synthesized") and r.source is not None
+        }
+        records: list[SupportingContent] = []
+        for citation in output.citations:
+            result = written.get(citation.source_id or "")
+            if citation.marker in matched or result is None:
+                continue
+            metadata = result.metadata or {}
+            kind = (
+                "key_point"
+                if "key_point_rank" in metadata
+                else (
+                    "intermediate_answer"
+                    if "intermediate_answer_rank" in metadata
+                    else citation.section_type
+                )
+            )
+            record = _record(
+                rank=len(records) + 1,
+                kind=kind,
+                content=result.content,
+                score=result.score,
+                source=citation.source_id,
+                chunk_id=None,
+                metadata={
+                    "synthesized": True,
+                    "text_unit_ids": citation.text_unit_ids,
+                },
+                max_text_chars=self.settings.max_text_chars,
+            )
+            names = [d.file_name for d in citation.documents if d.file_name]
+            record.documents = list(dict.fromkeys(names))
+            record.document_id = citation.document_id
+            record.document_name = citation.file_name
+            record.citation, record.cited = citation.marker, citation.cited
+            records.append(record)
+        return records
 
     async def _shaped(
         self, suffix: str, records: list[SupportingContent]
@@ -876,13 +932,21 @@ class KnowledgeGraphTools:
             sources = [self._from_source(i, s) for i, s in enumerate(output.sources, 1)]
             # Each record's [n] in the answer and whether the answer cites it.
             by_source = {c.source_id: c for c in output.citations if c.source_id}
+            matched: set[int] = set()
             for record in sources:
                 found = by_source.get(record.source_id or "") or by_source.get(
                     record.chunk_id or ""
                 )
                 if found is not None:
                     record.citation, record.cited = found.marker, found.cited
-            records, omitted = await self._shaped(str(rag_input.suffix), sources)
+                    matched.add(found.marker)
+            # Before the sources, as the strategies rank them (kg_search).
+            written = self._unsourced_citations(output, matched)
+            for rank, record in enumerate([*written, *sources], 1):
+                record.rank = rank
+            records, omitted = await self._shaped(
+                str(rag_input.suffix), [*written, *sources]
+            )
             answer, cut = _cut(output.answer, self.settings.max_response_chars)
             return AnswerToolResult(
                 namespace=str(rag_input.suffix),

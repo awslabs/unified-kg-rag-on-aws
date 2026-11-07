@@ -775,6 +775,10 @@ async def test_a_count_cites_matches_as_evidence(name: str) -> None:
         assert graph.requests[-1].limit == Config().search.structured.rows_in_context
     table = _table(result).metadata
     assert table["entity_ids"]
+    # Each returned entity by name too (an MCP query_result record's refs).
+    named = {r.source: r.metadata.get("name") for r in entities}
+    assert all(table["entity_names"])
+    assert table["entity_names"] == [named.get(i) for i in table["entity_ids"]]
     # Its citation's lineage: the units the evidence rows cite, the most
     # cited first.
     cited = [u for r in entities for u in r.metadata.get("text_unit_ids") or []]

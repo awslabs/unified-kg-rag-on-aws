@@ -3546,11 +3546,13 @@ come from, resolved in one fetch by id), `text_unit_ids`, `entities` (each
 for a relationship, and for a chunk the entities of the same response that
 cite it), `provenance` (a seed graph's `kind`, `seed_graphs` and `iri`, as
 in `RAGOutput.sources`) and `synthesized` (model-written, such as global
-search's key points: a `kg_search` record only, since the chain cites a
-key point by its reports' lineage but never reports it as a source). A
-`query_result` record (the structured strategy's table, §6.6) keeps its
-table up to 6000 characters, as the console shows it, names its plan
-description and lists the entities it returned. A text record's
+search's key points). The chain never reports a model-written section as a
+source, so `kg_answer` adds one record for each citation no source is (a
+`key_point` or `intermediate_answer`, before the sources), with its
+screened text and the documents its citation resolved under the caller's
+filters. A `query_result` record (the structured strategy's table, §6.6)
+keeps its table up to 6000 characters, as the console shows it, names its
+plan description and lists the entities it returned, by id and name. A text record's
 `document_id` is read where the text unit stores it
 (`attributes.document_id`), as `RAGOutput.sources` reads it. A
 `kg_answer` record also carries its `citation` (the `[n]` marker of §7.1)
