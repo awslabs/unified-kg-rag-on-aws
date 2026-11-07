@@ -1053,7 +1053,8 @@ async def test_answer_check_gets_what_the_answer_model_was_given(
     assert grounding.query == _QUERY
     # The reference is the context string the answer prompt carried.
     assert _CONTEXT in grounding.source and grounding.source in factory.prompts[-1]
-    assert grounding.ranked_sources == ["[doc-1] " + _CONTEXT]
+    # Each section as the context shows it: after its citation marker.
+    assert grounding.ranked_sources == ["[1] " + _CONTEXT]
 
 
 async def test_ungrounded_answer_takes_the_refusal_path(

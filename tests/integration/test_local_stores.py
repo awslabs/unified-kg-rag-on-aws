@@ -555,6 +555,15 @@ def test_local_mode_ingests_and_answers_through_the_registry(
         assert out.answer == answer
         assert out.sources
         assert server.answers == answers + 1
+        # The citations resolve on the real stores: passages name their file
+        # and relative path, graph sections the files of their lineage.
+        files = {"contract.txt", "logistics.txt"}
+        assert out.citations and "citations_unresolved" not in out.metadata
+        assert all({d.file_name for d in c.documents} <= files for c in out.citations)
+        assert any(c.section_type != "text" and c.documents for c in out.citations)
+        assert all(
+            c.file_path in files for c in out.citations if c.section_type == "text"
+        )
         assert set(server.embed_models) == {config.embedding_model_id}
     finally:
         chain.close()

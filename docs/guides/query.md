@@ -137,6 +137,44 @@ measured query times on real AWS
 Tuning is in the
 [Operator Runbook](../operations.md#query-deadlines-and-model-timeouts).
 
+## Citations
+
+Every answer cites the documents it rests on (`search.citations`, on by
+default). The answer context numbers its evidence `[1]`, `[2]`, ... (passages,
+entities, relationships, claims, community reports, summaries; not global
+search's key points or DRIFT's intermediate answers, which are model output),
+and the answer prompt asks the model to cite them with those markers, ASCII
+in every answer language:
+
+```text
+Depot stores the widgets for Vendor [1][3].
+창고는 공급사의 부품을 보관합니다 [2].
+```
+
+`RAGOutput.citations` lists one record per number: `marker`, `cited` (the
+answer uses it), `section_type`, `title`, the main `document_id` /
+`file_name` / `file_path` (relative to the corpus root) / `page` and
+`page_end`, `chunk_id` (a passage), `text_unit_ids`, every document as
+`documents`, and seed-graph `provenance` and `iri`. A graph section names the
+documents of up to `search.citations.lineage_units` of its text units (one
+batched store read per query, under the query's filters and suffix: a
+document they exclude is never named). A number the answer uses that the
+context did not show is in `metadata.unknown_citation_markers`, never a
+citation.
+
+- `run-rag` prints the cited sources under the answer; `--output-format
+  json` includes every citation.
+- PDF passages carry their pages; text ingested before this release has no
+  pages or relative paths until its documents are ingested again.
+- A streamed answer carries the same markers: read them from the chunks with
+  `CitationMarkerScanner` (a marker split across chunks is held back until it
+  closes). `astream` returns text only; `ainvoke` returns the citations.
+- A blocked answer has no citations; a masked one keeps them, flagged from
+  the masked text; a declined answer keeps them like its sources.
+- `search.citations.enabled: false` restores the earlier context and prompt.
+  The markers stay in the answer text; `run-eval`'s `answer_match` scores the
+  answer as written.
+
 ## Declined answers
 
 When retrieval returns nothing, the chain answers "I could not find relevant
@@ -314,3 +352,28 @@ Conversation memory lives in the process (`MemoryManager`, limits in the
   1,000 characters, and runs even with `enable_query_processing` off (that
   flag covers translation and entity/keyword extraction). Memory adds no
   other LLM call.
+
+### History from the caller
+
+A server that keeps the conversation itself (one request per turn) passes it
+as `RAGInput.history` instead of using memory:
+
+```python
+chain.invoke(RAGInput(
+    query="And its price?",
+    history=[
+        {"role": "user", "content": "Which part does Vendor supply?"},
+        {"role": "assistant", "content": "Vendor supplies the widgets [1]."},
+    ],
+))
+```
+
+The follow-up rewrite reads it as it reads memory: the last
+`memory.max_messages_per_conversation` turns, each answer cut to 1,000
+characters, and only the most recent turns that fit
+`memory.max_history_tokens` (default 4,000, estimated). With the input
+guardrail on, the turns are screened like the query: one check for all of
+them, then one per turn only when it intervenes; a masked turn is used
+masked, a blocked one is dropped (both in `metadata.guardrail`), and the
+query goes on. `history` and `use_memory=True` together are refused; a query
+with `history` writes nothing to memory.

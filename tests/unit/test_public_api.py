@@ -25,8 +25,12 @@ PUBLIC_API = sorted(
     [
         "__version__",
         # Using the framework
+        "Citation",
+        "CitationMarkerScanner",
+        "CitedDocument",
         "Config",
         "ConversationKey",
+        "ConversationTurn",
         "DataIngestionPipeline",
         "EvaluationManager",
         "GraphRAGChain",

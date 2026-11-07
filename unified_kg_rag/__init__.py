@@ -8,10 +8,10 @@ internal and may change in any release. Two groups:
 - **Using the framework**: load a :class:`Config` (:func:`get_config`),
   ingest a corpus (:class:`DataIngestionPipeline`, :class:`PipelineConfig`),
   query it (:class:`GraphRAGChain` with :class:`RAGInput`, answering with a
-  :class:`RAGOutput` or, from ``search``, a :class:`SearchOutput`) and
-  evaluate it (:class:`EvaluationManager`), or serve it to agents as
-  read-only MCP tools (:func:`build_mcp_server`, :func:`build_mcp_app`,
-  the ``mcp`` extra).
+  :class:`RAGOutput` and its :class:`Citation` records or, from ``search``, a
+  :class:`SearchOutput`) and evaluate it (:class:`EvaluationManager`), or
+  serve it to agents as read-only MCP tools (:func:`build_mcp_server`,
+  :func:`build_mcp_app`, the ``mcp`` extra).
 - **Extending it**: the ports a backend implements, the :class:`Providers`
   bundle that injects them, and the registries for providers, search
   strategies, parsers, renderers, extraction-schema sources and seed graph
@@ -72,6 +72,10 @@ _EXPORTS: dict[str, str] = {
     "RAGOutput": "unified_kg_rag.application.retrieval.rag_chain",
     "SearchOutput": "unified_kg_rag.application.retrieval.rag_chain",
     "ProcessedQuery": "unified_kg_rag.application.retrieval.rag_chain",
+    "ConversationTurn": "unified_kg_rag.application.retrieval.rag_chain",
+    "Citation": "unified_kg_rag.domain.models",
+    "CitedDocument": "unified_kg_rag.domain.models",
+    "CitationMarkerScanner": "unified_kg_rag.domain.retrieval.citations",
     "SearchResult": "unified_kg_rag.domain.models",
     "SearchStrategy": "unified_kg_rag.domain.models",
     "SearchType": "unified_kg_rag.domain.models",
@@ -178,6 +182,7 @@ if TYPE_CHECKING:
     from unified_kg_rag.application.config import get_config
     from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
     from unified_kg_rag.application.retrieval.rag_chain import (
+        ConversationTurn,
         GraphRAGChain,
         ProcessedQuery,
         RAGInput,
@@ -185,6 +190,8 @@ if TYPE_CHECKING:
         SearchOutput,
     )
     from unified_kg_rag.domain.models import (
+        Citation,
+        CitedDocument,
         Config,
         Methodology,
         ModelPurpose,
@@ -200,6 +207,7 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.domain.models.schema import SchemaDocument
     from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedGraph, SeedNode
+    from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
     from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
     from unified_kg_rag.ports import (
         ContentGuardPort,

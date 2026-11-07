@@ -31,6 +31,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts.retrieval import (
     ABSTENTION_INSTRUCTIONS,
+    CITATION_INSTRUCTIONS,
     DECLINE_INSTRUCTIONS,
     HEDGE_INSTRUCTIONS,
 )
@@ -350,7 +351,11 @@ async def test_mark_mode_appends_to_the_comprehensive_and_custom_prompts(
     config.custom_prompts.comprehensive_answer_system = "Answer from the context."
     chain, systems = _chain(config, _declining)
     await chain.ainvoke(_query())
-    assert "Answer from the context." + ABSTENTION_INSTRUCTIONS in systems[0]
+    # The citation instructions come first (search.citations).
+    assert (
+        "Answer from the context." + CITATION_INSTRUCTIONS + ABSTENTION_INSTRUCTIONS
+        in systems[0]
+    )
     assert "expert AI assistant" not in systems[0]
 
 

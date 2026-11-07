@@ -487,6 +487,8 @@ _KEYED_ONCE_SET = frozenset(
         "search.abstention.mode",
         "search.abstention.strip_marker",
         "search.abstention.on_insufficient",
+        # Bounds RAGInput.history only, which no earlier query had.
+        "memory.max_history_tokens",
         # The raptor methodology's settings (docs/design.md#65-raptor-summary-tree-raptor-tree-opt-in), added with
         # it: at their defaults they change nothing a run or a query did.
         "indexing.opensearch.summary_nodes_index_prefix",

@@ -2814,10 +2814,12 @@ do not hold.
   / 7050 / 4600 are packed. Synthesized global
   sections are seated first. `RAGOutput.sources` is
   built from this selection, so it lists only what the answer model saw,
-  truncated text included. Passages, claims and reports render with an
-  `[id]` prefix; entity and relationship lines without one, since nothing
-  reads those ids and a UUID cost about a quarter of their tokens. An entity
-  line shows the entity's type, from either store.
+  truncated text included. In the answer context every evidence section
+  starts with its citation marker `[n]` (§7.1); with citations off, and in
+  the intermediate prompts of DRIFT and iterative search, passages, claims and
+  reports render with an `[id]` prefix and entity and relationship lines
+  without one, since nothing reads those ids and a UUID cost about a quarter
+  of their tokens. An entity line shows the entity's type, from either store.
 - **Token counting** (`adapters/aws/token_counter.py`,
   `adapters/local/token_counter.py`). The Bedrock `count_tokens` API is used
   for language models that accept it, with a script-aware estimate otherwise
@@ -2825,6 +2827,94 @@ do not hold.
   5.x models and every embedding and rerank model, so with the defaults every
   count is the estimate. A non-transient failure marks the model unsupported
   for the process. Local models use the estimate or tiktoken.
+
+### 7.1 Document citations
+
+An answer cites the documents it rests on. The parts, all on by default
+(`search.citations.enabled`; off restores the context and prompts of earlier
+releases and returns no citations):
+
+- **Numbered context.** `optimize_context(..., number_sections=True)` (the
+  chain's answer context only; DRIFT's and iterative's intermediate prompts
+  stay unnumbered, so a number they write never reaches the answer as if it
+  were one) gives every retrieved section a marker `[1]`, `[2]`, ... in the
+  order the context string renders them (by section-type block, then by
+  rank). The marker replaces the `[id]` prefix of passages, claims and
+  reports and is added to entity and relationship lines (about 3 tokens; a
+  section is counted with a `[999]` placeholder so the budget holds). A
+  synthesized section (global search's key points, DRIFT's intermediate
+  answers) is model output, not evidence: it gets no marker and no citation,
+  as it is not a source.
+- **Prompt.** `CITATION_INSTRUCTIONS` is appended to the system prompt of
+  whichever answer prompt runs (concise, comprehensive or a `custom_prompts`
+  override), like the abstention text: cite the supporting items after each
+  statement with their markers, written as is (ASCII digits in square
+  brackets) in every answer language, and only markers the context shows.
+- **Resolution** (`application/retrieval/citations.py`). `RAGOutput.citations`
+  lists one `Citation` per numbered section: its marker, section type,
+  source id, title (file, entity, `A -> B`, report title), seed-graph
+  provenance (`seed_provenance`) and IRI, the text units it rests on and the
+  documents they belong to (`CitedDocument`: document id, file name, file
+  path relative to the corpus root, pages). A passage names its own unit,
+  document and pages. A graph section (entity, relationship, claim, report,
+  summary) resolves through its `text_unit_ids` lineage: up to
+  `search.citations.lineage_units` units, those in the context first, are
+  read from the text-units index in one batched fetch by id (in-context
+  units need none) under the query's suffix and the caller's filters that
+  index declares, so a document the filters exclude, or another tenant's,
+  is never named; units that do not come back are left out. Its documents
+  are ordered by how many of those units each holds; the first is the
+  citation's `document_id` / `file_name` / `file_path` / `page`. Seed units
+  (`sg-...`) are virtual documents: they are not looked up, and a seed-only
+  fact cites its seed graphs and IRI (`provenance.kind: seed_graph`) with no
+  document. A failed lookup leaves the graph citations without documents
+  (`metadata.citations_unresolved`), never fails the answer.
+- **Markers in the answer** (`domain/retrieval/citations.py`). `[1]`,
+  `[1, 2]`, `[1][3]`, `[1-3]` and the full-width forms CJK answers use
+  (`［1］`, `【1】`) are read; `Citation.cited` marks the ones the answer
+  uses. A number the context did not show is never a citation: it is listed
+  in `metadata.unknown_citation_markers`. `CitationMarkerScanner` reads the
+  same markers from streamed chunks (a marker split across chunks is held
+  back until it closes), so a client of `astream` sees the citations as they
+  are written; the citations of an answer that was streamed are parsed from
+  the whole text, as `ainvoke` does.
+- **Edges unchanged.** A blocked answer returns no citations (as no
+  sources); a masked one keeps them, their `cited` flags read from the
+  screened text. An empty context returns none (no model call); a declined
+  answer keeps them, like its sources.
+- **Pages.** The document converter records where each page starts in the
+  combined text (`page_offsets`, 1-based page numbers) when the loader emits
+  one document per page (PDF). The chunker locates each chunk in the text
+  (in order, never searching before the previous chunk) and stores
+  `page_start` / `page_end` in the text unit's attributes, beside its
+  `relative_path`. Chunk boundaries, texts and ids do not change, so no
+  stored record is re-keyed; a namespace indexed before shows pages and
+  relative paths only for documents indexed again.
+- **Deviations from the originals.** LightRAG returns a reference list of
+  file paths numbered per document, and MS GraphRAG asks for `[Data:
+  Entities (ids); Sources (ids)]` records. A marker per section is cheaper
+  in the prompt than either (no id lists) and maps every graph section to
+  its documents after the answer, from lineage the stores already hold.
+- **Evaluation.** The retrieval evaluator adds `citation_precision` (cited
+  citations naming a reference file / cited citations naming a file) and
+  `citation_recall` (references named by a cited citation / references)
+  against `reference_sources` (`evaluation/citation_scoring.py`).
+
+### 7.2 Caller-supplied conversation history
+
+`RAGInput.history` (a list of `{role: user | assistant, content}` turns,
+oldest first) is the conversation for a stateless caller (a web server, the
+MCP server) that keeps it itself. It takes the place memory has in the chain:
+the follow-up rewrite reads it, and nothing else does. It is bounded before
+use: the last `memory.max_messages_per_conversation` turns, each answer cut to
+1,000 characters as memory cuts it, then the oldest dropped until the rest fit
+`memory.max_history_tokens` (the script-aware estimate). With the input
+guardrail on, the bounded turns are screened as the query is (`INPUT`): one
+check over all of them, and only when it intervenes one per turn; a masked
+turn is replaced and a blocked one dropped (recorded in `metadata.guardrail`),
+so a client replaying a refused turn is not refused forever. `history` and
+`use_memory` together are refused (`ValueError`); without `history` memory
+works as before, and a query with `history` writes nothing to memory.
 
 ---
 

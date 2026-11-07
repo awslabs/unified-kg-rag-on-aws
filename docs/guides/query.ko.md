@@ -124,6 +124,39 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 정했습니다([근거](../concepts/defaults-and-evidence.md#query-deadlines-and-model-timeouts), 영문).
 조정 방법은 [운영 런북](../operations.md#query-deadlines-and-model-timeouts)(영문)에 있습니다.
 
+## 인용
+
+모든 답변은 근거가 된 문서를 인용합니다(`search.citations`, 기본값은 켜짐). 답변
+컨텍스트는 근거 항목(본문 조각, 엔티티, 관계, 클레임, 커뮤니티 보고서, 요약)에 `[1]`, `[2]`,
+... 번호를 붙이고, 답변 프롬프트는 모델에게 이 표식으로 인용하라고 지시합니다. 표식은 답변
+언어와 관계없이 ASCII로 씁니다. 전역 검색의 핵심 요점과 DRIFT의 중간 답변은 모델이 쓴
+글이므로 번호가 없습니다.
+
+```text
+창고는 공급사의 부품을 보관합니다 [1][3].
+```
+
+`RAGOutput.citations`는 번호마다 기록 하나를 돌려줍니다. `marker`, `cited`(답변이 인용했는지),
+`section_type`, `title`, 대표 문서의 `document_id` / `file_name` / `file_path`(코퍼스
+루트 기준 상대 경로) / `page`와 `page_end`, `chunk_id`(본문 조각), `text_unit_ids`, 모든
+문서를 담은 `documents`, 시드 그래프 `provenance`와 `iri`가 들어 있습니다. 그래프 항목은
+텍스트 단위 중 최대 `search.citations.lineage_units`개의 문서를 밝힙니다. 이 정보는 질의마다
+한 번 묶어서 읽고, 질의의 필터와 접미사를 그대로 적용하므로 필터가 제외한 문서는 드러나지
+않습니다. 컨텍스트에 없던 번호를 답변이 쓰면 인용이 아니라
+`metadata.unknown_citation_markers`에 남습니다.
+
+- `run-rag`는 답변 아래에 인용한 출처를 출력하고, `--output-format json`은 모든 인용을
+  담습니다.
+- PDF 본문 조각에는 페이지가 붙습니다. 이번 릴리스 전에 수집한 텍스트에는 문서를 다시
+  수집하기 전까지 페이지와 상대 경로가 없습니다.
+- 스트리밍 답변에도 같은 표식이 들어 있습니다. `CitationMarkerScanner`로 청크에서 읽으면
+  청크 경계에서 잘린 표식은 닫힐 때까지 보류합니다. `astream`은 텍스트만, `ainvoke`는
+  인용까지 돌려줍니다.
+- 가드레일이 차단한 답변에는 인용이 없고, 마스킹한 답변은 마스킹된 텍스트 기준으로 인용
+  여부를 표시합니다. 거절한 답변은 출처와 마찬가지로 인용을 유지합니다.
+- `search.citations.enabled: false`이면 이전 컨텍스트와 프롬프트로 돌아갑니다. 답변 텍스트에는
+  표식이 남으며, `run-eval`의 `answer_match`는 표식을 뺀 단어로 채점합니다.
+
 ## 답변 거절
 
 검색 결과가 없으면 체인은 모델을 호출하지 않고 질문의 언어로 정해진 문장("사용 가능한 데이터에서
@@ -279,3 +312,26 @@ run-rag --interactive --conversation-id my-session --config-path config.yaml
   `memory.max_messages_per_conversation`개 메시지를 읽고 앞선 답변은 각각 1,000자까지만
   쓰며, `enable_query_processing`을 꺼도 실행됩니다(이 플래그는 번역과 엔티티·키워드
   추출을 끔). 메모리는 이 외에 LLM을 추가로 호출하지 않습니다.
+
+### 호출자가 넘기는 대화 이력
+
+대화를 직접 관리하는 서버(턴마다 요청 하나)는 메모리 대신 `RAGInput.history`로 대화를
+넘깁니다.
+
+```python
+chain.invoke(RAGInput(
+    query="그럼 가격은요?",
+    history=[
+        {"role": "user", "content": "공급사는 어떤 부품을 공급하나요?"},
+        {"role": "assistant", "content": "공급사는 부품 A를 공급합니다 [1]."},
+    ],
+))
+```
+
+후속 질문 재작성은 메모리와 같은 방식으로 이력을 읽습니다. 최근
+`memory.max_messages_per_conversation`개 턴만, 답변은 각각 1,000자까지만 쓰고,
+`memory.max_history_tokens`(기본값 4,000, 추정치)에 들어가는 최근 턴만 남깁니다. 입력
+가드레일이 켜져 있으면 질의처럼 검사합니다. 모든 턴을 한 번에 검사하고, 개입했을 때만 턴마다
+다시 검사합니다. 마스킹된 턴은 마스킹된 채로 쓰고 차단된 턴은 빼며(둘 다
+`metadata.guardrail`에 기록), 질의는 계속 진행합니다. `history`와 `use_memory=True`를 함께
+주면 거부하며, `history`를 준 질의는 메모리에 아무것도 쓰지 않습니다.

@@ -134,6 +134,19 @@ written as is in every language, then in one or two sentences in the same langua
 fact the context is missing (you may state what it does establish). Never put the token in front of an answer: when
 the context supports the answer, even with a caveat, answer it without the token."""
 
+# Appended to the system prompt of whichever answer prompt runs (built-in or
+# a custom_prompts override) under search.citations.enabled, before any
+# abstention text: the context then numbers its items [1], [2], ...
+# (TokenManager, number_sections). The markers are ASCII in every answer
+# language, so reading them (domain.retrieval.citations) never depends on it.
+CITATION_INSTRUCTIONS = """
+
+CITATIONS:
+Each item of the context starts with a numbered marker such as [1] or [2]. After each statement, cite the items
+that support it by their markers, written exactly as in the context (square brackets and ASCII digits, as [1] or
+[1][3]) in every language. Cite only markers that appear in the context and never make one up; do not cite an item
+that does not support the statement. Do not add a list of references at the end."""
+
 # Appended when the strategy flagged its context insufficient
 # (SearchResult.metadata["context_sufficient"] is False) under
 # search.abstention.on_insufficient: hedge.

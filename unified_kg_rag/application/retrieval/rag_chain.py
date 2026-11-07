@@ -21,8 +21,9 @@ from collections.abc import (
     Iterator,
 )
 from contextlib import AbstractContextManager, aclosing, contextmanager
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.output_parsers import (
     BaseOutputParser,
     StrOutputParser,
@@ -34,20 +35,24 @@ from langchain_core.runnables import (
     RunnablePassthrough,
 )
 from langchain_core.runnables.config import merge_configs
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.retry import retry_deadline
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
     query_scope,
+    scope_filters,
 )
 from unified_kg_rag.adapters.retrieval.memory_manager import (
+    HISTORY_ANSWER_CHARS,
     ConversationKey,
     MemoryManager,
+    history_buffer,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
@@ -84,6 +89,7 @@ from unified_kg_rag.application.bootstrap import (
 )
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.application.retrieval import (
+    citations,
     filter_validation,
     methodology_check,
     query_processing,
@@ -96,6 +102,7 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     SOURCE_KINDS_FIELD,
 )
 from unified_kg_rag.domain.models import (
+    Citation,
     Config,
     Constants,
     IndexArtifact,
@@ -118,6 +125,7 @@ from unified_kg_rag.domain.prompts import (
 )
 from unified_kg_rag.domain.prompts.retrieval import (
     ABSTENTION_INSTRUCTIONS,
+    CITATION_INSTRUCTIONS,
     DECLINE_INSTRUCTIONS,
     HEDGE_INSTRUCTIONS,
     describe_routable_strategies,
@@ -337,6 +345,16 @@ class ProcessedQuery(BaseModel):
     )
 
 
+class ConversationTurn(BaseModel):
+    """One earlier message of a conversation a caller keeps itself
+    (``RAGInput.history``)."""
+
+    role: Literal["user", "assistant"] = Field(
+        description="Who wrote it: the user, or the assistant (an earlier answer)"
+    )
+    content: str = Field(description="The message text")
+
+
 class RAGInput(BaseModel):
     """One query to :class:`GraphRAGChain` (a dict with these keys also works).
 
@@ -344,7 +362,8 @@ class RAGInput(BaseModel):
     ``processing.document_parsing.index_value`` the corpus was ingested with
     (both default to ``default``). Set ``conversation_id`` and ``use_memory``
     to continue a conversation; with ``use_memory`` and no id, a new id is
-    generated and returned on :class:`RAGOutput`.
+    generated and returned on :class:`RAGOutput`. A stateless caller passes
+    the conversation itself as ``history`` instead (docs/design.md §7.2).
     """
 
     query: str = Field(description="The user's search query")
@@ -393,6 +412,14 @@ class RAGInput(BaseModel):
     use_memory: bool = Field(
         default=False, description="Whether to use conversation memory"
     )
+    history: list[ConversationTurn] | None = Field(
+        default=None,
+        description="The conversation so far, oldest turn first, for a caller "
+        "that keeps it itself: the follow-up rewrite reads it where it reads "
+        "memory otherwise. Bounded to memory.max_messages_per_conversation "
+        "turns and memory.max_history_tokens, and screened by the input "
+        "guardrail as the query is. Not with use_memory",
+    )
     enable_query_processing: bool = Field(
         default=True,
         description="Whether to enable query processing (translation, entity "
@@ -412,6 +439,15 @@ class RAGInput(BaseModel):
         # Indexed text is NFC (see convert_langchain_to_document); a query typed
         # or pasted as decomposed Hangul (NFD) must compose to match it.
         return unicodedata.normalize("NFC", query)
+
+    @model_validator(mode="after")
+    def _one_conversation_source(self) -> "RAGInput":
+        if self.history is not None and self.use_memory:
+            raise ValueError(
+                "Pass the conversation as history or keep it in memory "
+                "(use_memory), not both."
+            )
+        return self
 
 
 class RAGOutput(BaseModel):
@@ -438,6 +474,11 @@ class RAGOutput(BaseModel):
     strategy flagged its context insufficient under
     ``search.abstention.on_insufficient: abstain``); a declined answer keeps
     the sources the model was given.
+    ``citations`` (``search.citations``) lists each numbered section of the
+    answer context, ``[n]`` in the answer, with the documents, pages and text
+    units it rests on and whether the answer cites it; a number the answer
+    uses that the context did not show is listed in
+    ``metadata["unknown_citation_markers"]``. A blocked answer has none.
     """
 
     answer: str = Field(description="The generated answer to the user's query")
@@ -446,6 +487,11 @@ class RAGOutput(BaseModel):
     )
     search_results: SearchResult = Field(
         description="Detailed search results from the retrieval process"
+    )
+    citations: list[Citation] = Field(
+        default_factory=list,
+        description="The numbered sections of the answer context ([n]) and "
+        "what each rests on (search.citations)",
     )
     conversation_id: str | None = Field(
         description="The conversation session identifier"
@@ -668,7 +714,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             # answer's grounding check; wired only when that check is on.
             answer_step = answer_step | RunnableLambda(self._capture_grounding_step)
         rag_branch = (
-            context_step | answer_step | RunnableLambda(self._format_output_step)
+            context_step
+            | answer_step
+            | RunnableLambda(self._citations_step)
+            | RunnableLambda(self._format_output_step)
         )
 
         self._search_chain: Runnable[Any, Any] = base_chain | RunnableLambda(
@@ -1020,6 +1069,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
     async def _load_memory_step(self, state: dict[str, Any]) -> dict[str, Any]:
+        turns = state.get("history")
+        if isinstance(turns, list):
+            # The caller's own conversation (RAGInput.history), bounded and
+            # screened at the query's edge (_admit_history).
+            state["history"] = history_buffer(
+                [
+                    (
+                        HumanMessage(content=t["content"])
+                        if t["role"] == "user"
+                        else AIMessage(content=t["content"])
+                    )
+                    for t in turns
+                ],
+                max_answer_chars=HISTORY_ANSWER_CHARS,
+            )
+            return state
         if not state.get("use_memory") or not (cid := state.get("conversation_id")):
             state["history"] = ""
             return state
@@ -1404,6 +1469,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 if strategy is not None
                 else ()
             ),
+            number_sections=self.config.search.citations.enabled,
         )
 
     def _context_optimization_step(self, state: dict[str, Any]) -> OptimizedContext:
@@ -1475,11 +1541,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
 
     def _answer_instructions(self, state: dict[str, Any]) -> str:
-        """The ``search.abstention`` text appended to the answer's system
-        prompt ("" by default)."""
-        if self._declines_insufficient(state):
-            return DECLINE_INSTRUCTIONS
+        """The text appended to the answer's system prompt: the citation
+        instructions of a numbered context (``search.citations``), then the
+        ``search.abstention`` text ("" with both off)."""
         parts = []
+        optimized: OptimizedContext | None = state.get("optimized_context")
+        if optimized is not None and any(
+            s.marker is not None for s in optimized.sections
+        ):
+            parts.append(CITATION_INSTRUCTIONS)
+        if self._declines_insufficient(state):
+            return "".join([*parts, DECLINE_INSTRUCTIONS])
         if self.config.search.abstention.mode == "mark":
             parts.append(ABSTENTION_INSTRUCTIONS)
         if self._context_insufficient(state):
@@ -1563,6 +1635,84 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         return state
 
     @staticmethod
+    def _context_citations(state: dict[str, Any]) -> list[Citation]:
+        """One citation per numbered section of the answer context, in
+        marker order (documents of graph sections not yet resolved)."""
+        optimized: OptimizedContext | None = state.get("optimized_context")
+        if optimized is None or GraphRAGChain._context_is_empty(state):
+            return []
+        results: list[RetrievalResult] = state["search_results"].results
+        cited: list[Citation] = []
+        for section in sorted(
+            (s for s in optimized.sections if s.marker is not None),
+            key=lambda s: s.marker or 0,
+        ):
+            entry = GraphRAGChain._section_source(section, results)
+            assert section.marker is not None
+            cited.append(citations.citation_from_entry(section.marker, entry))
+        return cited
+
+    async def _citations_step(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Set ``state["citations"]``: the context's citations, the
+        documents of graph sections read from their lineage
+        (``citations.aresolve_documents``). A failed read leaves those
+        without documents (``citations_unresolved``); the answer stands."""
+        cited = self._context_citations(state)
+        state["citations"] = cited
+        if not cited:
+            return state
+        try:
+            await citations.aresolve_documents(
+                cited,
+                functools.partial(self._fetch_text_units, state),
+                self.config.search.citations.lineage_units,
+            )
+        except QueryTimeoutError:
+            raise
+        except Exception as e:  # noqa: BLE001 - citations never fail an answer
+            logger.warning(
+                "Could not read the text units of the answer's graph "
+                "citations; they name no document: %s",
+                e,
+            )
+            state["citations_unresolved"] = True
+        return state
+
+    async def _fetch_text_units(
+        self, state: dict[str, Any], unit_ids: list[str]
+    ) -> list[dict[str, Any]]:
+        """The stored text units of ``unit_ids`` (id, documents, attributes)
+        in the query's namespace that pass the caller's filters the
+        text-units index declares: a unit they exclude is never named."""
+        retriever = self._get_retriever(RetrieverRole.DOCUMENT)
+        prefix = self.config.indexing.opensearch.text_units_index_prefix
+        suffix = state.get("suffix")
+        declared = retriever.filter_fields_for([prefix])
+        filters = {
+            key: value
+            for key, value in (state.get("filters") or {}).items()
+            if declared is None or declared.declares(key)
+        }
+        limits = await retriever.aindex_limits(prefix, suffix)
+        size = max(1, limits.id_batch_size)
+        found: list[dict[str, Any]] = []
+        for start in range(0, len(unit_ids), size):
+            batch = unit_ids[start : start + size]
+            hits = await retriever.aretrieve(
+                SearchQuery(
+                    query="",
+                    search_type=SearchType.LEXICAL,
+                    top_k=len(batch),
+                    index_prefixes=[prefix],
+                    suffix=suffix,
+                    filters=scope_filters(filters, id=batch),
+                    source_fields=["id", "document_ids", "attributes"],
+                )
+            )
+            found.extend(hit.metadata or {} for hit in hits)
+        return found
+
+    @staticmethod
     def _format_output_step(state: dict[str, Any]) -> RAGOutput:
         sr: SearchResult = state["search_results"]
         sr.search_strategy = state["resolved_strategy"].value
@@ -1612,11 +1762,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if optimized is not None:
             metadata["context_sections_included"] = optimized.sections_included
             metadata["context_sections_excluded"] = optimized.sections_excluded
+        cited = state.get("citations")
+        if cited is None:
+            # A streamed answer (and a direct caller): no lineage read.
+            cited = GraphRAGChain._context_citations(state)
+        cited, unknown = citations.mark_cited(cited, str(state.get("answer") or ""))
+        if unknown and optimized is not None and optimized.numbered:
+            # Only an answer asked to cite has markers that can be wrong.
+            metadata["unknown_citation_markers"] = unknown
+        if state.get("citations_unresolved"):
+            metadata["citations_unresolved"] = True
 
         return RAGOutput(
             answer=state["answer"],
             sources=sources,
             search_results=sr,
+            citations=cited,
             conversation_id=state.get("conversation_id"),
             processed_query=state["processed_query"],
             metadata=metadata,
@@ -1686,26 +1847,41 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
         sources: list[dict[str, Any]] = []
         for section in sorted(sections, key=_rank):
-            truncated = bool(section.metadata.get("truncated"))
-            index = section.result_index
-            if index is not None and 0 <= index < len(results):
-                result = results[index]
-            else:
-                result = RetrievalResult(
-                    content=section.content,
-                    score=section.priority,
-                    source=section.source_id,
-                    retriever_type=section.section_type.value,
-                    metadata=section.metadata,
-                )
-            if GraphRAGChain._is_synthesized(result.metadata):
+            if GraphRAGChain._is_synthesized(
+                GraphRAGChain._section_result(section, results).metadata
+            ):
                 continue
-            sources.append(
-                GraphRAGChain._source_entry(
-                    result, section.content, truncated=truncated
-                )
-            )
+            sources.append(GraphRAGChain._section_source(section, results))
         return sources
+
+    @staticmethod
+    def _section_result(
+        section: ContextSection, results: list[RetrievalResult]
+    ) -> RetrievalResult:
+        """The result ``section`` was cut from (rebuilt from the section
+        itself without a usable ``result_index``)."""
+        index = section.result_index
+        if index is not None and 0 <= index < len(results):
+            return results[index]
+        return RetrievalResult(
+            content=section.content,
+            score=section.priority,
+            source=section.source_id,
+            retriever_type=section.section_type.value,
+            metadata=section.metadata,
+        )
+
+    @staticmethod
+    def _section_source(
+        section: ContextSection, results: list[RetrievalResult]
+    ) -> dict[str, Any]:
+        """The reported source of ``section``: the text the model saw plus
+        its result's provenance."""
+        return GraphRAGChain._source_entry(
+            GraphRAGChain._section_result(section, results),
+            section.content,
+            truncated=bool(section.metadata.get("truncated")),
+        )
 
     @staticmethod
     def _format_search_output_step(state: dict[str, Any]) -> SearchOutput:
@@ -1921,7 +2097,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 blocking = await self._screen_input(
                     rag_input, input_dict, guard_records
                 )
-                if blocking is not None:
+                if blocking is None:
+                    await self._admit_history(rag_input, input_dict, guard_records)
+                else:
                     # Not written to memory: a refused turn is no history.
                     return self._short_circuit_output(
                         rag_input,
@@ -1941,15 +2119,20 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         guard_records,
                         grounding=capture[-1] if capture else None,
                     )
+                    screened = verdict.text != output.answer
                     output.answer = verdict.text
                     if verdict.grounding is not None:
                         output.metadata["grounding"] = verdict.grounding.model_dump()
                     if verdict.action is GuardAction.BLOCKED:
                         # A refused answer keeps none of the evidence behind it.
                         output.sources = []
+                        output.citations = []
+                        output.metadata.pop("unknown_citation_markers", None)
                         output.search_results = output.search_results.model_copy(
                             update={"results": [], "total_results": 0}
                         )
+                    elif screened:
+                        self._mark_citations(output)
                 output.search_results = await self._screen_synthesized(
                     output.search_results, guard_records
                 )
@@ -1991,6 +2174,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         finally:
             _GROUNDING_CAPTURE.reset(capture_token)
             reset_contextvars(**tokens)
+
+    @staticmethod
+    def _mark_citations(output: RAGOutput) -> None:
+        """Set ``output``'s ``cited`` flags from its (screened) answer."""
+        output.citations, unknown = citations.mark_cited(
+            output.citations, output.answer
+        )
+        reported = output.metadata.pop("unknown_citation_markers", None)
+        # Reported for an answer asked to cite (it has citations or had
+        # unknown markers), as _format_output_step reports them.
+        if unknown and (output.citations or reported is not None):
+            output.metadata["unknown_citation_markers"] = unknown
 
     def _short_circuit_output(
         self,
@@ -2055,6 +2250,63 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return verdict
         rag_input.query = input_dict["query"] = verdict.text
         return None
+
+    def _bounded_history(self, turns: list[ConversationTurn]) -> list[ConversationTurn]:
+        """The turns of ``turns`` the rewrite reads: the last
+        ``memory.max_messages_per_conversation``, then the most recent ones
+        whose text (answers cut as memory cuts them) fits
+        ``memory.max_history_tokens``."""
+        memory = self.config.memory
+        kept = turns[-memory.max_messages_per_conversation :]
+        budget = memory.max_history_tokens
+        messages: list[BaseMessage] = []
+        bounded: list[ConversationTurn] = []
+        for turn in reversed(kept):
+            message: BaseMessage = (
+                HumanMessage(content=turn.content)
+                if turn.role == "user"
+                else AIMessage(content=turn.content)
+            )
+            text = history_buffer([message, *messages], HISTORY_ANSWER_CHARS)
+            if estimate_token_count(text) > budget:
+                break
+            messages.insert(0, message)
+            bounded.insert(0, turn)
+        return bounded
+
+    async def _admit_history(
+        self,
+        rag_input: RAGInput,
+        input_dict: dict[str, Any],
+        records: list[dict[str, Any]],
+    ) -> None:
+        """Bound the caller's ``history`` and screen it as the query is.
+
+        One input check reads every bounded turn; only when it intervenes is
+        each checked on its own: a masked turn is replaced, a blocked one
+        dropped (recorded), so a client that replays a refused turn is not
+        refused for good."""
+        if rag_input.history is None:
+            return
+        turns = self._bounded_history(rag_input.history)
+        if self._screen_inputs and turns:
+            assert self.guard is not None
+            verdict = await self.guard.acheck(
+                "\n\n".join(t.content for t in turns), GuardSource.INPUT
+            )
+            if verdict.intervened:
+                screened: list[ConversationTurn] = []
+                for turn in turns:
+                    one = await self.guard.acheck(turn.content, GuardSource.INPUT)
+                    if not one.intervened:
+                        screened.append(turn)
+                        continue
+                    records.append(_guard_record(GuardSource.INPUT, one))
+                    if one.action is not GuardAction.BLOCKED:
+                        screened.append(turn.model_copy(update={"content": one.text}))
+                turns = screened
+        rag_input.history = turns
+        input_dict["history"] = [t.model_dump() for t in turns]
 
     async def _screen_output(
         self,
@@ -2313,6 +2565,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                             rag_input, input_dict, guard_records
                         )
                         if blocking is None:
+                            await self._admit_history(
+                                rag_input, input_dict, guard_records
+                            )
                             span.set_attributes(
                                 _captured_content(input=rag_input.query)
                             )
