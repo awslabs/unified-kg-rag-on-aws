@@ -470,7 +470,7 @@ jobs:
           node-version: "24"
 
       - name: Install AWS CDK CLI
-        run: npm install -g aws-cdk@2.1146.1
+        run: npm install -g aws-cdk@2.1148.0
 
       - name: Install IaC dependencies
         # iac/ is its own uv project, outside the root lock; --locked fails if
@@ -564,13 +564,13 @@ jobs:
         # (.trivyignore.yaml lists the accepted ones, each with its reason and
         # expiry). The image is pinned by digest and run directly, not through
         # trivy-action, whose tags were hijacked in March 2026 (GHSA-69fq-xp46-6x23);
-        # 0.76.1 is a release after it. The vulnerability database is
+        # 0.76.2 is a release after it. The vulnerability database is
         # downloaded at run time.
         run: >-
           docker run --rm
           -v /var/run/docker.sock:/var/run/docker.sock
           -v "$PWD/.trivyignore.yaml:/trivyignore.yaml:ro"
-          aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+          aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
           image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
           --exit-code 1 --ignorefile /trivyignore.yaml unified-kg-rag:ci
 
@@ -618,6 +618,6 @@ jobs:
           docker run --rm
           -v /var/run/docker.sock:/var/run/docker.sock
           -v "$PWD/.trivyignore.yaml:/trivyignore.yaml:ro"
-          aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+          aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
           image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
           --exit-code 1 --ignorefile /trivyignore.yaml unified-kg-rag:ci-unstructured
