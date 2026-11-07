@@ -1422,20 +1422,41 @@ class BaseSearchStrategy(ABC):
         for twice. With ``bridge_first`` the edges whose BOTH endpoints are in
         ``entity_ids`` — the bridges that connect two retrieved entities,
         i.e. the hops of a multi-hop chain — come before edges that leave the
-        set.
+        set, and of those, the edges whose outside endpoint links more of
+        the set come first (MS GraphRAG local's ``_filter_relationships``:
+        its out-of-network "links" count, then the rank).
         """
         edges, _ = await self._incident_relationships(query, entity_ids)
         known = {self._relationship_identity(r) for r in known_relationships or []}
         edges = [e for e in edges if self._relationship_identity(e) not in known]
         if bridge_first:
             in_set = set(entity_ids)
+
+            def ends(edge: RetrievalResult) -> tuple[str, str]:
+                metadata = edge.metadata or {}
+                return str(metadata.get("source_id")), str(metadata.get("target_id"))
+
+            # An outside entity's links: the entities of the set it shares an
+            # edge with (upstream counts the distinct other endpoints of its
+            # out-of-network edges, which are those).
+            links: dict[str, set[str]] = {}
+            for edge in edges:
+                source, target = ends(edge)
+                if (source in in_set) != (target in in_set):
+                    inside, outside = (
+                        (source, target) if source in in_set else (target, source)
+                    )
+                    links.setdefault(outside, set()).add(inside)
+
+            def order(edge: RetrievalResult) -> tuple[bool, int]:
+                source, target = ends(edge)
+                if source in in_set and target in in_set:
+                    return False, 0
+                outside = target if source in in_set else source
+                return True, -len(links.get(outside, ()))
+
             # Stable: each group keeps the (rank, weight, id) order.
-            edges.sort(
-                key=lambda r: not (
-                    str((r.metadata or {}).get("source_id")) in in_set
-                    and str((r.metadata or {}).get("target_id")) in in_set
-                )
-            )
+            edges.sort(key=order)
         return edges
 
     async def _incident_relationships(

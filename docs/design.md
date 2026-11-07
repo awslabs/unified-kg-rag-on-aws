@@ -1688,7 +1688,11 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   `search.local_search.include_bridge_relationships` (default on), the
   relationships incident to the expanded entities are fetched too, edges
   between two retrieved entities first: they carry the hops of a multi-hop
-  chain the relationship vector query rarely matches. With claims on,
+  chain the relationship vector query rarely matches. The others follow MS
+  GraphRAG local's `_filter_relationships` order: by how many retrieved
+  entities their outside endpoint links ("links"), then by rank (here rank,
+  weight, then id); upstream's budget of `top_k_relationships` per selected
+  entity is the relationship quota here. With claims on,
   matching claims are injected (MS GraphRAG covariates). The section lookups
   run concurrently with the entity chain. The community reports are, by
   default (`search.local_search.report_selection: similarity`), those most
@@ -1953,8 +1957,9 @@ through the strategy registry, so there is no dispatch on the base:
    as a keyword, or search no entity past `raw_query_fallback_max_len`). A
    query already searched (case-folded) or
    a bridge already followed (`compact_name_key`, so `동부 창고` and `동부창고` are one) is
-   not searched again, a round follows at most five bridge entities (the
-   most follow-up queries a round may ask for), and the controller is shown the searched list: the
+   not searched again, a round follows at most five bridge entities
+   (`search.iterative_search.max_bridge_entities`, the most follow-up
+   queries a round may ask for), and the controller is shown the searched list: the
    redundant searches ReaRAG (arXiv 2503.21729) reports for open-ended
    search agents, which run on until their iteration limit, are what the
    caps and the dedupe prevent.

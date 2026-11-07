@@ -809,6 +809,9 @@ From a `main` checkout (formats and keys no release had):
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#PR).
 
 ### Changed
+- Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
+  its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
+  alone before), after the edges between two retrieved entities (#PR).
 - The fixed reply to a query retrieval found nothing for (and to a decline that left no text) is written in the
   question's language, one sentence per supported language told by its script and function words (English, the
   0.2.3 reply, or the index language when they do not tell); evaluation counts a decline by `metadata.abstained`

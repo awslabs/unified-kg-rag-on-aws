@@ -146,6 +146,39 @@ async def test_bridge_edges_come_first_and_edges_dedupe_by_id(
     ]
 
 
+async def test_out_of_network_edges_follow_upstream_links_then_rank(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # MS GraphRAG local orders the out-of-network edges by how many selected
+    # entities their outside endpoint links ("links"), then by rank: bank
+    # links vendor and buyer, carrier vendor alone, so bank's two edges come
+    # before carrier's higher-ranked one.
+    monkeypatch.setitem(
+        _EDGES,
+        "source_id",
+        [
+            _edge("r-carrier", "vendor", "carrier", 9.0),
+            _edge("r-bank-vendor", "vendor", "bank", 3.0),
+            _edge("r-bridge", "vendor", "buyer", 1.0),
+        ],
+    )
+    monkeypatch.setitem(
+        _EDGES, "target_id", [_edge("r-bank-buyer", "bank", "buyer", 2.0)]
+    )
+    strategy, _, _ = _make_strategy(config)
+
+    edges = await strategy._fetch_incident_relationships(
+        SearchQuery(query="q"), ["vendor", "buyer"], bridge_first=True
+    )
+
+    assert [e.source for e in edges] == [
+        "r-bridge",
+        "r-bank-vendor",
+        "r-bank-buyer",
+        "r-carrier",
+    ]
+
+
 async def test_an_edge_the_caller_holds_is_not_fetched_again(
     config: Config,
 ) -> None:
