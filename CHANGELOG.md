@@ -465,6 +465,15 @@ From a `main` checkout (formats and keys no release had):
 - #612 report generation off: a namespace built with `graph.community_detection.report_generation.enabled: false`
   holds `graphrag` again, so `local` answers on it (refused since #603); `global` and `drift`, which read the
   reports, are refused naming the switch. Nothing re-runs.
+- #PR image and IaC hardening: the data-plane image has no AWS CLI and no uv, and its venv and `/app` are
+  read-only to the app user, who writes only `/app/cache`, `/app/outputs`, `/app/logs`, `/tmp` and its home: a
+  derived image that runs `aws` or `uv`, or a command that writes elsewhere under `/app` (`run-prompt-tuning`'s
+  default `./tuned_prompts.yaml`), installs its own or writes under one of those. `aws.opensearch.use_iam: true`
+  with a username or password, a negative `fusion_weights` value and a resolution of 0 or less in
+  `auto_resolution_candidates` are refused at load (they were ignored or failed later): drop the setting the load
+  names. CDK: the next deploy turns on the cache bucket's S3 Bucket Key with `use_cmk` (new objects only, no
+  re-encryption; fewer KMS requests), tags the ingestion tasks and grants the state machine `ecs:TagResource` on
+  them; an `env_name` too long for the bucket or guardrail name now fails the synth. Nothing re-runs.
 
 ### Added
 - RAPTOR summary tree, opt-in (#599; on multi-hop questions it answered within the noise of `naive`,
@@ -779,6 +788,10 @@ From a `main` checkout (formats and keys no release had):
   keep `support` (`search.drift_search.text_unit_ranking`) (#607). Graph retrievers gain `aneighbourhood_edges`
   (Neptune, Gremlin Server, SQLite; the relationships index under a document filter), and `SearchQuery.max_hops`
   overrides the expansion depth (#597).
+- CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs with the CMK and
+  `log_retention_days` (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot
+  the instances after the deploy (#PR). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue
+  when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#PR).
 
 ### Changed
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
@@ -886,6 +899,9 @@ From a `main` checkout (formats and keys no release had):
   HippoRAG 2, RAPTOR and BenchmarkQED at pinned commits and versions (their dependencies resolved as of a fixed
   date), and the heavy RAPTOR fidelity cases that pull requests now sample (`weekly` marker); the build backend
   (`hatchling`) is pinned and ASH resolves its scanners as of a fixed date (#604, #611).
+- CDK: ingestion tasks carry the task definition's tags (`project`, `cost-center`, `owner`) for cost allocation, and
+  the `iac/README.md` run-task examples pass `--propagate-tags TASK_DEFINITION`; with `use_cmk` the cache bucket
+  uses an S3 Bucket Key (#PR).
 
 ### Deprecated
 - `run-rag` / `run-eval --enable-thinking` logs a deprecation WARNING and will be removed: the default Claude 5.x
@@ -1077,6 +1093,15 @@ Deployment (CDK).
 - A deploy that replaced the ingestion task definition (a new `image_tag`, guardrail, analyzer, size, tracing or
   secret) failed on the cross-stack export, or left the state machine on the old revision (#558).
 - `cdk destroy` of a `removal_destroy` environment no longer fails on a late access log in `CacheAccessLogs` (#583).
+- `bedrock_model_arns` with a `*` region, as documented, no longer fails the cdk-nag synth; an `env_name` too long
+  for the cache bucket or guardrail name fails the synth (not the deploy); an odd `opensearch_count` synthesized
+  without an account says why only 2 AZs are seen; the endpoint count in `iac/README.md` is six (#PR).
+- Configuration: `aws.opensearch.password` with `allow_anonymous` (the password was dropped) and `use_iam` with a
+  username or password (ignored) are refused, and the local preset no longer adds anonymous access beside a
+  password; a negative `search.fusion.fusion_weights` value and a non-positive `auto_resolution_candidates` value
+  are refused. A source directory that is a file raises `ConfigurationError`, an S3 ontology without a reader
+  `SchemaSourceError`, and creating an OpenSearch index that exists raises `AWSServiceError` without being logged
+  as an unexpected error (#PR).
 
 ### Security
 - Pinned floors for advisories: pypdf 6.21.4 (seven high-severity denial-of-service advisories, e.g.
@@ -1112,5 +1137,17 @@ Deployment (CDK).
 - Interactive graph tooltips are escaped (#180).
 - The compose containers drop all capabilities and run with `no-new-privileges`, the data-plane image declares
   `HEALTHCHECK NONE`, and retry jitter draws from `random.SystemRandom` (#307).
+- The data-plane image drops the AWS CLI (the entrypoint syncs the corpus with `docker/s3_sync.py`, on boto3) and
+  uv, is built on Python 3.12.16, and keeps the venv read-only to the app user: 939 MB instead of 1.98 GB, and no
+  HIGH or CRITICAL finding with a fix. CI scans both images with Trivy (pinned by digest) and fails on such a
+  finding (`.trivyignore.yaml` lists accepted ones with their reason and expiry) (#PR).
+- Releases attach SHA-256 checksums and a CycloneDX SBOM of the locked dependencies, with a signed build provenance
+  attestation of the distributions (`gh attestation verify`) (#PR).
+- IaC: the ingestion role cannot change OpenSearch cluster settings or plugin configuration (writes under
+  `_cluster`, `_plugins` and `_opendistro` are denied); the logger-credential semgrep finding is suppressed on each
+  matched line, not the whole package (#PR).
+- A failed query step (routing, query processing, follow-up rewrite, context optimization, the answer and its
+  stream, conversation memory) or claim extraction step logs its error as its type and a digest, its text at DEBUG,
+  as the evaluators do (#PR).
 
 [Unreleased]: https://github.com/awslabs/unified-kg-rag-on-aws/compare/81ea4987...HEAD
