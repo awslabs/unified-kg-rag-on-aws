@@ -323,7 +323,7 @@ class TestMergeClaims:
         # created_at is the earliest across the group.
         assert merged.created_at == early
 
-    def test_merge_status_picks_majority_value(self) -> None:
+    def test_merge_status_is_disputed_when_statements_disagree(self) -> None:
         def _c(id_: str, status: str | None) -> Claim:
             return Claim(
                 id=id_,
@@ -335,13 +335,23 @@ class TestMergeClaims:
                 status=status,
             )
 
+        # Two documents state it true and one false: a majority vote read
+        # it as true, and a TRUE+FALSE tie as false. The claim is disputed.
         merged = _resolver()._merge_claims(
             [_c("c1", "TRUE"), _c("c2", "FALSE"), _c("c3", "TRUE")]
         )
+        assert merged.status == "disputed"
+        # An unknown status adds nothing to a known one.
+        merged = _resolver()._merge_claims(
+            [_c("c1", "UNKNOWN"), _c("c2", "TRUE"), _c("c3", None)]
+        )
         assert merged.status == "TRUE"
+        assert _resolver()._merge_claims([_c("c1", "UNKNOWN")] * 2).status == "UNKNOWN"
 
     @pytest.mark.parametrize("order", [("TRUE", "FALSE"), ("FALSE", "TRUE")])
-    def test_merge_status_tie_is_the_smallest(self, order: tuple[str, str]) -> None:
+    def test_merge_status_does_not_depend_on_order(
+        self, order: tuple[str, str]
+    ) -> None:
         # Not the first claim's: the claims' order follows the text units,
         # which differs between namespaces of the same text.
         claims = [
@@ -357,7 +367,7 @@ class TestMergeClaims:
             for n, status in enumerate(order)
         ]
 
-        assert _resolver()._merge_claims(claims).status == "FALSE"
+        assert _resolver()._merge_claims(claims).status == "disputed"
 
     def test_merge_with_all_none_optional_fields(self) -> None:
         # None description/status/text_units/source_text/attributes must not crash;
@@ -563,12 +573,12 @@ def test_each_reference_is_fuzzy_matched_once_per_resolution(mocker) -> None:
 
 def test_resolution_lowercases_type_and_status_before_the_merge() -> None:
     # Before the merge, not only at the store: "TRUE" and "true" are one
-    # status in the vote.
+    # status, and "Employment" one type with "EMPLOYMENT".
     ents = [_entity("e1", "Alice"), _entity("e2", "Acme")]
     claims = [
         _claim("c1", "Alice", "Acme", type_="EMPLOYMENT", status="TRUE"),
         _claim("c2", "Alice", "Acme", type_="employment", status="true"),
-        _claim("c3", "Alice", "Acme", type_="Employment", status="FALSE"),
+        _claim("c3", "Alice", "Acme", type_="Employment", status="True"),
     ]
     out, _ = _resolver().resolve(claims, ents)
     assert [(c.type, c.status) for c in out] == [("employment", "true")]
@@ -677,6 +687,17 @@ def test_a_day_month_date_with_a_comma_is_a_calendar_date(text: str) -> None:
         ("2024. 3. 15.", "2024-03-15", "2024-03-15"),
         ("2024. 03. 15", "2024-03-15", "2024-03-15"),
         ("2024. 3. 15.(금요일)", "2024-03-15", "2024-03-15"),
+        # A month alone in the dotted form.
+        ("2024. 3.", "2024-03-01", "2024-03-31"),
+        ("2024. 12", "2024-12-01", "2024-12-31"),
+        # A Japanese era's year (元年 its first), and the Minguo calendar's.
+        ("令和6年3月15日", "2024-03-15", "2024-03-15"),
+        ("令和元年5月", "2019-05-01", "2019-05-31"),
+        ("平成31年4月30日", "2019-04-30", "2019-04-30"),
+        ("昭和64年", "1989-01-01", "1989-12-31"),
+        ("㋿6年", "2024-01-01", "2024-12-31"),
+        ("令和6年第3四半期", "2024-07-01", "2024-09-30"),
+        ("民國113年1月", "2024-01-01", "2024-01-31"),
     ],
 )
 def test_a_chinese_japanese_or_korean_date_is_a_calendar_date(
@@ -696,7 +717,54 @@ def test_an_impossible_cjk_date_stays_as_written(text: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "text", ["不明", "未定", "なし", "未知", "不详", "미상", "알 수 없음", "Unbekannt"]
+    ("text", "start", "end"),
+    [
+        ("15. März 2024", "2024-03-15", "2024-03-15"),
+        ("15. Mär. 2024", "2024-03-15", "2024-03-15"),
+        ("März 2024", "2024-03-01", "2024-03-31"),
+        ("1er mars 2024", "2024-03-01", "2024-03-01"),
+        ("15 février 2024", "2024-02-15", "2024-02-15"),
+        ("15 de marzo de 2024", "2024-03-15", "2024-03-15"),
+        ("marzo de 2024", "2024-03-01", "2024-03-31"),
+        ("15 marzo 2024", "2024-03-15", "2024-03-15"),
+        ("15 de março de 2024", "2024-03-15", "2024-03-15"),
+        ("15 марта 2024 г.", "2024-03-15", "2024-03-15"),
+        ("март 2024", "2024-03-01", "2024-03-31"),
+        ("15. Dezember 2024", "2024-12-15", "2024-12-15"),
+    ],
+)
+def test_a_date_written_with_another_language_s_month_is_a_calendar_date(
+    text: str, start: str, end: str
+) -> None:
+    # The months of the supported languages that write dates with words.
+    assert claim_date_value(text) == start
+    assert claim_date_value(text, end=True) == end
+
+
+@pytest.mark.parametrize("text", ["Out of scope", "Early 2024", "de 2024 x"])
+def test_words_that_are_no_month_stay_as_written(text: str) -> None:
+    assert claim_date_value(text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "不明",
+        "未定",
+        "なし",
+        "未知",
+        "不详",
+        "未詳",
+        "미상",
+        "알 수 없음",
+        "알수없음",
+        "해당없음",
+        "해당 없음",
+        "진행중",
+        "Unbekannt",
+        "NONE",
+        "N / A",
+    ],
 )
 def test_a_placeholder_in_the_corpus_language_is_an_unknown_date(text: str) -> None:
     assert claim_date_value(text) is None

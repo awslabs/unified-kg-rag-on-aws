@@ -690,6 +690,13 @@ def test_graph_analysis_builds_the_graph_without_centrality(mocker) -> None:
     assert PipelineStageType.GRAPH_ANALYSIS not in STAGE_OUTPUTS
 
 
+def _vendor(unit: str) -> Any:
+    """The entity a unit's record states (a claim's subject resolves to it)."""
+    from unified_kg_rag.domain.models import Entity
+
+    return Entity(id="e-vendor", name="Vendor", type="ORG", text_unit_ids=[unit])
+
+
 def test_claims_are_handed_on_per_statement_in_text_unit_id_order(mocker) -> None:
     # Regression: the stage merged a claim's statements in document order,
     # derivation in text-unit id order, so the description's line order (and
@@ -734,8 +741,8 @@ def test_claims_are_handed_on_per_statement_in_text_unit_id_order(mocker) -> Non
         # Document order puts u2 first.
         text_units=[TextUnit(id="u2", text="b"), TextUnit(id="u1", text="a")],
         unit_extractions=[
-            TextUnitExtraction(text_unit_id="u2"),
-            TextUnitExtraction(text_unit_id="u1"),
+            TextUnitExtraction(text_unit_id="u2", entities=[_vendor("u2")]),
+            TextUnitExtraction(text_unit_id="u1", entities=[_vendor("u1")]),
         ],
     )
 
@@ -745,6 +752,48 @@ def test_claims_are_handed_on_per_statement_in_text_unit_id_order(mocker) -> Non
         (["u1"], "stated in u1"),
         (["u2"], "stated in u2"),
     ]
+
+
+def test_claims_are_not_asked_of_a_unit_that_states_no_entity(mocker) -> None:
+    # A claim's subject resolves only against its own unit's entities, so a
+    # unit whose record states none (or that has no record) had a model call
+    # whose every claim was then dropped. Its empty claims are stored like
+    # any final record's.
+    from unified_kg_rag.adapters.ingestion.claim_extractor import (
+        ClaimExtractionStats,
+    )
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+    from unified_kg_rag.domain.models import Config, TextUnit, TextUnitExtraction
+
+    extractor = mocker.patch.object(ps, "ClaimExtractor", autospec=True)
+    extractor.return_value.extract_units.return_value = (
+        {"u1": []},
+        ClaimExtractionStats(),
+    )
+    store = mocker.patch.object(ps, "ExtractionStore", autospec=True)
+    store.return_value.load.return_value = {}
+    store.return_value.save.return_value = set()
+    stage = ps.ClaimExtractionStage(Config(), providers=mocker.MagicMock())
+    context = _context()
+    context.text_units = [TextUnit(id=u, text=u) for u in ("u1", "u2", "u3")]
+    context.unit_extractions = [
+        TextUnitExtraction(text_unit_id="u1", entities=[_vendor("u1")]),
+        TextUnitExtraction(text_unit_id="u2"),
+    ]
+
+    _, _, metrics = stage._execute_core(context)
+
+    (units, entities), _ = extractor.return_value.extract_units.call_args
+    assert [u.id for u in units] == ["u1"]
+    assert [e.name for e in entities] == ["Vendor"]
+    assert metrics["text_units_without_entities"] == 2
+    saved = {
+        unit.id
+        for call in store.return_value.save.call_args_list
+        for unit, _ in call.args[0]
+    }
+    # u3 has no record: nothing final to store its claims with.
+    assert saved == {"u1", "u2"}
 
 
 @pytest.mark.parametrize("stage_name", ["claim_extraction", "gleaning"])
@@ -764,7 +813,9 @@ def test_a_stage_hands_on_the_units_failed_for_their_own_error(
     failed = {"failed_text_unit_ids": ["u1", "u2"], "item_failed_text_unit_ids": ["u1"]}
     context = _context()
     context.text_units = [TextUnit(id=u, text=u) for u in ("u1", "u2")]
-    context.unit_extractions = [TextUnitExtraction(text_unit_id="u1")]
+    context.unit_extractions = [
+        TextUnitExtraction(text_unit_id="u1", entities=[_vendor("u1")])
+    ]
     if stage_name == "gleaning":
         gleaner = mocker.MagicMock()
         mocker.patch.object(ps, "GraphGleaner", return_value=gleaner)

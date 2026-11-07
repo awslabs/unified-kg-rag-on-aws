@@ -448,7 +448,12 @@ From a `main` checkout (formats and keys no release had):
   and vector made again). Any other configuration
   keeps its extraction records and indices; the community report prompt now names its language, so the next full
   build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
-  date written as `2024年3月` (or `2024. 3. 15.`, #612) is found under it, so nothing else re-runs.
+  date written as `2024年3月` (or `2024. 3. 15.`, #612, or a form read as a date since, #PR) is found under it, so
+  nothing else re-runs.
+- With claim extraction on (`processing.claim_extraction.enabled`, off by default), the claim prompt changed (#PR):
+  the next run asks the claims of every text unit it extracts again (one claim call per unit that states an entity;
+  the graph records are kept), a reset all of them. Stored claims keep their status until their claim is derived
+  again: reset once for `disputed` statuses and the object-less claims an empty `<object>` dropped.
 - #606 evaluation results: `run-eval` results saved before it record no `token_f1_tokens`: they tokenized by
   whitespace, so on a dataset with Han, Hangul or Kana text a default-normalization run is refused against them
   (exit 2) until one side is scored again (an `official_squad` or `hotpotqa` run, or any run on a dataset without
@@ -1082,7 +1087,17 @@ Ingestion and incremental indexing.
   queries used `source_language`, so the graph held a second language. The community report prompt names its
   output language. Claim dates written as `2024年3月15日`, `2024년 3월 15일` or `2022年第3四半期` read as calendar
   dates and placeholders such as `不明` or `미상` as unknown (#605), and so do `2024. 3. 15.` and a day followed by
-  its weekday, `2024年3月15日(金)` (#612).
+  its weekday, `2024年3月15日(金)` (#612), a month alone in the dotted form (`2024. 3.`), a Japanese era's or the
+  Minguo calendar's year (`令和6年3月15日`, `令和元年`, `民國113年`), the German, Spanish, French, Italian, Portuguese
+  and Russian month names (`15. März 2024`, `15 de marzo de 2024`, `15 марта 2024 г.`), and placeholders however
+  spaced (`해당없음`, `未詳`) (#PR).
+- Claims: the claim prompt names the output language of `<description>` (the index language, as extraction's
+  does), states that a claim's subject is one of the unit's listed entities (the resolver drops any other) and asks
+  for `NONE` when a claim has no object; a claim with an empty, `NONE`, `UNKNOWN` (or another language's "none")
+  object is kept under one `NONE` literal instead of dropped or split in two; a unit whose record states no entity
+  is not asked (its claims could resolve to nothing); and a claim whose statements disagree (`TRUE` and `FALSE`) is
+  `disputed`, in a full build and incrementally, where a majority vote read a tie as `FALSE` and an incremental run
+  kept the stored status whatever the new documents said (#PR).
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

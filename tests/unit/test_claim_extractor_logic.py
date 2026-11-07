@@ -255,7 +255,9 @@ class TestClaimsOutputParser:
         assert [c.subject_name for c in claims] == ["A", "C"]
 
     @pytest.mark.parametrize(
-        "missing", ["<object>B</object>", "<claim_type>X</claim_type>"]
+        # A claim without an object is kept (with NONE, see below).
+        "missing",
+        ["<subject>A</subject>", "<claim_type>X</claim_type>"],
     )
     def test_a_closed_section_of_only_an_invalid_claim_is_no_claims(
         self, extractor, text_unit, missing: str
@@ -477,3 +479,79 @@ def test_claim_prompt_defines_one_type_taxonomy() -> None:
     assert "# CLAIM TYPES" in system
     assert "Claim Categories" not in system
     assert "FACTUAL_ASSERTION" not in system
+
+
+def test_claim_prompt_names_the_output_language_and_the_subject_rule() -> None:
+    # The claim prompt named no output language (extraction, gleaning and
+    # reports do), nor that a claim's subject must be a listed entity: the
+    # resolver drops every claim whose subject is none.
+    from unified_kg_rag.domain.prompts.graph_extraction import ClaimExtractionPrompt
+
+    resolved = ClaimExtractionPrompt.resolve()
+    human = resolved.human_prompt_template.format(
+        input_text="t", entity_specs="Acme", target_language="ko"
+    )
+    assert "Write every <description> in the language with code 'ko'" in human
+    assert "<source_text>\nspans exactly as they appear" in human
+    system = resolved.system_prompt_template
+    assert "one of the entities in the entity specifications" in system
+    assert "write NONE when the claim has no object" in system
+
+
+@pytest.mark.parametrize("language", ["ko", "ja", "en"])
+def test_a_claim_prompt_asks_for_the_index_language(
+    extractor, mocker, language: str
+) -> None:
+    from unified_kg_rag.domain.models.config import LanguageCode
+
+    translation = extractor.config.processing.translation
+    translation.enabled = False
+    translation.source_language = LanguageCode(language)
+    units = [TextUnit(id="t1", text="Acme acquired Beta.")]
+
+    (prepared,) = extractor._prepare_extraction_inputs(units, []).values()
+
+    assert prepared["target_language"] == language
+
+
+def test_a_translated_unit_s_claims_are_extracted_from_its_translation(
+    extractor,
+) -> None:
+    # The claims are extracted from the text the index holds (the
+    # translation into the index language), as the graph is.
+    from unified_kg_rag.domain.models.config import LanguageCode
+
+    translation = extractor.config.processing.translation
+    translation.enabled = True
+    translation.source_language = LanguageCode.KO
+    translation.target_language = LanguageCode.EN
+    unit = TextUnit(
+        id="t1",
+        text="에이크미가 베타를 인수했다.",
+        translated_texts={"en": "Acme acquired Beta.", "ja": "Acme がBetaを買収した。"},
+    )
+
+    (prepared,) = extractor._prepare_extraction_inputs([unit], []).values()
+
+    assert prepared["input_text"] == "Acme acquired Beta."
+    assert prepared["target_language"] == "en"
+
+
+@pytest.mark.parametrize(
+    "written", ["", "NONE", "none", "UNKNOWN", "N/A", "없음", "なし"]
+)
+def test_a_claim_without_an_object_is_kept_with_none(
+    extractor, text_unit, written: str
+) -> None:
+    # An empty <object> dropped the claim, and NONE and UNKNOWN were two
+    # literal objects (two claim ids for one object-less claim).
+    claim = extractor._parse_claim_data(
+        {"subject": "Acme", "object": written, "claim_type": "LEGAL"}, text_unit
+    )
+    reference = extractor._parse_claim_data(
+        {"subject": "Acme", "object": "NONE", "claim_type": "LEGAL"}, text_unit
+    )
+
+    assert claim is not None and reference is not None
+    assert claim.object_name == "NONE"
+    assert claim.id == reference.id

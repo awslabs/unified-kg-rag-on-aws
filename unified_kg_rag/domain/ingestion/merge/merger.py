@@ -18,6 +18,7 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
     FuzzyMatcher,
     entity_types_compatible,
 )
+from unified_kg_rag.domain.ingestion.claim_resolver import merge_claim_statuses
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.graph_resolver import (
     ENTITY_KEYS_ATTRIBUTE,
@@ -392,12 +393,10 @@ def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
     its document, so the same claim extracted from another document has the
     stored claim's id. As in the full-build ``ClaimResolver`` merge, the
     descriptions and source texts are unioned (stored first) and the text
-    units are the sorted union. The status is the stored one when it has
-    one. ``ClaimResolver`` takes the most common status of a group (the
-    smallest on a tie), and the stored claim keeps no per-status counts, so
-    the two can differ: a stored ``TRUE`` stays when one delta document says
-    ``FALSE`` (a tie), and a stored ``SUSPECTED`` when two later documents
-    say ``TRUE``. The attributes are unioned with the document
+    units are the sorted union. The status is the one both state, or
+    ``disputed`` when they disagree (``merge_claim_statuses``, the
+    ``ClaimResolver`` rule, which is associative: the stored status stands
+    for its statements). The attributes are unioned with the document
     ``filters`` of both (see ``merge_attributes``). Every other field is the
     delta's. Returns the delta claims, merged.
     """
@@ -420,7 +419,7 @@ def merge_claims(old: list[Claim], delta: list[Claim]) -> list[Claim]:
                     "text_unit_ids": sorted(
                         {*(match.text_unit_ids or []), *(claim.text_unit_ids or [])}
                     ),
-                    "status": match.status or claim.status,
+                    "status": merge_claim_statuses((match.status, claim.status)),
                     "attributes": merge_attributes(
                         (match.attributes, claim.attributes)
                     ),

@@ -438,9 +438,11 @@ gets its models and stores from the run's `Providers` bundle.
   claims depend on the unit alone. A claim's subject and object resolve
   only against the entities its own text units stated (`ClaimResolver`, in
   a full build as incrementally): a claim whose subject its units' entity
-  extraction did not list is dropped, and an object not listed there is
+  extraction did not list is dropped (the prompt says so, and a unit whose
+  record lists no entity is not asked), and an object not listed there is
   kept as the literal name the claim states (`object_id` empty), though
-  another document states that entity. Each unit's statement is resolved
+  another document states that entity. Statements of one claim whose
+  statuses disagree merge into `disputed` (`merge_claim_statuses`). Each unit's statement is resolved
   on its own, and resolution merges the statements that resolve to one
   claim id.
 - **The extraction store** keeps each record, keyed by
@@ -1470,7 +1472,7 @@ every write and check that the next run converges to a fresh full build.
 |---|---|---|
 | Entity | id, else identity key | description lines unioned; `text_unit_ids` and `community_ids` unioned; max confidence and rank; attributes unioned (delta wins) except `filters`, whose values are unioned per key; the stored name and type are kept (the derivation then sets what a full build would) |
 | Relationship | id, else (source, target, type) | as entities; weight = sum of the strengths per supporting text unit (`attributes.text_unit_weights`), so the result equals a full build over the union; endpoint names re-derived from the merged entities |
-| Claim | id | full-build `ClaimResolver` rules: descriptions and source texts unioned, `text_unit_ids` unioned, the stored status kept |
+| Claim | id | full-build `ClaimResolver` rules: descriptions and source texts unioned, `text_unit_ids` unioned, the status both state or `disputed` when they disagree (`unknown` adds nothing) |
 | Community | content-derived id | appended (§5.5) |
 
 ### 5.5 Communities on delta runs
@@ -2938,15 +2940,20 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   target language before), the extraction settings and the stage caches
   from translation on key it too (`cache_keys._language_input`), so such a
   namespace re-extracts instead of mixing languages; every other config
-  keeps its keys. Claims carry no language slot: the claim prompt reads the
-  unit's text in the index language and states facts as written.
+  keeps its keys. The claim prompt reads the unit's text in the index
+  language and writes each `<description>` in it, keeping entity names and
+  `<source_text>` as written, as extraction does.
 - **Language-aware parsing.** Query entities split at `,`, `，`, `、`,
   `;`, `；` and line breaks (`domain/retrieval/query_entities.py`). Global
   search's relevance rating skips a scale written in Korean, Japanese or
   Chinese as in English; LightRAG's raw-query fallback gate counts a
   dense-script character as `LATIN_CHARS_PER_TOKEN` characters (upstream
-  counts characters); claim dates read `2024年3月15日`, `2024년 3월` and
-  CJK quarters, and corpus-language placeholders (`不明`, `미상`) as unknown.
+  counts characters); claim dates read `2024年3月15日`, `2024년 3월`,
+  `2024. 3.`, Japanese era years (`令和6年`) and CJK quarters, the month
+  names of German, Spanish, French, Italian, Portuguese and Russian
+  (`15. März 2024`, `15 de marzo de 2024`), and corpus-language
+  placeholders (`不明`, `미상`, `해당없음`) as unknown; an object-less claim's
+  object is `NONE` whatever placeholder the model wrote.
   The follow-up rewrite's refusal check knows English, Korean, Japanese and
   Chinese openings; a refusal in another language passes as a rewrite.
 - **Encoding.** A text, CSV or JSON file is first read with the locale's

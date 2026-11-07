@@ -30,7 +30,11 @@ from unified_kg_rag.domain.prompts import ClaimExtractionPrompt
 pytestmark = pytest.mark.unit
 
 _MODEL = "anthropic.claude-3-haiku-20240307-v1:0"
-_INPUT = {"input_text": "Vendor pays Buyer.", "entity_specs": ""}
+_INPUT = {
+    "input_text": "Vendor pays Buyer.",
+    "entity_specs": "",
+    "target_language": "en",
+}
 
 
 def _chain(reply: str, *, fixing: bool = False) -> Any:
