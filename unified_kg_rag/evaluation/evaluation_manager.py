@@ -90,7 +90,7 @@ from .answer_match_evaluator import (
     answer_scoring,
 )
 from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
-from .citation_scoring import cited_source_ids
+from .citation_scoring import cited_section_types, cited_source_ids
 from .comparison import USAGE_SCHEMA
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
@@ -810,6 +810,7 @@ class EvaluationManager:
                         ),
                         **self._extract_source_details(raw_result),
                         cited_source_ids=cited_source_ids(raw_result),
+                        cited_section_types=cited_section_types(raw_result),
                         enable_thinking=rag_metadata.get("enable_thinking", False),
                         search_strategy=rag_metadata.get("search_strategy"),
                         response_time=_response_time(
