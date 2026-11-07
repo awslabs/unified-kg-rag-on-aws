@@ -648,7 +648,7 @@ From a `main` checkout (formats and keys no release had):
   (`metadata.gold_plan`). `run-eval` keeps each answer's `structured` record and reports `structured_statistics`
   (status, fallback reasons, valid-plan, repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)).
-- A local web console, opt-in (the `console` extra, `run-console`; #PR): ask with a strategy picker (and how `auto`
+- A local web console, opt-in (the `console` extra, `run-console`; #631): ask with a strategy picker (and how `auto`
   chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources they
   cite, follow-ups sent with the page's conversation (`RAGInput.history`), and each source the answer read on a
   provenance trace back to its passage, file, seed graph and IRI and into the graph; ingest a workspace folder or an
@@ -663,10 +663,10 @@ From a `main` checkout (formats and keys no release had):
   English and nine more languages, and `console/demo/demo.py` prepares a synthetic corpus, a dataset and a config for
   fake, Ollama or Bedrock models ([Console](docs/guides/console.md)).
 - `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose inputs
-  changed (#PR).
+  changed (#631).
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
   streams them (the output, its citations included, is that of an unstreamed answer), and an `auto` query's output
-  carries `metadata["routing"]` (how the strategy was chosen, among which candidates) (#PR).
+  carries `metadata["routing"]` (how the strategy was chosen, among which candidates) (#631).
 - RAPTOR summary tree, opt-in and unmeasured (#599): the `raptor` methodology adds a `summary_tree` ingestion stage
   after indexing that clusters the stored text units by their vectors (numpy k-means by default, RAPTOR's Gaussian
   mixture with BIC as `algorithm: gmm`; PCA in place of UMAP), summarizes each cluster bottom-up in the index
