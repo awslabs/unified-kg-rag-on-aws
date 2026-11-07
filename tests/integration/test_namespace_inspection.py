@@ -170,7 +170,38 @@ def test_run_describe_prints_one_json_document(
     monkeypatch.setattr(
         sys, "argv", ["run-describe", "--suffix", "tenant_x", "--output-format", "json"]
     )
-    assert run_describe.main() == 2
+    with pytest.raises(SystemExit) as exc:
+        run_describe.main()
+    assert exc.value.code == 2
+    assert json.loads(capsys.readouterr().out)["exit_code"] == 2
+
+
+def test_run_describe_names_a_wrong_suffix_on_stderr(
+    ingested, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    # Text mode exited 2 and printed nothing.
+    config, providers = ingested
+    monkeypatch.setattr(run_describe, "load_cli_config", lambda _args: config)
+    monkeypatch.setattr(inspection, "build_providers", lambda _c: providers)
+    monkeypatch.setattr(sys, "argv", ["run-describe", "--suffix", "tenant_x"])
+    with pytest.raises(SystemExit) as exc:
+        run_describe.main()
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    err = " ".join(captured.err.split())
+    assert "run-describe: error: the index namespace" in err
+    assert "holds no index: check --suffix" in err
+
+
+def test_describing_where_nothing_was_ingested_creates_no_store(
+    tmp_path: Path,
+) -> None:
+    # It left an empty .unified-kg-rag/vector.sqlite3 in the working
+    # directory.
+    config = embedded._config(tmp_path / "stores", tmp_path / "viz")
+    description = describe_namespace(config)
+    assert not description.exists
+    assert not (tmp_path / "stores" / "vector.sqlite3").exists()
 
 
 # The registry adapter's own constructor (no_aws forbids building one).
@@ -217,6 +248,8 @@ def test_describe_reports_an_unreadable_registry_and_the_rest(
     assert description.registry is None
     assert description.registry_unavailable is not None
     assert "AccessDeniedException" in description.registry_unavailable
+    # Without the hint for an indexing run (it is in the error itself).
+    assert "providers.doc_status.enabled" not in description.registry_unavailable
     assert description.methodologies == ["graphrag", "lightrag", "hipporag"]
     assert {"local", "mix"} <= set(description.strategies)
 

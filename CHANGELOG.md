@@ -786,8 +786,9 @@ From a `main` checkout (formats and keys no release had):
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
   (`--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#628). A
   registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported unavailable, with
-  the reason in `registry_unavailable` and a warning, and the rest is still described. See
-  [inspect and export](docs/guides/inspect.md).
+  the reason in `registry_unavailable` and a warning, and the rest is still described. A missing extra and a
+  namespace that holds no index exit 2 with the error on stderr, and describing creates no store file where nothing
+  was ingested. See [inspect and export](docs/guides/inspect.md).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,

@@ -1782,6 +1782,22 @@ def test_a_reader_creates_no_file_where_nothing_was_ingested(
     writer.close()
 
 
+def test_a_writer_creates_its_file_on_the_first_write_only(tmp_path: Path) -> None:
+    # run-describe (an indexer that only reads) left an empty vector.sqlite3
+    # where nothing was ingested.
+    path = tmp_path / "stores" / "vector.sqlite3"
+    writer = SQLiteSearchEngine(path)
+    assert writer.get_index_name_by_alias(ALIAS) is None
+    assert not path.parent.exists()
+    writer.create_index(INDEX, MAPPING)
+    writer.update_alias(ALIAS, INDEX)
+    writer.bulk_index(INDEX, DOCS)
+    assert path.is_file()
+    assert writer.get_index_name_by_alias(ALIAS) == INDEX
+    assert _ids(writer, {"match_all": {}}) == ["a", "b", "c"]
+    writer.close()
+
+
 def test_messages_name_the_embedded_engine_not_opensearch(tmp_path: Path) -> None:
     # Local-mode refusals and retrieval logs said "The OpenSearch index".
     from unified_kg_rag.adapters.storage.search_engine import engine_name

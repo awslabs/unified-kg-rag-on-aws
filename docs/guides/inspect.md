@@ -44,7 +44,9 @@ Every flag: [CLI Reference](../reference/cli.md#run-describe).
   deployed query task has none) is reported unavailable, with the reason
   (`registry_unavailable`), and the rest is still described.
 
-A namespace that holds no index exits 2 (a mistyped `--suffix`, say).
+A namespace that holds no index exits 2 with the error on stderr (a
+mistyped `--suffix`, say); describing creates no store file where
+nothing was ingested.
 
 ## Exported graph
 

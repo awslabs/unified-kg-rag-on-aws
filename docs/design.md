@@ -1633,7 +1633,12 @@ registry's records; `export_graph` writes text units first, keeping a map
 of text unit id to document `file_path`, then entities, relationships,
 community reports and claims, each with the documents of the text units it
 cites, as JSON Lines or GraphML, so memory holds one page and that map.
-`run-describe` is the CLI.
+`run-describe` is the CLI. It only reads: the embedded engine creates its
+file on the first write, so describing where nothing was ingested leaves no
+file behind; an unreadable registry is reported with
+`DocStatusRegistryError.reason`, the error without its hint for an indexing
+run; a missing extra and a namespace that holds no index are usage errors
+(exit 2, on stderr, and in the JSON status).
 
 ---
 

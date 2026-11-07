@@ -239,12 +239,14 @@ def _registry_counts(
             if callable(close):
                 close()
     except (DocStatusRegistryError, ConfigurationError) as e:
+        # Without the hint for an indexing run: describing needs no registry.
+        reason = e.reason if isinstance(e, DocStatusRegistryError) else str(e)
         logger.warning(
             "The doc-status registry is unavailable; describing the namespace "
             "without its records: %s",
-            e,
+            reason,
         )
-        return None, str(e)
+        return None, reason
 
 
 # Export: the kinds in the order they are written (text units first, so

@@ -33,6 +33,7 @@ from unified_kg_rag.application.cli.conventions import (
     json_output,
     print_json,
     setup_cli_logging,
+    usage_error,
 )
 from unified_kg_rag.application.cli.display import console, markup_safe
 from unified_kg_rag.application.cli.help_text import doc_epilog
@@ -157,13 +158,12 @@ def main() -> int:
             config = apply_provider_arguments(load_cli_config(args), args)
         setup_cli_logging(config, args)
         if error := missing_extras_error(config, seeds=False):
-            return failed(EXIT_USAGE, error)
+            usage_error(error)
         description = describe_namespace(config, args.suffix)
         if not description.exists:
-            return failed(
-                EXIT_USAGE,
-                f"The index namespace '{description.namespace}' holds no index: "
-                "check --suffix (or the config's index_value)",
+            usage_error(
+                f"the index namespace '{description.namespace}' holds no index: "
+                "check --suffix (or the config's index_value)"
             )
         exported = None
         if args.output_path is not None:
