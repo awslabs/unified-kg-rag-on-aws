@@ -391,7 +391,7 @@ From a `main` checkout (formats and keys no release had):
   every report once more; later resets reuse the answers (#539).
 - Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
   (#564, #589), also a run resumed after dying between its removal and its commit (#592), and a summary that kept
-  the lines of a spelling a later run split off or lost those of a spelling a run folded in (#PR): reset once to
+  the lines of a spelling a later run split off or lost those of a spelling a run folded in (#624): reset once to
   summarize from the lines (one call per such item over the threshold), or leave it.
 - #565 changed the translation, description summary and gleaning prompts (gleaning re-keys every gleaned record,
   claims too): a reset translates, extracts and gleans every unit again, the cost of a first build; incremental runs
@@ -448,12 +448,12 @@ From a `main` checkout (formats and keys no release had):
   and vector made again). Any other configuration
   keeps its extraction records and indices; the community report prompt now names its language, so the next full
   build asks every report once more (one call per community), and later builds reuse them. A claim stored under a
-  date written as `2024年3月` (or `2024. 3. 15.`, #612, or a form read as a date since, #PR) is found under it, so
+  date written as `2024年3月` (or `2024. 3. 15.`, #612, or a form read as a date since, #624) is found under it, so
   nothing else re-runs.
 - `intelligent` chunking (the default) cuts a model chunk over `max_chunk_size` without pieces under
-  `min_chunk_size` (#PR): a reset re-cuts only the documents that had one, whose changed text units are extracted
+  `min_chunk_size` (#624): a reset re-cuts only the documents that had one, whose changed text units are extracted
   again (the boundary answers are kept); incremental runs cut new and changed documents so.
-- With claim extraction on (`processing.claim_extraction.enabled`, off by default), the claim prompt changed (#PR):
+- With claim extraction on (`processing.claim_extraction.enabled`, off by default), the claim prompt changed (#624):
   the next run asks the claims of every text unit it extracts again (one claim call per unit that states an entity;
   the graph records are kept), a reset all of them. Stored claims keep their status until their claim is derived
   again: reset once for `disputed` statuses and the object-less claims an empty `<object>` dropped.
@@ -567,7 +567,7 @@ From a `main` checkout (formats and keys no release had):
   summary. Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
   are unchanged reuses its summary. The tree is built again when a text unit's id, text, translation or document
   filters changed (a reset after re-filtering or re-translating the same units kept the old tree, its nodes' old
-  filters passing queries filtered by the old value), over the translations with their own token counts (#PR).
+  filters passing queries filtered by the old value), over the translations with their own token counts (#624).
   Each summary is asked for the words (characters for Japanese, Chinese and Korean) its token budget
   (`max_summary_tokens`) holds at the token counter's rate over the cluster's texts, and one still over the budget
   keeps its whole sentences within it (#601). `run-ingestion --enabled-stages summary_tree` builds the tree under the
@@ -938,7 +938,7 @@ From a `main` checkout (formats and keys no release had):
 - An incremental run finds what a changed or deleted document contributed by the text units every item cites, strips
   shared items and re-derives them (summarizing from lines as a full build does, also when several edited documents
   share an item or spell it otherwise, when a delta folds two spellings or stored summaries into one item or splits
-  a part off a summarized one (#PR), and when the run dies between the removal and the commit and is resumed: the
+  a part off a summarized one (#624), and when the run dies between the removal and the commit and is resumed: the
   removal notes the items it stripped in the extraction store until a commit's writes succeed), moves an item to the
   id a full build gives it, and deletes extraction records nothing names (#325, #327, #564, #589, #592). With fuzzy
   resolution on, it folds a delta entity into its one best stored match and never joins two stored ones until a reset
@@ -1093,14 +1093,14 @@ Ingestion and incremental indexing.
   its weekday, `2024年3月15日(金)` (#612), a month alone in the dotted form (`2024. 3.`), a Japanese era's or the
   Minguo calendar's year (`令和6年3月15日`, `令和元年`, `民國113年`), the German, Spanish, French, Italian, Portuguese
   and Russian month names (`15. März 2024`, `15 de marzo de 2024`, `15 марта 2024 г.`), and placeholders however
-  spaced (`해당없음`, `未詳`) (#PR).
+  spaced (`해당없음`, `未詳`) (#624).
 - Claims: the claim prompt names the output language of `<description>` (the index language, as extraction's
   does), states that a claim's subject is one of the unit's listed entities (the resolver drops any other) and asks
   for `NONE` when a claim has no object; a claim with an empty, `NONE`, `UNKNOWN` (or another language's "none")
   object is kept under one `NONE` literal instead of dropped or split in two; a unit whose record states no entity
   is not asked (its claims could resolve to nothing); and a claim whose statements disagree (`TRUE` and `FALSE`) is
   `disputed`, in a full build and incrementally, where a majority vote read a tie as `FALSE` and an incremental run
-  kept the stored status whatever the new documents said (#PR).
+  kept the stored status whatever the new documents said (#624).
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed
@@ -1150,7 +1150,7 @@ Ingestion and incremental indexing.
 - Chunking and translation errors are no longer swallowed, a chunk-boundary error falls back to a size split with a
   WARNING, and the `intelligent` chunker splits a one-line pre-chunk by size without a call (#250, #289, #565). A
   chunk the model's boundaries left over `max_chunk_size` is split as the size fallback splits, its pieces under
-  `min_chunk_size` folded into their neighbours (a three-character tail was a text unit of its own) (#PR).
+  `min_chunk_size` folded into their neighbours (a three-character tail was a text unit of its own) (#624).
 - `DataIngestionPipeline.run(source_directory)` ingests the directory it is given (#227).
 - Resume and caching: a pipeline id resumes; switching a stage on runs it; a new suffix or scope recomputes; turning
   the registry off rebuilds; `--force-rebuild` writes its outputs; `--resume-from-stage` ignores case; generated ids
