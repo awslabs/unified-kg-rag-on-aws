@@ -34,7 +34,7 @@ cp config-template.yaml config.yaml
 `UKR__` 변수)는 사용법 오류(종료 코드 2)입니다. 철자가 틀린 키는 아무 표시 없이 설정을
 기본값으로 남기므로 알 수 없는 키를 거부하며, `--allow-unknown-keys`(`get_config`에서는
 `allow_unknown_keys=True`)를 주면 키마다 WARNING만 남깁니다. 위치가 바뀐 키는 대신할 키를
-알려 주며 실패합니다([Moved keys](../reference/configuration.md#moved-keys)).
+알려 주며 실패합니다([Moved keys](../reference/configuration.md#moved-keys), 영문).
 
 재시도는 `retry` 섹션 하나에서 설정합니다. `max_attempts`와 백오프는 모델 호출(수집 항목,
 Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 호출자(모델 서버, 그래프 저장소
@@ -48,7 +48,7 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
 | `aws.region_name` | `"us-west-2"` | 저장소가 다른 리전에 있을 때(`aws.bedrock.region_name`이 없으면 Bedrock도 따름) |
 | `aws.neptune.endpoint`, `aws.opensearch.endpoint` | `null` | AWS에서는 항상(CDK 스택이 주입함) |
 | `providers.doc_status.enabled` | `false` | [증분 인덱싱](../guides/incremental.ko.md) |
-| `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | 다른 모델([참고 사항](../reference/models.md#model-selection-notes)) |
+| `models.default`, `models.fast` | Claude Sonnet 5.5, Claude Haiku 5.5 | 다른 모델([참고 사항](../reference/models.md#model-selection-notes), 영문) |
 | `processing.max_concurrency` | `40` | `ThrottlingException` 재시도가 보이면 낮추고, 할당량이 허용하면 높임 |
 | `processing.graph_extraction.entity_types` | 일반 유형 7개 | [도메인 적응](./domain-adaptation.ko.md#엔티티-유형) |
 | `processing.translation.target_language` | `"en"` | 코퍼스나 답변 언어가 다를 때([다국어 코퍼스](./multilingual.ko.md)) |
@@ -81,9 +81,9 @@ Bedrock 임베딩, 질의 시점 호출)에 적용되고, 기본값이 다른 �
   `aws.bedrock.region_name`이 `null`이면 `AWS_REGION`이 Bedrock 호출 리전도 정합니다.
   `AWS_DEFAULT_REGION`은 읽지 않습니다.
 - `UKR_SOURCE_DIRECTORY`, `UKR_PIPELINE_ID`(설정 키가 아니므로 밑줄 하나)와
-  `UKR_METRICS_ENVIRONMENT`는 `run-ingestion`이 읽습니다([CLI 레퍼런스](../reference/cli.md#run-ingestion)).
+  `UKR_METRICS_ENVIRONMENT`는 `run-ingestion`이 읽습니다([CLI 레퍼런스](../reference/cli.md#run-ingestion), 영문).
   CDK 태스크가 받는 변수는
-  [`iac/README.md`](../../iac/README.md#2-build-and-push-the-app-image)에 있습니다.
+  [`iac/README.md`](../../iac/README.md#2-build-and-push-the-app-image)(영문)에 있습니다.
 - CLI는 python-dotenv로 현재 작업 디렉터리의 `./.env`만 읽고 상위 디렉터리의 파일은
   찾지 않습니다(그러지 않으면 `AWS_PROFILE`을 설정한 `~/.env`가 모르는 사이에 계정을
   바꿀 수 있음). 이미 설정된 변수가 우선합니다. 패키지를 가져오는 것만으로는 `.env`를

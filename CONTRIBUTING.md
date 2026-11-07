@@ -214,6 +214,10 @@ to its page map, and link it from the pages around it.
 - **Extension recipes** (new strategies, backends, evaluators, renderers, parsers, config sections) live in
   [docs/design.md §15 Extension Guide](./docs/design.md#15-extension-guide). Update the recipe there when the way to
   extend changes.
+- **Diagrams.** A change that adds, removes or renames a stage, a strategy or a methodology, or changes how a
+  strategy fuses its results, updates the diagrams that show it in the same pull request: the
+  `assets/*.drawio.png` files embed their draw.io source, so open the PNG in draw.io, edit it and export it again
+  as PNG with "Include a copy of my diagram" checked.
 
 **Korean pages.** User-facing documentation is in English. The Tier-1 pages, the ones most Korean readers use, have
 a Korean twin `<page>.ko.md` next to the English page. The one list of them is `TRANSLATED_PAGES` in
@@ -236,10 +240,16 @@ the link.
    [docs/index.ko.md](./docs/index.ko.md#용어집).
 
 **The docs checker.** Run `uv run python scripts/check_docs.py` after editing a document. It checks every relative link,
-`#fragment` (heading id) and image in the tracked Markdown files (each target must exist and be tracked by Git), the
-`docs/*.md` paths and this repository's `blob/main/docs/...#fragment` URLs cited in `unified_kg_rag/`, `scripts/` and
-`iac/`, and the Korean structure rules above. It exits 1 and lists each failure. `tests/unit/test_docs_links.py` and
-`tests/unit/test_docs_translations.py` run the same checks in CI as part of the default test suite. Keep a heading's
+`#fragment` (heading id), image, `<a href>` and reference-style link definition in the tracked Markdown files (each
+target must exist and be tracked by Git), every inline code span that names a repository path, the `docs/*.md` paths
+and this repository's `blob/main/docs/...#fragment` URLs cited in `unified_kg_rag/`, `scripts/`, `iac/`, `tests/`,
+`.github/`, `docker/`, `config-template.yaml` and `pyproject.toml`, and the Korean rules above (the same inline code
+spans and every English number in the Korean page; a Korean page links the Korean twin of a translated page and
+marks a link to an English-only page "(영문)" in the same clause). It exits 1 and lists each failure.
+`tests/unit/test_docs_links.py` and `tests/unit/test_docs_translations.py` run the same checks in CI as part of the
+default test suite, and `tests/unit/test_docs_facts.py` checks the counts and lists the docs state (stages,
+strategies, the `auto` routable list, methodologies) against the code: a sentence that states one carries an
+explicit `<a id>` the test reads. Keep a heading's
 text when other pages link its fragment, or update every link to it in the same pull request.
 
 **Generated docs.** Two reference pages are generated from the code. Edit the source, regenerate, and commit both (a

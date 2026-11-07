@@ -189,5 +189,10 @@ uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix -
   [Retrieval](../concepts/retrieval.md).
 - [Incremental indexing](../guides/incremental.md): re-index
   only new and changed documents.
+- [Evaluation](../guides/evaluate.md) (`run-eval`),
+  [Visualization](../guides/visualize.md) (`run-visualization`) and
+  [Domain adaptation](../guides/domain-adaptation.md) (`run-prompt-tuning`):
+  score and compare strategies, render the exported graph, tune the prompts
+  to your corpus.
 - [`iac/README.md`](../../iac/README.md#quick-start): deploy the whole stack
   with AWS CDK instead.

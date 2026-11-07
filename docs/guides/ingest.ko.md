@@ -13,6 +13,8 @@
 정해집니다([범위와 네임스페이스](../concepts/scopes-and-namespaces.ko.md)). 한국어나 여러 언어가
 섞인 코퍼스는 [다국어 코퍼스](./multilingual.ko.md)를 참고하세요.
 
+<a id="파이프라인-단계"></a>
+
 ## 파이프라인 단계 13개
 
 실행 순서대로이며, `--enabled-stages` / `--resume-from-stage`에는 단계 **이름**(대소문자

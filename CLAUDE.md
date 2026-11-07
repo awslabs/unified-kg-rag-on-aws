@@ -1,14 +1,14 @@
 # Project Guide for Claude Code
 
-AWS-native Knowledge Graph RAG framework. Reimplements the Microsoft GraphRAG
-and LightRAG methodologies on Bedrock + Neptune + OpenSearch, with DynamoDB for
-incremental-indexing state.
+AWS-native Knowledge Graph RAG framework. Reimplements the Microsoft GraphRAG,
+LightRAG, HippoRAG 2 and RAPTOR methodologies on Bedrock + Neptune +
+OpenSearch, with DynamoDB for incremental-indexing state.
 
 ## Architecture (hexagonal / ports & adapters)
 
-The package is laid out in explicit hexagonal layers so the two RAG
-methodologies (GraphRAG community-summary, LightRAG dual-level keyword) share
-one ingestion/indexing/caching/hybrid-search infrastructure and only differ at
+The package is laid out in explicit hexagonal layers so the four RAG
+methodologies (see *Capabilities & CLIs*) share one
+ingestion/indexing/caching/hybrid-search infrastructure and only differ at
 the algorithm layer. Dependencies point **inward**. Layers, outermost first —
 a module imports its own layer and later ones, never an earlier one, and
 that includes lazy and `TYPE_CHECKING` imports:

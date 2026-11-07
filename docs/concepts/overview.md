@@ -66,7 +66,7 @@ resumes after the last valid one:
 
 With the doc-status registry on, a run re-indexes only new and changed
 documents and removes deleted ones. Stage list and flags:
-[Ingestion](../guides/ingest.md#the-13-pipeline-stages); internals:
+[Ingestion](../guides/ingest.md#pipeline-stages); internals:
 [Design Doc §4](../design.md#4-ingestion-pipeline) and
 [§5](../design.md#5-incremental-indexing).
 
@@ -114,18 +114,39 @@ Add `raptor` to any other profile to build the tree beside it.
 `naive` reads the text units alone and `simple` the indexes the namespace
 holds, so every profile serves them.
 The index namespace records what it holds: a query whose strategy reads a
-methodology it does not hold fails before any model call, naming what it
-holds and how to add the methodology, and `auto` routes only among the held
-ones. Adding a methodology later builds only what it adds: an incremental
-namespace is rebuilt once from its stored chunk boundaries, extractions,
-summaries and vectors, so the new model calls are the added methodology's
-(the community reports for `graphrag`; for `raptor`, the tree alone, built
-from the stored text units without a rebuild; a graph methodology added to
-a `raptor`-only namespace extracts every text unit, as it stores no
-extraction). Removing one stops maintaining its
-artifacts; nothing is deleted until a reset
-([Ingestion](../guides/ingest.md#methodology-profiles),
-[Design §4.6](../design.md#46-methodology-profiles)).
+methodology it does not hold fails before any model call, and `auto` routes
+only among the held ones. What adding or removing a methodology later
+rebuilds, reuses and costs:
+[Ingestion: Methodology profiles](../guides/ingest.md#methodology-profiles)
+(internals: [Design §4.6](../design.md#46-methodology-profiles)).
+
+## Compared with Amazon Bedrock Knowledge Bases GraphRAG
+
+[Amazon Bedrock Knowledge Bases GraphRAG](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs.html)
+is the managed way to run graph RAG on AWS: it builds and maintains the graph
+in Amazon Neptune Analytics from documents in Amazon S3, with no graph
+infrastructure to run. This framework is code you run and operate in your
+account, in exchange for control over how the graph is built and searched.
+The managed column restates the Amazon Bedrock documentation (read
+2026-11-07); check the linked pages for changes.
+
+| | Amazon Bedrock Knowledge Bases GraphRAG | This framework |
+|---|---|---|
+| Operation | Fully managed: the knowledge base creates and updates the graph by extracting entities, facts and relationships ([build a knowledge base with Neptune Analytics graphs](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs-build.html)) | You run the CLIs or the Python library, on your own Neptune cluster and OpenSearch domain or the bundled CDK stack; no serving layer is included ([Limitations](#limitations)) |
+| Stores | Neptune Analytics for graph and vector storage; autoscaling is not supported for Neptune Analytics graphs ([considerations and limitations](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs.html)) | Neptune (graph) and OpenSearch (BM25 and vectors), DynamoDB for the document-status registry; embedded SQLite stores in local mode |
+| Retrieval | One method: a vector search, then the graph nodes linked to the retrieved chunks, expanded by graph traversal ([how GraphRAG works](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs.html)) | Four methods (GraphRAG, LightRAG, HippoRAG 2, RAPTOR) and `iterative`, chosen per query or by the `auto` router ([Retrieval](./retrieval.md)) |
+| Keyword search | Hybrid (vector and raw-text) search is supported only for Amazon RDS, OpenSearch Serverless and MongoDB vector stores with a filterable text field; other stores use semantic search ([search type](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-test-config.html)) | BM25, vector search and graph signals fused by RRF and reranked, for every strategy but `global` |
+| Graph build control | Configuration options to customize the graph build are not supported; you choose the graph construction model | Extraction schema or OWL/RDFS ontology, domain-tuned prompts, seed graphs of a graph you already have, and the methodologies to build ([Extraction schema](../guides/extraction-schema.md), [Seed graphs](../guides/seed-graphs.md)) |
+| Data sources | Amazon S3 only, up to 1,000 files per data source (a limit increase raises it to 10,000) | Files in a directory (the CDK ingestion pipeline copies its corpus from S3): PDF, TXT, CSV, JSON, and Markdown and HTML with the `unstructured` extra |
+| Updates | Syncing is incremental: added, modified and deleted documents are re-ingested or removed ([sync your data](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-data-source-sync-ingest.html)) | Incremental indexing by content hash; a deleted document removes only what no surviving text unit states ([Incremental indexing](../guides/incremental.md)) |
+| Sources in answers | `RetrieveAndGenerate` returns citations: response segments with their retrieved references ([Citation](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_Citation.html)) | Every answer returns the source passages that were in the model's context |
+| Measurement | — | `run-eval` with LLM-free metrics, LLM judges and paired comparisons; the defaults are backed by published measurements ([Defaults and evidence](./defaults-and-evidence.md)) |
+| Regions | Seven Regions (US East (N. Virginia), US West (Oregon), Europe (Frankfurt, London, Ireland), Asia Pacific (Tokyo, Singapore)) | Any Region with the Bedrock models you configure, Neptune and OpenSearch, or a Bedrock Region other than the stores' ([Required models](../getting-started/aws.md#required-models)) |
+
+Choose the managed service when an S3 corpus, one retrieval method and no
+infrastructure to run fit the need; choose this framework when you need to
+pick or compare methods, keyword search beside vectors, control over what
+the graph extracts, or a corpus that is not in S3.
 
 ## Beyond the papers
 

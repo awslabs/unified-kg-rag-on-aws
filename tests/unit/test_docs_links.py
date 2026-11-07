@@ -103,6 +103,24 @@ def test_valid_links_pass(tmp_path: Path) -> None:
             {"scripts/s.py": f"U = '{REPO}docs/b.md#nope'", "docs/b.md": "# B"},
             "scripts/s.py:1: missing fragment #nope in docs/b.md",
         ),
+        ({"a.md": '<a href="gone.md">x</a>'}, "a.md:1: missing target: gone.md"),
+        ({"a.md": "[x][r]\n\n[r]: gone.md"}, "a.md:3: missing target: gone.md"),
+        (
+            {"a.md": "See `unified_kg_rag/gone.py`."},
+            "a.md:1: missing code path: unified_kg_rag/gone.py",
+        ),
+        (
+            {"a.md": "x\n`domain/gone.py`"},
+            "a.md:2: missing code path: domain/gone.py",
+        ),
+        (
+            {"tests/t.py": "# docs/gone.md\n"},
+            "tests/t.py:1: missing target: docs/gone.md",
+        ),
+        (
+            {"pyproject.toml": "# docs/gone.md\n"},
+            "pyproject.toml:1: missing target: docs/gone.md",
+        ),
     ],
 )
 def test_broken_links_are_reported(
@@ -188,3 +206,27 @@ def test_a_link_to_a_directory_git_tracks_nothing_in_fails(tmp_path: Path) -> No
     assert check_docs().check_links(root).failures == [
         "README.md:1: target not tracked by Git: outputs/"
     ]
+
+
+def test_inline_code_paths_that_exist_pass(tmp_path: Path) -> None:
+    report = check_docs().check_links(
+        git_tree(
+            tmp_path,
+            {
+                "a.md": "`unified_kg_rag/m.py`, `domain/x.py`, `ports/__init__`,"
+                " `domain/x.attr`, `docs/` and `docs/b.md#b`; `docs/<page>.md`,"
+                " `a/b.py` and `unified_kg_rag/query` are not checked.",
+                "unified_kg_rag/m.py": "",
+                "unified_kg_rag/domain/x.py": "",
+                "unified_kg_rag/ports/__init__.py": "",
+                "docs/b.md": "# B",
+            },
+        )
+    )
+    assert report.failures == []
+    assert report.counts["code paths"] == 6
+
+
+def test_a_code_citation_ends_at_a_full_stop(tmp_path: Path) -> None:
+    files = {"unified_kg_rag/m.py": '"""See docs/b.md#b."""\n', "docs/b.md": "# B"}
+    assert _failures(tmp_path, files) == []

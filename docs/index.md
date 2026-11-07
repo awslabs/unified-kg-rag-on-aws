@@ -86,7 +86,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Gleaning | Extra extraction rounds that ask the model what the first pass missed |
 | Community, community report | A Leiden cluster of entities, and the LLM-written summary that `global` and `drift` read |
 | Methodology, strategy | GraphRAG, LightRAG, HippoRAG 2 or RAPTOR (what an index holds, `indexing.methodologies`), and the concrete retrieval algorithm (`local`, `mix`, `ppr`, ...) chosen per query |
-| Index suffix | The `<suffix>` in every index and graph label name (`processing.document_parsing.index_value`, followed by `-<indexing.additional_suffix>` when set); one per tenant or corpus version |
+| Index suffix | The `<suffix>` in every index and graph label name `<prefix>-<suffix>`, from `processing.document_parsing.index_value` (`indexing.additional_suffix`, when set, is appended after it and is part of the namespace); one per tenant or corpus version |
 | Doc-status registry | The DynamoDB (or SQLite) table of each document's hash and text units that makes ingestion incremental |
 | Namespace | The index suffix plus `indexing.additional_suffix` and a tag of non-default index or label prefixes, and so the indexes it names; one writing run per namespace at a time (a write lease). Messages call it the index namespace |
 | Source scope | The corpus source a run diffs and deletes within (by default the source directory); document and text-unit ids derive from it |

@@ -76,9 +76,14 @@ uv run run-ingestion --backend local --source-directory ./sample-corpus
 their relationships; `mix` is the general LightRAG strategy:
 
 ```bash
-uv run run-rag --backend local --search-strategy local --query "Who is the chief engineer at Acme Robotics?"
-uv run run-rag --backend local --search-strategy mix --query "How are Acme Robotics and Globex Sensors related?"
+uv run run-rag --backend local --search-strategy local --verbose --query "Who is the chief engineer at Acme Robotics?"
+uv run run-rag --backend local --search-strategy mix --verbose --query "How are Acme Robotics and Globex Sensors related?"
 ```
+
+`--verbose` prints, after the answer, the sources it used (text-unit ids
+with their scores) and the retrieval metrics. The commands log every step at `INFO`; prefix
+them with `UKR__LOGGING__LEVEL=WARNING` to keep only warnings and the
+result.
 
 The first query downloads the default rerank model, the cross-encoder
 `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`, from Hugging Face, so it needs

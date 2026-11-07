@@ -144,7 +144,7 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 ```
 
 두 경로 모두 `s3://` URI를 받으므로 `run-eval`도 CDK 스택에서 일회성 태스크로
-실행할 수 있습니다([After deploy](../../iac/README.md#5-evaluate-from-inside-the-vpc)).
+실행할 수 있습니다([After deploy](../../iac/README.md#5-evaluate-from-inside-the-vpc), 영문).
 결과는 실행이 끝날 때 `aws.s3.encryption` 설정으로 올리며, 업로드가 실패하면 0이 아닌
 코드로 끝나고 로컬 파일을 남깁니다(경로를 출력). S3에는 설정의 `aws.profile_name` /
 `aws.region_name`으로 접속하며, 셸의 `AWS_PROFILE` / `AWS_REGION`은 설정이 비워 둔 경우에만
@@ -176,8 +176,11 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
   표에는 차이마다 `pairs`와 `unpaired` 질의 수가 나옵니다. 판정 모델이 채점하지 못한 질의는
   짝을 이루지 못하며, 전략마다 그 수가 다르면 경고합니다.
 - **차이를 믿을 수 있는 경우.** 구간이 0을 포함하지 않으면 그 차이가 뒷받침됩니다. 이진
-  지표의 10%p 차이는 질의 50개에서 15%, 200개에서 59%의 실행에서만 찾아지므로 수백 개
-  질의로 비교하세요. `deltas_by_category`는 차이를 데이터셋 `category`별로 나누며, 범주와
+  지표를 짝지어 비교하면 두 전략의 결과가 갈린 질의만 정보가 되므로, 검정력은 결과가
+  얼마나 자주 갈리는지에 달려 있습니다. 이 구간으로 시뮬레이션하면 10%p 차이는 질의의 15%에서
+  결과가 갈릴 때 질의 50개에서 45%, 200개에서 99%의 실행에서 찾아지고, 30%에서 갈릴 때는
+  28%와 73%에서 찾아집니다. 수백 개 질의로 비교하고, 같은 설정을 두 번 실행해 잡음 수준을
+  확인하세요. `deltas_by_category`는 차이를 데이터셋 `category`별로 나누며, 범주와
   지표 수에 따른 다중 비교 보정을 하지 않으므로 여러 개 가운데 하나만 0을 벗어난 결과는
   탐색적으로 읽으세요.
 - **맞비교 판정.** `--pairwise-judge`는 GraphRAG / LightRAG 논문의 맞비교 LLM 판정(포괄성,

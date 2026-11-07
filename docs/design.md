@@ -377,7 +377,7 @@ degree (§4.5), so with no seed graph the rank is the plain degree.
 
 ## 4. Ingestion Pipeline
 
-`DataIngestionPipeline` (`application/ingestion/pipeline.py`) runs 12
+`DataIngestionPipeline` (`application/ingestion/pipeline.py`) runs 13
 checkpointed stages, so a re-run resumes after the last valid one. Extraction
 works per text unit and the graph is resolved from the merged per-unit
 records, so a full build does not depend on batching and an incremental run
@@ -398,6 +398,7 @@ can re-derive what it touches (§5).
 | 10 | Graph analysis | `graph_analyzer.py` | graph build and statistics |
 | 11 | Community detection | `community_detector.py`, `domain/ingestion/community_clustering.py` | hierarchical Leiden (the clustering is pure, in the domain) and structured reports |
 | 12 | Indexing | `application/storage/indexing_manager.py` (+ `cross_run_merge.py`, `removal.py`, `reannotation.py`) | graph and vector stores; full build or delta |
+| 13 | Summary tree | `application/ingestion/summary_tree_stage.py`, `domain/ingestion/summary_tree.py` | only with `raptor` in `indexing.methodologies`: RAPTOR's tree over the stored text units, after indexing (§6.5) |
 
 The stage order lives in `DataIngestionPipeline.STAGE_CLASSES`; every stage
 gets its models and stores from the run's `Providers` bundle.
@@ -647,6 +648,13 @@ gets its models and stores from the run's `Providers` bundle.
   (`domain/ingestion/community_clustering.py`) sorts nodes and edges and
   renumbers each level by its smallest member id:
   the same graph and `random_state` always yield the same communities and ids.
+- **Leiden runs (deviation, unmeasured).** Each partition is the best of
+  `trials` (3) seeded Leiden runs, each with `extra_forced_iterations` (2)
+  passes after the first (`iterations: 3` to `graspologic_native`); MS
+  GraphRAG's `hierarchical_leiden` runs once with `iterations=1`
+  (`graphs/hierarchical_leiden.py`). The extra runs and passes cost Leiden
+  time, not model calls, and keep the partition of highest modularity;
+  whether that changes the reports or the answers was not measured.
 - **Reports (MS GraphRAG parity, two deliberate deviations below).** A report's input takes the community's
   entities by degree (document-backed, §4.5), capped at
   `max_entities_per_report`, and packs them into `max_report_context_tokens`
@@ -1827,7 +1835,14 @@ relationship side drops only the chunks the entity side picked
 sides are separate fusion streams (`lightrag_linked_chunks`,
 `lightrag_relation_chunks`) beside mix's naive chunks, so RRF interleaves
 them as upstream's round robin does, and the text quota cuts the merged
-chunks after the rerank (upstream's `chunk_top_k` cut). `kg_chunk_pick_method`
+chunks after the rerank (upstream's `chunk_top_k` cut). The cited chunks
+follow the entity and relationship *search hits*; upstream follows its
+merged lists instead, the hits plus the one-hop expansion (the relationships
+incident to the matched entities, the endpoints of the matched
+relationships), truncated to their token budgets (`operate.py`
+`_build_query_context`, `_merge_all_chunks`). Following the merged lists measured no different
+on the answers or retrieval of `mix` and `hybrid` ([evidence](./concepts/defaults-and-evidence.md#retrieval-switches)), so the hits alone
+stay. `kg_chunk_pick_method`
 picks within a side: `weight` (the default) is upstream's `WEIGHT` method,
 weighted polling with every matched item at least one chunk, without
 upstream's per-item sort by how many matched items cite a chunk, and both
@@ -1849,8 +1864,10 @@ One deviation in what the high-level side searches: upstream's extraction
 asks each relationship for its own high-level keywords and embeds the
 relationship as keywords, endpoints and description; here extraction is
 shared with GraphRAG, whose relationships carry no keywords, so a
-relationship is embedded (and BM25-indexed) by its description alone (its
-endpoints and type when it has none). The high-level keywords of the query
+relationship is embedded by its description alone (its endpoints and type
+when it has none), and BM25-indexed over its description and its endpoint
+names (`source_name`, `target_name`). Embedding the endpoints with the
+description, as upstream does, measured no different on `hybrid` ([evidence](./concepts/defaults-and-evidence.md#retrieval-switches)). The high-level keywords of the query
 then meet the description's words rather than a keyword list; asking
 extraction for keywords would add output tokens to every unit of every
 methodology and re-extract every stored corpus, so it waits for a measured
@@ -2313,7 +2330,7 @@ at HippoRAG commit `d5c8329`. The deliberate differences:
 | Facts by dense similarity to triple embeddings, min-max over all facts | the top relationships-index hits by kNN (`fact_search_type`, lexical or hybrid on request), scores relative to the best | the relationship descriptions are the facts this index holds; the top `fact_top_k` alone are searched |
 | Passage weights from a dense score of every passage | the top `passage_seed_top_k` hybrid hits, min-max over them | a bounded search; hybrid like every strategy here |
 | PPR order alone ranks the passages | the PPR order and the passage hits are two fusion buckets, then the optional rerank | the hybrid fusion every strategy shares; `fusion_weights: {ppr_seed_text_units: 0}` and `rerank: false` come closest to the original |
-| Synonymy edges between similar phrases | none | entity resolution merges duplicates at index time (§4.2) |
+| Synonymy edges between similar phrases | none | not a merge substitute: entity resolution (§4.2) joins only names with the same compact key, and similar names only with `processing.fuzzy_entity_resolution` (off by default), so near-synonyms stay separate entities linked only through shared passages; synonymy edges (kNN over entity name embeddings) are unmeasured |
 | Fact edge weight: the triples between two phrases | 1 per stored relationship (merged over its text units) | one relationship per pair and type after merging |
 | Every phrase links to its passages | not past `entity_frequency_threshold` units, seeds included | bounds the graph a hub entity would fill |
 | A passage links to every phrase it contains | to the reached entities citing it; a passage hit none cites has no edge | the neighbourhood is read from the seeds outward, not passage by passage |
@@ -2442,14 +2459,16 @@ flip a tie):
   changed every later pick and a delta re-clustered, and re-summarized, the
   whole tree. On 2,000 synthetic leaves (40 blobs, 64 dimensions) a 1% delta
   reused 39% of the summaries with this start against 0.8% with k-means++,
-  a 10% delta 8% against 0.6% (stage 0 below measures it on real vectors).
+  a 10% delta 8% against 0.6% (not yet measured on real embeddings).
   `algorithm: gmm` (RAPTOR's): its two steps, a global Gaussian mixture,
   then a local one inside each global cluster larger than `dims + 1`
   (local PCA of the members' vectors in place of upstream's local UMAP);
   each mixture is EM with full covariances (regularization 1e-6) started
   from k-means, k chosen by BIC over `bic_grid` (`bounded`, the default: at
-  most 8 values around `n / target_children`; `upstream`: 1..49 as
-  upstream's `max_clusters` 50), and a node joins every cluster whose
+  most 8 values from half to twice the expected count, `sqrt(n /
+  target_children)` for the global mixture and `members / target_children`
+  for each local one, so the two multiply to about `n / target_children`;
+  `upstream`: 1..49 as upstream's `max_clusters` 50), and a node joins every cluster whose
   posterior exceeds `soft_threshold` (0.1, upstream's `threshold`), its best
   one when none does. Soft membership makes the tree a DAG; lineage is a
   union.

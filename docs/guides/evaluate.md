@@ -196,9 +196,13 @@ How to read it:
   queries: a judge that could not score a query leaves it unpaired, and
   different counts per strategy are warned about.
 - **When a difference counts.** A difference is supported when its interval
-  excludes 0; a 10-point difference on binary metrics is detected in 15% of
-  runs with 50 queries and 59% with 200, so compare on a few hundred
-  queries. `deltas_by_category` splits the deltas by dataset `category`;
+  excludes 0. On a paired binary metric only the queries where the two
+  strategies disagree carry information, so power depends on how often
+  they do: in a simulation of this interval, a 10-point difference is
+  detected in 45% of runs with 50 queries and 99% with 200 when they
+  disagree on 15% of the queries, and in 28% and 73% when they disagree on
+  30%. Compare on a few hundred queries, and run the same configuration
+  twice to see your noise floor. `deltas_by_category` splits the deltas by dataset `category`;
   its intervals are not corrected for the many categories and metrics read,
   so treat a lone excluded 0 among many as exploratory.
 - **Pairwise judge.** `--pairwise-judge` adds the GraphRAG / LightRAG

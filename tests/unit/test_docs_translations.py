@@ -39,13 +39,14 @@ _EN = (
     "# Guide\n> 🇰🇷 [한국어](./guide.ko.md)\n## Install\n```sh\nrun\n```\n"
     "| a | b |\n|---|---|\n| 1 | 2 |\n"
     "See [README](../README.md#why) and [design](./design.md#x)"
-    " [site](https://aws.amazon.com/blogs/x).\n"
+    " [site](https://aws.amazon.com/blogs/x).\n\nSet `units: 2` for 1,024 rows.\n"
 )
 _KO = (
     "# 가이드\n> 🇬🇧 [English](./guide.md)\n## 설치\n```sh\nrun\n```\n"
     "| 가 | 나 |\n|---|---|\n| 1 | 2 |\n"
     "[README](../README.ko.md#이유)와 [설계](./design.md#x)(영문)"
-    " [사이트](https://aws.amazon.com/ko/blogs/x).\n"
+    " [사이트](https://aws.amazon.com/ko/blogs/x).\n\n"
+    "행 1,024개에는 `units: 2`를 설정합니다.\n"
 )
 _PAGES = ["README", "docs/guide"]
 
@@ -77,9 +78,16 @@ def test_a_matching_pair_passes(
     [
         (("## 설치", "### 설치"), "headings per level differ"),
         (("```sh\nrun\n```\n", ""), "fenced code blocks differ"),
-        (("| 1 | 2 |\n", ""), "table rows differ"),
+        (("| 1 | 2 |\n", "| 1 | 2 |\n| 1 | 2 |\n"), "table rows differ"),
         (("[README](../README.ko.md#이유)와 ", ""), "link targets differ"),
         (("./design.md#x", "./operations.md"), "link targets differ"),
+        (("`units: 2`", "`units: 3`"), "inline code differ"),
+        (("1,024", "1,000"), "numbers differ: EN only ['1024']"),
+        (("(영문)", ""), "docs/guide.ko.md:10: link to the English-only"),
+        (
+            ("../README.ko.md#이유", "../README.md#why"),
+            "docs/guide.ko.md:10: links README.md, which has a Korean twin",
+        ),
     ],
 )
 def test_a_structural_difference_fails(
@@ -92,7 +100,8 @@ def test_a_structural_difference_fails(
         tmp_path, monkeypatch, _KO.replace(*edit), **{"docs/operations.md": ""}
     )
     assert len(report.failures) == 1
-    assert report.failures[0].startswith(f"docs/guide: {message}")
+    prefix = message if message.startswith("docs/") else f"docs/guide: {message}"
+    assert report.failures[0].startswith(prefix)
     assert report.lagging == []
 
 

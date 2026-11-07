@@ -73,9 +73,13 @@ uv run run-ingestion --backend local --source-directory ./sample-corpus
 범용 전략입니다.
 
 ```bash
-uv run run-rag --backend local --search-strategy local --query "Who is the chief engineer at Acme Robotics?"
-uv run run-rag --backend local --search-strategy mix --query "How are Acme Robotics and Globex Sensors related?"
+uv run run-rag --backend local --search-strategy local --verbose --query "Who is the chief engineer at Acme Robotics?"
+uv run run-rag --backend local --search-strategy mix --verbose --query "How are Acme Robotics and Globex Sensors related?"
 ```
+
+`--verbose`는 답변 뒤에 답변에 쓴 근거(텍스트 단위 id와 점수)와 검색 지표를 출력합니다. 명령은 모든 단계를
+`INFO`로 기록하므로, 경고와 결과만 보려면 명령 앞에 `UKR__LOGGING__LEVEL=WARNING`을
+붙이세요.
 
 첫 질의는 기본 재순위화 모델인 크로스 인코더 `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`을
 Hugging Face에서 내려받으므로 한 번은 인터넷 연결이 필요하고 시간이 더 걸립니다. 이후
