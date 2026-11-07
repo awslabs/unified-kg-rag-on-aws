@@ -418,7 +418,6 @@
   "settings.save": "{{file}}에 저장",
   "settings.keepEditing": "계속 편집",
   "settings.methodologiesHelp": "indexing.methodologies: 수집에서 빌드할 항목입니다. 인덱스에 없는 방법론의 전략은 쿼리에서 거부됩니다.",
-  "settings.methodologyUnavailable": "(선택 패키지 필요)",
   "settings.methodologyRebuild": "방법론을 추가하면 다음 수집에서 해당 아티팩트만 빌드합니다. 제거하면 더 이상 빌드하지 않으며 해당 전략은 거부됩니다.",
   "settings.observabilityHelp": "쿼리와 수집 실행의 트레이스를 OpenTelemetry를 통해 Langfuse, Phoenix 또는 OTLP 엔드포인트로 보냅니다. 엔드포인트와 키는 이 파일이 아니라 환경 변수에서 가져옵니다.",
   "settings.otelMissing": "트레이싱에는 otel extra가 필요합니다: uv sync --extra otel.",

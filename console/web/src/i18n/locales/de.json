@@ -441,7 +441,6 @@
   "settings.save": "In {{file}} speichern",
   "settings.keepEditing": "Weiter bearbeiten",
   "settings.methodologiesHelp": "indexing.methodologies: was ein Import erstellt. Abfragen lehnen eine Strategie ab, deren Methodik der Index nicht enthält.",
-  "settings.methodologyUnavailable": "(benötigt ein optionales Paket)",
   "settings.methodologyRebuild": "Wird eine Methodik hinzugefügt, erstellt der nächste Import nur ihre Artefakte; wird eine entfernt, wird sie nicht mehr erstellt und ihre Strategien werden abgelehnt.",
   "settings.observabilityHelp": "Traces von Abfragen und Importläufen, über OpenTelemetry an Langfuse, Phoenix oder einen beliebigen OTLP-Endpunkt. Endpunkte und Schlüssel kommen aus Umgebungsvariablen, nie aus dieser Datei.",
   "settings.otelMissing": "Tracing braucht das Extra otel: uv sync --extra otel.",

@@ -464,7 +464,6 @@
   "settings.save": "Salva in {{file}}",
   "settings.keepEditing": "Continua a modificare",
   "settings.methodologiesHelp": "indexing.methodologies: ciò che costruisce un’ingestione. Le query rifiutano una strategia la cui metodologia non è presente nell’indice.",
-  "settings.methodologyUnavailable": "(richiede un pacchetto opzionale)",
   "settings.methodologyRebuild": "Aggiungendo una metodologia, la prossima ingestione costruisce solo i suoi artefatti; rimuovendola, non viene più costruita e le sue strategie vengono rifiutate.",
   "settings.observabilityHelp": "Tracce delle query e delle esecuzioni di ingestione, tramite OpenTelemetry verso Langfuse, Phoenix o qualsiasi endpoint OTLP. Endpoint e chiavi provengono dalle variabili d’ambiente, mai da questo file.",
   "settings.otelMissing": "Il tracciamento richiede l’extra otel: uv sync --extra otel.",

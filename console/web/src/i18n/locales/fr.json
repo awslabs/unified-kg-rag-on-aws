@@ -464,7 +464,6 @@
   "settings.save": "Enregistrer dans {{file}}",
   "settings.keepEditing": "Continuer à modifier",
   "settings.methodologiesHelp": "indexing.methodologies : ce que construit une ingestion. Les requêtes refusent une stratégie dont l’index ne contient pas la méthodologie.",
-  "settings.methodologyUnavailable": "(nécessite un paquet facultatif)",
   "settings.methodologyRebuild": "Ajouter une méthodologie fait construire uniquement ses artefacts à la prochaine ingestion ; en retirer une arrête sa construction, et ses stratégies sont refusées.",
   "settings.observabilityHelp": "Traces des requêtes et des exécutions d’ingestion, via OpenTelemetry vers Langfuse, Phoenix ou tout point de terminaison OTLP. Les points de terminaison et les clés proviennent des variables d’environnement, jamais de ce fichier.",
   "settings.otelMissing": "Le traçage nécessite l’extra otel : uv sync --extra otel.",

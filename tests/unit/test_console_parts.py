@@ -184,7 +184,7 @@ def test_a_view_without_a_file_uses_the_defaults(tmp_path: Path) -> None:
         "LANGFUSE_HOST",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
     }
-    assert view["methodologies"]["all"] == [m.value for m in Methodology]
+    assert view["methodologies"] == [m.value for m in Methodology]
 
 
 def test_the_tracing_panel_reports_presence_not_values(

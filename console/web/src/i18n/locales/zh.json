@@ -418,7 +418,6 @@
   "settings.save": "保存到 {{file}}",
   "settings.keepEditing": "继续编辑",
   "settings.methodologiesHelp": "indexing.methodologies：摄取要构建的内容。如果索引不包含某策略的方法论，查询会拒绝该策略。",
-  "settings.methodologyUnavailable": "（需要可选包）",
   "settings.methodologyRebuild": "添加方法论后，下一次摄取只构建它的产物；移除后将不再构建，其策略会被拒绝。",
   "settings.observabilityHelp": "通过 OpenTelemetry 将查询和摄取运行的追踪发送到 Langfuse、Phoenix 或任意 OTLP 端点。端点和密钥来自环境变量，而不是此文件。",
   "settings.otelMissing": "追踪需要 otel 扩展：uv sync --extra otel。",

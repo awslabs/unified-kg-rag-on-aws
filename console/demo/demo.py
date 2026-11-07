@@ -132,7 +132,7 @@ def demo_config(
                 "kind": "ollama",
                 "base_url": model_base_url,
             }
-        # The cross-encoder needs the [local] extra and a download.
+        # The cross-encoder needs the cross-encoder extra and a download.
         config["providers"]["rerank"] = {"kind": "none"}
     else:
         config["aws"] = {

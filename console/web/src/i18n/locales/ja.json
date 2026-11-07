@@ -418,7 +418,6 @@
   "settings.save": "{{file}} に保存",
   "settings.keepEditing": "編集を続ける",
   "settings.methodologiesHelp": "indexing.methodologies: 取り込みで作成する対象です。インデックスにない手法の戦略は、クエリで拒否されます。",
-  "settings.methodologyUnavailable": "（オプションのパッケージが必要）",
   "settings.methodologyRebuild": "手法を追加すると、次の取り込みではその成果物だけを作成します。削除すると作成されなくなり、その戦略は拒否されます。",
   "settings.observabilityHelp": "クエリと取り込み実行のトレースを、OpenTelemetry 経由で Langfuse、Phoenix、または任意の OTLP エンドポイントに送ります。エンドポイントとキーはこのファイルではなく環境変数から取得します。",
   "settings.otelMissing": "トレースには otel extra が必要です: uv sync --extra otel。",

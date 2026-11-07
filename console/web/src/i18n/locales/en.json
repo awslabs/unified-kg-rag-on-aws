@@ -441,7 +441,6 @@
   "settings.save": "Save to {{file}}",
   "settings.keepEditing": "Keep editing",
   "settings.methodologiesHelp": "indexing.methodologies: what an ingestion builds. Queries refuse a strategy whose methodology the index does not hold.",
-  "settings.methodologyUnavailable": "(needs an optional package)",
   "settings.methodologyRebuild": "Adding a methodology makes the next ingestion build only its artifacts; removing one stops building it, and its strategies are refused.",
   "settings.observabilityHelp": "Traces of queries and ingestion runs, through OpenTelemetry to Langfuse, Phoenix or any OTLP endpoint. Endpoints and keys come from environment variables, never from this file.",
   "settings.otelMissing": "Tracing needs the otel extra: uv sync --extra otel.",

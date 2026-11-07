@@ -18,7 +18,7 @@ interface ConfigView {
   parse_error: string | null;
   load_error: string | null;
   effective: Record<string, unknown> | null;
-  methodologies: { available: string[]; all: string[] };
+  methodologies: string[];
   tracing_environment: Record<string, boolean>;
   otel_installed: boolean;
 }
@@ -442,13 +442,11 @@ function MethodologyPanel({ data, changes, setChange }: { data: ConfigView; chan
       <p className="field-help" style={{ margin: 0 }}>
         {t("settings.methodologiesHelp")}
       </p>
-      {data.methodologies.all.map((m) => {
-        const available = data.methodologies.available.includes(m);
+      {data.methodologies.map((m) => {
         return (
           <label key={m} className="check">
             <input
               type="checkbox"
-              disabled={!available}
               checked={current.includes(m)}
               onChange={(e) => {
                 const next = e.target.checked ? [...current, m] : current.filter((x) => x !== m);
@@ -458,7 +456,6 @@ function MethodologyPanel({ data, changes, setChange }: { data: ConfigView; chan
             />
             <span>
               <strong>{t(`methodology.${m}`)}</strong> <span className="field-help">{t(`methodology.help.${m}`)}</span>
-              {!available ? <span className="field-help"> {t("settings.methodologyUnavailable")}</span> : null}
             </span>
           </label>
         );

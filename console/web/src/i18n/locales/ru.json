@@ -487,7 +487,6 @@
   "settings.save": "Сохранить в {{file}}",
   "settings.keepEditing": "Продолжить",
   "settings.methodologiesHelp": "indexing.methodologies: что строит загрузка. Запросы отклоняют стратегию, методологии которой нет в индексе.",
-  "settings.methodologyUnavailable": "(нужен дополнительный пакет)",
   "settings.methodologyRebuild": "Если добавить методологию, следующая загрузка построит только её артефакты; если удалить, она перестанет строиться, а её стратегии будут отклоняться.",
   "settings.observabilityHelp": "Трассировка запросов и загрузок через OpenTelemetry в Langfuse, Phoenix или любую конечную точку OTLP. Конечные точки и ключи берутся из переменных окружения, а не из этого файла.",
   "settings.otelMissing": "Для трассировки нужен extra otel: uv sync --extra otel.",

@@ -23,7 +23,6 @@ import yaml
 
 from unified_kg_rag.application.config import ConfigLoader, env_var, unknown_keys
 from unified_kg_rag.domain.models import Config, Methodology
-from unified_kg_rag.domain.models.methodology import available_methodologies
 from unified_kg_rag.shared.exceptions import ConfigurationError
 
 MASK = "********"
@@ -337,10 +336,7 @@ class SettingsFile:
             "parse_error": parse_error,
             "load_error": load_error,
             "effective": masked(effective) if effective else None,
-            "methodologies": {
-                "available": [m.value for m in available_methodologies()],
-                "all": [m.value for m in Methodology],
-            },
+            "methodologies": [m.value for m in Methodology],
             "tracing_environment": {
                 name: name in os.environ for name in TRACING_VARIABLES
             },

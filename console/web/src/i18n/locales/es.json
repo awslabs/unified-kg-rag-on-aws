@@ -464,7 +464,6 @@
   "settings.save": "Guardar en {{file}}",
   "settings.keepEditing": "Seguir editando",
   "settings.methodologiesHelp": "indexing.methodologies: lo que construye una ingesta. Las consultas rechazan una estrategia cuya metodología no está en el índice.",
-  "settings.methodologyUnavailable": "(necesita un paquete opcional)",
   "settings.methodologyRebuild": "Al añadir una metodología, la próxima ingesta construye solo sus artefactos; al quitarla, deja de construirse y sus estrategias se rechazan.",
   "settings.observabilityHelp": "Trazas de las consultas y las ejecuciones de ingesta, mediante OpenTelemetry hacia Langfuse, Phoenix o cualquier endpoint OTLP. Los endpoints y las claves proceden de variables de entorno, nunca de este archivo.",
   "settings.otelMissing": "Las trazas necesitan el extra otel: uv sync --extra otel.",
