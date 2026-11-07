@@ -35,6 +35,7 @@ from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     claim_identity_suffix,
     claim_object_value,
+    claim_status,
 )
 from unified_kg_rag.domain.models import (
     Claim,
@@ -344,7 +345,7 @@ class ClaimExtractor(BaseProcessor):
                 object_id="",
                 object_name=object_name,
                 type=claim_type,
-                status=coerce_llm_text(claim_data.get("claim_status")),
+                status=claim_status(coerce_llm_text(claim_data.get("claim_status"))),
                 start_date=start_date,
                 end_date=end_date,
                 description=coerce_llm_text(claim_data.get("description"), join=True),

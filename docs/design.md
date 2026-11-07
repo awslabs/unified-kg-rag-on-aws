@@ -446,7 +446,9 @@ gets its models and stores from the run's `Providers` bundle.
   record lists no entity is not asked), and an object not listed there is
   kept as the literal name the claim states (`object_id` empty), though
   another document states that entity. Statements of one claim whose
-  statuses disagree merge into `disputed` (`merge_claim_statuses`). Each unit's statement is resolved
+  statuses disagree merge into `disputed` (`merge_claim_statuses`); a
+  model's status is read into the prompt's four (`claim_status`: `true`,
+  `false`, `disputed`, `unknown`, as stored) at extraction and in each merge. Each unit's statement is resolved
   on its own, and resolution merges the statements that resolve to one
   claim id.
 - **The extraction store** keeps each record, keyed by

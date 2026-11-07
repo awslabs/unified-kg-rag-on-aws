@@ -1327,7 +1327,10 @@ Ingestion and incremental indexing.
   object is kept under one `NONE` literal instead of dropped or split in two; a unit whose record states no entity
   is not asked (its claims could resolve to nothing); and a claim whose statements disagree (`TRUE` and `FALSE`) is
   `disputed`, in a full build and incrementally, where a majority vote read a tie as `FALSE` and an incremental run
-  kept the stored status whatever the new documents said (#624).
+  kept the stored status whatever the new documents said (#624). A status is read into the prompt's vocabulary
+  (`true`, `false`, `disputed`, `unknown`, as stored: `True.` is `true`, MS GraphRAG's `SUSPECTED` is `disputed`, an
+  unrecognised word `unknown`) at extraction and in every merge, so a stored off-vocabulary status no longer
+  disputes the same one.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

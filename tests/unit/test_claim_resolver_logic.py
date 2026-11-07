@@ -14,11 +14,14 @@ from datetime import datetime
 import pytest
 
 from unified_kg_rag.domain.ingestion.claim_resolver import (
+    CLAIM_STATUSES,
     ClaimResolutionStats,
     ClaimResolver,
     claim_date_value,
     claim_identity_suffix,
+    claim_status,
     earlier_claim_ids,
+    merge_claim_statuses,
     resolved_claim_id,
 )
 from unified_kg_rag.domain.models import Claim, Config, Entity
@@ -317,9 +320,9 @@ class TestMergeClaims:
         assert "first" in merged.description and "second" in merged.description
         assert "src one" in merged.source_text and "src two" in merged.source_text
         assert merged.text_unit_ids == ["t1", "t2"]
-        # Attributes merged; status is the most common value.
+        # Attributes merged; the status both state, as stored.
         assert merged.attributes == {"k1": "v1", "k2": "v2"}
-        assert merged.status == "TRUE"
+        assert merged.status == "true"
         # created_at is the earliest across the group.
         assert merged.created_at == early
 
@@ -345,8 +348,8 @@ class TestMergeClaims:
         merged = _resolver()._merge_claims(
             [_c("c1", "UNKNOWN"), _c("c2", "TRUE"), _c("c3", None)]
         )
-        assert merged.status == "TRUE"
-        assert _resolver()._merge_claims([_c("c1", "UNKNOWN")] * 2).status == "UNKNOWN"
+        assert merged.status == "true"
+        assert _resolver()._merge_claims([_c("c1", "UNKNOWN")] * 2).status == "unknown"
 
     @pytest.mark.parametrize("order", [("TRUE", "FALSE"), ("FALSE", "TRUE")])
     def test_merge_status_does_not_depend_on_order(
@@ -791,3 +794,44 @@ def test_a_claim_keyed_by_its_written_cjk_date_is_found_under_it() -> None:
             "claim:e-vendor:e-buyer:obligation:" + f"{written}:不明".casefold()
         )
         assert stale in earlier_claim_ids(claim, [statement])
+
+
+@pytest.mark.parametrize(
+    ("raw", "status"),
+    [
+        ("TRUE", "true"),
+        ("true.", "true"),
+        (" True ", "true"),
+        ("FALSE", "false"),
+        ("**False**", "false"),
+        ("Suspected", "disputed"),  # MS GraphRAG's word
+        ("DISPUTED", "disputed"),
+        ("UNKNOWN", "unknown"),
+        ("N/A", "unknown"),
+        ("", "unknown"),
+        (None, "unknown"),
+        ("probably", "unknown"),  # not a status
+        ("참", "true"),
+        ("거짓", "false"),
+        ("알 수 없음", "unknown"),
+        ("真実", "true"),
+        ("事実", "true"),
+        ("虚假", "false"),
+        ("有争议", "disputed"),
+        ("ＴＲＵＥ", "true"),  # full-width
+    ],
+)
+def test_a_models_claim_status_is_read_into_the_prompts_vocabulary(
+    raw: str | None, status: str
+) -> None:
+    assert claim_status(raw) == status
+    assert status in CLAIM_STATUSES
+
+
+def test_off_vocabulary_statuses_merge_as_the_status_they_name() -> None:
+    # A stored claim of an earlier build kept the model's word ("true.",
+    # "Suspected"): merged as written, it disagreed with "true".
+    assert merge_claim_statuses(["true.", "TRUE", "true"]) == "true"
+    assert merge_claim_statuses(["Suspected", "disputed"]) == "disputed"
+    assert merge_claim_statuses(["n/a", "false"]) == "false"
+    assert merge_claim_statuses([None, ""]) is None
