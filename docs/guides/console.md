@@ -22,8 +22,10 @@ uv sync --extra console
 uv run run-console --config-path config.yaml --source-directory ./workspace
 ```
 
-It prints `Console on http://127.0.0.1:8501/`. Open that address in a
-browser on the same host.
+It prints `Console on http://127.0.0.1:8501/?token=…`. Open that address in
+a browser on the same host: the token is new at every start (or
+`UKR_CONSOLE_TOKEN`, 16 characters or more, when a launcher sets it), the page
+keeps it in an HttpOnly cookie, and every request without it is refused.
 
 - `--source-directory` is the **workspace**: the folders of documents
   offered as corpora, the `run-eval` datasets (JSON files holding a list of
@@ -43,7 +45,10 @@ browser on the same host.
   becomes the Ask page's suggested questions.
 
 Without a build, the page at the address says how to build the client;
-the API still answers at `/api/status`.
+the API still answers at `/api/status`. The client is found in
+`console/web/dist` of the source checkout the package runs from, or where
+`UKR_CONSOLE_WEB_DIRECTORY` points: an installed wheel carries no build, so
+build it in a checkout and point the variable at its `dist`.
 
 ## Try the demo
 
@@ -67,7 +72,8 @@ uv run python console/demo/demo.py --models fake
 | `ollama` | A running Ollama with the local preset's models (`--model-base-url` for another server) | `ollama pull qwen2.5:7b-instruct` and `bge-m3` |
 | `bedrock` | Amazon Bedrock in `--region` (default `AWS_REGION`, else `us-west-2`) with your credentials (an SSO session, an instance role); the stores stay local | Model access in the region; every call is billed |
 
-The workspace is `.console-demo/` (`--workspace` to change it). Running
+The script prints the console's address with its access token. The
+workspace is `.console-demo/` (`--workspace` to change it). Running
 the script again rewrites the corpus and the config, and the ingestion
 finds nothing new. `--prepare-only` stops before starting the console;
 `--no-ingest` skips the ingestion.
@@ -77,8 +83,8 @@ finds nothing new. `--prepare-only` stops before starting the console;
 On a remote host (a cloud desktop, an EC2 instance) keep the console on
 `127.0.0.1` and forward its port:
 
-- **SSH:** `ssh -L 8501:127.0.0.1:8501 <host>`, then open
-  `http://127.0.0.1:8501/` on your machine.
+- **SSH:** `ssh -L 8501:127.0.0.1:8501 <host>`, then open the printed
+  address (`http://127.0.0.1:8501/?token=…`) on your machine.
 - **VS Code Remote:** the Ports view forwards 8501 when the console starts
   (or add it there); open the forwarded address.
 
@@ -120,13 +126,23 @@ what to build (the methodologies: build only what you will query; adding
 one later builds only its artifacts) and, under more options, another
 index namespace, a forced recompute and the answers to the two questions a
 run can ask (a reset that drops another source's content, a mass
-deletion). Start runs `run-ingestion` with a pipeline id per corpus, so
-running the same corpus again resumes or runs incrementally. The run's
+deletion). Start runs `run-ingestion` with a pipeline id per corpus folder
+(its name and a hash of its path and namespace), so running the same corpus
+again resumes or runs incrementally. A run that stops at one of its
+questions (the corpus or the settings changed since this corpus's last run,
+a reset, a mass deletion) says which, and offers to start again answering
+that question alone (`--confirm-integrity`, `--confirm-reset`,
+`--confirm-deletions`); the same answers can be ticked under more options
+beforehand. The run's
 stages appear as a column of stations as they finish (from the pipeline's
 own metadata), with their time, outputs and model calls, each failed
 stage's error and failed files, and the log's tail. Stop sends the CLI
 the stop it is built for: the finished stages are kept and the next run of
-the corpus resumes.
+the corpus resumes. A job a console left running when it stopped is shown
+as lost when the console starts again (its namespace is free; the
+pipeline's namespace lease still guards the stores). Uploads go in batches
+of up to 500 files or 100 MiB; the server takes up to 10,000 files and
+500 MiB a request.
 
 **Evaluate.** Pick a dataset (its questions, the unanswerable ones and
 which evaluators it feeds are shown), the strategies (the first is the
@@ -173,7 +189,13 @@ collect on the right; Review checks them as a run would load the file
 (unknown keys and the `UKR__` environment included) and shows the diff of
 the file, its errors and warnings; Save writes it, refused if the file
 changed on disk meanwhile. Saving from fields rewrites the YAML without its
-comments (the review says so); the YAML tab keeps them. The Methodologies
+comments (the review says so); the YAML tab keeps them. A change to where
+a provider sends its requests (`providers.*.base_url`,
+`aws.neptune.endpoint`, `aws.opensearch.endpoint`, their ports) is listed in
+the review and saved only once confirmed there: the requests carry the
+credentials the console's environment holds for that provider (an API key,
+a store password, signed AWS requests). The file is written whole (a
+temporary file beside it, renamed over it). The Methodologies
 tab edits `indexing.methodologies`; the Tracing tab edits `observability`
 and shows which `LANGFUSE_*`, `PHOENIX_*` and `OTEL_*` variables are set,
 never their values. The Effective tab shows the configuration a run gets.
@@ -197,7 +219,9 @@ The next question and job use the saved file.
 ## Security
 
 - Loopback by default; `--allow-remote` for any other address, behind an
-  authenticating proxy. The console has no login of its own.
+  authenticating proxy. The console has no accounts: a per-launch access
+  token, in the printed address and then an HttpOnly, SameSite=Strict
+  cookie, is required on every request.
 - Requests that change anything need a header a cross-site form cannot
   send, and one from another origin is refused; on loopback a request for
   another host name is refused (DNS rebinding). No response carries a CORS
@@ -205,9 +229,10 @@ The next question and job use the saved file.
 - The page loads nothing from another host: its fonts (Bricolage Grotesque,
   Atkinson Hyperlegible Next and Mono, SIL Open Font License) are bundled by
   the build, so it works offline and in a private VPC.
-- One ingestion or evaluation job per index namespace at a time; the
-  pipeline's namespace lease still guards against a `run-ingestion` started
-  elsewhere.
+- One ingestion or evaluation job per index namespace at a time, also for
+  requests made at the same moment; the pipeline's namespace lease still
+  guards against a `run-ingestion` started elsewhere. Stopping the console
+  stops its jobs and waits up to the CLIs' stop grace (110 s) for them.
 
 ## Languages
 
@@ -237,14 +262,16 @@ npm run build
 ```
 
 - `npm run test:smoke` runs the Playwright smoke test against a running
-  console (`CONSOLE_URL`, default `http://127.0.0.1:8501`); it skips when
+  console (`CONSOLE_URL`, the printed address with its token); it skips when
   no browser is installed (`npx playwright install chromium`).
 - `node scripts/screenshots.mjs --base-url <url> --out <dir>` screenshots
   every page (`--locales en,ko --widths 1440,390`).
-- `node scripts/record-tour.mjs --base-url <url> --out <dir>` records a
-  scripted 25-second tour (a question, its sources, the trail into the
-  graph, an evaluation comparison, the dashboard) as a video, and with
-  `ffmpeg` on the path converts it to a GIF and an MP4 of the same framing.
+- `node scripts/record-tour.mjs --base-url <printed address> --out <dir>`
+  records a scripted tour of at most 25 seconds (a question, its sources, the trail into the
+  graph, an evaluation comparison, the dashboard): each step waits for what
+  it shows and fails with a screenshot rather than record a broken state;
+  waits on models are cut. With `ffmpeg` on the path it writes the edit as
+  an MP4 and a GIF of the same framing.
 
 ## Limits
 

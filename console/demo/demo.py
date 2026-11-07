@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import shutil
 import signal
 import subprocess
@@ -235,6 +236,9 @@ def main(argv: list[str] | None = None) -> int:
             ingest(workspace, config_path, source)
         if args.prepare_only:
             return 0
+        # The console's access token, chosen here so the address can be
+        # printed below as well.
+        token = os.environ.get("UKR_CONSOLE_TOKEN") or secrets.token_urlsafe(24)
         console = subprocess.Popen(
             [
                 _script("run-console"),
@@ -248,8 +252,10 @@ def main(argv: list[str] | None = None) -> int:
                 str(args.port),
             ],
             cwd=workspace,
+            env={**os.environ, "UKR_CONSOLE_TOKEN": token},
         )
         print(f"Dataset: {dataset}", flush=True)
+        print(f"Open http://127.0.0.1:{args.port}/?token={token}", flush=True)
         try:
             return console.wait()
         except KeyboardInterrupt:

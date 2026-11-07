@@ -166,7 +166,11 @@ class AskService:
         self._chain: GraphRAGChain | None = None
         self._config: Config | None = None
         self._lock = asyncio.Lock()
+        # Chains a reset replaced, closed once their questions finish, and
+        # the questions each chain is answering (by id()).
         self._retired: list[GraphRAGChain] = []
+        self._in_flight: dict[int, int] = {}
+        self._closing: set[asyncio.Task[None]] = set()
 
     async def chain(self) -> tuple[GraphRAGChain, Config]:
         async with self._lock:
@@ -180,24 +184,65 @@ class AskService:
 
     def reset(self) -> None:
         """Build the chain again at the next question (the config was
-        saved, or an ingestion changed the index)."""
+        saved, or an ingestion changed the index); the replaced chain is
+        closed once the questions it is answering finish."""
         if self._chain is not None:
             self._retired.append(self._chain)
+            self._close_idle()
         self._chain = None
         self._config = None
+
+    @contextlib.asynccontextmanager
+    async def _using(self) -> AsyncIterator[tuple[GraphRAGChain, Config]]:
+        """The current chain, counted as in use until the block ends."""
+        chain, config = await self.chain()
+        key = id(chain)
+        self._in_flight[key] = self._in_flight.get(key, 0) + 1
+        try:
+            yield chain, config
+        finally:
+            self._in_flight[key] -= 1
+            if not self._in_flight[key]:
+                del self._in_flight[key]
+            self._close_idle()
+
+    def _close_idle(self) -> None:
+        """Close the retired chains no question uses any more."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # closed by close()
+        for chain in [c for c in self._retired if id(c) not in self._in_flight]:
+            self._retired.remove(chain)
+            task = loop.create_task(self._aclose(chain))
+            self._closing.add(task)
+            task.add_done_callback(self._closing.discard)
+
+    @staticmethod
+    async def _aclose(chain: GraphRAGChain) -> None:
+        try:
+            await chain.aclose()
+        except Exception as e:  # noqa: BLE001 - a close must not fail anything
+            logger.warning("Closing a replaced chain failed: %s", e)
 
     async def close(self) -> None:
         chains = [*self._retired, *([self._chain] if self._chain else [])]
         self._retired.clear()
         self._chain = None
         for chain in chains:
-            with contextlib.suppress(Exception):
-                await chain.aclose()
+            await self._aclose(chain)
+        if self._closing:
+            await asyncio.gather(*self._closing, return_exceptions=True)
 
     async def strategies(self, suffix: str | None = None) -> list[dict[str, Any]]:
         """Every strategy, its methodology, whether ``auto`` routes to it and
         whether the namespace holds what it reads."""
-        chain, config = await self.chain()
+        async with self._using() as (chain, config):
+            return await self._strategies(chain, config, suffix)
+
+    async def _strategies(
+        self, chain: GraphRAGChain, config: Config, suffix: str | None
+    ) -> list[dict[str, Any]]:
         routable = {s.value for s in config.search.auto_routable_strategies}
         views = []
         for strategy in SearchStrategy:
@@ -241,41 +286,13 @@ class AskService:
 
         async def run() -> None:
             try:
-                chain, config = await self.chain()
-                with observability.span(
-                    "kg_rag.console.ask",
-                    {"kg_rag.search_strategy": request.search_strategy.value},
-                ):
-                    ids = observability.current_trace_ids()
-                    trace_id = ids[0] if ids else None
-                    record["trace_id"] = trace_id
-                    queue.put_nowait(
-                        {
-                            "kind": "start",
-                            "query_id": query_id,
-                            "trace_id": trace_id,
-                            "trace_url": trace_url(
-                                trace_id, self.trace_url_template, config
-                            ),
-                        }
+                async with self._using() as (chain, config):
+                    output, trace_id = await self._invoke(
+                        chain, config, request, query_id, queue
                     )
-                    output = await chain.ainvoke(
-                        RAGInput(
-                            query=request.query,
-                            search_strategy=request.search_strategy,
-                            search_type=request.search_type,
-                            top_k=request.top_k,
-                            conversation_id=request.conversation_id,
-                            use_memory=request.use_memory,
-                            filters=request.filters,
-                            suffix=request.suffix,
-                        ),
-                        on_answer_chunk=lambda text: queue.put_nowait(
-                            {"kind": "chunk", "text": text}
-                        ),
-                    )
+                record["trace_id"] = trace_id
                 result = self._result(output, config, time.perf_counter() - started)
-                result["trace_id"] = record.get("trace_id")
+                result["trace_id"] = trace_id
                 result["trace_url"] = trace_url(
                     record.get("trace_id"), self.trace_url_template, config
                 )
@@ -285,7 +302,11 @@ class AskService:
                     outcome=(
                         "error"
                         if result["error"]
-                        else ("abstained" if result["abstained"] else "answered")
+                        else (
+                            "blocked"
+                            if result["blocked"]
+                            else ("abstained" if result["abstained"] else "answered")
+                        )
                     ),
                     abstained=result["abstained"],
                     rerank_status=(result.get("rerank") or {}).get("status"),
@@ -323,6 +344,47 @@ class AskService:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
+
+    async def _invoke(
+        self,
+        chain: GraphRAGChain,
+        config: Config,
+        request: AskRequest,
+        query_id: str,
+        queue: asyncio.Queue[dict[str, Any] | None],
+    ) -> tuple[RAGOutput, str | None]:
+        """Answer ``request`` under the console's trace span, the start event
+        and the answer's chunks put on ``queue``; the output and trace id."""
+        with observability.span(
+            "kg_rag.console.ask",
+            {"kg_rag.search_strategy": request.search_strategy.value},
+        ):
+            ids = observability.current_trace_ids()
+            trace_id = ids[0] if ids else None
+            queue.put_nowait(
+                {
+                    "kind": "start",
+                    "query_id": query_id,
+                    "trace_id": trace_id,
+                    "trace_url": trace_url(trace_id, self.trace_url_template, config),
+                }
+            )
+            output = await chain.ainvoke(
+                RAGInput(
+                    query=request.query,
+                    search_strategy=request.search_strategy,
+                    search_type=request.search_type,
+                    top_k=request.top_k,
+                    conversation_id=request.conversation_id,
+                    use_memory=request.use_memory,
+                    filters=request.filters,
+                    suffix=request.suffix,
+                ),
+                on_answer_chunk=lambda text: queue.put_nowait(
+                    {"kind": "chunk", "text": text}
+                ),
+            )
+        return output, trace_id
 
     @staticmethod
     def _result(output: RAGOutput, config: Config, latency: float) -> dict[str, Any]:

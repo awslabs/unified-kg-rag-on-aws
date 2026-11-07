@@ -44,6 +44,53 @@ TRACING_VARIABLES = (
 )
 
 
+# The keys that name where a provider sends its requests (and with them the
+# credentials the environment holds for it: an API key, a store password,
+# signed AWS requests). Changing one is confirmed on Save.
+ENDPOINT_KEYS = frozenset({"base_url", "endpoint", "host", "port", "url"})
+ENDPOINT_SECTIONS = ("providers", "aws")
+
+
+class EndpointNotConfirmed(ConfigurationError):
+    """A save that changes a provider endpoint without confirming it."""
+
+    def __init__(self, paths: list[str]) -> None:
+        super().__init__(
+            "the change sends requests to another address ("
+            + ", ".join(paths)
+            + "), with the credentials the environment holds for it: confirm "
+            "the endpoints to save it"
+        )
+        self.paths = paths
+
+
+def _flat(data: Any, prefix: str = "") -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {prefix: data}
+    flat: dict[str, Any] = {}
+    for key, value in data.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        flat.update(_flat(value, path) if isinstance(value, dict) else {path: value})
+    return flat
+
+
+def endpoint_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, Any]]:
+    """The provider endpoints ``new`` changes from ``old``: where requests,
+    and the credentials sent with them, would go."""
+    before, after = _flat(old), _flat(new)
+    changes = []
+    for path in sorted(set(before) | set(after)):
+        if path.split(".")[0] not in ENDPOINT_SECTIONS:
+            continue
+        if path.rsplit(".", 1)[-1] not in ENDPOINT_KEYS:
+            continue
+        if before.get(path) != after.get(path):
+            changes.append(
+                {"path": path, "from": before.get(path), "to": after.get(path)}
+            )
+    return changes
+
+
 class SecretRefused(ConfigurationError):
     """A config file or edit sets a secret: not written, not shown."""
 
@@ -335,14 +382,18 @@ class SettingsFile:
         return {
             "text": new_text,
             "diff": diff,
+            "endpoint_changes": endpoint_changes(base, new_data),
             "changed": new_text != current,
             "comments_dropped": comments_dropped,
             **validate(new_data, self.path),
         }
 
-    def save(self, *, text: str, base_sha: str) -> dict[str, Any]:
-        """Write ``text`` to the file if it validates and the file did not
-        change since ``base_sha`` was read.
+    def save(
+        self, *, text: str, base_sha: str, confirm_endpoints: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Write ``text`` to the file if it validates, the file did not
+        change since ``base_sha`` was read, and every provider endpoint it
+        changes is in ``confirm_endpoints``.
 
         Raises:
             SecretRefused: ``text`` sets a secret.
@@ -364,5 +415,15 @@ class SettingsFile:
         result = validate(data, self.path)
         if not result["valid"]:
             raise ConfigurationError("; ".join(result["errors"]))
-        self.path.write_text(text, encoding="utf-8")
+        changed = [c["path"] for c in endpoint_changes(parse(current), data)]
+        if changed and sorted(confirm_endpoints or []) != changed:
+            raise EndpointNotConfirmed(changed)
+        # Written whole or not at all: a temporary file beside it, renamed
+        # over it.
+        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_text(text, encoding="utf-8")
+            os.replace(temporary, self.path)
+        finally:
+            temporary.unlink(missing_ok=True)
         return {"sha": digest(text), **result}

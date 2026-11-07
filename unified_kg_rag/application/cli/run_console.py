@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """``run-console``: the local web console (docs/guides/console.md).
 
-Serves the console's API and its built web client on 127.0.0.1. Another
+Serves the console's API and its built web client on 127.0.0.1, behind a
+per-launch access token the printed address carries. Another
 address needs ``--allow-remote``, and then an authenticating reverse proxy
 in front: the console has no login of its own. Needs the ``console`` extra.
 """
@@ -14,6 +15,7 @@ import importlib.util
 import ipaddress
 import json
 import os
+import secrets
 import socket
 import sys
 from pathlib import Path
@@ -42,6 +44,27 @@ DEFAULT_PORT = 8501
 EXTRA_PACKAGES = ("fastapi", "uvicorn", "multipart")
 # The built client: the environment variable, else the source checkout's.
 WEB_DIRECTORY_ENV = "UKR_CONSOLE_WEB_DIRECTORY"
+# The access token, when a launcher chooses it (the demo); else a new random
+# one each start.
+TOKEN_ENV = "UKR_CONSOLE_TOKEN"
+MIN_TOKEN_LENGTH = 16
+
+
+def access_token() -> str:
+    """This launch's access token: ``UKR_CONSOLE_TOKEN`` (16 characters or
+    more), else a random one.
+
+    Raises:
+        SystemExit: The variable is set but too short (a usage error).
+    """
+    chosen = os.environ.get(TOKEN_ENV)
+    if chosen is None:
+        return secrets.token_urlsafe(24)
+    if len(chosen) < MIN_TOKEN_LENGTH:
+        usage_error(f"{TOKEN_ENV} must be at least {MIN_TOKEN_LENGTH} characters")
+    return chosen
+
+
 SAMPLE_QUESTIONS_FILE = "sample-questions.json"
 
 
@@ -188,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         create_app,
     )
 
+    token = access_token()
     web = web_directory()
     options = ConsoleOptions(
         workspace=workspace,
@@ -198,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         web_directory=web,
         trace_url_template=args.trace_url,
         sample_questions=_sample_questions(workspace),
+        token=token,
     )
     try:
         sock = _bind(args.host, args.port)
@@ -208,7 +233,9 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_FAILURE
     port = sock.getsockname()[1]
     host = f"[{args.host.strip('[]')}]" if ":" in args.host else args.host
-    url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '[::]') else host}:{port}/"  # nosec B104 - display only
+    # The token rides in the address once; the page then keeps it in an
+    # HttpOnly cookie.
+    url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '[::]') else host}:{port}/?token={token}"  # nosec B104 - display only
     built = (web / "index.html").is_file()
     status: dict[str, Any] = {
         "status": "serving",
@@ -220,7 +247,10 @@ def main(argv: list[str] | None = None) -> int:
         print_json(status)
         sys.stdout.flush()
     else:
-        console.print(f"[bold]Console[/bold] on [cyan]{url}[/cyan]  (Ctrl-C to stop)")
+        console.print(
+            f"[bold]Console[/bold] on [cyan]{url}[/cyan]  (Ctrl-C to stop)",
+            soft_wrap=True,
+        )
         if not built:
             console.print(
                 f"[yellow]The web client is not built ({markup_safe(web)}): cd console/web && npm ci && npm run build[/yellow]"

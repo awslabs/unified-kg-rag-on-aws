@@ -657,10 +657,12 @@ From a `main` checkout (formats and keys no release had):
   evidence); a dashboard of the questions and jobs run through it (time, tokens, cost per strategy, model and
   role); and edit the config file with validation, a diff before saving and secrets never shown or written. Jobs
   run the unchanged `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs
-  `--allow-remote`), refuses paths outside its directories and cross-site requests, and loads nothing from another
+  `--allow-remote`), requires a per-launch access token, refuses paths outside its directories and cross-site requests, and loads nothing from another
   host. The web client (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, and
   `console/demo/demo.py` prepares a synthetic corpus, a dataset and a config for fake, Ollama or Bedrock models
   ([Console](docs/guides/console.md)).
+- `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose inputs
+  changed (#PR).
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
   streams them, and an `auto` query's output carries `metadata["routing"]` (how the strategy was chosen, among
   which candidates) (#PR).

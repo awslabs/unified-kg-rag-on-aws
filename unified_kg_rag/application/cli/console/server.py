@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -21,11 +22,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
     JSONResponse,
+    RedirectResponse,
     Response,
     StreamingResponse,
 )
@@ -50,6 +52,7 @@ from unified_kg_rag.application.cli.console.paths import (
     walk_files,
 )
 from unified_kg_rag.application.cli.console.settings_api import (
+    EndpointNotConfirmed,
     SecretRefused,
     SettingsFile,
     schema,
@@ -98,6 +101,10 @@ class ConsoleOptions:
     web_directory: Path | None = None
     trace_url_template: str | None = None
     sample_questions: list[str] = field(default_factory=list)
+    # The per-launch access token every request must carry (the cookie the
+    # tokenised URL sets, or the X-Console-Token header); None turns the
+    # check off (tests of the other checks only).
+    token: str | None = None
 
     @property
     def console_directory(self) -> Path:
@@ -115,6 +122,7 @@ class IngestBody(BaseModel):
     force_rebuild: bool = False
     confirm_reset: bool = False
     confirm_deletions: bool = False
+    confirm_integrity: bool = False
 
 
 class EvaluateBody(BaseModel):
@@ -135,6 +143,11 @@ class PreviewBody(BaseModel):
 class SaveBody(BaseModel):
     text: str = Field(max_length=2_000_000)
     base_sha: str = Field(min_length=64, max_length=64)
+    confirm_endpoints: list[str] = Field(default_factory=list, max_length=50)
+
+
+class UploadTooLarge(ConfigurationError):
+    """An upload over the size limit (or without a Content-Length)."""
 
 
 class ConsoleState:
@@ -153,7 +166,23 @@ class ConsoleState:
             trace_url_template=options.trace_url_template,
             chain_factory=chain_factory,
         )
-        config = self.try_config()
+        self.try_config()
+        self.jobs = JobManager(
+            store=self.store,
+            jobs_directory=options.console_directory / "jobs",
+            cache_directory=options.cache_directory,
+            evaluation_outputs=Path("."),
+            config_path=options.config_path,
+            load_config=self.load_config,
+            on_ingest_end=self.ask.reset,
+        )
+        self._build_roots()
+
+    def _build_roots(self) -> None:
+        """The directories from the options and the config (again after the
+        config is saved: its outputs directories may have moved)."""
+        config = self._config
+        options = self.options
         outputs = (
             Path(config.evaluation.outputs_directory)
             if config
@@ -161,8 +190,7 @@ class ConsoleState:
         )
         self.evaluation_outputs = (
             outputs if outputs.is_absolute() else (Path.cwd() / outputs)
-        )
-        self.evaluation_outputs = self.evaluation_outputs.resolve()
+        ).resolve()
         viz = config.graph.visualization.outputs_directory if config else None
         roots = [
             Root("workspace", options.workspace),
@@ -174,15 +202,7 @@ class ConsoleState:
             viz_path = Path(viz) if Path(viz).is_absolute() else Path.cwd() / viz
             roots.append(Root("visualization", viz_path))
         self.roots = Roots.build(*roots)
-        self.jobs = JobManager(
-            store=self.store,
-            jobs_directory=options.console_directory / "jobs",
-            cache_directory=options.cache_directory,
-            evaluation_outputs=self.evaluation_outputs,
-            config_path=options.config_path,
-            load_config=self.load_config,
-            on_ingest_end=self.ask.reset,
-        )
+        self.jobs.evaluation_outputs = self.evaluation_outputs
 
     def load_config(self) -> Config:
         """The config (loaded once, again after Settings saves it).
@@ -210,10 +230,24 @@ class ConsoleState:
         self._config = None
         self.ask.reset()
         self.try_config()
+        self._build_roots()
 
 
-def _error(status: int, message: str, **extra: Any) -> JSONResponse:
-    return JSONResponse({"error": message, **extra}, status_code=status)
+def _error(status: int, code: str, message: str, **extra: Any) -> JSONResponse:
+    """An API error: ``code`` for the page to name it in its language,
+    ``error`` the detail."""
+    return JSONResponse({"error": message, "code": code, **extra}, status_code=status)
+
+
+TOKEN_COOKIE = "ukr_console_token"
+TOKEN_HEADER = "X-Console-Token"
+_UNAUTHORIZED_PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Console</title></head><body style="font:16px/1.5 system-ui,sans-serif;
+max-width:40rem;margin:4rem auto;padding:0 1rem">
+<h1>Open the address run-console printed</h1>
+<p>The console needs the access token that address carries
+(<code>http://127.0.0.1:&lt;port&gt;/?token=&hellip;</code>). It is new at every
+start; the terminal that started the console shows it.</p></body></html>"""
 
 
 def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI:
@@ -247,21 +281,49 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
         if options.loopback:
             host = (request.headers.get("host") or "").rsplit(":", 1)[0].lower()
             if host not in LOOPBACK_HOSTS:
-                return _error(421, "the console answers only on its loopback address")
+                return _error(
+                    421,
+                    "foreign_host",
+                    "the console answers only on its loopback address",
+                )
+        if options.token:
+            offered = request.query_params.get("token")
+            if offered is not None and not request.url.path.startswith("/api/"):
+                if not secrets.compare_digest(offered, options.token):
+                    return HTMLResponse(_UNAUTHORIZED_PAGE, status_code=401)
+                # The token moves from the address to a cookie once.
+                redirect = RedirectResponse(request.url.path or "/", status_code=303)
+                redirect.set_cookie(
+                    TOKEN_COOKIE,
+                    options.token,
+                    httponly=True,
+                    samesite="strict",
+                    path="/",
+                )
+                return redirect
+            carried = request.cookies.get(TOKEN_COOKIE) or request.headers.get(
+                TOKEN_HEADER
+            )
+            if not carried or not secrets.compare_digest(carried, options.token):
+                if request.url.path.startswith("/api/"):
+                    return _error(
+                        401, "unauthorized", "the console's access token is missing"
+                    )
+                return HTMLResponse(_UNAUTHORIZED_PAGE, status_code=401)
         if request.url.path.startswith("/api/") and request.method not in (
             "GET",
             "HEAD",
             "OPTIONS",
         ):
             if request.headers.get(REQUEST_HEADER) != "1":
-                return _error(403, f"missing the {REQUEST_HEADER} header")
+                return _error(403, "forbidden", f"missing the {REQUEST_HEADER} header")
             origin = request.headers.get("origin")
             if (
                 origin
                 and origin.split("://", 1)[-1].lower()
                 != (request.headers.get("host") or "").lower()
             ):
-                return _error(403, "cross-origin request refused")
+                return _error(403, "forbidden", "cross-origin request refused")
         response = await call_next(request)
         for name, value in _SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
@@ -271,23 +333,36 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
 
     @app.exception_handler(PathRefused)
     async def _refused(_: Request, e: PathRefused) -> JSONResponse:
-        return _error(403, str(e))
+        return _error(403, "path_refused", str(e))
 
     @app.exception_handler(SecretRefused)
     async def _secret(_: Request, e: SecretRefused) -> JSONResponse:
-        return _error(422, str(e), kind="secret")
+        return _error(422, "secret", str(e), kind="secret")
+
+    @app.exception_handler(EndpointNotConfirmed)
+    async def _endpoints(_: Request, e: EndpointNotConfirmed) -> JSONResponse:
+        return _error(409, "endpoints", str(e), paths=e.paths)
 
     @app.exception_handler(JobConflict)
     async def _conflict(_: Request, e: JobConflict) -> JSONResponse:
-        return _error(409, str(e), job_id=e.job_id)
+        return _error(409, "job_conflict", str(e), job_id=e.job_id)
+
+    @app.exception_handler(UploadTooLarge)
+    async def _too_large(_: Request, e: UploadTooLarge) -> JSONResponse:
+        return _error(413, "too_large", str(e))
 
     @app.exception_handler(ConfigurationError)
     async def _config(_: Request, e: ConfigurationError) -> JSONResponse:
-        return _error(400, str(e))
+        return _error(400, "invalid", str(e))
 
     @app.exception_handler(DataProcessingError)
     async def _data(_: Request, e: DataProcessingError) -> JSONResponse:
-        return _error(422, str(e))
+        return _error(422, "unreadable", str(e))
+
+    @app.exception_handler(HTTPException)
+    async def _http(_: Request, e: HTTPException) -> JSONResponse:
+        code = {404: "not_found", 400: "invalid"}.get(e.status_code, "failed")
+        return _error(e.status_code, code, str(e.detail))
 
     # -- status -----------------------------------------------------------
 
@@ -407,38 +482,59 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
     @app.get("/api/corpora")
     async def corpora() -> dict[str, Any]:
         return {
-            "corpora": _corpora(state.roots),
+            "corpora": await asyncio.to_thread(_corpora, state.roots),
             "extensions": sorted(ParserFactory.get_supported_extensions()),
         }
 
     @app.post("/api/uploads")
-    async def upload(
-        name: str = Form(...),
-        files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI's form declaration
-    ) -> dict[str, Any]:
-        folder = safe_name(name, "the corpus name")
-        if len(files) > MAX_UPLOAD_FILES:
-            raise PathRefused(f"an upload takes at most {MAX_UPLOAD_FILES} files")
-        target = state.roots.resolve(f"uploads:{folder}", write=True)
-        written, total = 0, 0
-        for upload_file in files:
-            relative = safe_relative(upload_file.filename or "")
-            path = state.roots.resolve(
-                f"uploads:{folder}/{relative.as_posix()}", write=True
+    async def upload(request: Request) -> dict[str, Any]:
+        """Files into ``uploads/<name>/`` (form fields ``name`` and
+        ``files``, each file named by its path in the folder): refused
+        whole before parsing when over the size limit, and the files
+        written before a refusal removed."""
+        length = request.headers.get("content-length")
+        if length is None or not length.isdigit():
+            raise UploadTooLarge("an upload needs its Content-Length")
+        if int(length) > MAX_UPLOAD_BYTES:
+            raise UploadTooLarge(
+                f"an upload takes at most {MAX_UPLOAD_BYTES // 2**20} MiB"
             )
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("wb") as out:
-                while chunk := await upload_file.read(1024 * 1024):
-                    total += len(chunk)
-                    if total > MAX_UPLOAD_BYTES:
-                        out.close()
-                        path.unlink(missing_ok=True)
-                        raise PathRefused(
-                            f"an upload takes at most {MAX_UPLOAD_BYTES // 2**20} MiB"
-                        )
-                    out.write(chunk)
-            written += 1
-        return {"corpus": state.roots.ref(target), "files": written, "bytes": total}
+        form = await request.form(max_files=MAX_UPLOAD_FILES, max_fields=8)
+        written: list[Path] = []
+        try:
+            name = form.get("name")
+            files = [f for f in form.getlist("files") if not isinstance(f, str)]
+            if not isinstance(name, str) or not files:
+                raise PathRefused("an upload names its folder and holds files")
+            folder = safe_name(name, "the corpus name")
+            target = state.roots.resolve(f"uploads:{folder}", write=True)
+            total = 0
+            for upload_file in files:
+                relative = safe_relative(upload_file.filename or "")
+                path = state.roots.resolve(
+                    f"uploads:{folder}/{relative.as_posix()}", write=True
+                )
+                path.parent.mkdir(parents=True, exist_ok=True)
+                written.append(path)
+                with path.open("wb") as out:
+                    while chunk := await upload_file.read(1024 * 1024):
+                        total += len(chunk)
+                        if total > MAX_UPLOAD_BYTES:
+                            raise UploadTooLarge(
+                                f"an upload takes at most {MAX_UPLOAD_BYTES // 2**20} MiB"
+                            )
+                        out.write(chunk)
+        except BaseException:
+            for path in written:
+                path.unlink(missing_ok=True)
+            raise
+        finally:
+            await form.close()
+        return {
+            "corpus": state.roots.ref(target),
+            "files": len(written),
+            "bytes": total,
+        }
 
     @app.post("/api/jobs/ingest")
     async def ingest(body: IngestBody) -> dict[str, Any]:
@@ -457,6 +553,7 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
             force_rebuild=body.force_rebuild,
             confirm_reset=body.confirm_reset,
             confirm_deletions=body.confirm_deletions,
+            confirm_integrity=body.confirm_integrity,
         )
         return state.jobs.get(job.id)
 
@@ -504,7 +601,10 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
 
     @app.get("/api/datasets/preview")
     async def dataset_preview(ref: str) -> dict[str, Any]:
-        return evaluations.preview_dataset(state.roots.resolve(ref))
+        path = state.roots.resolve(ref)
+        if not await asyncio.to_thread(path.is_file):
+            raise HTTPException(404, f"no dataset '{ref}'")
+        return await asyncio.to_thread(evaluations.preview_dataset, path)
 
     @app.get("/api/evaluations")
     async def runs() -> dict[str, Any]:
@@ -513,8 +613,8 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
     @app.get("/api/evaluations/run")
     async def run(ref: str) -> dict[str, Any]:
         directory = state.roots.resolve(ref)
-        if not directory.is_dir():
-            raise PathRefused(f"'{ref}' is not a saved run directory")
+        if not await asyncio.to_thread(directory.is_dir):
+            raise HTTPException(404, f"no saved run '{ref}'")
         return await asyncio.to_thread(evaluations.read_run, directory)
 
     # -- graph ------------------------------------------------------------
@@ -531,8 +631,10 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
     @app.get("/api/graphs/data")
     async def graph_data(ref: str) -> dict[str, Any]:
         path = state.roots.resolve(ref)
-        if path.name != VISUALIZATION_DATA_FILENAME or not path.is_file():
+        if path.name != VISUALIZATION_DATA_FILENAME:
             raise PathRefused(f"'{ref}' is not a visualization_data.json file")
+        if not await asyncio.to_thread(path.is_file):
+            raise HTTPException(404, f"no graph '{ref}'")
         return await asyncio.to_thread(graph_api.load_graph, path)
 
     # -- settings ---------------------------------------------------------
@@ -551,7 +653,11 @@ def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI
 
     @app.post("/api/config/save")
     async def config_save(body: SaveBody) -> dict[str, Any]:
-        result = state.settings_file.save(text=body.text, base_sha=body.base_sha)
+        result = state.settings_file.save(
+            text=body.text,
+            base_sha=body.base_sha,
+            confirm_endpoints=body.confirm_endpoints,
+        )
         state.reload()
         return result
 
@@ -646,7 +752,8 @@ code{{background:#fff;padding:.1rem .3rem;border-radius:4px}}</style></head><bod
 <pre><code>cd console/web
 npm ci
 npm run build</code></pre>
-<p>Or point <code>run-console --web-directory</code> at a built copy.</p>
+<p>Or set <code>UKR_CONSOLE_WEB_DIRECTORY</code> to a built copy (a wheel
+install carries none: build it in a source checkout).</p>
 </body></html>"""
 
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -65,6 +66,8 @@ class JobStatus(str, Enum):
     FAILED = "failed"
     STOPPING = "stopping"
     STOPPED = "stopped"
+    # Left running by a console process that ended (see _mark_lost).
+    LOST = "lost"
 
 
 _ACTIVE = (JobStatus.RUNNING, JobStatus.STOPPING)
@@ -101,6 +104,8 @@ class Job:
     output_directory: Path | None = None
     plan: list[str] = field(default_factory=list)
     total_runs: int = 0
+    # The question a failed ingestion stopped at, unanswered (its flag).
+    confirmation: str | None = None
     process: asyncio.subprocess.Process | None = None
     watcher: asyncio.Task[None] | None = None
 
@@ -125,6 +130,8 @@ class Job:
             ),
             "plan": self.plan,
             "total_runs": self.total_runs,
+            "confirmation": self.confirmation,
+            "pid": self.process.pid if self.process is not None else None,
         }
 
 
@@ -150,14 +157,18 @@ def namespace_of(config: Config, index_value: str | None = None) -> str:
     )
 
 
-def _pipeline_id(corpus: str, namespace: str) -> str:
-    """A stable pipeline id per corpus and namespace, so a rerun of the same
-    corpus resumes or runs incrementally on the same cache."""
-    slug = _SLUG.sub("-", corpus).strip("-._")[:80] or "corpus"
-    if not slug[0].isalnum():
-        slug = f"c{slug}"
-    suffix = "" if namespace == Constants.DEFAULT_SUFFIX.value else f"-{namespace}"
-    return validate_path_segment(f"console-{slug}{suffix}"[:128], "pipeline_id")
+def _pipeline_id(corpus: Path, namespace: str) -> str:
+    """A stable pipeline id per corpus directory and namespace, so a rerun of
+    the same corpus resumes or runs incrementally on the same cache: a
+    readable slug of the folder name and a hash of the resolved path and the
+    namespace, so two corpora never share one (``uploads:docs`` and
+    ``workspace:docs``, ``a b`` and ``a-b``, names in any script)."""
+    resolved = str(corpus.resolve())
+    digest = hashlib.sha256(f"{resolved}\0{namespace}".encode()).hexdigest()[:10]
+    slug = _SLUG.sub("-", corpus.name).strip("-._")[:60]
+    return validate_path_segment(
+        f"console-{slug}-{digest}" if slug else f"console-{digest}", "pipeline_id"
+    )
 
 
 class JobManager:
@@ -184,10 +195,38 @@ class JobManager:
         self.on_ingest_end = on_ingest_end
         self.cwd = cwd or Path.cwd()
         self.jobs: dict[str, Job] = {}
+        # Namespaces a request has claimed before its job is registered: two
+        # requests at once must not both pass the check across an await.
+        self._claimed: dict[str, str] = {}
+        self._mark_lost()
+
+    def _mark_lost(self) -> None:
+        """Record the jobs an earlier console process left running as lost:
+        it ended without seeing them end, so nothing watches them any more
+        (their child may still run; the namespace lease guards the stores)."""
+        for record in self.store.jobs():
+            if record.get("status") in {s.value for s in _ACTIVE}:
+                pid = record.get("pid")
+                alive = isinstance(pid, int) and _alive(pid)
+                record.update(
+                    status=JobStatus.LOST.value,
+                    ended=record.get("ended") or time.time(),
+                    error=(
+                        "the console stopped while this job ran"
+                        + (f"; its process {pid} still runs" if alive else "")
+                    ),
+                )
+                self.store.save_job(record)
 
     # -- starting ---------------------------------------------------------
 
-    def _check_free(self, namespace: str) -> None:
+    def _claim(self, namespace: str, job_id: str) -> None:
+        """Claim ``namespace`` for ``job_id``, synchronously (no await
+        between the check and the claim).
+
+        Raises:
+            JobConflict: A job runs in it, or another request claimed it.
+        """
         for job in self.jobs.values():
             if job.namespace == namespace and job.status in _ACTIVE:
                 raise JobConflict(
@@ -195,16 +234,29 @@ class JobManager:
                     f"'{namespace}'; stop it or wait for it to finish",
                     job.id,
                 )
+        if (other := self._claimed.get(namespace)) is not None:
+            raise JobConflict(
+                f"job {other} is starting in namespace '{namespace}'", other
+            )
+        self._claimed[namespace] = job_id
+
+    def _release(self, namespace: str, job_id: str) -> None:
+        if self._claimed.get(namespace) == job_id:
+            del self._claimed[namespace]
+
+    @staticmethod
+    def _new_id() -> str:
+        return f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
 
     def _new_job(
         self,
+        job_id: str,
         kind: JobKind,
         namespace: str,
         params: dict[str, Any],
         argv: list[str],
         env: dict[str, str],
     ) -> Job:
-        job_id = f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
         work_dir = self.jobs_directory / job_id
         work_dir.mkdir(parents=True, exist_ok=True)
         return Job(
@@ -231,8 +283,14 @@ class JobManager:
         force_rebuild: bool = False,
         confirm_reset: bool = False,
         confirm_deletions: bool = False,
+        confirm_integrity: bool = False,
     ) -> Job:
         """Start ``run-ingestion`` over ``corpus`` (a resolved directory).
+
+        A question the run may ask is answered only by its own flag:
+        ``confirm_integrity`` (continue a pipeline id whose inputs changed),
+        ``confirm_reset``, ``confirm_deletions``; unanswered, the run stops
+        before it writes and the job's ``confirmation`` names the question.
 
         Raises:
             JobConflict: A job runs in the namespace.
@@ -255,10 +313,44 @@ class JobManager:
                 raise ConfigurationError(str(e)) from e
             env["UKR__PROCESSING__DOCUMENT_PARSING__INDEX_VALUE"] = index_value
         namespace = namespace_of(config, index_value)
-        self._check_free(namespace)
+        job_id = self._new_id()
+        self._claim(namespace, job_id)
+        try:
+            return await self._start_ingest(
+                job_id,
+                config,
+                env,
+                namespace,
+                corpus,
+                corpus_ref,
+                methodologies,
+                index_value,
+                force_rebuild,
+                confirm_reset,
+                confirm_deletions,
+                confirm_integrity,
+            )
+        finally:
+            self._release(namespace, job_id)
+
+    async def _start_ingest(
+        self,
+        job_id: str,
+        config: Config,
+        env: dict[str, str],
+        namespace: str,
+        corpus: Path,
+        corpus_ref: str,
+        methodologies: list[str] | None,
+        index_value: str | None,
+        force_rebuild: bool,
+        confirm_reset: bool,
+        confirm_deletions: bool,
+        confirm_integrity: bool,
+    ) -> Job:
         if not await asyncio.to_thread(corpus.is_dir):
             raise PathRefused(f"'{corpus_ref}' is not a directory")
-        pipeline_id = _pipeline_id(corpus_ref.partition(":")[2] or "corpus", namespace)
+        pipeline_id = _pipeline_id(corpus, namespace)
         argv = [
             *_cli("run-ingestion", "run_ingestion"),
             *self._config_args(),
@@ -277,7 +369,10 @@ class JobManager:
             argv.append("--confirm-reset")
         if confirm_deletions:
             argv.append("--confirm-deletions")
+        if confirm_integrity:
+            argv.append("--confirm-integrity")
         job = self._new_job(
+            job_id,
             JobKind.INGEST,
             namespace,
             {
@@ -288,6 +383,7 @@ class JobManager:
                 "force_rebuild": force_rebuild,
                 "confirm_reset": confirm_reset,
                 "confirm_deletions": confirm_deletions,
+                "confirm_integrity": confirm_integrity,
             },
             argv,
             env,
@@ -341,8 +437,38 @@ class JobManager:
         if not await asyncio.to_thread(dataset.is_file):
             raise PathRefused(f"'{dataset_ref}' is not a file")
         namespace = namespace_of(config)
-        self._check_free(namespace)
-        job = self._new_job(JobKind.EVALUATE, namespace, {}, [], {})
+        job_id = self._new_id()
+        self._claim(namespace, job_id)
+        try:
+            return await self._start_evaluate(
+                job_id,
+                namespace,
+                dataset,
+                dataset_ref,
+                chosen,
+                repeats,
+                closed_book,
+                pairwise_judge,
+                gates,
+                max_failure_rate,
+            )
+        finally:
+            self._release(namespace, job_id)
+
+    async def _start_evaluate(
+        self,
+        job_id: str,
+        namespace: str,
+        dataset: Path,
+        dataset_ref: str,
+        chosen: list[str],
+        repeats: int,
+        closed_book: bool,
+        pairwise_judge: bool,
+        gates: list[str],
+        max_failure_rate: float | None,
+    ) -> Job:
+        job = self._new_job(job_id, JobKind.EVALUATE, namespace, {}, [], {})
         output = self.evaluation_outputs / "console" / job.id
         output.mkdir(parents=True, exist_ok=True)
         argv = [
@@ -433,6 +559,7 @@ class JobManager:
             job.status = JobStatus.FAILED
         if job.status is not JobStatus.SUCCEEDED:
             job.error = (document or {}).get("error") or _last_error(self.log_tail(job))
+            job.confirmation = confirmation_needed(job.error)
         self.store.save_job(job.record())
         logger.info(
             "%s job %s ended: %s (exit %s)",
@@ -470,7 +597,7 @@ class JobManager:
             with contextlib.suppress(ProcessLookupError):
                 job.process.kill()
 
-    async def shutdown(self, grace_seconds: float = 30.0) -> None:
+    async def shutdown(self, grace_seconds: float = STOP_GRACE_SECONDS) -> None:
         """Stop every running job and wait (up to ``grace_seconds``) for them."""
         running = [j for j in self.jobs.values() if j.status in _ACTIVE]
         for job in running:
@@ -541,6 +668,35 @@ class JobManager:
             return []
         cleaned = [_ANSI.sub("", line).rstrip() for line in text.splitlines()]
         return [line for line in cleaned if line.strip()][-lines:]
+
+
+# The flag each question run-ingestion asks names in its error, and the
+# confirmation the console offers for it.
+_CONFIRMATIONS = {
+    "--confirm-integrity": "integrity",
+    "--confirm-reset": "reset",
+    "--confirm-deletions": "deletions",
+}
+
+
+def confirmation_needed(error: str | None) -> str | None:
+    """Which question a run stopped at unanswered, from its error."""
+    if not error or "onfirmation required" not in error:
+        return None
+    for flag, name in _CONFIRMATIONS.items():
+        if flag in error:
+            return name
+    return None
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def evaluation_progress(output: Path, total: int) -> dict[str, Any]:

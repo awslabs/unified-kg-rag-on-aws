@@ -4255,7 +4255,15 @@ strategies x repeats. Logs go to a file per job; the page shows its tail
 and each failed stage's error.
 
 **Concurrency.** One ingestion or evaluation job per index namespace at a
-time; a second is refused with the running job's id. Across processes the
+time; a second is refused with the running job's id, also when both
+requests arrive at once (the namespace is claimed before the first await).
+A pipeline id is per corpus folder: a readable slug of its name and a hash
+of its resolved path and namespace. A question the run asks before it
+writes (the inputs of a resumed id changed, a reset, a mass deletion) is
+answered only by its own flag (`run-ingestion --confirm-integrity`,
+`--confirm-reset`, `--confirm-deletions`); unanswered, the job names it and
+the page offers to start again with that flag. A job a console process left
+running when it ended is marked lost at the next start. Across processes the
 pipeline's namespace lease still decides (a run started by another
 `run-ingestion` makes the console's run fail with `NamespaceLeaseError`'s
 message). Queries run while a job does; after an ingestion finishes the
@@ -4284,8 +4292,13 @@ with the environment variable to use instead
 
 **Security.** It binds 127.0.0.1 by default; another address needs
 `--allow-remote`, and the guide says to put the console behind an
-authenticating reverse proxy then: it has no login of its own (a fake one
-would be worse than none). Every path the client names (a corpus, a
+authenticating reverse proxy then: it has no accounts. Every request needs
+a per-launch random access token (the printed address carries it once; the
+server moves it into an HttpOnly, SameSite=Strict cookie; scripts send it
+as `X-Console-Token`), so another local user or a page in another tab
+cannot drive the console. A Settings change to where a provider sends its
+requests (a `base_url`, a store endpoint or port) is saved only when
+confirmed: those requests carry the credentials the environment holds. Every path the client names (a corpus, a
 dataset, an upload, a graph file, a saved run) is resolved, symlinks
 included, and must stay inside the directories the console was started
 with: reads under `--source-directory` (default: the working directory)
@@ -4307,7 +4320,10 @@ does not validate starts the console with the Settings page only, showing
 the errors. A chain that cannot be built (a store unreachable) makes Ask
 report the error per question; jobs still start (their own run reports it).
 A server stopped by a signal sends SIGTERM to its running jobs and waits
-for them within the stop grace.
+for them up to the CLIs' stop grace (110 s). A streamed answer cut at the
+output-token limit fails as the unstreamed one does
+(`STRICT_STREAM_TRUNCATION` makes the truncation guard raise after the last
+chunk).
 
 **Identity.** The client is a knowledge-graph workbench where every claim
 has a trail. One signature element: the *provenance trace*, a cobalt rail

@@ -65,6 +65,17 @@ def test_a_missing_workspace_is_a_usage_error(tmp_path: Path) -> None:
     assert exc.value.code == 2
 
 
+def test_a_chosen_token_must_be_long_enough(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(run_console.TOKEN_ENV, "short")
+    with pytest.raises(SystemExit) as exc:
+        run_console.access_token()
+    assert exc.value.code == 2
+    monkeypatch.setenv(run_console.TOKEN_ENV, "x" * 20)
+    assert run_console.access_token() == "x" * 20
+    monkeypatch.delenv(run_console.TOKEN_ENV)
+    assert run_console.access_token() != run_console.access_token()
+
+
 def test_the_web_directory_follows_the_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -104,7 +115,10 @@ def test_it_binds_then_prints_where_it_serves(
     assert code == 0
     status = json.loads(capsys.readouterr().out)
     host, port = served["address"]
-    assert host == "127.0.0.1" and status["url"] == f"http://127.0.0.1:{port}/"
+    assert host == "127.0.0.1"
+    assert status["url"].startswith(f"http://127.0.0.1:{port}/?token=")
+    token = status["url"].split("token=", 1)[1]
+    assert len(token) >= 24 and served["app"].state.console.options.token == token
     assert status["status"] == "serving"
     options = served["app"].state.console.options
     assert options.loopback and options.sample_questions == ["Who ships?"]

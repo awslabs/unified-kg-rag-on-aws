@@ -282,13 +282,6 @@ def test_the_last_json_document_is_the_result() -> None:
     assert jobs._last_json("not json") is None
 
 
-def test_pipeline_ids_are_stable_safe_and_per_namespace() -> None:
-    assert jobs._pipeline_id("corpus", "default") == "console-corpus"
-    assert jobs._pipeline_id("uploads/한글 폴더", "default") == "console-uploads"
-    assert jobs._pipeline_id("a b/c", "tenant") == "console-a-b-c-tenant"
-    assert jobs._pipeline_id("..", "default").startswith("console-")
-
-
 def test_the_error_of_a_failed_job_is_read_from_its_log() -> None:
     assert jobs._last_error(["ok", "Error: boom", "tail"]) == "Error: boom"
     assert jobs._last_error(["only line"]) == "only line"

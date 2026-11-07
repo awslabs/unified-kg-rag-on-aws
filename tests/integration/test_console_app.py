@@ -25,6 +25,7 @@ from tests.fixtures.console_demo import load, requires_console
 pytestmark = [pytest.mark.integration, pytest.mark.slow, requires_console]
 
 HEADERS = {"X-Console-Request": "1"}
+TOKEN = "test-token-0123456789abcdef"
 
 
 @pytest.fixture(scope="module")
@@ -63,9 +64,35 @@ def client(workspace: Path) -> Iterator[Any]:
         config_path=workspace / "config.yaml",
         web_directory=web,
         sample_questions=["Who carries the lidar units?"],
+        token=TOKEN,
     )
-    with TestClient(create_app(options), base_url="http://127.0.0.1") as test_client:
+    with TestClient(
+        create_app(options),
+        base_url="http://127.0.0.1",
+        headers={"X-Console-Token": TOKEN},
+    ) as test_client:
         yield test_client
+
+
+def _upload(client: Any, name: str, files: dict[str, str]) -> Any:
+    return client.post(
+        "/api/uploads",
+        data={"name": name},
+        files=[
+            ("files", (path, text.encode(), "text/plain"))
+            for path, text in files.items()
+        ],
+        headers=HEADERS,
+    )
+
+
+@pytest.fixture
+def restore_config(workspace: Path, client: Any) -> Iterator[None]:
+    """Put the config file back after a test that saves it."""
+    original = (workspace / "config.yaml").read_text()
+    yield
+    (workspace / "config.yaml").write_text(original)
+    client.app.state.console.reload()
 
 
 def _events(response: Any) -> list[dict[str, Any]]:
@@ -361,12 +388,16 @@ def test_an_ingestion_job_reports_its_stages_and_refreshes_the_chain(
     client: Any,
 ) -> None:
     state = client.app.state.console
+    assert (
+        _upload(client, "fresh", {"a.txt": "Vendor ships parts to Buyer."}).status_code
+        == 200
+    )
     _ask(client, query="Who?", search_strategy="local")
     assert state.ask._chain is not None
     job = client.post(
-        "/api/jobs/ingest", json={"corpus": "uploads:extra"}, headers=HEADERS
+        "/api/jobs/ingest", json={"corpus": "uploads:fresh"}, headers=HEADERS
     ).json()
-    assert job["pipeline_id"] == "console-extra"
+    assert job["pipeline_id"].startswith("console-fresh-")
     assert "graph_extraction" in job["plan"] and "gleaning" not in job["plan"]
     done = _wait(client, job["id"])
     assert done["status"] == "succeeded", done["log"]
@@ -375,6 +406,48 @@ def test_an_ingestion_job_reports_its_stages_and_refreshes_the_chain(
     assert stages["indexing"]["status"] == "completed"
     assert done["result"]["status"] == "completed"
     assert state.ask._chain is None  # rebuilt at the next question
+
+
+def test_a_changed_corpus_ingests_again_once_its_question_is_confirmed(
+    client: Any, workspace: Path
+) -> None:
+    files = {"a.txt": "Umbra Freight carries parts for Acme Robotics."}
+    assert _upload(client, "changing", files).status_code == 200
+    first = _wait(
+        client,
+        client.post(
+            "/api/jobs/ingest", json={"corpus": "uploads:changing"}, headers=HEADERS
+        ).json()["id"],
+    )
+    assert first["status"] == "succeeded", first["log"]
+    (workspace / "uploads" / "changing" / "b.txt").write_text(
+        "Kestrel Depot stores parts for Globex Sensors.", encoding="utf-8"
+    )
+    second = _wait(
+        client,
+        client.post(
+            "/api/jobs/ingest", json={"corpus": "uploads:changing"}, headers=HEADERS
+        ).json()["id"],
+    )
+    # The pipeline id's inputs changed: the run asks before it writes, and
+    # the job names the question instead of failing for good.
+    assert second["status"] == "failed"
+    assert second["confirmation"] == "integrity", second["error"]
+    third = _wait(
+        client,
+        client.post(
+            "/api/jobs/ingest",
+            json={"corpus": "uploads:changing", "confirm_integrity": True},
+            headers=HEADERS,
+        ).json()["id"],
+    )
+    assert "--confirm-integrity" in third["command"]
+    assert third["status"] == "succeeded", third["log"]
+    assert third["pipeline_id"] == first["pipeline_id"]
+    result = _ask(
+        client, query="What does Kestrel Depot store?", search_strategy="naive"
+    )[-1]
+    assert any(s["file_name"] == "b.txt" for s in result["sources"])
 
 
 def test_ingestion_refuses_the_workspace_itself_and_a_file(client: Any) -> None:
@@ -432,7 +505,7 @@ def test_one_job_per_namespace_and_stop_ends_it_as_the_cli_stops(
 
 
 def test_settings_show_validate_diff_and_save_the_file(
-    client: Any, workspace: Path
+    client: Any, workspace: Path, restore_config: None
 ) -> None:
     view = client.get("/api/config").json()
     assert view["path"] == str(workspace / "config.yaml")
@@ -480,7 +553,9 @@ def test_settings_show_validate_diff_and_save_the_file(
     assert invalid.status_code == 400
 
 
-def test_secrets_are_never_written_or_shown(client: Any, workspace: Path) -> None:
+def test_secrets_are_never_written_or_shown(
+    client: Any, workspace: Path, restore_config: None
+) -> None:
     view = client.get("/api/config").json()
     response = client.post(
         "/api/config/preview",
@@ -555,3 +630,109 @@ def test_without_a_build_the_page_says_how_to_build(tmp_path: Path) -> None:
             headers=HEADERS,
         )
         assert saved.status_code == 400 and "--config-path" in saved.json()["error"]
+
+
+def test_every_request_needs_the_access_token(client: Any) -> None:
+    from fastapi.testclient import TestClient
+
+    anonymous = TestClient(client.app, base_url="http://127.0.0.1")
+    response = anonymous.get("/api/status")
+    assert response.status_code == 401 and response.json()["code"] == "unauthorized"
+    assert anonymous.get("/ask").status_code == 401
+    assert anonymous.get("/ask?token=wrong-token-value").status_code == 401
+    assert (
+        anonymous.get("/api/status", headers={"X-Console-Token": "wrong"}).status_code
+        == 401
+    )
+    entry = anonymous.get(f"/ask?token={TOKEN}", follow_redirects=False)
+    assert entry.status_code == 303 and entry.headers["location"] == "/ask"
+    cookie = entry.headers["set-cookie"]
+    assert "HttpOnly" in cookie and "SameSite=strict" in cookie and TOKEN in cookie
+    assert anonymous.get("/api/status").status_code == 200  # the cookie now
+
+
+def test_a_changed_provider_endpoint_is_saved_only_when_confirmed(
+    client: Any, workspace: Path, restore_config: None
+) -> None:
+    view = client.get("/api/config").json()
+    change = [
+        {"path": "providers.llm.base_url", "value": "http://elsewhere.example:11434"}
+    ]
+    preview = client.post(
+        "/api/config/preview", json={"changes": change}, headers=HEADERS
+    ).json()
+    assert [c["path"] for c in preview["endpoint_changes"]] == [
+        "providers.llm.base_url"
+    ]
+    refused = client.post(
+        "/api/config/save",
+        json={"text": preview["text"], "base_sha": view["sha"]},
+        headers=HEADERS,
+    )
+    assert refused.status_code == 409 and refused.json()["paths"] == [
+        "providers.llm.base_url"
+    ]
+    assert "elsewhere.example" not in (workspace / "config.yaml").read_text()
+    saved = client.post(
+        "/api/config/save",
+        json={
+            "text": preview["text"],
+            "base_sha": view["sha"],
+            "confirm_endpoints": ["providers.llm.base_url"],
+        },
+        headers=HEADERS,
+    )
+    assert saved.status_code == 200
+    assert not list(workspace.glob(".config.yaml.*.tmp"))
+
+
+def test_missing_files_are_not_found(client: Any) -> None:
+    for path in ("datasets/preview", "evaluations/run"):
+        response = client.get(f"/api/{path}", params={"ref": "workspace:no-such.json"})
+        assert response.status_code == 404 and response.json()["code"] == "not_found"
+    response = client.get(
+        "/api/graphs/data", params={"ref": "cache:x/visualization_data.json"}
+    )
+    assert response.status_code == 404
+
+
+def test_uploads_are_size_capped_and_take_over_a_thousand_files(
+    client: Any, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    many = {f"f{i}.txt": "x" for i in range(1100)}
+    response = _upload(client, "many", many)
+    assert response.status_code == 200, response.text
+    assert response.json()["files"] == 1100
+    from unified_kg_rag.application.cli.console import server
+
+    monkeypatch.setattr(server, "MAX_UPLOAD_BYTES", 64)
+    big = _upload(client, "big", {"a.txt": "x" * 500})
+    assert big.status_code == 413 and big.json()["code"] == "too_large"
+    assert not (workspace / "uploads" / "big").exists() or not any(
+        (workspace / "uploads" / "big").iterdir()
+    )
+
+
+def test_saving_new_output_directories_moves_the_roots(
+    client: Any, workspace: Path, restore_config: None
+) -> None:
+    view = client.get("/api/config").json()
+    moved = workspace / "outputs" / "moved"
+    preview = client.post(
+        "/api/config/preview",
+        json={
+            "changes": [{"path": "evaluation.outputs_directory", "value": str(moved)}]
+        },
+        headers=HEADERS,
+    ).json()
+    assert (
+        client.post(
+            "/api/config/save",
+            json={"text": preview["text"], "base_sha": view["sha"]},
+            headers=HEADERS,
+        ).status_code
+        == 200
+    )
+    status = client.get("/api/status").json()
+    assert status["directories"]["outputs"] == str(moved.resolve())
+    assert client.app.state.console.jobs.evaluation_outputs == moved.resolve()
