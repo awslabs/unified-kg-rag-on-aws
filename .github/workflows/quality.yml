@@ -38,6 +38,20 @@ jobs:
         # eval brings langchain-community (ragas' copy), so the .md/.html
         # loaders are also compared side by side with the ones they replaced.
         run: uv sync --locked --extra unstructured --extra eval
+      - name: Read the spaCy model version unstructured pins
+        id: spacy
+        run: echo "version=$(uv run --frozen python scripts/install_spacy_model.py --print-version)" >> "$GITHUB_OUTPUT"
+      - name: Cache the spaCy model wheel
+        # unstructured downloads en_core_web_sm from GitHub releases at its
+        # first Markdown or HTML file, in one attempt: a 502 there failed this
+        # job. The wheel is cached per model version and installed ahead of
+        # the tests, retried and checked against unstructured's SHA-256.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/unified-kg-rag/spacy-models
+          key: spacy-en_core_web_sm-${{ steps.spacy.outputs.version }}
+      - name: Install the spaCy model
+        run: uv run --frozen python scripts/install_spacy_model.py
       - name: Check the optional parsers are importable
         # The security test skips itself when unstructured is missing, and the
         # side-by-side loader comparison when langchain-community is, either
@@ -585,14 +599,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Restore the spaCy model wheel
+        # The wheel the optional-parsers job caches. A wheel of another
+        # version is ignored and one with the wrong SHA-256 discarded, so the
+        # newest cache entry is safe to take; with none, the build downloads
+        # it (scripts/install_spacy_model.py, retried).
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/unified-kg-rag/spacy-models
+          key: spacy-en_core_web_sm-
+          restore-keys: spacy-en_core_web_sm-
+
       - name: Build the image with the unstructured and eval extras
         run: |
           set -o pipefail
+          mkdir -p ~/.cache/unified-kg-rag/spacy-models
           base=$(sed -n 's|^ARG BASE_IMAGE=public\.ecr\.aws/docker/library/\(.*@sha256:[0-9a-f]\{64\}\)$|\1|p' docker/Dockerfile)
           [ -n "$base" ] || { echo "docker/Dockerfile: BASE_IMAGE is not a pinned public.ecr.aws/docker/library ref"; exit 1; }
           base_arg=()
           for attempt in 1 2 3 4 5; do
             if docker build -f docker/Dockerfile "${base_arg[@]}" \
+                --build-context "spacy-wheels=$HOME/.cache/unified-kg-rag/spacy-models" \
                 --build-arg "UV_EXTRAS=--extra unstructured --extra eval" \
                 -t unified-kg-rag:ci-unstructured . 2>&1 | tee "$RUNNER_TEMP/build.log"; then
               exit 0
