@@ -105,7 +105,10 @@ def _retryable(exc: Exception) -> bool:
 
 
 def _open(url: str, timeout: float) -> BinaryIO:
-    # A fixed https URL that unstructured pins, not user input.
+    # urllib also opens file:// and ftp:// URLs: only https is fetched.
+    if not url.startswith("https://"):
+        raise InstallError(f"refusing to fetch {url!r}: not an https URL")
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected - https only, the URL unstructured pins
     return urllib.request.urlopen(url, timeout=timeout)  # nosec B310  # noqa: S310
 
 

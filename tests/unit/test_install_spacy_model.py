@@ -121,3 +121,17 @@ def test_the_last_failed_attempt_fails(tmp_path: Path) -> None:
         script.fetch_wheel(PIN, tmp_path, opener=opener, sleep=lambda _s: None)
     assert opener.calls == script.ATTEMPTS
     assert list(tmp_path.iterdir()) == []
+
+
+def test_only_an_https_url_is_fetched(tmp_path: Path) -> None:
+    # urllib opens file:// URLs too; the real opener refuses anything else.
+    local = script.ModelPin(
+        name=PIN.name,
+        version=PIN.version,
+        url="file:///etc/hostname",
+        sha256=PIN.sha256,
+    )
+    slept: list[float] = []
+    with pytest.raises(script.InstallError, match="not an https URL"):
+        script.fetch_wheel(local, tmp_path, sleep=slept.append)
+    assert slept == []
