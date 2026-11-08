@@ -56,11 +56,13 @@ test suite runs without AWS.
 ```bash
 git clone https://github.com/<your-username>/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra eval --extra viz # creates .venv with the package, the dev group and the extras the tests need
-uv run pre-commit install        # runs ruff, isort, black and mypy on every commit
+# The package, the dev group and the extras CI's quality job installs (.github/workflows/quality.yml).
+uv sync --extra otel --extra eval --extra viz --extra ontology --extra mcp --extra docx --extra console
+uv run pre-commit install   # runs ruff, isort, black and mypy on every commit
 ```
 
-Without uv: create a virtual environment, activate it, and run `pip install -e '.[eval,viz]' --group dev` (pip 25.1 or later).
+Without uv: create a virtual environment, activate it, and run
+`pip install -e '.[otel,eval,viz,ontology,mcp,docx,console]' --group dev` (pip 25.1 or later).
 
 ### Branches and pull requests
 
@@ -104,13 +106,13 @@ from the former `config.py` into `unified_kg_rag/domain/models/config/`), add `-
 CI ([`.github/workflows/quality.yml`](./.github/workflows/quality.yml)) runs the same checks, so run them locally first:
 
 ```bash
-uv run pre-commit run --all-files                       # ruff, isort, black, mypy and file hygiene
-uv run pytest                                           # unit, property and integration suites
-uv run --extra otel --extra eval --extra viz --extra ontology pytest --cov=unified_kg_rag  # with coverage, as CI measures it
+uv run pre-commit run --all-files               # ruff, isort, black, mypy and file hygiene
+uv run pytest -n logical --cov=unified_kg_rag   # every suite with coverage, as CI's quality job runs it
 ```
 
-Add `-n logical` to run the suite on every logical CPU through pytest-xdist, as CI does (`-n auto` counts physical
-cores only); coverage still combines across the workers. CI measures coverage with `COVERAGE_CORE=sysmon` (Python
+Both run in the environment `uv sync` set up above (`uv run` keeps its extras). `-n logical` runs the suite on every
+logical CPU through pytest-xdist, as CI does (`-n auto` counts physical cores only); coverage still combines across
+the workers. CI measures coverage with `COVERAGE_CORE=sysmon` (Python
 3.12's low-overhead tracer; the suite measures lines, not branches), which reports the same lines as the default
 tracer.
 
@@ -242,7 +244,8 @@ to its page map, and link it from the pages around it.
 | [`iac/README.md`](./iac/README.md) | How-to | The CDK stacks, their options and the after-deploy commands |
 
 - **Current behaviour only.** A page describes what the code does. Do not write "previously", "now", "no longer" or
-  "(old behaviour)", and do not cite pull request numbers. Release history and upgrade notes go in
+  "(old behaviour)", and do not cite pull request numbers (`scripts/check_docs.py` fails a `#123` outside the
+  CHANGELOG; name the change by feature and date). Release history and upgrade notes go in
   [CHANGELOG.md](./CHANGELOG.md) (*Upgrading* for what a user must do), which the runbook's
   [Upgrading the library](./docs/operations.md#upgrading-the-library) links.
 - **Measured evidence** (benchmark numbers, measured costs and latencies, dated prices, how a default was chosen) goes
@@ -254,7 +257,9 @@ to its page map, and link it from the pages around it.
 - **Diagrams.** A change that adds, removes or renames a stage, a strategy or a methodology, or changes how a
   strategy fuses its results, updates the diagrams that show it in the same pull request: the
   `assets/*.drawio.png` files embed their draw.io source, so open the PNG in draw.io, edit it and export it again
-  as PNG with "Include a copy of my diagram" checked.
+  as PNG with "Include a copy of my diagram" checked. `scripts/check_docs.py` fails a PNG without that copy or with a
+  broken chunk: the draw.io command-line export (`drawio -x -e`) writes its zTXt chunk with a wrong CRC and no `IEND`,
+  so rewrite the chunk CRCs and append `IEND` after such an export.
 
 **Korean pages.** User-facing documentation is in English. The Tier-1 pages, the ones most Korean readers use, have
 a Korean twin `<page>.ko.md` next to the English page. The one list of them is `TRANSLATED_PAGES` in
