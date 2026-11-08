@@ -35,6 +35,9 @@ function escape(term: string): string {
 export function highlightRuns(text: string, query: string): { text: string; marked: boolean }[] {
   const terms = queryTerms(query);
   if (!terms.length) return [{ text, marked: false }];
+  // Every term is escaped, so the pattern is an alternation of literals and
+  // cannot backtrack catastrophically.
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const pattern = new RegExp(`(${terms.map(escape).join("|")})`, "giu");
   const runs: { text: string; marked: boolean }[] = [];
   const parts = text.split(pattern);
