@@ -535,6 +535,11 @@ class FakeVectorStore(_Recorder):
     ) -> Iterator[list[dict[str, Any]]] | None:
         return None
 
+    def read_text_unit_fields(
+        self, ids: list[str], suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]] | None:
+        return None
+
     def read_summary_nodes(
         self, suffix: str | None, *, fields: list[str]
     ) -> list[dict[str, Any]] | None:

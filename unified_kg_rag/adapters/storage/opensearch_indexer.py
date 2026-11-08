@@ -2992,6 +2992,19 @@ class OpenSearchIndexer(VectorIndexer):
             vector_fields=("text_embedding",),
         )
 
+    def read_text_unit_fields(
+        self, ids: list[str], suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]]:
+        """The stored ``fields`` of the text units ``ids`` (see the port)."""
+        units = self._read_sources(
+            self.opensearch_config.text_units_index_prefix, ids, suffix, fields
+        )
+        for unit in units:
+            value = unit.get("text_embedding")
+            if isinstance(value, list):
+                unit["text_embedding"] = np.asarray(value, dtype=np.float32)
+        return units
+
     def read_summary_nodes(
         self, suffix: str | None, *, fields: list[str]
     ) -> list[dict[str, Any]]:

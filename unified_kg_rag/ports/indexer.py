@@ -687,6 +687,16 @@ class VectorIndexer(BaseIndexer):
             [units[start : start + size] for start in range(0, len(units), size)]
         )
 
+    def read_text_unit_fields(
+        self, ids: list[str], suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]] | None:
+        """The stored text units of ``ids`` in ``suffix`` (a dict of ``id``
+        and the stored ``fields``, a vector field as a float32 array), as
+        :meth:`scan_text_units` gives them, in no set order; an id not
+        stored is absent. ``None`` (the default) when the backend cannot
+        read them by id: a caller scans instead. Raises when a read fails."""
+        return None
+
     def read_summary_nodes(
         self, suffix: str | None, *, fields: list[str]
     ) -> list[dict[str, Any]] | None:

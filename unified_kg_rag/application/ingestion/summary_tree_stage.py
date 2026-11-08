@@ -14,7 +14,7 @@ live tree's node with the same ``input_key``) and makes no model call.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Collection, Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
@@ -297,7 +297,7 @@ class SummaryTreeStage(_RegistryStage):
         # larger (_check_tree_size), and the trees of a corpus split by
         # partition_by or scope: document are not all held at once.
         for batch in self._tree_batches(rows):
-            groups = self._leaves(indexer, suffix, batch)
+            groups = self._leaves(indexer, suffix, batch, rows)
             for name in sorted(groups, key=lambda name: name or ""):
                 leaves = groups.pop(name)
                 leaf_count += len(leaves)
@@ -431,21 +431,28 @@ class SummaryTreeStage(_RegistryStage):
         return batches
 
     def _leaves(
-        self, indexer: VectorIndexer, suffix: str, trees: Collection[str | None]
+        self,
+        indexer: VectorIndexer,
+        suffix: str,
+        trees: Collection[str | None],
+        rows: Sequence[dict[str, Any]],
     ) -> dict[str | None, list[Leaf]]:
         """The suffix's stored text units of the ``trees`` (``_tree_of``)
-        with their vectors (float32), by tree, read a page at a time: the
-        other units' texts and vectors are not kept."""
+        with their vectors (float32), by tree, in id order. Read by id, a
+        page of ids at a time (``rows``: every unit's id and attributes), so
+        a batch reads only its own units; a store that cannot read them by
+        id is scanned, keeping no other unit's text or vector."""
         translated = self._translated_field
-        pages: Iterable[list[dict[str, Any]]] = (
-            indexer.scan_text_unit_pages(
-                suffix,
-                fields=["text", translated, "text_embedding", "n_tokens", "attributes"],
-                page_size=_VECTOR_PAGE,
-            )
-            or []
-        )
+        fields = ["text", translated, "text_embedding", "n_tokens", "attributes"]
         wanted = set(trees)
+        ids = [
+            str(row["id"])
+            for row in rows
+            if self._tree_of(row.get("attributes") or {}) in wanted
+        ]
+        pages: Iterable[list[dict[str, Any]]] = self._pages_by_id(
+            indexer, suffix, ids, fields
+        )
         groups: dict[str | None, list[Leaf]] = defaultdict(list)
         skipped = 0
         for row in (row for page in pages for row in page):
@@ -485,6 +492,36 @@ class SummaryTreeStage(_RegistryStage):
         """The text-unit field holding the translation into the index
         language."""
         return f"translated_text_{index_language(self.config)}"
+
+    @staticmethod
+    def _pages_by_id(
+        indexer: VectorIndexer, suffix: str, ids: list[str], fields: list[str]
+    ) -> Iterable[list[dict[str, Any]]]:
+        """The text units ``ids`` (in that order) a page at a time, read by
+        id; every unit of the suffix, scanned, when the store cannot."""
+        first = indexer.read_text_unit_fields(ids[:_VECTOR_PAGE], suffix, fields=fields)
+        if first is None:
+            return (
+                indexer.scan_text_unit_pages(
+                    suffix, fields=fields, page_size=_VECTOR_PAGE
+                )
+                or []
+            )
+
+        def pages() -> Iterator[list[dict[str, Any]]]:
+            page = first
+            for start in range(0, len(ids), _VECTOR_PAGE):
+                if start:
+                    page = (
+                        indexer.read_text_unit_fields(
+                            ids[start : start + _VECTOR_PAGE], suffix, fields=fields
+                        )
+                        or []
+                    )
+                order = {i: n for n, i in enumerate(ids[start : start + _VECTOR_PAGE])}
+                yield sorted(page, key=lambda row: order.get(str(row["id"]), 0))
+
+        return pages()
 
     def _leaf_text(self, row: dict[str, Any]) -> str:
         """The text a stored text unit is a leaf of the tree with: its

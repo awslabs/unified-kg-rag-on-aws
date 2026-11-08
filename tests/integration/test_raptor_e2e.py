@@ -521,16 +521,16 @@ def test_a_tree_over_the_limit_fails_before_its_vectors_are_read(
     from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 
     config, providers, _, _ = setup(tmp_path)
-    pages = OpenSearchIndexer.scan_text_unit_pages
+    by_id = OpenSearchIndexer.read_text_unit_fields
     read: list[Any] = []
 
-    def recorded(self: Any, suffix: Any, *, fields: list[str], **kwargs: Any) -> Any:
-        for page in pages(self, suffix, fields=fields, **kwargs):
-            if "text_embedding" in fields:
-                read.extend(row["text_embedding"] for row in page)
-            yield page
+    def recorded(self: Any, ids: Any, suffix: Any, *, fields: list[str]) -> Any:
+        units = by_id(self, ids, suffix, fields=fields)
+        if "text_embedding" in fields:
+            read.extend(row["text_embedding"] for row in units)
+        return units
 
-    monkeypatch.setattr(OpenSearchIndexer, "scan_text_unit_pages", recorded)
+    monkeypatch.setattr(OpenSearchIndexer, "read_text_unit_fields", recorded)
     source = corpus(tmp_path)
     context = ingest(config, providers, source, tmp_path / "run-1")
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
@@ -720,22 +720,20 @@ def test_a_text_unit_without_a_vector_is_left_out_of_the_tree(
 
     config, providers, _, calls = setup(tmp_path)
     source = corpus(tmp_path)
-    pages = OpenSearchIndexer.scan_text_unit_pages
+    by_id = OpenSearchIndexer.read_text_unit_fields
     blank = "depot"
 
-    def degraded(self: Any, suffix: Any, **kwargs: Any) -> Any:
-        for rows in pages(self, suffix, **kwargs):
-            if "text_embedding" in kwargs["fields"]:
-                for row in rows:
-                    if blank in str(row.get("attributes", {}).get("file_name", "")):
-                        row["text_embedding"] = None
-                    elif row.get("text_embedding") is not None:
-                        row["text_embedding"] = [
-                            float(v) for v in row["text_embedding"]
-                        ]
-            yield rows
+    def degraded(self: Any, ids: Any, suffix: Any, **kwargs: Any) -> Any:
+        rows = by_id(self, ids, suffix, **kwargs)
+        if "text_embedding" in kwargs["fields"]:
+            for row in rows:
+                if blank in str(row.get("attributes", {}).get("file_name", "")):
+                    row["text_embedding"] = None
+                elif row.get("text_embedding") is not None:
+                    row["text_embedding"] = [float(v) for v in row["text_embedding"]]
+        return rows
 
-    monkeypatch.setattr(OpenSearchIndexer, "scan_text_unit_pages", degraded)
+    monkeypatch.setattr(OpenSearchIndexer, "read_text_unit_fields", degraded)
     with caplog.at_level("WARNING"):
         context = ingest(config, providers, source, tmp_path / "run-1")
 
@@ -1168,9 +1166,10 @@ def test_the_tree_is_built_over_the_translations_and_follows_them(
     indexer = providers.build_vector_indexer()
     try:
         stage = SummaryTreeStage(config, providers=providers)
+        rows = indexer.scan_text_units(None, fields=["attributes"]) or []
         leaves = [
             leaf
-            for group in stage._leaves(indexer, None, {None}).values()
+            for group in stage._leaves(indexer, None, {None}, rows).values()
             for leaf in group
         ]
         stored = {

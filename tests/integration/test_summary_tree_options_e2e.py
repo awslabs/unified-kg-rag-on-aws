@@ -188,6 +188,8 @@ def test_a_tree_over_max_leaves_in_memory_fails_and_names_the_ways_out(
     monkeypatch: pytest.MonkeyPatch,
     no_aws,  # noqa: F811 - the fixture
 ) -> None:
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+
     config, providers, _, calls = raptor.setup(tmp_path)
     config.indexing.summary_tree.max_leaves_in_memory = 10
     source = _documents(tmp_path / "corpus")
@@ -215,11 +217,31 @@ def test_a_tree_over_max_leaves_in_memory_fails_and_names_the_ways_out(
         held.append(sum(len(g) for g in groups.values()))
         return groups
 
+    # Each batch reads its own units' vectors only (it scanned every unit's).
+    vectors = Counter[str]()
+    by_id = OpenSearchIndexer.read_text_unit_fields
+    pages = OpenSearchIndexer.scan_text_unit_pages
+
+    def read(self: Any, ids: Any, suffix: Any, *, fields: list[str]) -> Any:
+        units = by_id(self, ids, suffix, fields=fields)
+        if "text_embedding" in fields:
+            vectors.update(str(u["id"]) for u in units)
+        return units
+
+    def scanned(self: Any, suffix: Any, *, fields: list[str], **kwargs: Any) -> Any:
+        for page in pages(self, suffix, fields=fields, **kwargs):
+            if "text_embedding" in fields:
+                vectors.update(str(u["id"]) for u in page)
+            yield page
+
     monkeypatch.setattr(SummaryTreeStage, "_leaves", counted)
+    monkeypatch.setattr(OpenSearchIndexer, "read_text_unit_fields", read)
+    monkeypatch.setattr(OpenSearchIndexer, "scan_text_unit_pages", scanned)
     context = raptor.ingest(config, providers, source, tmp_path / "run-2")
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert raptor.tree_nodes(providers)
     assert sum(held) == 17 and max(held) <= 10
+    assert len(vectors) == 17 and set(vectors.values()) == {1}
 
 
 def test_a_failed_tree_write_fails_the_stage_and_keeps_the_old_tree(

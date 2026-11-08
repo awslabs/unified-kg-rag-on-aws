@@ -891,8 +891,8 @@ From a `main` checkout (formats and keys no release had):
   tree is current reads the texts a page at a time and keeps only their ids, attributes and text hashes
   (`VectorIndexer.scan_text_unit_pages`) (#640); the port's default pages a store's `scan_text_units`, so a store
   that implements only that one still builds the tree (#644). Several trees (`partition_by`, `scope: document`) are
-  read and built a batch of at most `max_leaves_in_memory` leaves at a time, a page walk each, where every tree's
-  vectors were held at once. Failed summaries and, with
+  read and built a batch of at most `max_leaves_in_memory` leaves at a time, each batch reading its own text units by
+  id (`VectorIndexer.read_text_unit_fields`), where every tree's vectors were held at once. Failed summaries and, with
   `refresh: on_reset`, the text units no summary covers are EMF metrics (`total_tree_summaries_failed`,
   `total_tree_uncovered_leaves`) on the CDK dashboard's "Summary tree (EMF)" widget (#603). See
   [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
