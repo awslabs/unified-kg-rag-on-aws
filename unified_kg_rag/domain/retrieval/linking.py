@@ -31,7 +31,7 @@ from collections.abc import Sequence
 from difflib import SequenceMatcher
 from typing import Literal
 
-from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.models import RetrievalResult
 from unified_kg_rag.shared.utils.legal_forms import latin_legal_form
 from unified_kg_rag.shared.utils.scripts import DENSE_SCRIPT_LETTERS

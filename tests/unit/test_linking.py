@@ -10,7 +10,7 @@ import pytest
 from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
 )
-from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.models import RetrievalResult
 from unified_kg_rag.domain.retrieval.linking import (
     choose_links,
