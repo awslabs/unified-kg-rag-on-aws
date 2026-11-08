@@ -155,8 +155,8 @@ hand, together where they must match:
 
 - The uv version, `version: "0.12.23"` under every `astral-sh/setup-uv` step in `.github/workflows/` (Dependabot moves
   the action's SHA, not this input), and the `ghcr.io/astral-sh/uv` image `docker/Dockerfile` copies uv from
-  (`COPY --from`, tag and digest). Held at 0.12 for now, so the weekly issue lists uv 0.13 until the hold is lifted:
-  0.13.0 has breaking changes (Python 3.15 as the default, the tar codec, constraint-file parsing) to check against
+  (`COPY --from`, tag and digest). Held at 0.12 for now (`HELD` in `scripts/check_pins.py`: the weekly report lists
+  uv 0.13 as held, which opens no issue; delete the entry to lift the hold): 0.13.0 has breaking changes (Python 3.15 as the default, the tar codec, constraint-file parsing) to check against
   the locks, the workflows and the image, and its image digest needs a Docker build to verify.
 - The container base image, the `BASE_IMAGE` ARG default in `docker/Dockerfile` (tag and digest; Dependabot does not
   resolve an ARG in `FROM`).
@@ -171,7 +171,8 @@ hand, together where they must match:
 - The Trivy image the `docker` jobs scan with (`aquasec/trivy`, tag and digest, in `quality.yml`).
 
 The weekly [`pin-freshness`](./.github/workflows/pin-freshness.yml) workflow runs `scripts/check_pins.py`, which
-compares the base image, uv, apt, ADOT, CDK CLI and Trivy pins with upstream, and builds and scans the image with
+compares the base image, uv, apt, ADOT, CDK CLI and Trivy pins with upstream (a base index whose amd64 and arm64
+images are the pinned ones is current), and builds and scans the image with
 the opt-in extras (a superset of the default image) as the `docker-unstructured` job does. It opens (or updates) one
 issue listing the pins that are behind and the fixable findings, and another when the image does not build; a week
 that finds everything current (or the image built) closes it. The image scan (Trivy, `--severity HIGH,CRITICAL --ignore-unfixed`) fails a pull request on a fixable HIGH or CRITICAL

@@ -8,7 +8,9 @@ an issue with the report when one is behind:
 
 - the data-plane base image (``ARG BASE_IMAGE`` in docker/Dockerfile): the
   digest its tag points to now, against the pinned one (a new digest is the
-  same Python line with OS and Python patch updates);
+  same Python line with OS and Python patch updates). A new index whose
+  images for the platforms the image builds for are the pinned ones (an
+  attestation re-pushed, say) is not reported;
 - the uv image the Dockerfile copies uv from: the latest uv release, and
   whether the pinned tag still has the pinned digest;
 - the ADOT collector sidecar (iac/stacks/compute_stack.py): the latest
@@ -28,7 +30,8 @@ Usage::
     python scripts/check_pins.py [--report report.md]
 
 Exit status 0 when every pin is current, 1 when one is behind (the report
-says which), 2 when a lookup failed. Image digests come from
+says which), 2 when a lookup failed. A release past a pin held on purpose
+(``HELD``) is listed in the report as held and does not count as behind. Image digests come from
 ``docker buildx imagetools inspect``; release versions from the GitHub API
 (``GITHUB_TOKEN``, if set, raises its rate limit) and the npm registry; the
 apt versions from ``apt-cache policy`` in the pinned base image (``docker
@@ -75,12 +78,48 @@ _APT_PIN = re.compile(
     r"^\s+(?P<package>[a-z0-9][a-z0-9.+-]*)=(?P<version>\S+) \\$", re.M
 )
 
+# The platforms docker/Dockerfile builds for (Fargate x86_64 and Graviton).
+IMAGE_PLATFORMS = ("linux/amd64", "linux/arm64")
+
 UV_RELEASES = "https://api.github.com/repos/astral-sh/uv/releases/latest"
 ADOT_RELEASES = (
     "https://api.github.com/repos/aws-observability/aws-otel-collector/releases/latest"
 )
 CDK_CLI_LATEST = "https://registry.npmjs.org/aws-cdk/latest"
 TRIVY_RELEASES = "https://api.github.com/repos/aquasecurity/trivy/releases/latest"
+
+
+@dataclass(frozen=True)
+class Held:
+    """A pin kept on a release series on purpose, with the reason."""
+
+    series: str
+    reason: str
+
+
+# Releases past these series are reported as held, not behind (exit 0).
+# Lift a hold by deleting its entry (CONTRIBUTING.md, "Pins Dependabot does
+# not move").
+HELD: dict[str, Held] = {
+    "uv": Held(
+        series="0.12",
+        reason="0.13.0 has breaking changes (Python 3.15 as the default, the "
+        "tar codec, constraint-file parsing) to check against the locks, the "
+        "workflows and the image",
+    ),
+}
+
+
+def _in_series(version: str, series: str) -> bool:
+    return _version(version)[: len(_version(series))] == _version(series)
+
+
+@dataclass(frozen=True)
+class Report:
+    """The pins behind upstream, and the releases past a held pin."""
+
+    behind: list[str]
+    held: list[str]
 
 
 @dataclass(frozen=True)
@@ -155,6 +194,8 @@ class Lookups:
     """The upstream lookups (network calls), replaceable in tests."""
 
     digest: Callable[[str], str]
+    # ref -> {"os/arch": digest} of the images an index lists.
+    platform_digests: Callable[[str], dict[str, str]]
     latest_release: Callable[[str], str]
     latest_npm: Callable[[str], str]
     # (image, packages) -> {package: (installed, candidate)} as apt-cache
@@ -162,20 +203,39 @@ class Lookups:
     apt_policy: Callable[[str, tuple[str, ...]], dict[str, tuple[str, str]]]
 
 
-def check(pins: Pins, lookups: Lookups) -> list[str]:
-    """One report line per pin that is behind (empty: all current)."""
-    behind = []
+def _same_images(pins: Pins, lookups: Lookups) -> bool:
+    """Whether the base tag's index now lists the pinned images for every
+    platform the image builds for."""
+    pinned = lookups.platform_digests(f"{pins.base_ref}@{pins.base_digest}")
+    current = lookups.platform_digests(pins.base_ref)
+    return all(
+        pinned.get(platform) is not None
+        and pinned.get(platform) == current.get(platform)
+        for platform in IMAGE_PLATFORMS
+    )
+
+
+def check(pins: Pins, lookups: Lookups) -> Report:
+    """One report line per pin that is behind, and per held release."""
+    behind: list[str] = []
+    held: list[str] = []
     digest = lookups.digest(pins.base_ref)
-    if digest != pins.base_digest:
+    if digest != pins.base_digest and not _same_images(pins, lookups):
         behind.append(
             f"- Base image `{pins.base_ref}` now points to `{digest}` "
             f"(pinned: `{pins.base_digest}`) in docker/Dockerfile. Bump the "
             "digest, re-check the apt pins, and build both images."
         )
-    # uv is held at 0.12 on purpose (CONTRIBUTING.md, "Pins Dependabot does
-    # not move"): 0.13 is reported until that hold is lifted.
     latest_uv = lookups.latest_release(UV_RELEASES).lstrip("v")
-    if _version(latest_uv) > _version(pins.uv_version):
+    uv_hold = HELD.get("uv")
+    if _version(latest_uv) <= _version(pins.uv_version):
+        pass
+    elif uv_hold is not None and not _in_series(latest_uv, uv_hold.series):
+        held.append(
+            f"- uv {latest_uv} is released; held at {uv_hold.series} "
+            f"(pinned: {pins.uv_version}): {uv_hold.reason}."
+        )
+    else:
         behind.append(
             f"- uv {latest_uv} is released (pinned: {pins.uv_version}, the image "
             "in docker/Dockerfile and `version:` of setup-uv in the workflows)."
@@ -240,11 +300,11 @@ def check(pins: Pins, lookups: Lookups) -> list[str]:
                 f"`{pinned}` (a security upgrade the base digest now "
                 "includes): drop it from docker/Dockerfile's apt-get line."
             )
-    return behind
+    return Report(behind=behind, held=held)
 
 
-def _image_digest(ref: str) -> str:
-    """The digest ``ref`` (a tag) points to: its multi-arch index."""
+def _manifest(ref: str) -> dict[str, object]:
+    """``ref``'s manifest (a multi-arch index for a tag) as buildx reads it."""
     out = subprocess.run(  # nosec B603 B607 - fixed argv, no shell
         [
             "docker",
@@ -260,10 +320,39 @@ def _image_digest(ref: str) -> str:
         text=True,
         timeout=120,
     ).stdout
-    digest = json.loads(out)["digest"]
+    manifest: dict[str, object] = json.loads(out)
+    return manifest
+
+
+def _image_digest(ref: str) -> str:
+    """The digest ``ref`` (a tag) points to: its multi-arch index."""
+    digest = str(_manifest(ref)["digest"])
     if not re.fullmatch(_DIGEST, digest):
         raise ValueError(f"{ref}: unexpected digest {digest!r}")
-    return str(digest)
+    return digest
+
+
+def platform_digests(manifest: dict[str, object]) -> dict[str, str]:
+    """{"os/arch[/variant]": digest} of the images an index lists, without
+    its attestation manifests (platform ``unknown/unknown``). arm64's
+    default variant (v8) is left out, as Docker names the platform."""
+    found: dict[str, str] = {}
+    for entry in manifest.get("manifests") or []:  # type: ignore[attr-defined]
+        platform = entry.get("platform") or {}
+        if platform.get("os", "unknown") == "unknown":
+            continue
+        variant = platform.get("variant")
+        if platform["architecture"] == "arm64" and variant == "v8":
+            variant = None
+        key = "/".join(
+            part for part in (platform["os"], platform["architecture"], variant) if part
+        )
+        found[key] = entry["digest"]
+    return found
+
+
+def _platform_digests(ref: str) -> dict[str, str]:
+    return platform_digests(_manifest(ref))
 
 
 def _apt_policy(image: str, packages: tuple[str, ...]) -> dict[str, tuple[str, str]]:
@@ -335,6 +424,7 @@ def _latest_npm(url: str) -> str:
 
 NETWORK = Lookups(
     digest=_image_digest,
+    platform_digests=_platform_digests,
     latest_release=_latest_release,
     latest_npm=_latest_npm,
     apt_policy=_apt_policy,
@@ -346,20 +436,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", type=Path, help="write the Markdown report here")
     args = parser.parse_args(argv)
     try:
-        behind = check(read_pins(), NETWORK)
+        result = check(read_pins(), NETWORK)
     except Exception as e:  # noqa: BLE001 - any failed lookup is exit 2
         print(f"check_pins: {type(e).__name__}: {e}", file=sys.stderr)
         return 2
-    report = (
-        "These pins are behind upstream (weekly check, "
-        "`scripts/check_pins.py`):\n\n" + "\n".join(behind) + "\n"
-        if behind
-        else "Every pin is current.\n"
-    )
+    report = render(result)
     print(report, end="")
     if args.report:
         args.report.write_text(report, encoding="utf-8")
-    return 1 if behind else 0
+    return 1 if result.behind else 0
+
+
+def render(result: Report) -> str:
+    """The Markdown report: what is behind, then what is held."""
+    report = (
+        "These pins are behind upstream (weekly check, "
+        "`scripts/check_pins.py`):\n\n" + "\n".join(result.behind) + "\n"
+        if result.behind
+        else "Every pin is current.\n"
+    )
+    if result.held:
+        report += (
+            "\nHeld on purpose (`HELD` in `scripts/check_pins.py`; not counted "
+            "as behind):\n\n" + "\n".join(result.held) + "\n"
+        )
+    return report
 
 
 if __name__ == "__main__":
