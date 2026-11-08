@@ -27,17 +27,22 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_right
+from collections import Counter
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cache
 
 __all__ = [
+    "OTHER_LETTERS",
     "DENSE_SCRIPT_LETTERS",
     "DENSE_SCRIPT_TOKEN_RANGES",
     "SCRIPTS",
     "SPACELESS_SCRIPT_LETTERS",
     "Script",
+    "ScriptCounts",
     "Spacing",
+    "count_letters",
     "drop_dense_script_spaces",
     "has_dense_script",
     "is_dense_script_char",
@@ -217,6 +222,79 @@ def script_of(ch: str) -> Script | None:
     if i >= 0 and cp <= _SPANS[i][1]:
         return _SPANS[i][2]
     return None
+
+
+# The name letters of no script's block are counted under.
+OTHER_LETTERS = "other"
+
+
+@dataclass(frozen=True)
+class ScriptCounts:
+    """How many letters of each script a text holds, by script name
+    (:data:`OTHER_LETTERS` for letters of no listed script)."""
+
+    by_script: Mapping[str, int] = field(default_factory=dict)
+
+    def __getitem__(self, name: str) -> int:
+        return self.by_script.get(name, 0)
+
+    @property
+    def letters(self) -> int:
+        return sum(self.by_script.values())
+
+    @property
+    def dense(self) -> int:
+        """The Han, Hangul and Kana letters."""
+        return sum(
+            count
+            for name, count in self.by_script.items()
+            if name in _BY_NAME and _BY_NAME[name].spacing is Spacing.DENSE
+        )
+
+    @property
+    def dense_share(self) -> float:
+        return self.dense / self.letters if self.letters else 0.0
+
+    def dominant(self) -> str | None:
+        """The script most of the text is in, weighed by what its letters
+        carry (its letters over its ``chars_per_token``, so one Hangul
+        syllable outweighs one Latin letter), the dense scripts together
+        as ``"dense"``; ``None`` without letters. On a tie, a script other
+        than Latin wins: a name in Latin letters is what a question in
+        another script quotes."""
+        weights: dict[str, float] = {}
+        for name, count in self.by_script.items():
+            script = _BY_NAME.get(name)
+            if script is not None and script.spacing is Spacing.DENSE:
+                group, rate = "dense", script.chars_per_token
+            else:
+                group = name
+                rate = script.chars_per_token if script is not None else 4.0
+            weights[group] = weights.get(group, 0.0) + count / rate
+        if not weights:
+            return None
+        return max(weights, key=lambda group: (weights[group], group != "latin"))
+
+
+def count_letters(
+    texts: Iterable[str],
+    *,
+    max_texts: int | None = None,
+    max_chars: int | None = None,
+) -> ScriptCounts:
+    """Count the letters of ``texts`` (the first ``max_chars`` characters of
+    each of the first ``max_texts``, when given) by script."""
+    counts: Counter[str] = Counter()
+    for i, text in enumerate(texts):
+        if max_texts is not None and i >= max_texts:
+            break
+        for ch in text if max_chars is None else text[:max_chars]:
+            if (script := script_of(ch)) is not None:
+                if ch.isalpha():
+                    counts[script.name] += 1
+            elif ch.isalpha():
+                counts[OTHER_LETTERS] += 1
+    return ScriptCounts(dict(counts))
 
 
 def _class_body(ranges: Ranges) -> str:

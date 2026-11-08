@@ -31,6 +31,11 @@ ENGLISH = "The vendor supplies parts to the buyer under a fixed price contract. 
 KOREAN_TECHNICAL = (
     "벤더는 API 게이트웨이와 Lambda 함수로 주문을 처리하고 S3 버킷에 저장한다. " * 6
 )
+# Korean in mixed script: its stems in Han (Hanja), more Han than Hangul.
+KOREAN_HANJA = (
+    "供給者는 購買者에게 部品을 供給하고 納期와 價格은 契約書로 定한다. "
+    "契約의 當事者는 法律이 定하는 바에 依하여 義務를 진다. "
+) * 3
 
 
 @pytest.mark.parametrize(
@@ -38,11 +43,12 @@ KOREAN_TECHNICAL = (
     [
         (KOREAN, LanguageCode.KO),
         (KOREAN_TECHNICAL, LanguageCode.KO),
+        (KOREAN_HANJA, LanguageCode.KO),
         (JAPANESE, LanguageCode.JA),
         (CHINESE, LanguageCode.ZH),
         (ENGLISH, None),
     ],
-    ids=["ko", "ko-technical", "ja", "zh", "en"],
+    ids=["ko", "ko-technical", "ko-hanja", "ja", "zh", "en"],
 )
 def test_the_sample_reads_as_its_dense_script_language(
     text: str, language: LanguageCode | None
@@ -74,6 +80,7 @@ def test_a_script_the_setting_does_not_name_is_reported(
     [
         (KOREAN, LanguageCode.KO),
         (KOREAN_TECHNICAL, LanguageCode.KO),
+        (KOREAN_HANJA, LanguageCode.KO),
         (JAPANESE, LanguageCode.JA),
         (CHINESE, LanguageCode.ZH),
         # One Latin script: English and German are not told apart.
@@ -104,6 +111,16 @@ def test_the_sample_is_bounded() -> None:
     share = script_share([ENGLISH * 100] * 30 + [KOREAN * 100])
     assert share.dense == 0
     assert share.letters <= 20 * 2000
+
+
+def test_korean_with_hanja_is_not_told_to_be_chinese() -> None:
+    share = script_share([KOREAN_HANJA])
+    assert share["han"] > share["hangul"]
+    assert source_language_mismatch(share, LanguageCode.KO) is None
+    reason = source_language_mismatch(share, LanguageCode.ZH)
+    assert reason is not None and "set it to 'ko'" in reason
+    # Prompt tuning writes Korean for it, not Chinese.
+    assert corpus_source_language([KOREAN_HANJA], "Chinese") is LanguageCode.KO
 
 
 def test_the_tuned_language_is_the_scripts_else_the_profiles() -> None:

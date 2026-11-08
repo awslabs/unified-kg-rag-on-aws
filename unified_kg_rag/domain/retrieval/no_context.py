@@ -6,8 +6,8 @@ When retrieval produced no context (or a decline left no text) the chain
 answers with a fixed sentence instead of asking the model. The answer
 prompt writes in the language of the query, so the fixed reply does too:
 :func:`no_context_answer` picks one of :data:`NO_CONTEXT_ANSWERS` (one per
-``LanguageCode``) by the query's script, and among the Latin-script
-languages by their function words. A query whose language it cannot tell
+``LanguageCode``) by the script most of the query's letters are in, and
+among the Latin-script languages by their function words. A query whose language it cannot tell
 gets the index language's reply when that is written in the query's script,
 else English.
 
@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import re
 
+from unified_kg_rag.domain.languages import dense_language
 from unified_kg_rag.domain.models import LanguageCode
-from unified_kg_rag.shared.utils.scripts import letter_class
+from unified_kg_rag.shared.utils.scripts import count_letters
 
 __all__ = [
     "NO_CONTEXT_ANSWER",
@@ -69,10 +70,6 @@ NO_CONTEXT_ANSWERS: dict[LanguageCode, str] = {
 # The English reply, the one earlier releases always gave.
 NO_CONTEXT_ANSWER = NO_CONTEXT_ANSWERS[LanguageCode.EN]
 
-_HANGUL = re.compile(f"[{letter_class('hangul')}]")
-_KANA = re.compile(f"[{letter_class('kana')}]")
-_HAN = re.compile(f"[{letter_class('han')}]")
-_CYRILLIC = re.compile(f"[{letter_class('cyrillic')}]")
 _LATIN_WORD = re.compile(r"[a-zà-öø-ÿ']+")
 
 # Frequent function words of each Latin-script language, none in another
@@ -108,16 +105,18 @@ def answer_language(query: str, fallback: LanguageCode | str) -> LanguageCode:
     """The language ``query`` is written in, as far as its script and
     function words tell; ``fallback`` (the index language) when they do not
     and it is written in the query's script (a Latin one for a Latin-script
-    query), else English."""
+    query), else English.
+
+    The script most of the query's letters are in decides
+    (``ScriptCounts.dominant``: a Korean question quoting an English name is
+    Korean, an English one quoting a Korean name English); Han, Hangul and
+    Kana read as ``dense_language`` says."""
     fallback = _language(fallback)
-    if _HANGUL.search(query):
-        return LanguageCode.KO
-    if _KANA.search(query):
-        return LanguageCode.JA
-    if _HAN.search(query):
-        # Han without kana: Chinese, or a Japanese index's kanji-only query.
-        return LanguageCode.JA if fallback is LanguageCode.JA else LanguageCode.ZH
-    if _CYRILLIC.search(query):
+    counts = count_letters([query])
+    script = counts.dominant()
+    if script == "dense":
+        return dense_language(counts, fallback) or fallback
+    if script == "cyrillic":
         return LanguageCode.RU
     words = _LATIN_WORD.findall(query.lower())
     hits = {

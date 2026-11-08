@@ -1475,6 +1475,9 @@ Bugs present in 0.2.3.
 Queries and retrieval.
 - `@register_strategy` on a registered class with other arguments raises instead of replacing its record, which
   changed what that strategy reads for every caller in the process; the same arguments keep the record.
+- The no-context reply is written in the language of the script most of the question's letters are in, weighed
+  by what a letter carries, not in the first non-Latin script found: "What does 계약 mean?" gets the English reply,
+  a Japanese question quoting a Korean word the Japanese one.
 - A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
   went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
@@ -1555,6 +1558,10 @@ Ingestion and incremental indexing.
   as prose: it gets one output-fixer call, and a repair that still holds text only is read as empty, counted
   (`sections_read_empty_from_text` in the graph and claim extraction stats) and logged with the section and its
   length.
+- Korean written with Hanja reads as Korean, not Chinese, in the corpus-language WARNING and in the
+  `source_language` prompt tuning writes: one rule (`domain.languages.dense_language`) reads Han, Hangul and Kana
+  text as Korean when a tenth or more of those letters are Hangul (and no fewer than Kana), else Japanese when a
+  tenth are Kana, else Chinese.
 - A run into a namespace that holds other source scopes' documents no longer exports `visualization_data.json`
   from its own corpus's graph (or fails to, `Communities must be detected before exporting`): it logs an INFO line
   pointing at `run-describe --output-path` and leaves the earlier file in place (#640).
