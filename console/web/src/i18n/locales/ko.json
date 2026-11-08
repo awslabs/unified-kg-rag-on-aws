@@ -3,6 +3,7 @@
   "app.tagline": "질문, 수집, 평가, 추적",
   "app.skip": "본문으로 건너뛰기",
   "nav.label": "페이지",
+  "nav.menu": "메뉴",
   "nav.ask": "질문",
   "nav.ingest": "수집",
   "nav.evaluate": "평가",

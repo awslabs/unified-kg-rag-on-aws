@@ -1,7 +1,8 @@
 # Console design brief
 
 The design the console's styles implement
-(`console/web/src/styles/tokens.css`, `console/web/src/styles/app.css`). Change this brief first when the direction changes.
+(`console/web/src/styles/tokens.css`, `console/web/src/styles/app.css`).
+Change this brief first when the direction changes.
 
 ## Subject and audience
 
@@ -10,8 +11,8 @@ audit every answer back to its passages and graph entities, build or update
 the index, compare retrieval strategies with confidence intervals, inspect the
 graph, watch cost and latency, and edit the config. The people at it are ML
 and data engineers and solution architects deciding whether to trust a
-strategy on their corpus. They read numbers and identifiers all day, in
-English, Korean, Japanese, Chinese and six European languages.
+strategy on their corpus, in English, Korean, Japanese, Chinese and six
+European languages.
 
 Each page has one job and one primary action:
 
@@ -24,97 +25,86 @@ Each page has one job and one primary action:
 | Dashboard | See what questions and jobs cost | (read only) |
 | Settings | Change the config safely | Review changes |
 
-## Aesthetic family: the evidence ledger
+## Direction: a developer tool
 
-An assay report or a survey field book: ruled, exact, quiet, with one ink
-colour that owns the page and a highlighter that marks what matters now.
-It is a working instrument, so density is a feature and decoration is not.
+The console should feel like the tools its users already live in: a dark,
+GitHub-like developer-tool palette (with a matching light theme), a sticky
+top bar, cards on a quiet ground, compact tables and figures, a chat-style
+answer view, and a force-directed canvas graph. The references are patterns,
+not assets:
 
-References (patterns, not assets):
-
-- **IBM Carbon** (carbondesignsystem.com): the productive type set on IBM Plex
-  (fixed heading sizes for dense product pages, `label-01` / `code-01` at
-  12/16), layers instead of drop shadows, data-table row heights (32/40/48).
-- **GitHub Primer** (primer.style): the Blankslate empty state (what this
-  is, how to start, one action), underline tabs, progressive disclosure with
-  native `details`.
-- **Langfuse and Arize Phoenix** (LLM tracing and experiments): a trace read
-  as a vertical list of spans beside its output, and runs compared against a
-  named baseline column.
-- **Neo4j Bloom and sigma.js** (graph explorers): the scene comes first; the
-  search bar and the legend float over the canvas, an inspector card sits
-  beside it.
+- **A dark, GitHub-like developer-tool palette**: near-black ground, card and
+  raised layers a step lighter, hairline borders, one saturated accent,
+  GitHub-style status colours with a label.
+- **A top-bar shell**: the brand at the left, the pages as icon-and-label
+  links with the current one filled in the accent, the index and the
+  preferences at the right; on a narrow screen the pages fold under a menu
+  button.
+- **A chat-style answer view**: the question as the asker's bubble at the
+  right, the answer as a card at the left with its cited sources as chips,
+  the composer docked at the foot of the conversation, a welcome with sample
+  questions before the first one. The evidence trace stays beside it.
+- **A force-directed canvas graph in the style of react-force-graph**: nodes
+  sized by their connections and coloured by community or type, labels for
+  the focused node, its neighbours and the busiest nodes (all labels once
+  zoomed in), the rest dimmed, directed edges with arrows, the edge's
+  relationship shown on hover, a click that centres and zooms, a legend and
+  zoom tools over the canvas, and an inspector beside it.
 
 ## Tokens
 
 Two first-class themes, each a full set of colour roles in
 `console/web/src/styles/tokens.css` (light on `:root`, dark on
-`:root[data-theme="dark"]`): the dark one is the same roles stepped for a
-blue-black ground, not an inversion. The choice is System (the default:
-`prefers-color-scheme`), Light or Dark, from the toggle in the rail, kept
-in `localStorage`; `console/web/public/theme.js` applies it before the
-first paint (a file, since the page's CSP allows no inline script).
-
-Colour: dominant ink with a sharp accent; status colours stay functional.
-Ratios are WCAG contrast against the surface named.
+`:root[data-theme="dark"]`): the dark one is its own set, not an inversion.
+The choice is System (the default: `prefers-color-scheme`), Light or Dark,
+from the toggle in the top bar, kept in `localStorage`;
+`console/web/public/theme.js` applies it before the first paint (a file,
+since the page's CSP allows no inline script).
 
 | Role | Light | Dark | Use |
 | --- | --- | --- | --- |
-| `--rail-bg` | `#0e2341` prussian | `#070d16` | The navigation rail, the dominant ink |
-| `--rail-ink` | `#c9d3e0` (10.4:1) | `#c3cfdd` (12.3:1) | Text on the rail |
-| `--primary-bg` / `-ink` | `#0e2341` / `#ffffff` (15.7:1) | `#b9cdf7` / `#0e2341` (9.8:1) | The primary action, selected tags |
-| `--cobalt` | `#2453c7` (6.7:1 on sheet) | `#84a6f2` (7.1:1) | The trace, links, focus ring |
-| `--highlighter` / `--mark-ink` | `#ffd43b` / `#111a24` (12.3:1) | same | Matched evidence, the current page, cited markers |
-| `--paper` | `#f1f3f0` | `#0c131c` | Page ground (a ledger grey-green; blue-black) |
-| `--sheet` | `#ffffff` | `#131c27` | Working surfaces |
-| `--ink` | `#111a24` (15.7:1 on paper) | `#e4e9ef` (15.3:1 on paper, 14.1:1 on sheet) | Text |
-| `--graphite` | `#56606b` (5.7:1 paper, 6.4:1 sheet) | `#9ba7b5` (7.6:1, 7.0:1) | Secondary text |
-| `--rule` | `#d5dad6` | `#243142` | Hairline rules |
-| `--control-edge` | `#7c8681` (3.4:1 paper, 3.8:1 sheet) | `#6c7d91` (4.4:1, 4.1:1) | Field edges |
-| `--good` / `--warn` / `--bad` | 5.1 / 5.6 / 5.6:1 on their washes | 8.2 / 8.5 / 7.3:1 | Status, with a label |
-| `--series-1..8` | dataviz reference, light steps | the same hues, dark steps (all 3:1 on sheet) | Graph communities and types |
+| `--paper` | `#f6f7f9` | `#0e1117` | Page ground |
+| `--sheet` | `#ffffff` | `#151a21` | Cards, panels, the top bar (dark) |
+| `--sheet-sunk` | `#f1f3f6` | `#1c222a` | Wells: code, the composer, table heads |
+| `--rule` | `#d9dde3` | `#2e353f` | Borders |
+| `--ink` | `#1c2128` (16.2:1 on sheet) | `#e6e9ee` (14.4:1) | Text |
+| `--graphite` | `#59636e` (6.1:1 sheet, 5.7:1 paper) | `#8f98a3` (6.0:1, 6.5:1) | Secondary text |
+| `--control-edge` | `#848c96` (3.4:1) | `#6b7480` (3.6:1) | Field edges |
+| `--primary-bg` / `-ink` | `#4f46e5` / white (6.3:1) | `#5b5bd6` / white (5.4:1) | The primary action, the current page |
+| `--cobalt` | `#4f46e5` (6.3:1) | `#a5a8ff` (8.0:1) | Links, the trace, focus ring |
+| `--trace-wash` / `--trace-ink` | `#eef0ff` / `#3730a3` (8.8:1) | `#232557` / `#c9ccff` (9.2:1) | Chosen chips, citation chips |
+| `--highlighter` / `--mark-ink` | `#ffd33d` / `#1c2128` (11.3:1) | same | Matched evidence, cited markers |
+| `--good` / `--warn` / `--bad` | 4.6 / 4.5 / 4.7:1 on their washes | 6.3 / 6.2 / 4.9:1 | Status, with a label |
+| `--series-1..8` | dataviz reference, light steps | the same hues, dark steps (3:1 on sheet) | Graph communities and types, charts |
 
-Type: one superfamily, IBM Plex (SIL OFL 1.1), self-hosted as WOFF2 subsets
-(`console/web/scripts/gen-fonts.mjs` writes the generated `fonts.css` next
-to the tokens; the licences are in `console/web/public/licenses/`).
+Type: the platform's own UI face (`-apple-system`, Segoe UI, `system-ui`),
+so Korean renders in Apple SD Gothic Neo on macOS and Malgun Gothic on
+Windows (Noto Sans KR elsewhere), Japanese in Hiragino Sans or Yu Gothic,
+Chinese in PingFang SC or Microsoft YaHei; JetBrains Mono (SIL OFL 1.1,
+self-hosted as WOFF2 subsets by `console/web/scripts/gen-fonts.mjs`, the
+licence in `console/web/public/licenses/`) for ids, strategies and figures.
+Titles use the same face at 700 with tighter tracking (-0.02em Latin,
+-0.015em Korean). Scale (px): 12 labels, 13 small, 14 body compact (tables,
+forms, nav), 15 answers, 18 card headings, 22 sections, 28 page titles; CJK
+text takes a 1.7 line height and Korean keeps words whole.
 
-| Role | Face | Weights | Use |
-| --- | --- | --- | --- |
-| Display | IBM Plex Serif | 500 | Page titles only (Latin scripts) |
-| Body | IBM Plex Sans (+ Cyrillic) | 400, 600 | Everything else |
-| Data | IBM Plex Mono | 400, 600 | Identifiers, strategies, metrics, figures in tables |
-| Korean | IBM Plex Sans KR | 400, 600 | Hangul, same design as Plex Sans |
-| Japanese | IBM Plex Sans JP | 400, 600 | Kana and kanji |
-| Chinese | System (PingFang SC, Microsoft YaHei, Noto Sans SC) | | No Plex SC is published as a web font package |
-
-Scale (px, line height): 12/16 label and caption, 13/20 small, 14/20 body
-compact (tables, forms), 16/24 body, 20/28 sheet heading, 28/36 section,
-40/48 page title. CJK body text takes a 1.75 line height and Korean keeps
-words whole (`word-break: keep-all`). Weights jump 400 to 600; nothing
-in between.
-
-Space: a 4px base (4, 8, 12, 16, 24, 32, 48). Radius: 2px on controls and
-panels, round only for graph nodes and stations. No drop shadows on panels;
-a raised element (a popover, a tooltip) gets one.
+Space: a 4px base. Radius: 6px controls, 8px cards, pills for chips and
+badges. Cards carry a hairline border and the faintest shadow; raised
+elements (the composer, popovers, tooltips) a stronger one.
 
 ## Signature
 
-The provenance trace: matched words in highlighter yellow, and a cobalt rail
-whose stations are the sources an answer read, with arcs to the passages
-that state the opened one. The same yellow marks where you are in the rail
-navigation, so the accent always means "look here".
+The provenance trace: matched words in highlighter yellow, and an accent
+rail whose stations are the sources an answer read, with arcs to the
+passages that state the opened one, continued into the graph, where the
+traced node wears a dashed ring and its edge carries moving particles.
 
 ## Avoid
 
-- Inter, Roboto, Arial, a system-font-only stack; the convergent display
-  picks (Space Grotesk, Bricolage Grotesque).
-- Purple or indigo gradients, glassmorphism, glow.
-- Evenly spread pastel palettes; more than one accent.
-- Every block a white rounded card with a drop shadow on grey; pill chips
-  for everything.
-- Decorative numbering (01 / 02 / 03), emoji, icon soup.
-- The cream-and-serif editorial look, and near-black with an acid accent.
+- Copying any reference's code, strings, labels, data, logo or brand colours.
 - A dark theme made by inverting or filtering the light one.
-- Motion that is not tied to an event: the one orchestrated moment is an
-  answer arriving (the rail draws, the sources settle in order), and it is
-  off under `prefers-reduced-motion`.
+- More than one accent; colour as the only carrier of a status or a series.
+- Decorative numbering, emoji icons, gradients, glow.
+- Motion that is not tied to an event: an answer arriving (the rail draws,
+  the sources settle in order) and the traced edge's particles; both are off
+  under `prefers-reduced-motion`, where the graph opens already laid out.

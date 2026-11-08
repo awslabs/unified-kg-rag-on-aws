@@ -1,69 +1,73 @@
 /* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
- * The console's tokens: the brief is console/web/DESIGN.md ("the evidence
- * ledger"). One dominant ink (prussian), one sharp accent (highlighter) and
- * the trace colour (cobalt); status and chart colours are functional and
- * kept apart from them. Contrast ratios are against --sheet unless named.
+ * The console's tokens; the brief is console/web/DESIGN.md (a developer
+ * tool: a dark, GitHub-like palette with a matching light one, one indigo
+ * accent, a highlighter for evidence). Two first-class themes, each a full
+ * set of the same roles: light on :root, dark under data-theme="dark",
+ * which public/theme.js sets before the first paint. Contrast ratios are
+ * against --sheet unless named.
  */
-/* Two first-class themes, each a full token set (DESIGN.md): the light one
- * by default, the dark one under data-theme="dark", which public/theme.js
- * sets before the first paint from the saved choice or the system's. Every
- * colour the styles use is one of these roles. */
 :root {
-  /* The rail: the dominant ink */
-  --rail-bg: #0e2341; /* prussian */
-  --rail-hover: #1a3a63;
-  --rail-line: #2a4670;
-  --rail-ink: #c9d3e0; /* 10.4:1 on the rail */
-  --rail-muted: #8a97a6; /* 5.3:1 */
-  --rail-strong: #ffffff; /* the current page, the brand, 15.7:1 */
-
-  /* The primary action and selected tags: the same ink */
-  --primary-bg: #0e2341;
-  --primary-hover: #1a3a63;
-  --primary-ink: #ffffff; /* 15.7:1 */
-  --primary-meta: #c9d3e0;
-
-  /* The trace and the accent */
-  --cobalt: #2453c7; /* the trace, links, focus, 6.7:1 on sheet */
-  --trace: var(--cobalt);
-  --trace-ink: #1c3f99; /* trace-coloured text on a wash, 8.1:1 */
-  --trace-wash: #e8edf8;
-  --highlighter: #ffd43b; /* matched evidence, "you are here" */
-  --mark-ink: #111a24; /* text on the highlighter, 12.3:1, in both themes */
-
-  /* Ground and surfaces (Carbon-style layers: no shadow on a panel) */
-  --paper: #f1f3f0; /* page ground, a ledger grey-green */
-  --sheet: #ffffff;
-  --sheet-sunk: #f6f7f5; /* a well inside a sheet: code, diffs, wells */
-  --sheet-hover: #eef1ec;
+  /* Ground and surfaces */
+  --paper: #f6f7f9; /* page ground */
+  --sheet: #ffffff; /* cards and panels */
+  --sheet-sunk: #f1f3f6; /* a well inside a card: code, diffs, inputs' ground */
+  --sheet-hover: #eceff3;
   --overlay-bg: rgb(255 255 255 / 94%); /* a legend over the graph */
-  --ink: #111a24; /* text, 15.7:1 on paper */
-  --graphite: #56606b; /* secondary text, 5.7:1 on paper, 6.4:1 on sheet */
-  --rule: #d5dad6; /* hairlines */
-  --rule-strong: #b3bab5; /* table header rules, dashed outlines */
-  --control-edge: #7c8681; /* field edges, 3.4:1 on paper, 3.8:1 on sheet */
-  --placeholder: #6b7480; /* 4.7:1 */
-  --disabled-ink: #646d78; /* 4.9:1 on sheet-sunk */
-  --grid-dot: rgb(14 35 65 / 13%); /* the graph canvas' dot grid */
-  --log-bg: #0e2341;
-  --log-ink: #c9d3e0; /* 10.4:1 */
-  --tooltip-bg: #0e2341;
+  --rule: #d9dde3; /* borders */
+  --rule-strong: #b8bfc8;
+  --control-edge: #848c96; /* field edges, 3.4:1 on sheet, 3.2:1 on paper */
+
+  /* Text */
+  --ink: #1c2128; /* 16.2:1 on sheet, 15.1:1 on paper */
+  --graphite: #59636e; /* secondary, 6.1:1 on sheet, 5.7:1 on paper */
+  --placeholder: #6b7480; /* 4.8:1 */
+  --disabled-ink: #6b7480; /* 4.3:1 on sheet-sunk, a disabled control */
+
+  /* The accent: indigo. The trace, links, focus, the primary action. */
+  --cobalt: #4f46e5; /* 6.3:1 on sheet, 5.9:1 on paper */
+  --trace: var(--cobalt);
+  --trace-ink: #3730a3; /* accent text on its wash, 8.8:1 */
+  --trace-wash: #eef0ff;
+  --primary-bg: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-ink: #ffffff; /* 6.3:1 */
+  --primary-meta: #dcdcff;
+
+  /* The top bar */
+  --rail-bg: #ffffff;
+  --rail-hover: #eceff3;
+  --rail-line: #d9dde3;
+  --rail-ink: #59636e;
+  --rail-muted: #59636e;
+  --rail-strong: #1c2128;
+
+  /* The highlighter: matched evidence */
+  --highlighter: #ffd33d;
+  --mark-ink: #1c2128; /* 11.3:1 on the highlighter, in both themes */
+
+  /* Code, logs, tooltips, the graph canvas */
+  --log-bg: #0e1117;
+  --log-ink: #e6e9ee;
+  --tooltip-bg: #1c2128;
   --tooltip-ink: #ffffff;
-  --shadow-raised: 0 1px 2px rgb(17 26 36 / 8%), 0 8px 24px rgb(17 26 36 / 12%);
+  --grid-dot: rgb(28 33 40 / 10%);
+  --canvas-bg: #fbfcfd;
+  --shadow-card: 0 1px 2px rgb(28 33 40 / 6%);
+  --shadow-raised: 0 4px 16px rgb(28 33 40 / 12%);
 
-  /* Status (never used for identity or series) */
-  --good: #17734a; /* 5.1:1 on its wash */
-  --good-wash: #e2f2e8;
-  --warn: #8a5300; /* 5.6:1 */
-  --warn-wash: #fcf0d6;
-  --bad: #b42318; /* 5.6:1 */
-  --bad-wash: #fce8e6;
+  /* Status: GitHub-like, always with a label */
+  --good: #1a7f37; /* 4.6:1 on its wash */
+  --good-wash: #dafbe1;
+  --warn: #9a6700; /* 4.5:1 */
+  --warn-wash: #fff8c5;
+  --bad: #cf222e; /* 4.7:1 */
+  --bad-wash: #ffebe9;
 
-  /* Chart series: the validated categorical order (dataviz reference),
-   * first eight slots; a ninth folds into "other". Slots 3-5 are under 3:1
-   * on the sheet, so the graph labels every node and keeps a legend. */
+  /* Chart and graph series: the validated categorical order (dataviz
+   * reference); a ninth folds into "other". Slots 3-5 are under 3:1 on the
+   * sheet, so nodes keep their labels and a legend. */
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
@@ -75,51 +79,51 @@
   --series-other: #9aa7b1;
 }
 
-/* The dark theme: the same roles stepped for a blue-black ground, not an
- * inversion. The rail goes deepest, the primary action turns to a pale
- * prussian with prussian text, the trace lightens to stay 7:1. */
 :root[data-theme="dark"] {
-  --rail-bg: #070d16;
-  --rail-hover: #121d2c;
-  --rail-line: #1d2a3b;
-  --rail-ink: #c3cfdd; /* 12.3:1 */
-  --rail-muted: #8796a8; /* 6.5:1 */
-  --rail-strong: #ffffff;
+  --paper: #0e1117;
+  --sheet: #151a21;
+  --sheet-sunk: #1c222a;
+  --sheet-hover: #232a33;
+  --overlay-bg: rgb(21 26 33 / 94%);
+  --rule: #2e353f;
+  --rule-strong: #3d4652;
+  --control-edge: #6b7480; /* 3.6:1 on sheet, 4.0:1 on paper */
 
-  --primary-bg: #b9cdf7;
-  --primary-hover: #d0dcfa;
-  --primary-ink: #0e2341; /* 9.8:1 */
-  --primary-meta: #1a3a63;
+  --ink: #e6e9ee; /* 14.4:1 on sheet, 15.5:1 on paper */
+  --graphite: #8f98a3; /* 6.0:1 on sheet, 6.5:1 on paper, 5.5:1 on sheet-sunk */
+  --placeholder: #7d8691; /* 4.7:1 */
+  --disabled-ink: #8f98a3;
 
-  --cobalt: #84a6f2; /* 7.1:1 on sheet */
-  --trace-ink: #b3c8f8; /* 9.2:1 on its wash */
-  --trace-wash: #18253c;
+  --cobalt: #a5a8ff; /* 8.0:1 on sheet */
+  --trace-ink: #c9ccff; /* 9.2:1 on its wash */
+  --trace-wash: #232557;
+  --primary-bg: #5b5bd6;
+  --primary-hover: #6c6ce0;
+  --primary-ink: #ffffff; /* 5.4:1 */
+  --primary-meta: #dcdcff;
 
-  --paper: #0c131c;
-  --sheet: #131c27;
-  --sheet-sunk: #0f1721;
-  --sheet-hover: #1a2532;
-  --overlay-bg: rgb(19 28 39 / 94%);
-  --ink: #e4e9ef; /* 15.3:1 on paper, 14.1:1 on sheet */
-  --graphite: #9ba7b5; /* 7.6:1 on paper, 7.0:1 on sheet */
-  --rule: #243142;
-  --rule-strong: #34465b;
-  --control-edge: #6c7d91; /* 4.4:1 on paper, 4.1:1 on sheet */
-  --placeholder: #8794a4; /* 5.6:1 */
-  --disabled-ink: #8b96a4; /* 6.0:1 on sheet-sunk */
-  --grid-dot: rgb(200 215 235 / 12%);
-  --log-bg: #070d16;
-  --log-ink: #c3cfdd;
-  --tooltip-bg: #e4e9ef;
-  --tooltip-ink: #0c131c; /* 15.3:1 */
-  --shadow-raised: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 45%);
+  --rail-bg: #151a21;
+  --rail-hover: #1c222a;
+  --rail-line: #2e353f;
+  --rail-ink: #8f98a3;
+  --rail-muted: #8f98a3;
+  --rail-strong: #e6e9ee;
 
-  --good: #63d29b; /* 8.2:1 on its wash */
-  --good-wash: #0f2a1d;
-  --warn: #f2b54f; /* 8.5:1 */
-  --warn-wash: #2e2210;
-  --bad: #ff8f85; /* 7.3:1 */
-  --bad-wash: #3a1715;
+  --log-bg: #0b0e13;
+  --log-ink: #e6e9ee;
+  --tooltip-bg: #e6e9ee;
+  --tooltip-ink: #0e1117;
+  --grid-dot: rgb(230 233 238 / 7%);
+  --canvas-bg: #0e1117;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-raised: 0 4px 16px rgb(0 0 0 / 45%);
+
+  --good: #3fb950; /* 6.3:1 on its wash */
+  --good-wash: #12261a;
+  --warn: #d29922; /* 6.2:1 */
+  --warn-wash: #2a2210;
+  --bad: #f85149; /* 4.9:1 */
+  --bad-wash: #331616;
 
   /* The same eight hues stepped for the dark surface (dataviz reference),
    * all at least 3:1 on the sheet. */
@@ -131,38 +135,41 @@
   --series-6: #008300;
   --series-7: #9085e9;
   --series-8: #e66767;
-  --series-other: #6c7d91;
+  --series-other: #6b7480;
 }
 
 :root {
-  /* Type: IBM Plex throughout (src/styles/fonts.css, generated). The CJK
-   * faces follow the Latin one in each stack, so Latin text keeps Plex Sans
-   * and Hangul or kana take the matching Plex design. Chinese has no Plex
-   * web font: the system faces carry it. */
-  --cjk-ko: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR";
-  --cjk-ja: "IBM Plex Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo",
-    "Noto Sans JP", "Noto Sans CJK JP";
-  --cjk-zh: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC";
-  --font-display: "IBM Plex Serif", Georgia, serif;
-  /* Documents and questions can be in any language whatever the page's:
-   * the default stacks carry Korean and Japanese faces too (a locale's
-   * own stack, in app.css, puts its script first for the Han glyphs). */
-  --font-body: "IBM Plex Sans", "IBM Plex Sans KR", "IBM Plex Sans JP", "Helvetica Neue", Arial, sans-serif;
-  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "IBM Plex Sans KR", "IBM Plex Sans JP",
-    monospace;
+  /* Type: the platform's own UI face, so Korean takes Apple SD Gothic Neo
+   * on macOS and Malgun Gothic on Windows; JetBrains Mono (self-hosted,
+   * src/styles/fonts.css, generated) for ids, strategies and figures.
+   * Documents and questions can be in any language whatever the page's,
+   * so every stack carries the CJK faces; a locale's stack (app.css) puts
+   * its script first, for the Han glyphs. */
+  --cjk-ko: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR";
+  --cjk-ja: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo", "Noto Sans JP",
+    "Noto Sans CJK JP";
+  --cjk-zh: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC";
+  --font-latin: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial;
+  --font-body: var(--font-latin), var(--cjk-ko), var(--cjk-ja), var(--cjk-zh), sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas;
+  --font-data: var(--font-mono), var(--cjk-ko), var(--cjk-ja), monospace;
+  /* Headings: tighter tracking for Latin; Hangul sets a little tighter too. */
+  --tracking-display: -0.02em;
 
-  /* Scale (DESIGN.md): size / line height */
-  --text-xs: 0.75rem; /* 12/16 labels, captions, data in dense cells */
+  /* Scale: size / line height */
+  --text-xs: 0.75rem; /* 12/16 labels, captions */
   --text-sm: 0.8125rem; /* 13/20 */
-  --text-md: 0.875rem; /* 14/20 body compact: tables, forms, the rail */
-  --text-base: 1rem; /* 16/24 body: answers, ledes */
-  --text-lg: 1.25rem; /* 20/28 sheet headings */
-  --text-xl: 1.75rem; /* 28/36 sections */
-  --text-2xl: 2.5rem; /* 40/48 page titles */
-  --leading-body: 1.5;
-  --leading-cjk: 1.75;
+  --text-md: 0.875rem; /* 14/20 body compact: tables, forms, the nav */
+  --text-base: 0.9375rem; /* 15/24 body: answers */
+  --text-lg: 1.125rem; /* 18/26 card headings */
+  --text-xl: 1.375rem; /* 22/30 sections */
+  --text-2xl: 1.75rem; /* 28/36 page titles */
+  --leading-body: 1.55;
+  --leading-cjk: 1.7;
   --weight-regular: 400;
   --weight-strong: 600;
+  --weight-display: 700;
 
   /* Space and shape */
   --space-1: 4px;
@@ -172,10 +179,13 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
-  --radius: 2px;
+  --radius-sm: 6px; /* controls */
+  --radius: 8px; /* cards */
+  --radius-pill: 999px; /* chips */
   --rail: 2px;
   --station: 11px;
-  --nav-width: 248px;
+  --nav-height: 56px;
+  --content-width: 1440px;
   --duration: 420ms;
 }
 

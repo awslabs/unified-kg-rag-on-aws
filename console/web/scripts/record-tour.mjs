@@ -196,7 +196,7 @@ if (await passage.count()) {
 await step("open-graph", () => page.locator(".source-trail .button-primary").first().click());
 await idle("graph", async () => {
   await visible(".trail-banner");
-  await visible(".graph-node circle");
+  await visible(".graph-canvas canvas");
 });
 await pause(2300);
 await step("analysis", async () => {

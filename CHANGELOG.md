@@ -750,8 +750,8 @@ From a `main` checkout (formats and keys no release had):
   unchanged `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs
   `--allow-remote`), requires a per-launch access token, refuses paths outside its directories and cross-site
   requests, and loads nothing from another host. The web client (`console/web/`, Vite, React, TypeScript) is in
-  English and nine more languages, in a light and a dark theme (the system's unless one is chosen in the rail),
-  set in IBM Plex with its Korean and Japanese faces (self-hosted WOFF2 subsets, SIL OFL), to the brief in
+  English and nine more languages, in a light and a dark theme (the system's unless one is chosen in the top bar),
+  with a force-directed canvas graph (the focused node and its neighbours labelled, the rest dimmed), to the brief in
   `console/web/DESIGN.md`; `console/demo/demo.py` prepares a synthetic corpus of the formats the core install
   parses (multi-page PDFs, whose citations name their page, Markdown, HTML, CSV, JSON and text), a dataset and a
   config (kept on a restart, `--reset-config` to write it again) for fake, Ollama or Bedrock models

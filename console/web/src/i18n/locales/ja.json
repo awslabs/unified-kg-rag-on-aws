@@ -3,6 +3,7 @@
   "app.tagline": "質問、取り込み、評価、トレース",
   "app.skip": "本文へスキップ",
   "nav.label": "ページ",
+  "nav.menu": "メニュー",
   "nav.ask": "質問",
   "nav.ingest": "取り込み",
   "nav.evaluate": "評価",

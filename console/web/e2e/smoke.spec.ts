@@ -40,7 +40,8 @@ test("ask, follow the trail into the graph, visit every page", async ({ page, ba
   await page.getByRole("button", { name: "Show in the graph" }).click();
   await expect(page).toHaveURL(/\/graph\?focus=/);
   await expect(page.locator(".trail-banner")).toContainText("From your question");
-  await expect(page.locator(".graph-node .ring")).toHaveCount(1);
+  await expect(page.locator(".graph-canvas")).toHaveAttribute("data-traced", "1");
+  await expect(page.locator(".graph-canvas canvas").first()).toBeVisible();
 
   for (const [path, title] of <[string, string][]>[
     ["/ingest", "Ingest"],

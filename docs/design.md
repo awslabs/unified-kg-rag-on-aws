@@ -4493,21 +4493,20 @@ chunk).
 
 **Identity.** The client is a knowledge-graph workbench where every claim
 has a trail; its brief, tokens and references are in
-[`console/web/DESIGN.md`](../console/web/DESIGN.md) ("the evidence
-ledger"). One signature element: the *provenance trace*, a cobalt rail
-(`#2453C7`) from an answer through each source it read (ranked), the
-passage and file it came from, to the entity or relationship in the graph,
-continued on the Graph page around that node, with matched words in a
-highlighter (`#FFD43B`) that also marks the current page. One dominant ink,
-prussian (`#0E2341`: the navigation rail and the primary action), on ruled
-white sheets over a grey-green ground (`#F1F3F0`). Type is one
-superfamily, IBM Plex (OFL), self-hosted as WOFF2 subsets: Plex Serif for
-page titles, Plex Sans for text, Plex Mono for ids and numbers, Plex Sans KR
-and JP for Korean and Japanese (Chinese takes the system faces), set per
-locale through `:lang()`. A light and a dark theme are two full token sets
-(the dark one stepped for its ground, not inverted), following the system
-setting unless the rail's toggle picks one; a same-origin script sets the
-theme before the first paint, as the CSP allows no inline script. UI copy is English
+[`console/web/DESIGN.md`](../console/web/DESIGN.md): a developer tool, with
+a dark, GitHub-like palette and a matching light one, a sticky top bar,
+cards, a chat-style answer view and a force-directed canvas graph. One
+signature element: the *provenance trace*, an indigo rail from an answer
+through each source it read (ranked), the passage and file it came from, to
+the entity or relationship in the graph, where the traced node wears a
+dashed ring and its edge carries particles; matched words are in a
+highlighter. Text takes the platform's UI face (Korean in Apple SD Gothic
+Neo or Malgun Gothic), ids and figures JetBrains Mono (OFL, self-hosted),
+set per locale through `:lang()`. A light and a dark theme are two full
+token sets (the dark one its own, not inverted), following the system
+setting unless the top bar's toggle picks one; a same-origin script sets
+the theme before the first paint, as the CSP allows no inline script. The
+graph canvas (react-force-graph-2d) loads with the Graph page only. UI copy is English
 with nine more locales (the languages `LanguageCode` lists), English being
 the source and the fallback.
 

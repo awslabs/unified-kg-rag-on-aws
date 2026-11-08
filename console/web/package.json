@@ -22,13 +22,11 @@
     "record": "node scripts/record-tour.mjs"
   },
   "dependencies": {
-    "@fontsource/ibm-plex-mono": "^5.3.0",
-    "@fontsource/ibm-plex-sans": "^5.3.0",
-    "@fontsource/ibm-plex-sans-jp": "^5.3.1",
-    "@fontsource/ibm-plex-sans-kr": "^5.3.0",
-    "@fontsource/ibm-plex-serif": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "d3-force": "^3.0.1",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "react-force-graph-2d": "^1.29.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -36,6 +34,7 @@
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.8",
+    "@types/d3-force": "^3.0.10",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

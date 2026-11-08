@@ -3,6 +3,7 @@
   "app.tagline": "Interroger, ingérer, évaluer et tracer",
   "app.skip": "Aller au contenu",
   "nav.label": "Pages",
+  "nav.menu": "Menu",
   "nav.ask": "Interroger",
   "nav.ingest": "Ingestion",
   "nav.evaluate": "Évaluer",

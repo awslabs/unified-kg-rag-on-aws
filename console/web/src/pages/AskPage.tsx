@@ -157,102 +157,33 @@ export function AskPage({ status }: { status: Status | null }) {
         }
       />
       <div className="grid-2">
-        <div className="stack">
-          <section className="sheet">
-            <form
-              className="composer"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void ask(query);
-              }}
-            >
-              <label className="visually-hidden" htmlFor="question">
-                {t("ask.question")}
-              </label>
-              <textarea
-                id="question"
-                className="textarea"
-                value={query}
-                placeholder={t("ask.placeholder")}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    void ask(query);
-                  }
-                }}
-                rows={3}
-              />
-              <div className="composer-options">
-                <details>
-                  <summary>
-                    {t("strategy.label")}: <strong>{strategy}</strong>
-                  </summary>
-                  {strategies.data ? (
-                    <StrategyPicker strategies={strategies.data.strategies} value={[strategy]} onChange={(v) => setStrategy(v[0] ?? "auto")} />
-                  ) : null}
-                </details>
-                <details>
-                  <summary>{t("ask.options")}</summary>
-                  <div className="grid-cols" style={{ gap: 12 }}>
-                    <label className="field">
-                      <span className="field-label">{t("ask.topK")}</span>
-                      <input className="input" type="number" min={1} max={100} value={topK} onChange={(e) => setTopK(Math.max(1, Math.min(100, Number(e.target.value) || 10)))} />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">{t("ask.searchType")}</span>
-                      <select className="select" value={searchType} onChange={(e) => setSearchType(e.target.value)}>
-                        {["hybrid", "lexical", "vector"].map((v) => (
-                          <option key={v} value={v}>
-                            {t(`ask.searchType.${v}`)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field">
-                      <span className="field-label">{t("ask.filters")}</span>
-                      <textarea className="textarea mono" rows={2} value={filterText} placeholder="file_name: report.pdf" onChange={(e) => setFilterText(e.target.value)} />
-                      <span className="field-help">{t("ask.filtersHelp")}</span>
-                    </label>
-                  </div>
-                </details>
-              </div>
-              {strategies.error ? (
-                <Notice tone="bad" title={t("ask.strategiesFailed")}>
-                  {errorMessage(t, strategies.error)}
-                </Notice>
-              ) : null}
-              <div className="composer-actions">
-                <label className="check">
-                  <input type="checkbox" checked={followUp} onChange={(e) => setFollowUp(e.target.checked)} />
-                  <span>{t("ask.followUp")}</span>
-                </label>
-                <div className="row">
-                  {busy ? (
-                    <button type="button" className="button" onClick={() => abort.current?.abort()}>
-                      {t("ask.stop")}
-                    </button>
-                  ) : null}
-                  <button type="submit" className="button button-primary" disabled={!query.trim() || busy}>
-                    {t("ask.submit")}
-                  </button>
-                </div>
-              </div>
-              {!turns.length && status?.sample_questions.length ? (
-                <div className="stack" style={{ gap: 6 }}>
-                  <span className="field-help">{t("ask.samples")}</span>
-                  <div className="samples">
-                    {status.sample_questions.map((sample) => (
-                      <button key={sample} type="button" className="sample" onClick={() => void ask(sample)}>
-                        {sample}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </form>
-          </section>
+        <div className="conversation">
           <div className="thread" aria-live="polite">
+            {!turns.length ? (
+              <div className="welcome">
+                <svg className="welcome-mark" viewBox="0 0 28 28" aria-hidden="true">
+                  <line x1="6" y1="21" x2="14" y2="7" />
+                  <line x1="14" y1="7" x2="22" y2="19" />
+                  <line x1="6" y1="21" x2="22" y2="19" />
+                  <circle cx="6" cy="21" r="3.5" />
+                  <circle cx="22" cy="19" r="3.5" />
+                  <circle className="lit" cx="14" cy="7" r="3.5" />
+                </svg>
+                <p className="welcome-title">{t("ask.evidenceEmptyTitle")}</p>
+                {status?.sample_questions.length ? (
+                  <>
+                    <span>{t("ask.samples")}</span>
+                    <div className="samples">
+                      {status.sample_questions.map((sample) => (
+                        <button key={sample} type="button" className="sample" onClick={() => void ask(sample)}>
+                          {sample}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
             {turns.map((turn) => (
               <TurnView
                 key={turn.id}
@@ -262,6 +193,90 @@ export function AskPage({ status }: { status: Status | null }) {
                 onOpenCitation={(citation) => select(turn.id, citation.source_rank)}
               />
             ))}
+          </div>
+          <div className="composer-dock">
+            <section className="sheet">
+              <form
+                className="composer"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void ask(query);
+                }}
+              >
+                <label className="visually-hidden" htmlFor="question">
+                  {t("ask.question")}
+                </label>
+                <textarea
+                  id="question"
+                  className="textarea"
+                  value={query}
+                  placeholder={t("ask.placeholder")}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                      event.preventDefault();
+                      void ask(query);
+                    }
+                  }}
+                  rows={3}
+                />
+                <div className="composer-options">
+                  <details>
+                    <summary>
+                      {t("strategy.label")}: <strong>{strategy}</strong>
+                    </summary>
+                    {strategies.data ? (
+                      <StrategyPicker strategies={strategies.data.strategies} value={[strategy]} onChange={(v) => setStrategy(v[0] ?? "auto")} />
+                    ) : null}
+                  </details>
+                  <details>
+                    <summary>{t("ask.options")}</summary>
+                    <div className="grid-cols" style={{ gap: 12 }}>
+                      <label className="field">
+                        <span className="field-label">{t("ask.topK")}</span>
+                        <input className="input" type="number" min={1} max={100} value={topK} onChange={(e) => setTopK(Math.max(1, Math.min(100, Number(e.target.value) || 10)))} />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">{t("ask.searchType")}</span>
+                        <select className="select" value={searchType} onChange={(e) => setSearchType(e.target.value)}>
+                          {["hybrid", "lexical", "vector"].map((v) => (
+                            <option key={v} value={v}>
+                              {t(`ask.searchType.${v}`)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span className="field-label">{t("ask.filters")}</span>
+                        <textarea className="textarea mono" rows={2} value={filterText} placeholder="file_name: report.pdf" onChange={(e) => setFilterText(e.target.value)} />
+                        <span className="field-help">{t("ask.filtersHelp")}</span>
+                      </label>
+                    </div>
+                  </details>
+                </div>
+                {strategies.error ? (
+                  <Notice tone="bad" title={t("ask.strategiesFailed")}>
+                    {errorMessage(t, strategies.error)}
+                  </Notice>
+                ) : null}
+                <div className="composer-actions">
+                  <label className="check">
+                    <input type="checkbox" checked={followUp} onChange={(e) => setFollowUp(e.target.checked)} />
+                    <span>{t("ask.followUp")}</span>
+                  </label>
+                  <div className="row">
+                    {busy ? (
+                      <button type="button" className="button" onClick={() => abort.current?.abort()}>
+                        {t("ask.stop")}
+                      </button>
+                    ) : null}
+                    <button type="submit" className="button button-primary" disabled={!query.trim() || busy}>
+                      {t("ask.submit")}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </section>
           </div>
         </div>
         <div className="sticky">

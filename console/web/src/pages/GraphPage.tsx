@@ -1,8 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Bars } from "../components/charts";
-import { colorSlot, GraphCanvas } from "../components/GraphCanvas";
+import { colorSlot } from "../lib/graphColors";
+
 import { Empty, ErrorText, Loading, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
 import { get } from "../lib/api";
@@ -10,6 +11,9 @@ import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
 import type { GraphData, GraphNode } from "../lib/types";
 import { useApi } from "../lib/useApi";
+
+// The canvas and its force engine load with the page that draws them.
+const GraphCanvas = lazy(() => import("../components/GraphCanvas").then((m) => ({ default: m.GraphCanvas })));
 
 interface GraphFile {
   ref: string;
@@ -225,6 +229,7 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
                 </button>
               </div>
             </div>
+            <Suspense fallback={<Loading />}>
             <GraphCanvas
               data={data}
               colorOf={colorOf}
@@ -239,6 +244,7 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
               }}
               legend={legend}
             />
+            </Suspense>
           </div>
           {Object.keys(data.layout).length < data.nodes.length ? (
             <p className="field-help">{t("graph.drawnOnly", { drawn: Object.keys(data.layout).length, total: data.nodes.length })}</p>

@@ -3,6 +3,7 @@
   "app.tagline": "Ask, ingest, evaluate and trace",
   "app.skip": "Skip to content",
   "nav.label": "Pages",
+  "nav.menu": "Menu",
   "nav.ask": "Ask",
   "nav.ingest": "Ingest",
   "nav.evaluate": "Evaluate",

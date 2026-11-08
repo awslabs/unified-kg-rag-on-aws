@@ -3,6 +3,7 @@
   "app.tagline": "Fragen, importieren, evaluieren und nachverfolgen",
   "app.skip": "Zum Inhalt springen",
   "nav.label": "Seiten",
+  "nav.menu": "Menü",
   "nav.ask": "Fragen",
   "nav.ingest": "Import",
   "nav.evaluate": "Evaluieren",

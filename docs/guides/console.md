@@ -278,9 +278,9 @@ The next question and job use the saved file.
   send, and one from another origin is refused; on loopback a request for
   another host name is refused (DNS rebinding). No response carries a CORS
   header.
-- The page loads nothing from another host: its fonts (IBM Plex Sans, Mono,
-  Serif, Sans KR and Sans JP, SIL Open Font License; the texts are in
-  `console/web/public/licenses/`) are bundled by the build, so it works
+- The page loads nothing from another host: its one bundled font (JetBrains
+  Mono, SIL Open Font License; the text is in `console/web/public/licenses/`)
+  is part of the build, text uses the system's own faces, so it works
   offline and in a private VPC.
 - One ingestion or evaluation job per index namespace at a time, also for
   requests made at the same moment; the pipeline's namespace lease still
@@ -290,8 +290,8 @@ The next question and job use the saved file.
 ## Light and dark
 
 The page has a light and a dark theme. It follows the operating system's
-setting by default; **Theme** in the side bar (at the top on a narrow
-screen) switches it to *System*, *Light* or *Dark*, and the browser keeps
+setting by default; **Theme** in the top bar (under **Menu** on a
+narrow screen) switches it to *System*, *Light* or *Dark*, and the browser keeps
 the choice. The graph, the charts and the evidence highlights follow the
 theme.
 
@@ -299,7 +299,7 @@ theme.
 
 The page is in English, Korean, Japanese, Simplified Chinese, German,
 Spanish, French, Italian, Portuguese and Russian (the languages the
-library supports), chosen in the side bar or on the Settings page,
+library supports), chosen in the top bar or on the Settings page,
 defaulting to the browser's language and kept in the browser. Documents,
 questions and answers can be in any language; numbers, dates, durations
 and currency follow the chosen language.
