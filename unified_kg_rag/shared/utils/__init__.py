@@ -19,6 +19,7 @@ from .common import (
 )
 from .concurrency import ContextThreadPoolExecutor
 from .event_loop import configure_event_loop
+from .model_output import parse_model_object, strip_leading_reasoning
 
 # NOTE: the shared kernel imports no other layer, and this package root
 # re-exports only dependency-light helpers because the domain layer imports
@@ -42,7 +43,9 @@ __all__ = [
     "normalize_name",
     "parse_llm_json",
     "parse_llm_score",
+    "parse_model_object",
     "safe_float_parse",
     "strip_embedding_fields",
+    "strip_leading_reasoning",
     "text_digest",
 ]

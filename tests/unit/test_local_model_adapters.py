@@ -103,11 +103,20 @@ class FakeServer:
     """Records requests and answers like an OpenAI-compatible or Ollama server."""
 
     def __init__(
-        self, reply: str = "Vendor ships to Buyer.", stop: str = "stop"
+        self,
+        reply: str = "Vendor ships to Buyer.",
+        stop: str = "stop",
+        *,
+        capabilities: list[str] | None = None,
+        reasoning: str | None = None,
     ) -> None:
         self.reply = reply
         # finish_reason / done_reason; "length" = cut at the output limit.
         self.stop = stop
+        # Ollama's /api/show capabilities (None: an older server, no show).
+        self.capabilities = capabilities
+        # The reasoning a server returns beside the answer.
+        self.reasoning = reasoning
         self.requests: list[tuple[str, dict[str, Any]]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -132,6 +141,10 @@ class FakeServer:
             )
         if path == "/api/chat":
             return httpx.Response(200, content=self._ollama_chat(body))
+        if path == "/api/show" and self.capabilities is not None:
+            return httpx.Response(
+                200, json={"model_info": {}, "capabilities": self.capabilities}
+            )
         if path == "/api/embed":
             inputs = body["input"]
             inputs = inputs if isinstance(inputs, list) else [inputs]
@@ -153,7 +166,15 @@ class FakeServer:
             "choices": [
                 {
                     "index": 0,
-                    "message": {"role": "assistant", "content": self.reply},
+                    "message": {
+                        "role": "assistant",
+                        "content": self.reply,
+                        **(
+                            {"reasoning_content": self.reasoning}
+                            if self.reasoning
+                            else {}
+                        ),
+                    },
                     "finish_reason": self.stop,
                 }
             ],
@@ -164,7 +185,11 @@ class FakeServer:
         chunk = {
             "model": body["model"],
             "created_at": "2026-01-01T00:00:00Z",
-            "message": {"role": "assistant", "content": self.reply},
+            "message": {
+                "role": "assistant",
+                "content": self.reply,
+                **({"thinking": self.reasoning} if body.get("think") else {}),
+            },
             "done": True,
             "done_reason": self.stop,
             "prompt_eval_count": 5,
@@ -187,6 +212,8 @@ class FailingServer(FakeServer):
         self.calls = 0
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/show":
+            return super().__call__(request)
         self.calls += 1
         if self.calls <= self.failures:
             # retry-after-ms keeps the OpenAI client's own backoff short.
@@ -268,6 +295,61 @@ def test_ollama_chat_round_trip_sends_the_context_window() -> None:
     assert body["options"]["num_ctx"] == 16384
     assert body["options"]["num_predict"] == 300
     assert body["options"]["temperature"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "think"),
+    [(["completion", "thinking"], True), (["completion"], None), (None, None)],
+)
+def test_ollama_asks_a_thinking_model_for_its_reasoning_apart(
+    capabilities: list[str] | None, think: bool | None
+) -> None:
+    # A thinking model is built with reasoning=True, so its reasoning comes
+    # back beside the answer; Ollama refuses the setting (HTTP 400) for a
+    # model without the capability, and an older server lists none.
+    server = FakeServer(capabilities=capabilities, reasoning="Vendor, Buyer.")
+    factory = OllamaLanguageModelFactory(
+        _config("ollama"), transport=httpx.MockTransport(server)
+    )
+
+    reply = factory.get_model("synthetic-chat").invoke("hello")
+    factory.get_model("synthetic-chat")
+
+    assert reply.content == server.reply
+    _, body = server.requests[-1]
+    assert body.get("think") is think
+    # Asked once per model.
+    assert [path for path, _ in server.requests].count("/api/show") == 1
+    if think:
+        assert reply.additional_kwargs["reasoning_content"] == "Vendor, Buyer."
+
+
+def test_openai_compatible_keeps_the_reasoning_a_server_returns_apart() -> None:
+    server = FakeServer(reasoning="Vendor ships, so Buyer receives.")
+    factory = OpenAICompatibleLanguageModelFactory(
+        _config("openai_compatible"), transport=httpx.MockTransport(server)
+    )
+    reply = factory.get_model("synthetic-chat").invoke("hello")
+    assert reply.content == server.reply
+    assert reply.additional_kwargs["reasoning_content"] == server.reasoning
+
+
+@pytest.mark.parametrize(
+    ("kind", "factory_cls"),
+    [
+        ("openai_compatible", OpenAICompatibleLanguageModelFactory),
+        ("ollama", OllamaLanguageModelFactory),
+    ],
+)
+def test_a_chain_drops_the_reasoning_block_an_answer_starts_with(
+    kind: str, factory_cls: type
+) -> None:
+    server = FakeServer(reply="<think>\nThe user wants [1].\n</think>\n\nVendor ships.")
+    factory = factory_cls(_config(kind), transport=httpx.MockTransport(server))
+    chain = _query_chain(factory)
+    assert chain.invoke(_ANSWER_INPUT) == "Vendor ships."
+    if kind == "ollama":  # the fake OpenAI server does not stream
+        assert "".join(chain.stream(_ANSWER_INPUT)) == "Vendor ships."
 
 
 _ANSWER_INPUT = {"query": "Who ships?", "context": "Vendor ships to Buyer."}

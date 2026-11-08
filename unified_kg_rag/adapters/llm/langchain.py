@@ -25,11 +25,12 @@ from tqdm.asyncio import tqdm as async_tqdm
 
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
-from unified_kg_rag.shared.utils.common import parse_llm_json, text_digest
+from unified_kg_rag.shared.utils.common import text_digest
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
     cancel_on_exit,
 )
+from unified_kg_rag.shared.utils.model_output import parse_model_object
 
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models import Config
@@ -1351,27 +1352,51 @@ class RobustXMLOutputParser(XMLOutputParser):
         return result
 
 
-class LLMJsonOutputParser(BaseOutputParser[dict[str, Any]]):
-    """Parse a JSON object answer with :func:`parse_llm_json` (strict).
+_JSON_FORMAT_INSTRUCTIONS = (
+    "Return the completion as one JSON object{keys}. Keep every value it "
+    "states, add nothing it does not state, and use double quotes. Return "
+    "only the JSON."
+)
+
+
+class LLMJsonOutputParser(BaseOutputParser[Any]):
+    """Parse a JSON object answer with :func:`parse_model_object`: the one
+    reading of model JSON every prompt shares.
 
     LangChain's ``JsonOutputParser`` reads the first object of a response
     that holds several, so a model that corrects itself ("Correction: ...
-    final output:" and the object again) was read by its superseded answer.
-    This one reads the last object that parses, and raises
-    ``OutputParserException`` when none does; non-object JSON is ``{}``.
-    With ``answer_keys``, the last object holding any of them is read.
+    final output:" and the object again) was read by its superseded answer,
+    and refuses what other model families write (a trailing comma, a Python
+    dict, comments). With ``answer_keys``, the last object holding any of
+    them is read; with ``schema`` (a Pydantic model) the answer is that
+    model. Raises ``OutputParserException`` when nothing parses, which an
+    output fixer (``create_json_output_parser``) repairs; ``instructions``
+    is added to what the fixer is told (e.g. a prompt's sentinel).
     """
 
     answer_keys: tuple[str, ...] = ()
+    schema_model: type[BaseModel] | None = None
+    instructions: str = ""
 
-    def parse(self, text: str) -> dict[str, Any]:
+    def parse(self, text: str) -> Any:
+        if not text.strip():
+            raise OutputParserException("The model returned no output", llm_output=text)
         try:
-            return parse_llm_json(text, strict=True, answer_keys=self.answer_keys)
+            return parse_model_object(text, self.schema_model, self.answer_keys)
         except ValueError as e:
             raise OutputParserException(
                 f"The answer is not a JSON object (content {text_digest(text)}): {e}",
                 llm_output=text,
             ) from e
+
+    def get_format_instructions(self) -> str:
+        keys = (
+            " with the keys " + ", ".join(f'"{k}"' for k in self.answer_keys)
+            if self.answer_keys
+            else ""
+        )
+        text = _JSON_FORMAT_INSTRUCTIONS.format(keys=keys)
+        return f"{text} {self.instructions}" if self.instructions else text
 
     @property
     def _type(self) -> str:

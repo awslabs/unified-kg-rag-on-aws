@@ -171,6 +171,12 @@ class LanguageModelError(ModelError):
     or an answer it gave that cannot be used."""
 
 
+class ModelOutputError(LanguageModelError, ValueError):
+    """Model output that holds no object of the shape a prompt asked for
+    (``parse_model_object``). A ``ValueError``, as ``json.JSONDecodeError``
+    is, so a caller that caught that still does."""
+
+
 class LLMOutputTruncatedError(LanguageModelError):
     """A model response stopped at its output-token limit, cut mid-answer, or
     an extraction whose every entity lacks a name (cut off the same way). Not

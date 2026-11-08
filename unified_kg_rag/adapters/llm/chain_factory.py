@@ -26,8 +26,12 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
 )
 from langchain_core.runnables import Runnable, RunnableConfig
+from pydantic import BaseModel
 
-from unified_kg_rag.adapters.llm.langchain import RobustXMLOutputParser
+from unified_kg_rag.adapters.llm.langchain import (
+    LLMJsonOutputParser,
+    RobustXMLOutputParser,
+)
 from unified_kg_rag.adapters.llm.retry import (
     TransientErrorPredicate,
     acall_with_transient_retry,
@@ -46,6 +50,12 @@ from unified_kg_rag.shared import (
     GraphRAGException,
     LLMOutputTruncatedError,
     get_logger,
+)
+from unified_kg_rag.shared.utils.model_output import (
+    leading_reasoning_end,
+    may_open_reasoning,
+    opens_reasoning,
+    strip_leading_reasoning,
 )
 
 if TYPE_CHECKING:
@@ -321,6 +331,150 @@ class TruncationGuard(Runnable[Any, Any]):
         self._warn(reason)
 
 
+def _content_text(message: Any) -> str | None:
+    """A model message's (or a plain string's) text content, else None (a
+    list of content blocks: Bedrock's reasoning arrives as typed blocks)."""
+    if isinstance(message, str):
+        return message
+    content = getattr(message, "content", None)
+    return content if isinstance(content, str) else None
+
+
+def _with_content(message: Any, text: str) -> Any:
+    if isinstance(message, str):
+        return text
+    return message.model_copy(update={"content": text})
+
+
+class ReasoningStripper(Runnable[Any, Any]):
+    """Drop the reasoning block a model answer starts with, before any parser.
+
+    A reasoning model whose server leaves its reasoning in the answer (an
+    Ollama or vLLM server without a reasoning parser, a distilled R1 or
+    Qwen3) writes ``<think>...</think>`` (or ``<thinking>``, ``<reasoning>``)
+    before it: every answer then started with it, extraction descriptions
+    stored and embedded it, the router read a strategy it named, and the
+    abstention token was no longer the answer's start. One normaliser in
+    ``setup_chain`` (and the output fixers' models) removes it for every
+    parser (:func:`~unified_kg_rag.shared.utils.strip_leading_reasoning`).
+
+    A stream holds its first chunks only until it can tell whether they
+    open a block, and a block's chunks pass on emptied (their metadata, the
+    stop reason with the last one, kept). A message whose answer is empty
+    while its server returned reasoning separately
+    (``additional_kwargs["reasoning_content"]``) is logged: the output limit
+    went to reasoning.
+    """
+
+    def __init__(self, prompt_name: str = "") -> None:
+        self.prompt_name = prompt_name
+
+    def _strip(self, message: Any) -> Any:
+        text = _content_text(message)
+        if text is None:
+            return message
+        stripped = strip_leading_reasoning(text)
+        if not stripped.strip() and getattr(message, "additional_kwargs", {}).get(
+            "reasoning_content"
+        ):
+            logger.warning(
+                "'%s' response holds reasoning and no answer: raise the output "
+                "token limit or lower the reasoning effort",
+                self.prompt_name,
+            )
+        if stripped == text:
+            return message
+        logger.debug("'%s' response: dropped its leading reasoning", self.prompt_name)
+        return _with_content(message, stripped)
+
+    def invoke(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> Any:
+        return self._strip(input)
+
+    async def ainvoke(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> Any:
+        return self._strip(input)
+
+    def transform(
+        self,
+        input: Iterator[Any],
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> Iterator[Any]:
+        stream = _ReasoningStream(self.prompt_name)
+        for chunk in input:
+            yield from stream.feed(chunk)
+        yield from stream.flush()
+
+    async def atransform(
+        self,
+        input: AsyncIterator[Any],
+        config: RunnableConfig | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        stream = _ReasoningStream(self.prompt_name)
+        async for chunk in input:
+            for out in stream.feed(chunk):
+                yield out
+        for out in stream.flush():
+            yield out
+
+
+class _ReasoningStream:
+    """``ReasoningStripper`` over a stream: held chunks until the start
+    tells, then the block's chunks emptied, then the answer as it comes."""
+
+    def __init__(self, prompt_name: str) -> None:
+        self.prompt_name = prompt_name
+        self.mode: Literal["start", "reasoning", "after", "answer"] = "start"
+        self.held: list[Any] = []
+        self.text = ""
+
+    def feed(self, chunk: Any) -> list[Any]:
+        text = _content_text(chunk)
+        if self.mode == "answer" or (text is None and self.mode == "start"):
+            self.mode = "answer"
+            return [*self._release(), chunk]
+        text = text or ""
+        if self.mode == "after":
+            if not text.strip():
+                return [_with_content(chunk, "")]
+            self.mode = "answer"
+            return [_with_content(chunk, text.lstrip())]
+        self.held.append(chunk)
+        self.text += text
+        if self.mode == "start":
+            if not opens_reasoning(self.text):
+                if may_open_reasoning(self.text):
+                    return []
+                self.mode = "answer"
+                return self._release()
+            self.mode = "reasoning"
+        end = leading_reasoning_end(self.text)
+        if end is None:
+            return []
+        rest = self.text[end:]
+        emptied = [_with_content(c, "") for c in self.held[:-1]]
+        last = _with_content(self.held[-1], rest)
+        self.held, self.text = [], ""
+        self.mode = "answer" if rest.strip() else "after"
+        logger.debug("'%s' stream: dropped its leading reasoning", self.prompt_name)
+        return [*emptied, last]
+
+    def _release(self) -> list[Any]:
+        held, self.held, self.text = self.held, [], ""
+        return held
+
+    def flush(self) -> list[Any]:
+        if self.mode == "reasoning" and self.held:
+            # Never closed: the output ran out while reasoning.
+            held, self.held = self.held, []
+            return [_with_content(c, "") for c in held]
+        return self._release()
+
+
 class TransientRetryRunnable(Runnable[Any, Any]):
     """Retry a chain on transient errors (predicate-based ``with_retry``).
 
@@ -446,8 +600,9 @@ def with_transient_retry(
     )
 
 
-class XMLOutputFixingParser(OutputFixingParser[dict[str, Any]]):
-    """``OutputFixingParser`` that never asks the fixer to repair a blank answer.
+class XMLOutputFixingParser(OutputFixingParser[Any]):
+    """``OutputFixingParser`` that never asks the fixer to repair a blank answer
+    (the XML parsers' and the JSON parser's fixer).
 
     An empty or whitespace-only completion (e.g. a thinking-only response)
     carries nothing to repair, so a fixer could only invent the structure;
@@ -455,14 +610,14 @@ class XMLOutputFixingParser(OutputFixingParser[dict[str, Any]]):
     the batch retry treats as retryable.
     """
 
-    def parse(self, completion: str) -> dict[str, Any]:
+    def parse(self, completion: str) -> Any:
         if not completion.strip():
-            return dict(self.parser.parse(completion))
+            return self.parser.parse(completion)
         return super().parse(completion)
 
-    async def aparse(self, completion: str) -> dict[str, Any]:
+    async def aparse(self, completion: str) -> Any:
         if not completion.strip():
-            return dict(await self.parser.aparse(completion))
+            return await self.parser.aparse(completion)
         return await super().aparse(completion)
 
 
@@ -513,15 +668,59 @@ def create_robust_xml_output_parser(
         logger.info(
             "Created OutputFixingParser with model: '%s'", output_fixing_model_id
         )
-        fixer = XMLOutputFixingParser.from_llm(parser=base_parser, llm=fixing_llm)
-        _serialize_once(*getattr(fixer.retry_chain, "steps", ()))
-        return fixer
+        return _with_fixer(base_parser, fixing_llm)
     except Exception as e:
         logger.error(
             "Failed to create OutputFixingParser with model %s: %s",
             output_fixing_model_id,
             e,
         )
+        raise GraphRAGException(f"Failed to create OutputFixingParser: {e}") from e
+
+
+def _with_fixer(
+    parser: BaseOutputParser[Any], fixing_llm: Any
+) -> BaseOutputParser[Any]:
+    """``parser`` wrapped in one repair call to ``fixing_llm`` (its answer
+    stripped of leading reasoning, as every chain's)."""
+    fixer = XMLOutputFixingParser.from_llm(
+        parser=parser, llm=fixing_llm | ReasoningStripper("OutputFixingParser")
+    )
+    _serialize_once(*getattr(fixer.retry_chain, "steps", ()))
+    return fixer
+
+
+def create_json_output_parser(
+    factory: LLMFactoryPort,
+    output_fixing_model_id: str | None,
+    *,
+    answer_keys: tuple[str, ...] = (),
+    schema: type[BaseModel] | None = None,
+    instructions: str = "",
+    model_purpose: ModelPurpose = ModelPurpose.QUERY,
+) -> BaseOutputParser[Any]:
+    """The JSON answer parser every JSON prompt uses (``LLMJsonOutputParser``
+    over ``parse_model_object``), wrapped in one repair call to
+    ``output_fixing_model_id`` (``models.roles.fixing``; None: no repair).
+
+    The one failure policy of a JSON answer: read it whatever the model
+    family's habits (the parser), else ask the fixer once, else raise
+    ``OutputParserException``, which the caller records as a degraded
+    step (``metadata.degraded_error``) or a failed item. ``instructions``
+    tells the fixer what the prompt allows besides the object (a
+    sentinel), so it does not dress a refusal up as an answer.
+    """
+    parser = LLMJsonOutputParser(
+        answer_keys=answer_keys, schema_model=schema, instructions=instructions
+    )
+    if output_fixing_model_id is None:
+        return parser
+    try:
+        fixing_llm = factory.get_model(
+            model_id=output_fixing_model_id, model_purpose=model_purpose
+        )
+        return _with_fixer(parser, fixing_llm)
+    except Exception as e:
         raise GraphRAGException(f"Failed to create OutputFixingParser: {e}") from e
 
 
@@ -577,11 +776,13 @@ def setup_chain(
         )
         _serialize_once(prompt, llm)
         guard = TruncationGuard(prompt_class.__name__, model_id, model_purpose)
+        # Every parser reads the answer without a leading reasoning block.
+        normalizer = ReasoningStripper(prompt_class.__name__)
         # Named after the prompt, so a trace shows "AnswerGenerationPrompt"
         # instead of an anonymous "RunnableSequence".
-        chain: Runnable[Any, Any] = (prompt | llm | guard | parser).with_config(
-            run_name=prompt_class.__name__
-        )
+        chain: Runnable[Any, Any] = (
+            prompt | llm | guard | normalizer | parser
+        ).with_config(run_name=prompt_class.__name__)
         logger.debug("Successfully created LLM chain with model: '%s'", model_id)
         is_transient = getattr(factory, "is_transient_error", None)
         if model_purpose is not ModelPurpose.QUERY or is_transient is None:

@@ -69,6 +69,12 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   model can generate); token counts and so context budgets are estimates. A
   server that refuses a call (HTTP 4xx) or stays unreachable fails the query
   with the client's error instead of answering "could not find".
+- **Reasoning models.** A leading `<think>` (or `<thinking>`, `<reasoning>`)
+  block a model writes before its answer is dropped before any parser reads
+  it, streamed answers included. An Ollama model whose `/api/show` lists the
+  `thinking` capability is built with `reasoning=True`, so Ollama returns the
+  reasoning beside the answer; a reasoning budget still counts against
+  `max_output_tokens`, and an answer left empty by it is logged.
 - **Guardrail.** With `aws.bedrock.guardrail.identifier` set, the query
   chain still screens queries and answers through Bedrock `ApplyGuardrail`
   (AWS credentials needed).
