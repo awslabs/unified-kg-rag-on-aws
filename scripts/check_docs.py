@@ -22,6 +22,12 @@ Korean page carries :data:`LAG_NOTE`. ``tests/unit/test_docs_links.py`` and
 ``tests/unit/test_docs_facts.py`` checks the counts and lists the docs state
 against the code.
 
+:func:`check_hygiene` (``tests/unit/test_docs_links.py``) fails a pull
+request number (``#123``) in a page outside :data:`PR_NUMBER_EXEMPT`: release
+history belongs in the CHANGELOG, so a page names a change by its feature and
+date. It also fails a diagram (:data:`DIAGRAMS`) that is not a whole PNG (a
+chunk whose CRC does not match, no ``IEND``) or embeds no draw.io source.
+
 The design reference is an index (:data:`DESIGN_INDEX`, every section heading)
 over part files (:data:`DESIGN_PARTS`) that hold the sections' text.
 :func:`design_sections` maps each section number to the file holding it, so
@@ -36,8 +42,10 @@ Usage:
 from __future__ import annotations
 
 import re
+import struct
 import subprocess
 import sys
+import zlib
 from collections import Counter
 from functools import cache
 from pathlib import Path
@@ -136,6 +144,17 @@ EXTERNAL_PATHS = frozenset(
         "evaluation/eval_rag_quality.py",
     }
 )
+# Pages that may cite pull request numbers: the release history and the
+# GitHub templates' examples.
+PR_NUMBER_EXEMPT = ("CHANGELOG.md", ".github/")
+# A pull request number: ``#`` and three or more digits, not part of a word,
+# an HTML entity (``&#123;``) or a heading fragment (``#611-global-search``).
+_PR_NUMBER = re.compile(r"(?<![\w&/#-])#\d{3,}(?![\w-])")
+# The diagrams: PNGs exported from draw.io with their source embedded.
+DIAGRAMS = "assets/*.drawio.png"
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+# The text chunk keywords draw.io stores its source under.
+_DRAWIO_KEYS = (b"mxGraphModel", b"mxfile")
 _SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 # The design reference: the index lists every section heading, and each
 # section's text lives in one part (§15, the extension guide, in the guides).
@@ -634,8 +653,62 @@ def check_translations(root: Path = REPO_ROOT) -> Report:
     return report
 
 
+def png_problems(data: bytes) -> list[str]:
+    """Why ``data`` is not a whole PNG with an embedded draw.io source."""
+    if not data.startswith(_PNG_SIGNATURE):
+        return ["not a PNG"]
+    problems, offset, source, ended = [], len(_PNG_SIGNATURE), False, False
+    while offset + 8 <= len(data):
+        (length,) = struct.unpack(">I", data[offset : offset + 4])
+        kind = data[offset + 4 : offset + 8]
+        end = offset + 12 + length
+        if end > len(data):
+            problems.append(f"truncated {kind.decode('latin-1')} chunk")
+            break
+        body = data[offset + 8 : offset + 8 + length]
+        (crc,) = struct.unpack(">I", data[end - 4 : end])
+        if zlib.crc32(kind + body) != crc:
+            problems.append(f"{kind.decode('latin-1')} chunk CRC mismatch")
+        if kind in (b"zTXt", b"tEXt", b"iTXt"):
+            source = source or body.split(b"\0", 1)[0] in _DRAWIO_KEYS
+        offset = end
+        if kind == b"IEND":
+            ended = True
+            break
+    if not ended:
+        problems.append("no IEND chunk")
+    if not source:
+        problems.append("no embedded draw.io source")
+    return problems
+
+
+def check_hygiene(root: Path = REPO_ROOT) -> Report:
+    """Pull request numbers outside the CHANGELOG, and broken diagrams."""
+    report = Report()
+    for path in tracked_files(root):
+        rel = path.relative_to(root).as_posix()
+        if path.match(DIAGRAMS) and rel.startswith("assets/"):
+            report.counts["diagrams"] += 1
+            for problem in png_problems(path.read_bytes()):
+                report.failures.append(f"{rel}: {problem}")
+            continue
+        if path.suffix != ".md" or rel.startswith(PR_NUMBER_EXEMPT):
+            continue
+        for first, body in _paragraphs(path.read_text(encoding="utf-8")):
+            for match in _PR_NUMBER.finditer(body):
+                number = first + body.count("\n", 0, match.start())
+                report.failures.append(
+                    f"{rel}:{number}: pull request number {match.group()} "
+                    "(name the change by feature and date; history goes in "
+                    "CHANGELOG.md)"
+                )
+    return report
+
+
 def main(root: Path = REPO_ROOT) -> int:
     links_report = check_links(root)
+    hygiene = check_hygiene(root)
+    links_report.failures += hygiene.failures
     translations = check_translations(root)
     for line in links_report.failures + translations.failures:
         print(f"FAIL {line}")

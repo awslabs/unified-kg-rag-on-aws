@@ -280,3 +280,74 @@ def test_an_unknown_section_or_a_link_to_the_wrong_part_fails(tmp_path: Path) ->
     )
     assert any("README.md:1: links §3 to docs/design/two.md" in f for f in failures)
     assert any("m.py:1: no design section §4.2" in f for f in failures)
+
+
+def test_docs_cite_no_pull_request_numbers_and_diagrams_are_whole() -> None:
+    report = check_docs().check_hygiene()
+    assert not report.failures, "\n".join(report.failures)
+    assert report.counts["diagrams"] >= 6
+
+
+@pytest.mark.parametrize(
+    ("text", "flagged"),
+    [
+        ("Fixed in #627 last week.", ["#627"]),
+        ("(#618), and", ["#618"]),
+        ("See [§6.1.1](#611-global-search) and `#999` in code.", []),
+        ("&#1234; and issue#123 and docs/a.md#100", []),
+        ("Version 2.19 and #12 stay.", []),
+    ],
+)
+def test_pull_request_numbers_outside_the_changelog_fail(
+    tmp_path: Path, text: str, flagged: list[str]
+) -> None:
+    files = {
+        "docs/a.md": text,
+        "CHANGELOG.md": "- A fix (#627).",
+        ".github/t.md": "Closes #123",
+    }
+    failures = check_docs().check_hygiene(git_tree(tmp_path, files)).failures
+    assert [f.split("number ")[1].split(" ")[0] for f in failures] == flagged
+    assert all(f.startswith("docs/a.md:1:") for f in failures)
+
+
+def _png(*chunks: tuple[bytes, bytes], crc_ok: bool = True) -> bytes:
+    import struct
+    import zlib
+
+    out = b"\x89PNG\r\n\x1a\n"
+    for kind, body in chunks:
+        crc = zlib.crc32(kind + body) ^ (0 if crc_ok else 1)
+        out += struct.pack(">I", len(body)) + kind + body + struct.pack(">I", crc)
+    return out
+
+
+@pytest.mark.parametrize(
+    ("data", "problems"),
+    [
+        (_png((b"zTXt", b"mxGraphModel\0\0x"), (b"IEND", b"")), []),
+        (_png((b"tEXt", b"mxfile\0x"), (b"IEND", b"")), []),
+        (
+            _png((b"zTXt", b"mxGraphModel\0\0x"), (b"IEND", b""), crc_ok=False),
+            ["zTXt chunk CRC mismatch", "IEND chunk CRC mismatch"],
+        ),
+        (_png((b"zTXt", b"mxGraphModel\0\0x")), ["no IEND chunk"]),
+        (
+            _png((b"zTXt", b"mxGraphModel\0\0x"))[:-6],
+            ["truncated zTXt chunk", "no IEND chunk", "no embedded draw.io source"],
+        ),
+        (_png((b"IEND", b"")), ["no embedded draw.io source"]),
+        (b"GIF89a", ["not a PNG"]),
+    ],
+    ids=["ztxt", "text", "crc", "no-iend", "truncated", "no-source", "not-png"],
+)
+def test_a_diagram_must_be_a_whole_png_with_its_source(
+    tmp_path: Path, data: bytes, problems: list[str]
+) -> None:
+    assert check_docs().png_problems(data) == problems
+    root = git_tree(tmp_path, {"README.md": "# R"})
+    (root / "assets").mkdir()
+    (root / "assets" / "x.drawio.png").write_bytes(data)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    failures = check_docs().check_hygiene(root).failures
+    assert failures == [f"assets/x.drawio.png: {p}" for p in problems]
