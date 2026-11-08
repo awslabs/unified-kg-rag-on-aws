@@ -680,11 +680,13 @@ class SummaryTreeConfig(BaseModel):
         default=100_000,
         ge=1,
         description="Text units one tree may hold, read into memory with "
-        "their texts and vectors and clustered there: about 50 KiB of task "
-        "memory per text unit at the peak (4,000-character units, 1,024 "
-        "dimensions; read 15, build 35), so the default takes about 5 GiB. "
-        "A larger tree fails the stage before its vectors are read, naming "
-        "partition_by and scope: document; raise it with the task's memory.",
+        "their texts and vectors and clustered there, and the trees read "
+        "at once hold (several trees are read and built a batch at a time): "
+        "about 50 KiB of task memory per text unit at the peak "
+        "(4,000-character units, 1,024 dimensions; read 15, build 35), so "
+        "the default takes about 5 GiB. A larger tree fails the stage before "
+        "its vectors are read, naming partition_by and scope: document; "
+        "raise it with the task's memory.",
     )
 
     @field_validator("partition_by")

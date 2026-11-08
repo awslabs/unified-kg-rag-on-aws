@@ -589,7 +589,7 @@ RAPTOR's summary tree over the stored text units, which the tree strategy search
 | `min_leaves_per_tree` | integer (≥ 2) | `3` | scope: document only: a document with fewer text units gets no tree. |
 | `refresh` | `"every_run"` \| `"on_reset"` | `"every_run"` | every_run: rebuild the tree on every run whose stored text units changed. on_reset: delta runs only delete the nodes of removed text (always done) and report the text units no summary covers (tree_uncovered_leaves); indexing.reset rebuilds. |
 | `random_state` | integer | `42` | Seed of the clustering's initializations. |
-| `max_leaves_in_memory` | integer (≥ 1) | `100000` | Text units one tree may hold, read into memory with their texts and vectors and clustered there: about 50 KiB of task memory per text unit at the peak (4,000-character units, 1,024 dimensions; read 15, build 35), so the default takes about 5 GiB. A larger tree fails the stage before its vectors are read, naming partition_by and scope: document; raise it with the task's memory. |
+| `max_leaves_in_memory` | integer (≥ 1) | `100000` | Text units one tree may hold, read into memory with their texts and vectors and clustered there, and the trees read at once hold (several trees are read and built a batch at a time): about 50 KiB of task memory per text unit at the peak (4,000-character units, 1,024 dimensions; read 15, build 35), so the default takes about 5 GiB. A larger tree fails the stage before its vectors are read, naming partition_by and scope: document; raise it with the task's memory. |
 
 ## `search`
 

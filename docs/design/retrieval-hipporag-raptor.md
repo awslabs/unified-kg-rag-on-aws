@@ -426,7 +426,11 @@ flip a tie):
   keys. `scope: document`: one tree per document (RAPTOR's own setting),
   documents told apart by their stored file path; one with fewer than
   `min_leaves_per_tree` (3) leaves gets none. MuSiQue's one-paragraph
-  documents get no tree under `document`.
+  documents get no tree under `document`. The trees are read (texts and
+  vectors) and built a batch at a time, a batch holding at most
+  `max_leaves_in_memory` leaves (whole trees, in name order), so a corpus
+  split into many trees holds one batch at once, not every tree; each batch
+  is one more page walk of the stored text units.
 
 **Data model.** `SummaryNode` (`domain/models/summary_node.py`): `id` (a
 content id: level, partition and sorted child ids), `level` (1..L; text

@@ -14,7 +14,7 @@ live tree's node with the same ``input_key``) and makes no model call.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Collection, Iterable, Sequence
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
@@ -233,7 +233,7 @@ class SummaryTreeStage(_RegistryStage):
                 suffix,
             )
             raise _IntactTreeError(str(e)) from e
-        return self._rebuild(indexer, suffix, context, digest, fingerprint)
+        return self._rebuild(indexer, suffix, context, digest, fingerprint, rows)
 
     def _check_tree_size(self, suffix: str, rows: list[dict[str, Any]]) -> None:
         """Fail before the vectors are read when a tree would hold more
@@ -273,9 +273,9 @@ class SummaryTreeStage(_RegistryStage):
         context: PipelineContext,
         digest: str,
         fingerprint: str,
+        rows: list[dict[str, Any]],
     ) -> dict[str, Any]:
         tree = self.config.indexing.summary_tree
-        groups = self._leaves(indexer, suffix)
         reusable: dict[str, tuple[str, int]] = {}
         if self.reuse_stored:
             for node in (
@@ -291,14 +291,26 @@ class SummaryTreeStage(_RegistryStage):
         nodes: list[SummaryNode] = []
         vectors: dict[str, np.ndarray] = {}
         stops: set[str] = set()
-        for name, leaves in sorted(groups.items(), key=lambda item: item[0] or ""):
-            if tree.scope == "document" and len(leaves) < tree.min_leaves_per_tree:
-                continue
-            build = self._build(indexer, leaves, suffix, name, reusable, counts)
-            nodes.extend(build.nodes)
-            vectors.update(build.vectors)
-            stops.add(build.stop_reason)
-            counts["summaries_failed"] += build.failed
+        leaf_count = 0
+        # The trees are read and built a batch at a time, each batch's leaves
+        # (texts and vectors) at most max_leaves_in_memory: one tree is no
+        # larger (_check_tree_size), and the trees of a corpus split by
+        # partition_by or scope: document are not all held at once.
+        for batch in self._tree_batches(rows):
+            groups = self._leaves(indexer, suffix, batch)
+            for name in sorted(groups, key=lambda name: name or ""):
+                leaves = groups.pop(name)
+                leaf_count += len(leaves)
+                if tree.scope == "document" and len(leaves) < tree.min_leaves_per_tree:
+                    continue
+                build = self._build(indexer, leaves, suffix, name, reusable, counts)
+                nodes.extend(build.nodes)
+                vectors.update(build.vectors)
+                stops.add(build.stop_reason)
+                counts["summaries_failed"] += build.failed
+            # Let the batch's leaves go before the next batch is read.
+            del groups
+            leaves = []
         record = SummaryTreeRecord(
             pipeline_id=context.pipeline_id,
             built_at=datetime.now(UTC),
@@ -306,7 +318,7 @@ class SummaryTreeStage(_RegistryStage):
             fingerprint=fingerprint,
             scope=tree.scope,
             algorithm=tree.algorithm,
-            leaves=sum(len(g) for g in groups.values()),
+            leaves=leaf_count,
             nodes=len(nodes),
             levels=max((n.level for n in nodes), default=0),
             partial=counts["summaries_failed"] > 0,
@@ -400,26 +412,46 @@ class SummaryTreeStage(_RegistryStage):
             attributes={Constants.INDEX.value: suffix},
         )
 
+    def _tree_batches(self, rows: list[dict[str, Any]]) -> list[set[str | None]]:
+        """The trees of the suffix's text units (``rows``: their ids and
+        attributes), in name order, in batches of at most
+        ``max_leaves_in_memory`` text units (a tree is never split)."""
+        limit = self.config.indexing.summary_tree.max_leaves_in_memory
+        sizes: dict[str | None, int] = defaultdict(int)
+        for row in rows:
+            sizes[self._tree_of(row.get("attributes") or {})] += 1
+        batches: list[set[str | None]] = []
+        held = 0
+        for name in sorted(sizes, key=lambda name: name or ""):
+            if not batches or held + sizes[name] > limit:
+                batches.append(set())
+                held = 0
+            batches[-1].add(name)
+            held += sizes[name]
+        return batches
+
     def _leaves(
-        self, indexer: VectorIndexer, suffix: str
+        self, indexer: VectorIndexer, suffix: str, trees: Collection[str | None]
     ) -> dict[str | None, list[Leaf]]:
-        """The suffix's stored text units with their vectors (float32), by
-        tree (``_tree_of``)."""
+        """The suffix's stored text units of the ``trees`` (``_tree_of``)
+        with their vectors (float32), by tree, read a page at a time: the
+        other units' texts and vectors are not kept."""
         translated = self._translated_field
-        rows = (
-            indexer.scan_text_units(
+        pages: Iterable[list[dict[str, Any]]] = (
+            indexer.scan_text_unit_pages(
                 suffix,
                 fields=["text", translated, "text_embedding", "n_tokens", "attributes"],
                 page_size=_VECTOR_PAGE,
             )
             or []
         )
+        wanted = set(trees)
         groups: dict[str | None, list[Leaf]] = defaultdict(list)
         skipped = 0
-        for index, row in enumerate(rows):
-            # Each row is let go once it is a leaf: the JSON it was read as
-            # is not kept beside the leaves.
-            rows[index] = {}
+        for row in (row for page in pages for row in page):
+            name = self._tree_of(row.get("attributes") or {})
+            if name not in wanted:
+                continue
             vector = row.get("text_embedding")
             if isinstance(vector, list):
                 vector = np.asarray(vector, dtype=np.float32)
@@ -430,7 +462,7 @@ class SummaryTreeStage(_RegistryStage):
             # The stored count is the source text's: a translation is
             # counted in its own script.
             n_tokens = 0 if row.get(translated) else int(row.get("n_tokens") or 0)
-            groups[self._tree_of(row.get("attributes") or {})].append(
+            groups[name].append(
                 Leaf(
                     id=str(row["id"]),
                     text=text,
