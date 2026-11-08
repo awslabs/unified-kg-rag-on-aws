@@ -147,6 +147,31 @@ class TestBatched:
             bootstrap_ci(s, confidence=0.99, **kwargs) for s in samples
         ]
 
+    def test_held_means_are_bounded_without_changing_the_intervals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A family of m tests resamples ~400 m times each: holding every
+        # test's means at once grows with m squared. Past the budget the
+        # tests of one size go a group at a time, drawing the same indices.
+        from unified_kg_rag.evaluation import comparison
+
+        rng = np.random.default_rng(5)
+        samples = [rng.normal(0.1, 1, 30).tolist() for _ in range(7)]
+        kwargs = {"resamples": 3000, "seed": 11, "confidence": 0.95}
+        whole = bootstrap_cis(samples, **kwargs)
+        monkeypatch.setattr(comparison, "_BOOTSTRAP_HELD_MEANS", 2 * 3000)
+        draws: list[int] = []
+        real_rng = np.random.default_rng
+
+        def counting_rng(seed):  # type: ignore[no-untyped-def]
+            draws.append(seed)
+            return real_rng(seed)
+
+        monkeypatch.setattr(comparison.np.random, "default_rng", counting_rng)
+        assert bootstrap_cis(samples, **kwargs) == whole
+        # Seven tests of one size, two at a time: four groups, four draws.
+        assert len(draws) == 4
+
 
 class TestHolm:
     def test_step_down_values(self) -> None:

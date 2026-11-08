@@ -187,6 +187,11 @@ def per_query_means(
 # Resampled values drawn at once by ``bootstrap_ci`` before it draws them in
 # chunks of rows (bounds its memory at the family-scaled resample counts).
 _BOOTSTRAP_CHUNK_VALUES = 4_000_000
+# Resampled means ``bootstrap_cis`` holds at once (8 bytes each). A family
+# of m tests resamples about 400 m times each, so holding every test's
+# means grows with m squared; past this the tests of one size are taken a
+# group at a time, each group drawing the same indices from the seed again.
+_BOOTSTRAP_HELD_MEANS = 25_000_000
 
 
 def bootstrap_ci(
@@ -208,7 +213,8 @@ def bootstrap_cis(
     """``bootstrap_ci`` of each of ``samples``, the same intervals faster:
     samples of one size draw the same resampled indices from the seed, so
     each chunk of them is drawn once for all of that size (drawing them is
-    most of the cost)."""
+    most of the cost), or once per group of them when holding all their
+    resampled means would pass ``_BOOTSTRAP_HELD_MEANS``."""
     out: list[tuple[float, float] | None] = [None] * len(samples)
     by_size: dict[int, list[int]] = defaultdict(list)
     arrays = [np.asarray(sample, dtype=float) for sample in samples]
@@ -218,17 +224,22 @@ def bootstrap_cis(
         else:
             by_size[data.size].append(index)
     tail = (1.0 - confidence) / 2 * 100
-    for size, members in by_size.items():
-        rng = np.random.default_rng(seed)
+    group_size = max(1, _BOOTSTRAP_HELD_MEANS // max(1, resamples))
+    for size, same_size in by_size.items():
         rows = max(1, _BOOTSTRAP_CHUNK_VALUES // size)
-        means: dict[int, list[np.ndarray]] = {i: [] for i in members}
-        for start in range(0, resamples, rows):
-            drawn = rng.integers(0, size, size=(min(rows, resamples - start), size))
+        for first in range(0, len(same_size), group_size):
+            members = same_size[first : first + group_size]
+            rng = np.random.default_rng(seed)
+            means: dict[int, list[np.ndarray]] = {i: [] for i in members}
+            for start in range(0, resamples, rows):
+                drawn = rng.integers(0, size, size=(min(rows, resamples - start), size))
+                for i in members:
+                    means[i].append(arrays[i][drawn].mean(axis=1))
             for i in members:
-                means[i].append(arrays[i][drawn].mean(axis=1))
-        for i in members:
-            low, high = np.percentile(np.concatenate(means[i]), [tail, 100 - tail])
-            out[i] = (float(low), float(high))
+                low, high = np.percentile(
+                    np.concatenate(means.pop(i)), [tail, 100 - tail]
+                )
+                out[i] = (float(low), float(high))
     return [interval for interval in out if interval is not None]
 
 
