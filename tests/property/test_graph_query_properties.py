@@ -93,7 +93,12 @@ def graphs(draw: st.DrawFn) -> PropertyGraph:
             type=draw(st.sampled_from(TYPES)),
             rank=draw(st.integers(0, 5)),
             attributes=(
-                {"seed_properties": {"size": draw(st.integers(1, 4))}}
+                # An int or the float it equals (two extraction runs).
+                {
+                    "seed_properties": {
+                        "size": draw(st.integers(1, 4) | st.integers(1, 4).map(float))
+                    }
+                }
                 if draw(st.booleans())
                 else None
             ),
@@ -226,3 +231,7 @@ def test_the_store_operation_recounts_every_match(
     else:
         answer = answer_from_result(plan, result)
     assert answer == reference_execute(plan, graph)
+    # One group per value: 2.0 is the group 2.
+    assert not any(
+        isinstance(g.key, float) and g.key.is_integer() for g in answer.groups
+    )
