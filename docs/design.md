@@ -1956,8 +1956,15 @@ comprehensive prompt by default, modelled on MS GraphRAG's reduce prompt
 (`search.answer_prompt_style`, merged over that default). Both defaults are
 measured choices (§9.1).
 
-**Degradation.** A batch whose map call failed or returned unparseable output
-is *unrated*; when no point passed but some reports were never rated, those
+**Degradation.** A map output that `json.loads` refuses is repaired as MS
+GraphRAG's `try_parse_json_object` repairs it with `json_repair`, for the
+defects models write (`_repaired_map_payload`: a raw line break or an invalid
+escape in a string, a trailing comma, the points as a bare list, a quote left
+unescaped inside a description, then read point by point); one still not map
+JSON (an object with a `points` list) is asked for once more, its shape
+logged, never its text (a deviation: MS GraphRAG scores such a batch as one
+empty point). A batch whose map call failed or returned unparseable output
+twice is *unrated*; when no point passed but some reports were never rated, those
 reports pass through, so global search still answers, and the search
 metadata records it (`degraded_error`). When every map call failed (other than
 on a prompt longer than the model's context) and `processing.ignore_errors` is

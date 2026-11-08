@@ -1423,7 +1423,11 @@ Queries and retrieval.
   entirely fails the query or is recorded in `degraded_error`, and a fatal model error fails the query even under
   `processing.ignore_errors` (#264, #267, #348, #354, #360, #567). A dynamic-selection rating is its answer's first
   number clamped to 1-10 (`8/10`, `Score: 2`; none counts in `global_unrated_report_count`), not a number of a mention
-  of the scale (`On a scale of 1-10, I'd rate 8` is 8) (#567, #589).
+  of the scale (`On a scale of 1-10, I'd rate 8` is 8) (#567, #589). A map output `json.loads` refuses is repaired
+  as MS GraphRAG repairs it (a raw line break or an invalid escape in a string, a trailing comma, the points as a bare
+  list, a quote left unescaped inside a description) and otherwise asked for once more, its shape logged (never its
+  text); an object without `points` counts as unrated, no longer as a rated batch with no points. On a real model
+  about 1% of map batches came back unparseable, so one global answer in five lost a batch's reports.
 - A suffix nothing was ingested under fails with `No indices found` (#227); indices of another embedding model or
   dimension fail with a `ConfigurationError`, and queries embed with `models.embedding.dimension` (#232).
 - `run-rag` and `run-eval` query `processing.document_parsing.index_value` when `--suffix` is not given (they

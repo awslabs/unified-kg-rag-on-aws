@@ -386,6 +386,95 @@ def test_parse_map_payload_handles_garbage() -> None:
     assert GlobalSearchStrategy._parse_map_payload("") is None
 
 
+# Map outputs json.loads refuses, as a model writes them (rv6: about 1% of
+# real map batches came back unparseable and left their reports unrated).
+_DEFECTIVE_MAP_OUTPUTS = {
+    "unescaped-quote": (
+        '{"points": [{"description": "The album "Thriller" sold most", '
+        '"score": 80, "report_ids": ["1", "3"]}, {"description": "공급사가 '
+        '"부품"을 출하한다", "score": 40, "report_ids": ["2"]}]}',
+        [
+            ('The album "Thriller" sold most', 80, ["1", "3"]),
+            ('공급사가 "부품"을 출하한다', 40, ["2"]),
+        ],
+    ),
+    "line-break-in-string": (
+        '{"points": [{"description": "倉庫が部品を\n保管する", "score": 70, '
+        '"report_ids": ["1"]}]}',
+        [("倉庫が部品を\n保管する", 70, ["1"])],
+    ),
+    "invalid-escape": (
+        r'{"points": [{"description": "Vendor\'s depot", "score": 60, '
+        '"report_ids": ["1"]}]}',
+        [("Vendor's depot", 60, ["1"])],
+    ),
+    "trailing-comma": (
+        '{"points": [{"description": "Depot", "score": 50, "report_ids": ["1"],},],}',
+        [("Depot", 50, ["1"])],
+    ),
+    "bare-list": (
+        'Here are the points:\n[{"description": "A", "score": 30, "report_ids": '
+        '["1"]}, {"description": "B", "score": 20, "report_ids": ["2"]}]',
+        [("A", 30, ["1"]), ("B", 20, ["2"])],
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    list(_DEFECTIVE_MAP_OUTPUTS.values()),
+    ids=list(_DEFECTIVE_MAP_OUTPUTS),
+)
+def test_parse_map_payload_repairs_what_a_model_writes(
+    raw: str, expected: list[tuple[str, int, list[str]]]
+) -> None:
+    points = GlobalSearchStrategy._parse_map_payload(raw)
+    assert points is not None
+    assert [(p.description, p.score, p.report_ids) for p in points] == expected
+
+
+def test_an_object_without_points_is_unrated_not_rated_empty() -> None:
+    # Regression (rv6): the last top-level object was taken for the answer,
+    # so a bare list's last point (no "points") read as a rated batch with
+    # no key points: its points were lost without a trace.
+    assert GlobalSearchStrategy._parse_map_payload('{"answer": "none"}') is None
+    assert GlobalSearchStrategy._parse_map_payload('{"points": []}') == []
+
+
+async def test_an_unparseable_map_output_is_asked_once_more(caplog) -> None:
+    strat = _strategy(
+        map_batch_size=1,
+        map_outputs=[
+            "Sorry, here they are: points: none",
+            _map_payload(("retried", 70)),
+            "",
+            "still not json",
+        ],
+    )
+    degraded: list[str] = []
+    points, unrated = await strat._run_map_phase(
+        _batches(strat, _communities(2)), SearchQuery(query="q"), degraded=degraded
+    )
+    assert [(p.description, p.batch) for p in points] == [("retried", 0)]
+    assert [r.source for r in unrated] == ["c1"]
+    assert len(strat.map_rater.batch_inputs) == 4
+    assert degraded == ["LanguageModelError"]
+    # The log names the shape, never the text.
+    messages = [r.getMessage() for r in caplog.records if "not map JSON" in r.message]
+    assert len(messages) == 3
+    assert "asking once more" in messages[0] and "no JSON object" in messages[0]
+    assert "empty" in messages[1] and "still not json" not in " ".join(messages)
+
+
+async def test_a_parsed_map_output_is_not_asked_again() -> None:
+    strat = _strategy(map_batch_size=1, map_outputs=[json.dumps({"points": []})])
+    points, unrated = await strat._run_map_phase(
+        _batches(strat, _communities(1)), SearchQuery(query="q")
+    )
+    assert (points, unrated) == ([], [])
+    assert len(strat.map_rater.batch_inputs) == 1
+
+
 def test_parse_map_payload_strips_code_fence() -> None:
     raw = "```json\n" + _map_payload(("fenced", 70)) + "\n```"
     points = GlobalSearchStrategy._parse_map_payload(raw) or []
