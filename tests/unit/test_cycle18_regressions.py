@@ -55,42 +55,6 @@ def test_lone_letter_dash_keeps_one_token() -> None:
     assert normalize_answer("5-year") == "5 year"
 
 
-@pytest.mark.parametrize(
-    ("rewrite", "usable"),
-    [
-        (
-            "I can't find the termination clause in the Vendor agreement; where is it?",
-            True,
-        ),
-        ("Sorry, which payment terms apply to the Buyer?", True),
-        ("I'm sorry, I can't help with that.", False),
-        ("I\u2019m sorry, I can\u2019t help with that.", False),
-        ("What are the Vendor's payment terms?", True),
-        # An apology that asks the user to clarify is a meta-reply.
-        ("I'm sorry, could you clarify which contract?", False),
-        ("Sorry, which agreement do you mean?", False),
-        ("I'm sorry, please specify the contract.", False),
-        ("I can't tell; are you referring to the Vendor agreement?", False),
-        # Without a refusal opening the same words are a real question.
-        ("Could you clarify which clause of the Vendor agreement applies?", True),
-        # Refusals and clarification requests in Korean, Japanese, Chinese.
-        ("죄송하지만 도와드릴 수 없습니다.", False),
-        ("죄송하지만 어떤 계약을 말씀하시는 건가요?", False),
-        ("申し訳ありませんが、お手伝いできません。", False),
-        ("申し訳ありませんが、どの契約のことですか？", False),
-        ("抱歉，我无法回答这个问题。", False),
-        ("抱歉，您是指哪份合同？", False),
-        # A rewritten question in those languages is used, including one
-        # that opens with an apology but asks about the corpus.
-        ("공급사의 지급 조건은 무엇인가요?", True),
-        ("すみません、供給者の支払条件は何ですか？", True),
-        ("供应商的付款条件是什么？", True),
-    ],
-)
-def test_rewrite_refusal_guard(rewrite: str, usable: bool) -> None:
-    assert (GraphRAGChain._usable_rewrite(rewrite) is not None) is usable
-
-
 def test_chunkers_reject_unknown_keywords(config) -> None:
     from unified_kg_rag.adapters.ingestion.chunker import IntelligentTextChunker
 

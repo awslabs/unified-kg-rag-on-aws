@@ -17,7 +17,7 @@ from typing import Any, TypeVar, overload
 
 from pydantic import BaseModel, ValidationError
 
-from unified_kg_rag.shared.exceptions import ModelOutputError
+from unified_kg_rag.shared.exceptions import ModelOutputCutOffError, ModelOutputError
 from unified_kg_rag.shared.utils.common import UNCLOSED_JSON_MESSAGE, parse_llm_json
 
 _M = TypeVar("_M", bound=BaseModel)
@@ -81,6 +81,8 @@ _BLOCK_COMMENT = re.compile(_STRING + r"|/\*.*?\*/", re.DOTALL)
 _TRAILING_COMMA = re.compile(_STRING + r"|,(\s*[}\]])")
 _ESCAPE = re.compile(r'\\(["\\/bfnrt]|u[0-9a-fA-F]{4})?')
 _SMART_QUOTES = str.maketrans({"\u201c": '"', "\u201d": '"', "\u201e": '"'})
+# A ``{`` that starts an object: a key's quote next, or the end of the text.
+_OPENS_JSON = re.compile(r"\{\s*(?:[\"']|\Z)")
 _FENCE = re.compile(r"```[A-Za-z]*[ \t]*\n?(.*?)```", re.DOTALL)
 
 
@@ -118,6 +120,12 @@ def _balanced_objects(text: str) -> list[str]:
     """The top-level ``{...}`` spans of ``text``, in order. Braces inside a
     string (double- or single-quoted: JSON or a Python literal) do not
     count; an unclosed last span is left out."""
+    return _scan_objects(text)[0]
+
+
+def _scan_objects(text: str) -> tuple[list[str], int | None]:
+    """``_balanced_objects`` of ``text``, and where an unclosed last span
+    starts (None when every span closes)."""
     spans: list[str] = []
     depth, quote, escaped, start = 0, "", False, -1
     for index, char in enumerate(text):
@@ -138,7 +146,7 @@ def _balanced_objects(text: str) -> list[str]:
             depth -= 1
             if depth == 0:
                 spans.append(text[start : index + 1])
-    return spans
+    return spans, (start if depth else None)
 
 
 def _objects(value: Any, answer_keys: Collection[str]) -> list[dict[str, Any]]:
@@ -173,7 +181,7 @@ def _candidates(raw: str, answer_keys: Collection[str]) -> list[dict[str, Any]]:
         strict = parse_llm_json(raw, strict=True, answer_keys=answer_keys)
     except json.JSONDecodeError as e:
         if e.msg == UNCLOSED_JSON_MESSAGE:
-            raise ModelOutputError(
+            raise ModelOutputCutOffError(
                 "the answer's last JSON object is unclosed (cut off?)"
             ) from e
         strict = {}
@@ -197,6 +205,9 @@ def _candidates(raw: str, answer_keys: Collection[str]) -> list[dict[str, Any]]:
         if any(key in obj for obj in found for key in answer_keys):
             return found
         fallback = fallback or found
+    cut_at = _scan_objects(raw)[1]
+    if not fallback and cut_at is not None and _OPENS_JSON.match(raw, cut_at):
+        raise ModelOutputCutOffError("the answer's JSON object is unclosed (cut off?)")
     return fallback
 
 

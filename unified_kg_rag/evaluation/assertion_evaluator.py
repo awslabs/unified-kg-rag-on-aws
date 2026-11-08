@@ -55,10 +55,10 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
     error_digest,
+    judge_answers,
     judge_model_kwargs,
 )
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
-from unified_kg_rag.adapters.llm.langchain import LLMJsonOutputParser
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
     Config,
@@ -240,7 +240,7 @@ class AssertionEvaluator(BaseGraphRAGEvaluator):
             self.providers.llm_factory,
             self.config.model_id(ModelRole.EVALUATION),
             AssertionJudgementPrompt,
-            LLMJsonOutputParser(answer_keys=("verdicts",)),
+            judge_answers(self.providers.llm_factory, self.config, ("verdicts",)),
             custom_prompts=self.config.custom_prompts,
             model_purpose=ModelPurpose.EVALUATION,
             **judge_model_kwargs(self.config),

@@ -71,7 +71,7 @@ def _respond(system: str, human: str) -> str:
     if "knowledge graph extraction expert" in system:
         return _extraction(_source_text(human), NAMES)
     if "search strategy selector" in system:
-        return "local"
+        return '{"strategy": "local"}'
     if "specialized entity extraction expert" in system:
         return "Acme Robotics, Alice Chen"
     if "expert keyword extractor" in system:

@@ -122,11 +122,22 @@ async def test_auto_with_one_candidate_makes_no_router_call(config: Config) -> N
     assert factory.get_model_calls == 1  # the answer only
 
 
-def test_router_reply_naming_its_strategy_counts_as_the_router() -> None:
+async def test_router_reply_naming_its_strategy_counts_as_the_router() -> None:
+    from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
     from unified_kg_rag.application.retrieval.rag_chain import GraphRAGChain
 
-    assert GraphRAGChain._names_strategy("Local search.", SearchStrategy.LOCAL)
-    assert not GraphRAGChain._names_strategy("I am not sure", SearchStrategy.LOCAL)
+    chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain.config = Config()
+    chain.factory = ScriptedLLMFactory(lambda _system, _human: "no JSON")
+    routable = (SearchStrategy.LOCAL, SearchStrategy.MIX)
+    assert await chain._routed_strategy('{"strategy": "mix"}', routable) == (
+        SearchStrategy.MIX,
+        True,
+    )
+    assert await chain._routed_strategy("I am not sure", routable) == (
+        SearchStrategy.LOCAL,
+        False,
+    )
 
 
 class _CutModel(GenericFakeChatModel):

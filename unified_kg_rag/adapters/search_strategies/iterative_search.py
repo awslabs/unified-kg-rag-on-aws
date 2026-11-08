@@ -46,6 +46,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 
@@ -85,7 +86,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.usage import usage_scope
-from unified_kg_rag.shared.utils import interleave, parse_llm_json, text_digest
+from unified_kg_rag.shared.utils import interleave, text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
@@ -377,7 +378,15 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         except Exception as e:  # noqa: BLE001 - classified by _degrade
             self._degrade(run, "controller_failed", e)
             return None
-        payload = parse_llm_json(str(raw), answer_keys=_CONTROLLER_KEYS)
+        # The verdict's parse error (after one repair), else None: an object
+        # without a readable 'sufficient' verdict.
+        parse_error: OutputParserException | None = None
+        try:
+            payload = await self.json_answers(answer_keys=_CONTROLLER_KEYS).aparse(
+                str(raw)
+            )
+        except OutputParserException as e:
+            payload, parse_error = {}, e
         sufficient = _flag(payload.get("sufficient"))
         if sufficient is None:
             logger.warning(
@@ -386,7 +395,9 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             )
             run.degraded = run.stop_reason = "controller_unparsed"
             record_degradation(
-                DegradationStep.ITERATIVE_CONTROLLER, "controller_unparsed"
+                DegradationStep.ITERATIVE_CONTROLLER,
+                "controller_unparsed",
+                parse_error,
             )
             return None
         verdict = _Verdict(

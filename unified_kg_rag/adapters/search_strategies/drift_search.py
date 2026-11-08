@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
 
@@ -59,7 +60,6 @@ from unified_kg_rag.domain.prompts import (
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils import (
-    parse_llm_json,
     parse_llm_score,
     text_digest,
 )
@@ -86,6 +86,11 @@ class _Answer:
     read: list[RetrievalResult] = field(default_factory=list)
     # The non-fatal error that left the answer without text, if any.
     error: Exception | None = None
+
+
+# The keys of the primer's and of an action's JSON answer.
+_PRIMER_KEYS = ("intermediate_answer", "follow_up_queries")
+_ACTION_KEYS = ("response", "follow_up_queries")
 
 
 def _follow_ups(payload: dict[str, Any]) -> list[str]:
@@ -133,6 +138,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             parser=parser,
             custom_prompts=self.config.custom_prompts,
         )
+
         # Each follow-up query is a local search, as in MS GraphRAG. It shares
         # this strategy's providers, scorer and token counter, and does not
         # rerank: the evidence of every follow-up is reranked once, at the
@@ -386,9 +392,15 @@ class DriftSearchStrategy(BaseSearchStrategy):
             except Exception as e:  # noqa: BLE001 - classified by _degrade
                 self._degrade(DegradationStep.DRIFT_PRIMER, "DRIFT primer", e)
                 return e
-            payload = parse_llm_json(str(raw))
-            if not payload:
+            try:
+                payload = await self.json_answers(answer_keys=_PRIMER_KEYS).aparse(
+                    str(raw)
+                )
+            except OutputParserException as e:
                 logger.warning("DRIFT primer returned no JSON; fold skipped")
+                record_degradation(
+                    DegradationStep.DRIFT_PRIMER, "primer answer unreadable", e
+                )
                 return None
             # The fold's reports are the answer's evidence, as an action's
             # local search results are: the primer answer reaches the answer
@@ -491,10 +503,14 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 self._degrade(DegradationStep.DRIFT_ACTION, "DRIFT action", e)
                 answer.error = e
                 return answer
-        payload = parse_llm_json(str(raw))
-        if not payload:
+        try:
+            payload = await self.json_answers(answer_keys=_ACTION_KEYS).aparse(str(raw))
+        except OutputParserException as e:
             logger.warning(
                 "DRIFT action returned no JSON for %s", text_digest(follow_up)
+            )
+            record_degradation(
+                DegradationStep.DRIFT_ACTION, "action answer unreadable", e
             )
             return answer
         answer.text = str(payload.get("response", "") or "").strip()

@@ -10,13 +10,15 @@ the ranked points, packed into a token budget, are the answer context.
 
 import asyncio
 import json
+import math
 import re
 import time
 from typing import Any
 
-from langchain_core.exceptions import ContextOverflowError
+from langchain_core.exceptions import ContextOverflowError, OutputParserException
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import Runnable, RunnableConfig
+from pydantic import BaseModel
 
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
@@ -46,6 +48,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.methodology import REPORT_READER_ARTIFACTS
 from unified_kg_rag.domain.prompts import CommunityRelevancePrompt, GlobalMapPrompt
+from unified_kg_rag.domain.prompts.retrieval import RELEVANCE_RATING_MAX
 from unified_kg_rag.domain.retrieval.abstention import (
     NO_CONTEXT_REASON_KEY,
     REASON_NO_REPORTS,
@@ -55,12 +58,13 @@ from unified_kg_rag.domain.retrieval.filters import document_filters
 from unified_kg_rag.shared import (
     ConfigurationError,
     LanguageModelError,
+    ModelOutputError,
     get_logger,
     observability,
 )
 from unified_kg_rag.shared.utils import (
-    parse_llm_json,
     parse_llm_score,
+    parse_model_object,
     safe_float_parse,
     text_digest,
 )
@@ -97,25 +101,13 @@ class _MapPoint:
         self.report_ids = report_ids or []
 
 
-# A rating's number: the first one in the answer that is not part of a
-# mention of the scale, in English ("1-10", "1 to 10", "out of 10", "/10")
-# or in the corpus language the model may answer in: a range ("1~10",
-# "1から10", "1到10", "1에서 10") or the maximum ("10점 만점에", "10点満点中",
-# "满分10分", "10段階", "10分制").
-_FIRST_NUMBER = re.compile(r"\d+(?:\.\d+)?")
-_SCALE_MENTION = re.compile(
-    r"(?<![\d.])[01]\s*(?:-|\u2013|~|\uff5e|\u301c|to|から|到|至|에서|부터)\s*"
-    r"10{1,2}(?![\d.])"
-    r"|(?:\bout\s+of|/|满分|滿分)\s*10{1,2}(?![\d.])"
-    r"|(?<![\d.])10{1,2}\s*(?:점\s*(?:만점|중|척도)|点\s*満点|段階|分制|分满分|分滿分)",
-    re.IGNORECASE,
-)
+class _RelevanceRating(BaseModel):
+    """The community rating's answer (``CommunityRelevancePrompt``): MS
+    GraphRAG's ``{"reason": ..., "rating": 0-5}``; the reason is not read."""
+
+    rating: float
 
 
-# A backslash escape JSON allows (kept), or a lone backslash (dropped): a
-# model writes ``\'`` or ``\_`` in a description.
-_ESCAPE = re.compile(r'\\(["\\/bfnrt]|u[0-9a-fA-F]{4})?')
-_TRAILING_COMMA = re.compile(r",(\s*[}\]])")
 # One key point as the map prompt asks for it, read without a JSON parser:
 # its description runs to the ``", "score"`` that follows it, so a quote the
 # model left unescaped inside it does not end it.
@@ -128,6 +120,12 @@ _MAP_POINT = re.compile(
 _REPORT_ID = re.compile(r"[^\s,\"']+")
 
 
+class _MapAnswer(BaseModel):
+    """The map prompt's answer: its key points (each checked when read)."""
+
+    points: list[Any]
+
+
 def _json_string(body: str) -> str:
     """A JSON string's ``body`` decoded, or as written when it does not
     decode."""
@@ -138,37 +136,17 @@ def _json_string(body: str) -> str:
     return decoded if isinstance(decoded, str) else body
 
 
-def _repaired_map_payload(raw: str) -> dict[str, Any] | None:
-    """Map JSON a model wrote with a defect ``json.loads`` refuses, read as
-    MS GraphRAG reads it (``try_parse_json_object`` repairs it with
-    ``json_repair``), for the defects seen in map outputs: control
-    characters (a raw line break) inside a string, an invalid backslash
-    escape, a trailing comma, the points as a bare list, or a quote left
-    unescaped inside a description (the points are then read one by one,
-    ``_MAP_POINT``). ``None`` when no point can be read."""
-    text = (raw or "").strip()
-    start = min((i for i in (text.find("{"), text.find("[")) if i != -1), default=-1)
-    end = max(text.rfind("}"), text.rfind("]"))
-    if start == -1 or end <= start:
-        return None
-    text = text[start : end + 1]
-    text = _ESCAPE.sub(lambda m: m.group(0) if m.group(1) else "", text)
-    text = _TRAILING_COMMA.sub(r"\1", text)
-    try:
-        parsed = json.loads(text, strict=False)
-    except ValueError:
-        parsed = None
-    if isinstance(parsed, list):
-        parsed = {"points": parsed}
-    if isinstance(parsed, dict) and isinstance(parsed.get("points"), list):
-        return parsed
+def _salvaged_map_payload(raw: str) -> dict[str, Any] | None:
+    """The key points of map JSON broken by a quote left unescaped inside a
+    description, read one by one (``_MAP_POINT``), as MS GraphRAG's
+    ``json_repair`` recovers them; ``None`` when no point can be read."""
     points = [
         {
             "description": _json_string(m.group("description")),
             "score": m.group("score"),
             "report_ids": _REPORT_ID.findall(m.group("ids") or ""),
         }
-        for m in _MAP_POINT.finditer(text)
+        for m in _MAP_POINT.finditer(raw or "")
     ]
     return {"points": points} if points else None
 
@@ -609,13 +587,13 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                         unrated += 1
                     elif outcome is None:
                         logger.warning(
-                            "Community rating held no number; report %s kept "
+                            "Community rating held no rating; report %s kept "
                             "unrated",
                             report.source,
                         )
                         record_degradation(
                             DegradationStep.COMMUNITY_RATING,
-                            "community rating not a number",
+                            "community rating not a rating",
                             LanguageModelError.__name__,
                         )
                         unrated += 1
@@ -664,23 +642,28 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         *,
         config: RunnableConfig | None = None,
     ) -> float | None:
-        """The report's relevance to the query on a 0-1 scale (rating / 10),
-        ``None`` when the answer holds no number.
+        """The report's relevance to the query on a 0-1 scale (the 0-5 rating
+        divided by ``RELEVANCE_RATING_MAX``), ``None`` when the answer holds
+        no rating even after one repair.
 
-        The prompt asks for a bare 1-10 rating; a model that writes "8/10",
-        "Score: 2" or a reason after the number is read by its first number
-        outside a mention of the scale ("On a scale of 1-10, I'd rate 8" is
-        8, not 1), clamped to 1-10 (an "85" read as a percentage is still
-        the top rating). A float() of the whole answer read each of those as
-        the default 5 and "nan" as NaN, which no threshold drops."""
+        The answer is MS GraphRAG's ``{"reason": ..., "rating": 0-5}``
+        (``CommunityRelevancePrompt``), read as every JSON answer is; a
+        rating outside the scale is clamped to it and a non-finite one is no
+        rating (NaN passes every threshold)."""
         async with semaphore:
             llm_output = await self.community_relevance_scorer.ainvoke(
                 {"community_summary": report.content, "query": query.query}, config
             )
-        found = _FIRST_NUMBER.search(_SCALE_MENTION.sub(" ", str(llm_output)))
-        if found is None:
+        try:
+            answer = await self.json_answers(schema=_RelevanceRating).aparse(
+                str(llm_output)
+            )
+        except OutputParserException:
             return None
-        return min(max(float(found.group()), 1.0), 10.0) / 10.0
+        rating = float(answer.rating)
+        if not math.isfinite(rating):
+            return None
+        return min(max(rating, 0.0), RELEVANCE_RATING_MAX) / RELEVANCE_RATING_MAX
 
     @staticmethod
     def _community_id(report: RetrievalResult) -> str:
@@ -991,43 +974,47 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         bad_requests: list[Exception] = []
         errors: list[Exception] = []
 
-        async def rate(batch: list[RetrievalResult]) -> str | None:
+        async def rate(batch: list[RetrievalResult]) -> list[_MapPoint] | None:
             # The map chain already retries transient model errors as a query
             # chain. An output that is not map JSON, even repaired
-            # (``_parse_map_payload``), is asked for once more: on a real
-            # model about 1% of batches came back so, each leaving its
+            # (``_parse_map_payload``), goes to the output fixer once: on a
+            # real model about 1% of batches came back so, each leaving its
             # reports unrated (one global answer in five lost a batch).
-            raw: str | None = None
-            for attempt in (1, 2):
-                try:
-                    raw = str(
-                        await self.map_rater.ainvoke(
-                            {
-                                "query": query.query,
-                                "reports": self._format_reports(batch),
-                                "target_language": self.query_language(query),
-                            },
-                            config,
-                        )
+            try:
+                raw = str(
+                    await self.map_rater.ainvoke(
+                        {
+                            "query": query.query,
+                            "reports": self._format_reports(batch),
+                            "target_language": self.query_language(query),
+                        },
+                        config,
                     )
-                except Exception as e:  # noqa: BLE001 - classified below
-                    errors.append(e)
-                    if is_bad_request(e):
-                        bad_requests.append(e)
-                    elif is_fatal_retrieval_error(e):
-                        fatal_errors.append(e)
-                    return None
-                if self._parse_map_payload(raw) is not None:
-                    return raw
-                logger.warning(
-                    "Global map output for %s reports is not map JSON (%s)%s",
-                    len(batch),
-                    _unparsed_shape(raw),
-                    "; asking once more" if attempt == 1 else "",
                 )
-            return raw
+            except Exception as e:  # noqa: BLE001 - classified below
+                errors.append(e)
+                if is_bad_request(e):
+                    bad_requests.append(e)
+                elif is_fatal_retrieval_error(e):
+                    fatal_errors.append(e)
+                return None
+            if (points := self._parse_map_payload(raw)) is not None:
+                return points
+            logger.warning(
+                "Global map output for %s reports is not map JSON (%s)%s",
+                len(batch),
+                _unparsed_shape(raw),
+                "; asking the output fixer" if raw.strip() else "",
+            )
+            if not raw.strip():
+                return None
+            try:
+                fixed = await self.json_answers(schema=_MapAnswer).aparse(raw)
+                return self._map_points(fixed)
+            except OutputParserException:
+                return None
 
-        raw_outputs = await gather_bounded(
+        rated = await gather_bounded(
             self.max_concurrency, (rate(batch) for batch in report_batches)
         )
         if fatal_errors:
@@ -1035,8 +1022,9 @@ class GlobalSearchStrategy(BaseSearchStrategy):
 
         points: list[_MapPoint] = []
         unrated: list[RetrievalResult] = []
-        for i, (batch, raw) in enumerate(zip(report_batches, raw_outputs, strict=True)):
-            batch_points = self._parse_map_payload(raw) if raw else None
+        for i, (batch, batch_points) in enumerate(
+            zip(report_batches, rated, strict=True)
+        ):
             if batch_points is None:
                 unrated.extend(batch)
                 continue
@@ -1081,26 +1069,39 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             for i, report in enumerate(reports)
         )
 
-    @staticmethod
-    def _parse_map_payload(raw: str) -> list[_MapPoint] | None:
+    @classmethod
+    def _parse_map_payload(cls, raw: str) -> list[_MapPoint] | None:
         """Parse a map JSON payload into scored key points.
 
-        Tolerates the LLM wrapping the JSON in prose or code fences, and
-        repairs the defects ``_repaired_map_payload`` reads. ``None`` when
-        ``raw`` is not map JSON, an object with a ``points`` list (the
-        batch counts as unrated); an empty list means the batch WAS rated
-        and yielded no key points. (An object without ``points``, such as
-        the last point of a bare list, read as rated, lost the batch's
-        points without a trace.)
+        Reads it as every JSON answer is read (``parse_model_object``:
+        prose and fences around it, trailing commas, invalid escapes, raw
+        line breaks, a bare list of points), then reads the points one by
+        one when a quote left unescaped inside a description breaks the
+        JSON (``_salvaged_map_payload``). ``None`` when ``raw`` is not map
+        JSON, an object with a ``points`` list (the batch counts as
+        unrated); an empty list means the batch WAS rated and yielded no
+        key points. (An object without ``points``, such as the last point
+        of a bare list, read as rated, lost the batch's points without a
+        trace.)
         """
-        payload: dict[str, Any] | None = parse_llm_json(raw, answer_keys=("points",))
-        if not isinstance((payload or {}).get("points"), list):
-            payload = _repaired_map_payload(raw)
-        if payload is None:
+        payload: dict[str, Any] | None
+        try:
+            payload = parse_model_object(raw, _MapAnswer).model_dump()
+        except ModelOutputError:
+            payload = _salvaged_map_payload(raw)
+        return cls._map_points(payload)
+
+    @staticmethod
+    def _map_points(payload: Any) -> list[_MapPoint] | None:
+        """The scored key points of a map answer (``_MapAnswer`` or its
+        dict), ``None`` when it holds no ``points`` list."""
+        if isinstance(payload, BaseModel):
+            payload = payload.model_dump()
+        if not isinstance(payload, dict) or not isinstance(payload.get("points"), list):
             return None
 
         points: list[_MapPoint] = []
-        for item in payload.get("points", []) or []:
+        for item in payload["points"]:
             if not isinstance(item, dict):
                 continue
             description = str(item.get("description", "")).strip()

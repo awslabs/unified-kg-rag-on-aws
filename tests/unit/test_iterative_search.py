@@ -184,8 +184,13 @@ class _Script:
     def __init__(self, **replies: list[Any]) -> None:
         self.replies = replies
         self.calls: dict[str, list[tuple[str, str]]] = {k: [] for k in self.KINDS}
+        # The output fixer's prompts (one human message, no system).
+        self.repairs: list[str] = []
 
     def __call__(self, system: str, human: str) -> str:
+        if not system and "did not satisfy the constraints" in human:
+            self.repairs.append(human)
+            return self.replies.get("fixer", ["still no JSON"])[0]
         for kind, marker in self.KINDS.items():
             if marker in system:
                 self.calls[kind].append((system, human))
@@ -495,7 +500,8 @@ async def test_at_most_max_next_queries_are_searched() -> None:
     ids=["prose", "no-verdict", "cut-off"],
 )
 async def test_an_unreadable_verdict_answers_from_what_is_there(reply: str) -> None:
-    strategy, _, later, _, _ = _strategy(_Script(controller=[reply]))
+    script = _Script(controller=[reply])
+    strategy, _, later, _, _ = _strategy(script)
 
     result = await strategy.asearch(_query())
 
@@ -504,6 +510,23 @@ async def test_an_unreadable_verdict_answers_from_what_is_there(reply: str) -> N
     meta = result.metadata["iterative"]
     assert meta["stop_reason"] == meta["degraded"] == "controller_unparsed"
     assert "context_sufficient" not in result.metadata
+    # The answer is marked degraded (it was not before), and only an answer
+    # that does not parse is sent to the output fixer, once.
+    assert result.metadata["degraded_error"] == "OutputParserException"
+    # A cut-off answer is not repaired either: a fixer could only invent it.
+    assert len(script.repairs) == (1 if reply == "no JSON at all" else 0)
+
+
+async def test_a_verdict_the_fixer_repairs_is_read() -> None:
+    # A Llama-style trailing comma parses as it is; prose goes to the fixer.
+    fixed = json.dumps(INSUFFICIENT)
+    script = _Script(controller=["Not sufficient yet, search the depot", SUFFICIENT])
+    script.replies["fixer"] = [fixed]
+    strategy, _, later, _, _ = _strategy(script)
+
+    result = await strategy.asearch(_query())
+
+    assert len(script.repairs) == 1 and later.queries
     assert "degraded_error" not in result.metadata
 
 

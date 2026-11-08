@@ -70,11 +70,11 @@ import numpy as np
 
 from unified_kg_rag.adapters.evaluators.base import (
     error_digest,
+    judge_answers,
     judge_effort,
     judge_model_kwargs,
 )
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
-from unified_kg_rag.adapters.llm.langchain import LLMJsonOutputParser
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import (
@@ -259,7 +259,7 @@ class PairwiseJudge:
             providers.llm_factory,
             config.model_id(ModelRole.EVALUATION),
             prompt,
-            LLMJsonOutputParser(answer_keys=self.criteria),
+            judge_answers(providers.llm_factory, config, self.criteria),
             custom_prompts=config.custom_prompts,
             model_purpose=ModelPurpose.EVALUATION,
             **judge_model_kwargs(config),
@@ -269,7 +269,7 @@ class PairwiseJudge:
                 providers.llm_factory,
                 config.model_id(ModelRole.PAIRWISE_OVERLAP),
                 PairwiseOverlapPrompt,
-                LLMJsonOutputParser(answer_keys=_OVERLAP_KEYS),
+                judge_answers(providers.llm_factory, config, _OVERLAP_KEYS),
                 custom_prompts=config.custom_prompts,
                 model_purpose=ModelPurpose.EVALUATION,
                 min_output_tokens=overlap_output_floor(config),

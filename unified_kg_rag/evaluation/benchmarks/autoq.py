@@ -61,9 +61,8 @@ import numpy as np
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, ConfigDict, Field
 
-from unified_kg_rag.adapters.evaluators.base import error_digest
+from unified_kg_rag.adapters.evaluators.base import error_digest, judge_answers
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
-from unified_kg_rag.adapters.llm.langchain import LLMJsonOutputParser
 from unified_kg_rag.adapters.llm.token_estimate import (
     estimate_token_count,
     truncate_to_estimate,
@@ -531,7 +530,7 @@ class AssertionBenchmarkGenerator:
                 self.providers.llm_factory,
                 self.model_id,
                 prompt,
-                LLMJsonOutputParser(answer_keys=keys),
+                judge_answers(self.providers.llm_factory, self.config, keys),
                 custom_prompts=self.config.custom_prompts,
                 model_purpose=ModelPurpose.EVALUATION,
             )

@@ -155,9 +155,12 @@ class _FixingFactory:
     def __init__(self, fixed: str) -> None:
         self.fixed = fixed
         self.calls = 0
+        self.built = 0
 
     def get_model(self, **kwargs: object) -> object:
         from langchain_core.runnables import RunnableLambda
+
+        self.built += 1
 
         def answer(_: object) -> AIMessage:
             self.calls += 1
@@ -172,7 +175,8 @@ def test_the_json_parser_asks_the_fixer_once() -> None:
         factory, "fixer", answer_keys=("strategy",)  # type: ignore[arg-type]
     )
     assert parser.parse('{"strategy": "local"}') == {"strategy": "local"}
-    assert factory.calls == 0
+    # The fixing model is built on the first answer that does not parse.
+    assert factory.calls == factory.built == 0
     # The fixer's answer is stripped of its reasoning too.
     assert parser.parse("global, I think") == {"strategy": "global"}
     assert factory.calls == 1
@@ -186,3 +190,15 @@ def test_the_json_parser_asks_the_fixer_once() -> None:
     with pytest.raises(OutputParserException, match="no output"):
         create_json_output_parser(broken, "fixer").parse("")  # type: ignore[arg-type]
     assert broken.calls == 1
+
+
+async def test_a_cut_off_answer_is_not_repaired() -> None:
+    factory = _FixingFactory('{"sufficient": true}')
+    parser = create_json_output_parser(
+        factory, "fixer", answer_keys=("sufficient",)  # type: ignore[arg-type]
+    )
+    with pytest.raises(OutputParserException):
+        await parser.aparse('{"sufficient":')
+    assert factory.calls == 0
+    assert await parser.aparse("sufficient: yes") == {"sufficient": True}
+    assert factory.calls == 1

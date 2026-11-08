@@ -1,12 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import Collection, Coroutine
 from datetime import datetime
 from typing import Any
 
 from tqdm import tqdm
 
+from unified_kg_rag.adapters.llm.chain_factory import (
+    FixingJsonOutputParser,
+    create_json_output_parser,
+)
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetricType,
@@ -14,6 +18,8 @@ from unified_kg_rag.domain.models import (
     EvaluationReport,
     EvaluationResult,
     EvaluatorType,
+    ModelPurpose,
+    ModelRole,
 )
 from unified_kg_rag.shared import get_logger
 
@@ -47,6 +53,21 @@ def judge_model_kwargs(config: Config) -> dict[str, Any]:
     """
     effort = config.evaluation.judge_effort
     return {"effort": effort} if effort else {}
+
+
+def judge_answers(
+    factory: Any, config: Config, answer_keys: Collection[str]
+) -> FixingJsonOutputParser:
+    """The JSON reader of an LLM judge's answers: every model family's JSON
+    (``parse_model_object``), then one repair by ``models.roles.fixing``;
+    what still fails raises ``OutputParserException``, which the judge
+    counts as a failed item."""
+    return create_json_output_parser(
+        factory,
+        config.model_id(ModelRole.FIXING),
+        answer_keys=tuple(answer_keys),
+        model_purpose=ModelPurpose.EVALUATION,
+    )
 
 
 def judge_effort(config: Config, model_id: str) -> str:

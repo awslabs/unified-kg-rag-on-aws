@@ -5,7 +5,6 @@ import concurrent.futures
 import contextvars
 import functools
 import json
-import re
 import threading
 import time
 import unicodedata
@@ -21,8 +20,9 @@ from collections.abc import (
     Iterator,
 )
 from contextlib import AbstractContextManager, aclosing, contextmanager
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.output_parsers import (
     BaseOutputParser,
@@ -40,6 +40,8 @@ from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.llm.chain_factory import (
     STRICT_STREAM_TRUNCATION,
+    FixingJsonOutputParser,
+    create_json_output_parser,
     setup_chain,
 )
 from unified_kg_rag.adapters.llm.reachability import (
@@ -113,6 +115,7 @@ from unified_kg_rag.domain.models import (
     IndexArtifact,
     LanguageCode,
     Methodology,
+    ModelRole,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -120,7 +123,6 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
-from unified_kg_rag.domain.models.config import SearchConfig
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     BasePrompt,
@@ -391,6 +393,16 @@ ROUTING_KEY = "routing"
 DEFAULT_ERROR_MESSAGE: str = (
     "I apologize, but an error occurred while processing your request. Please try again in a moment."
 )
+
+
+class _RouteAnswer(BaseModel):
+    """The router's answer (``StrategySelectionPrompt``)."""
+
+    strategy: str
+
+
+# Every strategy's name: a bare-name router answer is read without JSON.
+_STRATEGY_NAMES = frozenset(strategy.value for strategy in SearchStrategy)
 
 
 class ProcessedQuery(BaseModel):
@@ -967,12 +979,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 },
                 config,
             )
-            strategy = self._parse_routed_strategy(selected_strategy_str, routable)
-            decided_by = (
-                "router"
-                if self._names_strategy(selected_strategy_str, strategy)
-                else "fallback"
+            strategy, named = await self._routed_strategy(
+                str(selected_strategy_str), routable
             )
+            decided_by = "router" if named else "fallback"
         except Exception as e:
             if not self.ignore_errors or is_unreachable_error(e):
                 raise
@@ -1024,38 +1034,38 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             "ingest the methodology an allowed strategy reads."
         )
 
-    @staticmethod
-    def _names_strategy(raw: str, strategy: SearchStrategy) -> bool:
-        """Whether the router's reply ``raw`` named ``strategy`` (rather than
-        ``_parse_routed_strategy`` falling back to it)."""
-        return strategy.value in re.findall(r"[a-z]+", (raw or "").lower())
+    async def _routed_strategy(
+        self, raw: str, routable: tuple[SearchStrategy, ...]
+    ) -> tuple[SearchStrategy, bool]:
+        """The strategy the router's answer ``raw`` names, and whether it
+        named a routable one (else the fallback, ``_fallback_strategy``).
 
-    @staticmethod
-    def _parse_routed_strategy(
-        raw: str, routable: tuple[SearchStrategy, ...] | None = None
-    ) -> SearchStrategy:
-        """Map a router LLM response to a routable strategy, tolerating extra text.
-
-        The router is asked for a bare word, but LLMs add punctuation/prose
-        ("Local search.", "I'd use local"). The response is split into word
-        tokens and the FIRST token naming a routable strategy wins, so the
-        result depends on what the model wrote, not on the order strategies
-        are listed in (a substring scan picked whichever name it checked
-        first). Defaults to :meth:`_fallback_strategy`.
+        The answer is ``{"strategy": "<name>"}`` (``StrategySelectionPrompt``),
+        read as every JSON answer is (one repair when it does not parse); an
+        answer that is one strategy name alone, as an older custom prompt
+        asks for, is read as that name. A name is matched whole: prose naming
+        several ("not global ... local") is not guessed from.
         """
-        allowed = routable or tuple(SearchConfig().auto_routable_strategies)
-        by_value = {strat.value: strat for strat in allowed}
-        for token in re.findall(r"[a-z]+", (raw or "").lower()):
-            if token in by_value:
-                return by_value[token]
-        fallback = GraphRAGChain._fallback_strategy(allowed)
+        name = raw.strip().strip("\"'`.").casefold()
+        if name not in _STRATEGY_NAMES:
+            try:
+                answer = await self._json_parser(
+                    StrategySelectionPrompt, schema=_RouteAnswer
+                ).aparse(raw)
+                name = str(answer.strategy).strip().casefold()
+            except OutputParserException:
+                name = ""
+        by_value = {strategy.value: strategy for strategy in routable}
+        if (strategy := by_value.get(name)) is not None:
+            return strategy, True
+        fallback = GraphRAGChain._fallback_strategy(routable)
         logger.warning(
-            "Router returned unrecognized strategy (%s); defaulting to '%s'",
+            "Router returned no routable strategy (%s); defaulting to '%s'",
             text_digest(raw),
             fallback.value,
         )
         logger.debug("Unrecognized router output: '%s'", raw)
-        return fallback
+        return fallback, False
 
     @staticmethod
     def _fallback_strategy(routable: tuple[SearchStrategy, ...]) -> SearchStrategy:
@@ -1096,6 +1106,34 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 )
             return cached
 
+    def _json_parser(
+        self,
+        prompt_class: type[BasePrompt],
+        *,
+        answer_keys: tuple[str, ...] = (),
+        schema: type[BaseModel] | None = None,
+        instructions: str = "",
+    ) -> FixingJsonOutputParser:
+        """The JSON reader of ``prompt_class``'s answers
+        (``create_json_output_parser``: every family's JSON, then one repair
+        by ``models.roles.fixing``), built once per chain. Its fixing model
+        is built on the first answer that does not parse."""
+        key = ("json", prompt_class, answer_keys, schema, instructions)
+        cache = getattr(self, "_prompt_chains", None)
+        with getattr(self, "_cache_lock", None) or threading.RLock():
+            if cache is not None and (cached := cache.get(key)) is not None:
+                return cast(FixingJsonOutputParser, cached)
+            parser = create_json_output_parser(
+                getattr(self, "factory", None),  # type: ignore[arg-type]
+                self.config.model_id(ModelRole.FIXING),
+                answer_keys=answer_keys,
+                schema=schema,
+                instructions=instructions,
+            )
+            if cache is not None:
+                cache[key] = cast(Runnable[Any, Any], parser)
+            return parser
+
     def _start_query_inputs(
         self,
         inputs: dict[str, Any],
@@ -1117,7 +1155,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     async def _translate_query(
         self, query: str, target_language: str, config: RunnableConfig | None
-    ) -> str:
+    ) -> str | None:
         """``query_processing.translate_query``."""
         return await query_processing.translate_query(
             self, query, target_language, config
@@ -1165,11 +1203,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 final_query=question,
                 degraded_error=type(e).__name__,
             )
-
-    @staticmethod
-    def _looks_like_translation_refusal(candidate: str, original: str) -> bool:
-        """``query_processing.looks_like_translation_refusal``."""
-        return query_processing.looks_like_translation_refusal(candidate, original)
 
     async def _extract_query_entities(
         self, query: str, target_language: str, config: RunnableConfig | None
@@ -1261,12 +1294,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 DegradationStep.FOLLOW_UP_REWRITE, "searched the follow-up as is", e
             )
             return None
-        return self._usable_rewrite(str(rewritten))
-
-    @staticmethod
-    def _usable_rewrite(rewritten: str) -> str | None:
-        """``query_processing.usable_rewrite``."""
-        return query_processing.usable_rewrite(rewritten)
+        return await query_processing.read_rewrite(self, str(rewritten))
 
     @staticmethod
     def _question(state: dict[str, Any]) -> str:

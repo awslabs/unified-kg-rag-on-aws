@@ -11,11 +11,13 @@ isolated building blocks. Also covers the top-level ainvoke error contract.
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.application.retrieval import query_processing
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
@@ -42,13 +44,23 @@ class _FakeChain:
 
 
 def _chain(config: Config) -> GraphRAGChain:
-    return GraphRAGChain(config=config)
+    chain = GraphRAGChain(config=config)
+    # The output fixer's model: a refusal is the sentinel (as it is told).
+    chain.factory = ScriptedLLMFactory(
+        lambda _system, _human: '{"translation": "[CANNOT_TRANSLATE]"}'
+    )
+    return chain
 
 
 def _install_fakes(chain: GraphRAGChain, *, translation, entities) -> None:
     def fake_get_chain(prompt_class, parser, **kwargs):
         if prompt_class is TranslationPrompt:
-            return _FakeChain(translation)
+            # The translation answers JSON (a refusal is prose: repaired).
+            return _FakeChain(
+                json.dumps({"translation": translation})
+                if isinstance(translation, str) and not translation.startswith("I ")
+                else translation
+            )
         if prompt_class is EntityExtractionPrompt:
             # The model's text answer, split by split_entity_list.
             return _FakeChain(
@@ -162,7 +174,8 @@ async def test_translation_refusal_falls_back_to_original(config: Config) -> Non
         entities=["nobunaga"],
     )
     result = await chain._process_query_step({"query": "織田信長について"})
-    # The refusal is rejected; search uses the original query, not the meta-text.
+    # The prose goes to the fixer, which answers the sentinel; search uses
+    # the original query, not the meta-text.
     assert result.translated_query is None
     assert result.final_query == "織田信長について"
 
@@ -281,3 +294,19 @@ async def test_an_unreachable_model_server_is_never_absorbed(
     )
     with pytest.raises(httpx.ConnectError):
         await chain._extract_dual_keywords("q", "English")
+
+
+async def test_a_translation_the_fixer_cannot_repair_is_degraded(
+    config: Config,
+) -> None:
+    # Not a failure of the query, under ignore_errors=False too: the query
+    # is searched as written and the answer is marked degraded.
+    config.processing.ignore_errors = False
+    config.processing.translation.source_language = "ja"
+    config.processing.translation.target_language = "en"
+    chain = _chain(config)
+    chain.factory = ScriptedLLMFactory(lambda _system, _human: "still not JSON")
+    _install_fakes(chain, translation="I cannot do that.", entities=["nobunaga"])
+    result = await chain._process_query_step({"query": "織田信長について"})
+    assert result.final_query == "織田信長について"
+    assert result.degraded_error == "OutputParserException"

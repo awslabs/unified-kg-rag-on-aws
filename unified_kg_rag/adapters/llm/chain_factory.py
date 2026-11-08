@@ -13,11 +13,13 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import dataclasses
+import threading
 import time
 from collections.abc import AsyncIterator, Collection, Iterator
 from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_classic.output_parsers import OutputFixingParser
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import BaseMessage
 from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.prompts import (
@@ -26,7 +28,7 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
 )
 from langchain_core.runnables import Runnable, RunnableConfig
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from unified_kg_rag.adapters.llm.langchain import (
     LLMJsonOutputParser,
@@ -49,6 +51,7 @@ from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import (
     GraphRAGException,
     LLMOutputTruncatedError,
+    ModelOutputCutOffError,
     get_logger,
 )
 from unified_kg_rag.shared.utils.model_output import (
@@ -690,6 +693,74 @@ def _with_fixer(
     return fixer
 
 
+class FixingJsonOutputParser(LLMJsonOutputParser):
+    """``LLMJsonOutputParser`` that asks a fixing model once when nothing
+    parses: the one failure policy of a JSON answer.
+
+    Read the answer whatever the model family's habits
+    (``parse_model_object``), else ask the fixer once (its answer stripped
+    of reasoning too), else raise ``OutputParserException``, which the
+    caller records as a degraded step (``metadata.degraded_error``) or a
+    failed item. The fixing model is built on the first failure only, so a
+    chain whose answers parse never builds it. A blank answer has nothing
+    to repair and raises at once, as does one cut off inside its last
+    object.
+    """
+
+    _factory: Any = PrivateAttr(default=None)
+    _fixing_model_id: str | None = PrivateAttr(default=None)
+    _model_purpose: ModelPurpose = PrivateAttr(default=ModelPurpose.QUERY)
+    _fixer: BaseOutputParser[Any] | None = PrivateAttr(default=None)
+    _fixer_lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+
+    def _fixing_parser(self) -> BaseOutputParser[Any]:
+        with self._fixer_lock:
+            if self._fixer is None:
+                try:
+                    llm = self._factory.get_model(
+                        model_id=self._fixing_model_id,
+                        model_purpose=self._model_purpose,
+                    )
+                    plain = LLMJsonOutputParser(
+                        answer_keys=self.answer_keys,
+                        schema_model=self.schema_model,
+                        instructions=self.instructions,
+                    )
+                    self._fixer = _with_fixer(plain, llm)
+                except Exception as e:
+                    raise GraphRAGException(
+                        f"Failed to create OutputFixingParser: {e}"
+                    ) from e
+            return self._fixer
+
+    def _repairable(self, text: str, error: OutputParserException) -> bool:
+        """Whether a fixer may repair ``text``: not blank, not cut off (a
+        fixer could only invent the rest), and a fixing model is set."""
+        return (
+            bool(text.strip())
+            and not isinstance(error.__cause__, ModelOutputCutOffError)
+            and self._fixing_model_id is not None
+        )
+
+    def parse(self, text: str) -> Any:
+        try:
+            return super().parse(text)
+        except OutputParserException as e:
+            if not self._repairable(text, e):
+                raise
+            logger.info("JSON answer did not parse: asking the output fixer once")
+            return self._fixing_parser().parse(text)
+
+    async def aparse(self, text: str) -> Any:
+        try:
+            return super().parse(text)
+        except OutputParserException as e:
+            if not self._repairable(text, e):
+                raise
+            logger.info("JSON answer did not parse: asking the output fixer once")
+            return await self._fixing_parser().aparse(text)
+
+
 def create_json_output_parser(
     factory: LLMFactoryPort,
     output_fixing_model_id: str | None,
@@ -698,30 +769,24 @@ def create_json_output_parser(
     schema: type[BaseModel] | None = None,
     instructions: str = "",
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
-) -> BaseOutputParser[Any]:
-    """The JSON answer parser every JSON prompt uses (``LLMJsonOutputParser``
-    over ``parse_model_object``), wrapped in one repair call to
+) -> FixingJsonOutputParser:
+    """The JSON answer parser every JSON prompt uses
+    (:class:`FixingJsonOutputParser`), repairing through
     ``output_fixing_model_id`` (``models.roles.fixing``; None: no repair).
 
-    The one failure policy of a JSON answer: read it whatever the model
-    family's habits (the parser), else ask the fixer once, else raise
-    ``OutputParserException``, which the caller records as a degraded
-    step (``metadata.degraded_error``) or a failed item. ``instructions``
-    tells the fixer what the prompt allows besides the object (a
-    sentinel), so it does not dress a refusal up as an answer.
+    Put it in the chain, or call its ``aparse`` on a chain's raw text.
+    ``answer_keys`` and ``schema`` pick and check the answer
+    (``parse_model_object``); ``instructions`` tells the fixer what the
+    prompt allows besides the object (a sentinel), so it does not dress a
+    refusal up as an answer.
     """
-    parser = LLMJsonOutputParser(
+    parser = FixingJsonOutputParser(
         answer_keys=answer_keys, schema_model=schema, instructions=instructions
     )
-    if output_fixing_model_id is None:
-        return parser
-    try:
-        fixing_llm = factory.get_model(
-            model_id=output_fixing_model_id, model_purpose=model_purpose
-        )
-        return _with_fixer(parser, fixing_llm)
-    except Exception as e:
-        raise GraphRAGException(f"Failed to create OutputFixingParser: {e}") from e
+    parser._factory = factory
+    parser._fixing_model_id = output_fixing_model_id
+    parser._model_purpose = model_purpose
+    return parser
 
 
 def setup_chain(

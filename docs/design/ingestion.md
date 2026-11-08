@@ -415,13 +415,22 @@ gets its models and stores from the run's `Providers` bundle.
   its call timeout (`call_timeout_seconds`) is neither served nor stored: its late answer
   is not its item's, which was retried or failed meanwhile.
 - **Output fixing.** Structured outputs are parsed with an output-fixing
-  parser (the model of `models.roles.fixing`, always on). The XML parser unwraps one
-  element wrapping the expected sections and reads a section holding only
-  "None" (or "N/A", "null", "-") as empty; the extraction, claims and
-  gleaning parsers raise `OutputParserException` for any other answer that
-  parses but is not the prompt's shape (no section, a section holding
-  prose, nameless entities in a complete answer), so the fixer repairs it
-  as it repairs output that does not parse.
+  parser (the model of `models.roles.fixing`, always on). Every chain first
+  drops a leading `<think>`/`<thinking>`/`<reasoning>` block
+  (`ReasoningStripper` in `setup_chain`). The XML parser unwraps one
+  element wrapping the expected sections and reads a section that lists
+  elements (`container_tags`: entities, relationships, claims, the
+  refinement plan, findings, chunk boundaries) but holds text and no
+  element as empty, whatever language the model says "none" in; the
+  extraction, claims and gleaning parsers raise `OutputParserException`
+  for any other answer that parses but is not the prompt's shape (no
+  section, nameless entities in a complete answer), so the fixer repairs
+  it as it repairs output that does not parse. A JSON answer, at
+  ingestion, query and evaluation alike, is read by one parser
+  (`parse_model_object`: fences and prose around it, trailing commas,
+  comments, typographic quotes, invalid escapes, a Python literal, a
+  self-correction ending on the answer) and gets one repair by the same
+  fixing model (`create_json_output_parser`) before its caller degrades.
 - **Resources.** The pipeline releases indexer and client resources in
   `close()`, which `run-ingestion` calls in `finally` (§8.2).
 

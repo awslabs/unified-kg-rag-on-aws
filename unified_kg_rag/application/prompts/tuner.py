@@ -32,7 +32,10 @@ from langchain_core.output_parsers import StrOutputParser
 from pydantic import BaseModel, Field, ValidationError
 
 from unified_kg_rag.adapters.ingestion.graph_extractor import GraphExtractor
-from unified_kg_rag.adapters.llm.chain_factory import setup_chain
+from unified_kg_rag.adapters.llm.chain_factory import (
+    create_json_output_parser,
+    setup_chain,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.schema_sources import redact_location
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
@@ -66,7 +69,6 @@ from unified_kg_rag.shared import LanguageModelError, get_logger
 from unified_kg_rag.shared.utils import (
     entity_key,
     generate_stable_id,
-    parse_llm_json,
     text_digest,
 )
 from unified_kg_rag.shared.utils.sentences import sentence_ends
@@ -454,9 +456,15 @@ class PromptTuner:
             custom_prompts=self.config.custom_prompts,
         )
         raw = await chain.ainvoke({"corpus_sample": corpus_sample})
+        profile_answers = create_json_output_parser(
+            self.factory,
+            self.config.model_id(ModelRole.FIXING),
+            answer_keys=_PROFILE_KEYS,
+            model_purpose=ModelPurpose.INGESTION,
+        )
         try:
-            payload = parse_llm_json(raw, strict=True, answer_keys=_PROFILE_KEYS)
-        except json.JSONDecodeError as e:
+            payload = await profile_answers.aparse(str(raw))
+        except ValueError as e:
             # A default profile here would yield generic prompts presented as
             # tuned ones; fail so the user can retry or fix the model. The
             # model output stays out of the message (it is logged at ERROR)

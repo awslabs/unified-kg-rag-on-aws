@@ -23,6 +23,7 @@ import pytest
 from unified_kg_rag.application.cli import run_evaluation
 from unified_kg_rag.application.retrieval import query_processing, rag_chain
 from unified_kg_rag.application.retrieval.rag_chain import (
+    GraphRAGChain,
     _ExtractionCache,
     extraction_cache_scope,
 )
@@ -304,6 +305,8 @@ class _ExtractingChain:
 
     def _get_chain_for_prompt(self, *args: Any, **kwargs: Any) -> Any:
         return self.model
+
+    _json_parser = GraphRAGChain._json_parser
 
 
 async def _two_arms(chain: _ExtractingChain, scopes: tuple[str, str]) -> list[Any]:

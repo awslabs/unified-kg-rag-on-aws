@@ -25,7 +25,7 @@ import math
 import re
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -364,8 +364,8 @@ def respond(system: str, human: str) -> tuple[str, bool]:
         )
     if "claim extraction specialist" in system:
         return "<claims></claims>", False
-    if "precision relevance evaluator" in system:
-        return "8", False
+    if "deciding whether the provided information is useful" in system:
+        return json.dumps({"reason": "It names the parties.", "rating": 4}), False
     if "community analysis" in system:
         return community_report(human), False
     if "knowledge-graph editor" in system:
@@ -374,9 +374,13 @@ def respond(system: str, human: str) -> tuple[str, bool]:
     if "translate a question into a query plan" in system:
         return plan(_between(human, "<question>\n", "\n</question>")), False
     if "rewrite the latest user message" in system:
-        return rewrite(human), False
+        return json.dumps({"question": rewrite(human)}, ensure_ascii=False), False
     if "search strategy selector" in system:
-        return route(_between(human, 'Query: "', '"') or human), False
+        strategy = route(_between(human, 'Query: "', '"') or human)
+        return json.dumps({"strategy": strategy}), False
+    if "professional technical translator" in system:
+        query = _between(human, "<query>\n", "\n</query>")
+        return json.dumps({"translation": query}, ensure_ascii=False), False
     if "specialized entity extraction expert" in system:
         return ", ".join(_names_in(human)) or "none", False
     if "expert keyword extractor" in system:
@@ -441,8 +445,13 @@ class FakeModels:
         dimensions: int = 64,
         chunk_delay: float = 0.03,
         request_delay: float = 0.0,
+        restyle: Callable[[str, str], str] | None = None,
     ) -> None:
         self.dimensions = dimensions
+        # (system prompt, reply) -> the reply as another model family writes
+        # it (a reasoning block, a Python dict, prose around it): the tests
+        # of how the pipeline reads other families' output.
+        self.restyle = restyle
         self.chunk_delay = chunk_delay
         # Seconds every chat request waits first (a slow model, for tests
         # that stop a run part-way).
@@ -459,6 +468,8 @@ class FakeModels:
             m.get("content", "") for m in messages if m.get("role") == "user"
         )
         reply, streamed = respond(system, human)
+        if self.restyle is not None:
+            reply = self.restyle(system, reply)
         if self.request_delay:
             time.sleep(self.request_delay)
         with self.lock:
@@ -553,10 +564,11 @@ def serve(
     dimensions: int = 64,
     chunk_delay: float = 0.03,
     request_delay: float = 0.0,
+    restyle: Callable[[str, str], str] | None = None,
 ) -> tuple[ThreadingHTTPServer, FakeModels]:
     """Start the server on a daemon thread; ``port`` 0 picks a free one
     (read it from ``server.server_address``)."""
-    models = FakeModels(dimensions, chunk_delay, request_delay)
+    models = FakeModels(dimensions, chunk_delay, request_delay, restyle)
     server = ThreadingHTTPServer((host, port), make_handler(models))
     server.daemon_threads = True
     threading.Thread(

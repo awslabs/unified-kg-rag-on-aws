@@ -177,6 +177,11 @@ class ModelOutputError(LanguageModelError, ValueError):
     is, so a caller that caught that still does."""
 
 
+class ModelOutputCutOffError(ModelOutputError):
+    """Model output whose last JSON object is unclosed: cut off, so not
+    repaired (a fixer could only invent the rest)."""
+
+
 class LLMOutputTruncatedError(LanguageModelError):
     """A model response stopped at its output-token limit, cut mid-answer, or
     an extraction whose every entity lacks a name (cut off the same way). Not

@@ -192,8 +192,11 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   (`global` and `drift` need community reports) and, with filters, those
   that do not apply every filter key (none left: `InvalidFilterError`,
   before any LLM call, so a filter never fails by route); the prompt
-  describes exactly these candidates, and unrecognized output falls back to
-  `local` (else the first candidate). The default set is `local`, `mix`,
+  describes exactly these candidates. The router answers
+  `{"strategy": "<name>"}` (a bare name, as an older custom prompt asks
+  for, is read too), with one repair when it does not parse; a name that is
+  not a candidate, or prose naming several, falls back to `local` (else the
+  first candidate), recorded as `decided_by: fallback`. The default set is `local`, `mix`,
   `global`, `iterative` (`drift` costs up to 27 LLM calls; `iterative`'s
   guide entry keeps it to questions that chain facts through an unnamed
   bridge entity, §6.3); with one candidate no router
@@ -211,9 +214,9 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   sent). It is cancelled at the query's deadline or when the chain closes.
   We chose this over one router
   prompt that also returns entities and keywords because the router prompt
-  and its decision stay byte-identical (no re-validation of the routing),
+  and its decision stay unchanged by the extractions,
   `custom_prompts.strategy_selection_*` keeps working, and the router's
-  output stays one word, at the price of one or two short fast-model
+  output stays one short object, at the price of one or two short fast-model
   calls a query. The extractions are cached per question, target language,
   model and prompt text (`search.query_extraction_cache_size`), so the
   repeats and arms of a comparison read the same ones. The
@@ -246,9 +249,11 @@ depth selects the cut.
   `max_level`, which bounds only this fallback). The walk starts at the roots
   as upstream's does but follows relevant reports to the leaves, where
   upstream's stops at `community_level`. Ratings run
-  `search.max_concurrency` at a time. A rating is the first number of the
-  model's answer, clamped to the prompt's 1-10; an answer without one, like
-  a failed call, keeps its report unrated (MS GraphRAG keeps a report it
+  `search.max_concurrency` at a time. A rating is upstream's JSON
+  (`{"reason": ..., "rating": 0-5}`, `RATE_QUERY`), divided by 5 and
+  compared with `relevance_threshold` (0.2: upstream's rating of 1 or more);
+  an answer without one even after one repair, like a failed call, keeps
+  its report unrated (MS GraphRAG keeps a report it
   could not rate), recorded in `degraded_error` and
   `global_unrated_report_count`.
 
@@ -278,13 +283,14 @@ measured choices (§9.1).
 
 **Degradation.** A map output that `json.loads` refuses is repaired as MS
 GraphRAG's `try_parse_json_object` repairs it with `json_repair`, for the
-defects models write (`_repaired_map_payload`: a raw line break or an invalid
-escape in a string, a trailing comma, the points as a bare list, a quote left
-unescaped inside a description, then read point by point); one still not map
-JSON (an object with a `points` list) is asked for once more, its shape
-logged, never its text (a deviation: MS GraphRAG scores such a batch as one
-empty point). A batch whose map call failed or returned unparseable output
-twice is *unrated*; when no point passed but some reports were never rated, those
+defects models write (`parse_model_object`, the one reader of model JSON: a
+raw line break or an invalid escape in a string, a trailing comma, comments,
+a Python literal, the points as a bare list; then `_salvaged_map_payload`
+for a quote left unescaped inside a description, read point by point); one
+still not map JSON (an object with a `points` list) goes to the output fixer
+once, its shape logged, never its text (a deviation: MS GraphRAG scores such
+a batch as one empty point). A batch whose map call failed or whose output
+the fixer could not repair is *unrated*; when no point passed but some reports were never rated, those
 reports pass through, so global search still answers, and the search
 metadata records it (`degraded_error`). When every map call failed (other than
 on a prompt longer than the model's context) and `processing.ignore_errors` is
@@ -402,7 +408,8 @@ through the strategy registry, so there is no dispatch on the base:
    within `controller_context_tokens` (null: the answer's own budget, so
    the controller judges what the answer will read; a smaller cap leaves
    it only the first passages of a context of long chunks), plus what was already
-   searched. It returns JSON (`parse_llm_json` with answer keys):
+   searched. It returns JSON (`parse_model_object` with answer keys, one
+   repair, else the stop reason `controller_unparsed`, marked degraded):
    `sufficient`, `known_facts`, `bridge_entities` (as the context writes
    them) and at most `max_next_queries` (2) `next_queries` naming them.
 3. *Follow-up round.* The base search reruns seeded with the new bridge
