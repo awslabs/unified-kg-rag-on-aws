@@ -128,11 +128,13 @@ class GraphQueryExecutionError(GraphQueryError):
 
 
 class ModelError(GraphRAGException):
-    pass
+    """A model call that failed or a model that cannot be built: a
+    language, embedding or rerank model."""
 
 
 class EmbeddingModelError(ModelError):
-    pass
+    """An embedding model that cannot be built (an unsupported id or
+    dimension) or a query embedding that failed after its retries."""
 
 
 class IndexNotFoundError(GraphRAGException):
@@ -164,7 +166,8 @@ class ToolArgumentError(GraphRAGException, ValueError):
 
 
 class LanguageModelError(ModelError):
-    pass
+    """A language model that cannot be built (an unsupported setting for it)
+    or an answer it gave that cannot be used."""
 
 
 class LLMOutputTruncatedError(LanguageModelError):
@@ -228,7 +231,9 @@ class QueryTimeoutError(GraphRAGException, TimeoutError):
 
 
 class RerankModelError(ModelError):
-    pass
+    """A rerank model that cannot be built or a rerank call that failed. A
+    query raises it only with ``search.reranking.required``; otherwise it
+    answers from the fused order."""
 
 
 class StoreConnectionError(AWSServiceError, ConnectionError):
