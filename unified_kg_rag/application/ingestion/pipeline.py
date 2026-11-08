@@ -138,6 +138,7 @@ from unified_kg_rag.shared import (
     NamespaceLeaseError,
     PipelineExecutionError,
     PipelineInterrupted,
+    PipelineStateError,
     get_logger,
     observability,
 )
@@ -797,9 +798,15 @@ class DataIngestionPipeline:
         scope is kept. For a directory corpus, the ids are the files'
         relative paths and ``source_scope`` its scope.
 
+        A deletion is retried under its ``pipeline_id``: an id the registry
+        no longer holds because the run interrupted before deleted its
+        record (its saved delta lists it) is taken as deleted, and the
+        others are finished.
+
         Raises:
             DocumentNotFoundError: An id the registry does not hold for the
-                index namespace and ``source_scope`` (nothing is deleted).
+                index namespace and ``source_scope`` (nothing is deleted),
+                that no earlier run of ``pipeline_id`` deleted.
             ConfigurationError, ValueError, NamespaceLeaseError,
             StoreConnectionError, PipelineExecutionError: As for
                 :meth:`insert_documents`.
@@ -830,7 +837,17 @@ class DataIngestionPipeline:
                     close()
         else:
             held = registry.get_many(list(doc_ids))
-        missing = [name for doc_id, name in doc_ids.items() if doc_id not in held]
+        gone = [doc_id for doc_id in doc_ids if doc_id not in held]
+        done = self._deleted_by(pipeline_id, gone)
+        if done:
+            logger.info(
+                "%d of the documents to delete were deleted by the interrupted "
+                "run '%s' already; finishing the others",
+                len(done),
+                pipeline_id,
+            )
+            names = [name for doc_id, name in doc_ids.items() if doc_id not in done]
+        missing = [doc_ids[doc_id] for doc_id in gone if doc_id not in done]
         if missing:
             raise DocumentNotFoundError(
                 f"No document {', '.join(map(repr, missing[:10]))}"
@@ -839,6 +856,28 @@ class DataIngestionPipeline:
                 f"and source scope {source_scope!r}: nothing was deleted"
             )
         return self._run_changes([], tuple(names), source_scope, pipeline_id)
+
+    def _deleted_by(self, pipeline_id: str | None, doc_ids: list[str]) -> set[str]:
+        """The ``doc_ids`` the saved delta of the run ``pipeline_id`` deletes
+        (none without an earlier run of that id, or one that saved none): a
+        deletion it was interrupted in already deleted their records."""
+        if not pipeline_id or not doc_ids:
+            return set()
+        try:
+            if not self.state_manager.pipeline_exists(pipeline_id):
+                return set()
+            metadata = self.state_manager.load_pipeline_metadata(pipeline_id)
+        except PipelineStateError as e:
+            logger.warning(
+                "Could not read the saved state of run '%s' (%s): its deleted "
+                "documents are not known",
+                pipeline_id,
+                e,
+            )
+            return set()
+        delta = metadata.get("incremental_delta")
+        deleted = delta.get("deleted") if isinstance(delta, dict) else None
+        return set(doc_ids) & set(deleted if isinstance(deleted, list) else [])
 
     def _run_changes(
         self,

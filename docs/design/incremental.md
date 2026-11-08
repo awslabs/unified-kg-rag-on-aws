@@ -500,7 +500,9 @@ stage hands `filter_to_delta` the ids to delete (none for an insert):
 hold from `deleted` to `kept` (and `unchanged`: downstream, a kept document
 is an unchanged one, so the graph stages treat the run as an incremental
 delta, never as a full build), deletes only the named ones and refuses one
-the scope does not hold (`DocumentNotFoundError`); no mass-deletion
+the scope does not hold (`DocumentNotFoundError`; a retry under the
+`pipeline_id` of an interrupted deletion takes an id its saved delta deletes
+as deleted); no mass-deletion
 question is asked, since the caller named them. A call needs the registry
 (without it every run is a full build of its documents) and refuses
 `indexing.reset`, or a run the pipeline would rebuild to add a methodology

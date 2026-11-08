@@ -411,3 +411,55 @@ def test_delete_documents_closes_a_registry_it_builds(
     with pytest.raises(DocumentNotFoundError):
         pipeline.delete_documents(["never-inserted"])
     assert closed == [True]
+
+
+class _Killed(BaseException):
+    """A process death: no ``except Exception`` handler absorbs it."""
+
+
+@pytest.mark.parametrize("after", [False, True], ids=["first-only", "both"])
+def test_a_deletion_killed_after_its_first_record_delete_is_retried(
+    setup, mocker, after: bool
+) -> None:
+    # The registry deletes the documents' records one by one, last. A run
+    # killed after the first left the others: retried under its pipeline
+    # id, the deletion refused the id already gone ("nothing was deleted"),
+    # so it could not be finished.
+    from unified_kg_rag.adapters.doc_status.sqlite import SQLiteDocStatusStore
+
+    config, providers, pipeline = setup
+    _ok(
+        pipeline.insert_documents(
+            [
+                {"id": "a", "text": "Vendor supplies widgets to Buyer."},
+                {"id": "b", "text": "Depot stores widgets for Vendor."},
+                {"id": "c", "text": "Carrier ships widgets for Buyer."},
+            ]
+        )
+    )
+    delete = SQLiteDocStatusStore.delete
+    calls = {"n": 0}
+
+    def dies_second(self, doc_id):  # noqa: ANN001, ANN202
+        calls["n"] += 1
+        if calls["n"] == 2:
+            if after:
+                delete(self, doc_id)
+            raise _Killed
+        return delete(self, doc_id)
+
+    mocker.patch.object(SQLiteDocStatusStore, "delete", dies_second)
+    with pytest.raises(_Killed):
+        pipeline.delete_documents(["a", "b"], pipeline_id="del-1")
+    mocker.stopall()
+    assert len(_records(providers)) == (1 if after else 2)
+
+    _ok(pipeline.delete_documents(["a", "b"], pipeline_id="del-1"))
+
+    assert set(_records(providers)) == {"c"}
+    assert _entity_names(providers) == {"Carrier", "Buyer"}
+    assert _stored_texts(config, providers) == {"Carrier ships widgets for Buyer."}
+    # Another id is still refused: only those the interrupted run deleted
+    # are taken as done.
+    with pytest.raises(DocumentNotFoundError, match="'a'"):
+        pipeline.delete_documents(["a", "c"], pipeline_id="del-2")

@@ -93,7 +93,9 @@ finally:
 - Both return the run's `PipelineContext`; `incremental_delta` lists what
   was new, changed, deleted and `kept`. `delete_documents` raises
   `DocumentNotFoundError`, before any write, for an id the registry does
-  not hold in the scope. Without the registry, or with `indexing.reset`,
+  not hold in the scope; retried with the `pipeline_id` of an interrupted
+  deletion, it takes the ids that run already deleted as done and finishes
+  the others. Without the registry, or with `indexing.reset`,
   both raise `ConfigurationError`: a full build of the given documents
   would replace the rest of the namespace.
 - A methodology added to `indexing.methodologies` that builds what the
