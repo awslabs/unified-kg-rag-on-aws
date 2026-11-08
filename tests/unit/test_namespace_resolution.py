@@ -12,10 +12,10 @@ same config wrote ``index_value``.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 
+from tests.fixtures.source_guards import SourceGuard, text_matching
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.retrieval.store_names import (
     namespace_suffix,
@@ -24,8 +24,6 @@ from unified_kg_rag.domain.retrieval.store_names import (
 
 pytestmark = pytest.mark.unit
 
-PACKAGE = Path(__file__).resolve().parents[2] / "unified_kg_rag"
-OWNER = PACKAGE / "domain" / "retrieval" / "store_names.py"
 
 # An ad-hoc fallback to the default suffix or to the config's index_value.
 _COPIES = re.compile(
@@ -62,15 +60,20 @@ def test_namespace_suffix_defaults_without_a_config() -> None:
     assert namespace_suffix("tenant") == "tenant"
 
 
+# One rule, one owner (tests/fixtures/source_guards, as the other
+# single-owner guards in test_single_owner_guards.py).
+GUARD = SourceGuard(
+    name="namespace rule",
+    use="resolve_namespace/namespace_suffix",
+    owners=("domain/retrieval/store_names.py",),
+    find=text_matching(_COPIES),
+)
+
+
 def test_no_copy_of_the_namespace_rule_remains() -> None:
-    found = [
-        f"{path.relative_to(PACKAGE)}:{text[: m.start()].count(chr(10)) + 1}"
-        for path in sorted(PACKAGE.rglob("*.py"))
-        if path != OWNER
-        for text in [path.read_text(encoding="utf-8")]
-        for m in _COPIES.finditer(text)
-    ]
-    assert not found, f"use resolve_namespace/namespace_suffix: {found}"
+    found = [str(hit) for hit in GUARD.copies()]
+    assert not found, f"use {GUARD.use}: {found}"
+    assert GUARD.hits(), "the owner no longer matches the pattern it guards"
 
 
 def test_the_copy_pattern_catches_the_old_forms() -> None:
