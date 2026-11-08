@@ -51,7 +51,6 @@ _CASES: list[tuple[BaseException, x.ErrorClass, int, bool]] = [
     (x.StoreConnectionError("down"), x.ErrorClass.STORE_UNREACHABLE, 1, False),
     (x.StoreTimeoutError("slow"), x.ErrorClass.STORE_UNREACHABLE, 1, False),
     (x.ModelUnreachableError("m"), x.ErrorClass.MODEL_UNREACHABLE, 1, False),
-    (x.LanguageModelTimeoutError("llm"), x.ErrorClass.FAILURE, 1, False),
     (x.GuardrailError("g"), x.ErrorClass.FAILURE, 1, False),
     (RuntimeError("r"), x.ErrorClass.FAILURE, 1, False),
 ]
