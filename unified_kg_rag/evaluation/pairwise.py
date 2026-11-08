@@ -83,6 +83,7 @@ from unified_kg_rag.domain.models import (
     ModelPurpose,
     ModelRole,
 )
+from unified_kg_rag.domain.models.config import EFFORT_THINKING_TOKENS
 from unified_kg_rag.domain.prompts import (
     PairwiseComparisonOverallPrompt,
     PairwiseComparisonPrompt,
@@ -91,7 +92,6 @@ from unified_kg_rag.domain.prompts import (
     PairwiseOverlapPrompt,
 )
 from unified_kg_rag.domain.retrieval.citations import strip_markers
-from unified_kg_rag.ports.model_factory import EFFORT_THINKING_TOKENS
 from unified_kg_rag.shared import EvaluationException, get_logger, observability
 
 from .comparison import bootstrap_ci, sign_flip_p_value

@@ -16,7 +16,6 @@ from unified_kg_rag.application.storage.stored_items import (
     _reads_back,
     _vector_stale,
 )
-from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.cache_keys import unbuilt_record_prefixes
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
@@ -29,6 +28,7 @@ from unified_kg_rag.domain.ingestion.merge import (
     remove_text_units,
 )
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.models import Entity, Relationship
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger

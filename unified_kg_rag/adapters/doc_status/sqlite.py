@@ -186,19 +186,25 @@ class SQLiteDocStatusStore:
 
     def get_many(self, doc_ids: Iterable[str]) -> dict[str, DocStatusRecord]:
         ids = list(dict.fromkeys(doc_ids))
+        # By the primary key (namespace, doc_id): doc_id alone scans the table.
+        by_namespace: dict[str, list[str]] = {}
+        for doc_id in ids:
+            by_namespace.setdefault(doc_id_namespace(doc_id), []).append(doc_id)
         found: dict[str, DocStatusRecord] = {}
         with self._lock, self._registry_errors("read records"):
-            for start in range(0, len(ids), _BATCH):
-                batch = ids[start : start + _BATCH]
-                marks = ",".join("?" * len(batch))
-                reader = self._reader()
-                # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query - sqlite3 with bound values
-                rows = reader.execute(
-                    f"SELECT doc_id, record FROM documents WHERE doc_id IN ({marks})",  # nosec B608 - ? marks only, values bound
-                    batch,
-                ).fetchall()
-                for doc_id, record in rows:
-                    found[doc_id] = DocStatusRecord.model_validate_json(record)
+            for namespace, namespace_ids in by_namespace.items():
+                for start in range(0, len(namespace_ids), _BATCH):
+                    batch = namespace_ids[start : start + _BATCH]
+                    marks = ",".join("?" * len(batch))
+                    reader = self._reader()
+                    # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query - sqlite3 with bound values
+                    rows = reader.execute(
+                        "SELECT doc_id, record FROM documents "  # nosec B608 - ? marks only, values bound
+                        f"WHERE namespace = ? AND doc_id IN ({marks})",
+                        [namespace, *batch],
+                    ).fetchall()
+                    for doc_id, record in rows:
+                        found[doc_id] = DocStatusRecord.model_validate_json(record)
         return {doc_id: found[doc_id] for doc_id in ids if doc_id in found}
 
     def put(self, record: DocStatusRecord) -> None:

@@ -12,7 +12,6 @@ from unified_kg_rag.adapters.ingestion.description_summarizer import (
     SUMMARIZED_FROM_ATTRIBUTE,
 )
 from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
-from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.contributions import (
     claims_from_payload,
     record_from_payload,
@@ -20,6 +19,7 @@ from unified_kg_rag.domain.ingestion.contributions import (
 )
 from unified_kg_rag.domain.ingestion.derivation import derive
 from unified_kg_rag.domain.ingestion.merge import remove_text_units
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import annotate_sources
 from unified_kg_rag.domain.models import (
     Claim,

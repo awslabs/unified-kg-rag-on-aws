@@ -30,9 +30,11 @@ from unified_kg_rag.adapters.local.models import (
     import_optional,
     local_transient_retry,
     ollama_async_client_kwargs,
+    ollama_client_kwargs,
     openai_http_async_client,
     per_loop_async_client,
     request_timeout,
+    tls_context,
 )
 from unified_kg_rag.domain.models import Config, ModelPurpose, model_id_value
 from unified_kg_rag.domain.models.config import TransientRetryConfig
@@ -199,6 +201,13 @@ class OpenAICompatibleEmbeddingFactory(_LocalEmbeddingFactory):
             extra["http_client"] = httpx.Client(
                 transport=self.transport, timeout=timeout
             )
+        else:
+            # The OpenAI client's own sync client, on the shared TLS context
+            # (it builds one per model otherwise).
+            openai = importlib.import_module("openai")
+            extra["http_client"] = openai.DefaultHttpxClient(
+                timeout=timeout, verify=tls_context()
+            )
         embeddings: Embeddings = module.OpenAIEmbeddings(
             model=model_id,
             base_url=self.settings.base_url,
@@ -228,7 +237,7 @@ class OllamaEmbeddingFactory(_LocalEmbeddingFactory):
     def _build(self, model_id: str, purpose: ModelPurpose) -> Embeddings:
         module = import_optional("langchain_ollama", self.kind)
         timeout = request_timeout(self.config, self.settings.timeout_seconds, purpose)
-        client_kwargs: dict[str, Any] = {"timeout": timeout}
+        client_kwargs = ollama_client_kwargs(timeout)
         async_timeout = timeout if purpose is ModelPurpose.QUERY else None
         if self.transport is not None:
             client_kwargs["transport"] = self.transport

@@ -52,7 +52,7 @@ from unified_kg_rag.adapters.evaluators.base import (
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.application.retrieval.citations import citations_enabled
-from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,

@@ -626,6 +626,10 @@ From a `main` checkout (formats and keys no release had):
   text units of documents indexed from this release on; to add them to an existing namespace, re-ingest it
   (`indexing.reset: true`): chunk boundaries and text-unit ids do not change, so the extraction store's records are
   reused and the cost is the embedding and indexing of the text units.
+- Ingestion output floors add the thinking budget of the effort a call runs at, not always the `high` one (8192): a
+  call on a fast-tier role (`translation` by default) or under `aws.bedrock.ingestion_effort` asks for another
+  `max_tokens`, so its LLM response-cache entries miss once and a re-run of that stage pays its model calls again;
+  extraction-store records are reused (they are keyed by the effort, not by `max_tokens`).
 - #628 `run-visualization` no longer takes the provider flags (`--backend`, `--llm-provider`, `--llm-model`,
   `--embedding-provider`, `--embedding-model`, `--embedding-dimension`): it renders exported data and calls no model,
   so a script passing one exits 2 until it drops it.
@@ -1146,7 +1150,8 @@ From a `main` checkout (formats and keys no release had):
   whose runs record different judges, judge efforts or ragas embedding models warns. The CDK
   stack's default Bedrock grant covers it (#533, #536, #645).
 - Models: Claude Sonnet/Opus 5.5, Opus 4.6-4.8, Sonnet 4.6, Haiku 5.5 and OpenAI GPT models on Bedrock, free-form
-  ids with `aws.bedrock.model_overrides`, reasoning effort per tier (#113, #117, #127, #128, #162, #179);
+  ids with `aws.bedrock.model_overrides`, reasoning effort per tier; a long-output ingestion prompt reserves its
+  longest answer plus the thinking budget of the effort its call runs at (#113, #117, #127, #128, #162, #179);
   `aws.bedrock.query_prompt_cache_ttl: 1h` (#458). See [models](docs/reference/models.md).
 - `processing.chunking.length_unit: tokens`: chunk sizes in a script-aware token estimate (#460).
 - `indexing.neptune.vertex_ids: custom` (`<label>:<item id>` vertex ids); graph expansion reads either mode during a
@@ -1351,10 +1356,24 @@ From a `main` checkout (formats and keys no release had):
 - The `graph_analysis` stage no longer computes the average clustering coefficient (about 10 s at 80,000 entities)
   or the diameter, which no stage read: `graph.analysis.statistics.calculate_average_clustering` and
   `calculate_diameter` load with a WARNING and are ignored (#608, #628).
-- Embedding requests in flight are bounded by `processing.max_concurrency` too (at most 16 as before) (#608).
+- Embedding requests in flight are bounded by `processing.max_concurrency` too (at most 16 as before) (#608);
+  `processing.embedding_concurrency` (16) and `processing.embedding_batch_size` (50 texts per request) set them.
 - Stage cache keys cover the whole configuration and the package version (#332).
 - `BatchProcessor` runs one pool of `processing.max_concurrency` items, connection pools follow the concurrency, and
-  OpenSearch indexing embeds and writes 800 items of a type at a time (#296, #309, #310).
+  OpenSearch indexing embeds and writes 800 items of a type at a time (`embedding_batch_size` x
+  `embedding_concurrency`, at most 1,000) (#296, #309, #310).
+- With the doc-status registry on, a run parses only the source files whose bytes or parser changed since they were
+  indexed: each record keeps its file's source digest (`DocStatusRecord.source_digest`), an unchanged file enters the
+  diff with its record's content hash, and one the run processes after all (other extraction settings) is parsed
+  before its attempt opens. A reset, `processing.deduplicate` or a `target_directory` export parses every file. Files
+  parse in a process pool once the rest is expected to take longer than starting one. The first run after upgrading
+  parses every file once and records their digests.
+- Stage-cache files are compact UTF-8 JSON, half the bytes to write and hash; entries written indented still load.
+- Faster at query time and ingestion: the query path no longer imports datasketch and SciPy (about a second per
+  process; the name keys are in `domain/ingestion/names.py`), the SQLite registry reads records by key (a full table
+  scan per batch before), the local model clients share one TLS context (a model built in under 1 ms, 13-28 ms
+  before), the contribution merge copies only the statement each id keeps, and an XML answer is scanned for its
+  sections once.
 - The `graph_analysis` stage computes no centrality (#248); `run-visualization` computes it only for a renderer that
   reads it (`BaseRenderer.needs_centrality`) (#563).
 - The parser uses its own loaders on langchain-core (same text and ids; a 4,000-page PDF loads in about 1 s);

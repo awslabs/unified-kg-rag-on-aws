@@ -54,10 +54,12 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     REGISTRY_NAMESPACE_KEY,
     REGISTRY_SOURCE_KEY,
     RELATIVE_PATH_KEY,
+    UNPARSED_CONTENT_HASH_KEY,
     compute_doc_id,
     compute_document_id,
     compute_text_hash,
     is_local_path_scope,
+    is_unparsed,
     normalize_source_path,
     normalize_source_scope,
     registry_namespace,
@@ -119,7 +121,11 @@ class DocStatusReader(Protocol):
 
 
 def compute_content_hash(document: Document) -> str:
-    """Compute a content hash for change detection over the document text."""
+    """Compute a content hash for change detection over the document text:
+    for a document this run did not parse (``is_unparsed``), the one its
+    registry record holds."""
+    if is_unparsed(document):
+        return str(document.metadata[UNPARSED_CONTENT_HASH_KEY])
     return compute_text_hash(document.page_content)
 
 

@@ -18,7 +18,7 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     Constants,

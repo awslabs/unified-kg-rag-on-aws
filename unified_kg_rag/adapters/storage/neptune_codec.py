@@ -33,7 +33,7 @@ from collections.abc import Collection, Mapping
 from typing import Any
 
 from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
-from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SOURCE_KINDS_FIELD,
     encoded_source_kinds,

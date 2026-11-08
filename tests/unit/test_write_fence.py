@@ -297,10 +297,7 @@ def test_a_lost_lease_stops_a_full_build_before_its_alias_swap(tmp_path: Path) -
     # swapped the alias onto the partial index and deleted the complete one.
     from tests.fixtures.fakes.embeddings import HashingEmbeddingFactory
     from unified_kg_rag.adapters.local.search_engine import SQLiteSearchEngine
-    from unified_kg_rag.adapters.storage.opensearch_indexer import (
-        _WRITE_SLICE_SIZE,
-        OpenSearchIndexer,
-    )
+    from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
     from unified_kg_rag.shared.write_fence import check_write_fence
 
     class _FencedEngine(SQLiteSearchEngine):
@@ -314,7 +311,7 @@ def test_a_lost_lease_stops_a_full_build_before_its_alias_swap(tmp_path: Path) -
         embedding_factory=HashingEmbeddingFactory(dimensions=8),
         opensearch_client=engine,
     )
-    count = _WRITE_SLICE_SIZE * 2
+    count = indexer._write_slice_size * 2
     indexer.index_text_units(
         [TextUnit(id=f"old{i}", text=f"old text {i}") for i in range(count)],
         suffixes=["default"],

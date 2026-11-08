@@ -325,6 +325,8 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         "custom_prompts.claim_extraction_human",
     ),
     "processing.max_concurrency": _neutral(_THROUGHPUT),
+    "processing.embedding_concurrency": _neutral(_THROUGHPUT),
+    "processing.embedding_batch_size": _neutral(_THROUGHPUT),
     "processing.io_workers": _neutral(_THROUGHPUT),
     # --- the corpus-wide stages --------------------------------------------
     **_keyed_at(

@@ -535,6 +535,12 @@ class DataIngestionPipeline:
                 "source_directory": self.source_directory,
                 "target_directory": self.target_directory,
                 "cache_directory": cache_directory,
+                # The loading stage reads the files left unparsed.
+                "doc_status": (
+                    doc_status
+                    if self._stage_enabled(PipelineStageType.DOCUMENT_LOADING)
+                    else None
+                ),
             },
             PipelineStageType.DOCUMENT_LOADING: {
                 "source_directory": self.source_directory,
@@ -1621,6 +1627,7 @@ class DataIngestionPipeline:
                     source_directory=source_directory,
                     target_directory=stage.target_directory,
                     cache_directory=stage.cache_directory,
+                    doc_status=stage._doc_status,
                 )
             elif isinstance(stage, DocumentLoadingStage):
                 self.stages[index] = type(stage)(

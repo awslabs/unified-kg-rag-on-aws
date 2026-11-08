@@ -379,11 +379,12 @@ class CacheManager:
         try:
             sample_size = min(10, data_length)
             sample_data = data[:sample_size]
-            # Estimate with the SAME serialization used to write (serialize_data,
-            # indent=2). json.dumps without indent under-counts the on-disk size,
-            # so a file that will exceed the limit could be written un-chunked.
-            sample_json = self.serialize_data(sample_data)
-            estimated_size = (len(sample_json) / sample_size) * data_length
+            # Estimate with the SAME serialization used to write
+            # (serialize_data), in UTF-8 bytes: a character count under-counts
+            # non-ASCII text, so a file over the limit could be written
+            # un-chunked.
+            sample_bytes = len(self.serialize_data(sample_data).encode("utf-8"))
+            estimated_size = (sample_bytes / sample_size) * data_length
             estimated_size_mb = estimated_size / 1024 / 1024
 
             if estimated_size > self.MAX_FILE_BYTES:
@@ -461,8 +462,8 @@ class CacheManager:
         else:
             sample_size = min(5, len(data))
             sample_data = data[:sample_size]
-            sample_json = self.serialize_data(sample_data)
-            avg_size_per_item = len(sample_json) / sample_size
+            sample_bytes = len(self.serialize_data(sample_data).encode("utf-8"))
+            avg_size_per_item = sample_bytes / sample_size
             target_chunk_size_bytes = self.MAX_FILE_BYTES
             items_per_chunk = max(1, int(target_chunk_size_bytes / avg_size_per_item))
             chunks = list(self._chunk_data(data, items_per_chunk))
@@ -532,8 +533,19 @@ class CacheManager:
         self._save_cache_index(index)
         self.stats.total_size_bytes += entry.file_size or 0
 
-    def serialize_data(self, data: Any, indent: int | None = 2) -> str:
-        return json.dumps(data, indent=indent, default=self._json_default)
+    def serialize_data(self, data: Any) -> str:
+        """``data`` as the JSON text a cache file holds: compact UTF-8 (no
+        indentation, no ASCII escapes), half the bytes to write and hash of
+        the indented form. Entries are verified against the hash of their
+        own text, so files an earlier release wrote indented still load.
+        Text UTF-8 cannot encode (a lone surrogate a decoder let through) is
+        written with ASCII escapes instead."""
+        text = json.dumps(data, ensure_ascii=False, default=self._json_default)
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            return json.dumps(data, default=self._json_default)
+        return text
 
     @staticmethod
     def _json_default(o: Any) -> Any:

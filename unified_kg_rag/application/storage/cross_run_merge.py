@@ -26,7 +26,7 @@ from unified_kg_rag.application.storage.stored_items import (
     _with_old_ids,
     unit_records,
 )
-from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher, compact_name_key
+from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
 from unified_kg_rag.domain.ingestion.derivation import Derived, derive
 from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.merge import (
@@ -37,6 +37,7 @@ from unified_kg_rag.domain.ingestion.merge import (
     relationship_key,
     remove_text_units,
 )
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     sync_relationship_endpoint_names,
 )

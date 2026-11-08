@@ -277,7 +277,7 @@ def test_one_read_of_stored_digests_per_write_slice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     indexer, model = _indexer(tmp_path / "v.sqlite3")
-    count = module._WRITE_SLICE_SIZE + 5
+    count = indexer._write_slice_size + 5
     units = [TextUnit(id=f"t{i:05d}", text=f"unit {i}") for i in range(count)]
     indexer.index_text_units(units)
     model.texts.clear()
@@ -286,10 +286,10 @@ def test_one_read_of_stored_digests_per_write_slice(
     indexer.upsert_text_units(units)
 
     assert model.texts == []
-    assert module._WRITE_SLICE_SIZE <= module._READ_BATCH_SIZE
+    assert indexer._write_slice_size <= module._READ_BATCH_SIZE
     digests = (module._DIGESTS_FIELD,)
     assert [n for n, fields in reads if fields == digests] == [
-        module._WRITE_SLICE_SIZE,
+        indexer._write_slice_size,
         5,
     ]
     vectors = [n for n, fields in reads if fields != digests]

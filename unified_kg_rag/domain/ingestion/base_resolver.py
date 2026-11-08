@@ -1,34 +1,52 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-import re
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Sequence
 from difflib import SequenceMatcher
 from functools import lru_cache
-from typing import Any
-
-from datasketch import MinHash, MinHashLSH
+from typing import TYPE_CHECKING, Any
 
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
+
+# Re-exported: the name keys moved to ``names`` (no matching engine there).
+from unified_kg_rag.domain.ingestion.names import (
+    compact_name_key,
+    discriminator_tokens,
+    entity_types_compatible,
+    head_character,
+    normalize_entity_type,
+)
 from unified_kg_rag.domain.models import Config, ResolutionMethod
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.utils import (
-    default_max_workers,
-    entity_key,
-    normalize_name,
-)
-from unified_kg_rag.shared.utils.legal_forms import strip_legal_forms
-from unified_kg_rag.shared.utils.scripts import (
-    drop_dense_script_spaces,
-    is_dense_script_char,
-)
+from unified_kg_rag.shared.utils import default_max_workers, entity_key
+
+if TYPE_CHECKING:
+    from datasketch import MinHash
+
+__all__ = [
+    "BaseResolver",
+    "FuzzyMatcher",
+    "compact_name_key",
+    "discriminator_tokens",
+    "entity_types_compatible",
+    "head_character",
+    "normalize_entity_type",
+]
 
 logger = get_logger(__name__)
 
-# datasketch's default scheme, named explicitly because it must be passed
-# alongside precomputed permutations.
-_MINHASH_SCHEME = MinHash().scheme
+# datasketch (and the SciPy it loads, about a second) is imported when a
+# matcher first needs MinHash, not with this module.
+
+
+@lru_cache(maxsize=1)
+def _minhash_scheme() -> Any:
+    """datasketch's default scheme, named explicitly because it must be
+    passed alongside precomputed permutations."""
+    from datasketch import MinHash
+
+    return MinHash().scheme
 
 
 @lru_cache(maxsize=8)
@@ -36,6 +54,8 @@ def _lsh_params(threshold: float, num_perm: int) -> tuple[int, int]:
     """The ``(bands, rows)`` datasketch picks for ``threshold`` and
     ``num_perm``: a numerical optimisation of about 20 ms that every
     ``MinHashLSH`` otherwise repeats, once per matcher (per resolution)."""
+    from datasketch import MinHashLSH
+
     lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
     return lsh.b, lsh.r
 
@@ -48,98 +68,9 @@ def _minhash_permutations(num_perm: int) -> Any:
     the same for every name, so they are built once per ``num_perm`` and
     shared (MinHash only reads them). Signatures are unchanged.
     """
+    from datasketch import MinHash
+
     return MinHash(num_perm=num_perm).permutations
-
-
-# Multi-letter Roman numerals ("ii", "iv", "xii"); single letters ("i", "v",
-# "x") are already covered by the single-character rule below. This also matches
-# a few real words ("vi", "xi", "iv"), which is accepted: a spurious
-# discriminator only *blocks* a fuzzy merge (both names stay separate entities;
-# exact-key merges are unaffected), whereas dropping the rule would merge
-# "Annex II" into "Annex III" or "Phase II" into "Phase III".
-_RE_ROMAN_NUMERAL = re.compile(r"x{0,3}(?:ix|iv|v?i{0,3})")
-
-# Entity types that carry no information and so never block a merge.
-_GENERIC_ENTITY_TYPES = frozenset({"", "unknown"})
-
-
-def compact_name_key(name: str | None) -> str:
-    """Return the ``entity_key`` of ``name`` without its spelling variants.
-
-    Legal-form designators are stripped (``shared.utils.legal_forms``) and
-    spaces next to Han, Hangul and Kana letters dropped. Names with the same
-    compact key are the same entity written differently, and the fuzzy
-    matcher links them with score 1.0.
-    This is a matching key only: entity ids keep using ``entity_key``.
-    """
-    return drop_dense_script_spaces(strip_legal_forms(entity_key(name)))
-
-
-def head_character(name: str | None) -> str:
-    """Return the final character of a dense-script name, else ``""``.
-
-    In Han, Hangul and Kana compounds the head noun comes last and is often
-    one character: "가나다연구원" (institute) and "가나다연구소" (lab) share
-    every character but the head and name different organizations, and so do
-    the given names 김철수 and 김철민. Two names may only be fuzzy-linked when
-    their head characters are equal. For a name ending in another script the
-    result is ``""``, so Latin names are unaffected.
-    """
-    key = compact_name_key(name)
-    return key[-1] if key and is_dense_script_char(key[-1]) else ""
-
-
-def discriminator_tokens(name: str | None) -> frozenset[str]:
-    """Return the tokens of ``name`` that identify *which* instance it denotes.
-
-    Character-shingle similarity cannot tell "purchase order 1001" from
-    "purchase order 1002" or "vendor a" from "vendor b": the shared prefix
-    dominates the score. The differing part is a short identifier token, so
-    two names may only be fuzzy-linked when their discriminator tokens are
-    identical. After :func:`normalize_name` tokenization, a token counts as a
-    discriminator when it
-
-    * contains a digit of any script (``1001``, ``4``, ``2b``, ``v2``), or
-    * is a single letter or digit of any script (``a``, ``b``, ``甲``/``乙``,
-      ``갑``/``을``, ``α``/``β``, ``ä``/``ö``), or
-    * is a multi-letter ASCII Roman numeral (``ii``, ``iv``, ``xii``).
-
-    Tokens are already NFKC-normalized and casefolded by ``normalize_name``, so
-    a precomposed or full-width designator is one character here.
-
-    Requiring *equality* (not overlap) keeps the relation transitive, so a
-    cluster built from guarded links can never contain two members whose
-    discriminators differ. The rule is deliberately conservative: a variant
-    that only one side spells with an initial ("J. Smith" vs "Smith") stays a
-    separate entity rather than risking a wrong merge.
-
-    Legal-form designators are removed first (:func:`strip_legal_forms`), so
-    the "주" of "(주)가나다" does not count as an identifier.
-    """
-    tokens = normalize_name(strip_legal_forms(name) if name else name).split()
-    return frozenset(
-        token
-        for token in tokens
-        if any(c.isdigit() for c in token)
-        or (len(token) == 1 and token.isalnum())
-        or (len(token) > 1 and token.isascii() and _RE_ROMAN_NUMERAL.fullmatch(token))
-    )
-
-
-def normalize_entity_type(entity_type: str | None) -> str:
-    """Normalize an entity type for compatibility checks ("" = unknown)."""
-    normalized = normalize_name(entity_type)
-    return "" if normalized in _GENERIC_ENTITY_TYPES else normalized
-
-
-def entity_types_compatible(type_a: str | None, type_b: str | None) -> bool:
-    """Whether two entity types allow a fuzzy merge.
-
-    Types are compatible when they normalize to the same value or either side
-    is empty/unknown (the extractor does not always emit a type).
-    """
-    a, b = normalize_entity_type(type_a), normalize_entity_type(type_b)
-    return not a or not b or a == b
 
 
 class FuzzyMatcher:
@@ -191,6 +122,8 @@ class FuzzyMatcher:
             self.compact_index.setdefault(compact_name_key(name), []).append(name)
 
     def _build_minhash_lsh(self) -> None:
+        from datasketch import MinHashLSH
+
         self.lsh = MinHashLSH(
             threshold=self.similarity_threshold,
             num_perm=self.minhash_permutations,
@@ -204,7 +137,7 @@ class FuzzyMatcher:
 
         logger.debug("Built MinHash LSH with %s candidates", len(self.minhashes))
 
-    def _query_minhash(self, query: str) -> MinHash:
+    def _query_minhash(self, query: str) -> "MinHash":
         # Entity grouping queries every candidate against the index; those
         # signatures already exist.
         cached = self.minhashes.get(query)
@@ -215,11 +148,13 @@ class FuzzyMatcher:
     @classmethod
     def _create_minhash(
         cls, text: str, minhash_permutations: int = 128, n_grams: int = 3
-    ) -> MinHash:
+    ) -> "MinHash":
+        from datasketch import MinHash
+
         minhash = MinHash(
             num_perm=minhash_permutations,
             permutations=_minhash_permutations(minhash_permutations),
-            scheme=_MINHASH_SCHEME,
+            scheme=_minhash_scheme(),
         )
         normalized_text = entity_key(text)
 

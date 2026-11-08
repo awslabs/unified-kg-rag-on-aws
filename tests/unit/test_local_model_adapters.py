@@ -794,6 +794,53 @@ def test_one_embedding_model_serves_successive_event_loops(
             assert len(asyncio.run(model.aembed_query("Vendor"))) == DIM
 
 
+@pytest.mark.parametrize("kind", ["ollama", "openai_compatible"])
+def test_model_clients_share_one_tls_context(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every httpx client built its own TLS context (loading the CA bundle,
+    # ~28 ms), and a query builds clients per model and per event loop.
+    import ssl
+
+    built: list[object] = []
+    create = ssl.create_default_context
+
+    def counted(*args: Any, **kwargs: Any) -> ssl.SSLContext:
+        built.append(args)
+        return create(*args, **kwargs)
+
+    monkeypatch.setattr(ssl, "create_default_context", counted)
+    llm_factory = (
+        OllamaLanguageModelFactory
+        if kind == "ollama"
+        else OpenAICompatibleLanguageModelFactory
+    )
+    embedding_factory = (
+        OllamaEmbeddingFactory if kind == "ollama" else OpenAICompatibleEmbeddingFactory
+    )
+    with _HTTPFakeServer(FakeServer()) as server:
+        config = _http_config(kind, server.url)
+
+        def use_models() -> None:
+            for purpose in (ModelPurpose.QUERY, ModelPurpose.INGESTION):
+                model = llm_factory(config).get_model(
+                    "synthetic-chat", model_purpose=purpose
+                )
+                embeddings = embedding_factory(config).get_model(
+                    "synthetic-embed", dimensions=DIM, model_purpose=purpose
+                )
+                for _ in range(2):
+                    asyncio.run(model.ainvoke([HumanMessage(content="Who ships?")]))
+                    asyncio.run(embeddings.aembed_query("Vendor"))
+
+        # The first use imports the client libraries (some build a client at
+        # import) and the shared context.
+        use_models()
+        built.clear()
+        use_models()
+    assert built == []
+
+
 def test_per_loop_client_is_reused_within_a_loop_and_rebuilt_across_loops() -> None:
     built: list[object] = []
 

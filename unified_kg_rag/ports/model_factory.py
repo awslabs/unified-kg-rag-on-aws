@@ -260,16 +260,6 @@ def effective_max_output_tokens(
     return min(max(cap, min_output_tokens), model_info.max_output_tokens)
 
 
-# Reasoning tokens an adaptive-thinking (or OpenAI reasoning) request is
-# budgeted at each effort level when an output ceiling is sized: thinking
-# counts toward max_tokens, so a ceiling below it would cut the answer off.
-EFFORT_THINKING_TOKENS: dict[str, int] = {
-    "low": 2048,
-    "medium": 4096,
-    "high": 8192,
-    "xhigh": 16384,
-    "max": 32768,
-}
 # Answer tokens an output ceiling always leaves above the thinking budget.
 CEILING_ANSWER_TOKENS = 1024
 

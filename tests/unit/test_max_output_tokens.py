@@ -22,12 +22,17 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     create_robust_xml_output_parser,
     setup_chain,
 )
-from unified_kg_rag.domain.models import Config, LanguageModelId, ModelPurpose
+from unified_kg_rag.domain.models import (
+    Config,
+    LanguageModelId,
+    ModelPurpose,
+    ModelRole,
+)
+from unified_kg_rag.domain.models.config import EFFORT_THINKING_TOKENS
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
     GraphExtractionPrompt,
 )
-from unified_kg_rag.domain.prompts.base import THINKING_HEADROOM_TOKENS
 from unified_kg_rag.domain.prompts.data_processing import TextTranslationPrompt
 from unified_kg_rag.domain.prompts.graph_extraction import (
     ClaimExtractionPrompt,
@@ -125,7 +130,7 @@ class _RecordingFactory:
             FakeListChatModel,
         )
 
-        self.calls.append(kwargs)
+        self.calls.append({**kwargs, "model_id": model_id})
         return FakeListChatModel(responses=["ok"])
 
     def get_model_info(self, model_id: str) -> Any:
@@ -161,11 +166,12 @@ def test_output_fixer_gets_the_repaired_prompts_floor() -> None:
 
 def test_default_floors_follow_the_documented_arithmetic() -> None:
     config = Config()
-    # (50 + 50) records x 150 tokens + thinking headroom.
+    # (50 + 50) records x 150 tokens + the default tier's high-effort budget.
     assert GraphExtractionPrompt.output_floor(config) == 100 * 150 + 8192
     assert GraphRefinementPrompt.output_floor(config) == 100 * 150 + 8192
-    # A whole 8000-char chunk at 1.35 tokens/char (twice for claims).
-    assert TextTranslationPrompt.output_floor(config) == 10800 + 8192
+    # A whole 8000-char chunk at 1.35 tokens/char (twice for claims);
+    # translation runs on the fast tier, at low effort.
+    assert TextTranslationPrompt.output_floor(config) == 10800 + 2048
     assert ClaimExtractionPrompt.output_floor(config) == 21600 + 8192
     # medium report: 10 findings x 300 + 200 header.
     assert CommunityReportPrompt.output_floor(config) == 3200 + 8192
@@ -185,20 +191,62 @@ def test_floors_scale_with_the_configured_limits() -> None:
         },
     )
     assert GraphExtractionPrompt.output_floor(config) == 400 * 150 + 8192
-    assert TextTranslationPrompt.output_floor(config) == 27000 + 8192
+    assert TextTranslationPrompt.output_floor(config) == 27000 + 2048
     assert CommunityReportPrompt.output_floor(config) == 4700 + 8192
 
 
-def test_every_floor_leaves_thinking_headroom() -> None:
-    config = Config()
-    for prompt in (
-        GraphExtractionPrompt,
-        GraphRefinementPrompt,
-        ClaimExtractionPrompt,
-        CommunityReportPrompt,
-        TextTranslationPrompt,
-    ):
-        assert prompt.output_floor(config) > THINKING_HEADROOM_TOKENS
+_FLOOR_PROMPTS = (
+    GraphExtractionPrompt,
+    GraphRefinementPrompt,
+    ClaimExtractionPrompt,
+    CommunityReportPrompt,
+    TextTranslationPrompt,
+)
+
+
+def _thinking(config: Config, role: ModelRole) -> int:
+    tier = config.model_tier(config.model_id(role))
+    return EFFORT_THINKING_TOKENS[
+        config.aws.bedrock.tier_effort(tier, ModelPurpose.INGESTION)
+    ]
+
+
+@pytest.mark.parametrize("prompt", _FLOOR_PROMPTS)
+@pytest.mark.parametrize(
+    "bedrock",
+    [
+        {},
+        {"ingestion_effort": "low"},
+        {"default_effort": "max", "fast_effort": "medium"},
+        {"ingestion_effort": "xhigh", "fast_effort": "high"},
+    ],
+)
+def test_every_floor_leaves_its_models_thinking_budget(
+    prompt: Any, bedrock: dict[str, str]
+) -> None:
+    # The floor adds the budget of the effort the call runs at: the role's
+    # tier's ingestion effort, not a fixed high-effort 8192.
+    config = Config(aws={"bedrock": bedrock})
+    assert prompt.model_role is not None
+    base = Config()
+    answer = prompt.output_floor(base) - _thinking(base, prompt.model_role)
+    assert answer > 0
+    assert prompt.output_floor(config) == answer + _thinking(config, prompt.model_role)
+    # The output fixer re-emits the answer on its own model.
+    assert prompt.output_floor(config, ModelRole.FIXING) == answer + _thinking(
+        config, ModelRole.FIXING
+    )
+
+
+def test_a_role_pinned_to_the_fast_model_gets_the_fast_effort() -> None:
+    config = Config(
+        models={"roles": {"graph_extraction": "fast"}},
+        aws={"bedrock": {"default_effort": "high", "fast_effort": "low"}},
+    )
+    assert GraphExtractionPrompt.output_floor(config) == 100 * 150 + 2048
+    assert GraphExtractionPrompt.output_floor(config, ModelRole.FIXING) == (
+        100 * 150 + 8192
+    )
 
 
 def _build(module: str, config: Config, factory: _RecordingFactory) -> None:
@@ -232,10 +280,16 @@ def _build(module: str, config: Config, factory: _RecordingFactory) -> None:
         ("translator", TextTranslationPrompt),
     ],
 )
-def test_ingestion_chains_request_the_derived_floor(module: str, prompt: Any) -> None:
-    config = Config(fixing={"enabled": True})
+@pytest.mark.parametrize("fixing", [None, "fast"])
+def test_ingestion_chains_request_the_derived_floor(
+    module: str, prompt: Any, fixing: str | None
+) -> None:
+    config = Config(fixing={"enabled": True}, models={"roles": {"fixing": fixing}})
     factory = _RecordingFactory()
     _build(module, config, factory)
-    floors = {call["min_output_tokens"] for call in factory.calls}
-    # The chain and its output fixer both reserve the derived floor.
-    assert floors == {prompt.output_floor(config)}
+    # The chain and its output fixer both reserve the derived floor, each
+    # with its own model's thinking budget.
+    fixer = config.model_id(ModelRole.FIXING)
+    for call in factory.calls:
+        role = ModelRole.FIXING if call["model_id"] == fixer else None
+        assert call["min_output_tokens"] == prompt.output_floor(config, role)

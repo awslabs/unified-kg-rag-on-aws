@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, ClassVar
 
+from unified_kg_rag.domain.models.config import ModelRole
 from unified_kg_rag.domain.models.schema import (
     EntityTypeItem,
     EntityTypeSpec,
@@ -10,10 +11,10 @@ from unified_kg_rag.domain.models.schema import (
 )
 
 from .base import (
-    THINKING_HEADROOM_TOKENS,
     BasePrompt,
     chunk_output_floor,
     graph_output_floor,
+    thinking_tokens,
 )
 
 if TYPE_CHECKING:
@@ -303,6 +304,7 @@ requested report length ({_REPORT_FINDINGS_TEXT}). Do NOT emit a
 
 class GraphExtractionPrompt(BasePrompt):
     prompt_key = "graph_extraction"
+    model_role = ModelRole.GRAPH_EXTRACTION
     input_variables = [
         "input_text",
         "max_entities_per_chunk",
@@ -313,9 +315,10 @@ class GraphExtractionPrompt(BasePrompt):
     ]
 
     @classmethod
-    def output_floor(cls, config: "Config") -> int:
-        # Defaults: (50 entities + 50 relationships) x 150 + 8192 = 23192.
-        return graph_output_floor(config)
+    def output_floor(cls, config: "Config", role: ModelRole | None = None) -> int:
+        # Defaults: (50 entities + 50 relationships) x 150 + 8192 (high
+        # effort) = 23192.
+        return graph_output_floor(config, role or cls.model_role)
 
     @classmethod
     def config_variables(cls, config: "Config") -> dict[str, str]:
@@ -387,14 +390,15 @@ Begin extraction now:"""
 
 class ClaimExtractionPrompt(BasePrompt):
     prompt_key = "claim_extraction"
+    model_role = ModelRole.CLAIM_EXTRACTION
     input_variables = ["input_text", "entity_specs", "target_language"]
 
     @classmethod
-    def output_floor(cls, config: "Config") -> int:
+    def output_floor(cls, config: "Config", role: ModelRole | None = None) -> int:
         # The prompt asks for every claim, each quoting its verbatim span, so the
         # spans cover at most the chunk once and the claim records around them
         # about as much again: 2 x 8000 chars x 1.35 + 8192 = 29792 by default.
-        return chunk_output_floor(config, copies=2)
+        return chunk_output_floor(config, role or cls.model_role, copies=2)
 
     system_prompt_template = """You are an expert claim extraction specialist focused on identifying and structuring all
 factual assertions from text with maximum precision and completeness.
@@ -510,6 +514,7 @@ Begin claim extraction:"""
 
 class GraphRefinementPrompt(BasePrompt):
     prompt_key = "graph_refinement"
+    model_role = ModelRole.GLEANING
     input_variables = [
         "text",
         "entities",
@@ -520,10 +525,10 @@ class GraphRefinementPrompt(BasePrompt):
     ]
 
     @classmethod
-    def output_floor(cls, config: "Config") -> int:
+    def output_floor(cls, config: "Config", role: ModelRole | None = None) -> int:
         # The issues fill in one chunk's graph, which the extraction caps bound:
         # same arithmetic as GraphExtractionPrompt (23192 by default).
-        return graph_output_floor(config)
+        return graph_output_floor(config, role or cls.model_role)
 
     @classmethod
     def config_variables(cls, config: "Config") -> dict[str, str]:
@@ -713,6 +718,7 @@ Begin analysis:"""
 
 class CommunityReportPrompt(BasePrompt):
     prompt_key = "community_report"
+    model_role = ModelRole.COMMUNITY_REPORT
     input_variables = [
         "community_id",
         "entities",
@@ -724,7 +730,7 @@ class CommunityReportPrompt(BasePrompt):
     ]
 
     @classmethod
-    def output_floor(cls, config: "Config") -> int:
+    def output_floor(cls, config: "Config", role: ModelRole | None = None) -> int:
         # long: 15 x 300 + 200 + 8192 = 12892, medium 11392 -- both under the
         # default 16384 cap, which then applies.
         length = config.graph.community_detection.report_generation.content_length
@@ -732,7 +738,7 @@ class CommunityReportPrompt(BasePrompt):
         return (
             findings * TOKENS_PER_REPORT_FINDING
             + REPORT_HEADER_TOKENS
-            + THINKING_HEADROOM_TOKENS
+            + thinking_tokens(config, role or cls.model_role)
         )
 
     system_preamble: ClassVar[str] = _COMMUNITY_REPORT_PREAMBLE

@@ -102,6 +102,7 @@ def test_round_trip_keeps_every_field(store: DocStatusPort) -> None:
         attempt_batch=3,
         crash_batch=4,
         extraction_fingerprint="x1",
+        source_digest="s1",
         written_by="pipeline-a",
         updated_at="2026-01-01T00:00:00",
     )
@@ -491,6 +492,27 @@ def test_sqlite_registry_persists_across_instances(tmp_path: Path) -> None:
     assert second.get("d1") is not None
     assert second.diff({"d1": "h1"}, scope="s").unchanged == ["d1"]
     second.close()
+
+
+def test_sqlite_get_many_reads_by_primary_key(tmp_path: Path) -> None:
+    # ``WHERE doc_id IN (...)`` alone scanned the whole table (the key is
+    # (namespace, doc_id)): 9.8 s for one batch at 200k records, 0.3 s by key.
+    store = SQLiteDocStatusStore(Config(), tmp_path / "doc-status.db")
+    ids = [f"{ns}#d{i}" for ns in ("ns-a", "ns-b") for i in range(3)]
+    store.put_many([_record(doc_id) for doc_id in ids])
+    statements: list[str] = []
+    store.connection.set_trace_callback(statements.append)
+    assert set(store.get_many([*ids, "ns-c#missing"])) == set(ids)
+    store.connection.set_trace_callback(None)
+    reads = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
+    assert reads
+    for sql in reads:
+        plan = " ".join(
+            str(row[-1])
+            for row in store.connection.execute(f"EXPLAIN QUERY PLAN {sql}")
+        )
+        assert "namespace=? AND doc_id=?" in plan and "SCAN" not in plan, plan
+    store.close()
 
 
 def test_sqlite_reads_create_no_file_until_a_write(tmp_path: Path) -> None:

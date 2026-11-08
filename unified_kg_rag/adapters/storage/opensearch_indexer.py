@@ -87,21 +87,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Texts per embedding request, and requests in flight at once at most
-# (Bedrock embedding calls are IO-bound; processing.max_concurrency lowers
-# it). In the real-AWS E2E 16 requests in flight embedded 1,600 texts in
-# half the time 8 took, with no throttling.
-_EMBED_BATCH_SIZE = 50
-_EMBED_WORKERS = 16
 # Ids per read-back search at most (fewer when the index's limits are lower:
 # _limits).
 _READ_BATCH_SIZE = 1000
-# Items embedded and bulk-written at a time. Holding a whole item type's
-# vectors as float lists before one bulk call took gigabytes on a large
-# corpus. Its texts to embed take about one round of the concurrent
-# embedding requests (_EMBED_BATCH_SIZE * _EMBED_WORKERS = 800), and one
-# search reads the stored digests of a slice (_reusable_vectors).
-_WRITE_SLICE_SIZE = _EMBED_BATCH_SIZE * _EMBED_WORKERS
 # Ids per read of the stored vectors a write takes (_reusable_vectors): at
 # 1,024 dimensions three vectors are about 64 KB of JSON per document, and
 # reading a whole slice's at once held over 60 MB of response and its
@@ -1840,9 +1828,10 @@ class OpenSearchIndexer(VectorIndexer):
                 {"id": key, "record": record} for key, record in records.items()
             ]
             failed: list[str] = []
-            for start in range(0, len(documents), _WRITE_SLICE_SIZE):
+            size = self._write_slice_size
+            for start in range(0, len(documents), size):
                 response = self.opensearch_client.bulk_index(
-                    index_name, documents[start : start + _WRITE_SLICE_SIZE]
+                    index_name, documents[start : start + size]
                 )
                 failed += [
                     str(next(iter(item.values())).get("_id"))
@@ -2398,8 +2387,9 @@ class OpenSearchIndexer(VectorIndexer):
         instead of being embedded again (``_reusable_vectors``; an upsert
         ``keep_replaced``)."""
         stats = IndexingStats()
-        for start in range(0, len(items), _WRITE_SLICE_SIZE):
-            chunk = items[start : start + _WRITE_SLICE_SIZE]
+        size = self._write_slice_size
+        for start in range(0, len(items), size):
+            chunk = items[start : start + size]
             stored = self._reusable_vectors(
                 spec.alias_prefix, suffix, chunk, spec, keep_replaced
             )
@@ -2419,7 +2409,7 @@ class OpenSearchIndexer(VectorIndexer):
                     ids=failed_ids,
                 )
             if docs:
-                last = start + _WRITE_SLICE_SIZE >= len(items)
+                last = start + size >= len(items)
                 stats.merge(self._perform_indexing(index_name, docs, refresh=last))
         return stats
 
@@ -2586,9 +2576,24 @@ class OpenSearchIndexer(VectorIndexer):
             ],
         )
 
-    def _batch_embed(
-        self, texts: list[str], batch_size: int = _EMBED_BATCH_SIZE
-    ) -> list[list[float] | None]:
+    @property
+    def _write_slice_size(self) -> int:
+        """Items embedded and bulk-written at a time.
+
+        Holding a whole item type's vectors as float lists before one bulk
+        call took gigabytes on a large corpus. A slice's texts take about one
+        round of the concurrent embedding requests (``embedding_batch_size``
+        x ``embedding_concurrency``, 800 by default), and one search reads
+        the stored digests of a slice (``_reusable_vectors``), so at most
+        ``_READ_BATCH_SIZE``.
+        """
+        processing = self.config.processing
+        return min(
+            _READ_BATCH_SIZE,
+            processing.embedding_batch_size * processing.embedding_concurrency,
+        )
+
+    def _batch_embed(self, texts: list[str]) -> list[list[float] | None]:
         result: list[list[float] | None] = [None] * len(texts)
 
         # Identical texts of one call are embedded once and fanned back out.
@@ -2640,13 +2645,17 @@ class OpenSearchIndexer(VectorIndexer):
         # Embedding is IO-bound (Bedrock InvokeModel); fan the batches out across
         # threads instead of issuing them strictly serially. Results are stored
         # back on the calling thread to avoid races on result.
+        processing = self.config.processing
+        batch_size = processing.embedding_batch_size
         batches = [
             unique[start : start + batch_size]
             for start in range(0, len(unique), batch_size)
         ]
         if batches:
             max_workers = min(
-                _EMBED_WORKERS, self.config.processing.max_concurrency, len(batches)
+                processing.embedding_concurrency,
+                processing.max_concurrency,
+                len(batches),
             )
             failed_keys = 0
             with ContextThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -3038,8 +3047,9 @@ class OpenSearchIndexer(VectorIndexer):
             meta.pop(_META_DOC_STATUS, None)
             meta[SUMMARY_TREE_META] = record
             self.opensearch_client.create_index(index_name, mapping, exist_ok=False)
-            for start in range(0, len(nodes), _WRITE_SLICE_SIZE):
-                chunk = nodes[start : start + _WRITE_SLICE_SIZE]
+            size = self._write_slice_size
+            for start in range(0, len(nodes), size):
+                chunk = nodes[start : start + size]
                 docs = [
                     {
                         **self._prepare_summary_node_doc(
@@ -3051,7 +3061,7 @@ class OpenSearchIndexer(VectorIndexer):
                     }
                     for node in chunk
                 ]
-                last = start + _WRITE_SLICE_SIZE >= len(nodes)
+                last = start + size >= len(nodes)
                 stats.merge(self._perform_indexing(index_name, docs, refresh=last))
             if stats.failed_items:
                 self._drop_unswapped_index(alias_name, index_name)

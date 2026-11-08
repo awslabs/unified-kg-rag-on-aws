@@ -90,6 +90,17 @@ class LanguageModelId(str, Enum):
 ModelTier = Literal["default", "fast"]
 EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORT_LEVELS: frozenset[str] = frozenset(get_args(EffortLevel))
+# Reasoning tokens an adaptive-thinking (or OpenAI reasoning) request is
+# budgeted at each effort level when an output floor or ceiling is sized:
+# thinking counts toward max_tokens, so a limit below it would cut the
+# answer off.
+EFFORT_THINKING_TOKENS: dict[str, int] = {
+    "low": 2048,
+    "medium": 4096,
+    "high": 8192,
+    "xhigh": 16384,
+    "max": 32768,
+}
 
 # The Bedrock models of the two tiers when models.default / models.fast are
 # unset, so changing a tier default is a one-line edit here.

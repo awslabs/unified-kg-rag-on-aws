@@ -887,6 +887,17 @@ class RobustXMLOutputParser(XMLOutputParser):
         return bool(sections) and all(section.tag in closed for section in sections)
 
     def _top_level_sections(self, text: str) -> list[_Section]:
+        """:meth:`_sections_of` the expected sections (``tags``) in ``text``.
+
+        Computed once per response: a parse reads them three times (the
+        final answer, the shape check and whether the sections closed)."""
+        return list(self._sections_of(tuple(self.tags or ()), text))
+
+    # The responses of the parses in flight (an ingestion stage parses up to
+    # processing.max_concurrency at once), a few hundred KB.
+    @staticmethod
+    @functools.lru_cache(maxsize=64)
+    def _sections_of(tags: tuple[str, ...], text: str) -> tuple[_Section, ...]:
         """The top-level occurrences of the expected sections (``tags``) in
         ``text``, in order: where each starts and ends, and whether it was
         closed. An end tag closes the innermost open section of its name and
@@ -902,9 +913,9 @@ class RobustXMLOutputParser(XMLOutputParser):
         written without its ``<findings>``) is not top-level; an element that
         holds expected sections only (an ``<output>`` wrapper) does not hide
         them."""
-        expected = set(self.tags or ())
+        expected = set(tags)
         if not expected:
-            return []
+            return ()
         containers = _content_elements(text, expected)
         sections: list[_Section] = []
         stack: list[str] = []
@@ -942,7 +953,7 @@ class RobustXMLOutputParser(XMLOutputParser):
                     after_section >= 0
                     and not text[after_section : match.start()].strip()
                 )
-                or self._repeats_closed_section(text, match, sections)
+                or RobustXMLOutputParser._repeats_closed_section(text, match, sections)
             ):
                 continue
             if stack:
@@ -955,7 +966,7 @@ class RobustXMLOutputParser(XMLOutputParser):
                 stack, start = [name], match.start()
         if stack:
             sections.append(_Section(stack[0], start, len(text), False))
-        return sections
+        return tuple(sections)
 
     @staticmethod
     def _repeats_closed_section(

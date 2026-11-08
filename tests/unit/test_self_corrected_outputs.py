@@ -438,3 +438,31 @@ class TestJSONSelfCorrection:
         mocker.patch.object(pairwise.Providers, "resolve")
         pairwise.PairwiseJudge(Config())
         assert isinstance(setup.call_args.args[3], LLMJsonOutputParser)
+
+
+@pytest.mark.parametrize("answer", [outputs.EXTRACTION_SELF_CORRECTED, "SINGLE"])
+def test_a_parse_scans_each_response_for_its_sections_once(
+    answer: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The final answer, the shape check and the closed check each scanned
+    # the response; a self-corrected one is scanned again as its last answer.
+    import unified_kg_rag.adapters.llm.langchain as langchain_module
+
+    if answer == "SINGLE":
+        answer = (
+            "<entities>\n<entity><name>Vendor 가</name><type>ORG</type>"
+            "<description>A vendor</description></entity>\n</entities>\n"
+            "<relationships></relationships>"
+        )
+    scans: list[str] = []
+    scan = langchain_module._content_elements
+
+    def counted(text: str, expected: set[str]) -> set[int]:
+        scans.append(text)
+        return scan(text, expected)
+
+    monkeypatch.setattr(langchain_module, "_content_elements", counted)
+    RobustXMLOutputParser._sections_of.cache_clear()
+    result = _extraction_parser().parse(answer)
+    assert result["entities"]
+    assert len(scans) == len(set(scans))

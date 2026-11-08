@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import copy
 import math
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -93,6 +94,9 @@ def _union_filters(
                 except TypeError:
                     if item in merged:
                         continue
+                    # Unhashable, so mutable: a copy, so the merged map
+                    # shares no object with the maps it merges.
+                    item = copy.deepcopy(item)
                 merged.append(item)
     if not found:
         return None
@@ -121,7 +125,10 @@ def _with_seed_properties(
     ]
     if not properties:
         return merged
-    combined = {key: v for value in properties for key, v in value.items()}
+    # Copied: the merged map shares no (mutable) value with the maps it merges.
+    combined = copy.deepcopy(
+        {key: v for value in properties for key, v in value.items()}
+    )
     return {**(merged or {}), SEED_PROPERTIES_ATTRIBUTE: combined}
 
 
