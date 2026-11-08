@@ -126,7 +126,9 @@ unless noted.
    [runbook](../operations.md#failed-documents)). The suffix's build record is
    written just before, so a run killed after the registry write leaves the
    record of what it built (the next run finds nothing to index and writes
-   none). `failure_count` counts
+   none). A record the store rejected (on any index) is written again after
+   the registry write, and a run with nothing to index writes the record
+   when the configured suffix has none. `failure_count` counts
    consecutive failures of the same content; after
    `indexing.max_document_failures` the document reads unchanged. A run that
    stops before this step at a stage that failed on all of its units still

@@ -1093,3 +1093,14 @@ def rewrites_schema_annotations(store: object) -> bool:
         if method is None or getattr(method, "__func__", method) in defaults:
             return False
     return True
+
+
+def keeps_build_records(store: object) -> bool:
+    """Whether ``store`` keeps build records: it implements
+    ``VectorIndexer.record_build`` instead of inheriting the default, which
+    writes nothing (so a ``None`` from it means a write that failed). Bound
+    functions are compared, as :func:`rewrites_schema_annotations` does."""
+    method = getattr(store, "record_build", None)
+    return method is not None and (
+        getattr(method, "__func__", method) is not VectorIndexer.record_build
+    )

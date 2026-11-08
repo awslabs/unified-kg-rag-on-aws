@@ -148,7 +148,12 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.methodology import recorded_artifacts
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
-from unified_kg_rag.ports.indexer import BaseIndexer, GraphIndexer, IndexingStats
+from unified_kg_rag.ports.indexer import (
+    BaseIndexer,
+    GraphIndexer,
+    IndexingStats,
+    keeps_build_records,
+)
 from unified_kg_rag.shared import (
     ConfigurationError,
     ConfirmationDeclinedError,
@@ -2613,9 +2618,14 @@ class IndexingStage(_RegistryStage):
                 raise
             except Exception as e:  # noqa: BLE001 - written again after the registry
                 logger.warning(
-                    "Writing the build record failed (%s); it is written again "
-                    "once the documents are recorded",
+                    "Writing the build record failed (%s); retried once the "
+                    "documents are recorded",
                     e,
+                )
+            if counters is None:
+                logger.warning(
+                    "The build record was not written on every index; retried "
+                    "once the documents are recorded"
                 )
 
         if context.incremental_delta is not None and not self.config.indexing.reset:
@@ -2757,6 +2767,14 @@ class IndexingStage(_RegistryStage):
                     communities,
                     tree_pruned=_tree_pruned(indexing_results),
                 )
+                if counters is None:
+                    logger.warning(
+                        "The build record was not written on every index: until "
+                        "a run writes it, queries read the namespace as holding "
+                        "what this config builds (a strategy whose methodology "
+                        "it does not hold answers from what it finds instead of "
+                        "failing). The next run writes it again."
+                    )
             else:
                 self._record_removed_artifacts(text_units, delta)
 
@@ -2827,13 +2845,24 @@ class IndexingStage(_RegistryStage):
     ) -> bool:
         """Whether the run writes the build record: not an incremental run
         that found nothing to index and wrote no item (the indices keep the
-        record of the run that did)."""
+        record of the run that did), unless the registry holds documents of
+        the configured suffix and its indices hold no record (a write the
+        store rejected, or a build from before records)."""
         delta = context.incremental_delta
+        vector_indexer = self.indexing_manager.vector_indexer
         return (
             delta is None
             or self.config.indexing.reset
             or not delta.is_empty
             or any(s.total_items or s.failed_items for s in results.values())
+            or (
+                bool(delta.unchanged)
+                and keeps_build_records(vector_indexer)
+                and vector_indexer.read_build_record(
+                    resolve_namespace(self.config, None)
+                )
+                is None
+            )
         )
 
     def _record_build(
@@ -2842,7 +2871,7 @@ class IndexingStage(_RegistryStage):
         text_units: list[TextUnit],
         communities: Sequence[Community] = (),
         tree_pruned: bool = True,
-    ) -> dict[str, CommunityCounters]:
+    ) -> dict[str, CommunityCounters] | None:
         """Record on each written suffix's vector indices what built them.
 
         The summary tree is built after this record, by the summary_tree
@@ -2859,7 +2888,8 @@ class IndexingStage(_RegistryStage):
         ``communities`` it wrote; an incremental record adds the ones it
         appended and subtracts those its removals deleted, once per commit
         (``IndexBuildRecord.over``). Returns the counters written, by suffix
-        (none where the stored record predates them).
+        (none where the stored record predates them), or ``None`` when a
+        suffix's record was written on no index (the store rejected it).
         """
         delta = context.incremental_delta
         # A delta of new documents only into a namespace the registry held
@@ -2908,7 +2938,7 @@ class IndexingStage(_RegistryStage):
             if delta is not None and not self.config.indexing.reset
             else None
         )
-        counters: dict[str, CommunityCounters] = {}
+        counters: dict[str, CommunityCounters] | None = {}
         keeps_tree = tree_pruned and IndexArtifact.SUMMARY_TREE in (
             artifacts_to_build(self.config)
         )
@@ -2933,10 +2963,13 @@ class IndexingStage(_RegistryStage):
                     runs_since=0,
                     last_commit=commit,
                 )
-            written = self.indexing_manager.vector_indexer.record_build(
+            written = vector_indexer.record_build(
                 record.model_copy(update=update), suffix
             )
-            if written is not None and written.communities is not None:
+            if written is None:
+                if keeps_build_records(vector_indexer):
+                    counters = None
+            elif counters is not None and written.communities is not None:
                 counters[suffix] = written.communities
         return counters
 

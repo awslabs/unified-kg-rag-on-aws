@@ -960,7 +960,7 @@ class OpenSearchIndexer(VectorIndexer):
 
         Merged into the existing ``_meta`` (the embedding settings stay), so
         it needs ``indices:admin/mapping/put``; a failure is logged and the run
-        goes on. An incremental record keeps the full build the index holds
+        goes on (``None`` when no index took it: the indexing stage retries). An incremental record keeps the full build the index holds
         and its community counters (``IndexBuildRecord.over``). Returns the
         first record written that carries counters (else the first written).
         """
@@ -984,7 +984,8 @@ class OpenSearchIndexer(VectorIndexer):
             except Exception as e:  # noqa: BLE001 - the record is optional
                 logger.warning(
                     "Could not record the build of pipeline '%s' in the _meta of "
-                    "%s (%s); run-eval manifests will not identify this index.",
+                    "%s (%s): the run retries it once its documents are "
+                    "recorded, and later runs while it is missing",
                     record.pipeline_id,
                     alias,
                     e,
