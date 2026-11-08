@@ -903,11 +903,13 @@ class NeptuneIndexer(GraphIndexer):
         stored fails. Against a drop and re-add per edge (the
         :meth:`upsert_relationships` write) it costs about 1.5 % per edge
         (300 edges on a Gremlin Server: 0.15 ms against 10.6 ms). During a
-        rebuild in place the edges are written whole, with its tag."""
+        rebuild in place the edges are written whole, with its tag. An id
+        given twice is written once, with its last rank (as an upsert)."""
         if self._rebuild_tag is not None:
             return self.upsert_relationships(relationships)
-        stats = IndexingStats(total_items=len(relationships))
-        for suffix, rels in self._group_items_by_suffix(relationships).items():
+        latest = self._last_of_each_id(relationships)
+        stats = IndexingStats(total_items=len(latest))
+        for suffix, rels in self._group_items_by_suffix(latest).items():
             label = self._label(self.neptune_config.entity_label_prefix, suffix)
             by_rank: dict[int | None, list[str]] = defaultdict(list)
             for rel in rels:

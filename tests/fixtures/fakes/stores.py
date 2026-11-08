@@ -238,6 +238,9 @@ class FakeGraphStore:
 
     def update_relationship_ranks(self, relationships: list[Any]) -> IndexingStats:
         """Set the stored edges' rank in place; an edge not stored fails."""
+        relationships = list(
+            {(BaseIndexer.get_suffix(r), r.id): r for r in relationships}.values()
+        )
         stats = IndexingStats(total_items=len(relationships))
         bucket = self.data.setdefault("relationships", {})
         for rel in relationships:

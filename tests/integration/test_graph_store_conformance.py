@@ -735,3 +735,10 @@ def test_relationship_ranks_are_set_in_place(harness: StoreHarness) -> None:
     assert after.model_dump(exclude={"rank"}) == before.model_dump(exclude={"rank"})
     (untouched,) = graph.read_relationships(["a-b"], suffix="t2")
     assert untouched.rank == 2
+    # An id given twice is one edge, written with its last rank.
+    stats = graph.update_relationship_ranks(
+        [rel.model_copy(update={"rank": 4}), rel.model_copy(update={"rank": 5})]
+    )
+    assert (stats.total_items, stats.successful_items, stats.failed_items) == (1, 1, 0)
+    (twice,) = graph.read_relationships(["a-b"], suffix="t1")
+    assert twice.rank == 5

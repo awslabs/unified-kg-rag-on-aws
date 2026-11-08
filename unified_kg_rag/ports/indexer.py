@@ -201,6 +201,11 @@ class BaseIndexer(ABC):
         """Graph vertex label for ``prefix`` under ``suffix``."""
         return graph_label(prefix, suffix, self.config.indexing.additional_suffix)
 
+    def _last_of_each_id(self, items: list[Any]) -> list[Any]:
+        """``items`` with one per id and suffix, the last given (as an
+        upsert keeps the last write)."""
+        return list({(self.get_suffix(item), item.id): item for item in items}.values())
+
     def _group_items_by_suffix(
         self, items: list[Any], suffixes: Collection[str] = ()
     ) -> dict[str, list[Any]]:
