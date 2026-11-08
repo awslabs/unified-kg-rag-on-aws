@@ -470,6 +470,10 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
         return model
 
 
+# Seconds the capability lookup (``/api/show``) of a model may take.
+_SHOW_TIMEOUT_SECONDS = 10.0
+
+
 class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
     """Chat models on an Ollama server (``ChatOllama``).
 
@@ -511,7 +515,11 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
             if (known := self._thinks.get(model_id)) is not None:
                 return known
         module = import_optional("ollama", self.kind)
-        kwargs: dict[str, Any] = {"timeout": self.settings.timeout_seconds}
+        # Short: building a model made no request before, and a server that
+        # does not answer this fails the model's first call anyway.
+        kwargs: dict[str, Any] = {
+            "timeout": min(self.settings.timeout_seconds, _SHOW_TIMEOUT_SECONDS)
+        }
         if self.transport is not None:
             kwargs["transport"] = self.transport
         try:
