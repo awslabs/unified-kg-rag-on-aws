@@ -8,6 +8,7 @@ import { get } from "./lib/api";
 import { navigate, PAGES, useRoute, type Page } from "./lib/router";
 import type { Status } from "./lib/types";
 import { useApi } from "./lib/useApi";
+import { useCompactNav } from "./lib/useCompactNav";
 import { AskPage } from "./pages/AskPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EvaluatePage } from "./pages/EvaluatePage";
@@ -16,12 +17,15 @@ import { IngestPage } from "./pages/IngestPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 export function App() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const route = useRoute();
   const status = useApi(() => get<Status>("status"), [], { intervalMs: 5000, poll: true });
   const main = useRef<HTMLElement>(null);
   const running = status.data?.jobs.length ?? 0;
   const [menuOpen, setMenuOpen] = useState(false);
+  const navRow = useRef<HTMLDivElement>(null);
+  // The links collapse into the menu when the row does not fit, whatever the width.
+  const compact = useCompactNav(navRow, [locale, running > 0, status.data?.namespace]);
 
   useEffect(() => {
     document.title = `${t(`nav.${route.page}`)} · ${t("app.name")}`;
@@ -43,8 +47,8 @@ export function App() {
       <a className="skip-link" href="#main">
         {t("app.skip")}
       </a>
-      <header className="nav" data-open={menuOpen}>
-        <div className="nav-inner">
+      <header className="nav" data-open={menuOpen} data-compact={compact}>
+        <div className="nav-inner" ref={navRow}>
           <a
             className="brand"
             href="/ask"

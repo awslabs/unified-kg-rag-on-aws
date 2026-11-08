@@ -98,3 +98,39 @@ test("ask, follow the trail into the graph, visit every page", async ({ page, ba
   expect(foreign).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+// Regression (rv7): the top bar overflowed in English at 1200-1365 px and in
+// German at every width up to 1440 (a fixed breakpoint). It collapses into
+// its menu when its row does not fit, so nothing is cut at any width.
+for (const locale of ["en", "de"]) {
+  for (const width of [1280, 1440]) {
+    test(`the top bar fits at ${width} px in ${locale}`, async ({ page, baseURL }) => {
+      const origin = new URL(baseURL ?? "http://127.0.0.1:8501").origin;
+      await page.setViewportSize({ width, height: 900 });
+      await page.addInitScript((code) => window.localStorage.setItem("ukr-console-locale", code), locale);
+      const token = new URL(process.env.CONSOLE_URL ?? origin).searchParams.get("token") ?? process.env.CONSOLE_TOKEN;
+      const statusRead = page.waitForResponse((response) => response.url().includes("/api/status"));
+      await page.goto(token ? `/ask?token=${encodeURIComponent(token)}` : "/ask");
+      const row = page.locator(".nav-inner");
+      await expect(row).toBeVisible();
+      // Checked once what changes the row's width has arrived: the status
+      // (the namespace chip) and the web fonts.
+      await statusRead;
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
+      await page.waitForTimeout(100);
+      const { overflow, compact } = await row.evaluate((element) => ({
+        overflow: element.scrollWidth - element.clientWidth,
+        compact: element.closest("header")?.getAttribute("data-compact"),
+      }));
+      expect(overflow).toBeLessThanOrEqual(0);
+      if (compact === "true") {
+        // Collapsed: the menu opens every page link.
+        await page.locator(".nav-menu").click();
+        await expect(page.locator(".nav-list .nav-link")).toHaveCount(6);
+        await expect(page.locator(".nav-list .nav-link").last()).toBeVisible();
+      } else {
+        await expect(page.locator(".nav-list .nav-link").last()).toBeInViewport();
+      }
+    });
+  }
+}
