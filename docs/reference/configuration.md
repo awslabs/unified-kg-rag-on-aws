@@ -837,7 +837,7 @@ Numbered answer contexts and the answer's citations
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | boolean | `true` | Number the answer context's evidence sections [1], [2], ..., ask the answer model (concise, comprehensive or a custom_prompts override) to cite them with those markers in every language, and return RAGOutput.citations: per number its documents (file name, relative path, pages), text units and seed-graph provenance, and whether the answer cites it. The markers stay in the answer text. false: the context labels passages by id and the prompts are those of earlier releases; no citations. Unmeasured against off: the instruction changes answers, so compare runs of one setting. |
-| `lineage_units` | integer (≥ 1) | `10` | Text units of a graph section's lineage (entity, relationship, claim, report, summary) read to name its documents, those in the context first: one batched fetch by id per query for the ones the context does not hold. Unmeasured: bounds the fetch for hub entities and reports with thousands of units. |
+| `lineage_units` | integer (≥ 1) | `10` | Text units of a graph section's lineage (entity, relationship, claim, report, summary) that name its documents, those in the context first, counting only units the query's suffix and filters let through. The others are read in batched fetches by id, in pages that double what a section still lacks, at most 4 a query (a section reads at most 15 times this many of its units; one whose units read by then all fail the filters names no document). Unmeasured: bounds the reads for hub entities and reports with thousands of units. |
 
 ## `memory`
 

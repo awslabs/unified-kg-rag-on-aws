@@ -623,32 +623,37 @@ From a `main` checkout (formats and keys no release had):
   rate's interval resamples queries. The default still judges the first repeat (#620).
 - Document citations (#627): the answer context numbers its evidence sections `[1]`, `[2]`, ... (passages, entities,
   relationships, claims, reports, summaries) in every strategy, and global search's key points and DRIFT's
-  intermediate answers one section each, with the text units and documents of the reports (or the local context)
-  each was written from, as MS GraphRAG's reduce cites `[Data: Reports (...)]`: a report's are those of the entities
-  and relationships its findings cite, read by id (its community's membership only for a report stored without
-  findings, or whose cited records are all gone), and a cited point names those documents even when the evidence
-  budget left its reports out of the context; it stays model-written (screened, never a source) (#635, #643). The
-  answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those
-  markers, ASCII in every answer language; global and DRIFT answers are asked to cite where possible and keep a
-  relevant point with no marker (pairwise judges preferred their uncited answers on comprehensiveness) (#643).
-  `RAGOutput.citations` lists one `Citation` per number: whether the answer cites it, its documents (`CitedDocument`:
-  document id, file name, path relative to the corpus root, pages), text units, chunk id, title, seed-graph provenance
-  and IRI; a graph section names the documents of up to `search.citations.lineage_units` (10) of its text units that
-  its query's suffix and filters let through, read in batched fetches (an excluded or another tenant's document is
-  never named; the next units fill its place), alongside the answer call (#635, #643). A number the context did not
-  show is reported in `metadata.unknown_citation_markers`, never as a citation (a marker has at most three digits: a
-  bracketed year such as `[2020]` is text, and sections past the 999th get no number); a blocked answer has none
-  (#635, #643). Earlier answers reach the follow-up rewrite without their markers (#635). `CitationMarkerScanner`
+  intermediate answers one section each, with the text units and documents of the reports (or the local context) each
+  was written from, as MS GraphRAG's reduce cites `[Data: Reports (...)]`: a report's are those of the entities and
+  relationships its findings cite, read by id in the query's namespace without the caller's filters (the citation
+  applies them to the units; its community's membership only for a report stored without findings, whose cited records
+  are all gone, or whose read failed, reported as the search's `degraded_error`; a GraphRAG-only namespace has no
+  relationships index and cites the entities), and a cited point names those documents even when the evidence budget
+  left its reports out of the context; it stays model-written (screened, never a source) (#635, #643). The report
+  sections of `local`, `global` and DRIFT cite the same lineage (`findings_text_unit_ids`), so a report and a point
+  written from it name the same documents. The answer prompt (concise, comprehensive or a `custom_prompts` override)
+  asks the model to cite them with those markers, ASCII in every answer language; global and DRIFT answers are asked
+  to cite where possible and keep a relevant point with no marker (pairwise judges preferred their uncited answers on
+  comprehensiveness; worded as MS GraphRAG's local, DRIFT and map prompts are, it departs from its global reduce
+  prompt's "Do not include information where the supporting evidence for it is not provided", and is unmeasured on its
+  own). `RAGOutput.citations` lists one `Citation` per number: whether the answer cites it, its documents
+  (`CitedDocument`: document id, file name, path relative to the corpus root, pages), text units, chunk id, title,
+  seed-graph provenance and IRI; a graph section names the documents of up to `search.citations.lineage_units` (10) of
+  its text units that its query's suffix and filters let through, read in batched fetches (an excluded or another
+  tenant's document is never named; the next units fill its place, in at most four reads), alongside the answer call.
+  A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation (a marker
+  has at most three digits: a bracketed year such as `[2020]` is text, and sections past the 999th get no number); a
+  blocked answer has none. Earlier answers reach the follow-up rewrite without their markers. `CitationMarkerScanner`
   reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`, and a
   cited key point or intermediate answer is a record of its own (`key_point`, `intermediate_answer`) with its
-  citation's documents (#643). The document converter keeps where each PDF page starts and text units store
-  `page_start` / `page_end`, `relative_path` and `document_id` in their attributes (ids and texts unchanged).
+  citation's documents and their text units. The document converter keeps where each PDF page starts and text units
+  store `page_start` / `page_end`, `relative_path` and `document_id` in their attributes (ids and texts unchanged).
   `run-rag` prints the cited sources and its JSON output carries every citation. The retrieval evaluator adds
   `citation_precision` and `citation_recall` against `reference_sources`, each cited citation weighted by its files (a
   graph section of ten lineage files counts a tenth per reference file, not 1 when any matches), and
   `citation_precision_passages` over the cited passages alone; the run manifest records `citations.enabled` and the
   scoring, and a comparison warns when its runs differ in either. The pairwise judge, `graph_aware`'s answer coverage
-  and `answer_length` read the answers without their markers, as `answer_match` does (#639; [Design
+  and `answer_length` read the answers without their markers, as `answer_match` does ([Design
   §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
 - `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the
   follow-up rewrite reads where it reads memory otherwise, bounded to `memory.max_messages_per_conversation` turns
@@ -941,6 +946,11 @@ From a `main` checkout (formats and keys no release had):
   (DRIFT's intermediate answers, global key points) are screened too, in one check, then one per result
   (`search.max_concurrency` at a time) only when it intervenes; interventions name word lists
   (`wordPolicy:customWords`, `wordPolicy:PROFANITY`) (#462, #471, #567, #583, #643). See
+  (DRIFT's intermediate answers, global key points) are screened too, in joined checks of at most 12,000 characters
+  one after another (ApplyGuardrail's default quota is 25 text units of 1,000 characters a second), then one per
+  result of a chunk whose check intervened (`search.max_concurrency` at a time; the joined intervention is recorded
+  in `metadata.guardrail` with `scope: joined`); interventions name word lists
+  (`wordPolicy:customWords`, `wordPolicy:PROFANITY`) (#462, #471, #567, #583). See
   [guardrail](docs/guides/guardrail.md).
 - Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284). In `run-eval`, queries
   whose rerank call failed (a throttled rerank model keeps the fused order) and answers whose retrieval absorbed a step
@@ -1386,7 +1396,11 @@ Queries and retrieval.
   entirely fails the query or is recorded in `degraded_error`, and a fatal model error fails the query even under
   `processing.ignore_errors` (#264, #267, #348, #354, #360, #567). A dynamic-selection rating is its answer's first
   number clamped to 1-10 (`8/10`, `Score: 2`; none counts in `global_unrated_report_count`), not a number of a mention
-  of the scale (`On a scale of 1-10, I'd rate 8` is 8) (#567, #589).
+  of the scale (`On a scale of 1-10, I'd rate 8` is 8) (#567, #589). A map output `json.loads` refuses is repaired
+  as MS GraphRAG repairs it (a raw line break or an invalid escape in a string, a trailing comma, the points as a bare
+  list, a quote left unescaped inside a description) and otherwise asked for once more, its shape logged (never its
+  text); an object without `points` counts as unrated, no longer as a rated batch with no points. On a real model
+  about 1% of map batches came back unparseable, so one global answer in five lost a batch's reports.
 - A suffix nothing was ingested under fails with `No indices found` (#227); indices of another embedding model or
   dimension fail with a `ConfigurationError`, and queries embed with `models.embedding.dimension` (#232).
 - `run-rag` and `run-eval` query `processing.document_parsing.index_value` when `--suffix` is not given (they

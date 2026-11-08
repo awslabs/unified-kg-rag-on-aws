@@ -26,6 +26,8 @@ from typing import Any
 __all__ = [
     "DATASET_ENTITIES",
     "DATASET_RELATIONSHIPS",
+    "FINDINGS_DOCUMENTS_FIELD",
+    "FINDINGS_TEXT_UNITS_FIELD",
     "REPORT_FINDINGS_FIELD",
     "report_cited_ids",
     "report_cited_records",
@@ -38,6 +40,13 @@ DATASET_RELATIONSHIPS = "relationships"
 # The stored community report's field holding its findings
 # (``CommunityFinding.model_dump()`` each), not searched or filtered.
 REPORT_FINDINGS_FIELD = "findings"
+
+# Set by the search strategies on a retrieved report whose findings cite
+# stored records: the text units and documents of those records, which its
+# citation names in place of its community's membership (``text_unit_ids``,
+# ``document_ids``, which the report keeps).
+FINDINGS_TEXT_UNITS_FIELD = "findings_text_unit_ids"
+FINDINGS_DOCUMENTS_FIELD = "findings_document_ids"
 
 _REFERENCE = re.compile(
     r"\s*[\[［]\s*Data\s*[:：](?P<body>[^\]］]*)[\]］]", re.IGNORECASE

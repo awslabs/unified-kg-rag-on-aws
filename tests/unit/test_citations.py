@@ -484,6 +484,54 @@ async def test_the_lineage_cap_counts_the_units_the_filters_let_through() -> Non
     assert [u for ids in asked for u in ids] == [f"u{i}" for i in range(14)]
 
 
+async def test_the_lineage_reads_stop_after_a_bounded_number_of_pages() -> None:
+    # Regression (rv6): the pages went on until the lineage was read, so a
+    # filter excluding most of a hub's units read all of them.
+    report = citations.citation_from_entry(
+        1,
+        _entry(
+            {
+                "section_type": "community",
+                "text_unit_ids": [f"u{i}" for i in range(500)],
+            },
+            "c-1",
+        ),
+    )
+    asked: list[list[str]] = []
+
+    async def fetch(ids: list[str]) -> list[dict[str, Any]]:
+        asked.append(ids)
+        return []
+
+    await citations.aresolve_documents([report], fetch, limit=3)
+    assert len(asked) == citations.MAX_LINEAGE_PAGES
+    assert sum(len(ids) for ids in asked) == 3 * (2**citations.MAX_LINEAGE_PAGES - 1)
+    assert report.documents == []
+
+
+def test_a_report_cites_the_units_its_findings_cite() -> None:
+    # A report's text_unit_ids are its community's membership; the strategy
+    # sets the units of the records its findings cite beside them.
+    report = citations.citation_from_entry(
+        1,
+        _entry(
+            {
+                "section_type": "community",
+                "text_unit_ids": ["m-1", "m-2"],
+                "document_ids": ["doc-m"],
+                "findings_text_unit_ids": ["f-1"],
+                "findings_document_ids": ["doc-f"],
+            },
+            "c-1",
+        ),
+    )
+    legacy = citations.citation_from_entry(
+        2, _entry({"section_type": "community", "text_unit_ids": ["m-1"]}, "c-2")
+    )
+    assert report.text_unit_ids == ["f-1"]
+    assert legacy.text_unit_ids == ["m-1"]
+
+
 async def test_a_fully_known_lineage_needs_no_fetch() -> None:
     passage = citations.citation_from_entry(
         1, _entry({"section_type": "text", "id": "tu-1", "document_ids": ["d"]}, "tu-1")

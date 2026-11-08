@@ -716,6 +716,42 @@ async def test_a_primer_answer_cites_what_its_reports_findings_cite(
     assert answers["draft from report 1"]["text_unit_ids"] == ["tu-r1"]
     fetches = [q for q in reports.queries if q.index_prefixes == [entities]]
     assert [q.filters["id"] for q in fetches] == [["e-ko", "e-ja"]]
+    # The report's own evidence section cites what the answer cites (one
+    # read for both).
+    (cited,) = [r for r in result.results if r.source == "report 0"]
+    assert cited.metadata["findings_text_unit_ids"] == ["tu-ko", "tu-ja"]
+    assert "degraded_error" not in result.metadata
+
+
+async def test_a_failed_findings_read_is_the_searchs_degraded_error() -> None:
+    entities = Config().indexing.opensearch.entities_index_prefix
+
+    class _FailingEntities(_Reports):
+        async def aindex_limits(self, prefix: str, suffix: str | None) -> Any:
+            from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
+
+            return IndexLimits()
+
+        async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+            if query.index_prefixes != [entities]:
+                return await super().aretrieve(query)
+            raise RuntimeError("one request failed")
+
+    reports = _FailingEntities(count=1)
+    reports.reports[0].metadata.update(
+        text_unit_ids=["tu-r0"],
+        findings=[{"entity_ids": ["e-ko"], "relationship_ids": []}],
+    )
+    strat = _strategy(reports=reports, n_depth=1, primer_folds=1)
+    result = await strat.asearch(SearchQuery(query="누가 출하하나요?"))
+    primed = [
+        r
+        for r in result.results
+        if r.metadata.get("synthesized") and "draft from report 0" in r.content
+    ]
+    # The membership stands; the failure is reported.
+    assert primed and primed[0].metadata["text_unit_ids"] == ["tu-r0"]
+    assert result.metadata["degraded_error"] == "RuntimeError"
 
 
 async def test_evidence_is_fused_with_the_local_quota(mocker) -> None:

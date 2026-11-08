@@ -541,10 +541,17 @@ async def test_a_cited_model_written_section_is_a_record(
             cited=True,
             section_type="general",
             source_id=written.source,
-            text_unit_ids=["u1", "u2"],
+            # u-other: a unit of the lineage the caller's filters exclude.
+            text_unit_ids=["u1", "u-other", "u2"],
             documents=[
-                CitedDocument(document_id="d-ko", file_name="contract.ko.txt"),
-                CitedDocument(document_id="d-ja", file_name="memo.ja.txt"),
+                CitedDocument(
+                    document_id="d-ko",
+                    file_name="contract.ko.txt",
+                    text_unit_ids=["u1"],
+                ),
+                CitedDocument(
+                    document_id="d-ja", file_name="memo.ja.txt", text_unit_ids=["u2"]
+                ),
             ],
             document_id="d-ko",
             file_name="contract.ko.txt",
@@ -563,6 +570,8 @@ async def test_a_cited_model_written_section_is_a_record(
     # Its citation's documents, not a second, unfiltered read of its units.
     assert record.documents == ["contract.ko.txt", "memo.ja.txt"]
     assert (record.document_id, record.document_name) == ("d-ko", "contract.ko.txt")
+    # Regression (rv6): the record listed the whole lineage, units the
+    # caller's filters exclude included; it lists its documents' units.
     assert record.text_unit_ids == ["u1", "u2"]
     # kg_search lists the section among the results, uncited.
     found = (await _tools(chain).search("q")).records

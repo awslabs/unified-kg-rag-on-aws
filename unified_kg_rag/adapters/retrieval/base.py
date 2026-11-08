@@ -38,6 +38,8 @@ from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.report_references import (
     DATASET_ENTITIES,
     DATASET_RELATIONSHIPS,
+    FINDINGS_DOCUMENTS_FIELD,
+    FINDINGS_TEXT_UNITS_FIELD,
     report_cited_records,
 )
 from unified_kg_rag.domain.models import (
@@ -256,14 +258,15 @@ def evidence_lineage(
     cite it as MS GraphRAG's reduce cites ``[Data: Reports (...)]``.
     ``reports`` (``BaseSearchStrategy._findings_lineages``) gives a
     community report, by its ``source``, the lineage of the records its
-    findings cite in place of its community's membership."""
+    findings cite in place of its community's membership, as does a report
+    that carries it (``findings_lineage``)."""
     units: dict[str, None] = {}
     documents: dict[str, None] = {}
     for result in results:
         metadata = result.metadata or {}
         cited = (
-            reports.get(str(result.source))
-            if reports and result.retriever_type == SectionType.COMMUNITY.value
+            (reports or {}).get(str(result.source)) or findings_lineage(result)
+            if result.retriever_type == SectionType.COMMUNITY.value
             else None
         )
         if cited is not None:
@@ -288,6 +291,20 @@ def evidence_lineage(
             )
         )
     return {"text_unit_ids": list(units), "document_ids": list(documents)}
+
+
+def findings_lineage(result: RetrievalResult) -> dict[str, list[str]] | None:
+    """The lineage of the records a report's findings cite, as a strategy
+    set it on the report (``BaseSearchStrategy._with_findings_lineages``),
+    or ``None``."""
+    metadata = result.metadata or {}
+    units = _listed(metadata.get(FINDINGS_TEXT_UNITS_FIELD))
+    if not units:
+        return None
+    return {
+        "text_unit_ids": units,
+        "document_ids": _listed(metadata.get(FINDINGS_DOCUMENTS_FIELD)),
+    }
 
 
 def _graph_edge(hit: RetrievalResult) -> GraphEdge | None:
@@ -629,6 +646,7 @@ class BaseSearchStrategy(ABC):
         label: str,
         *,
         key: str = "id",
+        failures: list[Exception] | None = None,
     ) -> list[RetrievalResult]:
         """``query``, a fetch by id (no text, ``filters[key]`` listing the
         ids; ``key`` a field each hit holds one value of, ``id`` by default),
@@ -638,7 +656,8 @@ class BaseSearchStrategy(ABC):
         most ``search.max_concurrency`` at once. Asked at once, ids past the
         window came back as the window's worth in the store's order, not the
         best-ranked ones. The hits come back batch after batch, each id once
-        (a repeated id would be asked, and returned, by two batches)."""
+        (a repeated id would be asked, and returned, by two batches).
+        ``failures`` collects the errors of the batches that failed."""
         ids = list(dict.fromkeys((query.filters or {}).get(key) or ()))
         prefixes = query.index_prefixes or []
         if isinstance(prefixes, str):
@@ -658,6 +677,7 @@ class BaseSearchStrategy(ABC):
                         }
                     ),
                     label,
+                    failures,
                 )
                 for batch in (ids[i : i + step] for i in range(0, len(ids), step))
             ),
@@ -665,28 +685,50 @@ class BaseSearchStrategy(ABC):
         return [hit for part in parts for hit in part]
 
     async def _findings_lineages(
-        self, query: SearchQuery, results: Iterable[RetrievalResult]
+        self,
+        query: SearchQuery,
+        results: Iterable[RetrievalResult],
+        *,
+        failures: list[Exception] | None = None,
     ) -> dict[str, dict[str, list[str]]]:
         """The lineage of each community report among ``results`` (by its
         ``source``) from its findings: the text units and documents of the
         entities and relationships they cite (``report_cited_records``,
-        finding by finding), read by id in one fetch per index. A report has
-        none (and ``evidence_lineage`` keeps its community's membership)
-        when it was stored without findings, they cite nothing, or none of
-        the records they cite is stored any more (a removed record is
-        skipped: its id may outlive it in a kept report). A relationship is
-        read from the relationships index, so only where the namespace holds
-        it."""
-        cited = {
-            str(r.source): records
-            for r in results
-            if r.retriever_type == SectionType.COMMUNITY.value
-            and r.source is not None
-            and (records := report_cited_records(r.metadata or {}))
-        }
+        finding by finding), read by id in one fetch per index. A report
+        that carries its lineage already (``findings_lineage``) is not read
+        again. A report has none (and ``evidence_lineage`` keeps its
+        community's membership) when it was stored without findings, they
+        cite nothing, or none of the records they cite is stored any more (a
+        removed record is skipped: its id may outlive it in a kept report).
+
+        The records are read in the query's namespace (index prefix and
+        suffix) without the caller's filters: they say what the report rests
+        on, and the citation reads its units under the filters
+        (``citations.aresolve_documents``), so a unit they exclude is never
+        named. Read under the filters, a cited record of another document
+        was missing, and the report fell back to its membership: the
+        caller's documents, which its findings may not cite. ``failures``
+        collects the errors of the reads that failed (those reports keep
+        their membership).
+
+        A relationship is read from the relationships index, so only where
+        the namespace holds it: in a namespace without it (GraphRAG alone,
+        ``indexing.methodologies``) a report's lineage is that of the
+        entities its findings cite. The graph store holds the edges, but no
+        read by edge id."""
+        lineages: dict[str, dict[str, list[str]]] = {}
+        cited: dict[str, list[tuple[str, str]]] = {}
+        for r in results:
+            if r.retriever_type != SectionType.COMMUNITY.value or r.source is None:
+                continue
+            if (held := findings_lineage(r)) is not None:
+                lineages[str(r.source)] = held
+            elif records := report_cited_records(r.metadata or {}):
+                cited[str(r.source)] = records
+        cited = {k: v for k, v in cited.items() if k not in lineages}
         retriever = self.document_retriever
         if not cited or retriever is None:
-            return {}
+            return lineages
         opensearch = self.config.indexing.opensearch
         prefixes = {DATASET_ENTITIES: opensearch.entities_index_prefix}
         if self._reads_artifact(query, IndexArtifact.RELATIONSHIP_VECTORS):
@@ -696,9 +738,6 @@ class BaseSearchStrategy(ABC):
             for dataset, record_id in records:
                 if dataset in wanted:
                     wanted[dataset].append(record_id)
-        # The caller's filters but an id scope, which names other records:
-        # the citation's read of the units applies them to the documents.
-        filters = {k: v for k, v in (query.filters or {}).items() if k != "id"}
         datasets = [d for d, ids in wanted.items() if ids]
         fetched = await gather_or_cancel(
             self._fetch_by_ids(
@@ -710,10 +749,11 @@ class BaseSearchStrategy(ABC):
                     retrieval_multiplier=1,
                     index_prefixes=[prefixes[dataset]],
                     suffix=query.suffix,
-                    filters={**filters, "id": list(dict.fromkeys(wanted[dataset]))},
+                    filters={"id": list(dict.fromkeys(wanted[dataset]))},
                     source_fields=["id", "text_unit_ids", "document_ids"],
                 ),
                 "Report findings records",
+                failures=failures,
             )
             for dataset in datasets
         )
@@ -724,7 +764,6 @@ class BaseSearchStrategy(ABC):
                 found_id = metadata.get("id") or found.source
                 if found_id is not None:
                     stored[(dataset, str(found_id))] = metadata
-        lineages: dict[str, dict[str, list[str]]] = {}
         for report, records in cited.items():
             units: dict[str, None] = {}
             documents: dict[str, None] = {}
@@ -738,6 +777,52 @@ class BaseSearchStrategy(ABC):
                     "document_ids": list(documents),
                 }
         return lineages
+
+    @staticmethod
+    def _with_findings_lineages(
+        results: list[RetrievalResult], lineages: Mapping[str, dict[str, list[str]]]
+    ) -> list[RetrievalResult]:
+        """``results`` with each community report ``lineages`` has a lineage
+        for (``_findings_lineages``) carrying it (``findings_text_unit_ids``,
+        ``findings_document_ids``): its citation names those units, as a key
+        point written from it does, while its ``text_unit_ids`` stay its
+        community's membership."""
+        out: list[RetrievalResult] = []
+        for result in results:
+            lineage = (
+                lineages.get(str(result.source))
+                if result.retriever_type == SectionType.COMMUNITY.value
+                else None
+            )
+            if lineage is None or findings_lineage(result) is not None:
+                out.append(result)
+                continue
+            out.append(
+                result.model_copy(
+                    update={
+                        "metadata": {
+                            **(result.metadata or {}),
+                            FINDINGS_TEXT_UNITS_FIELD: lineage["text_unit_ids"],
+                            FINDINGS_DOCUMENTS_FIELD: lineage["document_ids"],
+                        }
+                    }
+                )
+            )
+        return out
+
+    async def _cite_report_findings(
+        self,
+        query: SearchQuery,
+        results: list[RetrievalResult],
+        *,
+        failures: list[Exception] | None = None,
+    ) -> list[RetrievalResult]:
+        """``results`` with each community report's findings lineage read
+        (``_findings_lineages``) and set (``_with_findings_lineages``)."""
+        if not any(r.retriever_type == SectionType.COMMUNITY.value for r in results):
+            return results
+        lineages = await self._findings_lineages(query, results, failures=failures)
+        return self._with_findings_lineages(results, lineages) if lineages else results
 
     async def _ids_passing(
         self,

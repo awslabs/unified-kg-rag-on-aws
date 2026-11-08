@@ -168,9 +168,11 @@ language. Global search's key points and DRIFT's intermediate answers are
 numbered one by one too: each names the documents of the reports (or the
 local context) it was written from, as MS GraphRAG's `[Data: Reports (...)]`
 does, even when the evidence budget left those reports out of the context.
-A report names the documents of the entities and relationships its findings
-cite, not of its whole community (a report indexed before its findings were
-kept falls back to the community). They are model output, so they are never
+A report, in every strategy that reads reports, names the documents of the
+entities and relationships its findings cite, not of its whole community (a
+report indexed before its findings were kept falls back to the community; in
+a GraphRAG-only namespace, which has no relationships index, it names its
+entities' documents). They are model output, so they are never
 listed as sources, and their answers cite where they can without leaving out
 a point that has no marker. A marker has
 at most three digits, so a bracketed year such as `[2020]` is text:
@@ -187,7 +189,8 @@ answer uses it), `section_type`, `title`, the main `document_id` /
 `documents`, and seed-graph `provenance` and `iri`. A graph section names the
 documents of up to `search.citations.lineage_units` of its text units that
 the query's filters and suffix let through (batched store reads: a document
-they exclude is never named, and the next units are read in its place). A number the answer uses that the
+they exclude is never named, and the next units are read in its place, in
+at most four reads). A number the answer uses that the
 context did not show is in `metadata.unknown_citation_markers`, never a
 citation. The store read runs alongside the answer call. A follow-up's
 rewrite reads the earlier answers without their markers.
