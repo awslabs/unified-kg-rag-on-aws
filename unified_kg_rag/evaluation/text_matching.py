@@ -33,15 +33,18 @@ _LANGUAGE_ARTICLES: dict[str, re.Pattern[str]] = {
     for language in profiles()
     if language.articles and language.code is not LanguageCode.EN
 }
-# An elided article before a vowel ("l'accord", "un'altra"): split from its
-# word before punctuation is deleted, so it is dropped as a word of its own
-# instead of gluing to the next one ("laccord").
-_ELIDED_ARTICLES: dict[str, re.Pattern[str]] = {
+# An elided word before a vowel ("l'accord", "d'Avignon", "dell'accordo";
+# ``LanguageProfile.elided_prefixes``): split from its word before
+# punctuation is deleted, instead of gluing to it ("laccord", "davignon");
+# an elided article is then dropped as the language's articles are.
+_ELIDED_PREFIXES: dict[str, re.Pattern[str]] = {
     language.code.value: re.compile(
-        r"(?<!\w)(" + "|".join(sorted(language.elided_articles)) + r")['\u2019](?=\w)"
+        r"(?<!\w)("
+        + "|".join(sorted(language.elided_prefixes, key=len, reverse=True))
+        + r")['\u2019](?=\w)"
     )
     for language in profiles()
-    if language.elided_articles
+    if language.elided_prefixes
 }
 _ASCII_PUNCTUATION = frozenset(string.punctuation)
 # A comma followed by exactly three digits inside a number ("1,000,000").
@@ -128,11 +131,12 @@ def normalize_answer(text: str, language: str | None = None) -> str:
 
     ``language`` (the answer's ``LanguageCode`` value) also drops that
     language's articles for German, Spanish, French, Italian and Portuguese
-    ("der Rhein" equals "Rhein", "l'accord" "accord"); other languages,
-    and ``None``, drop the English ones only.
+    ("der Rhein" equals "Rhein", "l'accord" "accord"), after splitting a
+    French or Italian elided word from the next ("d'Avignon" is "d
+    avignon"); other languages, and ``None``, drop the English ones only.
     """
     text = unicodedata.normalize("NFKC", text).lower()
-    if (elided := _ELIDED_ARTICLES.get(language or "")) is not None:
+    if (elided := _ELIDED_PREFIXES.get(language or "")) is not None:
         text = elided.sub(r"\1 ", text)
     text = _THOUSANDS_SEPARATOR.sub("", text)
     text = _JOINING_DASH.sub(_split_or_join_dash, text)
@@ -531,83 +535,48 @@ def _substring_beside_han_or_kana(needle: str, haystack: str) -> bool:
 
 # --- the number an answer states ----------------------------------------------
 
-_ENGLISH_UNITS = (
-    "zero one two three four five six seven eight nine ten eleven twelve "
-    "thirteen fourteen fifteen sixteen seventeen eighteen nineteen"
-).split()
-_ENGLISH_TENS = dict(
-    zip(
-        "twenty thirty forty fifty sixty seventy eighty ninety".split(),
-        range(20, 100, 10),
-        strict=True,
-    )
-)
-_ENGLISH_ZERO = ("none", "no")
+# The English number words, their tens and scale words and the words for
+# none (``LanguageProfile.number_words``, ``number_tens``, ``number_scales``,
+# ``zero_words``).
+_EN = profile(LanguageCode.EN)
+_ENGLISH_UNITS = sorted(_EN.number_words, key=_EN.number_words.__getitem__)
+_ENGLISH_TENS = dict(_EN.number_tens)
+_ENGLISH_ZERO = _EN.zero_words
 # Scale words after a number word: "three hundred", "two thousand five
 # hundred".
-_ENGLISH_SCALES = {"hundred": 100, "thousand": 1000, "million": 10**6, "billion": 10**9}
-# Korean native numerals, in the form they take before a counter ("세 곳",
-# "두 군데", "스무 개사") or alone ("셋"), ones and tens apart: 열세 is 13.
-_KOREAN_NATIVE_ONES = {
-    "한": 1,
-    "하나": 1,
-    "두": 2,
-    "둘": 2,
-    "세": 3,
-    "셋": 3,
-    "석": 3,
-    "네": 4,
-    "넷": 4,
-    "다섯": 5,
-    "여섯": 6,
-    "일곱": 7,
-    "여덟": 8,
-    "아홉": 9,
-}
-_KOREAN_NATIVE_TENS = {"열": 10, "스물": 20, "스무": 20, "서른": 30, "마흔": 40}
-# The counters a Korean count answer takes; a native numeral counts only
-# before one, since "네" alone is also "yes" and "세" a word of its own.
-_KOREAN_COUNTERS = ("개사", "군데", "가지", "곳", "개", "명", "건", "회", "번")
-# Japanese (and Chinese) numerals before a counter ("三社", "十二件").
+_ENGLISH_SCALES = dict(_EN.number_scales)
+# Korean native numerals before a counter, ones and tens apart (열세 is
+# 13), and the counters a Korean count answer takes
+# (``LanguageProfile.counter_numerals``, ``number_tens``, ``counters``).
+_KO = profile(LanguageCode.KO)
+_KOREAN_NATIVE_ONES = dict(_KO.counter_numerals)
+_KOREAN_NATIVE_TENS = dict(_KO.number_tens)
+_KOREAN_COUNTERS = _KO.counters
+# Japanese and Chinese numerals before a counter ("三社", "十二件", "两家"):
+# the digits, multipliers and counters of the profiles that write Han.
+_HAN_LANGUAGES = [profile(LanguageCode.JA), profile(LanguageCode.ZH)]
 _HAN_DIGITS = {
-    "〇": 0,
-    "零": 0,
-    "一": 1,
-    "二": 2,
-    "三": 3,
-    "四": 4,
-    "五": 5,
-    "六": 6,
-    "七": 7,
-    "八": 8,
-    "九": 9,
-    # Chinese two before a counter ("两家", "兩個").
-    "两": 2,
-    "兩": 2,
+    ch: value
+    for language in _HAN_LANGUAGES
+    for ch, value in language.counter_numerals.items()
 }
-_HAN_MULTIPLIERS = {"十": 10, "百": 100, "千": 1000}
-_HAN_COUNTERS = (
-    "社",
-    "つ",
-    "件",
-    "人",
-    "名",
-    "個",
-    "箇所",
-    "か所",
-    "カ所",
-    "ヶ所",
-    "家",
-    "个",
+_HAN_MULTIPLIERS = {
+    ch: value
+    for language in _HAN_LANGUAGES
+    for ch, value in language.numeral_multipliers.items()
+}
+_HAN_COUNTERS = tuple(
+    dict.fromkeys(c for language in _HAN_LANGUAGES for c in language.counters)
 )
 
 # Number words of the other languages with English-like counts, from zero
-# to twelve (``LanguageProfile.number_words``), read in an answer in that
-# language.
+# to twelve (``LanguageProfile.number_words`` without tens words to compose
+# with: English's are read by its own grammar above), read in an answer in
+# that language.
 _LANGUAGE_NUMBER_WORDS: dict[str, dict[str, int]] = {
     language.code.value: dict(language.number_words)
     for language in profiles()
-    if language.number_words
+    if language.number_words and not language.number_tens
 }
 _LANGUAGE_NUMBER: dict[str, re.Pattern[str]] = {
     language: re.compile(
@@ -875,9 +844,9 @@ def leading_number(text: str, language: str | None = None) -> float | None:
     ("No single vendor"), and "one of them". A count answer states its
     number first ("Three vendors ... Two of them ..." is 3), so a numeric
     gold is compared with this number, not with every number the answer
-    happens to name. With ``language`` German, Spanish, French, Italian or
-    Portuguese, that language's number words from zero to twelve count too
-    ("drei", "trois", "três")."""
+    happens to name. With ``language`` German, Spanish, French, Italian,
+    Portuguese or Russian, that language's number words from zero to twelve
+    count too ("drei", "trois", "três", "три")."""
     lines = [
         line
         for line in unicodedata.normalize("NFKC", text).splitlines()

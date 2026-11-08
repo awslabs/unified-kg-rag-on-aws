@@ -60,6 +60,25 @@ PROFILE = LanguageProfile(
         "有限責任公司",
         "有限公司",
     ),
+    # Han numerals before a counter ("三社", "十二件").
+    counter_numerals={
+        "〇": 0,
+        "零": 0,
+        "一": 1,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+        # Two before a counter ("两家", "兩個").
+        "两": 2,
+        "兩": 2,
+    },
+    numeral_multipliers={"十": 10, "百": 100, "千": 1000},
+    counters=("家", "个", "個", "件", "人", "名"),
     polarity_words={
         "是": "yes",
         "是的": "yes",

@@ -56,8 +56,18 @@ _WORD = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*")
 
 
 def words_of(text: str) -> list[str]:
-    """The lowercased words of ``text`` function words are counted in."""
-    return _WORD.findall(text.lower())
+    """The lowercased words of ``text`` function words are counted in (an
+    elided word kept with its apostrophe: "dell'accordo")."""
+    return _WORD.findall(text.lower().replace("\u2019", "'"))
+
+
+def _signals(word: str, language: LanguageProfile) -> bool:
+    """Whether ``word`` is one of ``language``'s function words or opens
+    with a word it elides ("dell'accordo": ``elided_prefixes``)."""
+    if word in language.function_words:
+        return True
+    head, apostrophe, _ = word.partition("'")
+    return bool(apostrophe) and head in language.elided_prefixes
 
 
 def _candidates(script: str | None) -> list[LanguageProfile]:
@@ -81,8 +91,9 @@ def script_language(
     (``ScriptCounts.dominant``): Han, Hangul and Kana read as
     :func:`dense_language` says, a script one profile writes as that
     language, and among the languages of one script (Latin) their function
-    words decide: the language with the most, ``fallback`` (the index
-    language) among those tied, else none."""
+    words and elisions decide ("dell'" is Italian, "d'" French): the
+    language with the most, ``fallback`` (the index language) among those
+    tied, else the one of them whose own articles occur most, else none."""
     script = counts.dominant()
     if script is None:
         return None
@@ -92,14 +103,32 @@ def script_language(
     if len(candidates) == 1 and candidates[0].script == script:
         return candidates[0].code
     words = list(words)
-    hits = {p.code: sum(word in p.function_words for word in words) for p in candidates}
+    hits = {p.code: sum(_signals(word, p) for word in words) for p in candidates}
     best = max(hits.values(), default=0)
     if not best:
         return None
-    tied = [code for code, count in hits.items() if count == best]
-    if fallback in tied:
+    tied = [p for p in candidates if hits[p.code] == best]
+    if fallback in {p.code for p in tied}:
         return fallback
-    return tied[0] if len(tied) == 1 else None
+    if len(tied) > 1:
+        tied = _by_articles(tied, words)
+    return tied[0].code if len(tied) == 1 else None
+
+
+def _by_articles(
+    tied: list[LanguageProfile], words: list[str]
+) -> list[LanguageProfile]:
+    """Of languages tied on their function words, those whose articles no
+    other of them writes occur most in ``words`` ("il" is Italian, not
+    Portuguese); all of them when none occurs."""
+    counts: dict[LanguageCode, int] = {}
+    for language in tied:
+        own = language.articles - frozenset().union(
+            *(other.articles for other in tied if other is not language)
+        )
+        counts[language.code] = sum(word in own for word in words)
+    best = max(counts.values())
+    return [p for p in tied if counts[p.code] == best] if best else tied
 
 
 def text_language(text: str, fallback: LanguageCode | str) -> LanguageCode:

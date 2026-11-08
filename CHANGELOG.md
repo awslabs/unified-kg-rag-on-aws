@@ -1129,8 +1129,9 @@ From a `main` checkout (formats and keys no release had):
   falling back to the first line), `evaluation.answer_normalization` (`official_squad`, `hotpotqa`), recorded in the
   manifest's `answer_scoring` with the token-F1 tokenization; under `default`, token F1 counts a Han, Hangul or Kana
   letter as a token and drops a run of Korean particles (their closed class) on a gold word, so Chinese, Japanese and
-  Korean answers get partial credit, and a German, Spanish, French, Italian or Portuguese answer (the question's
-  language, `answer_language` in each report) drops that language's articles and reads its number words up to twelve
+  Korean answers get partial credit, and a German, Spanish, French, Italian, Portuguese or Russian answer (the
+  question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
+  elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its number words up to twelve
   (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
@@ -1551,7 +1552,9 @@ Queries and retrieval.
   changed what that strategy reads for every caller in the process; the same arguments keep the record.
 - The no-context reply is written in the language of the script most of the question's letters are in, weighed
   by what a letter carries, not in the first non-Latin script found: "What does 계약 mean?" gets the English reply,
-  a Japanese question quoting a Korean word the Japanese one.
+  a Japanese question quoting a Korean word the Japanese one. Among Latin-script languages, elisions ("dell'") count
+  with the function words, and a tie the index language is not in goes to the language whose own articles occur
+  ("Qual è il prezzo?" is Italian, not English).
 - A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
   went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its

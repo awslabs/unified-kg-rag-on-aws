@@ -37,6 +37,28 @@ PROFILE = LanguageProfile(
         "notapplicable",
     ),
     articles=frozenset({"a", "an", "the"}),
+    number_words={
+        word: value
+        for value, word in enumerate(
+            "zero one two three four five six seven eight nine ten eleven "
+            "twelve thirteen fourteen fifteen sixteen seventeen eighteen "
+            "nineteen".split()
+        )
+    },
+    number_tens=dict(
+        zip(
+            "twenty thirty forty fifty sixty seventy eighty ninety".split(),
+            range(20, 100, 10),
+            strict=True,
+        )
+    ),
+    number_scales={
+        "hundred": 100,
+        "thousand": 1000,
+        "million": 10**6,
+        "billion": 10**9,
+    },
+    zero_words=("none", "no"),
     open_date_words=("tbd", "ongoing", "present"),
     # strptime reads the English month names itself.
     legal_forms={
