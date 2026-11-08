@@ -85,7 +85,7 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 기본값으로 같은 방식으로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking: ppr`.
 `support`는 각 단위를 인용하는 확장 엔티티 수로 정함). DRIFT의 후속 local 검색은 `support`를 유지합니다
 (`search.drift_search.text_unit_ranking`. `ppr`로는 측정하지 않음). [검색](../concepts/retrieval.ko.md)과
-[설계 §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking)(영문)을
+[설계 §6.4](../design/retrieval-hipporag-raptor.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking)(영문)을
 참고하세요.
 
 ## 재순위화 상태
@@ -284,7 +284,7 @@ models:
   ([답변 거절](#답변-거절)).
 
 동작 방식과 IRCoT·KAG와의 비교는
-[설계 문서](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in)(영문)에 있습니다.
+[설계 문서](../design/retrieval-graphrag-lightrag.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in)(영문)에 있습니다.
 
 ## 요약 트리 검색(선택 사항)
 
@@ -320,7 +320,7 @@ search:
 - **비용.** `naive` 질의에 검색 몇 번과 더 넓은 재순위화가 더해지며, 답변 전에 모델을
   호출하지 않습니다.
 
-동작 방식과 RAPTOR 원 코드와의 차이는 [설계](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)(영문)에
+동작 방식과 RAPTOR 원 코드와의 차이는 [설계](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in)(영문)에
 있습니다.
 
 ## 구조화 그래프 질의(선택 사항)

@@ -57,7 +57,7 @@ preset points at `localhost` ([containers](#local-stores-in-containers)).
   (`providers.llm.tokenizer: tiktoken` for a BPE encoding).
 - **Custom kinds** register a builder with
   `adapters.provider_registry.register_provider`
-  ([design §15](../design.md#15-extension-guide)).
+  ([design §15](./extend.md#15-extension-guide)).
 
 ## Differences from AWS mode
 

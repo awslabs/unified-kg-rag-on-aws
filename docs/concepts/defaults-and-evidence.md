@@ -311,7 +311,7 @@ leaf variant, not upstream's selection. A later run on the same 200 questions, t
 each, measured membership against similarity: exact match -4.0 points
 [-7.75, -0.25], token F1 -4.1 [-7.7, -0.6], both significant, for about 0.5%
 fewer tokens. Similarity stays the default
-([Design §6.1](../design.md#61-graphrag-methodology-adapterssearch_strategies)).
+([Design §6.1](../design/retrieval-graphrag-lightrag.md#61-graphrag-methodology-adapterssearch_strategies)).
 
 ## Local PPR ranking
 
@@ -321,7 +321,7 @@ expanded entities before the text quota cuts them (DRIFT's follow-ups keep
 `local` alone). `ppr`, the default, ranks them by HippoRAG 2's Personalized PageRank
 over the expanded entities, their relationships and the passages they cite,
 seeded by local's entities, the question's passage hits and the endpoints of
-its relationship hits ([Design §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking));
+its relationship hits ([Design §6.4](../design/retrieval-hipporag-raptor.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking));
 `support`, the earlier default, by how many expanded entities cite a unit.
 A retrieval-only screen first chose the seeding: on the same 200 MuSiQue
 questions, one repeat, real models, the ranking as configured by default
@@ -405,7 +405,7 @@ default changes.
 
 ## Iterative follow-up rounds
 
-`iterative` (§6.3 of the [Design Doc](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in))
+`iterative` (§6.3 of the [Design Doc](../design/retrieval-graphrag-lightrag.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in))
 reruns its base strategy for the bridge entities a fast-model controller
 says the answer still depends on. A run on 2026-11-06 (package at commit
 `d0615b8f`) measured it on the same 200 MuSiQue questions, embedded stores
@@ -474,7 +474,7 @@ search:
 ## RAPTOR summary tree
 
 `tree` searches the text units and every level of a summary tree (§6.5 of
-the [Design Doc](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)).
+the [Design Doc](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in)).
 A run on 2026-11-07 (package at commit `1c80d7da`) built the tree on a copy
 of the repaired index with `run-ingestion --enabled-stages summary_tree`
 and `models.roles.summary_tree: fast`: 603 summaries in 4 levels over the

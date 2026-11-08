@@ -21,7 +21,7 @@ install), configured under `graph.visualization` (`interactive.*`,
 `static.*`, `centrality.*`; every key: [Configuration
 Reference](../reference/configuration.md)).
 Ingestion itself renders nothing. Another renderer plugs in through
-`@register_renderer` ([Design Doc §15](../design.md#15-extension-guide)).
+`@register_renderer` ([Design Doc §15](./extend.md#15-extension-guide)).
 
 ## Input and output
 

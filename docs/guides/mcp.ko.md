@@ -8,7 +8,7 @@
 만든 에이전트, Amazon Bedrock AgentCore에서 실행하는 에이전트)는 이 패키지의 Python
 API 없이도 인덱스를 검색하고, 질문하고, 그래프를 따라갈 수 있습니다. 서버는 아무것도
 쓰지 않습니다. 수집·삭제·메모리 도구가 없습니다. 계층 배치, 보안 판단 근거, 실패 유형은
-[설계 문서](../design.md#84-agent-access-the-read-only-mcp-server)(영문)에, 모든
+[설계 문서](../design/surfaces.md#84-agent-access-the-read-only-mcp-server)(영문)에, 모든
 플래그는 [CLI 레퍼런스](../reference/cli.md#run-mcp-server)(영문)에 있습니다.
 
 ## 설치와 시작

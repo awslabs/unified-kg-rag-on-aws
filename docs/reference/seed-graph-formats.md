@@ -6,7 +6,7 @@ documents, and its lifecycle: [Seed graphs](../guides/seed-graphs.md).
 Every kind also takes `dangling` and `qualifier_property`
 ([Configure](../guides/seed-graphs.md#configure)); another format plugs in
 as a registered seed source
-([Design Doc §15](../design.md#15-extension-guide)).
+([Design Doc §15](../guides/extend.md#15-extension-guide)).
 
 ## JSONL
 

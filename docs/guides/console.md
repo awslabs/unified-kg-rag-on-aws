@@ -8,7 +8,7 @@ graph, ingest a folder of documents, run and compare evaluations, explore
 the exported graph, see what queries and jobs cost, and edit the
 configuration. It is a prototype for one person on one host: it has no
 login, and it binds `127.0.0.1` unless told otherwise. How it is built:
-[Design Doc §10.1](../design.md#101-the-console-run-console-opt-in). Every
+[Design Doc §10.1](../design/surfaces.md#101-the-console-run-console-opt-in). Every
 flag: [CLI Reference](../reference/cli.md#run-console).
 
 ## Start the console

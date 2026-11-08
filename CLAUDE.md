@@ -91,11 +91,12 @@ allowlist of exceptions is empty; keep it so).
   `tests/unit/test_layering.py` is the list. `EvaluationManager._resolve_evaluator_class`
   is the one explicit type → class map (a new evaluator adds a branch there).
 
-See `docs/design.md` §2 for the full layer map and dependency rule.
+See `docs/design/architecture.md` §2 for the full layer map and dependency rule
+(`docs/design.md` indexes every design section and the page holding it).
 
 ### Adding things
 Recipes for new strategies, backends, evaluators, renderers, parsers and
-config sections live in one place: `docs/design.md` §15 "Extension Guide"
+config sections live in one place: `docs/guides/extend.md` (§15 "Extension Guide")
 (read it before extending; update it, not this file, when a recipe changes).
 The rules to keep in mind:
 - Extend through the registries and the one evaluator type map, never new
@@ -166,7 +167,7 @@ The rules to keep in mind:
   reference in `docs/reference/`, including the generated `cli.md` and
   `configuration.md`. Operator
   procedures are in `docs/operations.md`, extension recipes in
-  `docs/design.md` §15. Where content goes, the Korean (Tier-1) pages and
+  `docs/guides/extend.md` (§15). Where content goes, the Korean (Tier-1) pages and
   the docs checker (`uv run python scripts/check_docs.py`):
   CONTRIBUTING.md *Documentation*.
 

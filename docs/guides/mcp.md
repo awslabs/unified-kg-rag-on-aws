@@ -9,7 +9,7 @@ framework agent, an agent hosted on Amazon Bedrock AgentCore) can then
 search the index, ask it questions and walk its graph without this
 package's Python API. The server writes nothing: there is no ingestion,
 deletion or memory tool. Its design (layering, security reasoning, failure
-modes) is in [the design doc](../design.md#84-agent-access-the-read-only-mcp-server);
+modes) is in [the design doc](../design/surfaces.md#84-agent-access-the-read-only-mcp-server);
 every flag is in the [CLI reference](../reference/cli.md#run-mcp-server).
 
 ## Install and start

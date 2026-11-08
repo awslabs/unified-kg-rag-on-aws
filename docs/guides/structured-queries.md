@@ -15,7 +15,7 @@ passages they cite.
 
 It is opt-in and unmeasured: no default selects it and `auto` does not route
 to it until it is added to `search.auto_routable_strategies`. How it works
-inside: [Design §6.6](../design.md#66-structured-graph-queries-structured-opt-in).
+inside: [Design §6.6](../design/structured-queries.md#66-structured-graph-queries-structured-opt-in).
 
 ## Run it
 

@@ -1347,6 +1347,9 @@ From a `main` checkout (formats and keys no release had):
   uses an S3 Bucket Key (#617).
 - Internal: the configuration models module `config.py` became the package `domain/models/config/`,
   one module per section. No user-visible change; imports from `unified_kg_rag.domain.models.config` are unchanged.
+- Docs: the design reference is split by topic. [`docs/design.md`](docs/design.md) is an index of every section
+  with a summary and a link, the sections are in `docs/design/`, and the extension guide (§15) is
+  [`docs/guides/extend.md`](docs/guides/extend.md); section numbers and heading ids are unchanged.
 
 ### Deprecated
 - `graph.community_detection.auto_resolution`, `auto_resolution_candidates` and `auto_resolution_max_nodes` log a

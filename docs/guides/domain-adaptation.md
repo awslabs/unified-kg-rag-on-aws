@@ -11,7 +11,7 @@ to an extraction prompt re-extracts the documents extracted with other
 settings on the next incremental run
 ([Incremental indexing: Workflows](./incremental.md#workflows)). How the
 prompts and tuning work inside:
-[Design §11](../design.md#11-prompts-and-prompt-tuning).
+[Design §11](../design/surfaces.md#11-prompts-and-prompt-tuning).
 
 ## Recommended flow
 

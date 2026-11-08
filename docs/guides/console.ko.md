@@ -7,7 +7,7 @@ CLI와 같은 진입점 위에 올린 로컬 웹 앱입니다. 질문하고 답�
 실행해 비교하고, 내보낸 그래프를 탐색하고, 질의와 작업에 든 비용을 보고,
 설정을 편집합니다. 한 사람이 한 호스트에서 쓰는 프로토타입이라 로그인이
 없고, 따로 지정하지 않으면 `127.0.0.1`에만 바인딩합니다. 구조:
-[설계 문서 §10.1](../design.md#101-the-console-run-console-opt-in)(영문). 모든
+[설계 문서 §10.1](../design/surfaces.md#101-the-console-run-console-opt-in)(영문). 모든
 플래그: [CLI 레퍼런스](../reference/cli.md#run-console)(영문).
 
 ## 콘솔 시작

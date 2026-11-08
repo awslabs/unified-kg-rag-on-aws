@@ -22,6 +22,13 @@ Korean page carries :data:`LAG_NOTE`. ``tests/unit/test_docs_links.py`` and
 ``tests/unit/test_docs_facts.py`` checks the counts and lists the docs state
 against the code.
 
+The design reference is an index (:data:`DESIGN_INDEX`, every section heading)
+over part files (:data:`DESIGN_PARTS`) that hold the sections' text.
+:func:`design_sections` maps each section number to the file holding it, so
+every ``§N`` reference in the docs and the code must name a section, and a
+link whose text names ``§N`` must point at the index or at the part holding
+it.
+
 Usage:
     uv run python scripts/check_docs.py   # exit 1 and list every failure
 """
@@ -72,6 +79,7 @@ CODE_FILES = ("config-template.yaml", "pyproject.toml")
 # Files whose doc paths are the checker's own test inputs, not citations.
 CITATION_FIXTURES = (
     "tests/unit/test_changelog_section.py",
+    "tests/unit/test_design_split.py",
     "tests/unit/test_docs_links.py",
     "tests/unit/test_docs_translations.py",
 )
@@ -129,6 +137,13 @@ EXTERNAL_PATHS = frozenset(
     }
 )
 _SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+# The design reference: the index lists every section heading, and each
+# section's text lives in one part (§15, the extension guide, in the guides).
+DESIGN_INDEX = "docs/design.md"
+DESIGN_PARTS = ("docs/design/", "docs/guides/extend.md")
+# A numbered heading ("6.1.1 Global search") and a reference to one ("§6.1.1").
+_SECTION_NUMBER = re.compile(r"(\d+(?:\.\d+)*)\.?(?:[ \t]|$)")
+_SECTION_REF = re.compile(r"§[ \t]?(\d+(?:\.\d+)*)")
 # docs/<path>.md[#fragment] inside code, docstrings, comments and YAML. A
 # heading id holds no "." (slugs drop it), so a sentence's full stop ends it.
 _CODE_CITE = re.compile(r"(?<![\w-])docs/[\w./-]+?\.md(?:#[^\s\"'`)\]>,;.]+)?")
@@ -384,7 +399,79 @@ def check_links(root: Path = REPO_ROOT) -> Report:
                 _check_target(
                     root, path, f"{rel}:{number}", match.group(), root, report, tracked
                 )
+    _check_section_refs(root, files, code, report)
     return report
+
+
+def _section_numbers(text: str) -> list[str]:
+    """The numbers of the numbered ##-and-deeper headings of a page."""
+    out = []
+    for level, title in headings(text):
+        match = _SECTION_NUMBER.match(title)
+        if level > 1 and match:
+            out.append(match.group(1))
+    return out
+
+
+def design_sections(root: Path = REPO_ROOT) -> dict[str, str]:
+    """Each section number of the design reference, and the repo-relative
+    file holding its text: a part, or the index for a section it keeps."""
+    sections: dict[str, str] = {}
+    paths = [p.relative_to(root).as_posix() for p in tracked_files(root)]
+    for rel in paths:
+        if rel.endswith(".md") and rel.startswith(DESIGN_PARTS):
+            text = (root / rel).read_text(encoding="utf-8")
+            sections.update(dict.fromkeys(_section_numbers(text), rel))
+    if DESIGN_INDEX in paths:
+        text = (root / DESIGN_INDEX).read_text(encoding="utf-8")
+        for number in _section_numbers(text):
+            sections.setdefault(number, DESIGN_INDEX)
+    return sections
+
+
+def _check_section_refs(
+    root: Path, files: list[Path], code: list[Path], report: Report
+) -> None:
+    """Every ``§N`` names a design section, and a link whose text names one
+    points at the index or at the part holding it."""
+    sections = design_sections(root)
+    if not sections:
+        return
+    design = set(sections.values()) | {DESIGN_INDEX}
+    for path in [p for p in files if p.suffix == ".md"] + code:
+        rel = path.relative_to(root).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for number, line in enumerate(text.splitlines(), 1):
+            for match in _SECTION_REF.finditer(line):
+                report.counts["section refs"] += 1
+                if match.group(1) not in sections:
+                    report.failures.append(
+                        f"{rel}:{number}: no design section §{match.group(1)}"
+                    )
+        if path.suffix != ".md":
+            continue
+        for first, paragraph in _paragraphs(text):
+            for m in _LINK_TEXT.finditer(paragraph):
+                link = m.group(2).strip("<>").partition("#")[0]
+                if not link or _SCHEME.match(link):
+                    continue
+                try:
+                    dest = (path.parent / unquote(link)).resolve()
+                    target = dest.relative_to(root.resolve()).as_posix()
+                except ValueError:
+                    continue
+                if target not in design or target == DESIGN_INDEX:
+                    continue
+                for ref in _SECTION_REF.findall(m.group(1)):
+                    if sections.get(ref) != target:
+                        line = first + paragraph.count("\n", 0, m.start())
+                        report.failures.append(
+                            f"{rel}:{line}: links §{ref} to {target}, but its "
+                            f"text is in {sections.get(ref)}"
+                        )
 
 
 def structure(text: str, page: Path, root: Path) -> dict[str, object]:

@@ -239,3 +239,44 @@ def test_inline_code_paths_that_exist_pass(tmp_path: Path) -> None:
 def test_a_code_citation_ends_at_a_full_stop(tmp_path: Path) -> None:
     files = {"unified_kg_rag/m.py": '"""See docs/b.md#b."""\n', "docs/b.md": "# B"}
     assert _failures(tmp_path, files) == []
+
+
+_DESIGN = {
+    "docs/design.md": "# D\n## 1. One\n## 2. Two\n### 2.1 Sub\n## 3. Three\n",
+    "docs/design/two.md": "# Two\n## 2. Two\n### 2.1 Sub\n",
+    "docs/design/three.md": "# Three\n## 3. Three\n",
+}
+
+
+def test_section_refs_name_design_sections(tmp_path: Path) -> None:
+    root = git_tree(
+        tmp_path,
+        {
+            **_DESIGN,
+            "README.md": "See docs/design.md §2.1, §3 and [§2](docs/design/two.md#2-two)"
+            " and [§1](docs/design.md#1-one).\n",
+            "unified_kg_rag/m.py": '"""Cites docs/design.md §2.1."""\n',
+        },
+    )
+    report = check_docs().check_links(root)
+    assert not report.failures
+    assert report.counts["section refs"] == 5
+    assert check_docs().design_sections(root) == {
+        "1": "docs/design.md",
+        "2": "docs/design/two.md",
+        "2.1": "docs/design/two.md",
+        "3": "docs/design/three.md",
+    }
+
+
+def test_an_unknown_section_or_a_link_to_the_wrong_part_fails(tmp_path: Path) -> None:
+    failures = _failures(
+        tmp_path,
+        {
+            **_DESIGN,
+            "README.md": "See [§3](docs/design/two.md#2-two).\n",
+            "unified_kg_rag/m.py": '"""Cites docs/design.md §4.2."""\n',
+        },
+    )
+    assert any("README.md:1: links §3 to docs/design/two.md" in f for f in failures)
+    assert any("m.py:1: no design section §4.2" in f for f in failures)

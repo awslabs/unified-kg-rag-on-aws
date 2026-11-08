@@ -3,7 +3,7 @@
 > 🇬🇧 English version: [multilingual.md](./multilingual.md)
 
 한국어나 다른 언어, 또는 여러 언어로 된 코퍼스는 번역, 검색 분석기, 청크 크기에 맞게
-언어를 지정해야 합니다. 내부 동작은 [설계 §8.3](../design.md#83-multilingual-processing)(영문)에
+언어를 지정해야 합니다. 내부 동작은 [설계 §8.3](../design/aws-integration.md#83-multilingual-processing)(영문)에
 있습니다.
 
 ## 번역

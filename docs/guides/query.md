@@ -94,7 +94,7 @@ explicitly. `local` orders its text units the same way by default
 (`search.local_search.text_unit_ranking: ppr`; `support` orders them by
 how many expanded entities cite each); DRIFT's follow-up local searches keep `support`
 (`search.drift_search.text_unit_ranking`), unmeasured with `ppr`. See [Retrieval](../concepts/retrieval.md) and
-[Design §6.4](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking).
+[Design §6.4](../design/retrieval-hipporag-raptor.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking).
 
 ## Rerank status
 
@@ -324,7 +324,7 @@ models:
   declines ([Declined answers](#declined-answers)).
 
 How it works and how it compares with IRCoT and KAG:
-[design](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in).
+[design](../design/retrieval-graphrag-lightrag.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in).
 
 ## Summary-tree search (opt-in)
 
@@ -366,7 +366,7 @@ search:
   model call before the answer.
 
 How it works and how it differs from RAPTOR's own code:
-[design](../design.md#65-raptor-summary-tree-raptor-tree-opt-in).
+[design](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in).
 
 ## Structured graph queries (opt-in)
 
