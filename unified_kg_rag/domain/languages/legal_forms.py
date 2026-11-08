@@ -25,6 +25,10 @@ To avoid merging different names, a designator is stripped only
   ("Inc." stays "inc.", "Pty Ltd" becomes "pty").
 
 ``S.p.A.`` counts only with its dots, since "spa" is a word.
+
+A form written before the name (Arabic "شركة", ``leading_legal_form``) is
+read by query-time linking (``domain.retrieval.linking``) only, so stored
+name keys are as they were.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ import unicodedata
 
 from unified_kg_rag.domain.languages.registry import profiles
 
-__all__ = ["latin_legal_form", "strip_legal_forms"]
+__all__ = ["latin_legal_form", "leading_legal_form", "strip_legal_forms"]
 
 # Designators written as words, dot-free and casefolded, each with the
 # canonical short form its spellings share, from every language's profile
@@ -43,6 +47,12 @@ _LATIN_LEGAL_FORMS: dict[str, str] = {
     form: short
     for language in profiles()
     for form, short in language.legal_forms.items()
+}
+# Those written before the name (``LanguageProfile.leading_legal_forms``).
+_LEADING_LEGAL_FORMS: dict[str, str] = {
+    unicodedata.normalize("NFKC", form).casefold(): short
+    for language in profiles()
+    for form, short in language.leading_legal_forms.items()
 }
 # Designators that are also words: a designator only when spelled with dots.
 _DOTTED_ONLY = frozenset({"spa"})
@@ -85,6 +95,13 @@ def latin_legal_form(token: str) -> str | None:
     if bare in _DOTTED_ONLY and "." not in token:
         return None
     return _LATIN_LEGAL_FORMS.get(bare)
+
+
+def leading_legal_form(token: str) -> str | None:
+    """The canonical short form of ``token`` (one casefolded word, its dots
+    ignored) when it is a designator its language writes before the name
+    ("شركة"), else ``None``."""
+    return _LEADING_LEGAL_FORMS.get(token.replace(".", ""))
 
 
 def _strip_trailing_latin(text: str) -> str:

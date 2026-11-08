@@ -5,7 +5,7 @@
 One rule for every strategy that turns a name into graph entities (local
 search's focus seeds, the structured strategy's mention nodes):
 :func:`choose_links` keeps the hits that *are* the name (the same
-``compact_name_key``), else follows its policy: ``cover`` (structured)
+:func:`link_key`), else follows its policy: ``cover`` (structured)
 keeps the hits whose name covers every term of it; ``rank`` (local, whose
 seeding is measured) keeps the top hit above a score floor unless it is a
 one-word lookalike.
@@ -17,11 +17,19 @@ absent 라마바 상사. Coverage can: each term of the name must be a term of
 the entity's name, or one spelled alike (``similarity``: the ``difflib``
 ratio entity resolution's ``processing.similarity_threshold`` sets, so
 "Bexly" finds "Bexley" while "Supplies" never stands for "Zorblax
-Supplies"). Terms are the words of the name's ``compact_name_key``
-(NFKC-casefolded, legal-form designators such as "Inc" or "株式会社"
-left out); a word in Han, Hangul or Kana is read as its character bigrams,
-since those scripts write compounds without spaces ("东芝" is covered by
-"东芝电子", "라마바상사" is not by "가나다상사").
+Supplies"). Terms are the words of the name's :func:`link_key`
+(NFKC-casefolded, legal-form designators such as "Inc", "株式会社" or
+"شركة" left out); a word in Han, Hangul or Kana is read as its character
+bigrams, since those scripts write compounds without spaces ("东芝" is
+covered by "东芝电子", "라마바상사" is not by "가나다상사").
+
+:func:`link_key` is the ``compact_name_key`` folded further for the
+comparison alone (stored keys and ids are as they were): the marks a script
+writes at will dropped (Arabic short vowels and tatweel, Hebrew points), a
+middle dot between Han, Hangul or Kana letters removed ("オリオン・ラボ" is
+"オリオンラボ"), the letters a script writes
+for one another folded (``Script.letter_variants``: "أ", "إ", "آ" as "ا",
+"ى" as "ي") and a designator written before the name dropped.
 """
 
 from __future__ import annotations
@@ -32,11 +40,26 @@ from difflib import SequenceMatcher
 from typing import Literal
 
 from unified_kg_rag.domain.ingestion.names import compact_name_key
-from unified_kg_rag.domain.languages.legal_forms import latin_legal_form
+from unified_kg_rag.domain.languages.legal_forms import (
+    latin_legal_form,
+    leading_legal_form,
+)
 from unified_kg_rag.domain.models import RetrievalResult
-from unified_kg_rag.shared.utils.scripts import DENSE_SCRIPT_LETTERS
+from unified_kg_rag.shared.utils.scripts import (
+    DENSE_SCRIPT_LETTERS,
+    drop_optional_marks,
+    fold_letter_variants,
+    join_dense_middle_dots,
+)
 
-__all__ = ["LinkPolicy", "choose_links", "covers", "hit_name", "name_terms"]
+__all__ = [
+    "LinkPolicy",
+    "choose_links",
+    "covers",
+    "hit_name",
+    "link_key",
+    "name_terms",
+]
 
 _WORD = re.compile(r"\w+")
 _DENSE_RUN = re.compile(f"[{DENSE_SCRIPT_LETTERS}]+")
@@ -47,10 +70,20 @@ def hit_name(hit: RetrievalResult) -> str:
     return str((hit.metadata or {}).get("name") or "")
 
 
+def link_key(name: str) -> str:
+    """The key two names that are one are linked by (module docstring)."""
+    key = compact_name_key(name)
+    key = fold_letter_variants(join_dense_middle_dots(drop_optional_marks(key)))
+    first, _, rest = key.partition(" ")
+    if rest and leading_legal_form(first) is not None:
+        return rest
+    return key
+
+
 def name_terms(name: str) -> frozenset[str]:
     """The terms of ``name`` coverage compares (module docstring)."""
     terms: set[str] = set()
-    for word in _WORD.findall(compact_name_key(name)):
+    for word in _WORD.findall(link_key(name)):
         if latin_legal_form(word) is not None:
             continue
         for run in _DENSE_RUN.findall(word):
@@ -101,7 +134,7 @@ def choose_links(
     similarity: float = 1.0,
 ) -> list[RetrievalResult]:
     """The entities ``mention`` links to among a search's ``hits`` (best
-    first): every hit with its ``compact_name_key``; else, by ``policy``:
+    first): every hit with its :func:`link_key`; else, by ``policy``:
 
     - ``cover`` (the structured strategy's mentions, where an absent name
       must link nothing): at most ``limit`` (0: none) hits that score above
@@ -113,9 +146,9 @@ def choose_links(
       (:func:`_lookalike`); a semantic or alias hit still links.
 
     Hits without a source never link."""
-    key = compact_name_key(mention)
+    key = link_key(mention)
     named = [h for h in hits if h.source]
-    exact = [h for h in named if key and compact_name_key(hit_name(h)) == key]
+    exact = [h for h in named if key and link_key(hit_name(h)) == key]
     if exact:
         return exact
     if policy == "rank":

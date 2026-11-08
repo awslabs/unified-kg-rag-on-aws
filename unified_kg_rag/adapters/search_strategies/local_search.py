@@ -415,7 +415,7 @@ class LocalSearchStrategy(PPRRankingMixin):
 
         Each focus entity is looked up on its own, concurrently (at most
         ``search.max_concurrency`` at once), and seeds the expansion with
-        the hits that are its name (``compact_name_key``), else with its top
+        the hits that are its name (``linking.link_key``), else with its top
         hit when that scores at least ``search.local_search.seed_score_ratio``
         of the best hit of any focus entity and is no one-word lookalike
         (``focus_seeds``). One query of the joined names, two

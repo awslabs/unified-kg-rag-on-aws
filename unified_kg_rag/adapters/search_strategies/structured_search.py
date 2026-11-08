@@ -567,7 +567,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     ) -> dict[str, tuple[str, ...]]:
         """Each mention node's entity ids (``domain.retrieval.linking``): the
         hits of a hybrid entity search (under the caller's filters and the
-        node's types) whose name has the mention's ``compact_name_key``;
+        node's types) whose name has the mention's ``linking.link_key``;
         else the best ``link_candidates`` hits of a lexical (BM25) search
         above ``link_min_score`` whose names cover every term of the
         mention (or one ``processing.similarity_threshold`` alike), so an

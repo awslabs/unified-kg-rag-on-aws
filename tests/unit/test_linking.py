@@ -16,6 +16,7 @@ from unified_kg_rag.domain.retrieval.linking import (
     choose_links,
     covers,
     hit_name,
+    link_key,
     name_terms,
 )
 
@@ -171,3 +172,41 @@ def test_the_rank_policy_breaks_a_top_tie_by_coverage() -> None:
     assert [h.source for h in choose_links("acme retail", hits, policy="rank")] == [
         "initech"
     ]
+
+
+@pytest.mark.parametrize(
+    ("mention", "stored"),
+    [
+        # Regression (rv8 retrieval M4): the katakana middle dot is a word
+        # separator a query writes as nothing, a space or the dot.
+        ("オリオンラボ", "オリオン・ラボ"),
+        ("オリオン ラボ", "オリオン・ラボ"),
+        ("オリオン･ラボ", "オリオン・ラボ"),
+        ("홍길동", "홍·길동"),
+        # Arabic: alef with or without hamza, alef maksura, short vowels,
+        # tatweel and the leading "company".
+        ("اكمي للروبوتات", "أكمي للروبوتات"),
+        ("مستشفى النور", "مستشفي النور"),
+        ("أَكْمِي للروبوتات", "أكمي للروبوتات"),
+        ("أكمـــي للروبوتات", "أكمي للروبوتات"),
+        ("شركة أكمي", "أكمي"),
+        ("أكمي", "شركة أكمي"),
+    ],
+)
+@pytest.mark.parametrize("policy", ["cover", "rank"])
+def test_a_written_variant_of_the_name_links_exactly(
+    mention: str, stored: str, policy: str
+) -> None:
+    hits = [_hit("Unrelated Corp", 0.9, "e0"), _hit(stored, 0.1, "e1")]
+    linked = choose_links(mention, hits, policy=policy)  # type: ignore[arg-type]
+    assert [h.source for h in linked] == ["e1"]
+
+
+def test_the_fold_is_query_time_only() -> None:
+    # Stored keys and ids keep the letters as written.
+    assert compact_name_key("أكمي") != compact_name_key("اكمي")
+    assert link_key("أكمي") == link_key("اكمي") == "اكمي"
+    # A designator alone stays (never down to nothing); a middle dot
+    # between Latin letters is no separator.
+    assert link_key("شركة") == "شركة"
+    assert link_key("a·b") == "a·b"

@@ -45,11 +45,13 @@ __all__ = [
     "count_letters",
     "drop_optional_marks",
     "drop_dense_script_spaces",
+    "fold_letter_variants",
     "has_dense_script",
     "has_unspaced_script",
     "is_dense_script_char",
     "is_hangul_syllable",
     "is_unspaced_char",
+    "join_dense_middle_dots",
     "letter_class",
     "script_named",
     "script_of",
@@ -78,7 +80,9 @@ class Script:
     over a sample sentence (``tests/fixtures/language_matrix.py``), rounded
     to a twelfth of a token per character. ``optional_marks`` are the
     combining marks the script writes or leaves out at will (vowel points),
-    so text compared for identity may drop them.
+    so text compared for identity may drop them. ``letter_variants`` are
+    letters its writers use for one another (an Arabic alef with or
+    without its hamza), each with the letter a search reads it as.
     """
 
     name: str
@@ -86,6 +90,7 @@ class Script:
     spacing: Spacing = Spacing.SPACED
     chars_per_token: float = 4.0
     optional_marks: Ranges = field(default=())
+    letter_variants: Mapping[str, str] = field(default_factory=dict)
 
 
 # Han, Hangul and Kana blocks.
@@ -172,6 +177,8 @@ SCRIPTS: tuple[Script, ...] = (
             (0x06E7, 0x06E8),
             (0x06EA, 0x06ED),
         ),
+        # Alef with hamza or madda as bare alef, alef maksura as ya.
+        letter_variants={"أ": "ا", "إ": "ا", "آ": "ا", "ى": "ي"},
     ),
     Script("syriac", ((0x0700, 0x074F),)),
     Script("thaana", ((0x0780, 0x07BF),)),
@@ -358,6 +365,34 @@ def drop_optional_marks(text: str) -> str:
     "שלום". Precomposed presentation forms are left as they are: normalize
     the text (NFC or NFKC) first."""
     return _OPTIONAL_MARK.sub("", text)
+
+
+_LETTER_VARIANTS = str.maketrans(
+    {k: v for script in SCRIPTS for k, v in script.letter_variants.items()}
+)
+
+
+def fold_letter_variants(text: str) -> str:
+    """``text`` with each letter its script writes for another as that one
+    (``Script.letter_variants``): "أحمد" is "احمد", "مستشفى" "مستشفي".
+    A search fold only: an identity key keeps the letters as written."""
+    return text.translate(_LETTER_VARIANTS)
+
+
+# A middle dot (Latin, hyphenation point, katakana and its half-width form)
+# between two Han, Hangul or Kana letters, where it separates the words of
+# one name ("オリオン・ラボ").
+_DENSE_MIDDLE_DOT = re.compile(
+    f"(?<=[{DENSE_SCRIPT_LETTERS}])[\u00b7\u2027\u30fb\uff65]"
+    f"(?=[{DENSE_SCRIPT_LETTERS}])"
+)
+
+
+def join_dense_middle_dots(text: str) -> str:
+    """``text`` without the middle dots between Han, Hangul or Kana letters:
+    "オリオン・ラボ" is "オリオンラボ", as those scripts write a name's words
+    with a dot, a space or nothing between them; a dot elsewhere stays."""
+    return _DENSE_MIDDLE_DOT.sub("", text)
 
 
 # One compiled class: the per-character range scan these tests replaced held
