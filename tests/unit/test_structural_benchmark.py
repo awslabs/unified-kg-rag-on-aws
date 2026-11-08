@@ -174,7 +174,7 @@ def test_run_eval_reports_what_the_structured_arm_did() -> None:
         _result(
             {"status": "answered", "repairs": 0, "exact": False, "truncated": True}
         ),
-        _result({"status": "fallback", "reason": "invalid_plan", "repairs": 1}),
+        _result({"status": "fallback", "reason": "refused_plan", "repairs": 1}),
         _result({"status": "fallback", "reason": "empty_result"}),
         _result(None),
     ]
@@ -182,7 +182,7 @@ def test_run_eval_reports_what_the_structured_arm_did() -> None:
     assert stats == {
         "queries": 4,
         "status": {"answered": 2, "fallback": 2},
-        "fallback_reasons": {"empty_result": 1, "invalid_plan": 1},
+        "fallback_reasons": {"empty_result": 1, "refused_plan": 1},
         "valid_plan_rate": 0.75,
         "repair_rate": 0.5,
         "truncated_rate": 0.5,

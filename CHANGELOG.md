@@ -786,8 +786,9 @@ From a `main` checkout (formats and keys no release had):
   condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a count cites its first matches
   as entities, a minimum or a maximum the entities holding it and groups by a property their listed groups'. Filter keys
   are checked against the fallback that would run too. A count of 0 or a "no" over a string
-  value no vertex holds (misspelled or translated) is no answer (`unknown_value`); a failed planner or store call is
-  also a degradation of the query (`metadata.degraded`, step `structured_query`), a designed fallback is not. A
+  value no vertex holds (misspelled or translated) is no answer (`unknown_value`); a failed planner or store call and a
+  plan still no JSON after the repair (`unreadable_plan`) are a degradation of the query (`metadata.degraded`, step
+  `structured_query`), a designed fallback (`refused_plan`: a plan the checks still refuse) is not. A
   stored name or a value starting with `~` (a Gremlin hidden token) is refused at validation with a WARNING, not as a
   compiler bug; a type the sampled profile missed is refused saying so, and a count over a symmetric `both` pattern says
   it counts each pair twice. Without a structured
@@ -1214,10 +1215,10 @@ From a `main` checkout (formats and keys no release had):
   printed a header alone, and an answer is followed by one line naming its source files and counting its graph
   elements; `--verbose` lists every source with its score and text, in `--interactive` mode too (which printed
   the details on every answer) (#629).
-- A LightRAG keyword extraction whose answer is no usable JSON fails naming the model role and model that answered
-  and the three ways out (`models.roles.entity_extraction`, `processing.ignore_errors`, `--disable-query-processing`)
-  instead of the parser's `Expecting value: line 1 column 1` (a `LanguageModelError` now, not a
-  `json.JSONDecodeError`) (#629).
+- A LightRAG keyword extraction whose answer is no usable JSON even after the repair is a degraded step
+  (`metadata.degraded`, step `keyword_extraction`), under `processing.ignore_errors: false` too: the query searches
+  the raw question as its keyword, as upstream LightRAG does, and a WARNING names the model role and model that
+  answered. It failed the whole `mix`, `hybrid` or `iterative` query with the parser's `Expecting value` (#629).
 - The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
   naming `processing.translation.source_language`, when its script disagrees with the setting: a Korean, Japanese
   or Chinese corpus under the default `en` was extracted with prompts asking for English and analyzed as English

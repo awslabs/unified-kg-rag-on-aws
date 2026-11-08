@@ -321,10 +321,12 @@ execution error (a malformed query, this query's server timeout), the
 query runs `fallback_strategy` (`local`; `null` answers from no context)
 and records `metadata.structured = {status: fallback, reason, ...}`. A
 failed planner or store call (`planner_error`, `execution_error`,
-`timeout`, `compile_error`) is also a degradation of the query
+`timeout`, `compile_error`) and a planner answer that is still no JSON
+after the repair (`unreadable_plan`) are also a degradation of the query
 (`metadata.degraded`, step `structured_query`, the reason and the error
 type), so the answer and `run-eval`'s `degraded_step_counts` show it. The
-designed fallbacks (`unanswerable`, `invalid_plan`, `no_schema`,
+designed fallbacks (`unanswerable`, `refused_plan`: a plan the checks
+still refuse after the repair, `no_schema`,
 `empty_result`, `unlinked_mention`, `unknown_value`) are not: the
 structural benchmark's absent-entity questions fall back by design and
 count as no degraded query. A
@@ -361,7 +363,8 @@ search, and the answer. Under `fallback` a failed plan adds the fallback's
 cost; under `augment` every query does.
 
 **Failure modes.** The planner's model fails or returns no JSON
-(`planner_error`, `invalid_plan`); the profile read fails (the declared
+(`planner_error`, `unreadable_plan`) or a plan the checks refuse
+(`refused_plan`); the profile read fails (the declared
 schema alone, or `no_schema`); a checker failure (`compile_error`, logged
 at ERROR: a bug); the store refuses or times out the query
 (`execution_error`, `timeout`); a custom graph retriever that does not

@@ -85,7 +85,8 @@ search:
 
 Under `fallback` (the default) a question the plan cannot answer runs
 `fallback_strategy`: the planner's call failed or its plan stayed invalid
-after the repair (`planner_error`, `invalid_plan`), it judged the question
+after the repair (`planner_error`; `unreadable_plan`, no JSON; `refused_plan`, a plan the
+checks refuse), it judged the question
 `unanswerable`, a name linked to nothing (`unlinked_mention`), the result
 was empty (`empty_result`; a count of 0 and a "no" are answers), a 0 or a "no"
 rests on a value no entity holds, as when the plan spells "Supplier" where the

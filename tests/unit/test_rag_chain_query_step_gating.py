@@ -20,6 +20,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from unified_kg_rag.adapters.retrieval.base import degradation_scope
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     ProcessedQuery,
@@ -37,7 +38,6 @@ from unified_kg_rag.domain.prompts import (
     KeywordsExtractionPrompt,
     TranslationPrompt,
 )
-from unified_kg_rag.shared import LanguageModelError
 
 pytestmark = pytest.mark.unit
 
@@ -214,18 +214,21 @@ async def test_prompts_get_language_names_not_codes(
     assert languages[EntityExtractionPrompt] == "English"
 
 
-async def test_keyword_failure_propagates_without_ignore_errors(
+async def test_an_unreadable_keyword_answer_degrades_without_ignore_errors(
     same_language_config: Config,
 ) -> None:
+    # An answer still unreadable after the repair is a recorded degradation
+    # (rv8 retrieval M3), as upstream LightRAG searches without keywords.
     factory = _FakeFactory()
     factory.outputs[KeywordsExtractionPrompt] = "not json"
     chain = _chain_with(same_language_config, factory)
     chain.ignore_errors = False
-    with pytest.raises(LanguageModelError, match="model role entity_extraction") as e:
-        await chain._process_query_step(
+    with degradation_scope() as ledger:
+        processed = await chain._process_query_step(
             {"query": "q", "resolved_strategy": SearchStrategy.MIX}
         )
-    assert isinstance(e.value.__cause__, ValueError)
+    assert processed.hl_keywords == processed.ll_keywords == []
+    assert [e.step for e in ledger.entries] == ["keyword_extraction"]
 
 
 async def test_auto_routed_to_local_extracts_entities(

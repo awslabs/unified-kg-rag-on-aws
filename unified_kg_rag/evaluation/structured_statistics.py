@@ -13,7 +13,7 @@ from unified_kg_rag.domain.models import EvaluationResult
 
 # The fallback reasons of a plan that never reached the graph store.
 _BEFORE_STORE = frozenset(
-    {"no_schema", "planner_error", "invalid_plan", "unanswerable"}
+    {"no_schema", "planner_error", "unreadable_plan", "refused_plan", "unanswerable"}
 )
 
 

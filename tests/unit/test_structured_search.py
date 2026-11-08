@@ -422,7 +422,7 @@ async def test_a_plan_still_refused_falls_back_with_its_entities() -> None:
     strategy, graph, _, fallback = _strategy(planner)
     result = await strategy.asearch(_query("Who is Acme?"))
     structured = result.metadata["structured"]
-    assert (structured["status"], structured["reason"]) == ("fallback", "invalid_plan")
+    assert (structured["status"], structured["reason"]) == ("fallback", "refused_plan")
     assert structured["fallback_strategy"] == "local"
     assert len(planner.calls) == 2 and not graph.requests
     assert fallback.queries[0].entity_focus == ["Acme"]
@@ -437,7 +437,7 @@ async def test_a_plan_still_refused_falls_back_with_its_entities() -> None:
             {"unanswerable": True, "entities": ["Acme"], "keywords": ["prices"]},
             "unanswerable",
         ),
-        ("I cannot write JSON today.", "invalid_plan"),
+        ("I cannot write JSON today.", "unreadable_plan"),
         (RuntimeError("model overloaded"), "planner_error"),
         (
             _with(
@@ -476,9 +476,9 @@ async def test_no_structured_answer_runs_the_fallback(reply: Any, reason: str) -
     assert len(fallback.queries) == 1
     if reason == "unanswerable":
         assert fallback.queries[0].entity_focus == ["Acme"]
-    # A failed call is a degradation of the query (the ledger); a designed
-    # fallback (an unanswerable question, an absent name, an empty result)
-    # is not.
+    # A failed call or an answer no repair made JSON is a degradation of
+    # the query (the ledger); a designed fallback (an unanswerable
+    # question, an absent name, an empty result) is not.
     degraded = result.metadata.get("degraded") or []
     if reason == "planner_error":
         assert degraded == [
@@ -487,6 +487,11 @@ async def test_no_structured_answer_runs_the_fallback(reply: Any, reason: str) -
                 "reason": reason,
                 "error_type": "RuntimeError",
             }
+        ]
+    elif reason == "unreadable_plan":
+        # Regression (rv8 retrieval M3): unrecorded as invalid_plan.
+        assert degraded == [
+            {"step": "structured_query", "reason": reason, "error_type": None}
         ]
     else:
         assert degraded == []

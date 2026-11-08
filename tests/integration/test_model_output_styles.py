@@ -181,7 +181,10 @@ def test_every_strategy_answers_in_every_style(
     if strategy is SearchStrategy.ITERATIVE:
         assert metadata["iterative"]["stop_reason"] == "sufficient", case
     if strategy is SearchStrategy.STRUCTURED:
-        assert metadata["structured"]["reason"] != "invalid_plan", (case, metadata)
+        assert metadata["structured"]["reason"] not in {
+            "refused_plan",
+            "unreadable_plan",
+        }, (case, metadata)
     if strategy is SearchStrategy.AUTO:
         # think: the router read the first strategy its reasoning named.
         assert metadata["routing"]["decided_by"] == "router", case

@@ -136,10 +136,15 @@ FALLBACK_BUCKET = "structured_fallback"
 # metadata.structured.status
 ANSWERED, FALLBACK, FAILED = "answered", "fallback", "failed"
 # The fallback reasons the query's degradation ledger records: a failed
-# planner or store call and a compiler refusal. A designed fallback (an
-# absent name, an unknown value, an unanswerable question) is no failure:
-# metadata.structured.reason alone keeps it.
-_DEGRADING = frozenset({"planner_error", "execution_error", "timeout", "compile_error"})
+# planner or store call, a planner answer no repair made readable JSON, and
+# a compiler refusal. A designed fallback (a plan the checks still refuse
+# after the repair, an absent name, an unknown value, an unanswerable
+# question) is no failure: metadata.structured.reason alone keeps it.
+_DEGRADING = frozenset(
+    {"planner_error", "unreadable_plan", "execution_error", "timeout", "compile_error"}
+)
+# What _parsed says of an answer that holds no JSON object.
+_UNREADABLE = "plan: the answer is not one JSON object"
 # What a fallback gives way to when the namespace does not serve it.
 _FALLBACK_ORDER = (SearchStrategy.LOCAL, SearchStrategy.MIX)
 # The JSON keys of a plan, to tell it from an example the model echoes.
@@ -493,6 +498,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         if run.schema_cut:
             logger.debug("Structured search: the schema was cut to its budget")
         feedback = ""
+        error: ValidatedPlan | str | None = None
         for attempt in range(settings.repair_attempts + 1):
             if attempt:
                 run.repairs += 1
@@ -520,7 +526,9 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 return None
             logger.info("Structured search: plan refused (%s)", error.splitlines()[0])
             feedback = REPAIR_FEEDBACK.format(error=error[:1500])
-        run.fall_back("invalid_plan")
+        # The last answer decides: still no JSON is a degraded step, a plan
+        # the checks refuse a designed fallback.
+        run.fall_back("unreadable_plan" if error == _UNREADABLE else "refused_plan")
         return None
 
     def _parsed(
@@ -534,7 +542,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         except ModelOutputError:
             parsed = {}
         if not parsed:
-            return "plan: the answer is not one JSON object"
+            return _UNREADABLE
         try:
             plan = GraphQueryPlan.model_validate(parsed)
         except ValidationError as e:
