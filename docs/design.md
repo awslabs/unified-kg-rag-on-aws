@@ -3301,9 +3301,25 @@ releases and returns no citations):
   fetch each), not its community's membership, which a corpus-spanning
   community shares with every point drawn from it; a report stored without
   findings, whose findings cite nothing, or none of whose cited records is
-  stored any more keeps the membership. A synthesized section without
-  lineage gets no marker. Its text is screened by the output guardrail: one
-  check of all of them, then, only when it intervenes, one per section
+  stored any more (or whose read failed: the search's `degraded_error`)
+  keeps the membership. The records are read in the query's namespace
+  (index prefix and suffix) without the caller's filters: they say what
+  the report rests on, and the citation applies the filters to their units
+  (Resolution below); read under the filters, a record of another document
+  came back missing and the point fell back to the membership, the
+  caller's own documents. A namespace without the relationships index
+  (GraphRAG alone) cites the entities its findings cite: the graph store
+  holds the edges but has no read by edge id. The report sections of
+  `local`, `global` and DRIFT carry the same lineage
+  (`findings_text_unit_ids` / `findings_document_ids` beside the
+  membership's `text_unit_ids`), so a report's citation and a point's
+  written from it name the same documents. A synthesized section without
+  lineage gets no marker. Its text is screened by the output guardrail:
+  joined checks of at most 12,000 characters each, one after another
+  (`_JOINED_CHECK_CHARS`: ApplyGuardrail allows 25 text units of 1,000
+  characters a second by default, and AWS's long-context guidance starts
+  from chunks of 12; a longer section is checked alone), then, for a chunk whose check intervened
+  (recorded in `metadata.guardrail` with `scope: joined`), one per section
   (`search.max_concurrency` at a time), each masked or dropped as before. A marker has at most three digits,
   read and stripped alike, so a bracketed year (`[2020]`) is text; an
   earlier answer reaches the follow-up rewrite without its markers
@@ -3315,9 +3331,12 @@ releases and returns no citations):
   statement with their markers, written as is (ASCII digits in square
   brackets) in every answer language, and only markers the context shows.
   Global and DRIFT answers get `SYNTHESIS_CITATION_INSTRUCTIONS` after it:
-  cite where possible, and keep a relevant point with no marker to cite
-  (MS GraphRAG's reduce: "Points supported by data should list their data
-  references"). With citations on, a pairwise judge preferred their uncited
+  cite where possible, and keep a relevant point with no marker to cite.
+  The wording follows MS GraphRAG's local, DRIFT and map prompts ("Points
+  supported by data should list their data references"); its global reduce
+  prompt, which this replaces, says instead "Do not include information
+  where the supporting evidence for it is not provided", and keeping an
+  uncited point departs from it (unmeasured on its own). With citations on, a pairwise judge preferred their uncited
   answers on comprehensiveness (sensemaking-50, x3 experiment 3), read as
   the rule leaving out what it could not cite; what may be stated stays the
   grounding rules' to decide.
@@ -3335,7 +3354,10 @@ releases and returns no citations):
   index declares, so a document the filters exclude, or another tenant's,
   is never named; units that do not come back are left out, and the next
   ones of the lineage are read in pages (what a citation still lacks,
-  doubled each page) until it has the limit or its lineage is read. Its documents
+  doubled each page) until it has the limit or its lineage is read, four
+  pages at most (`MAX_LINEAGE_PAGES`: a citation reads at most 15 times
+  `lineage_units` of its units, and names no document when none of them
+  passes). Its documents
   are ordered by how many of those units each holds; the first is the
   citation's `document_id` / `file_name` / `file_path` / `page`. Seed units
   (`sg-...`) are virtual documents: they are not looked up, and a seed-only

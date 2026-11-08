@@ -11,9 +11,9 @@ summary) names its ``text_unit_ids`` lineage and, through
 :func:`aresolve_documents`, the documents of up to
 ``search.citations.lineage_units`` of those units: the ones the context
 holds as passages first, the rest read in batched fetches by id, in pages
-until each citation has that many. A unit the fetch does not return
-(excluded by the caller's filters, or removed) is never named. See
-docs/design.md §7.1.
+until each citation has that many (at most :data:`MAX_LINEAGE_PAGES`). A
+unit the fetch does not return (excluded by the caller's filters, or
+removed) is never named. See docs/design.md §7.1.
 """
 
 from __future__ import annotations
@@ -23,11 +23,15 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
+from unified_kg_rag.domain.ingestion.report_references import (
+    FINDINGS_TEXT_UNITS_FIELD,
+)
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_UNIT_PREFIX
 from unified_kg_rag.domain.models import Citation, CitedDocument
 from unified_kg_rag.domain.retrieval.citations import cited_markers
 
 __all__ = [
+    "MAX_LINEAGE_PAGES",
     "aresolve_documents",
     "citation_from_entry",
     "mark_cited",
@@ -35,6 +39,13 @@ __all__ = [
 
 # Section type of a passage (``SectionType.TEXT``).
 _TEXT = "text"
+
+# Reads of a query's lineage units at most: each asks of a citation still
+# short twice the units the one before did, so a citation reads at most
+# ``lineage_units * (2**MAX_LINEAGE_PAGES - 1)`` of its units (150 with the
+# default 10). Uncapped, a filter excluding most of a hub's units read its
+# whole lineage.
+MAX_LINEAGE_PAGES = 4
 
 
 @dataclass(frozen=True)
@@ -164,7 +175,10 @@ def citation_from_entry(marker: int, entry: dict[str, Any]) -> Citation:
         citation.title = unit.file_name
         _attach(citation, [unit])
         return citation
-    citation.text_unit_ids = _ids(metadata.get("text_unit_ids"))
+    # A report whose findings cite stored records rests on their units
+    # (the strategy's ``findings_text_unit_ids``), not on its community's.
+    findings = _ids(metadata.get(FINDINGS_TEXT_UNITS_FIELD))
+    citation.text_unit_ids = findings or _ids(metadata.get("text_unit_ids"))
     if not citation.text_unit_ids and (documents := _ids(metadata.get("document_ids"))):
         # A report holds its documents' ids beside its lineage; with no
         # unit to name their files, the ids are still what it rests on.
@@ -235,8 +249,10 @@ async def aresolve_documents(
     that excluded the first ``limit`` units of a lineage left it naming no
     document though later ones pass. A page asks of each citation still
     short the units it lacks, times two to the number of pages before, so
-    a lineage of ``n`` units takes at most about ``log2(n)`` reads. Raises what
-    ``fetch`` raises, leaving the citations as they were."""
+    a lineage of ``n`` units takes at most about ``log2(n)`` reads, and no
+    more than :data:`MAX_LINEAGE_PAGES`: a citation whose units read by then
+    pass none names no document. Raises what ``fetch`` raises, leaving the
+    citations as they were."""
     known: dict[str, _Unit] = {}
     for citation in citations:
         if citation.section_type == _TEXT and citation.chunk_id:
@@ -256,7 +272,7 @@ async def aresolve_documents(
         return [u for u in lineages[marker] if u in known][:limit]
 
     scale = 1
-    while True:
+    for _ in range(MAX_LINEAGE_PAGES):
         wanted: list[str] = []
         for citation in graph:
             short = limit - len(chosen(citation.marker))

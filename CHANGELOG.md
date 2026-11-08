@@ -650,6 +650,38 @@ From a `main` checkout (formats and keys no release had):
   scoring, and a comparison warns when its runs differ in either. The pairwise judge, `graph_aware`'s answer coverage
   and `answer_length` read the answers without their markers, as `answer_match` does (#639; [Design
   §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
+  and relationships its findings cite, read by id in the query's namespace without the caller's filters (the
+  citation applies them to the units; its community's membership only for a report stored without findings, whose
+  cited records are all gone, or whose read failed, reported as the search's `degraded_error`; a GraphRAG-only
+  namespace has no relationships index and cites the entities), and a cited point names those documents even when
+  the evidence budget left its reports out of the context; it stays model-written (screened, never a source). The
+  report sections of `local`, `global` and DRIFT cite the same lineage (`findings_text_unit_ids`), so a report and
+  a point written from it name the same documents. The answer prompt
+  (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those markers, ASCII in
+  every answer language; global and DRIFT answers are asked to cite where possible and keep a relevant point with no
+  marker (pairwise judges preferred their uncited answers on comprehensiveness; worded as MS GraphRAG's local, DRIFT
+  and map prompts are, it departs from its global reduce prompt's "Do not include information where the supporting
+  evidence for it is not provided", and is unmeasured on its own). `RAGOutput.citations` lists one `Citation` per number: whether the answer
+  cites it, its documents (`CitedDocument`: document id, file name, path relative to the corpus root, pages), text
+  units, chunk id, title, seed-graph provenance and IRI; a graph section names the documents of up to
+  `search.citations.lineage_units` (10) of its text units that its query's suffix and filters let through, read
+  in batched fetches (an excluded or another tenant's document is never named; the next units fill its place, in at
+  most four reads),
+  alongside the answer call. A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation
+  (a marker has at most three digits: a bracketed year such as `[2020]` is text, and sections past the 999th get no
+  number); a blocked answer has none. Earlier
+  answers reach the follow-up rewrite without their markers. `CitationMarkerScanner`
+  reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`, and a
+  cited key point or intermediate answer is a record of its own (`key_point`, `intermediate_answer`) with its
+  citation's documents and their text units. The
+  document converter keeps where each PDF page starts and text units store `page_start` / `page_end`, `relative_path`
+  and `document_id` in their attributes (ids and texts unchanged). `run-rag` prints the cited sources and its JSON
+  output carries every citation. The retrieval evaluator adds `citation_precision` and `citation_recall` against
+  `reference_sources`, each cited citation weighted by its files (a graph section of ten lineage files counts a tenth
+  per reference file, not 1 when any matches), and `citation_precision_passages` over the cited passages alone; the
+  run manifest records `citations.enabled` and the scoring, and a comparison warns when its runs differ in either. The
+  pairwise judge, `graph_aware`'s answer coverage and `answer_length` read the answers without their markers, as
+  `answer_match` does ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
 - `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the
   follow-up rewrite reads where it reads memory otherwise, bounded to `memory.max_messages_per_conversation` turns
   and `memory.max_history_tokens` (4,000, estimated) and screened by the input guardrail like the query (a masked
@@ -941,6 +973,11 @@ From a `main` checkout (formats and keys no release had):
   (DRIFT's intermediate answers, global key points) are screened too, in one check, then one per result
   (`search.max_concurrency` at a time) only when it intervenes; interventions name word lists
   (`wordPolicy:customWords`, `wordPolicy:PROFANITY`) (#462, #471, #567, #583, #643). See
+  (DRIFT's intermediate answers, global key points) are screened too, in joined checks of at most 12,000 characters
+  one after another (ApplyGuardrail's default quota is 25 text units of 1,000 characters a second), then one per
+  result of a chunk whose check intervened (`search.max_concurrency` at a time; the joined intervention is recorded
+  in `metadata.guardrail` with `scope: joined`); interventions name word lists
+  (`wordPolicy:customWords`, `wordPolicy:PROFANITY`) (#462, #471, #567, #583). See
   [guardrail](docs/guides/guardrail.md).
 - Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284). In `run-eval`, queries
   whose rerank call failed (a throttled rerank model keeps the fused order) and answers whose retrieval absorbed a step

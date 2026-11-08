@@ -527,3 +527,84 @@ async def test_a_failed_section_cancels_the_entity_chain(config: Config) -> None
     with pytest.raises(StoreAccessDeniedError):
         await asyncio.wait_for(strategy.asearch(_query()), 2)
     assert cancelled == ["chain"]
+
+
+class _FindingsDocuments(FakeRetriever):
+    """A report whose finding cites entity ``e-f``, and that entity's stored
+    record, which a ``document_ids`` filter excludes."""
+
+    def __init__(self, config: Config) -> None:
+        super().__init__("document")
+        self.o = config.indexing.opensearch
+
+    async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
+        if query.index_prefixes == [self.o.community_reports_index_prefix]:
+            self.calls.append(query)
+            return [
+                RetrievalResult(
+                    content="공급사 보고서",
+                    score=1.0,
+                    source="r-1",
+                    retriever_type="community",
+                    metadata={
+                        "id": "r-1",
+                        "text_unit_ids": ["m-1"],
+                        "findings": [
+                            {
+                                "summary": "s",
+                                "entity_ids": ["e-f"],
+                                "relationship_ids": [],
+                            }
+                        ],
+                    },
+                )
+            ]
+        filters = query.filters or {}
+        if query.index_prefixes == [self.o.entities_index_prefix] and filters.get(
+            "id"
+        ) == ["e-f"]:
+            self.calls.append(query)
+            if filters.get("document_ids"):
+                return []
+            return [
+                RetrievalResult(
+                    content="",
+                    score=1.0,
+                    source="e-f",
+                    retriever_type="document",
+                    metadata={
+                        "id": "e-f",
+                        "text_unit_ids": ["tu-f"],
+                        "document_ids": ["doc-f"],
+                    },
+                )
+            ]
+        return await super().aretrieve(query)
+
+
+@pytest.mark.parametrize("filters", [None, {"document_ids": ["doc-0"]}])
+async def test_a_local_report_cites_what_its_findings_cite(
+    config: Config, filters: dict[str, list[str]] | None
+) -> None:
+    # Regression (rv6 backlog): global's key points cited their reports'
+    # findings while local's report sections cited the community membership,
+    # so the two named different documents for one report. The cited
+    # records are read in the namespace alone (the citation applies the
+    # filters to their units).
+    strategy, _, _ = _make_strategy(config)
+    documents = _FindingsDocuments(config)
+    strategy.retrievers[RetrieverRole.DOCUMENT.value] = documents
+
+    result = await strategy.asearch(_query(suffix="ns", filters=filters))
+
+    (report,) = [r for r in result.results if r.retriever_type == "community"]
+    assert report.metadata["findings_text_unit_ids"] == ["tu-f"]
+    assert report.metadata["findings_document_ids"] == ["doc-f"]
+    assert report.metadata["text_unit_ids"] == ["m-1"]
+    read = [
+        q
+        for q in documents.calls
+        if q.index_prefixes == [config.indexing.opensearch.entities_index_prefix]
+        and (q.filters or {}).get("id") == ["e-f"]
+    ]
+    assert [(q.filters, q.suffix) for q in read] == [({"id": ["e-f"]}, "ns")]

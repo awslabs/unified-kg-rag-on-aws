@@ -789,7 +789,7 @@ class KnowledgeGraphTools:
         (global search's key point, DRIFT's intermediate answer) the answer
         model was given and may cite, never reported as a source. It
         carries its screened text and the documents its citation names
-        (resolved with the caller's filters)."""
+        (resolved with the caller's filters), and their text units only."""
         written = {
             str(r.source): r
             for r in output.search_results.results
@@ -819,7 +819,11 @@ class KnowledgeGraphTools:
                 chunk_id=None,
                 metadata={
                     "synthesized": True,
-                    "text_unit_ids": citation.text_unit_ids,
+                    # The units its citation names, which the caller's
+                    # filters let through, not its whole lineage.
+                    "text_unit_ids": [
+                        unit for d in citation.documents for unit in d.text_unit_ids
+                    ],
                 },
                 max_text_chars=self.settings.max_text_chars,
             )

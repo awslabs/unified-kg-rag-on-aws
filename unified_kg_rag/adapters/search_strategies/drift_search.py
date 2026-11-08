@@ -245,7 +245,17 @@ class DriftSearchStrategy(BaseSearchStrategy):
             if evidence
             else []
         )
-        results = await self._answers_items(answers, query) + fused
+        # A report cites what its findings cite, as an answer read from it
+        # does: one read for both (the follow-ups' reports carry it already).
+        failures: list[Exception] = []
+        lineages = await self._findings_lineages(
+            query,
+            [*fused, *(r for answer in answers for r in answer.read)],
+            failures=failures,
+        )
+        degraded.extend(type(e).__name__ for e in failures)
+        fused = self._with_findings_lineages(fused, lineages)
+        results = await self._answers_items(answers, lineages) + fused
 
         processing_time = time.time() - start_time
         logger.info(
@@ -519,7 +529,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
     # ------------------------------------------------------------------ #
 
     async def _answers_items(
-        self, answers: list[_Answer], query: SearchQuery
+        self, answers: list[_Answer], lineages: dict[str, dict[str, list[str]]]
     ) -> list[RetrievalResult]:
         """The intermediate answers, best first, within ``max_answer_tokens``,
         one context section each.
@@ -528,8 +538,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
         them, but they are never reported as sources. Each carries the
         lineage of what it was written from (its fold's reports, or its
         local context: their text units and documents; a report's are those
-        of the records its findings cite, ``_findings_lineages``, or its
-        community's where they cite none), so the answer cites
+        of the records its findings cite, ``lineages`` from
+        ``_findings_lineages``, or its community's where they cite none), so
+        the answer cites
         it ``[n]`` as MS GraphRAG's DRIFT reduce cites ``[Data: Sources
         (...)]``.
         """
@@ -550,10 +561,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 break
             packed.append((answer, entry))
             used += cost
-        # A report an answer read names the records its findings cite.
-        lineages = await self._findings_lineages(
-            query, (r for answer, _ in packed for r in answer.read)
-        )
         items: list[RetrievalResult] = []
         for rank, (answer, entry) in enumerate(packed, start=1):
             lineage = evidence_lineage(answer.read, lineages)

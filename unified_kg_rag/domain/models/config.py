@@ -5048,10 +5048,14 @@ class CitationConfig(BaseModel):
         ge=1,
         description=(
             "Text units of a graph section's lineage (entity, relationship, "
-            "claim, report, summary) read to name its documents, those in the "
-            "context first: one batched fetch by id per query for the ones "
-            "the context does not hold. Unmeasured: bounds the fetch for hub "
-            "entities and reports with thousands of units."
+            "claim, report, summary) that name its documents, those in the "
+            "context first, counting only units the query's suffix and "
+            "filters let through. The others are read in batched fetches by "
+            "id, in pages that double what a section still lacks, at most 4 "
+            "a query (a section reads at most 15 times this many of its "
+            "units; one whose units read by then all fail the filters names "
+            "no document). Unmeasured: bounds the reads for hub entities and "
+            "reports with thousands of units."
         ),
     )
 

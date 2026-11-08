@@ -143,6 +143,9 @@ class LocalSearchStrategy(PPRRankingMixin):
             per_type_quota=self._per_type_quota(query.top_k),
             rerank_only_types=set(self.rerank_types),
         )
+        # A report cites what its findings cite, as global search's key
+        # points and DRIFT's answers written from it do.
+        final_results = await self._cite_report_findings(query, final_results)
 
         processing_time = time.time() - start_time
 

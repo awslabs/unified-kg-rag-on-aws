@@ -217,6 +217,16 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             # Only an all-below-threshold map phase empties a non-empty input.
             no_relevant_points = not results
 
+        if results and not self._was_map_reduce_applied(results):
+            # The reports as they are (no map, or the map left them unrated):
+            # each cites what its findings cite (the key points' reports
+            # carry it from the map-reduce already).
+            failures: list[Exception] = []
+            results = await self._cite_report_findings(
+                query, results, failures=failures
+            )
+            degraded.extend(type(e).__name__ for e in failures)
+
         if results and self.global_search_config.text_unit_slots:
             results = results + await self._text_units(results, query, rerank)
 
@@ -783,7 +793,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         evidence = self._evidence(packed_points, batches)
         # Read before the evidence cap: a point names its reports' sources
         # even when the cap leaves the reports out of the context.
-        lineages = await self._findings_lineages(query, evidence)
+        failures: list[Exception] = []
+        lineages = await self._findings_lineages(query, evidence, failures=failures)
+        for failure in failures:
+            _record(degraded, failure)
         if self.global_search_config.evidence_tokens is not None:
             evidence = await asyncio.to_thread(self._cap_evidence, evidence)
             stats["global_evidence_reports"] = len(evidence)
@@ -1057,7 +1070,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         report's community where its findings cite none. The answer cites
         it ``[n]`` as MS GraphRAG's reduce cites ``[Data: Reports (...)]``,
         and the citation names the reports' documents even when the
-        evidence budget left the reports themselves out of the context.
+        evidence budget left the reports themselves out of the context. A
+        report among ``results`` carries the same lineage
+        (``_with_findings_lineages``), so its own citation agrees with the
+        points'.
         """
         batches = batches or []
         out: list[RetrievalResult] = []
@@ -1091,7 +1107,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     },
                 )
             )
-        return out + results
+        return out + self._with_findings_lineages(results, lineages or {})
 
     def _was_map_reduce_applied(self, final_results: list[RetrievalResult]) -> bool:
         if not self.global_search_config.enable_map_reduce:

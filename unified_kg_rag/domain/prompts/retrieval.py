@@ -151,9 +151,13 @@ that does not support the statement. Do not add a list of references at the end.
 # the context (key points, intermediate answers). Read as "cite every
 # statement", the citation rule made the answer leave out points it could
 # not tie to a marker (a synthesized item without one, or a point merged
-# from several), so cited answers covered less. MS GraphRAG's reduce asks
-# the same: "Points supported by data should list their data references";
-# what the answer may state stays the grounding rules' to decide.
+# from several), so cited answers covered less. MS GraphRAG's local, DRIFT
+# and map prompts word it alike ("Points supported by data should list their
+# data references"); its global reduce prompt does not, and says instead "Do
+# not include information where the supporting evidence for it is not
+# provided", which this departs from: what the answer may state stays the
+# grounding rules' to decide. Unmeasured on its own (only with the citation
+# rule as a whole).
 SYNTHESIS_CITATION_INSTRUCTIONS = """
 Cite where possible: the markers show what supports a statement, they do not decide what the answer covers. Keep
 every relevant point of the context in the answer; a point drawn from an item without a marker, or merged from
