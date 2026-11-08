@@ -28,6 +28,7 @@ from unified_kg_rag.adapters.graph_query.gremlin import (
 )
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.domain.models.graph_query import GraphQueryPlan, GraphQueryRequest
+from unified_kg_rag.domain.retrieval.filters import KindsRule
 from unified_kg_rag.domain.retrieval.graph_query import (
     hydrate_keys,
     plan_operation,
@@ -302,7 +303,7 @@ def test_every_valid_plan_compiles_to_a_checked_traversal(raw: dict) -> None:
             ),
             LABEL,
             apply_filters=lambda t: t,
-            edge_rule=(['["seed_graph"]'], True),
+            edge_rule=KindsRule(("seed_graph", "document")),
             timeout_ms=5000,
         )
         _assert_scoped(query.build(g).bytecode)

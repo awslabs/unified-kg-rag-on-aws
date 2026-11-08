@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from collections import OrderedDict
-from collections.abc import Collection, Coroutine
+from collections.abc import Collection, Coroutine, Iterable
 from typing import Any, ClassVar
 
 from structlog.contextvars import get_contextvars
@@ -23,17 +23,9 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     stored_embedding_settings,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
-    EXACT_SUBFIELD,
     LATE_MAPPED_FIELDS,
-    SOURCE_KINDS_FIELD,
     TEXT_UNIT_KIND_FIELD,
-    FilterFields,
     IndexLimits,
-    check_filter_values,
-    exact_filters,
-    opensearch_filter_fields,
-    source_kinds_values,
-    union_filter_fields,
 )
 from unified_kg_rag.adapters.storage.search_engine import (
     SearchEngineClient,
@@ -43,8 +35,8 @@ from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_key
 from unified_kg_rag.domain.ingestion.seed_graph import (
-    DOCUMENT_SOURCE_KIND,
     SEED_SOURCE_KIND,
+    SOURCE_KINDS_FIELD,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -52,6 +44,20 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     SearchQuery,
     SearchType,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    EXACT_SUBFIELD,
+    ITEM_FILTER_FIELDS,
+    AnyOf,
+    Clause,
+    FieldKind,
+    FilterFields,
+    KindsRule,
+    Range,
+    check_filter_values,
+    kinds_rule,
+    parse_filters,
+    union_filter_fields,
 )
 from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
@@ -154,19 +160,67 @@ def _scope(
     return scope
 
 
-def _source_kinds_clause(value: str | list[str]) -> dict[str, Any]:
-    """The clause of a ``source_kinds`` filter (``filter_schema``): a
-    document holds one of the kinds, or, when they name ``document``, holds
-    no ``source_kinds`` (an item no seed graph states)."""
-    kinds = source_kinds_values(value)
+def opensearch_filter_clauses(clauses: Iterable[Clause]) -> list[dict[str, Any]]:
+    """The OpenSearch query DSL of filter ``clauses`` (``parse_filters``),
+    one ``bool`` filter clause each, on OpenSearch and the embedded engine.
+
+    A name is matched by its exact ``name.keyword`` sub-field; a
+    ``source_kinds`` rule is the kinds held or, naming ``document``, no
+    ``source_kinds`` at all; an any-of group a ``should`` of its groups' own
+    ``bool`` filters (one must hold). An empty value list is an empty
+    ``terms`` clause (the retriever sends no search under one).
+
+    Raises:
+        InvalidFilterError: A clause names analyzed text or an unindexed
+            path (the parser refuses them first).
+    """
+    compiled: list[dict[str, Any]] = []
+    for clause in clauses:
+        if isinstance(clause, AnyOf):
+            compiled.append(
+                {
+                    "bool": {
+                        "should": [
+                            {"bool": {"filter": opensearch_filter_clauses(group)}}
+                            for group in clause.groups
+                        ]
+                    }
+                }
+            )
+            continue
+        if clause.kind in (FieldKind.TEXT, FieldKind.UNINDEXED):
+            raise InvalidFilterError(
+                f"Filter '{clause.field}' cannot be applied on OpenSearch."
+            )
+        if isinstance(clause, KindsRule):
+            compiled.append(_source_kinds_clause(clause))
+            continue
+        field = clause.field
+        if clause.kind is FieldKind.NAME and not field.endswith(EXACT_SUBFIELD):
+            # A term on the analyzed name matched one lowercase token of it.
+            field = f"{field}{EXACT_SUBFIELD}"
+        if isinstance(clause, Range):
+            compiled.append({"range": {field: dict(clause.bounds)}})
+        elif not clause.listed:
+            compiled.append({"term": {field: clause.values[0]}})
+        else:
+            compiled.append({"terms": {field: list(clause.values)}})
+    return compiled
+
+
+def _source_kinds_clause(rule: KindsRule) -> dict[str, Any]:
+    """The clause of a ``source_kinds`` rule: a document holds one of the
+    kinds, or, when they name ``document``, holds no ``source_kinds`` (an
+    item no seed graph states)."""
+    kinds = list(rule.kinds)
     held: dict[str, Any] = (
-        {"term": {SOURCE_KINDS_FIELD: kinds[0]}}
+        {"term": {rule.field: kinds[0]}}
         if len(kinds) == 1
-        else {"terms": {SOURCE_KINDS_FIELD: kinds}}
+        else {"terms": {rule.field: kinds}}
     )
-    if DOCUMENT_SOURCE_KIND not in kinds:
+    if not rule.unstated_passes:
         return held
-    unstated = {"bool": {"must_not": [{"exists": {"field": SOURCE_KINDS_FIELD}}]}}
+    unstated = {"bool": {"must_not": [{"exists": {"field": rule.field}}]}}
     return {"bool": {"should": [held, unstated]}}
 
 
@@ -279,18 +333,16 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         }
 
     def _initialize_index_filter_fields(self) -> dict[str, FilterFields]:
-        """Index prefix -> its declared filterable fields (``filter_schema``)."""
+        """Index prefix -> its declared filterable fields
+        (``ITEM_FILTER_FIELDS``)."""
         o = self._opensearch_config
-        by_kind = opensearch_filter_fields(
-            *self._config.processing.translation.translated_languages
-        )
         return {
-            o.text_units_index_prefix: by_kind["text_units"],
-            o.entities_index_prefix: by_kind["entities"],
-            o.relationships_index_prefix: by_kind["relationships"],
-            o.claims_index_prefix: by_kind["claims"],
-            o.community_reports_index_prefix: by_kind["community_reports"],
-            o.summary_nodes_index_prefix: by_kind["summary_nodes"],
+            o.text_units_index_prefix: ITEM_FILTER_FIELDS["text_units"],
+            o.entities_index_prefix: ITEM_FILTER_FIELDS["entities"],
+            o.relationships_index_prefix: ITEM_FILTER_FIELDS["relationships"],
+            o.claims_index_prefix: ITEM_FILTER_FIELDS["claims"],
+            o.community_reports_index_prefix: ITEM_FILTER_FIELDS["community_reports"],
+            o.summary_nodes_index_prefix: ITEM_FILTER_FIELDS["summary_nodes"],
         }
 
     def filter_fields(self) -> FilterFields:
@@ -313,14 +365,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     def _filters_for_index(
         self, prefix: str, filters: dict[str, Any] | None, *, seedless: bool = False
     ) -> dict[str, Any] | None:
-        """``filters`` restricted to the keys the ``prefix`` index declares,
-        each on the field that matches it exactly (``name`` on
-        ``name.keyword``).
+        """``filters`` restricted to the keys the ``prefix`` index declares.
 
         A ``term``/``terms``/``range`` clause on a field an index does not map
         matches no document, so one caller filter shared across sub-queries
         (e.g. ``type`` on entities, ``attr_category`` on text units) would empty
-        every other index. See ``filter_schema`` for the declared fields.
+        every other index. See ``ITEM_FILTER_FIELDS`` for the declared fields.
         On a ``seedless`` index (``_seedless_prefixes``) a ``source_kinds``
         filter naming ``document`` matches every document and is dropped.
         """
@@ -338,19 +388,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 prefix,
                 ", ".join(sorted(set(filters) - set(kept))),
             )
-        # A name is matched exactly, by its keyword sub-field: a term on the
-        # analyzed name matched one lowercase token of it.
-        return (
-            exact_filters(
-                kept,
-                lambda key: (
-                    f"{key}{EXACT_SUBFIELD}"
-                    if f"{key}{EXACT_SUBFIELD}" in declared.fields
-                    else None
-                ),
-            )
-            or None
-        )
+        return kept or None
 
     @property
     def _engine(self) -> str:
@@ -672,12 +710,12 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         size-1 search per index, kept for the query (``_probe``); an index
         whose probe fails keeps the filter (its search degrades alike).
         """
-        value = (query.filters or {}).get(SOURCE_KINDS_FIELD)
+        rule = kinds_rule(query.filters)
         if (
-            value is None
+            rule is None
             or query_vector is None
             or search_type == SearchType.LEXICAL
-            or DOCUMENT_SOURCE_KIND not in source_kinds_values(value)
+            or not rule.unstated_passes
         ):
             return set()
         prefixes = [
@@ -1252,21 +1290,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
     @staticmethod
     def _build_filter_clauses(filters: dict[str, Any] | None) -> list[dict[str, Any]]:
-        if not filters:
-            return []
-
-        clauses: list[dict[str, Any]] = []
-        for key, value in filters.items():
-            if key == SOURCE_KINDS_FIELD and isinstance(value, str | list):
-                clauses.append(_source_kinds_clause(value))
-            elif isinstance(value, dict):
-                clauses.append({"range": {key: value}})
-            elif isinstance(value, list):
-                clauses.append({"terms": {key: value}})
-            else:
-                clauses.append({"term": {key: value}})
-
-        return clauses
+        """The DSL of ``filters`` (``opensearch_filter_clauses``); a
+        strategy's own scope may allow nothing (an empty list)."""
+        return opensearch_filter_clauses(parse_filters(filters, allow_empty_lists=True))
 
     @staticmethod
     def _check_filter_values(filters: dict[str, Any] | None, limit: int) -> None:

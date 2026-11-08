@@ -32,13 +32,13 @@ import json
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from unified_kg_rag.adapters.storage.filter_schema import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SOURCE_KINDS_FIELD,
     encoded_source_kinds,
 )
 from unified_kg_rag.domain.models import Community, Constants, Entity, Relationship
+from unified_kg_rag.domain.retrieval.filters import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.ports.indexer import AnnotatedKind, StoredAnnotation
 from unified_kg_rag.shared import get_logger
 

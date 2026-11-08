@@ -20,7 +20,9 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spe
 from unified_kg_rag.adapters.search_strategies.lightrag_search import (
     _pick_by_weighted_polling,
 )
-from unified_kg_rag.adapters.storage.filter_schema import FilterFields, IndexLimits
+from unified_kg_rag.adapters.storage.filter_schema import (
+    IndexLimits,
+)
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -28,6 +30,9 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
     SearchType,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    FilterFields,
 )
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 

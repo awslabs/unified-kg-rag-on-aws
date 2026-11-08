@@ -87,11 +87,6 @@ from unified_kg_rag.adapters.search_strategies import (  # noqa: F401
     LocalSearchStrategy,
     SimpleSearchStrategy,
 )
-from unified_kg_rag.adapters.storage.filter_schema import (
-    ATTRIBUTE_KEY_PREFIX,
-    check_filter_values,
-    typed_filter_values,
-)
 from unified_kg_rag.application.bootstrap import (
     build_providers,
     build_query_guard,
@@ -154,6 +149,11 @@ from unified_kg_rag.domain.retrieval.abstention import (
 from unified_kg_rag.domain.retrieval.degradation import (
     DEGRADED_ERROR_KEY,
     DegradationStep,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    ATTRIBUTE_KEY_PREFIX,
+    check_filter_values,
+    typed_filter_values,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
 from unified_kg_rag.domain.retrieval.no_context import (

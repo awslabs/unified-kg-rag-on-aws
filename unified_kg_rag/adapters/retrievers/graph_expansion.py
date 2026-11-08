@@ -25,9 +25,7 @@ with Gremlin::
 The seeds themselves come back as rows with a path of length 1.
 """
 
-import itertools
 import json
-import math
 import time
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
@@ -40,31 +38,31 @@ from unified_kg_rag.adapters.retrieval.base import (
     rank_expanded,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.adapters.storage.filter_schema import (
-    EXACT_SUBFIELD,
-    NEPTUNE_ENTITY_FILTER_FIELDS,
-    SOURCE_KINDS,
-    SOURCE_KINDS_FIELD,
-    FilterFields,
-    check_filter_values,
-    exact_filters,
-    graph_attribute_key,
-    source_kinds_values,
-    typed_filter_values,
-)
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
-from unified_kg_rag.domain.ingestion.seed_graph import (
-    DOCUMENT_SOURCE_KIND,
-    encoded_source_kinds,
-)
+from unified_kg_rag.domain.ingestion.seed_graph import SOURCE_KINDS_FIELD
 from unified_kg_rag.domain.models import (
     Config,
     GraphEdge,
     RetrievalResult,
     SearchQuery,
 )
+from unified_kg_rag.domain.retrieval.filters import (
+    ATTRIBUTE_KEY_PREFIX,
+    GRAPH_ENTITY_FILTER_FIELDS,
+    FieldKind,
+    FilterFields,
+    KindsRule,
+    Range,
+    Term,
+    check_filter_values,
+    kinds_rule,
+    loose_values,
+    own_attribute,
+    parse_filters,
+    typed_filter_values,
+)
 from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
-from unified_kg_rag.shared import StoreConnectionError, get_logger
+from unified_kg_rag.shared import InvalidFilterError, StoreConnectionError, get_logger
 from unified_kg_rag.shared.utils import safe_float_parse, text_digest
 
 logger = get_logger(__name__)
@@ -75,41 +73,52 @@ logger = get_logger(__name__)
 _LIST_PROPERTIES = frozenset({"text_unit_ids", "community_ids", SOURCE_KINDS_FIELD})
 
 
-def _attribute_values(value: Any) -> Any:
-    """An ``attributes.<key>`` filter value as a vertex property matches it.
+VertexClause = Term | Range | KindsRule
 
-    The entities index maps an attribute by its first value, and a term
-    converts to that type (``"1999"`` matches a stored ``1999``, ``1999`` a
-    stored ``"1999"``); a vertex property compares as stored. So a value
-    (each of a list) also matches its other spelling: a number its JSON
-    text, a string that reads as a number or boolean that value. A range
-    is left as given (a bound compares with values of its own type).
+
+def vertex_clauses(filters: dict[str, Any] | None) -> tuple[VertexClause, ...]:
+    """Filters scoped to entity vertices
+    (``GraphExpansionRetriever._scope_filters_to_label``) as clauses on the
+    vertex properties both graph stores hold (``neptune_codec``), which
+    each backend compiles (Gremlin steps, the SQLite graph's predicate).
+
+    ``id`` is the seed list, not a filter. A name is the ``name``
+    property under either spelling; an entity's own attribute
+    (``attributes.<key>``) its ``attr_<key>`` property, matched under either
+    spelling of a number or boolean (``loose_values``) as the entities
+    index, which maps it by its first value, converts a term.
+
+    Raises:
+        InvalidFilterError: A key no vertex holds (a document filter, a
+            nested attribute path, analyzed text), which the scoping drops
+            before, or a malformed value.
     """
-    if isinstance(value, dict):
-        return value
-    values: list[Any] = []
-    for given in value if isinstance(value, list) else [value]:
-        values.append(given)
-        if isinstance(given, bool):
-            values.append("true" if given else "false")
-        elif isinstance(given, int | float):
-            values.append(json.dumps(given))
-        elif isinstance(given, str):
-            text = given.strip()
-            if text in ("true", "false"):
-                values.append(text == "true")
-                continue
-            try:
-                values.append(int(text))
-            except ValueError:
-                try:
-                    number = float(text)
-                except ValueError:
-                    continue
-                if math.isfinite(number):
-                    values.append(number)
-    unique = list(dict.fromkeys((type(v), v) for v in values))
-    return [v for _, v in unique] if len(unique) > 1 else value
+    clauses: list[VertexClause] = []
+    for clause in parse_filters(
+        {k: v for k, v in (filters or {}).items() if k != "id"},
+        allow_empty_lists=True,
+    ):
+        if not GRAPH_ENTITY_FILTER_FIELDS.declares(clause.field):
+            raise InvalidFilterError(
+                f"Filter '{clause.field}' names nothing a graph vertex holds."
+            )
+        if clause.kind is FieldKind.NAME:
+            field = "name"
+        elif clause.kind is FieldKind.ATTRIBUTE:
+            field = f"{ATTRIBUTE_KEY_PREFIX}{own_attribute(clause.field)}"
+        else:
+            clauses.append(clause)
+            continue
+        if isinstance(clause, Term) and clause.kind is FieldKind.ATTRIBUTE:
+            values = loose_values(clause.values)
+            listed = clause.listed or len(values) > 1
+            clauses.append(Term(field, values, clause.kind, listed))
+        elif isinstance(clause, Term):
+            clauses.append(Term(field, clause.values, clause.kind, clause.listed))
+        else:
+            assert isinstance(clause, Range)
+            clauses.append(Range(field, clause.bounds, clause.kind))
+    return tuple(clauses)
 
 
 def edge_source_kinds(stored: Any) -> list[str] | None:
@@ -126,54 +135,17 @@ def edge_source_kinds(stored: Any) -> list[str] | None:
     return [str(k) for k in decoded] if isinstance(decoded, list) else None
 
 
-def edge_kinds_filter(filters: dict[str, Any] | None) -> tuple[list[str], bool] | None:
-    """How a ``source_kinds`` filter keeps an edge: the stored encodings
-    that name one of its kinds, and whether an edge without the property
-    (documents only) passes (the filter names ``document``). ``None``
-    without such a filter. Every encoding is a sorted JSON list of a
-    non-empty set of ``SOURCE_KINDS`` (``encoded_source_kinds``)."""
-    value = (typed_filter_values(filters) or {}).get(SOURCE_KINDS_FIELD)
-    if value is None or not isinstance(value, str | list) or not value:
-        return None
-    kinds = {str(kind) for kind in source_kinds_values(value)}
-    encodings = [
-        encoded_source_kinds(subset)
-        for size in range(1, len(SOURCE_KINDS) + 1)
-        for subset in itertools.combinations(sorted(SOURCE_KINDS), size)
-        if kinds.intersection(subset)
-    ]
-    return encodings, DOCUMENT_SOURCE_KIND in kinds
-
-
-def edge_kinds_pass(edge: GraphEdge, rule: tuple[list[str], bool] | None) -> bool:
-    """Whether ``edge`` passes an ``edge_kinds_filter`` rule."""
-    if rule is None:
-        return True
-    encodings, without = rule
-    if not edge.source_kinds:
-        return without
-    return encoded_source_kinds(edge.source_kinds) in encodings
-
-
 def edge_predicate(
     filters: dict[str, Any] | None,
 ) -> Callable[[Mapping[str, Any]], bool] | None:
-    """An ``edge_kinds_filter`` rule as a predicate on one edge's stored
-    properties (``source_kinds`` a JSON list string); ``None`` without a
-    ``source_kinds`` filter. The structured queries of the embedded graph
-    and the reference executor's fake apply it to every edge of a walk."""
-    rule = edge_kinds_filter(filters)
+    """The caller's ``source_kinds`` rule (``kinds_rule``) as a predicate on
+    one edge's stored properties (``source_kinds`` a JSON list string);
+    ``None`` without one. The structured queries of the embedded graph and
+    the reference executor's fake apply it to every edge of a walk."""
+    rule = kinds_rule(filters)
     if rule is None:
         return None
-    encodings, without = rule
-
-    def keep(props: Mapping[str, Any]) -> bool:
-        kinds = edge_source_kinds(props.get(SOURCE_KINDS_FIELD))
-        if not kinds:
-            return without
-        return encoded_source_kinds(kinds) in encodings
-
-    return keep
+    return lambda props: rule.passes(edge_source_kinds(props.get(SOURCE_KINDS_FIELD)))
 
 
 class GraphExpansionRetriever(BaseGraphRAGRetriever):
@@ -284,7 +256,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         label = self._get_label(self._neptune_config.entity_label_prefix, query.suffix)
         try:
             edges = await self._edges_within(
-                ids, label, per_vertex, edge_kinds_filter(query.filters)
+                ids, label, per_vertex, kinds_rule(query.filters)
             )
         except Exception as e:
             error = self._request_error(e)
@@ -308,10 +280,10 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         ids: list[str],
         label: str,
         per_vertex: int,
-        kinds: tuple[list[str], bool] | None,
+        kinds: KindsRule | None,
     ) -> list[GraphEdge] | None:
         """The edges between two of ``ids`` under ``label`` that pass the
-        ``edge_kinds_filter`` rule ``kinds``, each vertex's first
+        caller's ``source_kinds`` rule ``kinds``, each vertex's first
         ``per_vertex`` by relationship id. ``None`` (the default): the
         backend cannot tell."""
         return None
@@ -325,53 +297,37 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
 
     def filter_fields(self) -> FilterFields:
         # The traversal filters entity vertices only (_scope_filters_to_label).
-        return NEPTUNE_ENTITY_FILTER_FIELDS
+        return GRAPH_ENTITY_FILTER_FIELDS
 
     @staticmethod
     def _scope_filters_to_label(
         label: str, filters: dict[str, Any] | None
     ) -> dict[str, Any] | None:
         """``filters`` without the keys entity vertices (``label``) do not
-        declare, in the vertices' property names.
+        declare, typed.
 
         Mirrors the OpenSearch per-index scoping: a filter on ``key`` drops
-        every vertex lacking ``key``, so a key the label does not declare is
-        dropped rather than emptying the traversal (the strategy checks the
-        reached entities against the entities index for such a key,
+        every vertex lacking ``key``, so a key the label does not declare
+        (``GRAPH_ENTITY_FILTER_FIELDS``) is dropped rather than emptying the
+        traversal (the strategy checks the reached entities against the
+        entities index for such a key,
         ``BaseSearchStrategy._graph_unapplied_filters``). A string value of
         a boolean or numeric field is converted to that type
         (``typed_filter_values``): a vertex property compares as stored, so
         ``"false"`` matched no ``in_schema``, where OpenSearch converts it.
-        An entity's own attribute (``attributes.<key>``) is its ``attr_<key>``
-        property, matched as the entities index matches it
-        (``_attribute_values``).
+        The backend compiles what is kept (``vertex_clauses``).
         """
         if not filters:
             return filters
         kept: dict[str, Any] = {}
         for key, value in (typed_filter_values(filters) or {}).items():
-            if not NEPTUNE_ENTITY_FILTER_FIELDS.declares(key):
+            if not GRAPH_ENTITY_FILTER_FIELDS.declares(key):
                 logger.debug(
                     "Dropped filter key '%s': no %s vertex declares it", key, label
                 )
                 continue
-            if (stored := graph_attribute_key(key)) is not None:
-                kept[stored] = _attribute_values(value)
-                continue
             kept[key] = value
-        # The exact name (``name.keyword`` on the entities index) is the
-        # stored name.
-        return (
-            exact_filters(
-                kept,
-                lambda key: (
-                    key.removesuffix(EXACT_SUBFIELD)
-                    if key.endswith(EXACT_SUBFIELD)
-                    else None
-                ),
-            )
-            or None
-        )
+        return kept or None
 
     @staticmethod
     def _clean_property_map(prop_map: dict[str, Any]) -> dict[str, Any]:

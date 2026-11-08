@@ -18,20 +18,22 @@ from unified_kg_rag.adapters.local.sqlite_graph import SQLiteGraphStore, VertexF
 from unified_kg_rag.adapters.retrieval.base import seed_shares
 from unified_kg_rag.adapters.retrievers.graph_expansion import (
     GraphExpansionRetriever,
-    edge_kinds_pass,
+    VertexClause,
     edge_predicate,
     edge_source_kinds,
+    vertex_clauses,
 )
-from unified_kg_rag.adapters.storage.filter_schema import (
-    SOURCE_KINDS_FIELD,
-    source_kinds_values,
-)
-from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
+from unified_kg_rag.domain.ingestion.seed_graph import SOURCE_KINDS_FIELD
 from unified_kg_rag.domain.models import Config, GraphEdge, SearchQuery
 from unified_kg_rag.domain.models.graph_query import (
     GraphProfile,
     GraphQueryRequest,
     GraphQueryResult,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    KindsRule,
+    Range,
+    Scalar,
 )
 from unified_kg_rag.domain.retrieval.graph_query import build_profile
 from unified_kg_rag.shared import get_logger
@@ -47,65 +49,51 @@ _COMPARISONS = {
 }
 
 
-def _matches(values: list[Any], value: Any) -> bool:
-    """Whether a stored multi-valued property passes one filter entry.
+def _same(stored: Any, value: Scalar) -> bool:
+    """Gremlin's equality: of one type (``True`` is not ``1``), a number
+    equal to a number of either kind (``2`` is ``2.0``)."""
+    if isinstance(stored, bool) or isinstance(value, bool):
+        return isinstance(stored, bool) and isinstance(value, bool) and stored == value
+    if isinstance(stored, int | float) and isinstance(value, int | float):
+        return stored == value
+    return type(stored) is type(value) and stored == value
 
-    As Gremlin's ``has``: a list is ``within`` (any stored value in it), a
-    dict holds range operators that must all hold for some stored value
-    each, anything else is equality. A comparison across types fails.
-    """
-    if isinstance(value, list):
-        return any(v in value for v in values)
-    if isinstance(value, dict):
-        for op, operand in value.items():
-            compare = _COMPARISONS.get(op)
-            if compare is None:
-                continue
-            try:
-                if not any(compare(v, operand) for v in values):
-                    return False
-            except TypeError:
+
+def _in_range(stored: Any, bounds: tuple[tuple[str, Scalar], ...]) -> bool:
+    """Gremlin's comparison of one stored value: across types it fails."""
+    for op, bound in bounds:
+        number = isinstance(bound, int | float) and not isinstance(bound, bool)
+        if number != (isinstance(stored, int | float) and not isinstance(stored, bool)):
+            return False
+        try:
+            if not _COMPARISONS[op](stored, bound):
                 return False
-        return True
-    return value in values
+        except TypeError:
+            return False
+    return True
+
+
+def _passes(clause: VertexClause, value_map: dict[str, Any]) -> bool:
+    """Whether a vertex's stored valueMap passes one clause, as Gremlin's
+    ``has`` does on a multi-valued property: a list is ``within`` (any
+    stored value in it), a range holds for some stored value, a vertex
+    without the property fails (but a ``source_kinds`` rule naming
+    ``document``)."""
+    stored = value_map.get(clause.field) or []
+    if isinstance(clause, KindsRule):
+        return clause.passes(stored)
+    if isinstance(clause, Range):
+        return any(_in_range(v, clause.bounds) for v in stored)
+    return any(_same(v, value) for v in stored for value in clause.values)
 
 
 def vertex_filter(filters: dict[str, Any] | None) -> VertexFilter | None:
-    """The predicate ``NeptuneRetriever._apply_filters`` applies to a vertex.
-
-    ``id`` is the seed list, not a filter. A ``source_kinds`` entry naming
-    ``document`` passes vertices without it too (an entity no seed graph
-    states); every other key drops vertices without it. A dict without
-    a range operator filters nothing; the retriever refuses one before
-    (``check_filter_values``), as the OpenSearch retriever does.
-    """
-    entries = [
-        (key, value)
-        for key, value in (filters or {}).items()
-        if key != "id"
-        and not (
-            isinstance(value, dict) and not any(op in _COMPARISONS for op in value)
-        )
-    ]
-    if not entries:
+    """The predicate ``NeptuneRetriever._apply_filters`` applies to a vertex:
+    every clause of the scoped ``filters`` (``vertex_clauses``)."""
+    clauses = vertex_clauses(filters)
+    if not clauses:
         return None
-
-    def keep(value_map: dict[str, Any]) -> bool:
-        for key, value in entries:
-            stored = value_map.get(key)
-            if not stored:
-                if (
-                    key == SOURCE_KINDS_FIELD
-                    and isinstance(value, str | list)
-                    and DOCUMENT_SOURCE_KIND in source_kinds_values(value)
-                ):
-                    continue
-                return False
-            if not _matches(stored, value):
-                return False
-        return True
-
-    return keep
+    return lambda value_map: all(_passes(c, value_map) for c in clauses)
 
 
 class SQLiteGraphRetriever(GraphExpansionRetriever):
@@ -171,7 +159,7 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
         ids: list[str],
         label: str,
         per_vertex: int,
-        kinds: tuple[list[str], bool] | None,
+        kinds: KindsRule | None,
     ) -> list[GraphEdge]:
         rows = await asyncio.to_thread(self._store.edges_within, label, ids)
         edges = [
@@ -185,7 +173,9 @@ class SQLiteGraphRetriever(GraphExpansionRetriever):
             for edge_id, source, target, props in rows
         ]
         # aneighbourhood_edges keeps each vertex's first per_vertex.
-        return [edge for edge in edges if edge_kinds_pass(edge, kinds)]
+        return [
+            edge for edge in edges if kinds is None or kinds.passes(edge.source_kinds)
+        ]
 
     # --- GraphQueryPort (the structured strategy, docs/design.md §6.6) -----
 

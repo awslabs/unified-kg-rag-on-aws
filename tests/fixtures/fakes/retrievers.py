@@ -15,16 +15,18 @@ from collections.abc import Collection
 from typing import Any
 
 from unified_kg_rag.adapters.storage.filter_schema import (
-    FilterFields,
     IndexLimits,
-    opensearch_filter_fields,
-    union_filter_fields,
 )
 from unified_kg_rag.domain.models import (
     Config,
     GraphEdge,
     RetrievalResult,
     SearchQuery,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    ITEM_FILTER_FIELDS,
+    FilterFields,
+    union_filter_fields,
 )
 
 
@@ -115,9 +117,7 @@ def opensearch_fields_for(config: Config, prefixes: Collection[str]) -> FilterFi
     ``OpenSearchRetriever.filter_fields_for`` answers, for a fake standing in
     for it."""
     o = config.indexing.opensearch
-    by_kind = opensearch_filter_fields(
-        *config.processing.translation.translated_languages
-    )
+    by_kind = ITEM_FILTER_FIELDS
     by_prefix = {
         o.text_units_index_prefix: by_kind["text_units"],
         o.entities_index_prefix: by_kind["entities"],

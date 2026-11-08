@@ -3,8 +3,9 @@
 `--filters key:value ...` (or `RAGInput.filters`) narrows what retrieval ranks;
 a pair without a key, a `:` or a value, a key given twice and a key no index the
 strategy reads declares are usage errors (exit 2).
-Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
-steps on Neptune. How to use them in a query:
+Filters compile to `term`/`terms`/`range` clauses on OpenSearch and the
+embedded engine, `has` steps on Neptune and Gremlin Server, and one vertex
+predicate on the SQLite graph; every store answers a filter alike. How to use them in a query:
 [Querying: Filters](../guides/query.md#filters). Filters are not an
 access-control boundary:
 [Scopes and namespaces](../concepts/scopes-and-namespaces.md#not-an-access-control-boundary).
@@ -102,7 +103,7 @@ A filter applies only to the stores that declare its field
 (`type:person` leaves text units unfiltered). A key no store the
 selected strategy reads declares (e.g. `category`, or `type` with `naive`
 or `global`) raises `InvalidFilterError`, listing the filterable keys
-(`unified_kg_rag/adapters/storage/filter_schema.py`). `naive` reads text
+(`unified_kg_rag/domain/retrieval/filters.py`). `naive` reads text
 units; `hybrid` and `mix` entities, relationships and text units (and
 Neptune with `search.lightrag_search.enable_graph_expansion`); `local` and
 `drift` every index the pipeline builds and Neptune; `global` community

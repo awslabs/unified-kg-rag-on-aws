@@ -37,12 +37,12 @@ from unified_kg_rag.domain.models.graph_query import (
     ResolvedEdge,
     ResolvedNode,
 )
+from unified_kg_rag.domain.retrieval.filters import KindsRule, Range, Term
 from unified_kg_rag.domain.retrieval.graph_query import value_kind
 from unified_kg_rag.shared.utils.common import compute_hash
 
 # The property every vertex and edge is looked up by.
 ID = "id"
-_SOURCE_KINDS = "source_kinds"
 # Vertex properties the profile never reads (long, internal or lineage).
 PROFILE_SKIPPED_KEYS = (
     "id",
@@ -61,6 +61,37 @@ HYDRATE_BATCH = 200
 Filters = Callable[[GraphTraversal], GraphTraversal]
 
 
+def gremlin_vertex_filters(
+    traversal: GraphTraversal, clauses: Sequence[Term | Range | KindsRule]
+) -> GraphTraversal:
+    """``traversal`` with a vertex's filter clauses (``vertex_clauses``) as
+    Gremlin steps: a strict ``has`` per value (``within`` for several) or
+    range bound; a ``source_kinds`` rule a ``where`` (``gremlin_kinds``)."""
+    for clause in clauses:
+        if isinstance(clause, KindsRule):
+            traversal = traversal.where(gremlin_kinds(clause, clause.kinds))
+        elif isinstance(clause, Range):
+            for op, bound in clause.bounds:
+                traversal = traversal.has(clause.field, getattr(P, op)(bound))
+        elif len(clause.values) == 1 and not clause.listed:
+            traversal = traversal.has(clause.field, clause.values[0])
+        else:
+            traversal = traversal.has(clause.field, P.within(list(clause.values)))
+    return traversal
+
+
+def gremlin_kinds(rule: KindsRule, stored: Sequence[str]) -> GraphTraversal:
+    """The anonymous traversal an element passes under a ``source_kinds``
+    rule: its property holds one of ``stored`` (a vertex's kinds, or the
+    JSON encodings of an edge's: ``KindsRule.encodings``), or, when the rule
+    names ``document``, it has no ``source_kinds`` at all."""
+    values = list(stored)
+    held = __.has(rule.field, values[0] if len(values) == 1 else P.within(values))
+    if not rule.unstated_passes:
+        return held
+    return __.or_(held, __.hasNot(rule.field))
+
+
 def _flipped(direction: str) -> str:
     return {"out": "in", "in": "out"}.get(direction, direction)
 
@@ -70,7 +101,7 @@ class GremlinQuery:
 
     ``apply_filters`` applies the caller's graph filters to a vertex step
     (the retriever's own graph-expansion filter code), ``edge_rule`` the
-    caller's ``source_kinds`` rule to every edge (``edge_kinds_filter``).
+    caller's ``source_kinds`` rule to every edge (``kinds_rule``).
     """
 
     def __init__(
@@ -79,7 +110,7 @@ class GremlinQuery:
         label: str,
         *,
         apply_filters: Filters,
-        edge_rule: tuple[list[str], bool] | None,
+        edge_rule: KindsRule | None,
         timeout_ms: int,
     ) -> None:
         self.request = request
@@ -172,11 +203,8 @@ class GremlinQuery:
             else start.inE(*labels) if direction == "in" else start.bothE(*labels)
         )
         if self._edge_rule is not None:
-            encodings, without = self._edge_rule
-            named = __.has(_SOURCE_KINDS, P.within(encodings))
-            incident = incident.where(
-                __.or_(named, __.hasNot(_SOURCE_KINDS)) if without else named
-            )
+            rule = self._edge_rule
+            incident = incident.where(gremlin_kinds(rule, rule.encodings()))
         reached = (
             incident.inV()
             if direction == "out"

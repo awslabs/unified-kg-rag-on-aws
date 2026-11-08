@@ -27,14 +27,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     SectionType,
     TokenManager,
 )
-from unified_kg_rag.adapters.storage.filter_schema import (
-    SOURCE_KINDS,
-    SOURCE_KINDS_FIELD,
-    FilterFields,
-    IndexLimits,
-    document_filters,
-    source_kinds_values,
-)
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.report_references import (
@@ -44,6 +37,7 @@ from unified_kg_rag.domain.ingestion.report_references import (
     FINDINGS_TEXT_UNITS_FIELD,
     report_cited_records,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import SOURCE_KINDS_FIELD
 from unified_kg_rag.domain.models import (
     Config,
     GraphEdge,
@@ -60,6 +54,11 @@ from unified_kg_rag.domain.models.config import language_name
 from unified_kg_rag.domain.retrieval.degradation import (
     DegradationLedger,
     DegradationStep,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    FilterFields,
+    document_filters,
+    kinds_rule,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import (
     configured_index_prefixes,
@@ -2124,11 +2123,8 @@ class BaseSearchStrategy(ABC):
         filtering: local and DRIFT read no report then (``global``, which
         reads nothing else, refuses the key).
         """
-        value = (query.filters or {}).get(SOURCE_KINDS_FIELD)
-        if value is None:
-            return False
-        kinds = {str(kind).strip().lower() for kind in source_kinds_values(value)}
-        return not SOURCE_KINDS <= kinds
+        rule = kinds_rule(query.filters)
+        return rule is not None and rule.narrows
 
     @staticmethod
     def _scoped_filters(query: SearchQuery, **scope: Any) -> dict[str, Any] | None:

@@ -43,13 +43,7 @@ _SUFFIX = "default"
 _ALL = ("e1", "e2", "e3", "e4")
 
 # Known divergences, by (case, family): the test fails strictly once fixed.
-_IR = "the store matches nothing on an unindexed path instead of refusing it"
-_GRAPHS = ("sqlite-graph", "gremlin")
-_INDEXES = ("embedded", "opensearch")
-_KNOWN: dict[tuple[str, str], str] = {
-    ("unindexed-path", "embedded"): _IR,
-    ("unindexed-path", "opensearch"): _IR,
-}
+_KNOWN: dict[tuple[str, str], str] = {}
 
 _REFUSED = "refused"
 
@@ -153,7 +147,7 @@ _CASES: list[tuple[str, dict[str, Any], Any, bool]] = [
     ("name-is-exact", {"name": "가나다"}, set(), True),
     ("name-case", {"name": "acme"}, set(), True),
     ("name-keyword", {"name.keyword": "Acme"}, {"e1"}, True),
-    ("text-field", {"description": "widgets"}, _REFUSED, True),
+    ("text-field", {"description": "widgets"}, _REFUSED, False),
     (
         "unindexed-path",
         {"attributes.seed_properties.color": "red"},
@@ -241,10 +235,79 @@ def test_graph_expansion_applies_a_filter_or_leaves_it_to_the_entities_index(
     assert retriever is not None
     declared = retriever().filter_fields()
     assert all(declared.declares(key) for key in filters) is graph_applies
-    if expected == _REFUSED and graph_applies:
+    if expected == _REFUSED:
         with pytest.raises(InvalidFilterError):
             harness.retrieve(RetrieverRole.GRAPH, query)
         return
     (hits,) = harness.retrieve(RetrieverRole.GRAPH, query)
     # Every seed comes back when the graph leaves the keys to the index.
     assert {r.source for r in hits} == (expected if graph_applies else set(_ALL))
+
+
+# A filter on every kind of key, under one namespace, reads nothing of
+# another: the suffix, not a filter, separates tenants, and every compiler
+# keeps the store name or label the suffix gives.
+_TENANT_FILTERS: list[dict[str, Any]] = [
+    {},
+    {"name": "Acme"},
+    {"name.keyword": "Acme"},
+    {"type": ["org", "person"]},
+    {"attributes.category": "hardware"},
+    {"attr_category": "finance"},
+    {"source_kinds": "document"},
+    {"rank": {"gte": 0}},
+]
+
+
+def test_a_filter_never_reads_another_namespace(harness: StoreHarness) -> None:
+    other = harness.suffix("tenant-b")
+    # The same ids, names and filter values under another suffix.
+    foreign = [
+        e.model_copy(
+            update={
+                "description": "tenant b only",
+                "attributes": {**e.attributes, "index": other},
+            }
+        )
+        for e in _entities()
+    ]
+    assert harness.vector_indexer.index_entities(foreign).failed_items == 0
+    assert harness.graph_indexer.index_entities(foreign).failed_items == 0
+    prefix = harness.config.indexing.opensearch.entities_index_prefix
+    for suffix, own in ((_SUFFIX, False), (other, True)):
+        document = [
+            SearchQuery(
+                query="",
+                suffix=suffix,
+                search_type=SearchType.LEXICAL,
+                index_prefixes=[prefix],
+                top_k=10,
+                retrieval_multiplier=1,
+                filters=filters or None,
+            )
+            for filters in _TENANT_FILTERS
+        ]
+        graph = [
+            SearchQuery(
+                query="",
+                suffix=suffix,
+                top_k=10,
+                retrieval_multiplier=1,
+                max_hops=1,
+                filters={"id": list(_ALL), **filters},
+            )
+            for filters in _TENANT_FILTERS
+        ]
+        for role, queries in (
+            (RetrieverRole.DOCUMENT, document),
+            (RetrieverRole.GRAPH, graph),
+        ):
+            for filters, hits in zip(
+                _TENANT_FILTERS, harness.retrieve(role, *queries), strict=True
+            ):
+                assert hits, (suffix, role, filters)
+                assert {"tenant b only" in r.content for r in hits} == {own}, (
+                    suffix,
+                    role,
+                    filters,
+                )

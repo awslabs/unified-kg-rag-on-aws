@@ -31,6 +31,8 @@ from unified_kg_rag.adapters.graph_query.gremlin import (
     HYDRATE_BATCH,
     GremlinQuery,
     decode_profile,
+    gremlin_kinds,
+    gremlin_vertex_filters,
     hydrate_traversal,
     named_vertex_ids,
     profile_traversal,
@@ -38,20 +40,20 @@ from unified_kg_rag.adapters.graph_query.gremlin import (
 from unified_kg_rag.adapters.retrieval.base import seed_shares
 from unified_kg_rag.adapters.retrievers.graph_expansion import (
     GraphExpansionRetriever,
-    edge_kinds_filter,
     edge_source_kinds,
-)
-from unified_kg_rag.adapters.storage.filter_schema import (
-    SOURCE_KINDS_FIELD,
-    source_kinds_values,
+    vertex_clauses,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
-from unified_kg_rag.domain.ingestion.seed_graph import DOCUMENT_SOURCE_KIND
+from unified_kg_rag.domain.ingestion.seed_graph import SOURCE_KINDS_FIELD
 from unified_kg_rag.domain.models import Config, GraphEdge, SearchQuery
 from unified_kg_rag.domain.models.graph_query import (
     GraphProfile,
     GraphQueryRequest,
     GraphQueryResult,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    KindsRule,
+    kinds_rule,
 )
 from unified_kg_rag.domain.retrieval.graph_query import build_profile
 from unified_kg_rag.shared import StoreConnectionError, get_logger
@@ -157,53 +159,15 @@ class NeptuneRetriever(GraphExpansionRetriever):
         """
         return neptune_request_error(exc, self._config.search.store_timeout_seconds)
 
-    @staticmethod
-    def _filter_steps(key: str, value: Any) -> list[tuple[str, Any]]:
-        """``(key, predicate)`` pairs for one filter entry (``has`` arguments)."""
-        if isinstance(value, list):
-            return [(key, P.within(value))]
-        if isinstance(value, dict):
-            return [
-                (key, getattr(P, op)(val))
-                for op, val in value.items()
-                # Range bounds only: ``aretrieve`` refuses any other key
-                # (``check_filter_values``), which this would drop.
-                if op in {"gte", "lte", "gt", "lt"}
-            ]
-        return [(key, value)]
-
-    @staticmethod
-    def _source_kinds_predicate(value: Any) -> GraphTraversal:
-        """Anonymous traversal a vertex must match for a ``source_kinds``
-        entry (``filter_schema``): a vertex holds one of the kinds (a
-        multi-valued property: any value), or, when they name ``document``,
-        holds no ``source_kinds`` (an entity no seed graph states)."""
-        kinds = source_kinds_values(value)
-        held = __.has(
-            SOURCE_KINDS_FIELD, kinds[0] if len(kinds) == 1 else P.within(kinds)
-        )
-        if DOCUMENT_SOURCE_KIND not in kinds:
-            return held
-        return __.or_(held, __.hasNot(SOURCE_KINDS_FIELD))
-
     @classmethod
     def _apply_filters(
         cls,
         traversal: GraphTraversal,
         filters: dict[str, Any] | None,
     ) -> GraphTraversal:
-        if not filters:
-            return traversal
-
-        for key, value in filters.items():
-            if key == "id":
-                continue
-            if key == SOURCE_KINDS_FIELD and isinstance(value, str | list) and value:
-                traversal = traversal.where(cls._source_kinds_predicate(value))
-                continue
-            for step in cls._filter_steps(key, value):
-                traversal = traversal.has(*step)
-        return traversal
+        """``traversal`` with the scoped ``filters`` as Gremlin steps
+        (``vertex_clauses``, ``gremlin_vertex_filters``)."""
+        return gremlin_vertex_filters(traversal, vertex_clauses(filters))
 
     async def _traverse(
         self, seed_ids: list[Any], query: SearchQuery
@@ -339,7 +303,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
         ids: list[str],
         label: str,
         per_vertex: int,
-        kinds: tuple[list[str], bool] | None,
+        kinds: KindsRule | None,
     ) -> list[GraphEdge]:
         """One request: from each vertex of ``ids``, its first ``per_vertex``
         edges (by relationship id under ``deterministic_order``, else the
@@ -361,11 +325,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
                 other = __.otherV().hasLabel(label).has("id", P.within(ids))
             incident = __.bothE().where(other)
             if kinds is not None:
-                encodings, without = kinds
-                named = __.has(SOURCE_KINDS_FIELD, P.within(encodings))
-                incident = incident.where(
-                    __.or_(named, __.hasNot(SOURCE_KINDS_FIELD)) if without else named
-                )
+                incident = incident.where(gremlin_kinds(kinds, kinds.encodings()))
             if deterministic:
                 incident = incident.order().by("id")
             return (
@@ -441,7 +401,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
             request,
             label,
             apply_filters=lambda traversal: self._apply_filters(traversal, filters),
-            edge_rule=edge_kinds_filter(filters),
+            edge_rule=kinds_rule(filters),
             timeout_ms=timeout_ms,
         )
         digest: list[str] = []

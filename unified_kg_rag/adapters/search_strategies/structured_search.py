@@ -50,7 +50,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     serves,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.adapters.storage.filter_schema import document_filters
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.names import compact_name_key
@@ -84,6 +83,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
 )
+from unified_kg_rag.domain.retrieval.filters import document_filters
 from unified_kg_rag.domain.retrieval.graph_query import (
     FILTERS_KEY,
     aggregate_bindings,

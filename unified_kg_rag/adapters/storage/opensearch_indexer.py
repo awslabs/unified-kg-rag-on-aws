@@ -22,10 +22,7 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     stored_build_record,
     stored_embedding_settings,
 )
-from unified_kg_rag.adapters.storage.filter_schema import (
-    ATTRIBUTE_KEY_PREFIX,
-    IndexLimits,
-)
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.adapters.storage.search_engine import (
     SearchEngineClient,
     engine_name,
@@ -58,6 +55,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import DEFAULT_INDEX_SETTINGS
 from unified_kg_rag.domain.models.provider_config import BEDROCK
+from unified_kg_rag.domain.retrieval.filters import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.domain.retrieval.index_prefixes import index_artifacts
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.ports.indexer import (
