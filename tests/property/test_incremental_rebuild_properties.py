@@ -584,6 +584,15 @@ _KOREAN_LEGAL_FORM_B = [
 # key, and the same type here, so they stay one entity).
 _TWO_SPELLINGS = [(["Vendor", "Vendor Inc"], [("Vendor Inc", "Depot", 1)], [])]
 
+# Each spelling in a unit of its own, with an edge from "Depot" (two entities
+# while no unit names both; see the example of the insert/delete summaries
+# test).
+_SPELLING_PER_UNIT = [
+    (["Vendor Inc"], [], [("Depot", "Vendor Inc", 1)]),
+    (["Vendor"], [], [("Depot", "Vendor", 1)]),
+]
+_DEPOT_TO_VENDOR = [(["Vendor"], [], [("Depot", "Vendor", 1)])]
+
 
 @pytest.mark.slow
 @pytest.mark.timeout(600)
@@ -739,6 +748,17 @@ def _run_changes(
     changes=[
         {_PATHS[0]: "keep", _PATHS[1]: "keep", _PATHS[2]: _KOREAN_LEGAL_FORM_C},
         {_PATHS[0]: "keep", _PATHS[1]: _KOREAN_LEGAL_FORM_B, _PATHS[2]: "keep"},
+    ]
+)
+# b.txt stores "Vendor Inc" and "Vendor" apart, each with an edge from
+# "Depot"; c.txt's Depot -> Vendor edge then folds the stored "Vendor Inc"
+# into "Vendor": the derived edge cites b.txt's "Vendor Inc" unit too, so the
+# stored Depot -> Vendor summary, which never held that unit's line, must not
+# be extended with the delta's description alone.
+@example(
+    changes=[
+        {_PATHS[1]: _SPELLING_PER_UNIT},
+        {_PATHS[2]: _DEPOT_TO_VENDOR},
     ]
 )
 def test_insert_and_delete_calls_match_a_full_build_with_summaries(changes) -> None:

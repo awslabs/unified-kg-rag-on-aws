@@ -462,6 +462,8 @@ From a `main` checkout (formats and keys no release had):
   the lines of a spelling a later run split off or lost those of a spelling a run folded in (#624), or the line of
   an edge a run's delta resolved under a spelling the stored graph keeps apart (#640), or the line of an edge of
   such a spelling stated in a unit beside the edge it kept (#644): reset once to
+  such a spelling stated in a unit beside the edge it kept, or the line of a stored edge a delta's edge folded in:
+  reset once to
   summarize from the lines (one call per such item over the threshold), or leave it.
 - #565 changed the translation, description summary and gleaning prompts (gleaning re-keys every gleaned record,
   claims too): a reset translates, extracts and gleans every unit again, the cost of a first build; incremental runs
@@ -1393,6 +1395,9 @@ Ingestion and incremental indexing.
   where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full
   build's (#640). Nor when the moved and the kept lines share a text unit (a delta that resolved `(주)벤더` into
   `벤더`): an edge with an endpoint the derivation split off is summarized from its lines (#644).
+  `벤더`): an edge with an endpoint the derivation split off is summarized from its lines. Nor when the derivation
+  folded another stored spelling into the item (a delta `Depot -> Vendor` edge that folds the stored `Depot -> Vendor
+  Inc` into it): the extended summary lost the folded edge's line.
 - A document's doc-status registry namespace and its artifacts' index suffix follow one rule
   (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
   fails the loading stage naming it instead of keying the document's record under a namespace no index has (#628).
