@@ -50,6 +50,12 @@ _PENDING_STRIP = "pending-strip"
 _PENDING_COMMIT = "pending-commit"
 
 
+# Extraction-store key of a suffix's write note: the items whose write a
+# commit's stores rejected, written again by the next commit of the suffix
+# (see pending_writes).
+_PENDING_WRITES = "pending-writes"
+
+
 # Extraction-store key of a suffix's summary note: the items a removal's
 # strip summarized or wrote unsummarized, whose stored summary the run's
 # commit must not extend; written before the strip's writes and deleted

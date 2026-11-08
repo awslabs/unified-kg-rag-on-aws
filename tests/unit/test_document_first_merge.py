@@ -393,3 +393,27 @@ def test_derivation_takes_the_iri_and_drops_a_removed_seeds() -> None:
     stored = derived.model_copy(update={"text_unit_ids": [doc]})
     (derived,) = derive(Config(), [stored], [], [], {doc: records[doc]}).entities
     assert derived.iri is None
+
+
+@pytest.mark.parametrize(
+    ("confidences", "merged"),
+    [([None, None], None), ([None, 0.4], 0.4), ([0.2, 0.7], 0.7), ([0.0, None], 0.0)],
+)
+def test_every_merge_takes_the_highest_known_confidence(
+    confidences: list[float | None], merged: float | None
+) -> None:
+    # An unknown confidence (None) counts for nothing: the statements' merge
+    # and the incremental merge read it as 0.0 and graph resolution gave 1.0
+    # when none was known, so an incremental run stored 0.0 where a full
+    # build stored 1.0 (the stores write an unknown one as 1.0).
+    entities = [
+        Entity(id="e1", name="Vendor", text_unit_ids=[f"t{i}"], confidence=c)
+        for i, c in enumerate(confidences)
+    ]
+    copies = lambda: [e.model_copy(deep=True) for e in entities]  # noqa: E731
+    (statement,) = merge_entity_contributions(copies())
+    resolved = EntityResolver(Config())._merge_entities(copies())
+    first, second = copies()
+    (incremental,), _ = merge_entities([first], [second])
+    assert statement.confidence == resolved.confidence == incremental.confidence
+    assert incremental.confidence == merged

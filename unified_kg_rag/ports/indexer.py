@@ -262,6 +262,20 @@ class GraphIndexer(BaseIndexer):
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Idempotently merge relationships into the live graph (delta)."""
 
+    def update_relationship_ranks(
+        self, relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Set the ``rank`` of stored edges by id, in place, and nothing else.
+
+        An incremental commit rewrites the stored edges of an entity whose
+        degree changed for their rank alone: most of a delta's edge writes
+        once a hub gains neighbours. An adapter that can update a property
+        in place overrides this (batched, no drop and re-add); an id whose
+        edge the suffix does not store is a failed item. Default rewrites
+        each edge (:meth:`upsert_relationships`).
+        """
+        return self.upsert_relationships(relationships)
+
     def upsert_communities(self, communities: list[Community]) -> IndexingStats:
         """Idempotently merge communities into the live graph (delta semantics).
 
@@ -985,6 +999,18 @@ class VectorIndexer(BaseIndexer):
         incremental removal, :meth:`delete_extraction_records`) or a full
         build or reset keeps only its own units' records
         (:meth:`retain_extraction_records`). Default stores nothing."""
+        return IndexingStats()
+
+    def repoint_report_findings(
+        self, id_remap: Mapping[str, str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Point the record ids the findings of ``suffix``'s stored community
+        reports cite at their new ids (``id_remap``: old id -> new id), in
+        place: an incremental run re-keyed those items (their name changed)
+        and deletes the old ids. One item per report rewritten. Default
+        rewrites nothing (the reports keep citing the old ids, which a query
+        reading the records skips); adapters that override it raise when
+        the read of the citing reports fails."""
         return IndexingStats()
 
     def update_claim_lineage(self, claims: list[Claim]) -> IndexingStats:

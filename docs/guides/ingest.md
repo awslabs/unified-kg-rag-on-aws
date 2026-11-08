@@ -300,7 +300,9 @@ indexing:
   language when translation runs, the source language otherwise), and their
   text is analyzed with that language's analyzer.
 - **Limits.** A tree holds at most `max_leaves_in_memory` (100,000) text
-  units: their texts and vectors are clustered in memory, about 50 KiB of
+  units, and so do the trees read at once (a corpus split into several
+  trees is read a batch of them at a time): their texts and vectors are
+  clustered in memory, about 50 KiB of
   task memory per text unit at the peak (1,024 dimensions), so the default
   takes about 5 GiB of the task's 8 ([Capacity
   sizing](../operations.md#capacity-sizing)). Split larger corpora with

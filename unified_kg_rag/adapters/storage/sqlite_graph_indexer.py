@@ -229,6 +229,43 @@ class SQLiteGraphIndexer(GraphIndexer):
                     stats.add_success()
         return stats
 
+    def update_relationship_ranks(
+        self, relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Set the stored edges' ``rank`` by id in one transaction (see the
+        port); an edge the suffix does not store fails. During a rebuild in
+        place the edges are written whole, with its tag."""
+        if self._rebuild_tag is not None:
+            return self.upsert_relationships(relationships)
+        stats = IndexingStats(total_items=len(relationships))
+        if not relationships:
+            return stats
+        with self.store.transaction("write relationship ranks") as connection:
+            for suffix, rels in self._group_items_by_suffix(relationships).items():
+                label = self._entity_label(suffix)
+                ranks = {rel.id: rel.rank for rel in rels}
+                updates = []
+                for batch in batches(sorted(ranks)):
+                    rows = connection.execute(
+                        "SELECT id, props FROM edges "
+                        f"WHERE label = ? AND id IN ({placeholders(batch)})",  # nosec B608 - ? marks only, values bound
+                        [label, *batch],
+                    ).fetchall()
+                    for item_id, stored in rows:
+                        props = json.loads(stored)
+                        props.pop("rank", None)
+                        if ranks[item_id] is not None:
+                            props["rank"] = ranks[item_id]
+                        updates.append((json.dumps(props), label, item_id))
+                connection.executemany(
+                    "UPDATE edges SET props = ? WHERE label = ? AND id = ?", updates
+                )
+                stats.add_success(len(updates))
+                missing = sorted(set(ranks) - {item_id for _, _, item_id in updates})
+                if missing:
+                    stats.add_error("edge not stored", len(missing), ids=missing)
+        return stats
+
     def index_communities(
         self, communities: list[Community], *, suffixes: Collection[str] = ()
     ) -> IndexingStats:

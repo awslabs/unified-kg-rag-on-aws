@@ -350,7 +350,8 @@ gets its models and stores from the run's `Providers` bundle.
   mapping update), so a retrieved report and its reported source name the
   records each finding rests on (`report_references.report_cited_ids`).
   An incremental commit points them at the ids the cross-run merge kept,
-  as it does a community's members. A report stored before cites none.
+  as it does a community's members, and the stored reports citing an id it
+  re-keys at the new id (§5.1). A report stored before cites none.
 - **Sub-community roll-up (deviation).** When a parent's own context was
   cut, its children's report summaries (biggest child first, each with its
   rating) are added to that context under a second budget of

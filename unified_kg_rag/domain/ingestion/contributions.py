@@ -21,6 +21,7 @@ from typing import Any, TypeVar
 
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
+    merged_confidence,
     union_all_document_filters,
 )
 from unified_kg_rag.domain.ingestion.descriptions import (
@@ -67,10 +68,6 @@ def _union_ids(values: list[Any]) -> list[str]:
     )
 
 
-def _max_confidence(values: list[Any]) -> float:
-    return max(value if value is not None else 0.0 for value in values)
-
-
 def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
     """Merge entity statements by id (mutates the first of each id).
 
@@ -88,7 +85,7 @@ def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
     field_mergers: dict[str, Callable[[list[Any]], Any]] = {
         "description": merge_descriptions,
         "text_unit_ids": _union_ids,
-        "confidence": _max_confidence,
+        "confidence": merged_confidence,
         "attributes": union_all_document_filters,
     }
     statements: dict[str, list[Entity]] = defaultdict(list)
@@ -122,8 +119,8 @@ def merge_entity_contributions(entities: list[Entity]) -> list[Entity]:
             entity.name = min(names, key=lambda n: (-names[n], n))
         if len(deciding[entity.id]) < len(group):
             # Documents decide: the seed statements' confidence is left out.
-            entity.confidence = _max_confidence(
-                [confidence for _, confidence in deciding[entity.id]]
+            entity.confidence = merged_confidence(
+                confidence for _, confidence in deciding[entity.id]
             )
         entity.iri, conflict = iris[entity.id]
         conflicting += conflict

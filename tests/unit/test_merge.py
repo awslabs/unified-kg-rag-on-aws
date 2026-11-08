@@ -231,6 +231,30 @@ class TestMergeEntitiesFuzzy:
         assert names == ["Acme Corporatio", "Acme Corporation", "Zzzz Unrelated"]
         assert remap == {}
 
+    @pytest.mark.parametrize(
+        ("matches", "chosen"),
+        [
+            # The higher score first, then the shorter name, then the
+            # lexicographically smaller one (the docstring said only the
+            # name broke a tie, and the code took the larger one).
+            ([("Acme Corp", 0.8), ("Acme Corporation", 0.9)], "Acme Corporation"),
+            ([("Acme Corporation", 0.9), ("Acme Corp", 0.9)], "Acme Corp"),
+            ([("Acme Corb", 0.9), ("Acme Cora", 0.9)], "Acme Cora"),
+            ([("Acme Cora", 0.9), ("Acme Corb", 0.9)], "Acme Cora"),
+        ],
+    )
+    def test_the_best_of_several_stored_matches_is_taken(
+        self, matches: list[tuple[str, float]], chosen: str
+    ) -> None:
+        class Matcher:
+            def find_all_matches(self, name: str) -> list[tuple[str, float]]:
+                return list(matches)
+
+        old = [_entity(f"e-{n}", n, text_unit_ids=[n]) for n, _ in matches]
+        delta = [_entity("d1", "Acme Co", text_unit_ids=["t9"])]
+        _, remap = merge_entities(old, delta, fuzzy_matcher=Matcher())  # type: ignore[arg-type]
+        assert remap == {"d1": f"e-{chosen}"}
+
     def test_fuzzy_merge_order_independent(self) -> None:
         old = [_entity("e1", "Acme Corporation", text_unit_ids=["t0"])]
         d_ab = [

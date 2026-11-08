@@ -2139,6 +2139,34 @@ def test_a_report_hit_names_the_records_its_findings_cite(
     ]
 
 
+@pytest.mark.parametrize("harness", backends(RETRIEVERS), indirect=True)
+def test_a_re_key_repoints_the_stored_reports_findings(harness: StoreHarness) -> None:
+    # An incremental run re-keys "e-vendor" (its name changed) and deletes
+    # the old id: the stored reports citing it cite the new id instead.
+    _write(harness, "community_reports", "upsert", [_report_with_findings()])
+
+    stats = harness.vector_indexer.repoint_report_findings(
+        {"e-vendor": "e-vendor-inc", "r-ships": "r-ships-2", "e-absent": "e-x"},
+        "default",
+    )
+
+    assert (stats.successful_items, stats.failed_items) == (1, 0)
+    (hit,) = _report_hits(harness)
+    assert report_cited_ids(hit.metadata) == (
+        ["e-vendor-inc", "e-buyer", "e-depot"],
+        ["r-supplies", "r-ships-2"],
+    )
+    # Nothing left to repoint, and another suffix's reports are not read.
+    again = harness.vector_indexer.repoint_report_findings(
+        {"e-vendor": "e-vendor-inc"}, "default"
+    )
+    assert (again.total_items, again.failed_items) == (0, 0)
+    other = harness.vector_indexer.repoint_report_findings(
+        {"e-vendor-inc": "e-y"}, "other"
+    )
+    assert (other.total_items, other.failed_items) == (0, 0)
+
+
 @pytest.mark.parametrize("harness", backends(INDEX_ADMIN), indirect=True)
 def test_incremental_run_maps_the_findings_of_an_earlier_reports_index(
     harness: StoreHarness, monkeypatch: pytest.MonkeyPatch

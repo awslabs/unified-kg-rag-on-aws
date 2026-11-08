@@ -15,6 +15,10 @@ from unified_kg_rag.application.storage.cross_run_merge import (
     CrossRunMerge,
     CrossRunMergeResult,
 )
+from unified_kg_rag.application.storage.pending_writes import (
+    NotedWrites,
+    PendingWrites,
+)
 from unified_kg_rag.application.storage.reannotation import (
     SchemaReannotation,
     SchemaReannotator,
@@ -239,6 +243,7 @@ class IndexingManager:
         self._merge = CrossRunMerge(self)
         self._removal = TextUnitRemoval(self)
         self._reannotation = SchemaReannotator(self)
+        self._pending_writes = PendingWrites(self)
 
     @property
     def description_summarizer(self) -> DescriptionSummarizer:
@@ -573,9 +578,10 @@ class IndexingManager:
             ]
 
         # A full build's cleared (or, rebuilt in place, swept) entity labels
-        # drop the old edges.
+        # drop the old edges. A delta's stored edges rewritten for their rank
+        # alone (read before phase 1 takes them) are updated in place.
         edges = (
-            graph.upsert_relationships
+            partial(self._upsert_graph_relationships, set(self._rank_only))
             if suffixes is None
             else graph.index_relationships
         )
@@ -652,6 +658,24 @@ class IndexingManager:
 
         self._log_completion_summary(results, time.time() - start_time)
         return results
+
+    def _upsert_graph_relationships(
+        self, rank_only: Collection[str], relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Delta upsert of the relationship edges: an edge this run rewrites
+        for its rank only (``rank_only``) has its rank set in place
+        (``GraphIndexer.update_relationship_ranks``), the others are
+        written whole."""
+        graph = self.graph_indexer
+        ranked = [r for r in relationships if r.id in rank_only]
+        if not ranked:
+            return graph.upsert_relationships(relationships)
+        whole = [r for r in relationships if r.id not in rank_only]
+        stats = graph.update_relationship_ranks(ranked)
+        if whole:
+            stats.merge(graph.upsert_relationships(whole))
+        stats.total_items = len(relationships)
+        return stats
 
     def _upsert_vector_relationships(
         self, relationships: list[Relationship]
@@ -835,13 +859,47 @@ class IndexingManager:
             for suffix in self._rekeyed.keys() | self._dropped.keys()
         }
         vector_only = dict(self._vector_only)
+        rekeyed = {suffix: dict(rekey) for suffix, rekey in self._rekeyed.items()}
         self._reset_run_state()
+        # The stored community reports citing an old id cite the new one
+        # first: deleted, nothing would point them at it.
+        repointed = self._repoint_reports(rekeyed)
         if retired:
             logger.info(
                 "Deleting %d items re-keyed to follow their current name",
                 sum(len(ids) for ids in retired.values()),
             )
-        return self.delete_documents(retired, vector_only)
+        return {**repointed, **self.delete_documents(retired, vector_only)}
+
+    def _repoint_reports(
+        self, rekeyed: Mapping[str, Mapping[str, str]]
+    ) -> dict[str, IndexingStats]:
+        """Point the findings of the stored reports at the ids ``rekeyed``
+        (by suffix: old id -> new id) gives
+        (``VectorIndexer.repoint_report_findings``). A failure keeps the old
+        ids in them (a query reading the records skips an id not stored)."""
+        results: dict[str, IndexingStats] = {}
+        for suffix, rekey in sorted(rekeyed.items()):
+            moved = {old: new for old, new in rekey.items() if old != new}
+            if not moved:
+                continue
+            try:
+                stats = self.vector_indexer.repoint_report_findings(moved, suffix)
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - reported as a failed item
+                stats = IndexingStats(total_items=1)
+                stats.add_error(str(e))
+            if stats.failed_items:
+                logger.warning(
+                    "Pointing the stored community reports of '%s' at re-keyed "
+                    "ids failed; they keep citing the old ids: %s",
+                    suffix,
+                    stats.errors[:1],
+                )
+            if stats.total_items or stats.failed_items:
+                results[f"vector_report_findings_{suffix}"] = stats
+        return results
 
     def note_pending_commit(self) -> None:
         """Note, per suffix, the stored entities this commit's derivation
@@ -864,6 +922,45 @@ class IndexingManager:
                 continue
             self._write_note(_PENDING_COMMIT, suffix, {"entity_ids": sorted(ids)})
             self._commit_note_suffixes.add(suffix)
+
+    def read_pending_writes(
+        self, suffixes: Iterable[str], text_units: Sequence[TextUnit] = ()
+    ) -> NotedWrites:
+        """The items an earlier commit of ``suffixes`` failed to write, noted
+        for this one (see :mod:`.pending_writes`), cut to the text units
+        still stored or written by the delta (``text_units``). A failed read
+        raises."""
+        return self._pending_writes.read(suffixes, text_units)
+
+    def join_pending_writes(
+        self,
+        noted: NotedWrites,
+        entities: list[Entity] | None,
+        relationships: list[Relationship] | None,
+        claims: list[Claim] | None,
+        communities: list[Community] | None,
+        community_reports: list[CommunityReport] | None,
+    ) -> tuple[
+        list[Entity] | None,
+        list[Relationship] | None,
+        list[Claim] | None,
+        list[Community] | None,
+        list[CommunityReport] | None,
+    ]:
+        """The delta with the ``noted`` items, which the commit merges with
+        what is stored like its own (see :meth:`read_pending_writes`)."""
+        return self._pending_writes.join(
+            noted, entities, relationships, claims, communities, community_reports
+        )
+
+    def note_pending_writes(
+        self, results: Mapping[str, IndexingStats], written: Iterable[Any]
+    ) -> set[str]:
+        """Note the ``written`` items whose write failed (``results``) for the
+        next commit, and delete the read notes nothing is left in. Returns
+        the result keys whose failures are noted (none when a note cannot
+        be written)."""
+        return self._pending_writes.note(results, written)
 
     def clear_pending_commit(self) -> None:
         """Delete the commit notes of the suffixes this run noted or read
@@ -958,6 +1055,7 @@ class IndexingManager:
         self._stripped_ids.clear()
         self._noted_stripped_ids.clear()
         self._delta_ids.clear()
+        self._pending_writes.reset()
 
     def expect_delta(
         self, entities: Sequence[Entity], relationships: Sequence[Relationship]

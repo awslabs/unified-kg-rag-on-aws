@@ -108,6 +108,7 @@ def test_the_indexing_manager_attaches_the_hierarchy_on_write() -> None:
     manager.vector_indexer = _Recorder()
     manager.graph_indexer = _Recorder()
     manager._log_completion_summary = lambda *_: None  # type: ignore[method-assign]
+    manager._rank_only = set()
     manager.index_delta(communities=_communities(), community_reports=reports)
     assert {r.community_id: r.depth for r in reports}["C2x"] == 3
 

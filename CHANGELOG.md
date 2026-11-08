@@ -870,7 +870,9 @@ From a `main` checkout (formats and keys no release had):
   default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#608). The leaf digest that tells whether a
   tree is current reads the texts a page at a time and keeps only their ids, attributes and text hashes
   (`VectorIndexer.scan_text_unit_pages`) (#640); the port's default pages a store's `scan_text_units`, so a store
-  that implements only that one still builds the tree (#644). Failed summaries and, with
+  that implements only that one still builds the tree (#644). Several trees (`partition_by`, `scope: document`) are
+  read and built a batch of at most `max_leaves_in_memory` leaves at a time, a page walk each, where every tree's
+  vectors were held at once. Failed summaries and, with
   `refresh: on_reset`, the text units no summary covers are EMF metrics (`total_tree_summaries_failed`,
   `total_tree_uncovered_leaves`) on the CDK dashboard's "Summary tree (EMF)" widget (#603). See
   [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
@@ -916,7 +918,9 @@ From a `main` checkout (formats and keys no release had):
   default sweep and the optional indexes a strategy reads (claims, relationship vectors, reports) follow the same
   artifacts (#613). `hipporag` holds what `lightrag` builds, so `ppr` is served wherever `lightrag` is, and `raptor`
   reads a summary tree (#599). Without a build record (a namespace ingested before them), a query takes the namespace
-  to hold what a run of the config builds, `hipporag` included (#602). With
+  to hold what a run of the config builds, `hipporag` included (#602); a run writes the record before the registry
+  records its documents, so a first build or reset killed between the two leaves it (the next run found nothing to
+  index and wrote none, and queries took the namespace to hold what the config builds). With
   `graph.community_detection.report_generation.enabled: false` a run builds no reports, so an incremental run no
   longer takes them for missing and rebuilds the namespace, and the namespace holds `graphrag` for `local` while
   `global` and `drift`, which declare the reports among their artifacts, are refused naming the switch (a WARNING at
@@ -944,8 +948,9 @@ From a `main` checkout (formats and keys no release had):
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
   doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
-  (#628), and a methodology the namespace does not hold yet raises `ConfigurationError` before the run, naming the
-  methodologies held and the directory run that adds it (#640). See [Python
+  (#628), unless the interrupted run of the same `pipeline_id` deleted it (a retry finishes the others), and a
+  methodology the namespace does not hold yet raises `ConfigurationError` before the run, naming the methodologies
+  held and the directory run that adds it (#640). See [Python
   library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
@@ -1403,21 +1408,25 @@ From a `main` checkout (formats and keys no release had):
   for `[Data: Entities (...); Relationships (...)]` references, kept as the cited record ids on the finding
   (`CommunityFinding.entity_ids` / `relationship_ids`) and taken out of the searched text (#618). The report stores
   them (an unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its
-  text), name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept; a
-  removal leaves a removed record's id, which a query reading the records skips; a report stored before cites none
-  until it is regenerated (#640, #643).
+  text), name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept, and
+  a stored report at the new id of a record a later run re-keys (found by its `findings_record_ids` list,
+  `VectorIndexer.repoint_report_findings`); a removal leaves a removed record's id, which a query reading the records
+  skips; a report stored before cites none until it is regenerated (#640, #643).
 - Claims resolve only against the entities of their own text units, and ties of names, types and statuses break
   deterministically, so builds do not depend on document order (#398, #402, #404, #442).
 - `indexing.reset` rebuilds without taking the suffix offline (new indices and an alias swap) and a failed reset
   keeps the previous graph and records (#331).
 - An incremental run finds what a changed or deleted document contributed by the text units every item cites, strips
   shared items and re-derives them (summarizing from lines as a full build does, also when several edited documents
-  share an item or spell it otherwise, when a delta folds two spellings or stored summaries into one item or splits
-  a part off a summarized one (#624), and when the run dies between the removal and the commit and is resumed: the
-  removal notes the items it stripped in the extraction store until a commit's writes succeed), moves an item to the
-  id a full build gives it, and deletes extraction records nothing names (#325, #327, #564, #589, #592). With fuzzy
-  resolution on, it folds a delta entity into its one best stored match and never joins two stored ones until a reset
-  (#564).
+  share an item or spell it otherwise, when a delta folds two spellings or stored summaries into one item (one a
+  removal stripped too) or splits a part off a summarized one (#624), and when the run dies between the removal and
+  the commit and is resumed: the removal notes the items it stripped in the extraction store until a commit's writes
+  succeed), moves an item to the id a full build gives it, and deletes extraction records nothing names (#325, #327,
+  #564, #589, #592). With fuzzy resolution on, it folds a delta entity into its one best stored match (the higher
+  score, then the shorter name, then the smaller one) and never joins two stored ones until a reset (#564).
+- An incremental run sets the rank of a stored edge whose rank alone changed (a neighbour's degree changed) in place,
+  batched, instead of dropping and adding the edge (`GraphIndexer.update_relationship_ranks`, whose default rewrites
+  it): most of a delta's edge writes at a hub, 0.15 ms against 10.6 ms per edge on a Gremlin Server.
 - Re-runs reuse what is unchanged: vectors carry a digest of their text and model, so indexing embeds only changed
   texts; the `intelligent` chunker's boundary answers, the text units' translations and community report answers
   live in the extraction store; a full build keeps a stored summary of the same lines and settings; a no-op
@@ -1656,6 +1665,16 @@ Ingestion and incremental indexing.
 - An unreadable doc-status registry fails the loading stage (`DocStatusRegistryError`) instead of rebuilding (#186);
   incremental indexing follows the extraction settings and stops before writing after a change of the embedding
   model, languages or analyzers, or onto a suffix built with the registry off (#224, #231, #233).
+- An entity none of whose statements gives a confidence keeps none (stored as 1.0) in every merge: the statements'
+  merge and the incremental merge read a missing one as 0.0, graph resolution as 1.0, so an incremental run could
+  store 0.0 where a full build stored 1.0 (`base_processor.merged_confidence`).
+- Two relationships whose endpoint names or type hold a `:` no longer share an id: `A:B -> C` and `A -> B:C` hashed
+  one string and merged into one edge. Such ids are hashed from a JSON list (`shared.utils.id_content`); others keep
+  theirs. An edge an extraction record already holds keeps its id until the unit is extracted again.
+- A rejected entity, relationship, claim, community or report write (under `indexing.max_failure_rate`) no longer
+  records the documents owning it `FAILED`: the item is noted in the extraction store (`pending-writes`) and the next
+  run writes it again without extracting anything. Re-extracting the owners re-extracted every document a hub entity
+  cites, on every run its write kept failing. Only a failed text-unit write fails its document.
 - Deleting a document under a non-default suffix strips it from shared claims, a deletion-only run checks the
   configured suffix, and a run whose new documents name no entity still commits them (#248, #252, #256).
 - `indexing.reset` reusing a pipeline id rebuilds from the whole corpus, fails when the registry cannot be cleared,

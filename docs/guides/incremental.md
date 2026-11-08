@@ -292,9 +292,11 @@ refused or failed run recorded counts as new); it deletes nothing. Set
 A document is recorded `FAILED` when one of its text units failed in
 translation, extraction, gleaning or claim extraction, when a base-level
 community covering it got no report, when an artifact stage crashed in a
-`--continue-on-error` run, when writing one of its artifacts failed, or when
-the extraction record of one of its text units could not be stored. The next
-run processes it again, even if the file did not change, until
+`--continue-on-error` run, when writing one of its text units failed, or when
+the extraction record of one of its text units could not be stored. A store
+that rejects an entity, relationship, claim or report write fails no
+document: the next run writes the item again without extracting anything.
+The next run processes a `FAILED` document again, even if the file did not change, until
 `indexing.max_document_failures` (default `3`) consecutive failures of the
 same content; editing the file or raising the limit retries it after that.
 Only an error of the document's own counts toward that limit (a response

@@ -40,6 +40,7 @@ from unified_kg_rag.domain.prompts.graph_extraction import (
     GraphRefinementPrompt,
 )
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
+from unified_kg_rag.shared.utils import generate_stable_id
 
 pytestmark = pytest.mark.unit
 
@@ -316,6 +317,20 @@ class TestMergeRelationships:
         assert set(merged[0].text_unit_ids) == {"t1", "t2"}
         # Strength per text unit, kept for the incremental merge.
         assert merged[0].attributes == {"text_unit_weights": [1.0, 3.0]}
+
+    def test_names_with_colons_get_distinct_relationship_ids(self) -> None:
+        # The id hashed "relationship:{source}:{target}:{type}": an edge
+        # A:B -> C and an edge A -> B:C hashed one string and so merged into
+        # one edge. Ids of names without a colon are the ones stored before.
+        rel_id = BaseProcessor._generate_relationship_id
+        assert rel_id("A:B", "C", "RELATED") != rel_id("A", "B:C", "RELATED")
+        assert rel_id("Note 1", "2:X", "R") != rel_id("Note 1:2", "X", "R")
+        assert rel_id("A", "B", "C:D") != rel_id("A", "B:C", "D")
+        assert rel_id("Acme", "Buyer", "SUPPLIES") == generate_stable_id(
+            "relationship:acme:buyer:supplies"
+        )
+        # Case and spacing variants of one name still share an id.
+        assert rel_id("ACME:  Corp", "b", "R") == rel_id("acme: corp", "B", "r")
 
     def test_distinct_relationship_ids_not_merged(self, extractor) -> None:
         r1 = Relationship(id="r1", source_id="e1", target_id="e2")

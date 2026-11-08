@@ -9,7 +9,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
+from unified_kg_rag.domain.ingestion.base_processor import (
+    merge_attributes,
+    merged_confidence,
+)
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
 from unified_kg_rag.domain.ingestion.names import normalize_entity_type
@@ -420,10 +423,7 @@ class EntityResolver(BaseResolver):
         # Max, not mean: confidence is monotonic in evidence (consistent with the
         # extractor merge); averaging dilutes a well-supported entity. Over
         # the members documents state, when any (seed_graph.document_first).
-        confidences = [
-            e.confidence for e in document_first(entities) if e.confidence is not None
-        ]
-        merged_confidence = max(confidences) if confidences else 1.0
+        confidence = merged_confidence(e.confidence for e in document_first(entities))
         iri, _ = merged_iri(e.iri for e in entities)
 
         merged_text_unit_ids = self._merge_lists(
@@ -444,7 +444,7 @@ class EntityResolver(BaseResolver):
             community_ids=self._merge_lists(
                 [e.community_ids for e in entities if e.community_ids]
             ),
-            confidence=merged_confidence,
+            confidence=confidence,
             iri=iri,
             attributes=merge_attributes([e.attributes for e in entities]),
             # Keep the earliest known creation time; leave it None (truthfully

@@ -13,7 +13,10 @@ from __future__ import annotations
 from collections.abc import Collection
 from typing import Any
 
-from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
+from unified_kg_rag.domain.ingestion.base_processor import (
+    merge_attributes,
+    merged_confidence,
+)
 from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
 from unified_kg_rag.domain.ingestion.claim_resolver import merge_claim_statuses
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
@@ -104,9 +107,7 @@ def _merge_entity_fields(surviving: Entity, incoming: Entity) -> None:
     # matches the full-build resolver (max over the group), keeping a full
     # rebuild and an incremental build convergent on these fields too — they
     # feed report ranking and the confidence threshold filter.
-    surviving.confidence = max(
-        confidence if confidence is not None else 0.0 for confidence in deciding
-    )
+    surviving.confidence = merged_confidence(deciding)
     surviving.rank = max(
         surviving.rank if surviving.rank is not None else 1,
         incoming.rank if incoming.rank is not None else 1,
@@ -197,8 +198,8 @@ def _find_fuzzy_old_match(
 
     Considers only *old* candidate names (delta entities are never matcher
     candidates), so the collapse target is stable regardless of delta ordering.
-    Ties break on the higher score, then the lexicographically smaller name, so
-    the choice is deterministic. Old entities with an incompatible type are
+    The higher score wins, then the shorter name, then the lexicographically
+    smaller one, so the choice is deterministic. Old entities with an incompatible type are
     skipped, matching the full-build resolver's grouping guard (identifier
     conflicts are already filtered by ``find_all_matches``).
     """
@@ -210,7 +211,7 @@ def _find_fuzzy_old_match(
     ]
     if not matches:
         return None
-    best_name, _ = max(matches, key=lambda m: (m[1], -len(m[0]), m[0]))
+    best_name, _ = min(matches, key=lambda m: (-m[1], len(m[0]), m[0]))
     return by_id.get(old_id_by_name[best_name])
 
 

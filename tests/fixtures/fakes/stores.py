@@ -28,13 +28,20 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
 )
 from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
+from unified_kg_rag.domain.ingestion.report_references import repointed_findings
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SEED_ONLY_SOURCE_KINDS,
     SEED_SOURCE_KIND,
     SOURCE_KINDS_FIELD,
     is_seed_unit,
 )
-from unified_kg_rag.domain.models import Claim, Config, Constants, IndexBuildRecord
+from unified_kg_rag.domain.models import (
+    Claim,
+    CommunityFinding,
+    Config,
+    Constants,
+    IndexBuildRecord,
+)
 from unified_kg_rag.ports.indexer import (
     STORED_ITEM_KINDS,
     AnnotatedKind,
@@ -125,6 +132,8 @@ class FakeGraphStore:
         # What a query would see, sampled at every write of a rebuild (for
         # tests of the in-place rebuild): (entity ids, relationship ids).
         self.snapshots: list[tuple[set[str], set[str]]] = []
+        # The ids of the edges whose rank was set in place, in write order.
+        self.rank_updates: list[str] = []
 
     def close(self) -> None:
         return None
@@ -224,6 +233,23 @@ class FakeGraphStore:
                 "target_id": rel.target_id,
             }
             self._wrote("relationships", (suffix, rel.id))
+            stats.add_success()
+        return stats
+
+    def update_relationship_ranks(self, relationships: list[Any]) -> IndexingStats:
+        """Set the stored edges' rank in place; an edge not stored fails."""
+        stats = IndexingStats(total_items=len(relationships))
+        bucket = self.data.setdefault("relationships", {})
+        for rel in relationships:
+            key = (BaseIndexer.get_suffix(rel), rel.id)
+            if key not in bucket:
+                stats.add_error("edge not stored", ids=[rel.id])
+                continue
+            props = {k: v for k, v in bucket[key]["props"].items() if k != "rank"}
+            if rel.rank is not None:
+                props["rank"] = rel.rank
+            bucket[key] = {**bucket[key], "props": props}
+            self.rank_updates.append(rel.id)
             stats.add_success()
         return stats
 
@@ -991,6 +1017,30 @@ class FakeVectorStore(_Recorder):
             and bucket[i].description
             and BaseIndexer.get_suffix(bucket[i]) == wanted
         }
+
+    def repoint_report_findings(
+        self, id_remap: Mapping[str, str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Point the stored reports' cited ids at their new ids in place."""
+        stats = IndexingStats()
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        bucket = self.data.get("community_reports", {})
+        for report_id, report in list(bucket.items()):
+            if BaseIndexer.get_suffix(report) != wanted:
+                continue
+            findings = repointed_findings(
+                [f.model_dump(mode="json") for f in report.findings], id_remap
+            )
+            if findings is None:
+                continue
+            bucket[report_id] = report.model_copy(
+                update={
+                    "findings": [CommunityFinding.model_validate(f) for f in findings]
+                }
+            )
+            stats.total_items += 1
+            stats.add_success()
+        return stats
 
     def update_claim_lineage(self, claims: list[Any]) -> IndexingStats:
         return self._update("claims", claims, ("text_unit_ids",))

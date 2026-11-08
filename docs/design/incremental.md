@@ -59,7 +59,9 @@ unless noted.
    (§5.4); delta claims merge with the stored claims of the same id. Neptune
    writes with an idempotent `coalesce(unfold, addV)` upsert, OpenSearch by id
    into the live alias index; old ids of re-keyed items are deleted only after
-   the writes succeeded. Before the first write the commit notes the
+   the writes succeeded. A stored edge rewritten for its rank alone (an
+   endpoint's degree changed) has its rank set in place, in batches of one
+   rank (`GraphIndexer.update_relationship_ranks`), as its vector copy is. Before the first write the commit notes the
    entities it splits, re-keys or rewires in one record of the suffix's
    extraction store (`pending-commit`), deleted once the old ids are: those
    decisions live in memory only, and the next commit of the suffix derives
@@ -68,6 +70,19 @@ unless noted.
    the noted entities' copies only the vector store holds, with the vector
    edges at them (the killed commit got to its vector writes only), and a
    run that only removes in the suffix reads the note all the same.
+   An item write a store rejects (an entity, relationship, claim, community
+   or report; an edge held back for a rejected endpoint) does not fail the
+   documents owning it: the commit notes the rejected items as written in
+   the suffix's extraction store (`pending-writes`,
+   `unified_kg_rag/application/storage/pending_writes.py`), and the next commit of the
+   suffix, every run's, adds them to its delta, cut to the text units still
+   stored. They merge with what is stored and are derived from their records
+   like any delta item (summarized from their lines, not by extending a
+   stored summary), and the endpoints of a noted edge are written with it, so
+   their edges' ranks follow. The note is replaced by what still fails, or
+   deleted. Recording the owners `FAILED` instead re-extracted every document
+   a hub entity cites, on every run its write kept failing. A note that cannot
+   be written falls back to that.
 5. **Deletion propagation** (`IndexingManager.remove_text_units`). The stores
    are asked what cites the removed text units (`GraphIndexer.find_ids_citing`
    for entities, `VectorIndexer.find_documents`); edges are found among the
@@ -102,7 +117,10 @@ unless noted.
 6. **Registry update** (`commit`). The `PENDING` records are replaced, in one
    batched write, by `PROCESSED` or `FAILED` records with each document's text
    units, scope and relative path (the five causes of `FAILED`:
-   [runbook](../operations.md#failed-documents)). `failure_count` counts
+   [runbook](../operations.md#failed-documents)). The suffix's build record is
+   written just before, so a run killed after the registry write leaves the
+   record of what it built (the next run finds nothing to index and writes
+   none). `failure_count` counts
    consecutive failures of the same content; after
    `indexing.max_document_failures` the document reads unchanged. A run that
    stops before this step at a stage that failed on all of its units still
@@ -148,11 +166,14 @@ unless noted.
    records only removed text units named are then deleted (best effort).
 
 **Limitation:** shared communities and reports keep what a changed or deleted
-document contributed, and a re-keyed entity's old id, until a full rebuild
-(§5.5); descriptions, names, ids, types, filters, ranks and claims are
-derived again on every run. A kept report's findings keep the ids of the
-records they cite: a removal does not strip them, so they may name records
-no longer stored. They are filtered where they are read: global and DRIFT
+document contributed, and a community a re-keyed entity's old id, until a
+full rebuild (§5.5); descriptions, names, ids, types, filters, ranks and
+claims are derived again on every run. A kept report's findings cite the
+ids of records: a re-key points them at the new id before it deletes the
+old one (the stored reports citing it are found by their flat
+`findings_record_ids` keyword list, `VectorIndexer.repoint_report_findings`;
+a report stored before that list keeps the old id), but a removal does not
+strip them, so they may name records no longer stored. They are filtered where they are read: global and DRIFT
 search read the cited records by id (§7.1) and a removed one names no text
 unit, and a reported source of the report lists only each finding's ids,
 not its text, which the report's content renders already.
@@ -479,7 +500,9 @@ stage hands `filter_to_delta` the ids to delete (none for an insert):
 hold from `deleted` to `kept` (and `unchanged`: downstream, a kept document
 is an unchanged one, so the graph stages treat the run as an incremental
 delta, never as a full build), deletes only the named ones and refuses one
-the scope does not hold (`DocumentNotFoundError`); no mass-deletion
+the scope does not hold (`DocumentNotFoundError`; a retry under the
+`pipeline_id` of an interrupted deletion takes an id its saved delta deletes
+as deleted); no mass-deletion
 question is asked, since the caller named them. A call needs the registry
 (without it every run is a full build of its documents) and refuses
 `indexing.reset`, or a run the pipeline would rebuild to add a methodology

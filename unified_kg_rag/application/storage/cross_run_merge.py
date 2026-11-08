@@ -297,7 +297,7 @@ class CrossRunMerge:
             # entity does.
             merged_relationships = [r.model_copy() for r in merged_relationships]
             sync_relationship_endpoint_names(merged_relationships, merged_entities)
-        if existing or existing_rels:
+        if existing or existing_rels or m._pending_writes.joined(suffix):
             derived = m.derive(
                 suffix, merged_entities, merged_relationships, (), text_units
             )
@@ -624,6 +624,17 @@ class CrossRunMerge:
         # belong to the edge the split moved them to).
         # Those are summarized from their derived lines, as a full build does.
         parted = {i for pair in derived.split_from.items() for i in pair}
+        # An id two stored copies end under (a re-key folded a stored
+        # spelling into it) holds that spelling's lines too, stated in a unit
+        # the other copy may cite already: counted with the copies a strip
+        # wrote, which do not extend (a stripped spelling folded in was
+        # extended with the delta's lines alone, its own lines lost).
+        folded = {
+            final
+            for items in (existing, existing_rels)
+            for final, count in Counter(rekey.get(i.id, i.id) for i in items).items()
+            if count > 1
+        }
         stored_entities = [
             e.model_copy(update={"id": rekey.get(e.id, e.id)})
             for e in existing
@@ -640,7 +651,7 @@ class CrossRunMerge:
             _single_additions(
                 [(final_id(e.id, entity_id_remap), e) for e in entities],
                 stored_entities,
-                parted,
+                parted | folded,
                 derived.entities,
             ),
             summarized={
@@ -662,7 +673,8 @@ class CrossRunMerge:
                     r.id
                     for r in derived.relationships
                     if {r.source_id, r.target_id} & parted
-                },
+                }
+                | folded,
                 derived.relationships,
             ),
             summarized={

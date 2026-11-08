@@ -894,6 +894,66 @@ class NeptuneIndexer(GraphIndexer):
         """
         return self._write_relationships(relationships)
 
+    def update_relationship_ranks(
+        self, relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Set the stored edges' ``rank`` by id in place (see the port): one
+        traversal per batch of the suffix's edges that get the same rank,
+        which sets the property and returns the ids it found, so an edge not
+        stored fails. Against a drop and re-add per edge (the
+        :meth:`upsert_relationships` write) it costs about 1.5 % per edge
+        (300 edges on a Gremlin Server: 0.15 ms against 10.6 ms). During a
+        rebuild in place the edges are written whole, with its tag."""
+        if self._rebuild_tag is not None:
+            return self.upsert_relationships(relationships)
+        stats = IndexingStats(total_items=len(relationships))
+        for suffix, rels in self._group_items_by_suffix(relationships).items():
+            label = self._label(self.neptune_config.entity_label_prefix, suffix)
+            by_rank: dict[int | None, list[str]] = defaultdict(list)
+            for rel in rels:
+                by_rank[rel.rank].append(rel.id)
+            for rank, ids in by_rank.items():
+                for batch in self._batch_iterator(sorted(set(ids))):
+
+                    def build(
+                        g: GraphTraversalSource,
+                        batch: list[str] = batch,
+                        rank: int | None = rank,
+                        label: str = label,
+                    ) -> GraphTraversal:
+                        t = (
+                            g.E()
+                            .has("id", P.within(batch))
+                            .where(__.outV().hasLabel(label))
+                        )
+                        t = (
+                            t.property("rank", rank)
+                            if rank is not None
+                            else t.sideEffect(__.properties("rank").drop())
+                        )
+                        return t.values("id")
+
+                    try:
+                        found = set(
+                            map(
+                                str,
+                                self._execute_with_retries(
+                                    build, "Writing relationship ranks", results=True
+                                ),
+                            )
+                        )
+                    except NamespaceLeaseError:
+                        raise
+                    except Exception as e:  # noqa: BLE001 - reported as failed items
+                        stats.add_error(str(e), len(batch), ids=list(batch))
+                        logger.warning("Failed to write relationship ranks: %s", e)
+                        continue
+                    stats.add_success(len(found & set(batch)))
+                    missing = [i for i in batch if i not in found]
+                    if missing:
+                        stats.add_error("edge not stored", len(missing), ids=missing)
+        return stats
+
     def _build_add_edge_traversal(
         self,
         g: GraphTraversalSource,

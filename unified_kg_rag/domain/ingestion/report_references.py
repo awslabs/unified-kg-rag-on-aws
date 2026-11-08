@@ -27,8 +27,11 @@ __all__ = [
     "DATASET_ENTITIES",
     "DATASET_RELATIONSHIPS",
     "FINDINGS_DOCUMENTS_FIELD",
+    "FINDINGS_RECORD_IDS_FIELD",
     "FINDINGS_TEXT_UNITS_FIELD",
     "REPORT_FINDINGS_FIELD",
+    "findings_record_ids",
+    "repointed_findings",
     "report_cited_ids",
     "report_cited_records",
     "split_data_references",
@@ -40,6 +43,12 @@ DATASET_RELATIONSHIPS = "relationships"
 # The stored community report's field holding its findings
 # (``CommunityFinding.model_dump()`` each), not searched or filtered.
 REPORT_FINDINGS_FIELD = "findings"
+
+# The stored community report's flat keyword list of every record id its
+# findings cite (entities and relationships alike: their ids do not
+# collide), so the stores can find the reports citing an id an incremental
+# run re-keyed and point them at its new id (``repointed_findings``).
+FINDINGS_RECORD_IDS_FIELD = "findings_record_ids"
 
 # Set by the search strategies on a retrieved report whose findings cite
 # stored records: the text units and documents of those records, which its
@@ -129,3 +138,38 @@ def report_cited_records(metadata: Mapping[str, Any]) -> list[tuple[str, str]]:
                 if isinstance(cited_id, str) and cited_id:
                     records.setdefault((dataset, cited_id))
     return list(records)
+
+
+def repointed_findings(
+    findings: Any, id_remap: Mapping[str, str]
+) -> list[dict[str, Any]] | None:
+    """The stored ``findings`` (a report's :data:`REPORT_FINDINGS_FIELD`)
+    with each cited id ``id_remap`` replaces by its new id (repeats
+    dropped), or ``None`` when none is replaced. The findings of a stored
+    report cite the ids of the run that made it: an incremental run that
+    re-keys a stored item (its name changed) points them at its new one."""
+    if not isinstance(findings, list):
+        return None
+    changed = False
+    repointed: list[dict[str, Any]] = []
+    for finding in findings:
+        if not isinstance(finding, Mapping):
+            repointed.append(finding)
+            continue
+        finding = dict(finding)
+        for key in ("entity_ids", "relationship_ids"):
+            cited = finding.get(key)
+            if not isinstance(cited, list):
+                continue
+            if any(i in id_remap for i in cited):
+                changed = True
+                finding[key] = list(dict.fromkeys(id_remap.get(i, i) for i in cited))
+        repointed.append(finding)
+    return repointed if changed else None
+
+
+def findings_record_ids(findings: Any) -> list[str]:
+    """Every record id ``findings`` cite (:data:`FINDINGS_RECORD_IDS_FIELD`),
+    in first-cited order without repeats."""
+    entity_ids, relationship_ids = report_cited_ids({REPORT_FINDINGS_FIELD: findings})
+    return list(dict.fromkeys([*entity_ids, *relationship_ids]))

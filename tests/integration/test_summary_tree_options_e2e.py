@@ -21,6 +21,7 @@ from tests.integration import test_embedded_e2e as e2e
 from tests.integration import test_raptor_e2e as raptor
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - fixture
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.ingestion.summary_tree_stage import SummaryTreeStage
 from unified_kg_rag.domain.models import (
     PipelineContext,
     PipelineStageStatus,
@@ -183,7 +184,9 @@ def test_refresh_on_reset_keeps_the_tree_of_an_incremental_run(
 
 
 def test_a_tree_over_max_leaves_in_memory_fails_and_names_the_ways_out(
-    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_aws,  # noqa: F811 - the fixture
 ) -> None:
     config, providers, _, calls = raptor.setup(tmp_path)
     config.indexing.summary_tree.max_leaves_in_memory = 10
@@ -200,11 +203,23 @@ def test_a_tree_over_max_leaves_in_memory_fails_and_names_the_ways_out(
     assert calls.kinds["summary"] == 0
     assert raptor.tree_nodes(providers) == []
 
-    # One tree per document stays within the bound.
+    # One tree per document stays within the bound, and so do the leaves
+    # held at once: the trees are read a batch of at most 10 leaves at a
+    # time (all 17 were held at once while each tree was built).
     config.indexing.summary_tree.scope = "document"
+    held: list[int] = []
+    leaves = SummaryTreeStage._leaves
+
+    def counted(self: Any, *args: Any, **kwargs: Any) -> Any:
+        groups = leaves(self, *args, **kwargs)
+        held.append(sum(len(g) for g in groups.values()))
+        return groups
+
+    monkeypatch.setattr(SummaryTreeStage, "_leaves", counted)
     context = raptor.ingest(config, providers, source, tmp_path / "run-2")
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert raptor.tree_nodes(providers)
+    assert sum(held) == 17 and max(held) <= 10
 
 
 def test_a_failed_tree_write_fails_the_stage_and_keeps_the_old_tree(

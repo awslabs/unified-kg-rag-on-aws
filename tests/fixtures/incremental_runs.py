@@ -19,6 +19,7 @@ handlers.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import uuid
 from collections.abc import Callable, Iterable
@@ -65,6 +66,7 @@ from unified_kg_rag.domain.models import (
     TextUnitExtraction,
 )
 from unified_kg_rag.ports import DocStatusPort
+from unified_kg_rag.ports.indexer import IndexingStats
 
 Content = list[list[tuple[str, str, int]]]
 # A path's content, or a seed graph's shard document under its relative path.
@@ -163,7 +165,9 @@ def _unit_records(
                     name=name,
                     type="ORG" if strength % 2 else "PERSON",
                     description=f"{name} in {where}",
-                    confidence=0.5 + strength / 10,
+                    # A strength-1 statement gives no confidence (a model
+                    # may leave it out): every merge takes the highest known.
+                    confidence=None if strength == 1 else 0.5 + strength / 10,
                     text_unit_ids=[unit_id],
                 )
             )
@@ -261,6 +265,8 @@ def entity_state(entity: Entity) -> tuple[Any, ...]:
         _lines(entity.description),
         entity.rank,
         frozenset(entity.text_unit_ids or []),
+        # The stores write an unknown confidence as 1.0.
+        1.0 if entity.confidence is None else round(entity.confidence, 9),
     )
 
 
@@ -343,11 +349,22 @@ class IncrementalRun:
             config=self.config, vector_indexer=self.vector, graph_indexer=self.graph
         )
 
-    def run(self, corpus: Corpus, interrupt: str | None = None, k: int = 1) -> bool:
+    def run(
+        self,
+        corpus: Corpus,
+        interrupt: str | None = None,
+        k: int = 1,
+        fail: Callable[[str, str], bool] | None = None,
+    ) -> bool:
         """Index ``corpus``; return whether the ``interrupt`` point fired.
 
         ``k`` picks which call of a counted point (the k-th store write of
         the removal or the delta, the k-th registry record or delete) fires.
+        ``fail(where, item id)`` names the item writes the stores reject
+        during the run's commit (reported as failed items by id, as the
+        indexers report a rejected bulk item): ``where`` is
+        ``graph.<method>`` or ``vector.<method>``, a store's ``upsert_*`` or
+        ``update_*_lineage``.
         """
         # A run is a new process: nothing an interrupted one held in memory
         # survives it.
@@ -356,6 +373,19 @@ class IncrementalRun:
         restore: list[Callable[[], None]] = []
         fired = False
         try:
+            if fail is not None:
+                commit = inc.commit
+
+                def rejecting_commit(*args: Any, **kwargs: Any) -> Any:
+                    undo: list[Callable[[], None]] = []
+                    self._reject(fail, undo)
+                    try:
+                        return commit(*args, **kwargs)
+                    finally:
+                        for step in reversed(undo):
+                            step()
+
+                inc.commit = rejecting_commit  # type: ignore[method-assign]
             if interrupt is not None:
                 self._install(interrupt, k, inc, restore)
             self._run(inc, corpus)
@@ -411,6 +441,41 @@ class IncrementalRun:
         )
         # The run ends in the process: its attempts are not deaths.
         close_attempts(inc.doc_status, delta, fingerprints)
+
+    def _reject(
+        self, fail: Callable[[str, str], bool], restore: list[Callable[[], None]]
+    ) -> None:
+        """Make the stores reject the item writes ``fail`` names (see
+        :meth:`run`): the others are written, the rejected ones reported."""
+        for name, store in (("graph", self.graph), ("vector", self.vector)):
+            for method in dir(store):
+                if not (
+                    method.startswith("upsert_")
+                    or (method.startswith("update_") and method.endswith("_lineage"))
+                ):
+                    continue
+                original = getattr(store, method)
+
+                def rejecting(
+                    items: list[Any], _write: Any = original, _where: str = ""
+                ) -> IndexingStats:
+                    rejected = [i.id for i in items if fail(_where, i.id)]
+                    stats = _write([i for i in items if i.id not in set(rejected)])
+                    stats.total_items = len(items)
+                    if rejected:
+                        stats.add_error("write rejected", len(rejected), ids=rejected)
+                    return stats
+
+                setattr(
+                    store,
+                    method,
+                    functools.partial(rejecting, _where=f"{name}.{method}"),
+                )
+                restore.append(
+                    lambda store=store, method=method, original=original: setattr(
+                        store, method, original
+                    )
+                )
 
     def _install(
         self,

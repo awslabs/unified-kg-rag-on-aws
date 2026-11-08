@@ -27,6 +27,7 @@ from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.storage.indexing_manager import CrossRunMergeResult
+from unified_kg_rag.application.storage.pending_writes import NotedWrites
 from unified_kg_rag.domain.ingestion.cache_keys import extraction_fingerprint
 from unified_kg_rag.domain.ingestion.delta_detector import compute_doc_id
 from unified_kg_rag.domain.models import (
@@ -110,6 +111,12 @@ class _RecordingManager:
 
     def merge_with_existing_graph(self, entities, relationships, text_units=()):
         return CrossRunMergeResult(entities=entities, relationships=relationships)
+
+    def read_pending_writes(self, suffixes, text_units=()):  # noqa: ANN001, ANN201
+        return NotedWrites()
+
+    def note_pending_writes(self, results, written) -> set[str]:  # noqa: ANN001
+        return set()
 
     def merge_with_stored_claims(self, claims, text_units=()):
         return claims
