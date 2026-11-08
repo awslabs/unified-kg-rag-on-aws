@@ -45,8 +45,10 @@ records the span mode (``answer_span``) and the text scored
   is ``set`` scores 1.0 when every one of its ``metadata.answer_items``
   appears in the answer, in any order or layout; with
   ``metadata.answer_candidates`` (the names it could pick from) the
-  candidates the answer names must be exactly those items, so listing every
-  candidate is no match.
+  candidates the part that answers names (the extracted span, else the
+  first line and the list right after it, ``first_answer_block``) must be
+  exactly those items, so listing every candidate is no match and a later
+  "Delta is fourth" no pick.
 - ``exact_match``: 1.0 if the normalized span equals the normalized reference.
 - ``token_f1``: harmonic mean of token precision/recall (multiset overlap).
   Under ``default`` the tokens are script-aware
@@ -154,6 +156,7 @@ __all__ = [
     "AnswerMatchEvaluator",
     "answer_contains",
     "exact_match",
+    "first_answer_block",
     "first_answer_line",
     "normalize_answer",
     "token_f1",
@@ -287,6 +290,44 @@ def items_contained(
         c for c in named if not any(c != o and phrase_in_text(c, o) for o in named)
     }
     return float(named == set(items))
+
+
+# A list item: a bullet ("-", "*", "+", "•", "・") or an enumerator ("1.",
+# "2)", "1、", "一、", "①").
+_LIST_ITEM = re.compile(
+    r"[ \t]*(?:[-*+•][ \t]+|・[ \t]*|\d{1,3}[.)][ \t]+|\d{1,3}[、．][ \t]*"
+    r"|[一二三四五六七八九十]{1,3}、[ \t]*|[\u2460-\u2473][ \t]*)(?=\S)"
+)
+
+
+def first_answer_block(answer: str) -> str:
+    """The part of ``answer`` that answers a set question: its first line
+    that is neither empty nor a Markdown heading, then the list items that
+    follow it (blank lines between them skipped) up to the first line that
+    is no list item, each without its bullet or enumerator ("1、Acme" would
+    read as one word); the whole answer, stripped, when every line is empty
+    or a heading."""
+    lines = answer.splitlines()
+    start = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.strip() and not _MARKDOWN_HEADING.match(line)
+        ),
+        None,
+    )
+    if start is None:
+        return answer.strip()
+    first = _LIST_ITEM.match(lines[start])
+    block = [lines[start][first.end() if first else 0 :].strip()]
+    for line in lines[start + 1 :]:
+        if not line.strip():
+            continue
+        item = _LIST_ITEM.match(line)
+        if item is None:
+            break
+        block.append(line[item.end() :].strip())
+    return "\n".join(block)
 
 
 def first_answer_line(answer: str) -> str:
@@ -512,31 +553,40 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         """``answer_contains`` as the item's ``answer_type`` reads it: a
         number by the leading number of the extracted span (of the answer
         without one, or when the span fell back), a set by every one of its
-        ``answer_items``, else any reference as a phrase."""
+        ``answer_items`` (with ``answer_candidates``, in the extracted span
+        or else the answer's first block, ``first_answer_block``), else any
+        reference as a phrase."""
         kind = result.metadata.get(ANSWER_TYPE_KEY)
         if kind == "number":
-            read = (
-                span
-                if self.answer_span == "extracted"
-                and span
-                and SPAN_FALLBACK_KEY not in span_metadata
-                else answer
-            )
+            read = self._extracted_or(span, span_metadata, answer)
             return max(number_matches(read, ref) for ref in references)
         if kind == "set":
             items = result.metadata.get(ANSWER_ITEMS_KEY)
             candidates = result.metadata.get(ANSWER_CANDIDATES_KEY)
             if isinstance(items, list) and items:
+                if not isinstance(candidates, list):
+                    return items_contained(answer, [str(i) for i in items])
+                # The candidates it picks are those of the part that
+                # answers: a later "Delta is fourth" is no pick.
                 return items_contained(
-                    answer,
+                    self._extracted_or(span, span_metadata, first_answer_block(answer)),
                     [str(i) for i in items],
-                    (
-                        [str(c) for c in candidates]
-                        if isinstance(candidates, list)
-                        else None
-                    ),
+                    [str(c) for c in candidates],
                 )
         return max(answer_contains(answer, ref) for ref in references)
+
+    def _extracted_or(
+        self, span: str, span_metadata: dict[str, Any], otherwise: str
+    ) -> str:
+        """The extracted span, or ``otherwise`` without one (another span
+        mode, no span, or one that fell back to the first line)."""
+        if (
+            self.answer_span == "extracted"
+            and span
+            and SPAN_FALLBACK_KEY not in span_metadata
+        ):
+            return span
+        return otherwise
 
     def _score(
         self,

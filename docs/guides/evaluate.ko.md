@@ -88,10 +88,12 @@ a,b`), LLM이 필요 없는 세 개가 기본으로 켜져 있고 데이터셋 �
   `id`는 `query_id`로 써도 됩니다.
 - `metadata.answer_type`은 `answer_match`가 구조가 있는 정답을 읽는 방식을 정합니다.
   `number`는 답변이 처음 말한 수(숫자, 수 단어, 단위 앞의 고유어·한자 수사: `세 곳`,
-  `三社`)를 정답의 수와 비교하고(목록 번호, 인용 표시, 연도, 서수, 부정된 수는 세지 않음),
-  `set`은 `metadata.answer_items`(문자열 목록)의 항목이 순서나 형식과 관계없이 모두 답변에
-  있어야 맞습니다. `metadata.answer_candidates`(답변이 고를 수 있는 이름)가 있으면 그 밖의
-  후보를 말하지 않아야 맞습니다. `metadata.decline_is_correct: true`는
+  `三社`)를 정답의 수와 비교하고(목록 번호, 인용 표시, 연도, 서수, 부정된 수, 부분을 고르는
+  전체는 세지 않음: `only one of the three`와 `세 곳 중 한 곳`은 1), `set`은 `metadata.answer_items`(문자열 목록)의
+  항목이 순서나 형식과 관계없이 모두 답변에 있어야 맞습니다.
+  `metadata.answer_candidates`(답변이 고를 수 있는 이름)가 있으면 답하는 부분(추출한 스팬,
+  없으면 첫 줄과 바로 뒤의 목록)에서 그 밖의 후보를 말하지 않아야 맞습니다. 뒤에 나오는
+  `Delta is fourth` 같은 문장은 고른 후보가 아닙니다. `metadata.decline_is_correct: true`는
   데이터에 없는 대상을 묻는 질문에서 답변 거절을 정답으로 채점합니다. `prepare-benchmark
   structural`이 이 필드를 씁니다([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match), 영문).
 - 코퍼스로 답할 수 없는 질문에는 `"metadata": {"answerable": false}`를 지정하세요. 어떤

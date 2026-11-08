@@ -660,14 +660,24 @@ list, top level or under `metadata`, which wins), taking the maximum.
   the gold 2. Numbers that count nothing are skipped: list enumerators
   (`1. Acme`), citation markers (`[2]`), years (`as of 2024`, `2024년`,
   `2024年`), ordinals (`두 번째`, `三つ目`, `第三`), a negated number
-  (`not one but three`, `一つではなく`, `不是一家`, `한 곳이 아니라`), and
+  (`not one but three`, `一つではなく`, `不是一家`, `한 곳이 아니라`), the
+  whole of a partitive (`Of the three vendors, only one`, `三家中只有一家`,
+  `세 곳 중 한 곳`, `三社のうち一社` are 1), and
   `no` answering a yes/no question or before `single`, `more` and the like;
-  `not ... any`, `한 곳도`, `一社も` and `一家也` are 0. `set` scores 1.0
-  when every one of `metadata.answer_items` appears in the answer, in any
-  order or layout (a numbered list too); with `metadata.answer_candidates`
-  (the names the answer picks from, `prepare-benchmark structural` writes
-  every vendor) the candidates the answer names must be exactly those
-  items, so an answer listing every vendor scores 0.
+  `not ... any`, `not one`, `not a single`, `한 곳도`, `一社も`, `一家也`,
+  `没有` and `いません`/`ありません` (not `問題ありません` or `ではありません`)
+  are 0. English scale words count (`three hundred and twelve` is 312),
+  `两`/`兩` is 2 and a space may stand before a Han counter (`三 社`). `set`
+  scores 1.0 when every one of `metadata.answer_items` appears in the
+  answer, in any order or layout (a numbered list too); with
+  `metadata.answer_candidates` (the names the answer picks from,
+  `prepare-benchmark structural` writes every vendor) the candidates the
+  part that answers names must be exactly those items, so an answer
+  listing every vendor scores 0. That part is the extracted span (with
+  `extracted`, when it did not fall back), else the answer's first line
+  that is no heading and the list items right after it (blank lines
+  between them skipped, bullets and enumerators such as `1.`, `1、` and
+  `・` dropped): a later `Delta is fourth` names no candidate.
   With `metadata.decline_is_correct` (a question about something the data
   does not hold) a decline scores 1 on every `answer_match` metric. A
   Korean counter (`곳`, `군데`, `가지`, `개사`) keeps a number's value like a

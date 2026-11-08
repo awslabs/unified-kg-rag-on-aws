@@ -95,11 +95,14 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
 - `metadata.answer_type` says how `answer_match` reads a structured gold:
   `number` compares the first number the answer states (digits, number
   words, Korean and Han numerals before a counter: `세 곳`, `三社`) with
-  the gold's (list enumerators, citation markers, years, ordinals and a
-  negated number count nothing), `set` needs every one of
+  the gold's (list enumerators, citation markers, years, ordinals, a
+  negated number and the whole of a partitive count nothing: `only one of
+  the three` and `세 곳 중 한 곳` are 1), `set` needs every one of
   `metadata.answer_items` (a list of strings) in the answer in any layout,
   and with `metadata.answer_candidates` (the names the answer picks from)
-  no other candidate; `metadata.decline_is_correct:
+  no other candidate in the part that answers (the extracted span, or the
+  first line and the list right after it, so a later `Delta is fourth` is
+  no pick); `metadata.decline_is_correct:
   true` scores a decline as the right answer (a question about something
   the data does not hold). `prepare-benchmark structural` writes them
   ([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match)).

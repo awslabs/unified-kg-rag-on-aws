@@ -512,6 +512,9 @@ _ENGLISH_TENS = dict(
     )
 )
 _ENGLISH_ZERO = ("none", "no")
+# Scale words after a number word: "three hundred", "two thousand five
+# hundred".
+_ENGLISH_SCALES = {"hundred": 100, "thousand": 1000, "million": 10**6, "billion": 10**9}
 # Korean native numerals, in the form they take before a counter ("세 곳",
 # "두 군데", "스무 개사") or alone ("셋"), ones and tens apart: 열세 is 13.
 _KOREAN_NATIVE_ONES = {
@@ -547,6 +550,9 @@ _HAN_DIGITS = {
     "七": 7,
     "八": 8,
     "九": 9,
+    # Chinese two before a counter ("两家", "兩個").
+    "两": 2,
+    "兩": 2,
 }
 _HAN_MULTIPLIERS = {"十": 10, "百": 100, "千": 1000}
 _HAN_COUNTERS = (
@@ -565,14 +571,21 @@ _HAN_COUNTERS = (
 )
 
 _DIGITS = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?")
-_ENGLISH_NUMBER = re.compile(
-    r"\b(?:(?P<tens>"
+# A number word below a hundred ("twenty-one", "seven"), then any scale
+# words and the words after them ("three hundred and twelve").
+_ENGLISH_SMALL = (
+    r"(?:(?:"
     + "|".join(_ENGLISH_TENS)
-    + r")(?:[-\s](?P<ones>"
+    + r")(?:[-\s](?:"
     + "|".join(_ENGLISH_UNITS[1:10])
-    + r"))?|(?P<unit>"
+    + r"))?|(?:"
     + "|".join(sorted(_ENGLISH_UNITS, key=len, reverse=True))
-    + r")|(?P<zero>"
+    + r"))"
+)
+_ENGLISH_NUMBER = re.compile(
+    rf"\b(?:(?P<count>{_ENGLISH_SMALL}(?:[-\s]+(?:"
+    + "|".join(_ENGLISH_SCALES)
+    + rf")(?:(?:\s+and)?\s+{_ENGLISH_SMALL}(?!\w))?)*)|(?P<zero>"
     + "|".join(_ENGLISH_ZERO)
     + r"))\b",
     re.IGNORECASE,
@@ -589,12 +602,20 @@ _KOREAN_NUMBER = re.compile(
 # "없습니다" on its own word ("벤더가 없습니다"), not closing a compound
 # adjective ("문제없습니다", no problem).
 _KOREAN_NONE = re.compile(r"(?<![가-힣])없(?:습니다|어요|다|음)")
+# Zero stated by a Chinese or Japanese verb of absence: "没有供应商",
+# "サプライヤーはいません", not "no problem" ("没有问题", "問題ありません")
+# nor a negated copula ("Aではありません").
+_CJK_NONE = re.compile(
+    r"(?:没有|沒有)(?!问题|問題|关系|關係)"
+    r"|(?:(?<!で)(?<!問題)[はがも]|^|(?<=[\s、。]))(?:いません|ありません|おりません|ございません)",
+    re.MULTILINE,
+)
 _HAN_NUMBER = re.compile(
     "["
     + "".join([*_HAN_DIGITS, *_HAN_MULTIPLIERS])
-    + "]+(?="
+    + "]+(?=\\s?(?:"
     + "|".join(_HAN_COUNTERS)
-    + ")"
+    + "))"
 )
 
 
@@ -653,6 +674,26 @@ _NEGATED_BEFORE = re.compile(r"(?:\bnot\s+|(?:不是|并非|並非|不止)\s?)$"
 _NEGATED_AFTER = re.compile(
     rf"\s?{_ANY_COUNTER}?\s?(?:ではな|じゃな|でな|(?:이|가)?\s?아니)"
 )
+# The whole a partitive takes its part from: "Of the three vendors, only
+# one ...", "三家(供应商)中只有一家", "세 곳 중 한 곳", "三社のうち一社". Bare 中
+# is a partitive only before a comma or what states the part ("三家中国
+# 供应商" is three Chinese vendors).
+_PARTITIVE_WHOLE_BEFORE = re.compile(
+    r"(?:^|[.!?;:]\s+|\n[ \t]*)of\s+(?:the|these|those|all)\s+$", re.IGNORECASE
+)
+_DENSE_WORD = "[\u3040-\u30ff\u4e00-\u9fff가-힣]"
+_PARTITIVE_WHOLE_AFTER = re.compile(
+    rf"\s?{_ANY_COUNTER}?(?:の|의)?\s?{_DENSE_WORD}{{0,5}}?\s?(?:之中|当中|當中"
+    r"|中(?=[，,、\s只仅僅有的共就\d一二两兩三四五六七八九十])"
+    r"|のうち|の中で|중(?:에서|에)?(?![가-힣])|가운데)"
+)
+# "Not one vendor" and "not even one" state zero, unless "but" corrects
+# them ("not one but three") or a partitive follows ("is not one of them").
+_NOT_ONE_BEFORE = re.compile(r"\bnot\s+(?:even\s+)?$", re.IGNORECASE)
+_BUT_AFTER = re.compile(r"(?:\s+\w+)?\s*,?\s*but\b|\s+of\b", re.IGNORECASE)
+_NOT_A_SINGLE = re.compile(
+    r"\bnot\s+(?:even\s+)?a\s+single\b(?!(?:\s+\w+)?\s*,?\s*but\b)", re.IGNORECASE
+)
 # A list enumerator ("1. Acme", "2) Beta", "(3) Gamma"): at the line start,
 # before the item's text.
 _ENUMERATOR_BEFORE = re.compile(r"(?:^|\n)[ \t]*[(\[]?$")
@@ -687,13 +728,23 @@ _NOT_ANY = re.compile(r"(?:\bnot|n't)\s+(?:\w+\s+){0,3}?any\b", re.IGNORECASE)
 _NOT_EVEN_ONE = re.compile(rf"\s?{_ANY_COUNTER}?\s?(?:도|も|也|都)")
 # "No," / "No." answers a yes/no question; "one of them" is a partitive.
 _NO_POLARITY = re.compile(r"\s*[*_]*\s*[,.;:!?]")
-_ONE_OF = re.compile(r"\s+of\b", re.IGNORECASE)
+# "One of them" refers to a set the answer counts elsewhere; "one of the
+# vendors" and "only one of the three" state one.
+_ONE_OF = re.compile(
+    r"\s+of\s+(?:them|these|those|which|whom|us|its|their)\b", re.IGNORECASE
+)
 
 
 def _count_value(body: str, start: int, end: int, value: float) -> float | None:
     """``value``, the number at ``body[start:end]``, as the count it states:
     ``None`` when it states none (``_not_a_count``), 0 for one with "even"
-    after it ("한 곳도", "一社も")."""
+    after it ("한 곳도", "一社も") or "not" before it ("not one vendor")."""
+    if (
+        value == 1
+        and _NOT_ONE_BEFORE.search(body, 0, start)
+        and not _BUT_AFTER.match(body, end)
+    ):
+        return 0.0
     if _not_a_count(body, start, end):
         return None
     if value == 1 and _NOT_EVEN_ONE.match(body, end):
@@ -703,8 +754,9 @@ def _count_value(body: str, start: int, end: int, value: float) -> float | None:
 
 def _not_a_count(body: str, start: int, end: int) -> bool:
     """Whether the number at ``body[start:end]`` states no count: a list
-    enumerator, a citation marker, a year, an ordinal or a negated number
-    ("not one but three", "一つではなく")."""
+    enumerator, a citation marker, a year, an ordinal, a negated number
+    ("not one but three", "一つではなく") or the whole of a partitive ("of
+    the three, one", "三家中一家")."""
     before, after = body[:start], body[end:]
     if _ENUMERATOR_BEFORE.search(before) and _ENUMERATOR_AFTER.match(after):
         return True
@@ -717,7 +769,29 @@ def _not_a_count(body: str, start: int, end: int) -> bool:
         return True
     if _ORDINAL_BEFORE.search(before) or _ORDINAL_AFTER.match(after):
         return True
+    if _PARTITIVE_WHOLE_BEFORE.search(before) or _PARTITIVE_WHOLE_AFTER.match(after):
+        return True
     return bool(_NEGATED_BEFORE.search(before) or _NEGATED_AFTER.match(after))
+
+
+def _english_count(words: str) -> int:
+    """The value of number words: "twenty-one" 21, "three hundred and
+    twelve" 312, "two thousand five hundred" 2500."""
+    total = current = 0
+    for word in re.split(r"[-\s]+", words.lower()):
+        if word == "and":
+            continue
+        scale = _ENGLISH_SCALES.get(word)
+        if scale == 100:
+            current = (current or 1) * 100
+        elif scale is not None:
+            total += (current or 1) * scale
+            current = 0
+        elif word in _ENGLISH_TENS:
+            current += _ENGLISH_TENS[word]
+        else:
+            current += _ENGLISH_UNITS.index(word)
+    return total + current
 
 
 def _english_value(match: re.Match[str]) -> int | None:
@@ -729,30 +803,30 @@ def _english_value(match: re.Match[str]) -> int | None:
         if word == "no" and (_NO_POLARITY.match(after) or _NO_MODIFIES.match(after)):
             return None
         return 0
-    if match.group("unit"):
-        unit = match.group("unit").lower()
-        if unit == "one" and _ONE_OF.match(after):
-            return None
-        return _ENGLISH_UNITS.index(unit)
-    return _ENGLISH_TENS[match.group("tens").lower()] + (
-        _ENGLISH_UNITS.index(match.group("ones").lower()) if match.group("ones") else 0
-    )
+    count = match.group("count")
+    if count.lower() == "one" and _ONE_OF.match(after):
+        return None
+    return _english_count(count)
 
 
 def leading_number(text: str) -> float | None:
     """The first number ``text`` states as a count, or ``None``: digits
-    ("4,486", "3곳", "3社"), an English number word ("Three", "twenty-one",
-    "none" or "no" for 0), a Korean native numeral before a counter ("세 곳",
-    "열두 개사"; "없습니다" for 0) or a Han numeral before a counter ("三社").
-    Markdown heading lines are skipped; a number inside a word ("Zortal13")
-    is none, and so are numbers that count nothing: list enumerators ("1.
-    Acme"), citation markers ("[2]"), years ("as of 2024", "2024년"),
-    ordinals ("두 번째", "三つ目", "第三"), a negated number ("not one",
-    "一つではなく", "不是一个", "한 곳이 아니라"), "no" answering a yes/no
-    question or before "single", "more" and the like ("No single vendor"),
-    and "one of". A count answer states its number first ("Three vendors
-    ... Two of them ..." is 3), so a numeric gold is compared with this
-    number, not with every number the answer happens to name."""
+    ("4,486", "3곳", "3社"), English number words ("Three", "twenty-one",
+    "three hundred and twelve"; "none", "no", "not one" and "not a single"
+    for 0), a Korean native numeral before a counter ("세 곳", "열두 개사";
+    "없습니다" for 0) or a Han numeral before a counter ("三社", "两家", "三
+    社"; "没有" and "いません"/"ありません" for 0). Markdown heading lines are
+    skipped; a number inside a word ("Zortal13") is none, and so are numbers
+    that count nothing: list enumerators ("1. Acme"), citation markers
+    ("[2]"), years ("as of 2024", "2024년"), ordinals ("두 번째", "三つ目",
+    "第三"), a negated number ("not one but three", "一つではなく", "不是一个",
+    "한 곳이 아니라"), the whole of a partitive ("Of the three vendors, only
+    one", "三家中一家", "세 곳 중 한 곳", "三社のうち一社": the part counts),
+    "no" answering a yes/no question or before "single", "more" and the like
+    ("No single vendor"), and "one of them". A count answer states its
+    number first ("Three vendors ... Two of them ..." is 3), so a numeric
+    gold is compared with this number, not with every number the answer
+    happens to name."""
     lines = [
         line
         for line in unicodedata.normalize("NFKC", text).splitlines()
@@ -793,7 +867,12 @@ def leading_number(text: str) -> float | None:
         ),
     )
     first(_HAN_NUMBER.finditer(body), lambda m: _han_value(m.group()))
-    for zero in (_KOREAN_NONE.search(body), _NOT_ANY.search(body)):
+    for zero in (
+        _KOREAN_NONE.search(body),
+        _CJK_NONE.search(body),
+        _NOT_ANY.search(body),
+        _NOT_A_SINGLE.search(body),
+    ):
         if zero is not None:
             found.append((zero.start(), 0.0))
     return min(found)[1] if found else None

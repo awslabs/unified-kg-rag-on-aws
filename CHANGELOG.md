@@ -687,11 +687,15 @@ From a `main` checkout (formats and keys no release had):
   keeps each answer's `structured` record and reports `structured_statistics` (status, fallback reasons, valid-plan,
   repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)). Its items say how `answer_match` reads them:
-  `metadata.answer_type: number` compares the answer's leading number (digits, English words, Korean native and Han
-  numerals before a counter such as 곳, 군데, 가지, 개사 or 社; list enumerators, citation markers, years, ordinals such
-  as 두 번째, 三つ目 and 第三, and negated numbers such as "not one", 一つではなく and 不是一家 count nothing; "not ...
-  any", 한 곳도 and 一社も are 0), `set` needs every one of `metadata.answer_items` in any layout and, with
-  `metadata.answer_candidates` (every vendor), no other candidate, so listing them all is no match, and
+  `metadata.answer_type: number` compares the answer's leading number (digits, English words with their scale
+  words, Korean native and Han numerals, 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사 or 社; list
+  enumerators, citation markers, years, ordinals such as 두 번째, 三つ目 and 第三, negated numbers such as "not one
+  but three", 一つではなく and 不是一家, and the whole of a partitive, so "only one of the three", 三家中只有一家, 세 곳 중
+  한 곳 and 三社のうち一社 are 1, count nothing; "not ... any", "not one", "not a single", 한 곳도, 一社も, 没有 and
+  いません are 0), `set` needs every one of `metadata.answer_items` in any layout and, with
+  `metadata.answer_candidates` (every vendor), no other candidate in the part that answers (the extracted span, else
+  the first line and the list right after it), so listing them all is no match and a later "Delta is fourth" no
+  pick, and
   `metadata.decline_is_correct` scores a decline of an absent vendor as right; the localized counts carry 3곳 / 세 곳
   and 3社 / 三社 aliases. `structural-config.yaml` sets `evaluation.answer_span: extracted` (EM and F1 on the short
   span: one fast-model call per scored answer).
