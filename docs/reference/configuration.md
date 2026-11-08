@@ -455,7 +455,7 @@ Visualization configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `export_data` | boolean | `true` | Write visualization_data.json (the index namespace's graph nodes, edges and community hierarchy, read from its stores) at the end of every ingestion run that indexed, so run-visualization can render it. One pass over the stored items: no embedding or model call, no layout or centrality (run-visualization computes them). |
+| `export_data` | boolean | `true` | Write visualization_data.json (the index namespace's graph nodes, edges and community hierarchy, read from its stores) at the end of every ingestion run that indexed, so run-visualization can render it, once the run gave up the namespace's lease. One pass over the stored items: no embedding or model call, no layout or centrality (run-visualization computes them). A run that wrote nothing keeps an export of the build the stores hold. |
 | `outputs_directory` | string \| path \| null | `null` | Directory ingestion writes visualization_data.json to. When unset, '<cache directory>/<pipeline_id>/visualization' (--cache-directory), so the file is synced to S3 with the cache, or 'outputs/visualization' without a cache directory. |
 
 #### `graph.visualization.centrality`

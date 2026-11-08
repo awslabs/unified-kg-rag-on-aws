@@ -2545,6 +2545,7 @@ class IndexingStage(_RegistryStage):
 
         self.indexing_manager.initialize()
         self.indexing_manager.underived_items = 0
+        self.indexing_manager.annotations_rewritten = 0
         # A pipeline can be run again (library use): nothing an earlier run's
         # derivation decided carries over (a failed commit's re-keys would
         # delete old ids whose replacements were never written).
@@ -2786,6 +2787,8 @@ class IndexingStage(_RegistryStage):
             # Stored items an incremental run could not derive (a text unit
             # they cite names no stored record): stale until a rebuild.
             "underived_items": self.indexing_manager.underived_items,
+            # Stored items whose schema annotations a schema change rewrote.
+            "annotations_rewritten": self.indexing_manager.annotations_rewritten,
             # Documents gone from the corpus (or of a retired scope) whose
             # exclusive content and records this incremental run removed.
             "documents_deleted": documents_deleted,

@@ -119,6 +119,7 @@ def stored_visualization_data(
     reports: Iterable[dict[str, Any]],
     *,
     namespace: str,
+    built_at: str | None = None,
 ) -> dict[str, Any]:
     """The visualization data of an index namespace from what its stores
     hold: the graph ``GraphBuilder`` builds of its entities, relationships
@@ -126,7 +127,9 @@ def stored_visualization_data(
     (``VectorIndexer.scan_items`` records), each community's members the
     entities that list it in ``community_ids``. Deterministic: items in id
     order, communities by level and id. ``namespace`` names it, so
-    ``run-visualization --suffix`` finds the newest export of one."""
+    ``run-visualization --suffix`` finds the newest export of one, and
+    ``built_at`` (its build record's, when it has one) tells which build
+    the stores held."""
     built = GraphBuilder(
         sorted(entities, key=lambda e: e.id),
         sorted(relationships, key=lambda r: r.id),
@@ -157,9 +160,11 @@ def stored_visualization_data(
         }
         for r in stored
     ]
-    # The namespace first: a reader finds it in the file's first bytes.
+    # The namespace and the build first: a reader finds them in the file's
+    # first bytes.
     return {
         "namespace": namespace,
+        "built_at": built_at,
         **graph_data(built, {"hierarchy": hierarchy}, node_communities),
     }
 

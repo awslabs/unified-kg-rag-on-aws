@@ -18,6 +18,7 @@ from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.application.storage import visualization_export
 from unified_kg_rag.application.storage.visualization_export import (
+    export_build_time,
     export_namespace,
     newest_export,
     write_visualization_data,
@@ -146,7 +147,9 @@ def test_newest_export_of_a_namespace(tmp_path: Path) -> None:
 def _pipeline(config: Config, executed: set[str], cache: Path | None) -> Any:
     pipeline = object.__new__(DataIngestionPipeline)
     pipeline.config = config
-    pipeline.pipeline_config = SimpleNamespace(local_directory=cache)
+    pipeline.pipeline_config = SimpleNamespace(
+        local_directory=cache, s3_sync_enabled=False
+    )
     pipeline.providers = None
     pipeline._executed_stages = frozenset(executed)
     return pipeline
@@ -197,7 +200,9 @@ def test_a_run_exports_once_it_indexed_and_never_fails_for_it(
     config = Config()
     config.graph.visualization.export_data = export_data
     pipeline = _pipeline(config, executed, tmp_path)
-    context = SimpleNamespace(pipeline_id="pid", visualization_data_path=None)
+    context = SimpleNamespace(
+        pipeline_id="pid", visualization_data_path=None, stage_results=[]
+    )
     pipeline._export_visualization(context)
     assert bool(calls) is written
     assert (context.visualization_data_path is not None) is written
@@ -208,15 +213,61 @@ def test_a_run_exports_once_it_indexed_and_never_fails_for_it(
     monkeypatch.setattr(
         "unified_kg_rag.application.ingestion.pipeline.write_visualization_data", fail
     )
-    context = SimpleNamespace(pipeline_id="pid", visualization_data_path=None)
+    context = SimpleNamespace(
+        pipeline_id="pid", visualization_data_path=None, stage_results=[]
+    )
     pipeline._export_visualization(context)  # logged, not raised
     assert context.visualization_data_path is None
 
 
 def test_a_vector_store_that_cannot_page_is_refused(tmp_path: Path) -> None:
-    vector = SimpleNamespace(scan_items=lambda *_a, **_k: None, close=lambda: None)
+    vector = SimpleNamespace(
+        scan_items=lambda *_a, **_k: None,
+        read_build_record=lambda _suffix: None,
+        close=lambda: None,
+    )
     graph = SimpleNamespace(close=lambda: None)
     with pytest.raises(visualization_export.ConfigurationError, match="cannot page"):
         write_visualization_data(
             _providers(vector, graph), "default", tmp_path / "x.json"
         )
+
+
+def test_an_export_names_the_build_it_shows(tmp_path: Path) -> None:
+    def write(name: str, data: dict[str, Any]) -> Path:
+        path = tmp_path / name
+        path.write_text(json.dumps(data))
+        return path
+
+    built = stored_visualization_data(
+        [], [], [], [], namespace="tenant-a", built_at="2026-11-09T01:02:03Z"
+    )
+    unbuilt = stored_visualization_data([], [], [], [], namespace="tenant-a")
+    legacy = write("legacy.json", {"namespace": "tenant-a", "nodes": []})
+    for path, stamp in (
+        (write("built.json", built), "2026-11-09T01:02:03Z"),
+        (write("unbuilt.json", unbuilt), None),
+        (legacy, None),
+    ):
+        assert export_namespace(path) == "tenant-a"
+        assert export_build_time(path) == stamp
+
+
+@pytest.mark.parametrize("inside", [True, False])
+def test_an_export_in_the_cache_directory_is_uploaded(
+    tmp_path: Path, inside: bool
+) -> None:
+    uploads: list[Path] = []
+    pipeline = _pipeline(Config(), {"indexing"}, tmp_path)
+    pipeline.pipeline_config.s3_sync_enabled = True
+    pipeline.cache_manager = SimpleNamespace(
+        get_pipeline_cache_dir=lambda pid: tmp_path / pid
+    )
+    pipeline.s3_cache_manager = SimpleNamespace(
+        upload_file=lambda _pid, _cache, path: uploads.append(path)
+    )
+    path = (tmp_path / "pid" if inside else tmp_path / "elsewhere") / "viz.json"
+
+    pipeline._upload_export("pid", path)
+
+    assert uploads == ([path] if inside else [])

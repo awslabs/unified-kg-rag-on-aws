@@ -112,6 +112,7 @@ def write_visualization_data(
     vector = providers.build_vector_indexer()
     graph = providers.build_graph_indexer()
     try:
+        built_at = _built_at(vector, suffix)
         entities = _entities(vector, graph, suffix)
         relationships = _relationships(vector, graph, suffix, [e.id for e in entities])
         claims = [Claim.model_validate(c) for c in _scan(vector, "claims", suffix)]
@@ -125,6 +126,7 @@ def write_visualization_data(
         claims,
         reports,
         namespace=suffix,
+        built_at=built_at,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(data, default=str))
@@ -135,20 +137,51 @@ def write_visualization_data(
     }
 
 
-# How the file begins (stored_visualization_data writes the namespace first).
-_NAMESPACE_HEAD = re.compile(r'^\{"namespace": "([^"\\]*)"')
+def _built_at(vector: VectorIndexer, suffix: str) -> str | None:
+    """When the build ``suffix``'s record names finished (``None`` without
+    one)."""
+    built_at = (vector.read_build_record(suffix) or {}).get("built_at")
+    return str(built_at) if built_at else None
 
 
-def export_namespace(path: Path) -> str | None:
-    """The namespace an export names in its first bytes (``None`` for an
-    export written before they named one)."""
+def stored_build_time(providers: Providers, suffix: str) -> str | None:
+    """When the build the stores of ``suffix`` hold finished, as an export
+    names it (``None`` without a build record)."""
+    vector = providers.build_vector_indexer()
+    try:
+        return _built_at(vector, suffix)
+    finally:
+        vector.close()
+
+
+# How the file begins (stored_visualization_data writes the namespace, then
+# the build, first).
+_HEAD = re.compile(
+    r'^\{"namespace": "([^"\\]*)"(?:, "built_at": (?:"([^"\\]*)"|null))?'
+)
+
+
+def _head(path: Path) -> re.Match[str] | None:
     try:
         with path.open("r", encoding="utf-8") as handle:
             head = handle.read(512)
     except OSError:
         return None
-    match = _NAMESPACE_HEAD.match(head)
+    return _HEAD.match(head)
+
+
+def export_namespace(path: Path) -> str | None:
+    """The namespace an export names in its first bytes (``None`` for an
+    export written before they named one)."""
+    match = _head(path)
     return match.group(1) if match else None
+
+
+def export_build_time(path: Path) -> str | None:
+    """When the build an export shows finished, as its first bytes name it
+    (``None`` for one without, or written before exports named it)."""
+    match = _head(path)
+    return match.group(2) if match else None
 
 
 def newest_export(

@@ -134,7 +134,9 @@ stored is read again: follow *Upgrading* in order.
   `evaluation.ragas_metrics` takes only the five metrics ragas scores (`answer_correctness`, `answer_relevancy`,
   `context_precision`, `context_recall`, `faithfulness`); another fails the load instead of the evaluator.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
-  `true`), at the end of every run that indexed, from the namespace's stores, and prints its path;
+  `true`), at the end of every run that indexed, from the namespace's stores once the run gave up the namespace's
+  lease, and prints its path; a run that wrote nothing keeps an export naming the build the stores hold (`built_at`),
+  so a no-change run at 10k text units no longer rewrites a 59 MB file;
   `run-visualization` renders it (without `--data-path` the newest export, of `--suffix`'s namespace when given)
   with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are gone.
   `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown key (#344,

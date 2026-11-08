@@ -220,6 +220,8 @@ class IndexingManager:
         # Stored items derivation kept as they were: a text unit they cite
         # names no stored record (``Derived.underived``).
         self.underived_items = 0
+        # Stored items whose schema annotations this run rewrote (reannotate).
+        self.annotations_rewritten = 0
         # By suffix, the entities this run's graph merge or strip derived (to
         # be written): the claims about them are derived against these.
         self._derived_entities: dict[str, dict[str, Entity]] = {}
@@ -748,7 +750,11 @@ class IndexingManager:
         run (the next run tries again); a lost namespace lease still
         propagates.
         """
-        return self._reannotation.reannotate(suffixes)
+        result = self._reannotation.reannotate(suffixes)
+        self.annotations_rewritten += (
+            result.entities_rewritten + result.relationships_rewritten
+        )
+        return result
 
     def merge_with_existing_graph(
         self,
