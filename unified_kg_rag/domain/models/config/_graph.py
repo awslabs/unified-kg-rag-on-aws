@@ -234,10 +234,11 @@ class VisualizationConfig(BaseModel):
     )
     export_data: bool = Field(
         default=True,
-        description="Write visualization_data.json (graph nodes, edges and the "
-        "community hierarchy) at ingestion, so run-visualization can render "
-        "it. One pass over the graph: no embedding or model call, no layout or "
-        "centrality (run-visualization computes them).",
+        description="Write visualization_data.json (the index namespace's "
+        "graph nodes, edges and community hierarchy, read from its stores) at "
+        "the end of every ingestion run that indexed, so run-visualization can "
+        "render it. One pass over the stored items: no embedding or model call, "
+        "no layout or centrality (run-visualization computes them).",
     )
     outputs_directory: str | Path | None = Field(
         default=None,

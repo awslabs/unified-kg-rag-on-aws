@@ -806,6 +806,11 @@ class IngestionPipelineRunner:
                         f"[bold green]{success_msg}[/bold green]", border_style="green"
                     )
                 )
+                if context.visualization_data_path:
+                    console.print(
+                        "Graph for run-visualization: "
+                        f"{markup_safe(context.visualization_data_path)}"
+                    )
         finally:
             # Release the indexers' Neptune/OpenSearch connections so a finished
             # ingest run does not leak websockets/HTTP pools until interpreter
@@ -876,6 +881,8 @@ class IngestionPipelineRunner:
                 else {}
             ),
             "duration_seconds": context.duration_seconds,
+            # The namespace's graph for run-visualization (None: not written).
+            "visualization_data": context.visualization_data_path,
             "failed_documents": len(context.recorded_failed_doc_ids),
             # Text units a stage failed on: counted in a full build too,
             # which records no document FAILED.

@@ -133,8 +133,9 @@ stored is read again: follow *Upgrading* in order.
   `evaluation.ragas_metrics` takes only the five metrics ragas scores (`answer_correctness`, `answer_relevancy`,
   `context_precision`, `context_recall`, `faithfulness`); another fails the load instead of the evaluator.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
-  `true`); `run-visualization` renders it with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA)
-  are gone. `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown
+  `true`), at the end of every run that indexed, from the namespace's stores, and prints its path;
+  `run-visualization` renders it (without `--data-path` the newest export, of `--suffix`'s namespace when given)
+  with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are gone. `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown
   key (#344, #467). See [visualize](docs/guides/visualize.md).
 - Environment variables: `UKR__<SECTION>__<KEY>` sets any key (double underscores between segments, any case, JSON
   for lists and mappings); the 0.2.3 names are no longer read (#335). `NEPTUNE_ENDPOINT` is
@@ -1618,6 +1619,9 @@ Ingestion and incremental indexing.
 - A run into a namespace that holds other source scopes' documents no longer exports `visualization_data.json`
   from its own corpus's graph (or fails to, `Communities must be detected before exporting`): it logs an INFO line
   pointing at `run-describe --output-path` and leaves the earlier file in place (#640).
+- An incremental run, and a run into a namespace that holds other source scopes' documents, export the whole
+  namespace's graph, read from its stores, not only its own delta or corpus (or none, or `Communities must be
+  detected before exporting`), so the console's graph and `run-visualization` show what queries read (#640).
 - A source scope's first run into a namespace that holds other scopes' documents is recorded as the incremental
   build it is: the build record kept only that run's documents and artifacts as a full build, restarted the
   community counters and dropped the full build it was applied on (#640).

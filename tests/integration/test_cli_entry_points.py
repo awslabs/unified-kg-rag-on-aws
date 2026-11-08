@@ -140,7 +140,7 @@ def workspace(tmp_path_factory: pytest.TempPathFactory, models: str) -> Path:
     config = demo.demo_config("fake", model_base_url=models, region=None)
     config["logging"] = {"log_to_file": False}
     (root / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
-    _ok(
+    ingested = _ok(
         _run(
             root,
             "run-ingestion",
@@ -153,6 +153,8 @@ def workspace(tmp_path_factory: pytest.TempPathFactory, models: str) -> Path:
             "--yes",
         )
     )
+    # The run names the graph it exported for run-visualization.
+    assert "Graph for run-visualization:" in ingested.stdout
     return root
 
 
@@ -241,13 +243,14 @@ def _eval(workspace: Path) -> None:
 
 
 def _visualization(workspace: Path) -> None:
-    (data,) = (workspace / "cache").glob("*/visualization/visualization_data.json")
+    assert list((workspace / "cache").glob("*/visualization/visualization_data.json"))
+    # Without --data-path: the newest export of the namespace, in the cache.
     _ok(
         _run(
             workspace,
             "run-visualization",
-            "--data-path",
-            str(data),
+            "--suffix",
+            "default",
             "--output-directory",
             "viz",
             "--renderers",
@@ -255,6 +258,8 @@ def _visualization(workspace: Path) -> None:
         )
     )
     assert list((workspace / "viz").glob("*.html"))
+    missing = _run(workspace, "run-visualization", "--suffix", "nope")
+    assert missing.returncode == 2 and "of namespace 'nope'" in missing.stderr
 
 
 def _prompt_tuning(workspace: Path) -> None:

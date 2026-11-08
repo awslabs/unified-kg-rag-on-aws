@@ -106,7 +106,6 @@ from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.methodologies import (
     artifacts_to_build,
     built_artifacts,
-    selected_stages,
     stored_artifacts,
 )
 from unified_kg_rag.domain.ingestion.names import (
@@ -1803,112 +1802,10 @@ def _nothing_to_index(context: PipelineContext) -> bool:
     return context.incremental_delta is not None and not context.documents
 
 
-class _VisualizationExport:
-    """Writes ``visualization_data.json`` (``graph.visualization.export_data``)
-    for ``run-visualization``: the community detection stage with the
-    communities, the graph analysis stage without them when no community
-    detection runs (a LightRAG-only run)."""
-
-    config: Config
-    cache_directory: Path | None = None
-
-    def _visualization_outputs_dir(self, context: PipelineContext) -> Path | None:
-        # Unset outputs_directory -> the pipeline's cache dir, which the S3 cache
-        # sync uploads (a deployed task's local outputs/ is lost on exit).
-        if (
-            self.config.graph.visualization.outputs_directory
-            or not self.cache_directory
-        ):
-            return None
-        return self.cache_directory / context.pipeline_id / "visualization"
-
-    def _export_visualization(
-        self,
-        context: PipelineContext,
-        communities: Callable[[], tuple[dict[str, Any], dict[str, str]]],
-    ) -> None:
-        """Export the run's graph with ``communities()`` (the community data
-        and each node's level-0 community), unless the run's graph is an
-        incremental delta's."""
-        export = self.config.graph.visualization.export_data
-        delta = context.incremental_delta
-        others = (
-            [s for s in delta.stored_scopes if s != context.incremental_scope]
-            if delta is not None and not self.config.indexing.reset
-            else []
-        )
-        if export and others:
-            # The namespace holds other source scopes' documents, which this
-            # run's graph does not: exporting it would replace the
-            # namespace's visualization data with this corpus's part.
-            logger.info(
-                "Visualization skipped: the index namespace also holds the "
-                "documents of %d other source scope(s), which this run's "
-                "graph does not. Export the whole namespace's graph with "
-                "run-describe --output-path (GraphML or JSON Lines), or give "
-                "each corpus its own namespace "
-                "(processing.document_parsing.index_value).",
-                len(others),
-            )
-        elif export and delta is not None and delta.unchanged:
-            # An incremental run's graph holds only the delta's documents:
-            # exporting it would replace the full graph's visualization data
-            # with a fragment.
-            logger.info(
-                "Visualization skipped: this incremental run's graph holds only "
-                "its %d new or changed documents, not the %d unchanged ones. "
-                "To visualize the whole graph, run a full build "
-                "(indexing.reset: true) and then run-visualization on its "
-                "visualization_data.json.",
-                len(delta.to_process),
-                len(delta.unchanged),
-            )
-        elif export and context.knowledge_graph:
-            self._write_visualization_data(context, communities)
-
-    def _write_visualization_data(
-        self,
-        context: PipelineContext,
-        communities: Callable[[], tuple[dict[str, Any], dict[str, str]]],
-    ) -> None:
-        """Write the graph and communities for ``run-visualization`` (no render).
-
-        Best effort: a failed write never fails the stage.
-        """
-        import json
-
-        from unified_kg_rag.domain.ingestion.visualization_data import (
-            DEFAULT_OUTPUTS_DIRECTORY,
-            VISUALIZATION_DATA_FILENAME,
-            graph_data,
-        )
-
-        viz = self.config.graph.visualization
-        outputs_dir = self._visualization_outputs_dir(context) or Path(
-            viz.outputs_directory or DEFAULT_OUTPUTS_DIRECTORY
-        )
-        path = outputs_dir / VISUALIZATION_DATA_FILENAME
-        try:
-            community_data, node_communities = communities()
-            data = graph_data(context.knowledge_graph, community_data, node_communities)
-            outputs_dir.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(data, default=str), encoding="utf-8")
-        except Exception as e:  # noqa: BLE001 - the export is optional
-            logger.warning("Visualization data export failed: %s", e)
-            return
-        logger.info("Exported visualization data to '%s'", path)
-
-
-class GraphAnalysisStage(_VisualizationExport, PipelineStage):
-    def __init__(
-        self,
-        config: Config,
-        providers: Providers | None = None,
-        cache_directory: Path | None = None,
-    ):
+class GraphAnalysisStage(PipelineStage):
+    def __init__(self, config: Config, providers: Providers | None = None):
         super().__init__(PipelineStageType.GRAPH_ANALYSIS, config, providers)
         self.analyzer = GraphAnalyzer(config)
-        self.cache_directory = Path(cache_directory) if cache_directory else None
 
     def _execute_core(
         self, context: PipelineContext
@@ -1940,23 +1837,9 @@ class GraphAnalysisStage(_VisualizationExport, PipelineStage):
             },
         }
 
-        if not _detects_communities(self.config):
-            # No community detection follows to export the graph with its
-            # communities: export it without.
-            self._export_visualization(context, lambda: ({}, {}))
-
         input_count = len(entities) + len(relationships)
         output_count = len(entities)
         return input_count, output_count, metrics
-
-
-def _detects_communities(config: Config) -> bool:
-    """Whether a run of ``config`` runs community detection (its methodologies
-    read communities, and ``graph.community_detection.enabled``)."""
-    return (
-        config.graph.community_detection.enabled
-        and PipelineStageType.COMMUNITY_DETECTION in selected_stages(config)
-    )
 
 
 # Incident edges read per batch while a delta component's stored
@@ -2172,7 +2055,7 @@ def _neighbor_ids(graph: Any) -> dict[str, set[str]]:
     return {str(n): {str(m) for m in graph.neighbors(n)} for n in graph.nodes}
 
 
-class CommunityDetectionStage(_VisualizationExport, _RegistryStage):
+class CommunityDetectionStage(_RegistryStage):
     # Stored entities without a community linked to the small delta
     # components the last run clustered (``_whole_graph``).
     unclustered_stored = 0
@@ -2180,14 +2063,12 @@ class CommunityDetectionStage(_VisualizationExport, _RegistryStage):
     def __init__(
         self,
         config: Config,
-        cache_directory: Path | None = None,
         providers: Providers | None = None,
         doc_status: "DocStatusPort | None" = None,
         reuse_stored: bool = True,
     ):
         super().__init__(PipelineStageType.COMMUNITY_DETECTION, config, providers)
         self.detector = CommunityDetector(config, providers=self.providers)
-        self.cache_directory = Path(cache_directory) if cache_directory else None
         self._doc_status = doc_status
         self._description_summarizer: DescriptionSummarizer | None = None
         # A full build keeps the report answers in the extraction store (by
@@ -2598,17 +2479,6 @@ class CommunityDetectionStage(_VisualizationExport, _RegistryStage):
         context.community_reports = community_reports
         context.failed_text_unit_ids[self.name] = self._check_report_failures(
             evidenced, failed_community_ids
-        )
-
-        self._export_visualization(
-            context,
-            lambda: (
-                self.detector.export_community_data(),
-                {
-                    str(node): str(community)
-                    for node, community in self.detector.node_to_community_l0.items()
-                },
-            ),
         )
 
         communities_count = len(context.communities)

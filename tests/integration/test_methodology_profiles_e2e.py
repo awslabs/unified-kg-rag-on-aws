@@ -289,7 +289,7 @@ def test_a_lightrag_only_run_exports_its_graph_without_communities(
     (path,) = tmp_path.rglob("visualization_data.json")
     data = json.loads(path.read_text())
     assert data["nodes"] and data["edges"]
-    assert data["communities"] == {}
+    assert data["communities"] == {"hierarchy": []}
 
 
 def test_report_generation_off_keeps_incremental_runs_incremental(

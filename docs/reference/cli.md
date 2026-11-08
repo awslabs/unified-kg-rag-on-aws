@@ -139,7 +139,9 @@ Guide: [Visualization](../guides/visualize.md).
 
 | Flag | Default | Description |
 |---|---|---|
-| `--data-path` | required | Path to exported visualization-data JSON. |
+| `--data-path` | — | Path to exported visualization-data JSON (default: the newest visualization_data.json under graph.visualization.outputs_directory, outputs/visualization and --cache-directory, of --suffix's namespace when given). |
+| `--suffix` | — | Index namespace whose newest export to render, without --data-path (the name run-ingestion --suffix wrote it under). |
+| `--cache-directory` | `cache` | The run-ingestion cache directory searched without --data-path (default: cache). |
 | `--output-directory` | `visualization_outputs` | Directory to write visualization files. |
 | `--renderers` `RENDERER` | `interactive`, `static` | Renderers to run. Available: interactive, static. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |

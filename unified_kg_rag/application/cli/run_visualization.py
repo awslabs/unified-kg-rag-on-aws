@@ -3,9 +3,11 @@
 """Standalone graph visualization CLI.
 
 Renders visualizations from a previously exported visualization-data JSON
-(``visualization_data.json``, the graph and its communities, written into
-``graph.visualization.outputs_directory`` during ingestion by
-``graph.visualization.export_data``) WITHOUT re-running ingestion. The file
+(``visualization_data.json``, the index namespace's graph and its
+communities, which ingestion writes from the stores at the end of every run
+that indexed, ``graph.visualization.export_data``) WITHOUT re-running
+ingestion: ``--data-path``, else the newest export (of ``--suffix``'s
+namespace) where ingestion writes them. The file
 gets a spring layout here unless it carries its own, and the configured
 centrality metrics when a requested renderer reads them (``static``). Drives the renderer registry, so any registered renderer
 (``--renderers interactive static``) can be produced independently. The
@@ -51,12 +53,20 @@ from unified_kg_rag.application.cli.conventions import (
 )
 from unified_kg_rag.application.cli.help_text import doc_epilog
 from unified_kg_rag.application.config import load_cli_dotenv
+from unified_kg_rag.application.storage.visualization_export import newest_export
 from unified_kg_rag.domain.ingestion.graph_analyzer import (
     CentralityMetrics,
     GraphAnalyzer,
 )
-from unified_kg_rag.domain.ingestion.visualization_data import spring_layout
-from unified_kg_rag.domain.models import Community, HierarchicalCommunity
+from unified_kg_rag.domain.ingestion.visualization_data import (
+    DEFAULT_OUTPUTS_DIRECTORY,
+    spring_layout,
+)
+from unified_kg_rag.domain.models import (
+    Community,
+    HierarchicalCommunity,
+    validate_safe_name,
+)
 from unified_kg_rag.domain.models.config import InteractiveGraphSettings
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -70,8 +80,8 @@ logger = get_logger(__name__)
 def _hierarchy_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract the community hierarchy list from exported data.
 
-    ``export_visualization_data`` nests community data under ``communities`` as
-    a dict with a ``hierarchy`` list (see CommunityDetector.export_community_data).
+    The export nests community data under ``communities`` as a dict with a
+    ``hierarchy`` list (``stored_visualization_data``).
     """
     communities = data.get("communities", [])
     if isinstance(communities, dict):
@@ -223,6 +233,34 @@ def run_visualization(
     return written
 
 
+def _suffix(value: str) -> str:
+    try:
+        return validate_safe_name(value, "--suffix")
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def _newest_export(config: Any, args: argparse.Namespace) -> Path:
+    """The newest export under the directories ingestion writes to, of
+    ``--suffix``'s namespace when given (exit 2 when there is none)."""
+    configured = config.graph.visualization.outputs_directory
+    directories = [
+        *([Path(configured)] if configured else []),
+        Path(DEFAULT_OUTPUTS_DIRECTORY),
+        args.cache_directory,
+    ]
+    found = newest_export(directories, args.suffix)
+    if found is None:
+        usage_error(
+            "no visualization_data.json"
+            + (f" of namespace '{args.suffix}'" if args.suffix else "")
+            + " under "
+            + ", ".join(f"'{d}'" for d in directories)
+            + ": run run-ingestion first, or pass --data-path"
+        )
+    return found
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = ArgumentParser(
         allow_abbrev=False,
@@ -236,9 +274,26 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--data-path",
-        required=True,
         type=Path,
-        help="Path to exported visualization-data JSON",
+        default=None,
+        help="Path to exported visualization-data JSON (default: the newest "
+        "visualization_data.json under graph.visualization.outputs_directory, "
+        "outputs/visualization and --cache-directory, of --suffix's namespace "
+        "when given)",
+    )
+    parser.add_argument(
+        "--suffix",
+        type=_suffix,
+        default=None,
+        help="Index namespace whose newest export to render, without "
+        "--data-path (the name run-ingestion --suffix wrote it under)",
+    )
+    parser.add_argument(
+        "--cache-directory",
+        type=Path,
+        default=Path("cache"),
+        help="The run-ingestion cache directory searched without --data-path "
+        "(default: cache)",
     )
     parser.add_argument(
         "--output-directory",
@@ -268,9 +323,12 @@ def main() -> int:
     try:
         with exit_on_config_error():
             config = load_cli_config(args)
+        if args.data_path is None:
+            args.data_path = _newest_export(config, args)
         if not args.data_path.is_file():
             usage_error(f"visualization data not found: '{args.data_path}'")
         setup_cli_logging(config, args)
+        logger.info("Rendering '%s'", args.data_path)
         failures: dict[str, str] = {}
         written = run_visualization(
             args.data_path,
