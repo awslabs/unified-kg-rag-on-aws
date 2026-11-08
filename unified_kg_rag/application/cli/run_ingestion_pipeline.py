@@ -72,6 +72,7 @@ from unified_kg_rag.shared import (
     ConfigurationError,
     ConfirmationDeclinedError,
     MetricsSink,
+    ModelUnreachableError,
     NullMetricsSink,
     PipelineExecutionError,
     PipelineInterrupted,
@@ -1024,9 +1025,9 @@ def main() -> None:
         )
         _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)
-    except (PipelineExecutionError, StoreConnectionError) as e:
+    except (PipelineExecutionError, StoreConnectionError, ModelUnreachableError) as e:
         # A failed stage, a failed metadata check, a refused prompt or an
-        # unreachable store: say which before exiting non-zero.
+        # unreachable store or model server: say which before exiting non-zero.
         console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
         _print_failed(runner, EXIT_FAILURE, e)
         sys.exit(EXIT_FAILURE)

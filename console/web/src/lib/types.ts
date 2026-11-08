@@ -113,6 +113,7 @@ export interface AskResult {
   abstention_reason: string | null;
   blocked: boolean;
   error: boolean;
+  error_kind: string | null;
   error_message: string | null;
   rerank: { status: string; reason?: string; stages?: { scope: string; status: string }[] } | null;
   usage: Usage | null;

@@ -22,6 +22,7 @@ from unified_kg_rag.application.cli.config_args import (
     load_cli_config,
 )
 from unified_kg_rag.application.cli.conventions import (
+    EXIT_CODES,
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
@@ -68,14 +69,13 @@ from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     ConfigurationError,
-    IndexNotFoundError,
     InvalidFilterError,
     MethodologyNotIndexedError,
     MetricsSink,
     NullMetricsSink,
-    QueryTimeoutError,
     get_logger,
 )
+from unified_kg_rag.shared.exceptions import ErrorClass, classify, error_class_of
 from unified_kg_rag.shared.utils import event_loop
 
 if TYPE_CHECKING:
@@ -675,9 +675,15 @@ class RAGChainRunner:
             output = result.model_dump()
             # With processing.ignore_errors the chain does not raise: it returns
             # its error fallback flagged by metadata.error. That is a failure.
-            if (output.get("metadata") or {}).get("error"):
+            if (metadata := output.get("metadata") or {}).get("error"):
                 detail = (output.get("search_results") or {}).get("metadata", {})
                 error = str(detail.get("error") or "RAG chain returned an error")
+                error_class = error_class_of(metadata.get("error_class"))
+                if EXIT_CODES[error_class] == EXIT_USAGE and not self.args.interactive:
+                    # As raised without ignore_errors (below).
+                    usage_error(
+                        error, error_type=metadata.get("error_type") or RUN_FAILED
+                    )
                 console.print(
                     f"\n[bold red]Error executing query: {markup_safe(error)}"
                     "[/bold red]"
@@ -695,24 +701,20 @@ class RAGChainRunner:
             return {"success": True, **output}
 
         except Exception as e:
-            if (
-                isinstance(
-                    e,
-                    InvalidFilterError | ConfigurationError | IndexNotFoundError,
-                )
-                and not self.args.interactive
-            ):
+            error_class = classify(e)
+            if EXIT_CODES[error_class] == EXIT_USAGE and not self.args.interactive:
                 # A --filters key no index declares, a --search-strategy
                 # whose methodology the namespace does not hold, a setting
                 # the index cannot serve (an embedding dimension it does not
                 # hold) or a --suffix nothing was ingested under: the command
                 # line or the configuration is wrong (exit 2).
                 usage_error(str(e), error_type=type(e).__name__)
-            if isinstance(e, QueryTimeoutError):
-                # An expected outcome with its own message: no traceback.
-                logger.error("Query timed out: %s", e)
-            else:
+            if error_class is ErrorClass.FAILURE:
                 logger.exception("Error during query execution: %s", e)
+            else:
+                # An expected outcome with its own message (the deadline, a
+                # store or model server down): no traceback.
+                logger.error("Query failed (%s): %s", error_class.value, e)
             console.print(
                 f"\n[bold red]Error executing query: {markup_safe(e)}[/bold red]"
             )

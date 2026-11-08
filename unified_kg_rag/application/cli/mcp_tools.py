@@ -47,12 +47,12 @@ from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
+    ErrorClass,
     GraphRAGException,
-    IndexNotFoundError,
-    InvalidFilterError,
-    MethodologyNotIndexedError,
     QueryTimeoutError,
     ToolArgumentError,
+    classify,
+    error_class_of,
 )
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import safe_float_parse, text_digest
@@ -294,18 +294,18 @@ class _ReportedCallerError(GraphRAGException):
     (``processing.ignore_errors``): its message is the caller's."""
 
 
-# Errors whose message is for the caller: an argument, a filter or a
-# strategy to change, a namespace without an index, the deadline.
-_CALLER_ERRORS: tuple[type[BaseException], ...] = (
-    _ReportedCallerError,
-    ToolArgumentError,
-    InvalidFilterError,
-    MethodologyNotIndexedError,
-    IndexNotFoundError,
-    QueryTimeoutError,
+# The error classes (ErrorClass) whose message is for the caller: an
+# argument, a filter or a strategy to change, a namespace without an index,
+# the deadline. The others' may name an endpoint (a store, a model server).
+_CALLER_CLASSES = frozenset(
+    {
+        ErrorClass.INVALID_ARGUMENT,
+        ErrorClass.INVALID_FILTER,
+        ErrorClass.NOT_INDEXED,
+        ErrorClass.INDEX_NOT_FOUND,
+        ErrorClass.TIMEOUT,
+    }
 )
-# The caller errors the chain's error answer names by type (error_type).
-_CALLER_ERROR_NAMES = frozenset(e.__name__ for e in _CALLER_ERRORS[1:])
 INTERNAL_ERROR_MESSAGE = (
     "The call failed inside the server (a store or model error); the server "
     "log has the details."
@@ -317,7 +317,7 @@ def describe_error(exc: BaseException) -> tuple[str, bool]:
     the caller can act on. Any other error gets a generic message, so a
     store endpoint or a stack frame never reaches the caller (the server
     logs it)."""
-    if isinstance(exc, _CALLER_ERRORS):
+    if isinstance(exc, _ReportedCallerError) or classify(exc) in _CALLER_CLASSES:
         return str(exc), True
     return INTERNAL_ERROR_MESSAGE, False
 
@@ -845,7 +845,7 @@ class KnowledgeGraphTools:
         error the caller can act on, a generic one otherwise."""
         if not output.metadata.get("error"):
             return
-        if output.metadata.get("error_type") in _CALLER_ERROR_NAMES:
+        if error_class_of(output.metadata.get("error_class")) in _CALLER_CLASSES:
             message = output.search_results.metadata.get("error")
             raise _ReportedCallerError(str(message or "The query was refused."))
         raise _DegradedQueryError("The query failed (processing.ignore_errors).")

@@ -42,6 +42,10 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     STRICT_STREAM_TRUNCATION,
     setup_chain,
 )
+from unified_kg_rag.adapters.llm.reachability import (
+    is_unreachable_error,
+    model_unreachable_error,
+)
 from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
@@ -178,6 +182,7 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import (
     MethodologyNotIndexedError,
     ToolArgumentError,
+    classify,
 )
 from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
 from unified_kg_rag.shared.usage import usage_scope
@@ -957,7 +962,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 else "fallback"
             )
         except Exception as e:
-            if not self.ignore_errors:
+            if not self.ignore_errors or is_unreachable_error(e):
                 raise
             strategy = self._fallback_strategy(routable)
             decided_by = "fallback"
@@ -1135,7 +1140,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 ),
             )
         except Exception as e:
-            if not self.ignore_errors:
+            if not self.ignore_errors or is_unreachable_error(e):
                 raise
             logger.warning("Query processing failed: %s", error_digest(e))
             logger.debug("Query processing error: %s", e)
@@ -1234,7 +1239,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 {"query": state["query"], "conversation_history": history}, config
             )
         except Exception as e:
-            if not self.ignore_errors:
+            if not self.ignore_errors or is_unreachable_error(e):
                 raise
             logger.warning(
                 "Follow-up rewrite failed; using the query as is: %s", error_digest(e)
@@ -2356,9 +2361,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 if isinstance(output, RAGOutput):
                     await self._save_memory(output, rag_input)
                 return output
-        except Exception as e:
+        except Exception as raised:
+            # A model server that cannot be reached, named (provider kind,
+            # base_url) rather than as its transport's error.
+            e = (
+                model_unreachable_error(raised, self.config)
+                if is_unreachable_error(raised)
+                else raised
+            )
             if not self.ignore_errors:
-                raise
+                if e is raised:
+                    raise
+                raise e from raised
 
             logger.error(
                 "RAG chain execution failed for query %s: %s",
@@ -2376,9 +2390,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 search=search,
                 answer=DEFAULT_ERROR_MESSAGE,
                 strategy="error",
-                # The error's type, for a caller that tells a refused query
-                # (a strategy or filter to change, the deadline) apart.
-                metadata={"error": True, "error_type": type(e).__name__},
+                # The error's type and class (ErrorClass), for a caller that
+                # tells a refused query (a strategy or filter to change, the
+                # deadline, a server to start) apart.
+                metadata={
+                    "error": True,
+                    "error_type": type(e).__name__,
+                    "error_class": classify(e).value,
+                },
                 search_metadata={"error": str(e)},
             )
         finally:
@@ -3050,6 +3069,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     text_digest(rag_input.query),
                     error_digest(e),
                 )
+                if is_unreachable_error(e):
+                    raise model_unreachable_error(e, self.config) from e
                 raise
             logger.error(
                 "RAG stream failed for query %s after %s chunk(s): %s",

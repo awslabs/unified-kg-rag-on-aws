@@ -1,0 +1,114 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""A model server that cannot be reached: told apart, named and found early.
+
+A model client that cannot connect raises its transport's error (httpx's
+``ConnectError``, the OpenAI client's ``APIConnectionError``, the Ollama
+client's ``ConnectionError``, botocore's ``EndpointConnectionError``). Read
+as any other failure it was retried for minutes and reported as "produced 0
+outputs" or a traceback. :func:`model_unreachable_error` turns it into a
+:class:`ModelUnreachableError` naming the provider kind and ``base_url`` of
+the configured model servers, with how to start one (``ollama serve``, the
+models to pull): at ingestion's embedding probe, before any extraction, and
+for a query.
+"""
+
+from __future__ import annotations
+
+import socket
+
+from unified_kg_rag.domain.models import Config, ModelRole
+from unified_kg_rag.domain.models.provider_config import BEDROCK, OLLAMA
+from unified_kg_rag.shared.exceptions import (
+    AWSServiceError,
+    ModelUnreachableError,
+    causes,
+)
+
+# Errors of a connection that was never made, by class name so this module
+# imports no client: httpx's ConnectError and ConnectTimeout, the OpenAI
+# client's APIConnectionError (not its APITimeoutError subclass: a server
+# that accepted the request and did not answer is reachable) and botocore's
+# EndpointConnectionError.
+_CONNECT_ERROR_NAMES = frozenset(
+    {"ConnectError", "ConnectTimeout", "APIConnectionError", "EndpointConnectionError"}
+)
+_REACHED_NAMES = frozenset({"APITimeoutError"})
+# Ollama's default endpoint, which its client uses without a base_url.
+_OLLAMA_DEFAULT = "http://localhost:11434"
+
+
+def is_unreachable_error(exc: BaseException) -> bool:
+    """Whether ``exc`` (or an error it was raised from, as an
+    ``EmbeddingModelError`` wraps the client's) is a connection to a model
+    server that could not be made: refused, no route, a name that does not
+    resolve, no connection in time. Never a store's (``AWSServiceError``:
+    ``StoreConnectionError``, which the store clients raise for theirs)."""
+    for error in causes(exc):
+        if isinstance(error, ModelUnreachableError):
+            return True
+        if isinstance(error, AWSServiceError):
+            return False
+        names = {cls.__name__ for cls in type(error).__mro__}
+        if names & _REACHED_NAMES:
+            return False
+        if (
+            names & _CONNECT_ERROR_NAMES
+            # The Ollama client's own "Failed to connect" is a bare one.
+            or type(error) is ConnectionError
+            or isinstance(error, ConnectionRefusedError | socket.gaierror)
+        ):
+            return True
+    return False
+
+
+def _servers(config: Config) -> list[tuple[str, str, str | None]]:
+    """``(settings, kind, base_url)`` of the language and embedding model
+    servers, one entry for the two when they are the same."""
+    found: dict[tuple[str, str | None], list[str]] = {}
+    for setting, provider in (
+        ("providers.llm", config.providers.llm),
+        ("providers.embedding", config.providers.embedding),
+    ):
+        url = provider.base_url or (
+            _OLLAMA_DEFAULT if provider.kind == OLLAMA else None
+        )
+        found.setdefault((provider.kind, url), []).append(setting)
+    return [(" and ".join(names), kind, url) for (kind, url), names in found.items()]
+
+
+def _hint(config: Config, servers: list[tuple[str, str, str | None]]) -> str:
+    if any(kind == OLLAMA for _, kind, _ in servers):
+        # Every role's model but the evaluation judge's, and the embedder.
+        roles = (r for r in ModelRole if r is not ModelRole.EVALUATION)
+        models = ", ".join(
+            dict.fromkeys(
+                [*(config.model_id(r) for r in roles), str(config.embedding_model_id)]
+            )
+        )
+        return (
+            "Start it (ollama serve) and pull the models "
+            f"(ollama pull, for each of: {models}), or set its base_url."
+        )
+    if all(kind == BEDROCK for _, kind, _ in servers):
+        return "Check the network path to Bedrock (a VPC endpoint, a proxy)."
+    return "Start the server, or set its base_url."
+
+
+def model_unreachable_error(
+    exc: BaseException, config: Config
+) -> ModelUnreachableError:
+    """``exc``, a model server that could not be reached
+    (:func:`is_unreachable_error`), as a :class:`ModelUnreachableError` that
+    names the configured servers and how to start them."""
+    if isinstance(exc, ModelUnreachableError):
+        return exc
+    servers = _servers(config)
+    named = ", ".join(
+        f"{setting} ({kind}{f' at {url}' if url else ''})"
+        for setting, kind, url in servers
+    )
+    return ModelUnreachableError(
+        f"A model server could not be reached ({type(exc).__name__}): {named}. "
+        f"{_hint(config, servers)}"
+    )

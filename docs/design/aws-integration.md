@@ -34,7 +34,8 @@ fatal error.
 | HTTP 400 (a filter value of another type, a vector of another dimension) | `StoreRequestRejectedError` with the server's reason | fatal |
 | Bedrock error that is not transient (bad model id, no access, no credentials) | botocore error | fatal |
 | Query embedding failed, whatever the cause | `EmbeddingModelError` | fatal (every vector section needs it) |
-| Local model server 4xx other than 408/429, or unreachable after retries | `openai` / `httpx` error | fatal |
+| Local model server 4xx other than 408/429 | `openai` / `httpx` error | fatal |
+| A model server that cannot be reached (refused, no route, an unresolved name, no connection in time), after its retries | `ModelUnreachableError` naming the provider kind, `base_url` and how to start it (`adapters/llm/reachability.py`; ingestion's embedding probe, the query) | fatal, also under `processing.ignore_errors` (never absorbed by the router, rewrite or query processing fallbacks; the error answer) |
 | A prompt longer than the model's context | `ContextOverflowError` (or a plain 400 from vLLM / llama.cpp) | not fatal: that global-search map batch is left unrated, unless every batch fails |
 | One failed request (an HTTP 500 for one search) | any other exception | degrades that section |
 | The whole query past `search.query_timeout_seconds`, or a stream's first chunk past `search.model_timeout_seconds` | `QueryTimeoutError`, raised by `GraphRAGChain` once its tasks (and, through `gather_or_cancel`, every section's) are cancelled | fatal (the error answer under `processing.ignore_errors`) |

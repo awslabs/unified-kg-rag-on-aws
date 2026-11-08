@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Iterator
+from enum import StrEnum
 
 
 def causes(exc: BaseException) -> Iterator[BaseException]:
@@ -236,6 +237,14 @@ class RerankModelError(ModelError):
     answers from the fused order."""
 
 
+class ModelUnreachableError(ModelError, ConnectionError):
+    """A model server could not be reached (connection refused, no route, a
+    name that does not resolve, no connection in time): no model call can
+    succeed until it runs. The message names the provider kind, its
+    ``base_url`` and how to start it. Also a builtin ``ConnectionError``, so
+    retrieval fails the query rather than answering without the model."""
+
+
 class StoreConnectionError(AWSServiceError, ConnectionError):
     """A store (OpenSearch, Neptune) is unusable: unreachable, lost, overloaded.
 
@@ -271,3 +280,57 @@ class StoreAccessDeniedError(StoreConfigurationError):
 
 class StoreRequestRejectedError(StoreConfigurationError):
     """The store rejected a request as invalid (HTTP 400), as it will on retry."""
+
+
+class ErrorClass(StrEnum):
+    """What a failure means to the caller, the same on every surface: each
+    maps a class to what it reports (the CLIs' exit codes,
+    ``cli.conventions.EXIT_CODES``; the MCP server's caller messages; the
+    console's error kind, the value; docs/reference/exit-codes-and-json.md).
+    ``GraphRAGChain`` names the class of a failure it absorbed in
+    ``metadata["error_class"]``."""
+
+    INVALID_FILTER = "invalid_filter"
+    INVALID_ARGUMENT = "invalid_argument"
+    NOT_INDEXED = "not_indexed"
+    INDEX_NOT_FOUND = "index_not_found"
+    CONFIGURATION = "configuration"
+    TIMEOUT = "timeout"
+    STORE_UNREACHABLE = "store_unreachable"
+    MODEL_UNREACHABLE = "model_unreachable"
+    FAILURE = "failure"
+
+
+# Most specific first: MethodologyNotIndexedError is a ConfigurationError,
+# a ModelUnreachableError and a StoreConnectionError ConnectionErrors.
+_CLASSES: tuple[tuple[type[BaseException], ErrorClass], ...] = (
+    (InvalidFilterError, ErrorClass.INVALID_FILTER),
+    (ToolArgumentError, ErrorClass.INVALID_ARGUMENT),
+    (MethodologyNotIndexedError, ErrorClass.NOT_INDEXED),
+    (IndexNotFoundError, ErrorClass.INDEX_NOT_FOUND),
+    (QueryTimeoutError, ErrorClass.TIMEOUT),
+    (ModelUnreachableError, ErrorClass.MODEL_UNREACHABLE),
+    (StoreConnectionError, ErrorClass.STORE_UNREACHABLE),
+    (ConfigurationError, ErrorClass.CONFIGURATION),
+)
+
+
+def classify(exc: BaseException) -> ErrorClass:
+    """The :class:`ErrorClass` of ``exc``; ``FAILURE`` for any other."""
+    for kind, error_class in _CLASSES:
+        if isinstance(exc, kind):
+            return error_class
+    return ErrorClass.FAILURE
+
+
+def error_class_of(value: object) -> ErrorClass:
+    """The :class:`ErrorClass` a result's ``metadata["error_class"]`` names
+    (``FAILURE`` for none or an unknown one)."""
+    try:
+        return ErrorClass(str(value))
+    except ValueError:
+        return ErrorClass.FAILURE
+
+
+# The public name of :func:`classify` (``unified_kg_rag.classify_error``).
+classify_error = classify

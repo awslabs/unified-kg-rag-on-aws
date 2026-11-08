@@ -68,6 +68,8 @@
   "ask.error.index_not_found": "Cet espace de noms n’a pas encore d’index : ingérez-y d’abord un corpus",
   "ask.error.timeout": "La requête a dépassé son délai",
   "ask.error.store_unreachable": "Un stockage est injoignable",
+  "ask.error.model_unreachable": "Un serveur de modèles est injoignable : démarrez-le ou vérifiez sa base_url",
+  "ask.error.invalid_argument": "La requête a été refusée : un argument est à modifier",
   "ask.error.configuration": "La configuration ne permet pas de traiter cette requête",
   "ask.error.failure": "La requête a échoué",
   "ask.meta.strategy": "Stratégie",

@@ -77,6 +77,7 @@ from unified_kg_rag.domain.models.config import ChunkingStrategy, LanguageCode
 from unified_kg_rag.evaluation import EvaluationManager
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
+    ModelUnreachableError,
     StoreRequestRejectedError,
 )
 
@@ -979,3 +980,74 @@ def test_a_query_without_a_suffix_reads_the_configs_index_value(
     assert record is not None
     assert out.answer == ANSWER and out.sources, out.metadata
     assert not out.metadata.get("error"), out.metadata
+
+
+def _down(request: httpx.Request) -> httpx.Response:
+    """A model server that is not running."""
+    raise httpx.ConnectError("All connection attempts failed", request=request)
+
+
+def _down_providers(config: Config) -> Providers:
+    """The providers of ``_providers`` with every model call refused."""
+    transport = httpx.MockTransport(_down)
+    return build_providers(
+        config,
+        llm_factory=OllamaLanguageModelFactory(config, transport=transport),
+        embedding_factory=OllamaEmbeddingFactory(config, transport=transport),
+        rerank_factory=CrossEncoderRerankFactory(
+            config, loader=lambda *_, **__: FakeCrossEncoder("synthetic-reranker")
+        ),
+    )
+
+
+def test_an_unreachable_model_server_fails_ingestion_before_any_extraction(
+    tmp_path: Path, no_aws
+) -> None:
+    # Regression (rv7 features M1): the embedding probe swallowed the
+    # transport error, the stages retried for minutes, and the run ended
+    # with "processed 2 inputs but produced 0 outputs".
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    providers = _down_providers(config)
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "logistics.txt").write_text("Depot stores gadgets for Vendor.")
+    with pytest.raises(ModelUnreachableError) as raised:
+        _ingest(config, providers, source, tmp_path / "run-1")
+    message = str(raised.value)
+    assert (
+        "providers.llm and providers.embedding (ollama at http://localhost:11434)"
+        in message
+    )
+    assert "ollama serve" in message and "synthetic-embed" in message
+    # Before any extraction: no stage ran.
+    assert not (tmp_path / "stores" / "graph.sqlite3").exists()
+
+
+def test_an_unreachable_model_server_names_itself_at_query_time(
+    tmp_path: Path, no_aws
+) -> None:
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    server = FakeOllama(_respond, ANSWER, DIM)
+    providers = _providers(config, server, FakeCrossEncoder("synthetic-reranker"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "logistics.txt").write_text("Depot stores gadgets for Vendor.")
+    context = _ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    down = _down_providers(config)
+    chain = GraphRAGChain(config, providers=down)
+    try:
+        with pytest.raises(ModelUnreachableError, match="ollama serve"):
+            _ask(chain, SearchStrategy.LOCAL)
+    finally:
+        chain.close()
+    config.processing.ignore_errors = True
+    chain = GraphRAGChain(config, providers=down)
+    try:
+        out = _ask(chain, SearchStrategy.LOCAL)
+    finally:
+        chain.close()
+    assert out.metadata["error"] is True
+    assert out.metadata["error_type"] == "ModelUnreachableError"
+    assert out.metadata["error_class"] == "model_unreachable"

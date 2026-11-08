@@ -28,16 +28,19 @@ cannot be loaded, a :class:`SeedGraphError` a seed graph that cannot be
 imported, a :class:`MethodologyNotIndexedError` a query whose strategy
 reads a methodology its index namespace does not hold) and an
 :class:`InvalidFilterError` a search filter to fix, not failures to retry; a :class:`StoreConnectionError` is an unreachable
-store, a :class:`QueryTimeoutError` a query past its deadline, a
-:class:`ModelError` a model call that failed (a :class:`LanguageModelError`,
-an :class:`EmbeddingModelError` or a :class:`RerankModelError`), an
+ store, a :class:`ModelUnreachableError` a model server that could not be
+ reached (named with its provider kind and ``base_url``), a
+ :class:`QueryTimeoutError` a query past its deadline, a
+ :class:`ModelError` a model call that failed (a :class:`LanguageModelError`,
+ an :class:`EmbeddingModelError` or a :class:`RerankModelError`), an
 :class:`IndexNotFoundError` a suffix with no index (not ingested,
 or a typo), and a :class:`ConfirmationDeclinedError` (a
 :class:`PipelineExecutionError`) an ingestion run that stopped before it
 wrote because a question it asked was answered no, or could not be asked.
-Errors outside the framework's own code pass through as raised: a missing
-config file (``FileNotFoundError``), or the model client's transport error
-(an ``httpx.ConnectError`` from a local model server, say).
+:func:`classify_error` names the :class:`ErrorClass` of any of them, the
+classes every surface reports (an exit code, an error kind). Errors outside
+the framework's own code pass through as raised: a missing config file
+(``FileNotFoundError``), say.
 
 Names load on first access, so ``import unified_kg_rag`` stays cheap and
 pulls in no model, AWS or store SDK.
@@ -106,11 +109,14 @@ _EXPORTS: dict[str, str] = {
     "IndexNotFoundError": "unified_kg_rag.shared.exceptions",
     "DocumentNotFoundError": "unified_kg_rag.shared.exceptions",
     "StoreConnectionError": "unified_kg_rag.shared.exceptions",
+    "ModelUnreachableError": "unified_kg_rag.shared.exceptions",
     "QueryTimeoutError": "unified_kg_rag.shared.exceptions",
     "ModelError": "unified_kg_rag.shared.exceptions",
     "LanguageModelError": "unified_kg_rag.shared.exceptions",
     "EmbeddingModelError": "unified_kg_rag.shared.exceptions",
     "RerankModelError": "unified_kg_rag.shared.exceptions",
+    "ErrorClass": "unified_kg_rag.shared.exceptions",
+    "classify_error": "unified_kg_rag.shared.exceptions",
     "PipelineInterrupted": "unified_kg_rag.shared.exceptions",
     # Extension: provider injection and the provider registry
     "Providers": "unified_kg_rag.adapters.providers",
@@ -247,12 +253,14 @@ if TYPE_CHECKING:
         ConfirmationDeclinedError,
         DocumentNotFoundError,
         EmbeddingModelError,
+        ErrorClass,
         GraphRAGException,
         IndexNotFoundError,
         InvalidFilterError,
         LanguageModelError,
         MethodologyNotIndexedError,
         ModelError,
+        ModelUnreachableError,
         NamespaceLeaseError,
         PipelineExecutionError,
         PipelineInterrupted,
@@ -262,6 +270,7 @@ if TYPE_CHECKING:
         SeedGraphError,
         StoreConnectionError,
         StoreRequestRejectedError,
+        classify_error,
     )
     from unified_kg_rag.shared.logging import setup_logging
     from unified_kg_rag.shared.metrics import MetricsSink

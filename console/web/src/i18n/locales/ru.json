@@ -69,6 +69,8 @@
   "ask.error.index_not_found": "В этом пространстве имён ещё нет индекса: сначала загрузите в него корпус",
   "ask.error.timeout": "Запрос превысил лимит времени",
   "ask.error.store_unreachable": "Хранилище недоступно",
+  "ask.error.model_unreachable": "Сервер моделей недоступен: запустите его или проверьте base_url",
+  "ask.error.invalid_argument": "Запрос отклонён: нужно изменить аргумент",
   "ask.error.configuration": "Текущая конфигурация не позволяет выполнить этот запрос",
   "ask.error.failure": "Запрос не выполнен",
   "ask.meta.strategy": "Стратегия",

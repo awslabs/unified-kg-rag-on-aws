@@ -66,6 +66,8 @@
   "ask.error.index_not_found": "이 네임스페이스에는 아직 인덱스가 없습니다. 먼저 코퍼스를 수집하세요",
   "ask.error.timeout": "쿼리가 제한 시간을 넘었습니다",
   "ask.error.store_unreachable": "저장소에 연결할 수 없습니다",
+  "ask.error.model_unreachable": "모델 서버에 연결할 수 없습니다. 서버를 시작하거나 base_url을 확인하세요",
+  "ask.error.invalid_argument": "요청이 거부되었습니다. 인수를 바꿔야 합니다",
   "ask.error.configuration": "현재 구성으로는 이 쿼리를 처리할 수 없습니다",
   "ask.error.failure": "쿼리가 실패했습니다",
   "ask.meta.strategy": "전략",

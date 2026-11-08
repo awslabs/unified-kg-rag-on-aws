@@ -12,12 +12,34 @@ prints. Every flag: [CLI Reference](./cli.md); what an error message means:
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, or an unreachable store), a breached `--max-failure-rate`, a failed `run-eval --fail-if` gate, a failed upload, nothing rendered or a failed renderer |
-| `2` | Usage or configuration error: a bad flag, a `run-rag` `--suffix` nothing was ingested under (the message lists the ingested ones), a `run-rag` or `run-eval` `--search-strategy` (or a `run-eval` query's own strategy) whose methodology the index namespace does not hold ([methodology profiles](../concepts/overview.md#methodology-profiles)), a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint, a missing extra the selected providers need (`local`) (all before any work), or a `ConfigurationError` found while running outside a stage, such as `run-ingestion`'s pre-run refusal before its first model call (the search engine refused to create an index the run needs, an incremental run's live indices, a deletion-only run's included, were built for other embedding, language or registry settings, an incremental run would add a methodology to a namespace that also holds other source scopes' documents, or the embedding model returned vectors of another dimension than `models.embedding.dimension` for the probe text it embeds first) |
+| `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, an unreachable store or an unreachable model server), a breached `--max-failure-rate`, a failed `run-eval --fail-if` gate, a failed upload, nothing rendered or a failed renderer |
+| `2` | Usage or configuration error: a bad flag, a `run-rag` or `run-eval` `--suffix` nothing was ingested under (the message lists the ingested ones), a filter key no index declares, a `run-rag` or `run-eval` `--search-strategy` (or a `run-eval` query's own strategy) whose methodology the index namespace does not hold ([methodology profiles](../concepts/overview.md#methodology-profiles)), a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint, a missing extra the selected providers need (`local`) (all before any work), or a `ConfigurationError` found while running outside a stage, such as `run-ingestion`'s pre-run refusal before its first model call (the search engine refused to create an index the run needs, an incremental run's live indices, a deletion-only run's included, were built for other embedding, language or registry settings, an incremental run would add a methodology to a namespace that also holds other source scopes' documents, or the embedding model returned vectors of another dimension than `models.embedding.dimension` for the probe text it embeds first) |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
 
 Flags must be spelled out in full: a prefix such as `--output` is rejected.
+
+A query's failure maps to its code by its class (`ErrorClass`, the same for
+`run-rag`, `run-eval`, the MCP server and the console), also when
+`processing.ignore_errors` turned it into the error answer
+(`metadata.error_class`):
+
+| Class | Raised as | Exit code |
+|---|---|---|
+| `invalid_filter` | `InvalidFilterError` | `2` |
+| `invalid_argument` | `ToolArgumentError` | `2` |
+| `not_indexed` | `MethodologyNotIndexedError` | `2` |
+| `index_not_found` | `IndexNotFoundError` | `2` |
+| `configuration` | `ConfigurationError` | `2` |
+| `timeout` | `QueryTimeoutError` | `1` |
+| `store_unreachable` | `StoreConnectionError` | `1` |
+| `model_unreachable` | `ModelUnreachableError` | `1` |
+| `failure` | any other | `1` |
+
+The MCP server returns the message of the first four and `timeout` to the
+caller (a generic one for the rest, whose message may name an endpoint); the
+console's Ask page names the class. `run-rag`'s interactive session keeps
+going after any of them.
 
 `run-mcp-server` uses the same codes: `0` once the client closes stdio (or
 the HTTP server stops), `2` for a usage or configuration error (the `mcp`
@@ -124,7 +146,7 @@ shows the failure:
 | `status` | `"failed"` (`"interrupted"` for a stopped run; a `run-ingestion` result keeps the run's own status) |
 | `exit_code` | The process's exit code |
 | `error` | The message, when there is one |
-| `error_type` | What failed: the exception's class name (`ConfigurationError`, `QueryTimeoutError`, `StoreConnectionError`, `PipelineExecutionError`, ...), `UsageError` for a refused command line, `FailureBudgetExceeded` or `RegressionGateFailed` for `run-eval`, `RunFailed` for a run that failed without an exception (nothing rendered), `Interrupted` for a stopped run |
+| `error_type` | What failed: the exception's class name (`ConfigurationError`, `QueryTimeoutError`, `StoreConnectionError`, `ModelUnreachableError`, `PipelineExecutionError`, ...), `UsageError` for a refused command line, `FailureBudgetExceeded` or `RegressionGateFailed` for `run-eval`, `RunFailed` for a run that failed without an exception (nothing rendered), `Interrupted` for a stopped run |
 
 A run that printed its result prints nothing more; the result shows the
 failure with these keys: a failed `run-rag` query (also with

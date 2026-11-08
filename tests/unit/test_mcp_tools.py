@@ -843,10 +843,16 @@ async def test_logs_carry_a_digest_of_the_query_not_its_text(
 
 async def test_a_refusal_the_error_answer_absorbed_keeps_its_message() -> None:
     # processing.ignore_errors: the chain answers its error answer, naming
-    # the error's type; a refusal the caller can act on keeps its message.
+    # the error's type and class; a refusal the caller can act on keeps its
+    # message.
     class Absorbing(FakeChain):
         def __init__(self, error_type: str, message: str) -> None:
-            super().__init__(error=True, error_type=error_type)
+            error = {
+                "MethodologyNotIndexedError": "not_indexed",
+                "StoreConnectionError": "store_unreachable",
+                "ModelUnreachableError": "model_unreachable",
+            }[error_type]
+            super().__init__(error=True, error_type=error_type, error_class=error)
             self.message = message
 
         async def asearch(self, rag_input: RAGInput) -> SearchOutput:
@@ -858,9 +864,11 @@ async def test_a_refusal_the_error_answer_absorbed_keeps_its_message() -> None:
     with pytest.raises(mcp_tools._ReportedCallerError) as raised:
         await _tools(Absorbing("MethodologyNotIndexedError", refusal)).search("q")
     assert describe_error(raised.value) == (refusal, True)
-    with pytest.raises(mcp_tools._DegradedQueryError) as failed:
-        await _tools(Absorbing("StoreConnectionError", "https://vpc-x")).search("q")
-    assert describe_error(failed.value) == (INTERNAL_ERROR_MESSAGE, False)
+    for internal in ("StoreConnectionError", "ModelUnreachableError"):
+        # Its message names an endpoint: never the caller's.
+        with pytest.raises(mcp_tools._DegradedQueryError) as failed:
+            await _tools(Absorbing(internal, "https://vpc-x")).search("q")
+        assert describe_error(failed.value) == (INTERNAL_ERROR_MESSAGE, False)
 
 
 async def test_the_schema_is_resolved_once_and_its_error_returned(
