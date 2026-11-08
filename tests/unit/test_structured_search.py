@@ -397,6 +397,29 @@ async def test_rows_bring_their_entities_provenance_and_passages() -> None:
     assert {p.source for p in passages} == {"tu-v1", "tu-v3"}
 
 
+async def test_the_passage_search_lists_at_most_max_terms_count_ids() -> None:
+    # Regression (rv8 retrieval L7): the id list of the passage search went
+    # past the index's max_terms_count, which OpenSearch refuses (an
+    # InvalidFilterError, exit 2) where fetches by id were batched.
+    class _Small(_Documents):
+        async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+            return IndexLimits(max_terms_count=1)
+
+    plan = {
+        "nodes": [{"var": "v", "types": ["VENDOR"]}],
+        "returns": {"kind": "rows"},
+        "entities": [],
+    }
+    documents = _Small()
+    strategy, *_ = _strategy(_Planner(plan), documents=documents)
+    result = await strategy.asearch(_query("Which vendors are there?"))
+    assert result.metadata["structured"]["status"] == "answered"
+    searches = [
+        q for q in documents.calls if q.query and q.index_prefixes == [TEXT_UNITS]
+    ]
+    assert searches and all(len(q.filters["id"]) <= 1 for q in searches)
+
+
 async def test_a_refused_plan_is_repaired_once_with_the_refusal() -> None:
     bad = _with(
         {"nodes": [{"var": "v", "types": ["SUPPLIER"]}], "returns": {"kind": "count"}}

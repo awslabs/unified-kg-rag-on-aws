@@ -1167,6 +1167,11 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         async def searched() -> list[RetrievalResult]:
             if not query.query:
                 return []
+            # The best-cited units one terms clause takes: a text search is
+            # not split in batches (each would rank, and normalize, its own
+            # hits), so the list is cut as tree and global search cut theirs.
+            limits = await documents.aindex_limits(prefix, query.suffix)
+            among = ranked[: min(count * 10, limits.max_terms_count)]
             return await self._safe_aretrieve(
                 documents,
                 SearchQuery(
@@ -1176,7 +1181,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                     retrieval_multiplier=1,
                     index_prefixes=[prefix],
                     suffix=query.suffix,
-                    filters=self._scoped_filters(query, id=ranked[: count * 10]),
+                    filters=self._scoped_filters(query, id=among),
                 ),
                 "Structured query passage search",
             )
