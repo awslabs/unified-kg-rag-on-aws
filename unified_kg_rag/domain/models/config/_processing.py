@@ -60,9 +60,9 @@ class DocumentParsingConfig(BaseModel):
         default=None,
         description=(
             "Index suffix the run writes: every OpenSearch index and Neptune "
-            "label is named <prefix>-<index_value>. null = 'default'. run-rag "
-            "and run-eval query it too unless --suffix names another "
-            "(RAGInput.suffix in Python, which does not read it). "
+            "label is named <prefix>-<index_value>. null = 'default'. run-rag, "
+            "run-eval and a RAGInput without a suffix query it too unless "
+            "--suffix (RAGInput.suffix in Python) names another. "
             "run-ingestion --suffix sets it for one run. Lowercase letters, "
             "digits, '-' and '_'."
         ),
