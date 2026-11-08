@@ -136,18 +136,10 @@ FALLBACK_BUCKET = "structured_fallback"
 # metadata.structured.status
 ANSWERED, FALLBACK, FAILED = "answered", "fallback", "failed"
 # The fallback reasons the query's degradation ledger records: a failed
-# planner or store call, a compiler refusal, a name or value the graph
-# query could not use (metadata.structured.reason keeps every reason).
-_DEGRADING = frozenset(
-    {
-        "planner_error",
-        "execution_error",
-        "timeout",
-        "compile_error",
-        "unlinked_mention",
-        "unknown_value",
-    }
-)
+# planner or store call and a compiler refusal. A designed fallback (an
+# absent name, an unknown value, an unanswerable question) is no failure:
+# metadata.structured.reason alone keeps it.
+_DEGRADING = frozenset({"planner_error", "execution_error", "timeout", "compile_error"})
 # What a fallback gives way to when the namespace does not serve it.
 _FALLBACK_ORDER = (SearchStrategy.LOCAL, SearchStrategy.MIX)
 # The JSON keys of a plan, to tell it from an example the model echoes.
