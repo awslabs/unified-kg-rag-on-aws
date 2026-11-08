@@ -160,11 +160,15 @@ Tuning is in the
 
 ## Citations
 
-Every answer cites the documents it rests on (`search.citations`, on by
-default). The answer context numbers its evidence `[1]`, `[2]`, ... (passages,
-entities, relationships, claims, community reports, summaries), and the answer
-prompt asks the model to cite them with those markers, ASCII in every answer
-language. Global search's key points and DRIFT's intermediate answers are
+Answers cite the documents they rest on (`search.citations`): those of every
+strategy but `global` and `drift`, by default. The answer context numbers its
+evidence `[1]`, `[2]`, ... (passages, entities, relationships, claims,
+community reports, summaries), and the answer prompt asks the model to cite
+them with those markers, ASCII in every answer language. `global` and `drift`
+answer without markers unless you turn them on: on sensemaking questions
+their answers without citations were more comprehensive
+([evidence](../concepts/defaults-and-evidence.md#citations)). With them on,
+global search's key points and DRIFT's intermediate answers are
 numbered one by one too: each names the documents of the reports (or the
 local context) it was written from, as MS GraphRAG's `[Data: Reports (...)]`
 does, even when the evidence budget left those reports out of the context.
@@ -173,8 +177,7 @@ entities and relationships its findings cite, not of its whole community (a
 report indexed before its findings were kept falls back to the community; in
 a GraphRAG-only namespace, which has no relationships index, it names its
 entities' documents). They are model output, so they are never
-listed as sources, and their answers cite where they can without leaving out
-a point that has no marker. A marker has
+listed as sources. A marker has
 at most three digits, so a bracketed year such as `[2020]` is text:
 
 ```text
@@ -204,9 +207,24 @@ rewrite reads the earlier answers without their markers.
   closes). `astream` returns text only; `ainvoke` returns the citations.
 - A blocked answer has no citations; a masked one keeps them, flagged from
   the masked text; a declined answer keeps them like its sources.
-- `search.citations.enabled: false` restores the earlier context and prompt.
-  The markers stay in the answer text; `run-eval`'s `answer_match` scores the
-  answer as written.
+- Per strategy: `search.citations.strategies` is merged over its default
+  `{global: false, drift: false}`, and an entry wins over `enabled` either way.
+  `auto` follows the strategy it routes to, and `iterative` follows its base
+  (`search.iterative_search.base`) unless it is named itself. A strategy that
+  does not cite gets an unnumbered context, no citation instruction and no
+  `RAGOutput.citations`, and `run-rag`, `kg_answer` and the console show no
+  markers for it.
+
+  ```yaml
+  search:
+    citations:
+      strategies: {global: true, drift: true}  # cite in global and DRIFT too
+  ```
+
+- `search.citations.enabled: false` restores the earlier context and prompt
+  for every strategy the map does not name. The markers an answer asked to
+  cite writes stay in its text; `run-eval`'s `answer_match` scores the words
+  without them, and an answer not asked to cite as written.
 
 ## Declined answers
 

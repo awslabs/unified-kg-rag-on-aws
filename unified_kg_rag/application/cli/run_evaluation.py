@@ -1622,6 +1622,30 @@ class EvaluationRunner:
             for q in queries
         }
 
+    def _saved_citations(
+        self, manifest: dict[str, Any] | None
+    ) -> tuple[bool, dict[str, bool]]:
+        """``search.citations`` as the run with ``manifest`` answered under
+        it: ``enabled`` and, per strategy, whether its answers cited. A run
+        saved before the per-strategy setting cited in every strategy as
+        ``enabled`` said; one without the block, as this config does."""
+        saved = (manifest or {}).get("citations") or {}
+        enabled = bool(saved.get("enabled", self.config.search.citations.enabled))
+        known = {s.value for s in SearchStrategy if s is not SearchStrategy.AUTO}
+        recorded = saved.get("strategies")
+        if isinstance(recorded, dict):
+            per_strategy = {
+                name: bool(value) for name, value in recorded.items() if name in known
+            }
+        elif "enabled" in saved:
+            per_strategy = dict.fromkeys(sorted(known), enabled)
+        else:
+            per_strategy = {
+                s.value: value
+                for s, value in self.config.search.citations.strategies.items()
+            }
+        return enabled, per_strategy
+
     async def _rescore(
         self, grouped: dict[str, list[SavedRun]], local_outputs: Path
     ) -> dict[str, list[SavedRun]]:
@@ -1630,21 +1654,23 @@ class EvaluationRunner:
         place of the saved ones."""
         dataset_path, dataset = self._rescore_dataset()
         console.rule("[bold]Re-scoring the saved answers[/bold]", style="blue")
-        managers: dict[bool, EvaluationManager] = {}
+        managers: dict[str, EvaluationManager] = {}
         rescored: dict[str, list[SavedRun]] = {}
         for label, runs in grouped.items():
             rescored[label] = []
             for run in runs:
                 # answer_match and graph_aware read the answers without
-                # their citation markers when the run's answers carried them.
-                cited = bool(
-                    ((run.manifest or {}).get("citations") or {}).get(
-                        "enabled", self.config.search.citations.enabled
-                    )
-                )
+                # their citation markers when the run's answers carried them,
+                # and the citation metrics score only those.
+                enabled, per_strategy = self._saved_citations(run.manifest)
+                cited = json.dumps([enabled, per_strategy], sort_keys=True)
                 if cited not in managers:
                     config = self.config.model_copy(deep=True)
-                    config.search.citations.enabled = cited
+                    config.search.citations.enabled = enabled
+                    config.search.citations.strategies = {
+                        SearchStrategy(name): value
+                        for name, value in per_strategy.items()
+                    }
                     managers[cited] = EvaluationManager(
                         config=config,
                         rag_chain=_no_answers(),

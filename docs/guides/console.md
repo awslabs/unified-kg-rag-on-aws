@@ -134,7 +134,9 @@ context under the decline policy); a blocked one says the guardrail
 blocked it. The answer's citation markers (`[1]`, `[2, 3]`) open the
 source they cite in the provenance trace, and the sources the answer cites
 are listed under it with their file and pages; a number the context did
-not show is struck through. Follow-ups continue the conversation unless
+not show is struck through. An answer of a strategy that does not cite
+(`global` and `drift` by default, [Citations](./query.md#citations)) is
+shown as written, without markers. Follow-ups continue the conversation unless
 unticked: the page sends the earlier questions and answers with the
 question (`RAGInput.history`), so the conversation survives a settings
 save or an ingestion. Search options set the results per search, the

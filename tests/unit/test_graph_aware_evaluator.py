@@ -336,6 +336,20 @@ class TestRetrievedCoverage:
         assert cited["answer_length"] == plain["answer_length"]
         assert cited["entity_coverage"] == plain["entity_coverage"] == 0.5
 
+    def test_markers_count_for_a_strategy_that_does_not_cite(
+        self, config: Config
+    ) -> None:
+        # global answers do not cite by default: a bracketed number in one
+        # is the answer's own text.
+        evaluator = GraphAwareEvaluator(config)
+        local, _ = self._report(
+            evaluator, "Vendor ships [1][2].", search_strategy="local"
+        )
+        uncited, _ = self._report(
+            evaluator, "Vendor ships [1][2].", search_strategy="global"
+        )
+        assert uncited["answer_length"] > local["answer_length"]
+
     def test_wordy_answer_does_not_raise_retrieved_coverage(
         self, evaluator: GraphAwareEvaluator
     ) -> None:

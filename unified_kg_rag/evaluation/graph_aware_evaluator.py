@@ -51,6 +51,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     BaseGraphRAGEvaluator,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.models import (
     Config,
@@ -210,7 +211,7 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         self, result: EvaluationResult
     ) -> tuple[list[EvaluationMetric], dict[str, Any]]:
         answer = result.generated_answer or ""
-        if self.config.search.citations.enabled:
+        if citations_enabled(self.config, result.search_strategy):
             # The answer's words: its citation markers ([1]) are no
             # coverage and no length (as answer_match reads it).
             answer = strip_markers(answer)

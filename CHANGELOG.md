@@ -326,8 +326,9 @@ See [`iac/README.md`](iac/README.md).
   `iac/` creates masks email, phone and card numbers in the query too (its PII settings acted on answers only; the
   next deploy publishes a new version). A role outside the CDK stack needs `bedrock:ApplyGuardrail` (#104, #319,
   #344).
-- Answers carry `[n]` citation markers by default (`search.citations.enabled`): their text and the judges' scores
-  are not comparable with 0.2.3 runs; set it `false` for the earlier context and prompt (#627).
+- Answers of every strategy but `global` and `drift` carry `[n]` citation markers by default
+  (`search.citations.enabled`, `search.citations.strategies`): their text and the judges' scores are not comparable
+  with 0.2.3 runs; set `enabled: false` for the earlier context and prompt (#627).
 - A query with conversation history is rewritten as a standalone question (`models.roles.query_rewrite`) that every
   step reads (#212).
 - A filter key no retriever of the strategy declares raises `InvalidFilterError` (#123); a suffix nothing was
@@ -593,12 +594,17 @@ From a `main` checkout (formats and keys no release had):
   deeper and a `community_depth` cut maps other reports), and asks every report once more under the new report prompt:
   one report call per community and its embeddings, the report stage of a first build (no text unit is extracted
   again); later builds reuse them. An incremental run clusters and reports its own communities the new way (#618).
-- #627 citations: answers now cite their context with `[n]` markers (`search.citations.enabled`, on), so answer
-  texts and the LLM judges' scores differ from earlier runs (`answer_match` scores the words without the markers):
-  compare runs of one setting, or set it `false` for the earlier context and prompt. Pages and relative paths are
-  stored with the text units of documents indexed from this release on; to add them to an existing namespace,
-  re-ingest it (`indexing.reset: true`): chunk boundaries and text-unit ids do not change, so the extraction
-  store's records are reused and the cost is the embedding and indexing of the text units.
+- #627 citations: answers now cite their context with `[n]` markers (`search.citations.enabled`, on), so answer texts
+  and the LLM judges' scores differ from earlier runs (`answer_match` scores the words without the markers): compare
+  runs of one setting, or set it `false` for the earlier context and prompt. `global` and `drift` answers no longer
+  carry `[n]` markers or `RAGOutput.citations` by default, and their answer prompt drops the "cite where possible"
+  instruction: set `search.citations.strategies: {global: true, drift: true}` to cite there again (with the plain
+  citation instruction). A `run-eval` comparison of `global` or `drift` against the other strategies, or against a run
+  saved before this change, warns that the answers differ in citing; a saved run without `citations.strategies` in its
+  manifest is read and re-scored as citing in every strategy, as it did. Pages and relative paths are stored with the
+  text units of documents indexed from this release on; to add them to an existing namespace, re-ingest it
+  (`indexing.reset: true`): chunk boundaries and text-unit ids do not change, so the extraction store's records are
+  reused and the cost is the embedding and indexing of the text units.
 - #628 `run-visualization` no longer takes the provider flags (`--backend`, `--llm-provider`, `--llm-model`,
   `--embedding-provider`, `--embedding-model`, `--embedding-dimension`): it renders exported data and calls no model,
   so a script passing one exits 2 until it drops it.
@@ -632,11 +638,15 @@ From a `main` checkout (formats and keys no release had):
   left its reports out of the context; it stays model-written (screened, never a source) (#635, #643). The report
   sections of `local`, `global` and DRIFT cite the same lineage (`findings_text_unit_ids`), so a report and a point
   written from it name the same documents. The answer prompt (concise, comprehensive or a `custom_prompts` override)
-  asks the model to cite them with those markers, ASCII in every answer language; global and DRIFT answers are asked
-  to cite where possible and keep a relevant point with no marker (pairwise judges preferred their uncited answers on
-  comprehensiveness; worded as MS GraphRAG's local, DRIFT and map prompts are, it departs from its global reduce
-  prompt's "Do not include information where the supporting evidence for it is not provided", and is unmeasured on its
-  own). `RAGOutput.citations` lists one `Citation` per number: whether the answer cites it, its documents
+  asks the model to cite them with those markers, ASCII in every answer language, in the same words for every
+  strategy. Citations are selectable per strategy: `search.citations.strategies` is merged over the default `{global:
+  false, drift: false}` and an entry wins over `enabled` either way; `auto` follows its route and `iterative` its base
+  unless it is named itself. On 50 sensemaking questions the pairwise judge preferred the uncited `global` and `drift`
+  answers on comprehensiveness (0.68 and 0.75, Holm-adjusted), and a "cite where possible" instruction for them won
+  none back and cost `global` directness, so it is gone ([evidence](docs/concepts/defaults-and-evidence.md#citations));
+  `{global: true, drift: true}` turns them on with the plain instruction. A strategy that does not cite gets an
+  unnumbered context and no citations, and MCP `kg_answer` and the console show no markers for it.
+  `RAGOutput.citations` lists one `Citation` per number: whether the answer cites it, its documents
   (`CitedDocument`: document id, file name, path relative to the corpus root, pages), text units, chunk id, title,
   seed-graph provenance and IRI; a graph section names the documents of up to `search.citations.lineage_units` (10) of
   its text units that its query's suffix and filters let through, read in batched fetches (an excluded or another
@@ -651,8 +661,10 @@ From a `main` checkout (formats and keys no release had):
   `run-rag` prints the cited sources and its JSON output carries every citation. The retrieval evaluator adds
   `citation_precision` and `citation_recall` against `reference_sources`, each cited citation weighted by its files (a
   graph section of ten lineage files counts a tenth per reference file, not 1 when any matches), and
-  `citation_precision_passages` over the cited passages alone; the run manifest records `citations.enabled` and the
-  scoring, and a comparison warns when its runs differ in either. The pairwise judge, `graph_aware`'s answer coverage
+  `citation_precision_passages` over the cited passages alone, for the answers of a strategy that cites; the run
+  manifest records `citations.enabled`, what it resolved to per strategy (`citations.strategies`) and the scoring, a
+  comparison warns when its runs' answers differ in either, and `--rescore` reads each strategy's answers as they
+  were written. The pairwise judge, `graph_aware`'s answer coverage
   and `answer_length` read the answers without their markers, as `answer_match` does ([Design
   §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
 - `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the

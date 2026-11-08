@@ -135,10 +135,17 @@ fact the context is missing (you may state what it does establish). Never put th
 the context supports the answer, even with a caveat, answer it without the token."""
 
 # Appended to the system prompt of whichever answer prompt runs (built-in or
-# a custom_prompts override) under search.citations.enabled, before any
-# abstention text: the context then numbers its items [1], [2], ...
-# (TokenManager, number_sections). The markers are ASCII in every answer
-# language, so reading them (domain.retrieval.citations) never depends on it.
+# a custom_prompts override) when the query's strategy cites
+# (search.citations: enabled, and per strategy, global and DRIFT off by
+# default), before any abstention text: the context then numbers its items
+# [1], [2], ... (TokenManager, number_sections). The same text for every
+# strategy: global and DRIFT, turned on, get no extra wording. An earlier
+# "cite where possible" suffix for them departed from MS GraphRAG's global
+# reduce prompt ("Do not include information where the supporting evidence
+# for it is not provided"), gained no comprehensiveness and cost global
+# answers directness (docs/concepts/defaults-and-evidence.md#citations). The
+# markers are ASCII in every answer language, so reading them
+# (domain.retrieval.citations) never depends on it.
 CITATION_INSTRUCTIONS = """
 
 CITATIONS:
@@ -146,22 +153,6 @@ Each item of the context starts with a numbered marker such as [1] or [2]. After
 that support it by their markers, written exactly as in the context (square brackets and ASCII digits, as [1] or
 [1][3]) in every language. Cite only markers that appear in the context and never make one up; do not cite an item
 that does not support the statement. Do not add a list of references at the end."""
-
-# Appended after CITATION_INSTRUCTIONS when global or DRIFT search wrote
-# the context (key points, intermediate answers). Read as "cite every
-# statement", the citation rule made the answer leave out points it could
-# not tie to a marker (a synthesized item without one, or a point merged
-# from several), so cited answers covered less. MS GraphRAG's local, DRIFT
-# and map prompts word it alike ("Points supported by data should list their
-# data references"); its global reduce prompt does not, and says instead "Do
-# not include information where the supporting evidence for it is not
-# provided", which this departs from: what the answer may state stays the
-# grounding rules' to decide. Unmeasured on its own (only with the citation
-# rule as a whole).
-SYNTHESIS_CITATION_INSTRUCTIONS = """
-Cite where possible: the markers show what supports a statement, they do not decide what the answer covers. Keep
-every relevant point of the context in the answer; a point drawn from an item without a marker, or merged from
-several items, is still stated, citing the items that support it where there are any."""
 
 # Appended when the strategy flagged its context insufficient
 # (SearchResult.metadata["context_sufficient"] is False) under

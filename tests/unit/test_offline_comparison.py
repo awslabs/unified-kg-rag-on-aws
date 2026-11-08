@@ -1556,6 +1556,59 @@ def test_rescore_scores_the_saved_answers_again(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("citations", "exact"),
+    [
+        # Saved before the per-strategy setting: global answers cited, so
+        # their markers are no words.
+        ({"enabled": True, "scoring": "file_weighted"}, 1.0),
+        # Saved under it with global off: a bracketed number is the
+        # answer's own text.
+        (
+            {
+                "enabled": True,
+                "strategies": {"global": False, "local": True},
+                "scoring": "file_weighted",
+            },
+            0.0,
+        ),
+        ({"enabled": True, "strategies": {"global": True}}, 1.0),
+    ],
+)
+def test_rescore_reads_each_strategys_answers_as_they_were_written(
+    tmp_path: Path, citations: dict[str, Any], exact: float
+) -> None:
+    saved = tmp_path / "runs"
+    _save(
+        saved,
+        "global",
+        _answered("global", {"b1": "Depot [1].", "b2": "Depot [2]."}, "Depot"),
+        stamp="20260101_090000_aaaaaaaa",
+        order=["global"],
+        started=_T0,
+        manifest={"run_id": "r1", "repeat": 1, "citations": citations},
+    )
+    config = Config()
+    config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    code, out = _cli(
+        [
+            "--from-results",
+            str(saved),
+            "--rescore",
+            "--evaluators",
+            "answer_match",
+            "--output-directory",
+            str(tmp_path / "rescored"),
+        ],
+        config,
+    )
+    assert code == 0
+    metrics = out["comparison"]["strategies"]["global"]["metrics"]
+    assert metrics["answer_match/exact_match"]["mean"] == exact
+    # The re-scored manifest keeps what answered.
+    assert out["comparison"]["run_manifest"]["citations"]["enabled"] is True
+
+
+@pytest.mark.parametrize(
     ("argv", "message"),
     [
         (["--data-path", "x.json", "--rescore"], "give --from-results"),
@@ -1593,13 +1646,44 @@ def test_a_span_model_recorded_on_one_side_only_is_warned_not_refused() -> None:
         )
 
 
+def test_runs_are_compared_by_their_strategys_citations() -> None:
+    # The manifest records, per strategy, whether its answers cited: a
+    # global run saved before the per-strategy default (cited) against one
+    # after it (uncited) is warned; local runs of both are not.
+    from unified_kg_rag.evaluation.saved_results import citation_warnings
+
+    per = {"local": True, "mix": True, "global": False, "drift": False}
+    new = {
+        "citations": {"enabled": True, "strategies": per, "scoring": "file_weighted"}
+    }
+    old = {"citations": {"enabled": True, "scoring": "file_weighted"}}
+    assert citation_warnings([("baseline:local", old), ("local", new)]) == []
+    (warning,) = citation_warnings([("baseline:global", old), ("global", new)])
+    assert "on: baseline:global; off: global" in warning
+    # Arms: the strategy before the arm separator decides.
+    on = {"citations": {**new["citations"], "strategies": {**per, "global": True}}}
+    assert citation_warnings([("global@cited", on), ("local", new)]) == []
+    (arm,) = citation_warnings([("global", new), ("global@cited", on)])
+    assert "off: global; on: global@cited" in arm
+    # Strategies of one run that differ by default are told apart too.
+    (mixed,) = citation_warnings([("local", new), ("global", new)])
+    assert "global and drift do not cite by default" in mixed
+    # auto routes among strategies that differ.
+    (routed,) = citation_warnings([("auto", new), ("baseline:auto", old)])
+    assert "per strategy: auto" in routed
+    # An uncited run scored no citation metric: its scoring is no warning.
+    whole = {"citations": {**new["citations"], "scoring": "whole"}}
+    (only,) = citation_warnings([("local", new), ("global", whole)])
+    assert "--rescore" not in only
+
+
 def test_arms_that_differ_in_citations_are_warned() -> None:
     from unified_kg_rag.evaluation.saved_results import citation_warnings
 
     on = {"citations": {"enabled": True, "scoring": "file_weighted"}}
     off = {"citations": {"enabled": False, "scoring": "file_weighted"}}
     (warning,) = citation_warnings([("local", off), ("local@cited", on)])
-    assert "search.citations.enabled (off: local; on: local@cited)" in warning
+    assert "(search.citations, per strategy; off: local; on: local@cited)" in warning
     assert citation_warnings([("a", on), ("b", on)]) == []
     # A run saved before the weighting scored a graph citation whole.
     (old,) = citation_warnings([("baseline:a", {"answer_scoring": None}), ("a", on)])

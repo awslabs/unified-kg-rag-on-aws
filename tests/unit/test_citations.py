@@ -28,6 +28,7 @@ from unified_kg_rag.application.retrieval import citations
 from unified_kg_rag.application.retrieval.rag_chain import (
     NO_CONTEXT_ANSWER,
     GraphRAGChain,
+    ProcessedQuery,
     RAGInput,
 )
 from unified_kg_rag.domain.models import (
@@ -35,12 +36,11 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
+    SearchResult,
     SearchStrategy,
 )
-from unified_kg_rag.domain.prompts.retrieval import (
-    CITATION_INSTRUCTIONS,
-    SYNTHESIS_CITATION_INSTRUCTIONS,
-)
+from unified_kg_rag.domain.prompts import retrieval as retrieval_prompts
+from unified_kg_rag.domain.prompts.retrieval import CITATION_INSTRUCTIONS
 from unified_kg_rag.domain.retrieval.citations import (
     CitationMarkerScanner,
     cited_markers,
@@ -685,10 +685,12 @@ def _chain(
 
 def _query(**fields: Any) -> RAGInput:
     return RAGInput(
-        query="Who stores the widgets?",
-        search_strategy=SearchStrategy.SIMPLE,
-        enable_query_processing=False,
-        **fields,
+        **{
+            "query": "Who stores the widgets?",
+            "search_strategy": SearchStrategy.SIMPLE,
+            "enable_query_processing": False,
+            **fields,
+        }
     )
 
 
@@ -724,41 +726,190 @@ async def test_the_answer_cites_numbered_sections_and_their_documents(
     assert [s["source"] for s in out.sources] == ["tu-1", "e-1"]
 
 
+# --- citations per strategy ------------------------------------------------
+
+_DEFAULT_OFF = {SearchStrategy.GLOBAL, SearchStrategy.DRIFT}
+
+
+def test_global_and_drift_answers_do_not_cite_by_default(config: Config) -> None:
+    # 2026-11-08: on 50 sensemaking questions the uncited global and DRIFT
+    # answers won comprehensiveness (0.68 and 0.75); every other strategy
+    # (structured included) keeps citations on.
+    assert config.search.citations.enabled is True
+    for strategy in SearchStrategy:
+        if strategy is SearchStrategy.AUTO:
+            continue
+        assert citations.citations_enabled(config, strategy) is (
+            strategy not in _DEFAULT_OFF
+        ), strategy
+
+
 @pytest.mark.parametrize(
-    ("strategy", "softened"),
+    ("settings", "expected"),
     [
-        (SearchStrategy.GLOBAL, True),
-        (SearchStrategy.DRIFT, True),
-        (SearchStrategy.LOCAL, False),
-        (SearchStrategy.MIX, False),
+        # An entry turns a strategy on; the map merges over the default, so
+        # naming global leaves DRIFT off.
+        ({"strategies": {"global": True}}, {"global": True, "drift": False}),
+        (
+            {"strategies": {"global": True, "drift": True}},
+            {"global": True, "drift": True},
+        ),
+        # ... or off, and wins over enabled either way.
+        ({"strategies": {"local": False}}, {"local": False, "mix": True}),
+        ({"enabled": False}, {"local": False, "global": False, "structured": False}),
+        (
+            {"enabled": False, "strategies": {"mix": True}},
+            {"mix": True, "local": False, "global": False},
+        ),
     ],
 )
-def test_global_and_drift_answers_cite_where_possible(
-    config: Config, strategy: SearchStrategy, softened: bool
+def test_an_explicit_setting_decides_a_strategys_citations(
+    settings: dict[str, Any], expected: dict[str, bool]
 ) -> None:
-    # rv5: with citations on, pairwise judges preferred the uncited global
-    # and DRIFT answers on comprehensiveness: "after each statement, cite"
-    # read as leaving out what has no marker. Their answers are told to
-    # keep every relevant point and cite where possible; the grounding
-    # rules (the prompt's own) still decide what may be stated.
+    config = Config.model_validate({"search": {"citations": settings}})
+    for name, cites in expected.items():
+        assert citations.citations_enabled(config, name) is cites, name
+
+
+@pytest.mark.parametrize(
+    ("base", "strategies", "cites"),
+    [
+        ("mix", {}, True),
+        ("mix", {"mix": False}, False),
+        ("local", {"local": False}, False),
+        ("local", {"mix": False}, True),
+        # Named itself, iterative is its own.
+        ("mix", {"mix": False, "iterative": True}, True),
+        ("mix", {"iterative": False}, False),
+    ],
+)
+def test_iterative_follows_its_base_unless_it_is_named(
+    base: str, strategies: dict[str, bool], cites: bool
+) -> None:
+    config = Config.model_validate(
+        {
+            "search": {
+                "iterative_search": {"base": base},
+                "citations": {"strategies": strategies},
+            }
+        }
+    )
+    assert citations.citations_enabled(config, SearchStrategy.ITERATIVE) is cites
+
+
+def test_auto_is_no_key_of_the_per_strategy_map() -> None:
+    with pytest.raises(ValueError, match="auto resolves"):
+        Config.model_validate({"search": {"citations": {"strategies": {"auto": True}}}})
+
+
+def test_an_unknown_or_missing_strategy_reads_the_switch(config: Config) -> None:
+    # A result saved without a strategy, or with one this release lacks.
+    assert citations.citations_enabled(config, None) is True
+    assert citations.citations_enabled(config, "retired") is True
+    config.search.citations.enabled = False
+    assert citations.citations_enabled(config, None) is False
+
+
+def _state(strategy: SearchStrategy) -> dict[str, Any]:
+    return {
+        "processed_query": ProcessedQuery(original_query="q", final_query="q"),
+        "search_results": SearchResult(
+            query=SearchQuery(query="q"),
+            results=_results(),
+            total_results=4,
+            search_strategy=strategy.value,
+            processing_time=0.0,
+        ),
+        "resolved_strategy": strategy,
+    }
+
+
+@pytest.mark.parametrize(
+    ("strategy", "strategies", "numbered"),
+    [
+        (SearchStrategy.GLOBAL, {}, False),
+        (SearchStrategy.DRIFT, {}, False),
+        (SearchStrategy.LOCAL, {}, True),
+        (SearchStrategy.MIX, {}, True),
+        (SearchStrategy.STRUCTURED, {}, True),
+        (SearchStrategy.ITERATIVE, {}, True),
+        (SearchStrategy.ITERATIVE, {"mix": False}, False),
+        (SearchStrategy.GLOBAL, {"global": True}, True),
+        (SearchStrategy.LOCAL, {"local": False}, False),
+    ],
+)
+def test_the_answer_context_is_numbered_for_a_strategy_that_cites(
+    config: Config,
+    strategy: SearchStrategy,
+    strategies: dict[str, bool],
+    numbered: bool,
+) -> None:
+    config.search.citations.strategies = {
+        **config.search.citations.strategies,
+        **{SearchStrategy(k): v for k, v in strategies.items()},
+    }
     chain, _store, _prompts = _chain(config)
-    optimized = _token_manager(config).optimize_context(
-        _results(), "q", number_sections=True
-    )
-    instructions = chain._answer_instructions(
-        {"optimized_context": optimized, "resolved_strategy": strategy}
-    )
-    assert instructions.startswith(CITATION_INSTRUCTIONS)
-    assert (SYNTHESIS_CITATION_INSTRUCTIONS in instructions) is softened
-    assert "Cite where possible" in SYNTHESIS_CITATION_INSTRUCTIONS
+    state = _state(strategy)
+    optimized = chain._context_optimization_step(state)
+    assert optimized.numbered is numbered
+    assert any(s.marker is not None for s in optimized.sections) is numbered
+    state["optimized_context"] = optimized
+    instructions = chain._answer_instructions(state)
+    assert (CITATION_INSTRUCTIONS in instructions) is numbered
+
+
+@pytest.mark.parametrize("strategy", [SearchStrategy.GLOBAL, SearchStrategy.DRIFT])
+def test_global_and_drift_turned_on_get_the_plain_citation_instructions(
+    config: Config, strategy: SearchStrategy
+) -> None:
+    # The "cite where possible" suffix is gone: it gained no
+    # comprehensiveness and cost global answers directness (x4 e4), and it
+    # departed from MS GraphRAG's reduce prompt.
+    config.search.citations.strategies = {strategy: True}
+    chain, _store, _prompts = _chain(config)
+    state = _state(strategy)
+    state["optimized_context"] = chain._context_optimization_step(state)
+    assert chain._answer_instructions(state) == CITATION_INSTRUCTIONS
+    assert not hasattr(retrieval_prompts, "SYNTHESIS_CITATION_INSTRUCTIONS")
+    for name in dir(retrieval_prompts):
+        value = getattr(retrieval_prompts, name)
+        if isinstance(value, str):
+            assert "cite where possible" not in value.casefold(), name
     # Without a numbered context there is nothing to cite.
-    unnumbered = _token_manager(config).optimize_context(_results(), "q")
-    assert (
-        chain._answer_instructions(
-            {"optimized_context": unnumbered, "resolved_strategy": strategy}
-        )
-        == ""
-    )
+    config.search.citations.strategies = {strategy: False}
+    state["optimized_context"] = chain._context_optimization_step(state)
+    assert chain._answer_instructions(state) == ""
+
+
+async def test_a_strategy_whose_citations_are_off_answers_without_them(
+    config: Config,
+) -> None:
+    config.search.citations.strategies = {SearchStrategy.SIMPLE: False}
+    chain, store, prompts = _chain(config, answer="Depot stores widgets [1].")
+    out = await chain.ainvoke(_query())
+    system, human = prompts[-1]
+    assert CITATION_INSTRUCTIONS not in system
+    assert "[tu-1] Depot stores widgets for Vendor." in human
+    assert out.citations == []
+    assert store.fetches == []
+    # A bracketed number the model wrote anyway is no unknown marker.
+    assert "unknown_citation_markers" not in out.metadata
+
+
+async def test_auto_follows_the_strategy_it_routes_to(config: Config) -> None:
+    # One candidate: no router call, the query runs simple.
+    config.search.auto_routable_strategies = [SearchStrategy.SIMPLE]
+    config.search.citations.strategies = {SearchStrategy.SIMPLE: False}
+    chain, _store, prompts = _chain(config)
+    out = await chain.ainvoke(_query(search_strategy=SearchStrategy.AUTO))
+    assert out.metadata["search_strategy"] == "simple"
+    assert CITATION_INSTRUCTIONS not in prompts[-1][0]
+    assert out.citations == []
+    config.search.citations.strategies = {SearchStrategy.SIMPLE: True}
+    chain, _store, prompts = _chain(config)
+    out = await chain.ainvoke(_query(search_strategy=SearchStrategy.AUTO))
+    assert CITATION_INSTRUCTIONS in prompts[-1][0]
+    assert [c.marker for c in out.citations] == [1, 2]
 
 
 _KEY_POINT_ANSWERS = {
@@ -964,3 +1115,22 @@ async def test_a_streamed_answer_carries_its_markers(config: Config) -> None:
     assert CITATION_INSTRUCTIONS in prompts[-1][0]
     # A streamed answer reads no lineage.
     assert store.fetches == []
+
+
+@pytest.mark.parametrize("cites", [True, False])
+async def test_kg_answer_shows_markers_only_for_a_strategy_that_cites(
+    config: Config, cites: bool
+) -> None:
+    from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
+
+    config.search.citations.strategies = {SearchStrategy.SIMPLE: cites}
+    chain, _store, prompts = _chain(config, answer="Depot stores widgets [1].")
+    result = await KnowledgeGraphTools(chain).answer(  # type: ignore[arg-type]
+        "Who stores the widgets?", strategy="simple"
+    )
+    assert (CITATION_INSTRUCTIONS in prompts[-1][0]) is cites
+    markers = [(r.citation, r.cited) for r in result.records]
+    if cites:
+        assert (1, True) in markers
+    else:
+        assert all(m == (None, None) for m in markers)

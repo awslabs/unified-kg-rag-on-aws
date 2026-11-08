@@ -76,6 +76,7 @@ from unified_kg_rag.adapters.evaluators.base import (
     SKIPPED_METRICS_KEY,
     BaseGraphRAGEvaluator,
 )
+from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -273,7 +274,7 @@ class RetrievalEvaluator(BaseGraphRAGEvaluator):
             result,
             references,
             source_keys,
-            enabled=self.config.search.citations.enabled,
+            enabled=citations_enabled(self.config, result.search_strategy),
         )
         values.update(citation_values)
         skipped.update(citation_skips)

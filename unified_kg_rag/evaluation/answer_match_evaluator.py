@@ -98,6 +98,7 @@ from unified_kg_rag.adapters.evaluators.base import (
 )
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
+from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -454,9 +455,11 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
 
     def _answer(self, result: EvaluationResult) -> str:
         """The answer's words: without its citation markers ([1]) when the
-        answer prompt asks for them (search.citations)."""
+        answer prompt asked for them (search.citations, for the strategy the
+        answer ran)."""
         answer = result.generated_answer or ""
-        return strip_markers(answer) if self.config.search.citations.enabled else answer
+        cited = citations_enabled(self.config, result.search_strategy)
+        return strip_markers(answer) if cited else answer
 
     @staticmethod
     def _references(ground_truth: str, metadata: dict[str, Any]) -> list[str]:

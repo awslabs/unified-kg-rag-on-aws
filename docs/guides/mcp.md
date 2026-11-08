@@ -77,7 +77,7 @@ and ontology tooling exchange:
 | `entities` | References (`id`, `name`, `type`, `iri`): the entity itself, a relationship's or claim's endpoints, the entities a `query_result` returned (ids and names), or the entities of the same response that cite this chunk |
 | `provenance`, `synthesized` | Seed-graph provenance (`kind`, `seed_graphs`, `iri`); `true` for model-written text such as global search's key points |
 | `attributes` | Kind-specific scalars: `rank`, `weight`, `in_schema`, `type_iri`, `predicate_iri`, `hops` |
-| `citation`, `cited` | `kg_answer` only: the `[n]` marker the answer context gave the record and whether the answer cites it ([citations](./query.md#citations)); `null` in `kg_search` |
+| `citation`, `cited` | `kg_answer` only: the `[n]` marker the answer context gave the record and whether the answer cites it ([citations](./query.md#citations)); `null` in `kg_search`, and in `kg_answer` for a strategy that does not cite (`global` and `drift` by default) |
 
 A response past `mcp.max_response_chars` drops its lowest-ranked records
 and says so (`truncated`, `omitted`).

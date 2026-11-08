@@ -161,6 +161,13 @@ def test_every_strategy_cites_the_documents_its_answer_rests_on(
 
     files = {"contract.txt", "manual.pdf"}
     resolved_graph_citation = False
+    # global and drift answer without citations by default; turned on, as
+    # search.citations.strategies allows, every strategy's are checked.
+    defaults = config.model_copy(deep=True)
+    config.search.citations.strategies = {
+        SearchStrategy.GLOBAL: True,
+        SearchStrategy.DRIFT: True,
+    }
     chain = GraphRAGChain(config, providers=providers)
     try:
         for strategy in SearchStrategy:
@@ -204,3 +211,17 @@ def test_every_strategy_cites_the_documents_its_answer_rests_on(
         assert scanner.markers[0] == 1
     finally:
         chain.close()
+
+    # By default, global and DRIFT answers are asked for no markers.
+    uncited = GraphRAGChain(defaults, providers=providers)
+    try:
+        asked = len(model.contexts)
+        for strategy in (SearchStrategy.GLOBAL, SearchStrategy.DRIFT):
+            out = uncited.invoke(RAGInput(query=question, search_strategy=strategy))
+            assert isinstance(out, RAGOutput), strategy
+            assert out.citations == [], strategy
+            assert "unknown_citation_markers" not in out.metadata, strategy
+            assert out.sources, strategy
+        assert len(model.contexts) == asked
+    finally:
+        uncited.close()

@@ -105,6 +105,7 @@ ships no price table, because one would go stale.
 | `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions, one repeat: `answer_contains` +8.0 points [+3.0, +14.0], EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1], recall@5 -0.6 n.s., +1.2 s and +$0.0060 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions. One repeat on one corpus, so opt-in ([RAPTOR summary tree](#raptor-summary-tree)) |
 | `aws.bedrock.ingestion_effort` | `null` (`default_effort`, `high`) | `low` on a 109-document slice: ingestion cost -19%, answers n.s. on 30 questions ([Ingestion effort](#ingestion-effort)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
+| `search.citations.enabled`, `search.citations.strategies` | `true`; `{global: false, drift: false}` | Against off on 200 MuSiQue questions, two repeats, interleaved: `local` and `mix` answers n.s. (`answer_contains` -0.75 [-2.5, +0.75] and 0.0, after a Holm correction), citation precision 0.75 and 0.82, recall 0.88 and 0.85. On 50 sensemaking questions the answers without citations won comprehensiveness 0.68 [0.585, 0.775] (`global`) and 0.75 [0.67, 0.825] (`drift`) with the differential judge, both significant after a Holm correction; a "cite where possible" instruction for them won no comprehensiveness back and cost `global` directness ([Citations](#citations)) |
 | `search.iterative_search.max_rounds` | 2 | 3 against 2: `answer_contains` +1.5 [-0.5, +3.75] n.s., +2.7 s and +$0.0024 a query; 44% of questions still stop at the cap ([Iterative settings](#iterative-settings)) |
 | `search.token_manager.max_context_tokens` | 30000 | 12000 against 30000: `mix` -40% cost a query, `answer_contains` -2.25 [-5.75, +0.75] n.s., citation precision -3.4 [-6.0, -1.1]; `local` -13% cost, n.s. ([Iterative settings](#iterative-settings)) |
 | `aws.bedrock.default_effort` | `high` | `medium` against `high`: about 2 s faster and -4% cost a query, `answer_contains` n.s., token F1 -3.6 and -4.4 (significant on their own, n.s. after a Holm correction) ([Iterative settings](#iterative-settings)) |
@@ -726,6 +727,74 @@ much of this Wikipedia text, so the absolute scores overstate what
 retrieval adds, and the paired differences between strategies are the
 evidence.
 
+## Citations
+
+`search.citations` numbers the answer context and asks for `[n]` markers
+([Citations](../guides/query.md#citations)). Its defaults are on for every
+strategy but `global` and `drift`, from two runs.
+
+**`local` and `mix`.** The run of 2026-11-07 above answered with citations
+off as an `--arm`:
+
+| Strategy | Answers, off against on | Cost and latency |
+|---|---|---|
+| `local` (200 MuSiQue questions) | `answer_contains` -0.75 [-2.5, +0.75], EM +2.0, token F1 +2.2: n.s. | +39 output tokens, +$0.0015 a query; latency n.s. |
+| `mix` | 0.0, 0.0 and -0.1: n.s. | +24 output tokens, -$0.0003 a query |
+
+With citations on, citation precision (file-weighted) was 0.75 (`local`)
+and 0.82 (`mix`), passage precision 0.83 and 0.85, citation recall 0.88 and
+0.85. So citations stay on there: they cost nothing measurable and make
+answers attributable.
+
+**`global` and `drift`.** In that run their key points and intermediate
+answers reached the context without a number, and the answers without
+citations won comprehensiveness (0.75 and 0.79). A run on 2026-11-08
+(package at commit `876c938b`) measured them again after key points and
+intermediate answers became citable, each naming the documents of the
+reports it was written from (its findings' records). It regenerated the
+3,877 community reports of the index with their findings, on the same
+communities (about $96), and answered the 50 sensemaking questions twice
+with citations on and off, judged by the differential pairwise judge
+(`evaluation.pairwise_mode: differential`, `judge_effort: low`, both orders,
+every repeat). Win rates of the answers without citations, Holm-adjusted
+over the criteria:
+
+| Strategy | Comprehensiveness | Empowerment | Diversity, directness | Orders agreed | Unique statements (estimated tokens), on / off |
+|---|---|---|---|---|---|
+| `global` | 0.68 [0.585, 0.775], Holm p 0.005 | 0.585, n.s. | 0.545 and 0.535, n.s. | 85% | 1,588 / 1,704 |
+| `drift` | 0.75 [0.67, 0.825], Holm p 0.0004 | 0.705 [0.625, 0.78], Holm p 0.0007 | n.s. | 78% | 796 / 819 |
+
+The cited answers were less comprehensive although their key points could
+now be cited. Their citations also attribute little: on 100 MuSiQue
+questions, two repeats, `global` declined 113 of 199 answers and cited a
+file in 45 (citation precision 0.087, recall 0.023), and a cited key
+point named about 9.5 files (`lineage_units` caps it at 10): a point
+credits every report it came from, often a whole map batch. `drift` scored citation
+precision 0.571 and recall 0.903. Naming the reports' findings rather than
+their communities' members changed neither significantly (`drift`
+precision 0.571 against 0.576, `global` 0.087 against 0.071).
+
+**The "cite where possible" instruction.** Those cited `global` and `drift`
+answers carried an extra instruction: cite where possible and keep a
+relevant point that has no marker. It departs from MS GraphRAG's global
+reduce prompt ("Do not include information where the supporting evidence
+for it is not provided"). Against the same configuration without it (four
+runs, ABBA order, pooled), the answers without it won comprehensiveness
+0.48 [0.375, 0.58] (`global`) and 0.49 [0.395, 0.585] (`drift`), n.s., and
+`global` directness 0.665 [0.585, 0.74], Holm p 0.003; `global` citation
+precision on MuSiQue was 0.1225 against 0.1222. It bought no
+comprehensiveness, so it was removed.
+
+So `global` and `drift` answer without citations by default
+(`search.citations.strategies: {global: false, drift: false}`), with the
+reduce prompts they had before citations; set
+`strategies: {global: true, drift: true}` where attribution matters more
+than coverage, which gives them the plain citation instruction of the other
+strategies. `auto` follows the strategy it routes to and `iterative` its
+base. One judge on one question set, and about one `global` answer in five
+of those runs lost a map batch to a reply the parser could not read (12 to
+21 of 100, fixed since by a JSON repair and one retry, not yet re-measured).
+
 ## Iterative settings
 
 The run of 2026-11-07, `iterative` over `mix` and the answer settings, each
@@ -842,13 +911,14 @@ excludes zero.
   repaired copy.
 - **Costs are upper bounds** when the prompt cache hit, and they use the
   dated list prices above.
-- **Earlier answer prompts and run order.** Every run above predates
-  three changes to what a run with today's defaults does. Answers now cite
-  their context with `[n]` markers (`search.citations.enabled`, on since
-  #627): the measured answers were written without them, from a context
-  without numbered sections, so their text, length and the judges'
-  verdicts may differ, and no run has compared citations on and off yet.
-  Community reports now follow an evidence-only prompt with data
+- **Earlier answer prompts and run order.** The runs before 2026-11-07
+  predate three changes to what a run with today's defaults does. Answers
+  of every strategy but `global` and `drift` now cite their context with
+  `[n]` markers (`search.citations`, since #627): the measurements before
+  2026-11-07 were written without them, from a context without numbered
+  sections. The comparison in [Citations](#citations) found no difference
+  on `local` and `mix` answers; `global` and `drift` answer without
+  citations by default, as those measurements did. Community reports now follow an evidence-only prompt with data
   references (#618), and split communities stay parents of their pieces:
   the `global` and `drift` measurements read reports of the earlier prompt
   and hierarchy. And `run-eval` now answers a comparison interleaved

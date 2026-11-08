@@ -43,6 +43,7 @@ from unified_kg_rag.domain.models import (
     ModelRole,
     SearchQuery,
     SearchResult,
+    SearchStrategy,
 )
 from unified_kg_rag.domain.models.config import EvaluationConfig
 from unified_kg_rag.evaluation import EvaluationManager
@@ -833,6 +834,29 @@ class TestWarmUp:
             built = manager.build_run_manifest(queries=[query], ground_truths=[truth])
             assert built["dataset"]["dense_script"] is True, (question, answer)
 
+    def test_the_manifest_records_each_strategys_citations(
+        self, config: Config
+    ) -> None:
+        # Saved runs compare and re-score by what each strategy's answers
+        # did: global and drift do not cite by default, iterative follows
+        # its base, and auto is no strategy of its own.
+        config.search.citations.strategies = {
+            SearchStrategy.MIX: False,
+            SearchStrategy.GLOBAL: True,
+        }
+        manifest = EvaluationManager(config, rag_chain=object()).build_run_manifest()
+        strategies = manifest["citations"]["strategies"]
+        assert "auto" not in strategies
+        assert strategies["global"] is True
+        assert strategies["drift"] is False
+        assert strategies["mix"] is strategies["iterative"] is False
+        assert strategies["local"] is strategies["structured"] is True
+        default = EvaluationManager(Config(), rag_chain=object()).build_run_manifest()
+        assert {k for k, v in default["citations"]["strategies"].items() if not v} == {
+            "global",
+            "drift",
+        }
+
     def test_the_manifest_records_the_judge_effort_span_model_and_citations(
         self, config: Config
     ) -> None:
@@ -851,7 +875,9 @@ class TestWarmUp:
         assert scoring["span_model"] == manifest["models"]["answer_span"]
         assert scoring["span_effort"] == "medium"
         assert manifest["models"]["judge_effort"] == "medium"
-        assert manifest["citations"] == {"enabled": False, "scoring": "file_weighted"}
+        assert manifest["citations"]["enabled"] is False
+        assert manifest["citations"]["scoring"] == "file_weighted"
+        assert not any(manifest["citations"]["strategies"].values())
         # null inherits the judge model's tier effort.
         config.evaluation.judge_effort = None
         inherited = EvaluationManager(config, rag_chain=object()).build_run_manifest(

@@ -292,6 +292,14 @@ describe("AnswerText", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
+  it("shows an answer whose strategy does not cite as plain text", () => {
+    // global and drift answers do not cite by default: a bracketed number
+    // they write is text, neither a pending nor an unknown marker.
+    renderIn(<AnswerText text="Vendor ships [1]." citations={[]} cites={false} />);
+    expect(screen.getByText("Vendor ships [1].")).not.toHaveClass("cite");
+    expect(document.querySelector(".cite")).toBeNull();
+  });
+
   it("lists the cited sources with their pages", () => {
     const opened = vi.fn();
     renderIn(

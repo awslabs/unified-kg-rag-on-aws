@@ -301,8 +301,10 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   바꾼 비교군, 다른 호출의 `--baseline-results`나 `--from-results` 실행) 판정 지표의 차이에
   판정 모델의 차이도 섞인다고 경고합니다.
 - 실행 매니페스트는 비교군 실행마다 `arm`(이름, 오버레이 경로와 sha256, suffix)과
-  `compared_runs`를 기록하므로 `--from-results`가 같은 짝을 다시 만듭니다. 비교군끼리
-  `search.citations.enabled`가 다르면 답변 프롬프트도 다르다고 경고합니다.
+  `compared_runs`를 기록하므로 `--from-results`가 같은 짝을 다시 만듭니다. 실행마다 그
+  전략의 답변이 인용하는지(`search.citations`를 전략별로 판정한 값, 매니페스트의
+  `citations.strategies`)가 다르면 답변 프롬프트도 다르다고 경고합니다. `global`과 `drift`는
+  기본값으로 인용하지 않으므로, 맵에서 같게 맞추지 않으면 다른 전략과 비교할 때 경고합니다.
 - 오버레이가 질의 추출(질문마다 한 번 호출하는 엔터티와 키워드)을 바꾸지 않으면 비교군은 기본
   실행의 추출 결과로 검색합니다. 추출 모델, 기본 계층의 추론 강도(effort),
   `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, LLM

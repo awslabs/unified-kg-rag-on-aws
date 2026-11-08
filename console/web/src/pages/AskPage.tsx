@@ -343,7 +343,7 @@ function TurnView({
         ) : (
           <p className={`answer-text${turn.status === "streaming" ? " streaming" : ""}`}>
             {turn.text ? (
-              <AnswerText text={turn.text} citations={result?.citations} onOpen={onOpenCitation} />
+              <AnswerText text={turn.text} citations={result?.citations} cites={result?.cites} onOpen={onOpenCitation} />
             ) : turn.status === "streaming" ? (
               <span className="muted">{t("ask.retrieving")}</span>
             ) : (

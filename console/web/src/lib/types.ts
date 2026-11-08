@@ -104,6 +104,8 @@ export interface Usage {
 export interface AskResult {
   answer: string;
   citations: Citation[];
+  /** Whether the answer's strategy cites (search.citations); absent from an older server. */
+  cites?: boolean;
   unknown_citation_markers: number[];
   strategy: string | null;
   routing: { decided_by: "router" | "only_candidate" | "fallback"; candidates: string[] } | null;
