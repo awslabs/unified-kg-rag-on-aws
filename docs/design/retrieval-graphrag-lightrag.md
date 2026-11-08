@@ -108,8 +108,11 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   text units, plus a community-report section and a relationship section
   (MS GraphRAG local search). Each query entity is looked up in the entities
   index on its own, concurrently: the entities of its name
-  (`compact_name_key`) seed the expansion, else its top hit when that scores
-  at least `search.local_search.seed_score_ratio` (0.6) of the best hit of
+  (`compact_name_key`) seed the expansion, else its best hit whose name
+  covers every term of it (`domain/retrieval/linking.py` `choose_links`,
+  shared with the structured strategy's mentions; a hit sharing one word,
+  "Acme Supplies" for an absent "Zorblax Supplies", seeds nothing) when that
+  scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit of
   any query entity (`seed_floor`: on a hybrid search the ratio is read at
   equal weights, where a hit only the kNN side found scores at most 0.5 of
   one both found, and rescaled piecewise linearly so 0.5 lands on

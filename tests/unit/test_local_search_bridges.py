@@ -85,7 +85,7 @@ class FakeDocumentRetriever:
                 score=1.0,
                 source="vendor",
                 retriever_type="entity",
-                metadata={"id": "vendor", "text_unit_ids": []},
+                metadata={"id": "vendor", "name": "Vendor", "text_unit_ids": []},
             )
         ]
 

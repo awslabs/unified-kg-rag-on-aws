@@ -121,11 +121,18 @@ the model-written plan text the output guardrail screens).
    hits whose `compact_name_key` equals the mention's (Han, Hangul and Kana
    spacing and legal forms do not matter, as for `local`'s seeds); else
    the top `link_candidates` of a **lexical** (BM25) search of the name,
-   above `link_min_score`. A kNN search returns its nearest entities for
-   any text, so without a name match or a shared word a name links
-   nothing and the query falls back (`unlinked_mention`): an existence
-   question about an entity the data does not name is never answered from
-   a lookalike. The linked entities' names are written into the plan's
+   above `link_min_score`, whose names cover the mention
+   (`domain/retrieval/linking.py` `choose_links`, the rule `local`'s seeds
+   use too): every term of the mention's `compact_name_key` (its words,
+   legal-form designators left out; a Han, Hangul or Kana word as its
+   character bigrams) is a term of the entity's name, or one at least
+   `processing.similarity_threshold` alike (a spelling variant). A kNN
+   search returns its nearest entities for any text and BM25 every name
+   sharing one word, so without a name match or a covering name a mention
+   links nothing and the query falls back (`unlinked_mention`): an
+   existence question about an entity the data does not name ("Zorblax
+   Supplies" beside `Acme Supplies`, 라마바 상사 beside `가나다 상사`) is
+   never answered from a lookalike. The linked entities' names are written into the plan's
    description (`named "Acme" = "Acme Supplies"`), so the answer sees what
    was counted.
 5. *Compile, check, execute* (`GraphQueryPort.aexecute`), below.

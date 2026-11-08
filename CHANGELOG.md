@@ -755,7 +755,9 @@ From a `main` checkout (formats and keys no release had):
   `search.output_ceilings.graph_query`) writes the question as a closed JSON plan over the graph's schema profile
   (declared types plus a sampled profile of what the suffix holds), never query text; code validates it (one repair
   call with the refusal), links the names it mentions through the hybrid entity search (a name without a name match
-  needs a lexical hit, so an absent entity links nothing and falls back), compiles it to Gremlin bytecode (Neptune,
+  needs a lexical hit whose name holds every word of it, legal forms aside, Han, Hangul and Kana by character pairs
+  and a word spelled alike past `processing.similarity_threshold`, so an absent entity that shares one word with a
+  stored one links nothing and falls back), compiles it to Gremlin bytecode (Neptune,
   Gremlin Server; each branch of a hop range ends in its own `simplePath()`, since Neptune ignores one after a
   `union`, and a fixed length walks one chain without a `union`, whose one-branch form Neptune rejects) or
   parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
@@ -1504,8 +1506,10 @@ Queries and retrieval.
 - A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
   went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
-  top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal
-  hybrid weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530).
+  best hit whose name holds every word of it (the structured strategy's linking rule) when that scores at least
+  `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal hybrid weights; one lookup of the joined
+  names seeded a wrong neighbour beside every right seed (#517, #530), and an absent "Zorblax Supplies" seeded "Acme
+  Supplies".
 - Graph expansion returns every seed and its neighbourhood ranked by distance (#161, #218), fetches at most its
   per-seed budget (#310), and no longer depends on the store's edge order (`indexing.neptune.deterministic_order:
   false` keeps it) (#470, #473); an expanded entity shows its type (#567).

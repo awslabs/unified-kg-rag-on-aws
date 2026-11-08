@@ -100,6 +100,7 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     vertex_rank,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
+from unified_kg_rag.domain.retrieval.linking import choose_links, hit_name
 from unified_kg_rag.ports.graph_query import GraphQueryPort
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
@@ -540,13 +541,14 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     async def _link(
         self, query: SearchQuery, plan: ValidatedPlan, run: _Run
     ) -> dict[str, tuple[str, ...]]:
-        """Each mention node's entity ids: the hits of a hybrid entity search
-        (under the caller's filters and the node's types) whose name has the
-        mention's ``compact_name_key``; else the best ``link_candidates`` of a
-        lexical (BM25) search above ``link_min_score``, so a name no stored
-        entity shares a word with links nothing (a kNN search returns its
-        nearest entities for any text). A mention that links nothing sets
-        the fallback reason ``unlinked_mention``."""
+        """Each mention node's entity ids (``domain.retrieval.linking``): the
+        hits of a hybrid entity search (under the caller's filters and the
+        node's types) whose name has the mention's ``compact_name_key``;
+        else the best ``link_candidates`` hits of a lexical (BM25) search
+        above ``link_min_score`` whose names cover every term of the
+        mention (or one ``processing.similarity_threshold`` alike), so an absent name that shares a word with a stored one
+        ("Zorblax Supplies", "Acme Supplies") links nothing. A mention that
+        links nothing sets the fallback reason ``unlinked_mention``."""
         nodes = [node for node in plan.nodes if node.mention is not None]
         if not nodes:
             return {}
@@ -575,33 +577,27 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 "Structured query entity link",
             )
 
-        def name(hit: RetrievalResult) -> str:
-            return str((hit.metadata or {}).get("name") or "")
-
         async def link(node: Any) -> list[RetrievalResult]:
             mention = str(node.mention)
-            key = compact_name_key(mention)
             hits = await search(
                 mention,
                 node.types,
                 query.search_type,
                 max(settings.link_candidates * 3, 10),
             )
-            exact = [
-                h for h in hits if h.source and key and compact_name_key(name(h)) == key
-            ]
+            exact = choose_links(mention, hits, limit=0)
             if exact:
                 return exact
             lexical = await search(
                 mention, node.types, SearchType.LEXICAL, settings.link_candidates
             )
-            return [
-                h
-                for h in lexical
-                if h.source
-                and float(h.score or 0.0) > 0.0
-                and float(h.score or 0.0) >= settings.link_min_score
-            ]
+            return choose_links(
+                mention,
+                lexical,
+                limit=settings.link_candidates,
+                floor=settings.link_min_score,
+                similarity=self.config.processing.similarity_threshold,
+            )
 
         found = await gather_or_cancel(link(node) for node in nodes)
         linked: dict[str, tuple[str, ...]] = {}
@@ -612,7 +608,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 run.fall_back("unlinked_mention")
                 return {}
             linked[node.var] = tuple(str(h.source) for h in chosen)
-            names[node.var] = [name(h) or str(h.source) for h in chosen]
+            names[node.var] = [hit_name(h) or str(h.source) for h in chosen]
         run.linked = {var: list(ids) for var, ids in linked.items()}
         run.linked_names = names
         return linked

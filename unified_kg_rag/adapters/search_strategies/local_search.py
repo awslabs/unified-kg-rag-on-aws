@@ -18,7 +18,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     Constants,
@@ -31,6 +30,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
+from unified_kg_rag.domain.retrieval.linking import choose_links
 from unified_kg_rag.domain.retrieval.ppr import summed_seed_weights
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
@@ -413,10 +413,10 @@ class LocalSearchStrategy(PPRRankingMixin):
 
         Each focus entity is looked up on its own, concurrently (at most
         ``search.max_concurrency`` at once), and seeds the expansion with
-        the hits that are its name (``compact_name_key``), else with its top
-        hit when that scores at least
-        ``search.local_search.seed_score_ratio`` of the best hit of any
-        focus entity. One query of the joined names, two hits per name and
+        the hits that are its name (``compact_name_key``), else with its best
+        hit whose name covers the focus name's terms when that scores at
+        least ``search.local_search.seed_score_ratio`` of the best hit of any
+        focus entity (``focus_seeds``). One query of the joined names, two hits per name and
         no floor seeded a wrong neighbour beside the right entity on every
         query of a synthetic 12-query multi-hop corpus, and a generic focus
         word ("province") seeded unrelated entities. Without an
@@ -446,6 +446,7 @@ class LocalSearchStrategy(PPRRankingMixin):
                 query.search_type,
                 hybrid.vector_weight / (hybrid.lexical_weight + hybrid.vector_weight),
             ),
+            self.config.processing.similarity_threshold,
         )
 
     # The vector weight the seed_score_ratio scale is set at (the default
@@ -506,28 +507,26 @@ class LocalSearchStrategy(PPRRankingMixin):
 
     @staticmethod
     def focus_seeds(
-        focus: list[str], per_focus: list[list[RetrievalResult]], ratio: float
+        focus: list[str],
+        per_focus: list[list[RetrievalResult]],
+        ratio: float,
+        similarity: float = 1.0,
     ) -> list[RetrievalResult]:
         """The seeds of the focus entities ``focus`` from their own hits
-        ``per_focus`` (best first): a focus entity's exact name matches
-        (every entity of that ``compact_name_key``), else its top hit if it
-        scores at least ``ratio`` times the best hit of all; each seed once,
-        in focus order."""
+        ``per_focus`` (best first), each linked by ``choose_links``: a focus
+        entity's exact name matches (every entity of that
+        ``compact_name_key``), else its best hit whose name covers the focus
+        name (each term, or one at least ``similarity`` alike) if it scores
+        at least ``ratio`` times the best hit of all; each seed once, in
+        focus order."""
         best = max(
             (hit.score or 0.0 for hits in per_focus for hit in hits), default=0.0
         )
         seeds: dict[str, RetrievalResult] = {}
         for name, hits in zip(focus, per_focus, strict=True):
-            key = compact_name_key(name)
-            chosen = [
-                hit
-                for hit in hits
-                if key
-                and compact_name_key(str((hit.metadata or {}).get("name") or "")) == key
-            ]
-            if not chosen and hits and (hits[0].score or 0.0) >= ratio * best:
-                chosen = hits[:1]
-            for hit in chosen:
+            for hit in choose_links(
+                name, hits, limit=1, floor=ratio * best, similarity=similarity
+            ):
                 seeds.setdefault(str(hit.source), hit)
         return list(seeds.values())
 

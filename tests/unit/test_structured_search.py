@@ -701,10 +701,21 @@ async def test_the_declared_schema_alone_still_lists_the_core_properties() -> No
     assert "\n3" in _table(result).content
 
 
-@pytest.mark.parametrize("absent", ["Zorblax Industries", "존재하지않는회사"])
+@pytest.mark.parametrize(
+    "absent",
+    [
+        "Zorblax Industries",
+        "존재하지않는회사",
+        # One word shared with a stored name (Acme Supplies, 가나다 상사).
+        "Zorblax Supplies",
+        "라마바 상사",
+        "Zorblax Supplies Inc",
+    ],
+)
 async def test_a_name_no_entity_has_links_nothing(absent: str) -> None:
-    """A vector search returns its nearest entities for any name: without a
-    name match or a lexical hit the mention links nothing, so an existence
+    """A vector search returns its nearest entities for any name, a lexical
+    one every name that shares a word: without a name match or a hit whose
+    name covers every term of it the mention links nothing, so an existence
     question about an absent entity falls back instead of answering yes."""
     plan = _with(
         {

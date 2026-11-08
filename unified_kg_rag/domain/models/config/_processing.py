@@ -803,8 +803,11 @@ class ProcessingConfig(BaseModel):
         le=1.0,
         description=(
             "Similarity threshold for fuzzy entity resolution "
-            "(fuzzy_entity_resolution) and for matching claim subjects and "
-            "objects to entity names. Raise it if distinct entities merge."
+            "(fuzzy_entity_resolution), for matching claim subjects and "
+            "objects to entity names, and for a word of a name a query gives "
+            "to stand for a word of a stored entity's name (local search's "
+            "focus seeds, structured mentions). Raise it if distinct entities "
+            "merge."
         ),
     )
     document_parsing: DocumentParsingConfig = Field(

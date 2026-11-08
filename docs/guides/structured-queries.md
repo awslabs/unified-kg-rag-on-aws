@@ -60,9 +60,11 @@ several kinds. Under a filter the schema shows no sampled value.
 A name in the plan links to the stored entities whose name it is
 (spacing and legal forms aside, so `가나다상사` finds `가나다 상사`) among
 the hits of a hybrid entity search, else to the best hits of a lexical
-search for it. A name no entity shares a word with links nothing, and the
-query falls back (`unlinked_mention`): "Does Zorblax Industries supply
-Acme?" is not answered from a lookalike. The context shows which entities
+search for it whose names hold every word of it (legal forms aside; Han,
+Hangul and Kana compared by character pairs). Any other name links nothing,
+and the query falls back (`unlinked_mention`): neither "Does Zorblax
+Industries supply Acme?" nor "Does Zorblax Supplies ...", which shares one
+word with `Acme Supplies`, is answered from a lookalike. The context shows which entities
 each name linked to.
 
 ## When no plan answers

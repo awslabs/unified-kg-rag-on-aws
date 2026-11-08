@@ -69,13 +69,17 @@ class FakeRetriever:
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
         prefix = query.index_prefixes[0] if query.index_prefixes else self.tag
+        metadata: dict[str, Any] = {"id": f"{prefix}-id", "text_unit_ids": []}
+        if query.query:
+            # The entity the text names, so a name lookup links it.
+            metadata["name"] = query.query
         return [
             RetrievalResult(
                 content=f"{prefix} result",
                 score=1.0,
                 source=f"{prefix}-1",
                 retriever_type=self.tag,
-                metadata={"id": f"{prefix}-id", "text_unit_ids": []},
+                metadata=metadata,
             )
         ]
 
