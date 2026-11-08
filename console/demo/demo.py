@@ -7,8 +7,8 @@ Writes a small synthetic corpus and a matching ``run-eval`` dataset
 a restart keeps it, with what Settings saved; ``--reset-config`` writes it
 again), ingests
 the corpus into the embedded SQLite stores (``run-ingestion``) and starts
-``run-console`` on the loopback interface. Needs the ``console`` extra:
-``uv sync --extra console``.
+``run-console`` on the loopback interface. Needs the ``console`` extra
+(``uv run --extra console``, below), checked before anything is ingested.
 
 Models (``--models``):
 
@@ -23,8 +23,9 @@ Models (``--models``):
 
 Usage::
 
-    uv run python console/demo/demo.py --models fake
-    uv run python console/demo/demo.py --models bedrock --region us-west-2
+    uv run --no-dev --extra console python console/demo/demo.py --models fake
+    uv run --no-dev --extra console python console/demo/demo.py \
+        --models bedrock --region us-west-2
 
 The console binds 127.0.0.1 only. On a remote host, forward the port
 (``ssh -L 8501:127.0.0.1:8501 <host>``, or VS Code's port forwarding)
@@ -51,6 +52,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import corpus  # noqa: E402
 import fake_models  # noqa: E402
+
+from unified_kg_rag.application.cli.run_console import missing_extra  # noqa: E402
 
 # Illustrative prices of the fake models, so the dashboard and the
 # comparison show a cost column in the fake mode. Real runs take the current
@@ -264,6 +267,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Fake models: seconds between answer chunks",
     )
     args = parser.parse_args(argv)
+    # Before the ingestion: without the extra, run-console would fail after
+    # it, and the address printed would serve nothing.
+    if not args.prepare_only and (missing := missing_extra()):
+        raise SystemExit(
+            f"The console demo needs the console extra (missing: "
+            f"{', '.join(missing)}): uv run --no-dev --extra console python "
+            "console/demo/demo.py ..."
+        )
 
     workspace = args.workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)

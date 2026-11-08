@@ -720,8 +720,8 @@ From a `main` checkout (formats and keys no release had):
   `--allow-remote`), requires a per-launch access token, refuses paths outside its directories and cross-site
   requests, and loads nothing from another host. The web client (`console/web/`, Vite, React, TypeScript) is in
   English and nine more languages, and `console/demo/demo.py` prepares a synthetic corpus, a dataset and a config
-  (kept on a restart, `--reset-config` to write it again) for fake, Ollama or Bedrock models
-  ([Console](docs/guides/console.md)).
+  (kept on a restart, `--reset-config` to write it again) for fake, Ollama or Bedrock models, and stops before the
+  ingestion without the `console` extra ([Console](docs/guides/console.md)).
 - `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose inputs
   changed (#631).
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
