@@ -5024,10 +5024,41 @@ class AbstentionConfig(BaseModel):
     )
 
 
+# The strategies whose answers cite by default: every one but these. A
+# configured map is merged over them, so naming one strategy leaves the
+# others' defaults. global and DRIFT answer from model-written synthesis
+# (key points, intermediate answers), and their uncited answers won
+# comprehensiveness (docs/concepts/defaults-and-evidence.md#citations).
+DEFAULT_CITATION_STRATEGIES: dict[SearchStrategy, bool] = {
+    SearchStrategy.GLOBAL: False,
+    SearchStrategy.DRIFT: False,
+}
+
+
+def _over_default_citations(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {**DEFAULT_CITATION_STRATEGIES, **value}
+    return value
+
+
+def _reject_auto_citations(
+    value: dict[SearchStrategy, bool],
+) -> dict[SearchStrategy, bool]:
+    if SearchStrategy.AUTO in value:
+        raise ValueError(
+            "citations.strategies is keyed by the strategy a query runs; auto "
+            "resolves to one of them, so set it on those instead"
+        )
+    return value
+
+
 class CitationConfig(BaseModel):
     """Numbered answer contexts and the answer's citations
     (``RAGOutput.citations``). Guide: docs/guides/query.md#citations
     """
+
+    # An assigned strategies map merges over the default as a loaded one.
+    model_config = ConfigDict(validate_assignment=True)
 
     enabled: bool = Field(
         default=True,
@@ -5039,10 +5070,43 @@ class CitationConfig(BaseModel):
             "relative path, pages), text units and seed-graph provenance, and "
             "whether the answer cites it. The markers stay in the answer text. "
             "false: the context labels passages by id and the prompts are "
-            "those of earlier releases; no citations. Unmeasured against off: "
-            "the instruction changes answers, so compare runs of one setting."
+            "those of earlier releases; no citations. The setting of every "
+            "strategy that strategies does not name. On local and mix, answers "
+            "with and without citations scored alike "
+            "(docs/concepts/defaults-and-evidence.md#citations)."
         ),
     )
+    strategies: Annotated[
+        dict[SearchStrategy, bool],
+        BeforeValidator(_over_default_citations),
+        AfterValidator(_reject_auto_citations),
+    ] = Field(
+        default_factory=lambda: dict(DEFAULT_CITATION_STRATEGIES),
+        description=(
+            "Per strategy, whether its answers cite, over enabled (an entry "
+            "wins either way). The map is merged over the default {global: "
+            "false, drift: false}: on 50 sensemaking questions their answers "
+            "without citations won comprehensiveness (global 0.68, drift "
+            "0.75, a pairwise judge) "
+            "(docs/concepts/defaults-and-evidence.md#citations). {global: "
+            "true, drift: true} turns them back on, with the plain citation "
+            "instruction. An auto query follows the strategy it routes to, "
+            "and iterative follows its base (iterative_search.base) unless "
+            "it is named itself."
+        ),
+    )
+
+    def enabled_for(
+        self, strategy: SearchStrategy, base: SearchStrategy | None = None
+    ) -> bool:
+        """Whether answers of ``strategy`` cite: its ``strategies`` entry,
+        else that of the strategy it wraps (``base``: iterative's), else
+        ``enabled``."""
+        for key in (strategy, base):
+            if key is not None and key in self.strategies:
+                return self.strategies[key]
+        return self.enabled
+
     lineage_units: int = Field(
         default=10,
         ge=1,

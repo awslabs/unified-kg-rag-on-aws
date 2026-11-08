@@ -34,6 +34,7 @@ from unified_kg_rag.application.bootstrap import (
     build_providers,
     resolve_extraction_schema,
 )
+from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     RAGInput,
@@ -1568,11 +1569,19 @@ class EvaluationManager:
                 if EvaluatorType.ANSWER_MATCH in enabled
                 else None
             ),
-            # Whether the answers cite (the answer prompt asks for markers)
-            # and how the citation metrics weigh a citation's files: arms
-            # that differ compare those too.
+            # Whether the answers cite (the answer prompt asks for markers):
+            # the switch and, per strategy, what it resolves to (auto's
+            # routes and iterative's base included), and how the citation
+            # metrics weigh a citation's files: arms that differ compare
+            # those too, and a re-score reads each strategy's answers as
+            # they were written.
             "citations": {
                 "enabled": self.config.search.citations.enabled,
+                "strategies": {
+                    s.value: citations_enabled(self.config, s)
+                    for s in SearchStrategy
+                    if s is not SearchStrategy.AUTO
+                },
                 "scoring": CITATION_SCORING,
             },
             # What the usage records count (USAGE_SCHEMA: 2 meters the

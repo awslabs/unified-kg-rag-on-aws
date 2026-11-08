@@ -3278,9 +3278,31 @@ benchmark shows client-side filtering too slow or truncating.
 
 ### 7.1 Document citations
 
-An answer cites the documents it rests on. The parts, all on by default
-(`search.citations.enabled`; off restores the context and prompts of earlier
-releases and returns no citations):
+An answer cites the documents it rests on. The parts, on by default for
+every strategy but `global` and `drift` (`search.citations.enabled`; off
+restores the context and prompts of earlier releases and returns no
+citations):
+
+- **Per strategy.** `search.citations.strategies` maps a strategy to on or
+  off over `enabled` (an entry wins either way), merged over the default
+  `{global: false, drift: false}` like `answer_prompt_style`: on 50
+  sensemaking questions the pairwise judge preferred their uncited answers on
+  comprehensiveness
+  ([evidence](concepts/defaults-and-evidence.md#citations)).
+  `citations.citations_enabled(config, strategy)` resolves it once for the
+  chain, the evaluators, the run manifest and the console, for the strategy
+  a query ran: `auto`'s route (an `auto` key is refused), and for a wrapper,
+  its own entry, else its base's (`iterative` over `mix` cites as `mix`
+  does; `wrapped_strategy`), else `enabled`. `structured` is a strategy like
+  the others (on). A strategy that does not cite gets an unnumbered context
+  (`number_sections=False`), no citation instruction, no
+  `RAGOutput.citations` and no `unknown_citation_markers`; the evaluators
+  read its answers as written and skip its citation metrics
+  (`citations_disabled`). The run manifest records the resolved setting of
+  every strategy (`citations.strategies`), so `--baseline-results` and
+  `--from-results` compare, and `--rescore` reads, each strategy's answers
+  as they were written (a run saved before it followed `enabled`
+  everywhere).
 
 - **Numbered context.** `optimize_context(..., number_sections=True)` (the
   chain's answer context only; DRIFT's and iterative's intermediate prompts
@@ -3337,16 +3359,14 @@ releases and returns no citations):
   override), like the abstention text: cite the supporting items after each
   statement with their markers, written as is (ASCII digits in square
   brackets) in every answer language, and only markers the context shows.
-  Global and DRIFT answers get `SYNTHESIS_CITATION_INSTRUCTIONS` after it:
-  cite where possible, and keep a relevant point with no marker to cite.
-  The wording follows MS GraphRAG's local, DRIFT and map prompts ("Points
-  supported by data should list their data references"); its global reduce
-  prompt, which this replaces, says instead "Do not include information
-  where the supporting evidence for it is not provided", and keeping an
-  uncited point departs from it (unmeasured on its own). With citations on, a pairwise judge preferred their uncited
-  answers on comprehensiveness (sensemaking-50, x3 experiment 3), read as
-  the rule leaving out what it could not cite; what may be stated stays the
-  grounding rules' to decide.
+  It is the same text for every strategy that cites, `global` and `drift`
+  turned on included. An earlier "cite where possible" suffix for those two
+  (keep a relevant point with no marker to cite) departed from MS GraphRAG's
+  global reduce prompt ("Do not include information where the supporting
+  evidence for it is not provided"); against the same answers without it,
+  it gained no comprehensiveness and lost `global` directness, so it was
+  removed, and with citations off by default their answer prompts are the
+  ones before citations.
 - **Resolution** (`application/retrieval/citations.py`). `RAGOutput.citations`
   lists one `Citation` per numbered section: its marker, section type,
   source id, title (file, entity, `A -> B`, report title), seed-graph

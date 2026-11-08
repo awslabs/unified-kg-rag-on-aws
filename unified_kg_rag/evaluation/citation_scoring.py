@@ -25,7 +25,7 @@ main document first), kept on the result as
 
 Files match references as in the retrieval evaluator (``source_keys``).
 All are skipped without ``reference_sources``, with
-``search.citations.enabled`` off (``citations_disabled``) and for a result
+``search.citations`` off for the result's strategy (``citations_disabled``) and for a result
 saved before citations existed (``no_citation_data``); precision is also
 skipped for an answer that cites no file (``no_citations``), where recall
 is 0, and passage precision for one that cites no passage
@@ -113,8 +113,9 @@ def citation_scores(
 
     ``references`` maps each reference's match key to its name, and
     ``source_keys`` is the retrieval evaluator's matching function, so
-    citations and sources match references alike; ``enabled`` is
-    ``search.citations.enabled``."""
+    citations and sources match references alike; ``enabled`` is whether
+    the result's strategy cites (``citations_enabled``: ``search.citations``
+    for that strategy)."""
     cited = result.cited_source_ids
     reason = (
         "no_reference_sources"

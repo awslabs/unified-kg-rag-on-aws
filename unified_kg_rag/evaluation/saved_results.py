@@ -33,6 +33,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.shared import EvaluationException, get_logger
 
 from .answer_match_evaluator import SPAN_EFFORT_KEY, SPAN_MODEL_KEY, TOKENS_KEY
+from .arms import label_strategy
 from .comparison import USAGE_SCHEMA, Run
 
 logger = get_logger(__name__)
@@ -336,15 +337,34 @@ def check_answer_scoring(
     return warnings
 
 
+def recorded_citations(citations: dict[str, Any], label: str) -> str:
+    """Whether the answers of run ``label`` cited, as its manifest's
+    ``citations`` block records it: ``on``, ``off``, or ``per strategy``
+    for an ``auto`` run whose routes differ. The block's ``strategies``
+    (per strategy, what ``search.citations`` resolved to) decides; a run
+    saved before it was recorded followed ``enabled`` everywhere."""
+    strategy = label_strategy(label).removeprefix("baseline:")
+    per = citations.get("strategies")
+    if isinstance(per, dict) and per:
+        if strategy in per:
+            return "on" if per[strategy] else "off"
+        values = {bool(v) for v in per.values()}
+        if len(values) > 1:
+            return "per strategy"
+        return "on" if values.pop() else "off"
+    return "on" if citations.get("enabled") else "off"
+
+
 def citation_warnings(
     manifests: Sequence[tuple[str, dict[str, Any] | None]],
 ) -> list[str]:
-    """Warnings when the compared runs differ in ``search.citations.enabled``
-    (the answer prompt asks for markers on one side only: the answers differ
+    """Warnings when the answers of the compared runs differ in whether
+    they cite (``search.citations``, resolved for each run's strategy: the
+    answer prompt asks for markers on one side only, so the answers differ
     by the prompt as well as the strategy) or scored the citation metrics
     another way (``citations.scoring``; a run saved before it was recorded
     credited a graph citation whole)."""
-    enabled: dict[str, list[str]] = {}
+    cited: dict[str, list[str]] = {}
     # How the runs that may have scored citations did (one saved before
     # the block was recorded may have).
     scoring: dict[str, list[str]] = {}
@@ -355,25 +375,27 @@ def citation_warnings(
         if not isinstance(citations, dict):
             scoring.setdefault("unrecorded", []).append(label)
             continue
-        enabled.setdefault(str(citations.get("enabled")), []).append(label)
-        if citations.get("enabled"):
+        setting = recorded_citations(citations, label)
+        cited.setdefault(setting, []).append(label)
+        if setting != "off":
             scoring.setdefault(str(citations.get("scoring")), []).append(label)
     warnings = []
-    if len(enabled) > 1:
+    if len(cited) > 1:
         listed = "; ".join(
-            f"{'on' if value == 'True' else 'off'}: "
-            f"{', '.join(dict.fromkeys(labels))}"
-            for value, labels in enabled.items()
+            f"{value}: {', '.join(dict.fromkeys(labels))}"
+            for value, labels in cited.items()
         )
         warnings.append(
-            f"The compared runs differ in search.citations.enabled ({listed}): "
-            "the answer prompt asks for citation markers on one side only, so "
-            "the deltas measure that prompt as well as the strategies "
-            "(answer_match, graph_aware and the pairwise judge read the "
-            "answers without markers; the citation metrics exist on one side "
-            "only)."
+            "The compared runs differ in whether their answers cite "
+            f"(search.citations, per strategy; {listed}): the answer prompt "
+            "asks for citation markers on one side only, so the deltas "
+            "measure that prompt as well as the strategies (answer_match, "
+            "graph_aware and the pairwise judge read the answers without "
+            "markers; the citation metrics exist on one side only). To "
+            "compare the strategies alone, set search.citations.strategies "
+            "alike for them (global and drift do not cite by default)."
         )
-    if len(scoring) > 1 and enabled.get("True"):
+    if len(scoring) > 1 and any(value != "off" for value in cited):
         listed = "; ".join(
             f"{value}: {', '.join(dict.fromkeys(labels))}"
             for value, labels in scoring.items()

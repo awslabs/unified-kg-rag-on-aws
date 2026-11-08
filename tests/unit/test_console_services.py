@@ -28,7 +28,13 @@ from unified_kg_rag.application.cli.console.jobs import (
 )
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.retrieval.rag_chain import ProcessedQuery, RAGOutput
-from unified_kg_rag.domain.models import Config, Methodology, SearchQuery, SearchResult
+from unified_kg_rag.domain.models import (
+    Config,
+    Methodology,
+    SearchQuery,
+    SearchResult,
+    SearchStrategy,
+)
 from unified_kg_rag.shared.exceptions import StoreConnectionError
 
 pytestmark = pytest.mark.unit
@@ -255,6 +261,39 @@ async def test_chunks_carry_the_markers_they_close(tmp_path: Path) -> None:
     markers = [e["markers"] for e in events if e["kind"] == "chunk"]
     assert markers == [[], [1, 2], [3], []]
     assert "".join(e["text"] for e in events if e["kind"] == "chunk") == output.answer
+    await service.close()
+
+
+@pytest.mark.parametrize(
+    ("requested", "ran", "streamed", "cites"),
+    [
+        ("local", "local", [[1, 2], [3]], True),
+        # global and drift answers do not cite by default: no markers.
+        ("global", "global", [[], []], False),
+        ("drift", "drift", [[], []], False),
+        # auto's route is known with its result: the page shows the
+        # streamed text as plain text once the result says so.
+        ("auto", "global", [[1, 2], [3]], False),
+    ],
+)
+async def test_an_answer_shows_markers_only_when_its_strategy_cites(
+    tmp_path: Path, requested: str, ran: str, streamed: list[list[int]], cites: bool
+) -> None:
+    chunks = ["Vendor ships [1, 2]", " and stores [3]"]
+    output = _output(search_strategy=ran)
+    output.answer = "".join(chunks)
+    chain = _StreamingChain(output, chunks)
+    service = AskService(
+        Config, ConsoleStore(tmp_path / "s.sqlite3"), chain_factory=lambda _c: chain
+    )
+    events = [
+        e
+        async for e in service.ask(
+            AskRequest(query="q", search_strategy=SearchStrategy(requested))
+        )
+    ]
+    assert [e["markers"] for e in events if e["kind"] == "chunk"] == streamed
+    assert events[-1]["kind"] == "result" and events[-1]["cites"] is cites
     await service.close()
 
 

@@ -145,17 +145,18 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 
 ## 인용
 
-모든 답변은 근거가 된 문서를 인용합니다(`search.citations`, 기본값은 켜짐). 답변
-컨텍스트는 근거 항목(본문 조각, 엔티티, 관계, 클레임, 커뮤니티 보고서, 요약)에 `[1]`, `[2]`,
-... 번호를 붙이고, 답변 프롬프트는 모델에게 이 표식으로 인용하라고 지시합니다. 표식은 답변
-언어와 관계없이 ASCII로 씁니다. 전역 검색의 핵심 요점과 DRIFT의 중간 답변에도 하나씩 번호가
-붙습니다. 각 항목은 MS GraphRAG의 `[Data: Reports (...)]`처럼 그 글의 바탕이 된 보고서(또는
+답변은 근거가 된 문서를 인용합니다(`search.citations`). 기본값으로는 `global`과 `drift`를 뺀
+모든 전략의 답변이 인용합니다. 답변 컨텍스트는 근거 항목(본문 조각, 엔티티, 관계, 클레임, 커뮤니티
+보고서, 요약)에 `[1]`, `[2]`, ... 번호를 붙이고, 답변 프롬프트는 모델에게 이 표식으로 인용하라고
+지시합니다. 표식은 답변 언어와 관계없이 ASCII로 씁니다. `global`과 `drift`는 켜지 않으면 표식 없이
+답합니다. 개괄형(sensemaking) 질문에서 인용하지 않은 답변이 더 포괄적이었기 때문입니다
+([근거](../concepts/defaults-and-evidence.md#citations), 영문). 켜면 전역 검색의 핵심 요점과 DRIFT의
+중간 답변에도 하나씩 번호가 붙습니다. 각 항목은 MS GraphRAG의 `[Data: Reports (...)]`처럼 그 글의 바탕이 된 보고서(또는
 로컬 컨텍스트)의 문서를 밝히며, 근거 예산 때문에 보고서가 컨텍스트에서 빠져도 마찬가지입니다.
 보고서를 읽는 모든 전략에서 보고서는 커뮤니티 전체가 아니라 발견 사항(finding)이 인용한 엔터티와
 관계의 문서를 밝힙니다(발견 사항을 저장하기 전에 색인한 보고서는 커뮤니티의 문서를 쓰고, 관계
 색인이 없는 GraphRAG 전용 네임스페이스에서는 엔터티의 문서를 밝힙니다). 모델이 쓴 글이므로 출처로는
-나열하지 않으며, 이 전략의 답변은 표식이 없는 요점도 빠뜨리지 않고 인용할 수 있는 곳에서
-인용합니다. 표식의 숫자는 세 자리까지이므로 `[2020]` 같은
+나열하지 않습니다. 표식의 숫자는 세 자리까지이므로 `[2020]` 같은
 괄호 속 연도는 본문으로 남습니다.
 
 ```text
@@ -181,8 +182,21 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
   인용까지 돌려줍니다.
 - 가드레일이 차단한 답변에는 인용이 없고, 마스킹한 답변은 마스킹된 텍스트 기준으로 인용
   여부를 표시합니다. 거절한 답변은 출처와 마찬가지로 인용을 유지합니다.
-- `search.citations.enabled: false`이면 이전 컨텍스트와 프롬프트로 돌아갑니다. 답변 텍스트에는
-  표식이 남으며, `run-eval`의 `answer_match`는 표식을 뺀 단어로 채점합니다.
+- 전략별 설정: `search.citations.strategies`는 기본값 `{global: false, drift: false}` 위에
+  병합되며, 항목이 있으면 켜든 끄든 `enabled`보다 우선합니다. `auto`는 라우팅된 전략을 따르고,
+  `iterative`는 자신이 따로 지정되지 않으면 기반 전략(`search.iterative_search.base`)을 따릅니다.
+  인용하지 않는 전략은 번호 없는 컨텍스트를 받고, 인용 지시와 `RAGOutput.citations`가 없으며,
+  `run-rag`, `kg_answer`, 콘솔도 표식을 보여 주지 않습니다.
+
+  ```yaml
+  search:
+    citations:
+      strategies: {global: true, drift: true}  # global과 DRIFT도 인용
+  ```
+
+- `search.citations.enabled: false`이면 맵에 지정되지 않은 모든 전략이 이전 컨텍스트와 프롬프트로
+  돌아갑니다. 인용하라고 지시받은 답변의 표식은 텍스트에 남고, `run-eval`의 `answer_match`는
+  그런 답변은 표식을 뺀 단어로, 인용 지시를 받지 않은 답변은 쓰인 그대로 채점합니다.
 
 ## 답변 거절
 

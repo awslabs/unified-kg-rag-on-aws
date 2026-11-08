@@ -7,9 +7,11 @@ Events (``kind`` plus fields): ``start`` (the query id, the trace id when
 tracing is on), ``chunk`` (answer text as the answer model streams it,
 ``GraphRAGChain.ainvoke(on_answer_chunk=...)``, with the citation markers
 it completes, read by ``CitationMarkerScanner`` so a marker split across
-chunks counts once it closes), then ``result`` (the answer, its citations,
-its sources with their provenance and context markers, how ``auto``
-routed, rerank status, usage, cost and latency) or ``error``.
+chunks counts once it closes; none for a strategy whose citations are off),
+then ``result`` (the answer, its citations and ``cites``, whether its
+strategy cites at all (``search.citations``), its sources with their
+provenance and context markers, how ``auto`` routed, rerank status, usage,
+cost and latency) or ``error``.
 
 A follow-up carries the conversation itself (``RAGInput.history``): the
 page keeps its turns, so a chain rebuilt after a settings save or an
@@ -31,6 +33,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodology
 from unified_kg_rag.application.cli.console.jobs import namespace_of
 from unified_kg_rag.application.cli.console.store import ConsoleStore
+from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.application.retrieval.rag_chain import (
     ROUTING_KEY,
     ConversationTurn,
@@ -461,6 +464,8 @@ class AskService:
                 }
             )
             scanner = CitationMarkerScanner()
+            # An auto query's route is known only with its result.
+            scans = citations_enabled(config, request.search_strategy)
             output = await chain.ainvoke(
                 RAGInput(
                     query=request.query,
@@ -479,10 +484,14 @@ class AskService:
                     suffix=request.suffix,
                 ),
                 on_answer_chunk=lambda text: queue.put_nowait(
-                    {"kind": "chunk", "text": text, "markers": scanner.feed(text)}
+                    {
+                        "kind": "chunk",
+                        "text": text,
+                        "markers": scanner.feed(text) if scans else [],
+                    }
                 ),
             )
-            if tail := scanner.finish():
+            if scans and (tail := scanner.finish()):
                 queue.put_nowait({"kind": "chunk", "text": "", "markers": tail})
         return output, trace_id
 
@@ -511,6 +520,9 @@ class AskService:
         return {
             "answer": output.answer,
             "citations": citations,
+            # Whether the answer's strategy cites (search.citations): the
+            # page shows a [n] of an answer that does not as plain text.
+            "cites": citations_enabled(config, metadata.get("search_strategy")),
             "unknown_citation_markers": metadata.get("unknown_citation_markers") or [],
             "strategy": metadata.get("search_strategy"),
             "routing": metadata.get(ROUTING_KEY),

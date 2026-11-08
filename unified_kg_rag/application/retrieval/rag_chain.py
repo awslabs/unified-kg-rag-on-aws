@@ -133,7 +133,6 @@ from unified_kg_rag.domain.prompts.retrieval import (
     DECLINE_INSTRUCTIONS,
     HEDGE_INSTRUCTIONS,
     QUERY_RESULT_INSTRUCTIONS,
-    SYNTHESIS_CITATION_INSTRUCTIONS,
     describe_routable_strategies,
 )
 from unified_kg_rag.domain.retrieval.abstention import (
@@ -245,10 +244,6 @@ def seed_provenance(metadata: dict[str, Any]) -> dict[str, Any] | None:
 # answer. Also the answer of a declined answer that was only the [NO_ANSWER]
 # token (search.abstention.strip_marker).
 NO_CONTEXT_ANSWER = NO_CONTEXT_ANSWERS[LanguageCode.EN]
-
-# The strategies whose context is model-written synthesis (key points,
-# intermediate answers): their answer cites where possible.
-_SYNTHESIZING_STRATEGIES = frozenset({SearchStrategy.GLOBAL, SearchStrategy.DRIFT})
 
 # What a reported source keeps of each of a report's findings.
 _FINDING_IDS = ("entity_ids", "relationship_ids")
@@ -562,7 +557,11 @@ class RAGOutput(BaseModel):
     answer context, ``[n]`` in the answer, with the documents, pages and text
     units it rests on and whether the answer cites it; a number the answer
     uses that the context did not show is listed in
-    ``metadata["unknown_citation_markers"]``. A blocked answer has none.
+    ``metadata["unknown_citation_markers"]``. A blocked answer has none, and
+    so has every answer of a strategy whose citations are off
+    (``search.citations.strategies``: ``global`` and ``drift`` by default;
+    ``auto`` follows its route, ``iterative`` its base): its context is not
+    numbered and its answer carries no ``[n]`` markers.
     An ``auto`` query's ``metadata["routing"]`` says how its strategy was
     chosen (``ROUTING_KEY``).
     """
@@ -577,7 +576,8 @@ class RAGOutput(BaseModel):
     citations: list[Citation] = Field(
         default_factory=list,
         description="The numbered sections of the answer context ([n]) and "
-        "what each rests on (search.citations)",
+        "what each rests on (search.citations); empty when the strategy's "
+        "citations are off (global and drift by default)",
     )
     conversation_id: str | None = Field(
         description="The conversation session identifier"
@@ -1574,7 +1574,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 if strategy is not None
                 else ()
             ),
-            number_sections=self.config.search.citations.enabled,
+            # search.citations, per strategy: auto's route, iterative's base.
+            number_sections=citations.citations_enabled(self.config, strategy),
         )
 
     def _context_optimization_step(self, state: dict[str, Any]) -> OptimizedContext:
@@ -1653,19 +1654,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     def _answer_instructions(self, state: dict[str, Any]) -> str:
         """The text appended to the answer's system prompt: the citation
-        instructions of a numbered context (``search.citations``; global
-        and DRIFT search's ask to cite where possible, so no relevant point
-        is left out for want of a marker), the graph query result's
-        instruction when the context holds one (the structured strategy),
-        then the ``search.abstention`` text ("" with all off)."""
+        instructions of a numbered context (``search.citations``), the graph
+        query result's instruction when the context holds one (the
+        structured strategy), then the ``search.abstention`` text ("" with
+        all off)."""
         parts = []
         optimized: OptimizedContext | None = state.get("optimized_context")
         if optimized is not None and any(
             s.marker is not None for s in optimized.sections
         ):
             parts.append(CITATION_INSTRUCTIONS)
-            if state.get("resolved_strategy") in _SYNTHESIZING_STRATEGIES:
-                parts.append(SYNTHESIS_CITATION_INSTRUCTIONS)
         if self._declines_insufficient(state):
             return "".join([*parts, DECLINE_INSTRUCTIONS])
         if self._holds_query_result(state):

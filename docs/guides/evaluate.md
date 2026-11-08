@@ -353,8 +353,11 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   other invocations) warns that its judged deltas measure the judges too.
 - The run manifest records each arm run's `arm` (name, overlay path and
   sha256, suffix) and `compared_runs`, so `--from-results` rebuilds the
-  same pairs. A comparison whose arms differ in `search.citations.enabled`
-  warns that the answer prompt differs too.
+  same pairs. A comparison whose runs differ in whether their answers cite
+  (`search.citations`, resolved for each run's strategy, which the manifest
+  records as `citations.strategies`) warns that the answer prompt differs
+  too: `global` and `drift` do not cite by default, so they warn against
+  the other strategies unless the map sets them alike.
 - An arm retrieves on the base runs' query extractions (entities and
   keywords, one call per question) when its overlay leaves them alone; one
   that changes the extraction's model, the default tier's effort,

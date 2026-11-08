@@ -52,7 +52,8 @@ finally:
   ([History from the caller](./query.md#history-from-the-caller)).
 - `output.citations` lists the numbered context sections the answer's `[n]`
   markers refer to, with their documents and pages, and whether the answer
-  cites each ([Citations](./query.md#citations)).
+  cites each; it is empty for a strategy that does not cite (`global` and
+  `drift` by default, [Citations](./query.md#citations)).
 - `chain.search(...)` (`await chain.asearch(...)`) retrieves without
   answering and returns a `SearchOutput` (`search_results`,
   `processed_query`, `metadata`).

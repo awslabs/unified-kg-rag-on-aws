@@ -4,7 +4,8 @@
  * An answer with its citation markers: each [n] the answer's citations hold
  * opens its source in the provenance trace; a number the context did not
  * show is marked as such. While the answer streams, its markers are shown
- * but not yet linked (the citations come with the result).
+ * but not yet linked (the citations come with the result). An answer whose
+ * strategy does not cite (`search.citations`) is plain text.
  */
 import { useI18n } from "../i18n/i18n";
 import { answerSegments } from "../lib/citations";
@@ -15,11 +16,14 @@ export interface AnswerTextProps {
   /** The answer's citations; undefined while it streams. */
   citations?: Citation[];
   onOpen?: (citation: Citation) => void;
+  /** Whether the answer's strategy cites; false shows its text as written. */
+  cites?: boolean;
 }
 
-export function AnswerText({ text, citations, onOpen }: AnswerTextProps) {
+export function AnswerText({ text, citations, onOpen, cites = true }: AnswerTextProps) {
   const { t } = useI18n();
   const byMarker = new Map((citations ?? []).map((c) => [c.marker, c]));
+  if (!cites) return <span>{text}</span>;
   return (
     <>
       {answerSegments(text).map((segment, index) => {

@@ -19,6 +19,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
+    SearchStrategy,
 )
 from unified_kg_rag.evaluation import EvaluationManager, RetrievalEvaluator
 from unified_kg_rag.evaluation.answer_match_evaluator import AnswerMatchEvaluator
@@ -32,8 +33,10 @@ def _scores(
     cited: list[list[str]] | None,
     refs: list[str],
     types: list[str] | None = None,
+    strategy: str | None = None,
 ) -> tuple[dict[str, float], dict[str, str]]:
     result = EvaluationResult(
+        search_strategy=strategy,
         query_id="q",
         question="?",
         generated_answer="a",
@@ -246,6 +249,55 @@ def test_answer_match_scores_the_words_without_the_markers(
     )
     report = AnswerMatchEvaluator(config).evaluate_single(
         EvaluationQuery(query_id="q", question="?"), result, reference
+    )
+    values = {m.metric_type.value: m.value for m in report.metrics}
+    assert values["exact_match"] == exact
+
+
+@pytest.mark.parametrize(
+    ("strategy", "strategies", "reason"),
+    [
+        # global and drift answers do not cite by default: their citation
+        # metrics are skipped, not scored 0.
+        ("global", {}, "citations_disabled"),
+        ("drift", {}, "citations_disabled"),
+        ("local", {}, None),
+        ("iterative", {"mix": False}, "citations_disabled"),
+        ("global", {"global": True}, None),
+    ],
+)
+def test_citation_metrics_follow_the_answers_strategy(
+    config: Config, strategy: str, strategies: dict[str, bool], reason: str | None
+) -> None:
+    config.search.citations.strategies = {
+        **config.search.citations.strategies,
+        **{SearchStrategy(k): v for k, v in strategies.items()},
+    }
+    values, skipped = _scores(config, [], ["a.txt"], strategy=strategy)
+    if reason is None:
+        assert values["citation_recall"] == 0.0
+    else:
+        assert "citation_recall" not in values
+        assert skipped["citation_recall"] == reason
+
+
+@pytest.mark.parametrize(
+    ("strategy", "exact"),
+    [("local", 1.0), ("global", 0.0), ("drift", 0.0), ("mix", 1.0)],
+)
+def test_answer_match_strips_markers_only_from_answers_asked_to_cite(
+    config: Config, strategy: str, exact: float
+) -> None:
+    result = EvaluationResult(
+        query_id="q",
+        question="?",
+        generated_answer="Depot [1].",
+        ground_truth="Depot",
+        search_strategy=strategy,
+        metadata={},
+    )
+    report = AnswerMatchEvaluator(config).evaluate_single(
+        EvaluationQuery(query_id="q", question="?"), result, "Depot"
     )
     values = {m.metric_type.value: m.value for m in report.metrics}
     assert values["exact_match"] == exact

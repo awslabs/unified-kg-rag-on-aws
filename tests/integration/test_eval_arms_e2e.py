@@ -156,7 +156,7 @@ def test_configuration_arms_are_answered_paired_and_rebuilt(
     ]
     assert aa_delta["mean_delta"] == 0.0 and aa_delta["family"] == "primary"
     # The citations arm differs from the base in search.citations.enabled.
-    assert any("search.citations.enabled" in w for w in comparison["warnings"])
+    assert any("whether their answers cite" in w for w in comparison["warnings"])
     # Each arm run's manifest names its overlay; its files carry its label.
     summaries = {
         p.name: json.loads(p.read_text())
