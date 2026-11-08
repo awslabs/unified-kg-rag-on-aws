@@ -1195,7 +1195,12 @@ async def test_model_written_results_are_screened_with_the_answer(
     assert output.search_results.total_results == len(contents)
     screened = [text for text, source, _ in guard.calls if source is GuardSource.OUTPUT]
     assert "Vendor and Buyer signed the supply agreement." not in screened
-    assert [r["action"] for r in output.metadata["guardrail"]] == ["blocked", "masked"]
+    # The joined check's intervention, then each result's own.
+    assert [(r["action"], r.get("scope")) for r in output.metadata["guardrail"]] == [
+        ("blocked", "joined"),
+        ("blocked", None),
+        ("masked", None),
+    ]
 
 
 async def test_model_written_results_are_not_screened_without_the_output_check() -> (
@@ -1304,7 +1309,57 @@ async def test_an_intervening_check_screens_each_point_and_leaks_nothing() -> No
     written = [r.content for r in screened.results if r.metadata.get("synthesized")]
     assert not any("a@example.com" in c or "FORBIDDEN" in c for c in written)
     assert screened.total_results == 4
-    assert [r["action"] for r in records] == ["blocked", "masked"]
+    # Regression (rv6): the joined intervention went unrecorded, so one on
+    # the combination alone (no point drawing one) left no trace.
+    assert [(r["action"], r.get("scope")) for r in records] == [
+        ("blocked", "joined"),
+        ("blocked", None),
+        ("masked", None),
+    ]
+
+
+@pytest.mark.parametrize(
+    "unit",
+    ["Vendor ships widget lot", "공급사가 부품을 출하한다", "供給者が部品を出荷する"],
+    ids=["en", "ko", "ja"],
+)
+async def test_the_joined_check_reads_chunks_of_bounded_size(unit: str) -> None:
+    # Regression (rv6 M4): forty long key points were one ~32k-character
+    # check, above the size AWS recommends per ApplyGuardrail request (~12
+    # text units) and read less sharply by a policy. They are checked in
+    # chunks of at most 12,000 characters; only the points of a chunk that
+    # intervened are checked one by one.
+    points = [f"{unit} {i}. " + "x" * 780 for i in range(40)]
+    points[25] += " a@example.com"
+    guard = _ScreeningGuard()
+    records: list[dict[str, Any]] = []
+    result = _key_points(*points)
+    screened = await _screening_chain(guard)._screen_synthesized(result, records)
+
+    joined = [text for text, _, _ in guard.calls if "\n\n" in text]
+    assert len(joined) > 1
+    assert all(len(text) <= 12_000 for text in joined)
+    assert "\n\n".join(joined) == "\n\n".join(points)
+    # Only the intervening chunk's points are checked again.
+    (flagged,) = [text for text in joined if "a@example.com" in text]
+    single = [text for text, _, _ in guard.calls if "\n\n" not in text]
+    assert single == [p for p in points if p in flagged.split("\n\n")]
+    assert [(r["action"], r.get("scope")) for r in records] == [
+        ("masked", "joined"),
+        ("masked", None),
+    ]
+    assert screened.results[25].content.endswith("{EMAIL}")
+
+
+async def test_a_result_longer_than_a_chunk_is_checked_once_alone() -> None:
+    guard = _ScreeningGuard()
+    records: list[dict[str, Any]] = []
+    long = "요점: " + "가" * 13_000 + " a@example.com"
+    result = _key_points("Vendor ships widgets.", long)
+    screened = await _screening_chain(guard)._screen_synthesized(result, records)
+    assert [text for text, _, _ in guard.calls] == ["Vendor ships widgets.", long]
+    assert [(r["action"], r.get("scope")) for r in records] == [("masked", None)]
+    assert screened.results[1].content.endswith("{EMAIL}")
 
 
 async def test_per_point_checks_run_concurrently_within_the_bound() -> None:
@@ -1334,3 +1389,27 @@ async def test_per_point_checks_run_concurrently_within_the_bound() -> None:
     assert guard.peak == 3
     # No point intervened on its own: the joined verdict's text is never used.
     assert screened.results == result.results
+
+
+async def test_the_joined_chunks_are_checked_one_after_another() -> None:
+    # Together the chunks may exceed ApplyGuardrail's text units a second.
+    class _Slow(_RecordingGuard):
+        def __init__(self) -> None:
+            super().__init__()
+            self.in_flight = self.peak = 0
+
+        async def acheck(
+            self, text: str, source: GuardSource, **kwargs: Any
+        ) -> GuardVerdict:
+            await super().acheck(text, source, **kwargs)
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+            await asyncio.sleep(0.01)
+            self.in_flight -= 1
+            return GuardVerdict(action=GuardAction.NONE, text=text)
+
+    guard = _Slow()
+    result = _key_points(*(f"요점 {i}: " + "x" * 2000 for i in range(20)))
+    await _screening_chain(guard, concurrency=8)._screen_synthesized(result, [])
+    assert len(guard.calls) > 2
+    assert guard.peak == 1

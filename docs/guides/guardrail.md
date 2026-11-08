@@ -14,9 +14,10 @@ To create the guardrail with the CDK stack, see
   a streamed answer then arrives as one chunk). With `check_output`, the
   model-written search results (`metadata.synthesized`: DRIFT's
   intermediate answers, global search's key points or summary) are screened
-  too: one check of them all, and only when it intervenes one check each
-  (`search.max_concurrency` at a time), a refused one dropped from
-  `search_results`, a masked one masked. Only these are billed.
+  too: joined checks of at most 12,000 characters, one after another, and
+  only for a chunk whose check intervened (recorded in `metadata.guardrail`
+  with `scope: joined`) one check each (`search.max_concurrency` at a time),
+  a refused one dropped from `search_results`, a masked one masked. Only these are billed.
 - **What happens.**
   - A blocked query gets the guardrail's message, retrieves nothing, writes
     no memory and sets `RAGOutput.metadata.blocked`. A masked query continues

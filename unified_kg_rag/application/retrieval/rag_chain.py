@@ -253,6 +253,14 @@ _SYNTHESIZING_STRATEGIES = frozenset({SearchStrategy.GLOBAL, SearchStrategy.DRIF
 # What a reported source keeps of each of a report's findings.
 _FINDING_IDS = ("entity_ids", "relationship_ids")
 
+# The characters one joined guardrail check of the model-written results
+# reads at most (their texts joined by blank lines; a longer text is checked
+# alone). ApplyGuardrail counts a text unit per 1,000 characters and
+# allows 25 text units a second by default; the AWS Machine Learning Blog
+# post on long-context inputs suggests chunks of 12 units, checked one after
+# another, so a joined check never nears the quota on its own.
+_JOINED_CHECK_CHARS = 12_000
+
 # The search metadata of iterative search and its model-written text: the
 # follow-up queries searched (``searched``), and each verdict's bridge
 # entities and follow-up queries.
@@ -2562,11 +2570,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         They are returned with the search results (``ainvoke`` and
         ``asearch``), so with ``check_output`` they must not reach the caller
         unscreened. Retrieved results are corpus text and pass as they are.
-        One check reads them all; only when it intervenes is each checked on
-        its own, ``search.max_concurrency`` at a time (a check per key point,
+        They are checked joined, in chunks of at most
+        ``_JOINED_CHECK_CHARS`` characters (``_check_chunks``), one chunk
+        after another; only the
+        results of a chunk whose check intervened are checked each on its
+        own, ``search.max_concurrency`` at a time (a check per key point,
         one after another, added a guardrail round trip per point to every
-        global query). ``plan_texts`` receives the structured plan's texts
-        and what the guardrail made of each (``_screen_structured_metadata``).
+        global query). A joined check that intervened is recorded with
+        ``scope: joined``, so an intervention on the combination no single
+        result draws is reported; its text is never used. ``plan_texts``
+        receives the structured plan's texts and what the guardrail made of
+        each (``_screen_structured_metadata``).
         """
         if not self._screen_outputs:
             return search_results
@@ -2582,27 +2596,55 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             return search_results
         assert self.guard is not None
         guard = self.guard
-        joined = await guard.acheck("\n\n".join(written), GuardSource.OUTPUT)
-        if not joined.intervened:
+        concurrency = self.config.search.max_concurrency
+        chunks = _check_chunks(written, _JOINED_CHECK_CHARS)
+        # One chunk after another: together they may exceed the quota.
+        joined = await gather_bounded(
+            1,
+            (
+                guard.acheck("\n\n".join(written[i] for i in chunk), GuardSource.OUTPUT)
+                for chunk in chunks
+            ),
+        )
+        verdicts: dict[int, GuardVerdict] = {}
+        again: list[int] = []
+        for chunk, verdict in zip(chunks, joined, strict=True):
+            if not verdict.intervened:
+                continue
+            if len(chunk) == 1:
+                # A chunk of one result: its check is that result's own.
+                verdicts[chunk[0]] = verdict
+                continue
+            records.append(
+                {**_guard_record(GuardSource.OUTPUT, verdict), "scope": "joined"}
+            )
+            again.extend(chunk)
+        if not verdicts and not again:
             return search_results
-        verdicts = iter(
-            await gather_bounded(
-                self.config.search.max_concurrency,
-                (guard.acheck(text, GuardSource.OUTPUT) for text in written),
+        verdicts.update(
+            zip(
+                again,
+                await gather_bounded(
+                    concurrency,
+                    (guard.acheck(written[i], GuardSource.OUTPUT) for i in again),
+                ),
+                strict=True,
             )
         )
         kept: list[RetrievalResult] = []
+        position = -1
         for result in search_results.results:
             if not self._is_synthesized(result.metadata) or not result.content:
                 kept.append(result)
                 continue
-            verdict = next(verdicts)
-            if not verdict.intervened:
+            position += 1
+            own = verdicts.get(position)
+            if own is None or not own.intervened:
                 kept.append(result)
                 continue
-            records.append(_guard_record(GuardSource.OUTPUT, verdict))
-            if verdict.action is not GuardAction.BLOCKED:
-                kept.append(result.model_copy(update={"content": verdict.text}))
+            records.append(_guard_record(GuardSource.OUTPUT, own))
+            if own.action is not GuardAction.BLOCKED:
+                kept.append(result.model_copy(update={"content": own.text}))
         return search_results.model_copy(
             update={"results": kept, "total_results": len(kept)}
         )
@@ -3229,6 +3271,22 @@ def _screened_query(rag_input: RAGInput, metadata: dict[str, Any]) -> str | None
         for record in metadata.get("guardrail") or []
     )
     return None if input_blocked else rag_input.query
+
+
+def _check_chunks(texts: list[str], limit: int) -> list[list[int]]:
+    """The positions of ``texts`` in consecutive chunks whose texts, joined
+    by blank lines, hold at most ``limit`` characters; a longer text is a
+    chunk of its own."""
+    chunks: list[list[int]] = []
+    used = 0
+    for position, text in enumerate(texts):
+        if chunks and used + 2 + len(text) <= limit:
+            chunks[-1].append(position)
+            used += 2 + len(text)
+        else:
+            chunks.append([position])
+            used = len(text)
+    return chunks
 
 
 def _guard_record(source: GuardSource, verdict: GuardVerdict) -> dict[str, Any]:
