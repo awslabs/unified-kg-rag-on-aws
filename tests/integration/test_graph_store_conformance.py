@@ -699,3 +699,39 @@ def test_holds_any_item_tells_a_suffix_with_items(harness: StoreHarness) -> None
     graph.upsert_entities([_entity("a", tenant)])
     assert graph.holds_any_item(suffix=tenant) is True
     assert graph.holds_any_item(suffix=other) is False
+
+
+def test_relationship_ranks_are_set_in_place(harness: StoreHarness) -> None:
+    # A delta rewrites a hub's stored edges for their rank alone: only the
+    # rank changes, in the suffix's edges; an edge not stored fails by id.
+    graph = harness.graph_indexer
+    rel = _rel(
+        "a-b",
+        "a",
+        "b",
+        "t1",
+        type="SUPPLIES",
+        description="supplies",
+        weight=2.0,
+        rank=2,
+        text_unit_ids=["u1"],
+    )
+    assert graph.upsert_entities([_entity("a", "t1"), _entity("b", "t1")])
+    assert graph.upsert_entities([_entity("a", "t2"), _entity("b", "t2")])
+    other = rel.model_copy(update={"attributes": {"index": "t2"}})
+    assert graph.upsert_relationships([rel, other]).failed_items == 0
+    (before,) = graph.read_relationships(["a-b"], suffix="t1")
+
+    stats = graph.update_relationship_ranks(
+        [
+            rel.model_copy(update={"rank": 7}),
+            _rel("x-y", "a", "b", "t1", rank=3),
+        ]
+    )
+
+    assert (stats.successful_items, stats.failed_ids) == (1, ["x-y"])
+    (after,) = graph.read_relationships(["a-b"], suffix="t1")
+    assert after.rank == 7
+    assert after.model_dump(exclude={"rank"}) == before.model_dump(exclude={"rank"})
+    (untouched,) = graph.read_relationships(["a-b"], suffix="t2")
+    assert untouched.rank == 2

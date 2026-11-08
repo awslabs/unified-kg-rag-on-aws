@@ -262,6 +262,20 @@ class GraphIndexer(BaseIndexer):
     def upsert_relationships(self, relationships: list[Relationship]) -> IndexingStats:
         """Idempotently merge relationships into the live graph (delta)."""
 
+    def update_relationship_ranks(
+        self, relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Set the ``rank`` of stored edges by id, in place, and nothing else.
+
+        An incremental commit rewrites the stored edges of an entity whose
+        degree changed for their rank alone: most of a delta's edge writes
+        once a hub gains neighbours. An adapter that can update a property
+        in place overrides this (batched, no drop and re-add); an id whose
+        edge the suffix does not store is a failed item. Default rewrites
+        each edge (:meth:`upsert_relationships`).
+        """
+        return self.upsert_relationships(relationships)
+
     def upsert_communities(self, communities: list[Community]) -> IndexingStats:
         """Idempotently merge communities into the live graph (delta semantics).
 

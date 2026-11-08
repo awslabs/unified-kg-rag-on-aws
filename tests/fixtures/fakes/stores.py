@@ -125,6 +125,8 @@ class FakeGraphStore:
         # What a query would see, sampled at every write of a rebuild (for
         # tests of the in-place rebuild): (entity ids, relationship ids).
         self.snapshots: list[tuple[set[str], set[str]]] = []
+        # The ids of the edges whose rank was set in place, in write order.
+        self.rank_updates: list[str] = []
 
     def close(self) -> None:
         return None
@@ -224,6 +226,23 @@ class FakeGraphStore:
                 "target_id": rel.target_id,
             }
             self._wrote("relationships", (suffix, rel.id))
+            stats.add_success()
+        return stats
+
+    def update_relationship_ranks(self, relationships: list[Any]) -> IndexingStats:
+        """Set the stored edges' rank in place; an edge not stored fails."""
+        stats = IndexingStats(total_items=len(relationships))
+        bucket = self.data.setdefault("relationships", {})
+        for rel in relationships:
+            key = (BaseIndexer.get_suffix(rel), rel.id)
+            if key not in bucket:
+                stats.add_error("edge not stored", ids=[rel.id])
+                continue
+            props = {k: v for k, v in bucket[key]["props"].items() if k != "rank"}
+            if rel.rank is not None:
+                props["rank"] = rel.rank
+            bucket[key] = {**bucket[key], "props": props}
+            self.rank_updates.append(rel.id)
             stats.add_success()
         return stats
 

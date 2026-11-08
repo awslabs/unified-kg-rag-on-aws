@@ -59,7 +59,9 @@ unless noted.
    (§5.4); delta claims merge with the stored claims of the same id. Neptune
    writes with an idempotent `coalesce(unfold, addV)` upsert, OpenSearch by id
    into the live alias index; old ids of re-keyed items are deleted only after
-   the writes succeeded. Before the first write the commit notes the
+   the writes succeeded. A stored edge rewritten for its rank alone (an
+   endpoint's degree changed) has its rank set in place, in batches of one
+   rank (`GraphIndexer.update_relationship_ranks`), as its vector copy is. Before the first write the commit notes the
    entities it splits, re-keys or rewires in one record of the suffix's
    extraction store (`pending-commit`), deleted once the old ids are: those
    decisions live in memory only, and the next commit of the suffix derives

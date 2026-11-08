@@ -578,9 +578,10 @@ class IndexingManager:
             ]
 
         # A full build's cleared (or, rebuilt in place, swept) entity labels
-        # drop the old edges.
+        # drop the old edges. A delta's stored edges rewritten for their rank
+        # alone (read before phase 1 takes them) are updated in place.
         edges = (
-            graph.upsert_relationships
+            partial(self._upsert_graph_relationships, set(self._rank_only))
             if suffixes is None
             else graph.index_relationships
         )
@@ -657,6 +658,24 @@ class IndexingManager:
 
         self._log_completion_summary(results, time.time() - start_time)
         return results
+
+    def _upsert_graph_relationships(
+        self, rank_only: Collection[str], relationships: list[Relationship]
+    ) -> IndexingStats:
+        """Delta upsert of the relationship edges: an edge this run rewrites
+        for its rank only (``rank_only``) has its rank set in place
+        (``GraphIndexer.update_relationship_ranks``), the others are
+        written whole."""
+        graph = self.graph_indexer
+        ranked = [r for r in relationships if r.id in rank_only]
+        if not ranked:
+            return graph.upsert_relationships(relationships)
+        whole = [r for r in relationships if r.id not in rank_only]
+        stats = graph.update_relationship_ranks(ranked)
+        if whole:
+            stats.merge(graph.upsert_relationships(whole))
+        stats.total_items = len(relationships)
+        return stats
 
     def _upsert_vector_relationships(
         self, relationships: list[Relationship]
