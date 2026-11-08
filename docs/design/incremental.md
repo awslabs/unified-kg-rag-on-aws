@@ -70,6 +70,16 @@ unless noted.
    the noted entities' copies only the vector store holds, with the vector
    edges at them (the killed commit got to its vector writes only), and a
    run that only removes in the suffix reads the note all the same.
+   The note also lists the old ids the commit retires (an item re-keyed to
+   follow the spelling that now names it, an edge dropped). A commit whose
+   write fails deletes only the old ids no failed write touches (neither
+   the old id nor its new one failed, nor an edge at either; a dropped edge
+   only in a suffix without a failure) and keeps the others (deleting one
+   could lose its item), so a write that keeps failing holds back only the
+   re-keys at it. The next commit reads the items still stored under the
+   noted old ids with the noted entities and derives them again: the
+   derivation re-keys or drops what a full build does not have, and those
+   ids are deleted with its own.
    An item write a store rejects (an entity, relationship, claim, community
    or report; an edge held back for a rejected endpoint) does not fail the
    documents owning it: the commit notes the rejected items as written in
@@ -120,7 +130,9 @@ unless noted.
    [runbook](../operations.md#failed-documents)). The suffix's build record is
    written just before, so a run killed after the registry write leaves the
    record of what it built (the next run finds nothing to index and writes
-   none). `failure_count` counts
+   none). A record the store rejected (on any index) is written again after
+   the registry write, and a run with nothing to index writes the record
+   when the configured suffix has none. `failure_count` counts
    consecutive failures of the same content; after
    `indexing.max_document_failures` the document reads unchanged. A run that
    stops before this step at a stage that failed on all of its units still

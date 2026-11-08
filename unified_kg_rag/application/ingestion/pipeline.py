@@ -77,9 +77,14 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     TextChunkingStage,
     TranslationStage,
 )
+from unified_kg_rag.application.ingestion.source_parsing import fingerprint_digest
 from unified_kg_rag.application.ingestion.summary_tree_stage import SummaryTreeStage
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.application.storage.visualization_export import (
+    export_build_time,
+    export_namespace,
+    newest_export,
+    stored_build_time,
     write_visualization_data,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import (
@@ -1068,6 +1073,10 @@ class DataIngestionPipeline:
             # checkpoint is uploaded.
             self._checkpoint_id = None
             self._raise_if_stopping()
+            # It only reads the stores: another run may write the namespace
+            # meanwhile.
+            if context.status == PipelineStageStatus.COMPLETED:
+                self._export_visualization(context)
 
             if context.status == PipelineStageStatus.FAILED:
                 logger.warning(
@@ -1710,7 +1719,9 @@ class DataIngestionPipeline:
         if self.target_directory is not None:
             owned.append(self.target_directory)
         fingerprint = seed_corpus_fingerprint(
-            corpus_manifest_fingerprint(source_directory, extensions, owned),
+            corpus_manifest_fingerprint(
+                source_directory, extensions, owned, fingerprint_digest
+            ),
             [conversion.digest for conversion in self.seed_conversions],
         )
         logger.info("Corpus manifest fingerprint: '%s'", fingerprint)
@@ -2419,7 +2430,11 @@ class DataIngestionPipeline:
         """Write the namespace's ``visualization_data.json`` from its stores
         once a run indexed (``graph.visualization.export_data``): the whole
         graph, also after an incremental run or beside another corpus's
-        documents. Best effort: a failed export never fails the run."""
+        documents. Run after the namespace's lease is given up (it only
+        reads), and skipped when an export already shows the stores
+        (:meth:`_current_export`). With the S3 cache sync on, an export
+        in the cache directory is uploaded. Best effort: a failed export
+        never fails the run."""
         if not self.config.graph.visualization.export_data:
             return
         if PipelineStageType.INDEXING.value not in self._executed_stages:
@@ -2427,12 +2442,22 @@ class DataIngestionPipeline:
         suffix = resolve_namespace(self.config, None)
         path = self._visualization_path(context)
         try:
+            current = self._current_export(context, suffix, path)
+            if current is not None:
+                logger.info(
+                    "The visualization data in '%s' shows the stores already "
+                    "(this run wrote nothing)",
+                    current,
+                )
+                context.visualization_data_path = str(current)
+                return
             counts = write_visualization_data(self.providers, suffix, path)
         except Exception as e:  # noqa: BLE001 - the export is optional
             logger.warning("Visualization data export failed: %s", error_digest(e))
             logger.debug("Visualization data export error: %s", e)
             return
         context.visualization_data_path = str(path)
+        self._upload_export(context.pipeline_id, path)
         logger.info(
             "Exported the namespace's graph (%d nodes, %d edges, %d "
             "communities) to '%s' for run-visualization",
@@ -2441,6 +2466,66 @@ class DataIngestionPipeline:
             counts["communities"],
             path,
         )
+
+    def _current_export(
+        self, context: PipelineContext, suffix: str, path: Path
+    ) -> Path | None:
+        """An export that shows what the stores of ``suffix`` hold, when the
+        run's indexing stage wrote, deleted and re-annotated nothing: the
+        one at ``path``, else the newest of the namespace where ingestion
+        writes them (a run under a new pipeline id has a new ``path``), if
+        it names the build the namespace's record names (another run may
+        have written it since)."""
+        indexing = next(
+            (
+                r
+                for r in reversed(context.stage_results)
+                if r.stage_name == PipelineStageType.INDEXING.value
+            ),
+            None,
+        )
+        if indexing is None or any(
+            indexing.metrics.get(key)
+            for key in (
+                "total_indexed",
+                "total_failed",
+                "documents_deleted",
+                "annotations_rewritten",
+            )
+        ):
+            return None
+        if not path.is_file() or export_namespace(path) != suffix:
+            configured = self.config.graph.visualization.outputs_directory
+            local = self.pipeline_config.local_directory
+            found = newest_export(
+                [
+                    Path(configured) if configured else Path(DEFAULT_OUTPUTS_DIRECTORY),
+                    *([Path(local)] if local else []),
+                ],
+                suffix,
+            )
+            if found is None:
+                return None
+            path = found
+        built_at = export_build_time(path)
+        if built_at is None or built_at != stored_build_time(self.providers, suffix):
+            return None
+        return path
+
+    def _upload_export(self, pipeline_id: str, path: Path) -> None:
+        """Upload an export written into the pipeline's cache directory
+        (best effort): the run's last cache sync preceded it."""
+        if not (self.pipeline_config.s3_sync_enabled and self.s3_cache_manager):
+            return
+        cache_dir = self.cache_manager.get_pipeline_cache_dir(pipeline_id)
+        if not path.resolve().is_relative_to(cache_dir.resolve()):
+            return
+        try:
+            self.s3_cache_manager.upload_file(pipeline_id, cache_dir, path)
+        except Exception as e:  # noqa: BLE001 - the export is optional
+            logger.warning(
+                "Uploading the visualization data failed: %s", error_digest(e)
+            )
 
     def _finalize_pipeline_execution(
         self, context: PipelineContext, start_time: float
@@ -2467,7 +2552,6 @@ class DataIngestionPipeline:
         else:
             context.status = PipelineStageStatus.COMPLETED
             logger.info("Pipeline completed successfully with all stages passed")
-            self._export_visualization(context)
         self._warn_failed_units(context)
 
         with self._checkpoint_write():

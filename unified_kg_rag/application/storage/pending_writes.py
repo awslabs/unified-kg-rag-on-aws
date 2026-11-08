@@ -15,8 +15,14 @@ write kept failing.
 
 A text unit's failed write is its document's: it is not noted, and the
 document is recorded FAILED (see ``IncrementalIndexer.record``).
+
+A note over ``_PART_BYTES`` of JSON is split into parts, each its own
+record (a hub's items can exceed a store's request limit, 10 MiB on small
+OpenSearch instances): the note then lists their keys, written after them,
+so a reader never meets a half-written note.
 """
 
+import json
 from collections import defaultdict
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -41,6 +47,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.ports.indexer import BaseIndexer, IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
+from unified_kg_rag.shared.utils import compute_hash
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -70,6 +77,9 @@ RESULT_KINDS: dict[str, str] = {
 }
 
 _Item = TypeVar("_Item", bound=BaseModel)
+
+# The JSON size of a note's part (see the module docstring).
+_PART_BYTES = 1 << 20
 
 
 def _kind_of(item: Any) -> str | None:
@@ -147,10 +157,14 @@ class PendingWrites:
         # The suffixes whose noted items the commit's delta holds: derived
         # from their records even when nothing else is stored.
         self._joined: set[str] = set()
+        # By suffix, the part records of the note this run read (deleted
+        # once a note replaces it, or nothing is left to note).
+        self._parts: dict[str, list[str]] = {}
 
     def reset(self) -> None:
         self._read.clear()
         self._joined.clear()
+        self._parts.clear()
 
     def joined(self, suffix: str) -> bool:
         """Whether the commit's delta holds noted items of ``suffix``: their
@@ -176,7 +190,7 @@ class PendingWrites:
             if note is None:
                 continue
             self._read.add(suffix)
-            items = self._parse(note, suffix)
+            items = self._parse(self._whole(note, suffix), suffix)
             cited = sorted(
                 {
                     u
@@ -197,6 +211,68 @@ class PendingWrites:
                 suffix,
             )
         return noted
+
+    def _whole(self, note: Mapping[str, Any], suffix: str) -> Mapping[str, Any]:
+        """A stored ``note`` with the items of its parts (a split note lists
+        their keys under ``parts``). A failed read raises."""
+        keys = [k for k in note.get("parts") or [] if isinstance(k, str)]
+        if not keys:
+            return note
+        self._parts[suffix] = keys
+        parts = self._m.vector_indexer.read_extraction_records(keys, suffix=suffix)
+        whole: dict[str, list[Any]] = defaultdict(list)
+        for key in keys:
+            for kind, values in (parts.get(key) or {}).items():
+                if kind in _KINDS and isinstance(values, list):
+                    whole[kind].extend(values)
+        return whole
+
+    @staticmethod
+    def _split(note: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+        """``note`` in parts of at most ``_PART_BYTES`` of JSON each (an item
+        larger than that alone in its part); one part when it fits."""
+        parts: list[dict[str, list[dict[str, Any]]]] = [defaultdict(list)]
+        size = 0
+        for kind, values in note.items():
+            for value in values:
+                length = len(json.dumps(value, default=str))
+                if size and size + length > _PART_BYTES:
+                    parts.append(defaultdict(list))
+                    size = 0
+                parts[-1][kind].append(value)
+                size += length
+        return [dict(part) for part in parts]
+
+    def _write(self, suffix: str, note: dict[str, list[dict[str, Any]]]) -> None:
+        """Write ``note`` as the suffix's write note, split when it is large
+        (parts first, then the note naming them). Raises when a write
+        fails."""
+        parts = self._split(note)
+        if len(parts) == 1:
+            self._m._write_note(_PENDING_WRITES, suffix, parts[0])
+            return
+        stamp = compute_hash(json.dumps(note, sort_keys=True, default=str), length=12)
+        keys = [f"{_PENDING_WRITES}-{stamp}-{i}" for i in range(len(parts))]
+        for key, part in zip(keys, parts, strict=True):
+            self._m._write_note(key, suffix, part)
+        self._m._write_note(_PENDING_WRITES, suffix, {"parts": keys})
+        # Not the parts just written (the same note again).
+        self._parts[suffix] = [k for k in self._parts.get(suffix, []) if k not in keys]
+
+    def _delete_parts(self, suffix: str) -> None:
+        """Delete the parts of the note read (best-effort: a leftover part
+        no note names is never read)."""
+        keys = self._parts.pop(suffix, [])
+        if not keys:
+            return
+        try:
+            self._m.vector_indexer.delete_extraction_records(keys, suffix=suffix)
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a leftover part is harmless
+            logger.warning(
+                "Deleting the parts of the write note of '%s' failed: %s", suffix, e
+            )
 
     @staticmethod
     def _parse(note: Mapping[str, Any], suffix: str) -> dict[str, list[Any]]:
@@ -351,7 +427,8 @@ class PendingWrites:
                     kind: [_dump(item) for item in group.values()]
                     for kind, group in failed[suffix].items()
                 }
-                self._m._write_note(_PENDING_WRITES, suffix, note)
+                self._write(suffix, note)
+                self._delete_parts(suffix)
                 logger.warning(
                     "%d item writes of '%s' failed; noted for the next run, "
                     "which writes them again (their documents stay indexed)",
@@ -365,5 +442,6 @@ class PendingWrites:
             return set()
         for suffix in sorted(self._read - set(failed)):
             self._m._delete_note(_PENDING_WRITES, suffix)
+            self._delete_parts(suffix)
         self._read.clear()
         return covered

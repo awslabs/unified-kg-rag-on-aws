@@ -112,6 +112,37 @@ def test_text_units_are_paged_in_id_order_without_seed_units(
     assert indexer.scan_text_units(harness.suffix("empty"), fields=["text"]) == []
 
 
+def test_text_units_are_read_by_id_with_float32_vectors(
+    harness: StoreHarness,
+) -> None:
+    import numpy as np
+
+    indexer = harness.vector_indexer
+    stats = indexer.index_text_units(_units(5))
+    assert stats.failed_items == 0, stats.errors
+
+    rows = indexer.read_text_unit_fields(
+        ["u003", "u001", "missing"],
+        None,
+        fields=["text", "text_embedding", "n_tokens", "attributes"],
+    )
+
+    assert rows is not None
+    by_id = {r["id"]: r for r in rows}
+    assert set(by_id) == {"u001", "u003"}
+    vector = by_id["u001"]["text_embedding"]
+    assert isinstance(vector, np.ndarray) and vector.dtype == np.float32
+    assert vector.size == harness.embedding_factory.dimensions
+    assert by_id["u003"]["text"] == "Depot 3 stores widgets for Vendor"
+    assert by_id["u003"]["attributes"]["filters"] == {"category": "logistics"}
+    assert (
+        indexer.read_text_unit_fields(
+            ["u001"], harness.suffix("empty"), fields=["text"]
+        )
+        == []
+    )
+
+
 def test_a_tree_is_written_whole_with_its_record_and_swapped_in(
     harness: StoreHarness,
 ) -> None:
@@ -365,6 +396,7 @@ def test_a_backend_without_a_tree_says_so() -> None:
     # The port's defaults, as a custom backend inherits them.
     bare: Any = object()
     assert VectorIndexer.scan_text_units(bare, None, fields=["text"]) is None
+    assert VectorIndexer.read_text_unit_fields(bare, ["u"], None, fields=[]) is None
     assert VectorIndexer.read_summary_nodes(bare, None, fields=[]) is None
     assert VectorIndexer.embed_summary_texts(bare, ["x"], None) is None
     assert VectorIndexer.write_summary_tree(bare, [], {}, None, {}).failed_items == 1

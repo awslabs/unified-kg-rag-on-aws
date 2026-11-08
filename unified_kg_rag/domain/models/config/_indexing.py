@@ -13,7 +13,7 @@ from pydantic import (
     model_validator,
 )
 
-from unified_kg_rag.domain.languages import PROFILES
+from unified_kg_rag.domain.languages import BUILT_IN_ANALYZERS, PROFILES
 
 from ..methodology import (
     DEFAULT_METHODOLOGIES,
@@ -195,13 +195,15 @@ DEFAULT_VECTOR_SEARCH: dict[str, Any] = {
 _DEFAULT_VECTOR_METHOD = "hnsw"
 
 # The text analyzer of each LanguageCode, from its profile
-# (domain/languages/profiles). All but nori (the analysis-nori plugin) are
-# built into OpenSearch; cjk indexes Han and Kana runs as overlapping
-# character bigrams, which needs no dictionary plugin (kuromoji, smartcn).
-# The embedded engine knows every name (adapters/local/search_engine/
-# analyzers.py).
+# (domain/languages/profiles), and of the other codes OpenSearch has a
+# built-in language analyzer for (BUILT_IN_ANALYZERS). All but nori (the
+# analysis-nori plugin) are built into OpenSearch; cjk indexes Han and Kana
+# runs as overlapping character bigrams, which needs no dictionary plugin
+# (kuromoji, smartcn). The embedded engine knows every name
+# (adapters/local/search_engine/analyzers.py).
 DEFAULT_LANGUAGE_ANALYZERS: dict[str, str] = {
-    code.value: language.analyzer for code, language in PROFILES.items()
+    **BUILT_IN_ANALYZERS,
+    **{code.value: language.analyzer for code, language in PROFILES.items()},
 }
 
 
@@ -301,8 +303,10 @@ class OpenSearchIndexingConfig(BaseModel):
             "a profile has one (ar: arabic, de: german, en: english, es: "
             "spanish, fr: french, he: standard, hi: hindi, it: italian, ja: "
             "cjk, ko: nori, pt: portuguese, ru: russian, th: thai, vi: "
-            "standard, zh: cjk); a language without an entry (another BCP-47 "
-            "code) uses default_analyzer. All are built into OpenSearch "
+            "standard, zh: cjk), and so has every other BCP-47 code OpenSearch "
+            "has a built-in language analyzer for (nl: dutch, sv: swedish, tr: "
+            "turkish, ...: see Long defaults); a language without an entry "
+            "uses default_analyzer. All are built into OpenSearch "
             "but nori, which needs the analysis-nori plugin: an Amazon "
             "OpenSearch Service domain has it only once its optional package "
             "is associated (the CDK stack maps ko to cjk). An index keeps the "

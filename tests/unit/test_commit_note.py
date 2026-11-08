@@ -102,6 +102,32 @@ def test_a_note_carries_the_ids_of_the_note_it_finishes() -> None:
     assert set((_note(vector) or {})["entity_ids"]) == {"e-earlier", "e-now"}
 
 
+def test_a_note_lists_the_old_ids_the_commit_retires() -> None:
+    # Edges re-keyed or dropped alone (no entity changed): without them in
+    # the note, a commit whose write fails keeps their old copies for good.
+    manager, _, vector = _manager()
+    manager._rekeyed["default"] = {"r-old": "r-new"}
+    manager._dropped["default"] = {"r-loop"}
+    manager._noted_retired["default"] = {"r-earlier"}
+
+    manager.note_pending_commit()
+
+    note = _note(vector) or {}
+    assert note["retired_ids"] == ["r-earlier", "r-loop", "r-old"]
+    assert note["entity_ids"] == []
+
+
+def test_a_read_note_derives_the_items_under_its_old_ids_again() -> None:
+    manager, _, vector = _manager()
+    vector.write_extraction_records(
+        {NOTE: {"entity_ids": ["e1"], "retired_ids": ["r-old"]}}
+    )
+
+    assert manager._merge._read_commit_note("default") == {"e1", "r-old"}
+    assert manager._noted_retired == {"default": {"r-old"}}
+    assert manager._noted_commit_entities == {"default": {"e1"}}
+
+
 def test_a_read_note_is_deleted_with_this_commits(mocker) -> None:
     # A note read (an earlier commit's) is the suffix's to delete once this
     # commit retired its old ids.
@@ -418,3 +444,32 @@ def test_a_noted_entity_without_edges_is_derived_again(mocker, delta) -> None:
     manager._merge._merge_suffix("default", delta, [])
 
     assert "e-noted" in {e.id for e in derive.call_args.args[1]}
+
+
+def test_a_failure_naming_no_id_keeps_every_old_id() -> None:
+    # Which items it failed on is unknown: any old id may be the one whose
+    # new item was not written.
+    manager, _, _ = _manager()
+    manager._rekeyed["default"] = {"e-old": "e-new"}
+
+    assert manager._untouched_by(
+        {"graph_entities": _failed()},
+        [],
+        manager._retired_ids(),
+        manager._rekeyed,
+    ) == ({}, {})
+
+
+def test_an_old_id_a_failed_edge_touches_is_kept() -> None:
+    manager, _, _ = _manager()
+    manager._rekeyed["default"] = {"e-old": "e-new", "f-old": "f-new"}
+    edge = Relationship(id="r1", source_id="e-new", target_id="hub")
+    stats = IndexingStats(total_items=1)
+    stats.add_error("endpoint entity write failed", ids=["r1"])
+
+    kept, moved = manager._untouched_by(
+        {"graph_relationships": stats}, [edge], manager._retired_ids(), manager._rekeyed
+    )
+
+    assert kept == {"default": ["f-old"]}
+    assert moved == {"default": {"f-old": "f-new"}}

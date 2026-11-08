@@ -238,6 +238,9 @@ class FakeGraphStore:
 
     def update_relationship_ranks(self, relationships: list[Any]) -> IndexingStats:
         """Set the stored edges' rank in place; an edge not stored fails."""
+        relationships = list(
+            {(BaseIndexer.get_suffix(r), r.id): r for r in relationships}.values()
+        )
         stats = IndexingStats(total_items=len(relationships))
         bucket = self.data.setdefault("relationships", {})
         for rel in relationships:
@@ -533,6 +536,11 @@ class FakeVectorStore(_Recorder):
         fields: list[str],
         page_size: int | None = None,
     ) -> Iterator[list[dict[str, Any]]] | None:
+        return None
+
+    def read_text_unit_fields(
+        self, ids: list[str], suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]] | None:
         return None
 
     def read_summary_nodes(

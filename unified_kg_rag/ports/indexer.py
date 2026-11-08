@@ -201,6 +201,11 @@ class BaseIndexer(ABC):
         """Graph vertex label for ``prefix`` under ``suffix``."""
         return graph_label(prefix, suffix, self.config.indexing.additional_suffix)
 
+    def _last_of_each_id(self, items: list[Any]) -> list[Any]:
+        """``items`` with one per id and suffix, the last given (as an
+        upsert keeps the last write)."""
+        return list({(self.get_suffix(item), item.id): item for item in items}.values())
+
     def _group_items_by_suffix(
         self, items: list[Any], suffixes: Collection[str] = ()
     ) -> dict[str, list[Any]]:
@@ -687,6 +692,16 @@ class VectorIndexer(BaseIndexer):
             [units[start : start + size] for start in range(0, len(units), size)]
         )
 
+    def read_text_unit_fields(
+        self, ids: list[str], suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]] | None:
+        """The stored text units of ``ids`` in ``suffix`` (a dict of ``id``
+        and the stored ``fields``, a vector field as a float32 array), as
+        :meth:`scan_text_units` gives them, in no set order; an id not
+        stored is absent. ``None`` (the default) when the backend cannot
+        read them by id: a caller scans instead. Raises when a read fails."""
+        return None
+
     def read_summary_nodes(
         self, suffix: str | None, *, fields: list[str]
     ) -> list[dict[str, Any]] | None:
@@ -1093,3 +1108,14 @@ def rewrites_schema_annotations(store: object) -> bool:
         if method is None or getattr(method, "__func__", method) in defaults:
             return False
     return True
+
+
+def keeps_build_records(store: object) -> bool:
+    """Whether ``store`` keeps build records: it implements
+    ``VectorIndexer.record_build`` instead of inheriting the default, which
+    writes nothing (so a ``None`` from it means a write that failed). Bound
+    functions are compared, as :func:`rewrites_schema_annotations` does."""
+    method = getattr(store, "record_build", None)
+    return method is not None and (
+        getattr(method, "__func__", method) is not VectorIndexer.record_build
+    )

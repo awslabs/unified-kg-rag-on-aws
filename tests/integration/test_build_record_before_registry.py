@@ -15,14 +15,16 @@ registry write.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - a fixture
+from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
-from unified_kg_rag.domain.models import PipelineStageStatus
+from unified_kg_rag.domain.models import Methodology, PipelineStageStatus
 
 pytestmark = pytest.mark.integration
 
@@ -78,3 +80,83 @@ def test_a_run_killed_after_its_registry_write_leaves_its_record(
     assert context.incremental_delta is not None
     assert context.incremental_delta.to_process == []
     assert _record(config, providers) == killed
+
+
+def _setup(tmp_path: Path):  # noqa: ANN202
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    # A narrower profile than a query's default: without the record, a
+    # query reads the namespace as holding GraphRAG's artifacts too.
+    config.indexing.methodologies = [Methodology.LIGHTRAG]
+    providers = e2e._providers(
+        config, FakeOllama(e2e._respond, e2e.ANSWER, e2e.DIM), e2e.FakeCrossEncoder("r")
+    )
+    source = tmp_path / "corpus"
+    source.mkdir(parents=True)
+    (source / "contract.txt").write_text("Vendor supplies widgets to Buyer.")
+    (source / "logistics.txt").write_text("Depot stores widgets for Vendor.")
+    return config, providers, source
+
+
+def _failing_record_writes(mocker, attempts: int) -> None:  # noqa: ANN001
+    # The first ``attempts`` record writes fail on every index; the adapter
+    # logs each and goes on (the record is best-effort).
+    record_build = OpenSearchIndexer.record_build
+    calls = {"n": 0}
+
+    def denied(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        raise RuntimeError("mapping update denied")
+
+    def flaky(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        calls["n"] += 1
+        if calls["n"] > attempts:
+            return record_build(self, *args, **kwargs)
+        with mock.patch.object(OpenSearchIndexer, "_put_index_meta", denied):
+            return record_build(self, *args, **kwargs)
+
+    mocker.patch.object(OpenSearchIndexer, "record_build", flaky)
+
+
+@pytest.mark.usefixtures("no_aws")
+def test_a_record_the_store_rejected_is_written_again_after_the_registry(
+    tmp_path: Path, mocker
+) -> None:
+    config, providers, source = _setup(tmp_path)
+    # Every index of the first attempt fails; the second attempt succeeds.
+    _failing_record_writes(mocker, attempts=1)
+
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(config, providers)
+    assert record is not None
+    assert record["pipeline_id"] == "run-1"
+
+
+@pytest.mark.usefixtures("no_aws")
+def test_a_missing_record_is_written_by_a_run_with_nothing_to_index(
+    tmp_path: Path, mocker
+) -> None:
+    # A store that never took the record (or a build from before records):
+    # without one, every query reads the namespace as holding what its
+    # config builds. The next run writes it, even with nothing to index.
+    config, providers, source = _setup(tmp_path / "control")
+    e2e._ingest(config, providers, source, tmp_path / "control" / "run-1")
+    want = _record(config, providers)
+    assert want is not None
+    config, providers, source = _setup(tmp_path)
+    _failing_record_writes(mocker, attempts=1000)
+    e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert _record(config, providers) is None
+    mocker.stopall()
+
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert context.incremental_delta is not None
+    assert context.incremental_delta.to_process == []
+    record = _record(config, providers)
+    assert record is not None
+    assert record["methodologies"] == want["methodologies"] == ["lightrag", "hipporag"]
+    assert record["artifacts"] == want["artifacts"]
+    # Written by a delta that indexed nothing.
+    assert (record["mode"], record["documents"]) == ("incremental", 0)

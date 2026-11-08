@@ -693,10 +693,23 @@ class IncrementalIndexer:
                 community_reports=community_reports,
                 claims=claims,
             )
+            written = [
+                *(text_units or []),
+                *(entities or []),
+                *(relationships or []),
+                *(communities or []),
+                *(community_reports or []),
+                *(claims or []),
+            ]
             # The items the merge re-keyed to follow their current name are now
             # written under the new ids: delete the old ones, unless a write
-            # failed (deleting them would lose the item; the next run re-keys it).
+            # failed (deleting them would lose the item; the commit note names
+            # them, and the next commit derives what they hold again).
             if any(stats.failed_items for stats in results.values() if stats):
+                # Only the old ids no failed write touches go now, so one
+                # write that keeps failing (a hub) does not hold back every
+                # other re-key; the note keeps the rest for a later commit.
+                self.indexing_manager.delete_retired_ids(results, written)
                 self.indexing_manager.discard_retired_ids()
             else:
                 # The stripped items are written summarized as a full build:
@@ -717,14 +730,6 @@ class IncrementalIndexer:
         except BaseException:
             self.indexing_manager.discard_retired_ids()
             raise
-        written = [
-            *(text_units or []),
-            *(entities or []),
-            *(relationships or []),
-            *(communities or []),
-            *(community_reports or []),
-            *(claims or []),
-        ]
         if self.record(
             lineages,
             fingerprints,

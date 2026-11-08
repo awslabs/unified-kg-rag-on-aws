@@ -237,6 +237,7 @@ class SQLiteGraphIndexer(GraphIndexer):
         place the edges are written whole, with its tag."""
         if self._rebuild_tag is not None:
             return self.upsert_relationships(relationships)
+        relationships = self._last_of_each_id(relationships)
         stats = IndexingStats(total_items=len(relationships))
         if not relationships:
             return stats

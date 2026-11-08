@@ -650,8 +650,13 @@ def _top_k_rows(ids: list[str], scores: np.ndarray, rows: np.ndarray, k: int) ->
 Hit = tuple[LoadedIndex, str, float]
 
 
-def _sort_fields(sort: Any) -> list[tuple[str, bool]]:
-    """``[{field: {"order": "asc" | "desc"}}, ...]`` -> (field, descending)."""
+# A search body's ``sort`` as parsed (``parse_sort``): (field, descending).
+SortFields = list[tuple[str, bool]]
+
+
+def parse_sort(sort: Any) -> SortFields:
+    """``[{field: {"order": "asc" | "desc"}}, ...]`` -> (field, descending).
+    Parsed once per search: sorting compares every pair of hits."""
     if not isinstance(sort, list):
         raise rejected(f"[sort] takes a list, got {sort!r}")
     fields = []
@@ -679,14 +684,14 @@ def top_hits(hits: list[Hit], size: int) -> list[Hit]:
     return heapq.nsmallest(size, hits, key=rank_key)
 
 
-def sort_values(hit: Hit, sort: Any) -> list[Any]:
-    """The values ``hit`` sorts by under a body's ``sort`` (a hit's
+def sort_values(hit: Hit, fields: SortFields) -> list[Any]:
+    """The values ``hit`` sorts by under a body's sort ``fields`` (a hit's
     ``sort`` in the response, which ``search_after`` takes back): a numeric
     field's number, any other's keyword; of a multi-valued field the
     smallest ascending, the largest descending; ``None`` without one."""
     index, doc_id, _score = hit
     values: list[Any] = []
-    for path, descending in _sort_fields(sort):
+    for path, descending in fields:
         spec = index.spec(path)
         raw = resolve_path(index.sources[doc_id], path)
         if spec is not None and spec.type in NUMERIC_TYPES:
@@ -697,10 +702,10 @@ def sort_values(hit: Hit, sort: Any) -> list[Any]:
     return values
 
 
-def _compare_values(sort: Any, x: list[Any], y: list[Any]) -> int:
+def _compare_values(fields: SortFields, x: list[Any], y: list[Any]) -> int:
     """``x`` against ``y`` (``sort_values``) in sort order; a missing value
     comes last either way. 0: tied on every field."""
-    for (_, descending), a, b in zip(_sort_fields(sort), x, y, strict=True):
+    for (_, descending), a, b in zip(fields, x, y, strict=True):
         if a == b:
             continue
         if a is None or b is None:
@@ -712,10 +717,10 @@ def _compare_values(sort: Any, x: list[Any], y: list[Any]) -> int:
 
 
 def sort_hits(
-    hits: list[Hit], sort: Any, size: int, after: list[Any] | None = None
+    hits: list[Hit], fields: SortFields, size: int, after: list[Any] | None = None
 ) -> list[Hit]:
-    """The first ``size`` of ``hits`` in a search body's ``sort`` order,
-    after ``after`` (``search_after``: the sort values of the last hit of
+    """The first ``size`` of ``hits`` in a search body's sort order
+    (``fields``, see ``parse_sort``), after ``after`` (``search_after``: the sort values of the last hit of
     the page before) when given.
 
     As OpenSearch sorts: a numeric field by number, any other by keyword; a
@@ -723,20 +728,20 @@ def sort_hits(
     descending; a document without the field comes last either way. Ties
     keep the score order (``rank_key``).
     """
-    keyed = [(sort_values(hit, sort), hit) for hit in hits]
+    keyed = [(sort_values(hit, fields), hit) for hit in hits]
     if after is not None:
-        if not isinstance(after, list) or len(after) != len(_sort_fields(sort)):
+        if not isinstance(after, list) or len(after) != len(fields):
             raise rejected(
                 "[search_after] takes one value per sort field, got " f"{after!r}"
             )
         keyed = [
             (values, hit)
             for values, hit in keyed
-            if _compare_values(sort, values, after) > 0
+            if _compare_values(fields, values, after) > 0
         ]
 
     def compare(a: tuple[list[Any], Hit], b: tuple[list[Any], Hit]) -> int:
-        order = _compare_values(sort, a[0], b[0])
+        order = _compare_values(fields, a[0], b[0])
         if order:
             return order
         first, second = rank_key(a[1]), rank_key(b[1])

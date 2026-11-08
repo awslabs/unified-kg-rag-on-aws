@@ -134,7 +134,9 @@ stored is read again: follow *Upgrading* in order.
   `evaluation.ragas_metrics` takes only the five metrics ragas scores (`answer_correctness`, `answer_relevancy`,
   `context_precision`, `context_recall`, `faithfulness`); another fails the load instead of the evaluator.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
-  `true`), at the end of every run that indexed, from the namespace's stores, and prints its path;
+  `true`), at the end of every run that indexed, from the namespace's stores once the run gave up the namespace's
+  lease, and prints its path; a run that wrote nothing keeps an export naming the build the stores hold (`built_at`),
+  so a no-change run at 10k text units no longer rewrites a 59 MB file;
   `run-visualization` renders it (without `--data-path` the newest export, of `--suffix`'s namespace when given)
   with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are gone.
   `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown key (#344,
@@ -889,8 +891,8 @@ From a `main` checkout (formats and keys no release had):
   tree is current reads the texts a page at a time and keeps only their ids, attributes and text hashes
   (`VectorIndexer.scan_text_unit_pages`) (#640); the port's default pages a store's `scan_text_units`, so a store
   that implements only that one still builds the tree (#644). Several trees (`partition_by`, `scope: document`) are
-  read and built a batch of at most `max_leaves_in_memory` leaves at a time, a page walk each, where every tree's
-  vectors were held at once. Failed summaries and, with
+  read and built a batch of at most `max_leaves_in_memory` leaves at a time, each batch reading its own text units by
+  id (`VectorIndexer.read_text_unit_fields`), where every tree's vectors were held at once. Failed summaries and, with
   `refresh: on_reset`, the text units no summary covers are EMF metrics (`total_tree_summaries_failed`,
   `total_tree_uncovered_leaves`) on the CDK dashboard's "Summary tree (EMF)" widget (#603). See
   [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
@@ -938,7 +940,9 @@ From a `main` checkout (formats and keys no release had):
   reads a summary tree (#599). Without a build record (a namespace ingested before them), a query takes the namespace
   to hold what a run of the config builds, `hipporag` included (#602); a run writes the record before the registry
   records its documents, so a first build or reset killed between the two leaves it (the next run found nothing to
-  index and wrote none, and queries took the namespace to hold what the config builds). With
+  index and wrote none, and queries took the namespace to hold what the config builds). A record the store rejected
+  is written again once the documents are recorded, and a run with nothing to index writes a missing one (a WARNING
+  says what queries assume until one is written). With
   `graph.community_detection.report_generation.enabled: false` a run builds no reports, so an incremental run no
   longer takes them for missing and rebuilds the namespace, and the namespace holds `graphrag` for `local` while
   `global` and `drift`, which declare the reports among their artifacts, are refused naming the switch (a WARNING at
@@ -1300,8 +1304,11 @@ From a `main` checkout (formats and keys no release had):
   analyzer, decline and the words answers in it are read by; every consumer reads the profiles. Arabic, Hebrew,
   Hindi, Thai and Vietnamese have one (`ar: arabic`, `hi: hindi`, `th: thai`, `he` and `vi`: `standard`), and
   `source_language`/`target_language` take any other BCP-47 code with one WARNING and the defaults (a region is
-  dropped: `pt-BR` is `pt`). The embedded engine stems German, French, Spanish, Italian, Portuguese, Russian, Arabic
-  and Hindi with Snowball, normalizes Arabic as Lucene does and splits Thai runs into character pairs. A
+  dropped: `pt-BR` is `pt`); such a code's text fields get OpenSearch's built-in analyzer of the language where it
+  has one (`nl: dutch`, `sv: swedish`, `tr: turkish`, ... in the default `language_analyzers`; the embedded engine
+  stems those with Snowball), not `standard`. The embedded engine stems German, French, Spanish, Italian,
+  Portuguese, Russian, Arabic and Hindi with Snowball, normalizes Arabic as Lucene does and splits Thai runs into
+  character pairs. A
   Devanagari or Thai name keeps its vowel signs in fuzzy matching (`राहुल` was `र ह ल`), Arabic short vowels and
   Hebrew points are dropped there, a Thai span or name is grounded by character pairs (a Thai sentence was one
   token, too short to judge), the chunker and sentence ends cut after `।`, `॥`, `؟`, `۔`, `။` and `។`, the query
@@ -1390,7 +1397,8 @@ From a `main` checkout (formats and keys no release had):
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
   beside `match_all` nor every other document for a kNN filter that only excludes (the seed-graph predicate on text
-  units). `run-eval` and `run-rag` default `OPENBLAS_NUM_THREADS` to 1 (a value in the environment wins): with a BLAS
+  units), and parses a search's `sort` once instead of at every comparison (a sorted 10k page of 50k hits: 2.1 s to
+  0.8 s). `run-eval` and `run-rag` default `OPENBLAS_NUM_THREADS` to 1 (a value in the environment wins): with a BLAS
   thread per core for each kNN product, 40 concurrent local queries on the embedded stores spent about 8 times the
   CPU. Results are unchanged; on 200 MuSiQue questions on the embedded stores, 40 at once with the model calls faked,
   a local query's retrieval took about half as long (`support` 19-20 s to 9-10 s, `ppr` 23-25 s to 11 s on a loaded
@@ -1448,7 +1456,8 @@ From a `main` checkout (formats and keys no release had):
   score, then the shorter name, then the smaller one) and never joins two stored ones until a reset (#564).
 - An incremental run sets the rank of a stored edge whose rank alone changed (a neighbour's degree changed) in place,
   batched, instead of dropping and adding the edge (`GraphIndexer.update_relationship_ranks`, whose default rewrites
-  it): most of a delta's edge writes at a hub, 0.15 ms against 10.6 ms per edge on a Gremlin Server.
+  it): most of a delta's edge writes at a hub, 0.15 ms against 10.6 ms per edge on a Gremlin Server. An id given
+  twice is one edge with its last rank, on every backend.
 - Re-runs reuse what is unchanged: vectors carry a digest of their text and model, so indexing embeds only changed
   texts; the `intelligent` chunker's boundary answers, the text units' translations and community report answers
   live in the extraction store; a full build keeps a stored summary of the same lines and settings; a no-op
@@ -1475,8 +1484,10 @@ From a `main` checkout (formats and keys no release had):
   diff with its record's content hash, and one the run processes after all (other extraction settings) is parsed
   before its attempt opens. A reset, `processing.deduplicate` or a `target_directory` export parses every file. Files
   parse in a process pool once the rest is expected to take longer than starting one. The first run after upgrading
-  parses every file once and records their digests.
-- Stage-cache files are compact UTF-8 JSON, half the bytes to write and hash; entries written indented still load.
+  parses every file once and records their digests. The corpus fingerprint's read of each file computes its source
+  digest too, so a run reads each file's bytes once for both.
+- Stage-cache files are compact UTF-8 JSON, 1.2 to 1.6 times fewer bytes to write and hash on English text (more on
+  text the ASCII escapes multiplied); entries written indented still load.
 - Faster at query time and ingestion: the query path no longer imports datasketch and SciPy (about a second per
   process; the name keys are in `domain/ingestion/names.py`), the SQLite registry reads records by key (a full table
   scan per batch before), the local model clients share one TLS context (a model built in under 1 ms, 13-28 ms
@@ -1715,7 +1726,13 @@ Ingestion and incremental indexing.
 - A rejected entity, relationship, claim, community or report write (under `indexing.max_failure_rate`) no longer
   records the documents owning it `FAILED`: the item is noted in the extraction store (`pending-writes`) and the next
   run writes it again without extracting anything. Re-extracting the owners re-extracted every document a hub entity
-  cites, on every run its write kept failing. Only a failed text-unit write fails its document.
+  cites, on every run its write kept failing. Only a failed text-unit write fails its document. The commit's note
+  (`pending-commit`) lists the old ids its derivation retires, so when a write fails, or the run dies, the next
+  commit derives the items still stored under them again and deletes the old copies of those it re-keyed (another
+  spelling took over their name) or dropped; the failed commit already deletes the old ids no failed write touches, so
+  a hub whose write keeps failing holds back only the re-keys at it. A suffix whose stored reports could not be
+  pointed at the new ids keeps its old ids until a later run does both. A note over 1 MiB is split into parts, each
+  its own record, under a store's request limit (10 MiB on small OpenSearch instances).
 - Deleting a document under a non-default suffix strips it from shared claims, a deletion-only run checks the
   configured suffix, and a run whose new documents name no entity still commits them (#248, #252, #256).
 - `indexing.reset` reusing a pipeline id rebuilds from the whole corpus, fails when the registry cannot be cleared,

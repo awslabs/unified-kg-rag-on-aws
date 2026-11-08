@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.domain.languages import profile
 from unified_kg_rag.domain.models import (
     Claim,
     CommunityReport,
@@ -452,8 +453,22 @@ def test_every_language_has_a_default_analyzer() -> None:
     # A language without an entry fell back to 'standard', which keeps a
     # Japanese or Chinese run of characters as one token: a word inside it
     # never matched lexically.
-    assert set(DEFAULT_LANGUAGE_ANALYZERS) == {code.value for code in LanguageCode}
+    assert {code.value for code in LanguageCode} <= set(DEFAULT_LANGUAGE_ANALYZERS)
     assert Config().indexing.opensearch.language_analyzers == DEFAULT_LANGUAGE_ANALYZERS
+
+
+@pytest.mark.parametrize(
+    ("code", "analyzer"), [("nl", "dutch"), ("sv", "swedish"), ("tr", "turkish")]
+)
+def test_a_code_without_a_profile_gets_opensearchs_analyzer_of_it(
+    indexer, code: str, analyzer: str
+) -> None:
+    # It was analyzed by 'standard' (no stemming, no stop words) though
+    # OpenSearch has a built-in analyzer of the language.
+    indexer.config.processing.translation.source_language = LanguageCode(code)
+    props = _props(indexer._get_text_units_mapping())
+    assert props["text"]["analyzer"] == analyzer
+    assert profile(code).analyzer == analyzer
 
 
 def test_a_language_without_an_entry_uses_the_default_analyzer(indexer) -> None:

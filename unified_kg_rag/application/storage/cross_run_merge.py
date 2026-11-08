@@ -173,6 +173,7 @@ class CrossRunMerge:
             or m._split_from
             or m._renamed
             or m._noted_commit_entities
+            or m._noted_retired
         ):
             return claims
         groups = m._group_by_suffix(claims or [])
@@ -183,6 +184,7 @@ class CrossRunMerge:
             | m._split_from.keys()
             | m._renamed.keys()
             | m._noted_commit_entities.keys()
+            | m._noted_retired.keys()
         ):
             group = groups.get(suffix, [])
             stored = m._read_stored_claims(sorted({c.id for c in group}), suffix)
@@ -202,10 +204,12 @@ class CrossRunMerge:
                 if units
                 else {}
             )
+            # And those an earlier commit's note retires (_read_commit_note).
             about = sorted(
                 (
                     set(m._claims_about(suffix, self._rederived_entity_ids(suffix)))
                     | set(citing)
+                    | m._noted_retired.get(suffix, set())
                 )
                 - {c.id for c in group}
             )
@@ -500,7 +504,8 @@ class CrossRunMerge:
         ``noted`` entities and their other endpoints (``existing``,
         ``existing_rels``, ``merged_entities``, ``merged_relationships``,
         in that order), and the vector copies of the noted entities and
-        their edges the graph does not hold."""
+        their edges the graph does not hold. The edges stored under a noted
+        old id (``IndexingManager._noted_retired``) are among them."""
         m = self._m
         vector_orphans: set[str] = set()
         # The noted entities' stored edges: a killed commit may not have
@@ -509,6 +514,14 @@ class CrossRunMerge:
         graph_incident = set(
             m.graph_indexer.find_incident_relationship_ids(sorted(noted), suffix=suffix)
         )
+        retired = m._noted_retired.get(suffix, set()) - held
+        if retired:
+            graph_incident |= {
+                r.id
+                for r in m.graph_indexer.read_relationships(
+                    sorted(retired), suffix=suffix
+                )
+            }
         if _reads_back(m.graph_indexer):
             in_graph = {
                 e.id
@@ -528,6 +541,12 @@ class CrossRunMerge:
                 - graph_incident
                 - held
             )
+            if retired - graph_incident:
+                vector_orphans |= set(
+                    m.vector_indexer.read_vector_copies(
+                        "relationships", sorted(retired - graph_incident), suffix=suffix
+                    )
+                )
         noted_edges = m.graph_indexer.read_relationships(
             sorted(graph_incident - held),
             suffix=suffix,
@@ -1471,8 +1490,9 @@ class CrossRunMerge:
 
     def _read_commit_note(self, suffix: str) -> set[str]:
         """The entities an earlier commit's note of ``suffix`` names (see
-        :meth:`note_pending_commit`), recorded so their claims follow. A
-        failed read raises (see merge_with_existing_graph)."""
+        :meth:`note_pending_commit`), recorded so their claims follow, with
+        the old ids it retires. A failed read raises (see
+        merge_with_existing_graph)."""
         m = self._m
         notes = m.vector_indexer.read_extraction_records(
             [_PENDING_COMMIT, _STRIPPED_SUMMARIES], suffix=suffix
@@ -1486,7 +1506,13 @@ class CrossRunMerge:
             m._commit_note_suffixes.add(suffix)
         if ids:
             m._noted_commit_entities.setdefault(suffix, set()).update(ids)
-        return ids
+        # The items still stored under an old id it retires (a write failed
+        # or the run died before they were deleted) are derived again too:
+        # the derivation re-keys or drops what a full build does not have.
+        retired = _note_ids(note, "retired_ids")
+        if retired:
+            m._noted_retired.setdefault(suffix, set()).update(retired)
+        return ids | retired
 
     def _match_stored_names(
         self, suffix: str, entities: list[Entity]

@@ -33,7 +33,41 @@ from unified_kg_rag.domain.languages.profiles import (
     zh,
 )
 
-__all__ = ["PROFILES", "language_name", "profile", "profiles"]
+__all__ = ["BUILT_IN_ANALYZERS", "PROFILES", "language_name", "profile", "profiles"]
+
+# OpenSearch's built-in language analyzers of codes without a profile (the
+# primary subtag): such a code's text fields get its language's stemming
+# and stop words instead of ``standard``. Regions are dropped before
+# (``pt-BR`` is ``pt``, a profile), so ``brazilian`` is not reached.
+BUILT_IN_ANALYZERS: Mapping[str, str] = MappingProxyType(
+    {
+        "bg": "bulgarian",
+        "bn": "bengali",
+        "ca": "catalan",
+        "ckb": "sorani",
+        "cs": "czech",
+        "da": "danish",
+        "el": "greek",
+        "et": "estonian",
+        "eu": "basque",
+        "fa": "persian",
+        "fi": "finnish",
+        "ga": "irish",
+        "gl": "galician",
+        "hu": "hungarian",
+        "hy": "armenian",
+        "id": "indonesian",
+        "lt": "lithuanian",
+        "lv": "latvian",
+        "nb": "norwegian",
+        "nl": "dutch",
+        "nn": "norwegian",
+        "no": "norwegian",
+        "ro": "romanian",
+        "sv": "swedish",
+        "tr": "turkish",
+    }
+)
 
 PROFILES: Mapping[LanguageCode, LanguageProfile] = MappingProxyType(
     {
@@ -66,7 +100,7 @@ def _default_profile(code: LanguageCode) -> LanguageProfile:
         code=code,
         name=code.value,
         script="latin",
-        analyzer="standard",
+        analyzer=BUILT_IN_ANALYZERS.get(code.value, "standard"),
         decline=english.decline,
     )
 

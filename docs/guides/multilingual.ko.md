@@ -70,8 +70,10 @@ processing:
 - **다른 언어.** `source_language`와 `target_language`에는 언어 프로필이 있는 코드(`ar`,
   `de`, `en`, `es`, `fr`, `he`, `hi`, `it`, `ja`, `ko`, `pt`, `ru`, `th`, `vi`, `zh`)나
   다른 BCP-47 언어 코드(`sw`, `fa`, 지역은 버림: `pt-BR`은 `pt`)를 쓸 수 있습니다.
-  프로필이 없는 코드는 WARNING을 한 번 남기고 기본값을 씁니다. `language_analyzers`에
-  없으면 `default_analyzer`, 거절 응답은 영어, 프롬프트는 언어를 코드로 부릅니다. 프로필
+  프로필이 없는 코드는 WARNING을 한 번 남기고 기본값을 씁니다. 분석기는 OpenSearch에 그
+  언어의 내장 분석기가 있으면 그것(`nl`: `dutch`, `sv`: `swedish`, `tr`: `turkish` 등,
+  기본 `language_analyzers`에 있음), 없으면 `default_analyzer`이고, 거절 응답은 영어,
+  프롬프트는 언어를 코드로 부릅니다. 프로필
   (`unified_kg_rag/domain/languages/profiles/`)은 모듈 하나로, 언어 이름, 문자 체계,
   분석기, 거절 응답, 답변을 읽는 데 쓰는 단어를 담습니다.
 - **분석기는 클러스터에 있어야** 하며, 없으면 인덱싱 단계가

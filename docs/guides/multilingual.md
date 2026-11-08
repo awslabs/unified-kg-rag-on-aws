@@ -86,9 +86,11 @@ unit holds any more are deleted by the next full build
   codes with a language profile (`ar`, `de`, `en`, `es`, `fr`, `he`, `hi`,
   `it`, `ja`, `ko`, `pt`, `ru`, `th`, `vi`, `zh`) or any other BCP-47
   language code (`sw`, `fa`; a region is dropped, `pt-BR` is `pt`). A code
-  without a profile logs one WARNING and gets the defaults: the
-  `default_analyzer` unless `language_analyzers` maps it, English declines,
-  and prompts that name the language by its code. A profile
+  without a profile logs one WARNING and gets the defaults: OpenSearch's
+  built-in analyzer of the language where it has one (`nl`: `dutch`, `sv`:
+  `swedish`, `tr`: `turkish`, ...; the default `language_analyzers` lists
+  them), else the `default_analyzer`, English declines, and prompts that
+  name the language by its code. A profile
   (`unified_kg_rag/domain/languages/profiles/`) is one module: its name,
   script, analyzer, decline and the words answers in it are read by.
 - **The analyzer must exist on the cluster**, or the indexing stage fails

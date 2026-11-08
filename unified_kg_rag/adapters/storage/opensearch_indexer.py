@@ -960,7 +960,7 @@ class OpenSearchIndexer(VectorIndexer):
 
         Merged into the existing ``_meta`` (the embedding settings stay), so
         it needs ``indices:admin/mapping/put``; a failure is logged and the run
-        goes on. An incremental record keeps the full build the index holds
+        goes on (``None`` when no index took it: the indexing stage retries). An incremental record keeps the full build the index holds
         and its community counters (``IndexBuildRecord.over``). Returns the
         first record written that carries counters (else the first written).
         """
@@ -984,7 +984,8 @@ class OpenSearchIndexer(VectorIndexer):
             except Exception as e:  # noqa: BLE001 - the record is optional
                 logger.warning(
                     "Could not record the build of pipeline '%s' in the _meta of "
-                    "%s (%s); run-eval manifests will not identify this index.",
+                    "%s (%s): the run retries it once its documents are "
+                    "recorded, and later runs while it is missing",
                     record.pipeline_id,
                     alias,
                     e,
@@ -2990,6 +2991,19 @@ class OpenSearchIndexer(VectorIndexer):
             exclude={"exists": {"field": "source_kind"}},
             vector_fields=("text_embedding",),
         )
+
+    def read_text_unit_fields(
+        self, ids: list[str], suffix: str | None, *, fields: list[str]
+    ) -> list[dict[str, Any]]:
+        """The stored ``fields`` of the text units ``ids`` (see the port)."""
+        units = self._read_sources(
+            self.opensearch_config.text_units_index_prefix, ids, suffix, fields
+        )
+        for unit in units:
+            value = unit.get("text_embedding")
+            if isinstance(value, list):
+                unit["text_embedding"] = np.asarray(value, dtype=np.float32)
+        return units
 
     def read_summary_nodes(
         self, suffix: str | None, *, fields: list[str]

@@ -429,8 +429,10 @@ flip a tie):
   documents get no tree under `document`. The trees are read (texts and
   vectors) and built a batch at a time, a batch holding at most
   `max_leaves_in_memory` leaves (whole trees, in name order), so a corpus
-  split into many trees holds one batch at once, not every tree; each batch
-  is one more page walk of the stored text units.
+  split into many trees holds one batch at once, not every tree. A batch
+  reads its own text units by id (`VectorIndexer.read_text_unit_fields`), a
+  page of ids at a time, so the stored units are read once in all; a store
+  that cannot read them by id is walked once per batch.
 
 **Data model.** `SummaryNode` (`domain/models/summary_node.py`): `id` (a
 content id: level, partition and sorted child ids), `level` (1..L; text

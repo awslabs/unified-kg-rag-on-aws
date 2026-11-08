@@ -207,6 +207,10 @@ class IndexingManager:
         # wrote or read (clear_pending_commit deletes those).
         self._noted_commit_entities: dict[str, set[str]] = {}
         self._commit_note_suffixes: set[str] = set()
+        # Per suffix: the old ids an earlier commit's note retires (re-keyed
+        # away or dropped) and may not have deleted (a write failed, or it
+        # was killed): this commit derives the items stored under them again.
+        self._noted_retired: dict[str, set[str]] = {}
         # The stored community reports a removal kept although they cite a
         # removed text unit (see community_drift).
         self.outdated_reports: set[str] = set()
@@ -216,6 +220,8 @@ class IndexingManager:
         # Stored items derivation kept as they were: a text unit they cite
         # names no stored record (``Derived.underived``).
         self.underived_items = 0
+        # Stored items whose schema annotations this run rewrote (reannotate).
+        self.annotations_rewritten = 0
         # By suffix, the entities this run's graph merge or strip derived (to
         # be written): the claims about them are derived against these.
         self._derived_entities: dict[str, dict[str, Entity]] = {}
@@ -744,7 +750,11 @@ class IndexingManager:
         run (the next run tries again); a lost namespace lease still
         propagates.
         """
-        return self._reannotation.reannotate(suffixes)
+        result = self._reannotation.reannotate(suffixes)
+        self.annotations_rewritten += (
+            result.entities_rewritten + result.relationships_rewritten
+        )
+        return result
 
     def merge_with_existing_graph(
         self,
@@ -843,27 +853,39 @@ class IndexingManager:
             for i in items
         ]
 
-    def delete_retired_ids(self) -> dict[str, IndexingStats]:
+    def delete_retired_ids(
+        self,
+        failed: Mapping[str, IndexingStats] | None = None,
+        written: Iterable[Any] = (),
+    ) -> dict[str, IndexingStats]:
         """Delete the items whose ids a derivation replaced (see
         ``Derived.id_remap``) from both stores.
 
         Run after their items are written under the new ids: the re-pointed
         edges then hold the new endpoints, and deleting the old entity vertex
-        drops no edge still in use.
+        drops no edge still in use. A suffix whose stored reports could not
+        be pointed at the new ids keeps its old ids (the failure is in the
+        results, so the caller keeps its note and a later run retries both).
+
+        After a commit some of whose writes failed (``failed``: its results;
+        ``written``: the items it wrote), only the old ids no failed write
+        touches are deleted (:meth:`_untouched_by`): one whose new item, or
+        an edge at it, failed keeps its old copy, which the commit note
+        leaves to a later commit. A failure that names no id keeps them all.
         """
-        retired = {
-            suffix: sorted(
-                (set(self._rekeyed.get(suffix, {})) | self._dropped.get(suffix, set()))
-                - set(self._rekeyed.get(suffix, {}).values())
-            )
-            for suffix in self._rekeyed.keys() | self._dropped.keys()
-        }
-        vector_only = dict(self._vector_only)
+        retired = self._retired_ids()
         rekeyed = {suffix: dict(rekey) for suffix, rekey in self._rekeyed.items()}
+        if failed is not None:
+            retired, rekeyed = self._untouched_by(failed, written, retired, rekeyed)
+        vector_only = dict(self._vector_only)
         self._reset_run_state()
         # The stored community reports citing an old id cite the new one
         # first: deleted, nothing would point them at it.
         repointed = self._repoint_reports(rekeyed)
+        for suffix in sorted(retired):
+            stats = repointed.get(f"vector_report_findings_{suffix}")
+            if stats is not None and stats.failed_items:
+                del retired[suffix]
         if retired:
             logger.info(
                 "Deleting %d items re-keyed to follow their current name",
@@ -871,13 +893,61 @@ class IndexingManager:
             )
         return {**repointed, **self.delete_documents(retired, vector_only)}
 
+    def _untouched_by(
+        self,
+        failed: Mapping[str, IndexingStats],
+        written: Iterable[Any],
+        retired: Mapping[str, list[str]],
+        rekeyed: Mapping[str, Mapping[str, str]],
+    ) -> tuple[dict[str, list[str]], dict[str, dict[str, str]]]:
+        """The ``retired`` ids (and ``rekeyed`` pairs) no failed write
+        touches: neither the old id nor its new one failed, nor an edge at
+        either; a dropped edge only in a suffix with no failed write. None
+        when a failure names no id."""
+        if any(stats.unattributed_failures for stats in failed.values() if stats):
+            return {}, {}
+        failed_ids = {i for stats in failed.values() if stats for i in stats.failed_ids}
+        if not failed_ids:
+            return dict(retired), {s: dict(r) for s, r in rekeyed.items()}
+        touched = set(failed_ids)
+        failing_suffixes: set[str] = set()
+        for item in written:
+            if item.id in failed_ids:
+                failing_suffixes.add(BaseIndexer.get_suffix(item))
+                if isinstance(item, Relationship):
+                    touched.update((item.source_id, item.target_id))
+        kept: dict[str, list[str]] = {}
+        moved: dict[str, dict[str, str]] = {}
+        for suffix, ids in retired.items():
+            rekey = rekeyed.get(suffix, {})
+            free = [
+                i
+                for i in ids
+                if (i in rekey and i not in touched and rekey[i] not in touched)
+                or (i not in rekey and suffix not in failing_suffixes)
+            ]
+            kept[suffix] = free
+            moved[suffix] = {old: rekey[old] for old in free if old in rekey}
+        return kept, moved
+
+    def _retired_ids(self) -> dict[str, list[str]]:
+        """By suffix, the ids this run's derivations re-keyed away or
+        dropped, but none an item is re-keyed to."""
+        return {
+            suffix: sorted(
+                (set(self._rekeyed.get(suffix, {})) | self._dropped.get(suffix, set()))
+                - set(self._rekeyed.get(suffix, {}).values())
+            )
+            for suffix in self._rekeyed.keys() | self._dropped.keys()
+        }
+
     def _repoint_reports(
         self, rekeyed: Mapping[str, Mapping[str, str]]
     ) -> dict[str, IndexingStats]:
         """Point the findings of the stored reports at the ids ``rekeyed``
         (by suffix: old id -> new id) gives
         (``VectorIndexer.repoint_report_findings``). A failure keeps the old
-        ids in them (a query reading the records skips an id not stored)."""
+        ids in them, and the suffix's old ids stored (delete_retired_ids)."""
         results: dict[str, IndexingStats] = {}
         for suffix, rekey in sorted(rekeyed.items()):
             moved = {old: new for old, new in rekey.items() if old != new}
@@ -893,7 +963,8 @@ class IndexingManager:
             if stats.failed_items:
                 logger.warning(
                     "Pointing the stored community reports of '%s' at re-keyed "
-                    "ids failed; they keep citing the old ids: %s",
+                    "ids failed; they keep citing the old ids, which stay "
+                    "stored until a later run retries: %s",
                     suffix,
                     stats.errors[:1],
                 )
@@ -903,24 +974,38 @@ class IndexingManager:
 
     def note_pending_commit(self) -> None:
         """Note, per suffix, the stored entities this commit's derivation
-        split, re-keyed or rewired (with those of an earlier note it
-        finishes), before its first write. Those decisions live in memory
-        only: a run killed between the writes leaves the stored state half
-        changed, and the next run, deriving from it, would not split or
-        re-key them again, so their stored edges and claims would stay as
-        they were. The next commit of the suffix derives them again
+        split, re-keyed or rewired and the old ids it retires (re-keyed away
+        or dropped), with those of an earlier note it finishes, before its
+        first write. Those decisions live in memory only: a run killed
+        between the writes, or one whose write failed (it keeps the old ids,
+        :meth:`discard_retired_ids`), leaves the stored state half changed,
+        and the next run, deriving from it, would not split or re-key them
+        again, so their stored edges and claims and the old copies would
+        stay as they were. The next commit of the suffix derives the noted
+        entities and the items stored under the old ids again
         (:meth:`_merge_suffix`). Raises when a write fails, before anything
         is written."""
+        retired = self._retired_ids()
         for suffix in sorted(
-            self._commit_entities.keys() | self._noted_commit_entities.keys()
+            self._commit_entities.keys()
+            | self._noted_commit_entities.keys()
+            | retired.keys()
+            | self._noted_retired.keys()
         ):
             ids = {
                 *self._commit_entities.get(suffix, set()),
                 *self._noted_commit_entities.get(suffix, set()),
             }
-            if not ids:
+            old_ids = {
+                *retired.get(suffix, []),
+                *self._noted_retired.get(suffix, set()),
+            }
+            if not ids and not old_ids:
                 continue
-            self._write_note(_PENDING_COMMIT, suffix, {"entity_ids": sorted(ids)})
+            note: dict[str, Any] = {"entity_ids": sorted(ids)}
+            if old_ids:
+                note["retired_ids"] = sorted(old_ids)
+            self._write_note(_PENDING_COMMIT, suffix, note)
             self._commit_note_suffixes.add(suffix)
 
     def read_pending_writes(
@@ -1032,6 +1117,7 @@ class IndexingManager:
             self._vector_only,
             self._commit_entities,
             self._noted_commit_entities,
+            self._noted_retired,
             self._split_from,
             self._renamed,
             self._fresh,

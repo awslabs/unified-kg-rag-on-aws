@@ -487,10 +487,11 @@ class OpenSearchConfig(BaseModel):
     sigv4_service_name: str = Field(
         default="es",
         description=(
-            "SigV4 signing service for IAM auth: 'es', a managed OpenSearch "
-            "domain, the only store supported. OpenSearch Serverless ('aoss') "
-            "is refused: its vector collections assign their own document "
-            "ids and have no refresh API, which the indexes need."
+            "SigV4 signing service for IAM auth. Only 'es' (a managed "
+            "OpenSearch domain) is accepted: the setting exists so a config "
+            "naming OpenSearch Serverless ('aoss') fails at load with the "
+            "reason, as its vector collections assign their own document ids "
+            "and have no refresh API, which the indexes need."
         ),
     )
 
