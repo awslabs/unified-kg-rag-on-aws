@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
@@ -251,3 +252,32 @@ async def test_a_failed_query_processing_step_degrades_the_answer(
     monkeypatch.setattr(query_processing, "process_query", broken)
     result = await chain._process_query_step({"query": "q"})
     assert result.final_query == "q" and result.degraded_error == "KeyError"
+
+
+@pytest.mark.parametrize(
+    ("translation", "entities"),
+    [
+        (httpx.ConnectError("All connection attempts failed"), ["oda"]),
+        ("About Oda", ConnectionRefusedError(111, "Connection refused")),
+    ],
+    ids=["translation", "entities"],
+)
+async def test_an_unreachable_model_server_is_never_absorbed(
+    config: Config, translation, entities
+) -> None:
+    # Regression (rv7 features M1): ignore_errors searched without the
+    # failed call, and every later call met the same server: the query
+    # fails at once, naming it.
+    config.processing.ignore_errors = True
+    config.processing.translation.source_language = "ja"
+    config.processing.translation.target_language = "en"
+    chain = _chain(config)
+    _install_fakes(chain, translation=translation, entities=entities)
+    with pytest.raises((httpx.ConnectError, ConnectionRefusedError)):
+        await chain._process_query_step({"query": "織田信長について"})
+
+    chain._get_chain_for_prompt = (  # type: ignore[assignment]
+        lambda *a, **k: _FakeChain(httpx.ConnectError("refused"))
+    )
+    with pytest.raises(httpx.ConnectError):
+        await chain._extract_dual_keywords("q", "English")
