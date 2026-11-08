@@ -257,12 +257,22 @@ def test_local_preset_fills_every_role_and_the_store_endpoints() -> None:
     assert config.providers.graph.kind == "sqlite"
     assert config.providers.vector.kind == "sqlite"
     assert config.providers.doc_status.kind == "sqlite"
+    # Incremental by default: the embedded registry is on.
+    assert config.doc_status_enabled is True
     assert config.model_id(ModelRole.ANSWER_GENERATION) == models["default"]
     assert config.embedding_model_id == models["embedding"]["model_id"]
     assert config.rerank_model_id == models["rerank"]
     assert (config.aws.neptune.use_iam, config.aws.neptune.use_ssl) == (False, False)
     assert config.aws.opensearch.allow_anonymous is True
     assert config.aws.opensearch.port == 9200
+
+
+def test_the_local_registry_follows_its_kind_and_the_config() -> None:
+    off = Config(backend="local", providers={"doc_status": {"enabled": False}})
+    assert off.doc_status_enabled is False
+    # A DynamoDB table is on only when the config says so.
+    dynamo = Config(backend="local", providers={"doc_status": {"kind": "dynamodb"}})
+    assert dynamo.doc_status_enabled is False
 
 
 def test_local_preset_keeps_twenty_llm_calls_in_flight() -> None:

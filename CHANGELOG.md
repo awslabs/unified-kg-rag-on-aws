@@ -414,7 +414,10 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
 12. Local mode: a `backend: local` config that relied on the preset for the stores gets the embedded SQLite stores;
     add `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch` (as `docker/config.local.yaml` does)
     to keep the containers (#273). Its reranker needs the `cross-encoder` extra: with `local` alone queries run
-    with reranking off (#628).
+    with reranking off (#628). The preset turns the SQLite doc-status registry on, so runs are incremental: stores
+    a run built with it off make the next run exit 2 until one run with `indexing.reset: true` rebuilds them (a
+    first build's cost, less what the LLM response cache holds); `providers.doc_status.enabled: false` keeps full
+    reloads.
 13. After the rebuild succeeds: delete the old registry table, the OpenSearch pipeline 0.2.3 wrote (`DELETE
     _search/pipeline/graphrag-hybrid-search-pipeline`) and `s3://<bucket>/embedding-cache/` if you used it. Delete
     the three log groups 0.2.3 created that the stacks no longer manage (CloudFormation retains them, also with

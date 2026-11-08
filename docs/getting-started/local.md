@@ -63,18 +63,20 @@ uv run --no-dev run-ingestion --backend local --source-directory ./sample-corpus
 ```
 
 - **Files.** Without a config file the stores live in `.unified-kg-rag/` of
-  the working directory (`graph.sqlite3` and `vector.sqlite3`, plus
-  `doc-status.sqlite3` once the registry is on), so run every command from the
+  the working directory (`graph.sqlite3`, `vector.sqlite3` and the
+  registry's `doc-status.sqlite3`), so run every command from the
   same directory, or use a config file with `backend: local` (relative paths
   resolve against its directory). To start over, delete the
   `.unified-kg-rag/` directory or run once with `indexing.reset: true`.
-- **Incremental indexing** is off in the preset; turn it on with
-  `providers.doc_status.enabled: true` (the run logs the registry's absolute
-  path). The stores this run built hold documents the new registry does not
-  list, so the first run with the registry on exits 2 ("was built by a run
-  with the doc-status registry off"): run it once with `indexing.reset: true`
-  (for example `UKR__INDEXING__RESET=true`), which rebuilds the stores and
-  fills the registry; later runs are incremental.
+- **Incremental indexing** is on in the preset (the SQLite doc-status
+  registry; the run logs its absolute path): a run again over the same
+  folder processes only new, changed and failed documents.
+  `providers.doc_status.enabled: false` turns it off. Stores built by a run
+  with the registry off hold documents the registry does not list, so the
+  first run with it on exits 2 ("was built by a run with the doc-status
+  registry off"): run it once with `indexing.reset: true` (for example
+  `UKR__INDEXING__RESET=true`), which rebuilds the stores and fills the
+  registry; later runs are incremental.
 
 ## Query with GraphRAG and LightRAG
 

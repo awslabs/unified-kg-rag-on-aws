@@ -130,9 +130,12 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
     if (folder && !uploadName) setUploadName(folder);
   };
 
+  // A run is incremental only with the doc-status registry on.
+  const lede = status?.backend?.doc_status ? `${t("ingest.lede")} ${t("ingest.ledeIncremental")}` : t("ingest.lede");
+
   return (
     <>
-      <PageHead title={t("ingest.title")} lede={t("ingest.lede")} />
+      <PageHead title={t("ingest.title")} lede={lede} />
       <div className="grid-2">
         <div className="stack">
           <Sheet title={t("ingest.corpus")} aside={<button className="button button-small" onClick={() => void corpora.reload()}>{t("common.refresh")}</button>}>
