@@ -185,15 +185,21 @@ class GremlinQuery:
         return reached.hasLabel(self.label)
 
     def _segment(self, traversal: GraphTraversal, edge: ResolvedEdge) -> GraphTraversal:
-        if edge.min_hops == edge.max_hops == 1:
-            return self._step(traversal, edge)
+        if edge.min_hops == edge.max_hops:
+            # One length is one chain, walked in place: Neptune rejects a
+            # union() of a single simplePath() branch ("Exception processing
+            # a script"), and the trailing simplePath() covers a plain chain.
+            for _ in range(edge.min_hops):
+                traversal = self._step(traversal, edge)
+            return traversal
         chains = []
         for length in range(edge.min_hops, edge.max_hops + 1):
             chain = self._step(__, edge)
             for _ in range(length - 1):
                 chain = self._step(chain, edge)
-            # Neptune ignores a simplePath() after a union() (Gremlin Server
-            # honours it): each branch checks the walk so far itself.
+            # Neptune ignores a simplePath() after a union() of several
+            # branches (Gremlin Server honours it): each branch checks the
+            # walk so far itself.
             chains.append(chain.simplePath())
         return traversal.union(*chains)
 

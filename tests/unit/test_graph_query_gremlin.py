@@ -136,6 +136,28 @@ def test_every_union_branch_keeps_the_walk_simple() -> None:
     assert "simplePath" in [s[0] for s in steps[steps.index(union) + 1 :]]
 
 
+def test_a_fixed_multi_hop_edge_is_one_chain_without_a_union() -> None:
+    # Neptune 1.4 rejects union(chain.simplePath()) with one branch followed
+    # by simplePath() ("Exception processing a script"); a fixed length walks
+    # its hops in place and the trailing simplePath() keeps it simple.
+    plan = {
+        "nodes": [
+            {
+                "var": "a",
+                "where": [{"prop": "name", "op": "eq", "value": "Hooli Retail"}],
+            },
+            {"var": "z", "types": ["PRODUCT"]},
+        ],
+        "edges": [{"direction": "both", "hops": [2, 2]}],
+        "returns": {"kind": "rows", "vars": ["z"]},
+    }
+    steps = _query(plan).build(g).bytecode.step_instructions
+    names = [s[0] for s in steps]
+    assert "union" not in names
+    assert names.count("otherV") == 2
+    assert "simplePath" in names[names.index("otherV") :]
+
+
 def test_a_linked_last_node_starts_the_walk() -> None:
     query = _query(
         {
