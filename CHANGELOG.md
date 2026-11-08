@@ -1418,12 +1418,12 @@ From a `main` checkout (formats and keys no release had):
   keeps the previous graph and records (#331).
 - An incremental run finds what a changed or deleted document contributed by the text units every item cites, strips
   shared items and re-derives them (summarizing from lines as a full build does, also when several edited documents
-  share an item or spell it otherwise, when a delta folds two spellings or stored summaries into one item or splits
-  a part off a summarized one (#624), and when the run dies between the removal and the commit and is resumed: the
-  removal notes the items it stripped in the extraction store until a commit's writes succeed), moves an item to the
-  id a full build gives it, and deletes extraction records nothing names (#325, #327, #564, #589, #592). With fuzzy
-  resolution on, it folds a delta entity into its one best stored match (the higher score, then the shorter name, then
-  the smaller one) and never joins two stored ones until a reset (#564).
+  share an item or spell it otherwise, when a delta folds two spellings or stored summaries into one item (one a
+  removal stripped too) or splits a part off a summarized one (#624), and when the run dies between the removal and
+  the commit and is resumed: the removal notes the items it stripped in the extraction store until a commit's writes
+  succeed), moves an item to the id a full build gives it, and deletes extraction records nothing names (#325, #327,
+  #564, #589, #592). With fuzzy resolution on, it folds a delta entity into its one best stored match (the higher
+  score, then the shorter name, then the smaller one) and never joins two stored ones until a reset (#564).
 - An incremental run sets the rank of a stored edge whose rank alone changed (a neighbour's degree changed) in place,
   batched, instead of dropping and adding the edge (`GraphIndexer.update_relationship_ranks`, whose default rewrites
   it): most of a delta's edge writes at a hub, 0.15 ms against 10.6 ms per edge on a Gremlin Server.

@@ -761,6 +761,26 @@ def _run_changes(
         {_PATHS[2]: _DEPOT_TO_VENDOR},
     ]
 )
+# b.txt stores "벤더" (an org, by c.txt's edge) apart from "(주)벤더" (a
+# person). c.txt's deletion strips 벤더 and a.txt's 벤더 makes it a person:
+# the commit folds the stripped "(주)벤더" into it, whose line b.txt#1
+# states, a unit 벤더 cites already. The stored 벤더 summary must not be
+# extended with a.txt's line alone: the folded spelling's line was lost.
+@example(
+    changes=[
+        {_PATHS[0]: "keep", _PATHS[1]: "keep", _PATHS[2]: "keep"},
+        {
+            _PATHS[0]: "keep",
+            _PATHS[1]: [(["벤더"], [], []), (["벤더", "(주)벤더"], [], [])],
+            _PATHS[2]: [([], [], [("Vendor", "벤더", 1)])],
+        },
+        {
+            _PATHS[0]: [(["Vendor"], [], []), (["Vendor", "벤더"], [], [])],
+            _PATHS[1]: "keep",
+            _PATHS[2]: "delete",
+        },
+    ]
+)
 def test_insert_and_delete_calls_match_a_full_build_with_summaries(changes) -> None:
     """Named changes (the insert/delete API: the documents a call does not
     name are kept) leave the summarized stores a full build of what the
