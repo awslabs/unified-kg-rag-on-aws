@@ -5,7 +5,7 @@
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -104,6 +104,20 @@ REMOVED_EVALUATORS: dict[str, str] = {
 }
 
 
+def _ragas_metric_names(value: Any) -> Any:
+    """``evaluation.ragas_metrics`` checked against the ragas metrics by
+    name: the literal check names each allowed value by its enum repr."""
+    allowed = [m.value for m in get_args(RagasMetricType)]
+    if isinstance(value, list):
+        for item in value:
+            name = item.value if isinstance(item, Enum) else item
+            if name not in allowed:
+                raise ValueError(
+                    f"{name!r} is not a ragas metric; use one of: " + ", ".join(allowed)
+                )
+    return value
+
+
 def _without_removed_evaluators(value: Any) -> Any:
     """``enabled_evaluators`` without the removed types, each warned about."""
     if not isinstance(value, list | tuple):
@@ -161,7 +175,9 @@ class EvaluationConfig(BaseModel):
             "that names it loads with a warning and without it."
         ),
     )
-    ragas_metrics: list[RagasMetricType] = Field(
+    ragas_metrics: Annotated[
+        list[RagasMetricType], BeforeValidator(_ragas_metric_names)
+    ] = Field(
         default=[
             EvaluationMetricType.ANSWER_CORRECTNESS,
             EvaluationMetricType.ANSWER_RELEVANCY,

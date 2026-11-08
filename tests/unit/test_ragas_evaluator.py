@@ -821,8 +821,12 @@ class TestMetricChoice:
     def test_another_metric_fails_the_load(self, metric: Any) -> None:
         # The evaluator dropped it at run time (or refused it after the
         # answers were paid for).
-        with pytest.raises(ValidationError, match="ragas_metrics"):
+        with pytest.raises(ValidationError, match="ragas_metrics") as raised:
             Config.model_validate({"evaluation": {"ragas_metrics": [metric]}})
+        # The allowed metrics by name, not by their enum reprs.
+        message = str(raised.value)
+        assert "use one of: answer_correctness, answer_relevancy" in message
+        assert "<EvaluationMetricType.ANSWER" not in message
 
 
 class TestInitFailure:

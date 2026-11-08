@@ -245,7 +245,7 @@ AWS OpenSearch service configuration
 | `verify_certs` | boolean | `true` | Verify SSL/TLS certificates |
 | `use_iam` | boolean | `false` | SigV4-sign OpenSearch requests. false uses basic auth with username / password, usually from UKR__AWS__OPENSEARCH__USERNAME and UKR__AWS__OPENSEARCH__PASSWORD (for example in .env). |
 | `allow_anonymous` | boolean | `false` | Connect without authentication, for a local OpenSearch with the security plugin disabled. Mutually exclusive with use_iam and username/password. |
-| `sigv4_service_name` | string | `"es"` | SigV4 signing service for IAM auth: 'es', a managed OpenSearch domain, the only store supported. OpenSearch Serverless ('aoss') is refused: its vector collections assign their own document ids and have no refresh API, which the indexes need. |
+| `sigv4_service_name` | string | `"es"` | SigV4 signing service for IAM auth. Only 'es' (a managed OpenSearch domain) is accepted: the setting exists so a config naming OpenSearch Serverless ('aoss') fails at load with the reason, as its vector collections assign their own document ids and have no refresh API, which the indexes need. |
 
 ### `aws.s3`
 

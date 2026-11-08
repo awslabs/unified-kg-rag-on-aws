@@ -1486,7 +1486,8 @@ From a `main` checkout (formats and keys no release had):
   parse in a process pool once the rest is expected to take longer than starting one. The first run after upgrading
   parses every file once and records their digests. The corpus fingerprint's read of each file computes its source
   digest too, so a run reads each file's bytes once for both.
-- Stage-cache files are compact UTF-8 JSON, half the bytes to write and hash; entries written indented still load.
+- Stage-cache files are compact UTF-8 JSON, 1.2 to 1.6 times fewer bytes to write and hash on English text (more on
+  text the ASCII escapes multiplied); entries written indented still load.
 - Faster at query time and ingestion: the query path no longer imports datasketch and SciPy (about a second per
   process; the name keys are in `domain/ingestion/names.py`), the SQLite registry reads records by key (a full table
   scan per batch before), the local model clients share one TLS context (a model built in under 1 ms, 13-28 ms
