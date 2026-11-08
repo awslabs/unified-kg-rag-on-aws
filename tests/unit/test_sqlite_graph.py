@@ -613,8 +613,10 @@ async def test_retriever_filters(config: Config) -> None:
     assert await ids({"type": ["PERSON", "ORG"]}) == ["a", "b", "s"]
     assert await ids({"rank": {"gte": 3}}) == ["b", "c", "s"]
     assert await ids({"rank": {"gt": 1, "lt": 9}}) == ["c", "s"]
-    # attr_* applies only where the property exists.
-    assert await ids({"attr_role": "vendor"}) == ["a", "c", "s"]
+    # An entity's own attribute is strict, as on the entities index...
+    assert await ids({"attributes.role": "vendor"}) == ["a"]
+    # ... and attr_* is a document filter, which no vertex holds: dropped.
+    assert await ids({"attr_role": "vendor"}) == ["a", "b", "c", "s"]
     # A key no entity vertex declares is dropped, not matched.
     assert await ids({"level": "0"}) == ["a", "b", "c", "s"]
     # A string of a numeric field is typed (as the CLI gives every value)...

@@ -170,8 +170,9 @@ the property is a document edge). Node `i` binds the vertex at the
 boundary after `h_0 + … + h_{i-1}` steps and must have a `type` among its
 types' stored spellings, satisfy each condition, be among its linked ids
 and pass the caller's graph filters (as graph expansion applies them: an
-`attr_*` key where the vertex has it, `source_kinds` with the document
-rule, every other key strictly, `id` as a list of allowed ids). A
+entity's own `attributes.<key>` as its `attr_<key>` property,
+`source_kinds` with the document rule, every key strictly, `id` as a list
+of allowed ids). A
 *binding* is the tuple of the bound vertices' `id` properties; results are
 over distinct bindings, so a vertex stored twice while a label switches
 vertex-id mode counts once. A condition holds when any stored value

@@ -156,12 +156,12 @@ async def test_the_check_searches_the_query_suffix(config: Config) -> None:
     assert [q.suffix for q in document.queries] == ["tenant-b"]
 
 
-@pytest.mark.parametrize("key", ["attributes.role", "name.keyword"])
+@pytest.mark.parametrize("key", ["attributes.address.city", "name.keyword"])
 async def test_an_entity_key_the_graph_does_not_store_is_vouched(
     config: Config, key: str
 ) -> None:
-    # Regression: the graph drops a key its entity vertices lack (an
-    # entity's own attributes.role, name.keyword), so its walk returned
+    # Regression: the graph drops a key its entity vertices lack (a nested
+    # attribute path, name.keyword), so its walk returned
     # every neighbour, failing the key, as an entity result (59 of 59 under
     # attributes.role with mix). The entities index holds the key.
     prefix = config.indexing.opensearch.entities_index_prefix

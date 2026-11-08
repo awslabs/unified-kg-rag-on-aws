@@ -52,8 +52,8 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   `max_terms_count` the exclusion keeps the vertices reached last, so edges
   back to the others can. Without the relationships index the graph walk
   runs, checked against the entities index. So is a graph walk
-  under an entity key entity vertices do not store (`name.keyword`,
-  `attributes.<path>`): the graph drops it, the entities index applies it
+  under an entity key entity vertices do not store (`name.keyword`, a
+  nested `attributes.<path>`): the graph drops it, the entities index applies it
   (`_graph_unapplied_filters`), to LightRAG's seeds too (its relationship
   endpoints were found under no entity key; `local`'s and `drift`'s seeds
   were found under the filters).

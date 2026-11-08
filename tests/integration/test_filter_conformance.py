@@ -43,10 +43,6 @@ _SUFFIX = "default"
 _ALL = ("e1", "e2", "e3", "e4")
 
 # Known divergences, by (case, family): the test fails strictly once fixed.
-_D1 = (
-    "D1: a graph matches attr_<key> against the entity's own attribute, "
-    "not its documents' metadata, and does not apply attributes.<key>"
-)
 _D2 = (
     "D2: a name filter is a term on analyzed text on OpenSearch, exact on "
     "a graph; a description filter matches tokens or exact text"
@@ -56,18 +52,6 @@ _IR = "the store matches nothing on an unindexed path instead of refusing it"
 _GRAPHS = ("sqlite-graph", "gremlin")
 _INDEXES = ("embedded", "opensearch")
 _KNOWN: dict[tuple[str, str], str] = {
-    **{
-        (case, family): _D1
-        for case in (
-            "document-filter",
-            "document-filter-number",
-            "document-filter-string",
-            "own-attribute",
-            "own-attribute-list",
-            "own-attribute-range",
-        )
-        for family in _GRAPHS
-    },
     **{(case, family): _D2 for case in ("name", "name-korean") for family in _INDEXES},
     ("name-japanese", "embedded"): _D2,
     ("name-is-exact", "opensearch"): _D2,
@@ -169,6 +153,7 @@ _CASES: list[tuple[str, dict[str, Any], Any, bool]] = [
     ("own-attribute", {"attributes.category": "hardware"}, {"e1"}, True),
     ("own-attribute-list", {"attributes.category": ["software"]}, {"e3"}, True),
     ("own-attribute-range", {"attributes.founded": {"gte": 1000}}, {"e1"}, True),
+    ("own-attribute-number-text", {"attributes.founded": "1999"}, {"e1"}, True),
     ("type", {"type": "org"}, {"e1", "e2"}, True),
     ("type-list", {"type": ["org", "person"]}, {"e1", "e2", "e3"}, True),
     ("rank-range", {"rank": {"gte": 2}}, {"e1", "e3"}, True),

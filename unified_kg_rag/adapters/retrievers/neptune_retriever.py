@@ -42,7 +42,6 @@ from unified_kg_rag.adapters.retrievers.graph_expansion import (
     edge_source_kinds,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
-    ATTRIBUTE_KEY_PREFIX,
     SOURCE_KINDS_FIELD,
     source_kinds_values,
 )
@@ -174,22 +173,6 @@ class NeptuneRetriever(GraphExpansionRetriever):
         return [(key, value)]
 
     @staticmethod
-    def _filter_predicate(key: str, steps: list[tuple[str, Any]]) -> GraphTraversal:
-        """Anonymous traversal a vertex must match for one ``attr_*`` entry.
-
-        ``attr_*`` keys apply where present: a vertex without the property
-        passes. Entity vertices carry their own extracted attributes (e.g.
-        ``attr_role``) but not document attribute filters (``attr_category``
-        lives in OpenSearch), so a strict match would empty graph expansion for
-        every document-attribute filter. Every other key is a strict ``has``
-        (``_apply_filters``).
-        """
-        matched = __.has(*steps[0])
-        for step in steps[1:]:
-            matched = matched.has(*step)
-        return __.or_(matched, __.hasNot(key))
-
-    @staticmethod
     def _source_kinds_predicate(value: Any) -> GraphTraversal:
         """Anonymous traversal a vertex must match for a ``source_kinds``
         entry (``filter_schema``): a vertex holds one of the kinds (a
@@ -218,14 +201,8 @@ class NeptuneRetriever(GraphExpansionRetriever):
             if key == SOURCE_KINDS_FIELD and isinstance(value, str | list) and value:
                 traversal = traversal.where(cls._source_kinds_predicate(value))
                 continue
-            steps = cls._filter_steps(key, value)
-            if not steps:
-                continue
-            if key.startswith(ATTRIBUTE_KEY_PREFIX):
-                traversal = traversal.where(cls._filter_predicate(key, steps))
-            else:
-                for step in steps:
-                    traversal = traversal.has(*step)
+            for step in cls._filter_steps(key, value):
+                traversal = traversal.has(*step)
         return traversal
 
     async def _traverse(

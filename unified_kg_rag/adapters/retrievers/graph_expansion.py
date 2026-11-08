@@ -27,6 +27,7 @@ The seeds themselves come back as rows with a path of length 1.
 
 import itertools
 import json
+import math
 import time
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
@@ -45,6 +46,7 @@ from unified_kg_rag.adapters.storage.filter_schema import (
     SOURCE_KINDS_FIELD,
     FilterFields,
     check_filter_values,
+    graph_attribute_key,
     source_kinds_values,
     typed_filter_values,
 )
@@ -69,6 +71,43 @@ logger = get_logger(__name__)
 # value_map's one-element list is otherwise read as its value (an entity in
 # one text unit read as a str, and every consumer had to re-wrap it).
 _LIST_PROPERTIES = frozenset({"text_unit_ids", "community_ids", SOURCE_KINDS_FIELD})
+
+
+def _attribute_values(value: Any) -> Any:
+    """An ``attributes.<key>`` filter value as a vertex property matches it.
+
+    The entities index maps an attribute by its first value, and a term
+    converts to that type (``"1999"`` matches a stored ``1999``, ``1999`` a
+    stored ``"1999"``); a vertex property compares as stored. So a value
+    (each of a list) also matches its other spelling: a number its JSON
+    text, a string that reads as a number or boolean that value. A range
+    is left as given (a bound compares with values of its own type).
+    """
+    if isinstance(value, dict):
+        return value
+    values: list[Any] = []
+    for given in value if isinstance(value, list) else [value]:
+        values.append(given)
+        if isinstance(given, bool):
+            values.append("true" if given else "false")
+        elif isinstance(given, int | float):
+            values.append(json.dumps(given))
+        elif isinstance(given, str):
+            text = given.strip()
+            if text in ("true", "false"):
+                values.append(text == "true")
+                continue
+            try:
+                values.append(int(text))
+            except ValueError:
+                try:
+                    number = float(text)
+                except ValueError:
+                    continue
+                if math.isfinite(number):
+                    values.append(number)
+    unique = list(dict.fromkeys((type(v), v) for v in values))
+    return [v for _, v in unique] if len(unique) > 1 else value
 
 
 def edge_source_kinds(stored: Any) -> list[str] | None:
@@ -291,7 +330,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         label: str, filters: dict[str, Any] | None
     ) -> dict[str, Any] | None:
         """``filters`` without the keys entity vertices (``label``) do not
-        declare.
+        declare, in the vertices' property names.
 
         Mirrors the OpenSearch per-index scoping: a filter on ``key`` drops
         every vertex lacking ``key``, so a key the label does not declare is
@@ -301,6 +340,9 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         a boolean or numeric field is converted to that type
         (``typed_filter_values``): a vertex property compares as stored, so
         ``"false"`` matched no ``in_schema``, where OpenSearch converts it.
+        An entity's own attribute (``attributes.<key>``) is its ``attr_<key>``
+        property, matched as the entities index matches it
+        (``_attribute_values``).
         """
         if not filters:
             return filters
@@ -310,6 +352,9 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
                 logger.debug(
                     "Dropped filter key '%s': no %s vertex declares it", key, label
                 )
+                continue
+            if (stored := graph_attribute_key(key)) is not None:
+                kept[stored] = _attribute_values(value)
                 continue
             kept[key] = value
         return kept or None

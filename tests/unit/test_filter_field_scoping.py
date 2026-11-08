@@ -498,21 +498,25 @@ def _kept(filters: dict[str, Any]) -> list[str]:
     return [v["id"] for v in _VERTICES if _matches(v, steps)]
 
 
-def test_neptune_entity_attribute_filters_vertices_that_have_it() -> None:
-    # attr_role is an LLM-extracted entity attribute stored on the vertex;
-    # vertices without the property are not filtered by it.
-    assert _kept({"attr_role": "buyer"}) == ["e1", "e3"]
-    assert _kept({"attr_role": ["buyer", "vendor"]}) == ["e1", "e2", "e3"]
+def test_neptune_entity_attribute_is_filtered_as_on_the_entities_index() -> None:
+    # role is an LLM-extracted entity attribute, stored on the vertex as
+    # attr_role and filtered as attributes.role (the entities index's key),
+    # strictly: a vertex without it goes, as an entity document without it.
+    assert _kept({"attributes.role": "buyer"}) == ["e1"]
+    assert _kept({"attributes.role": ["buyer", "vendor"]}) == ["e1", "e2"]
 
 
-def test_neptune_document_attribute_does_not_empty_expansion() -> None:
-    # attr_category is a document attribute: absent on every vertex.
-    assert _kept({"attr_category": "research"}) == ["e1", "e2", "e3"]
+@pytest.mark.parametrize("key", ["attr_role", "attr_category"])
+def test_neptune_leaves_a_document_attribute_to_the_entities_index(key: str) -> None:
+    # attr_<key> is a document filter on every store: a vertex holds none
+    # (attr_role is the entity's own role, not its documents'), so the
+    # graph drops it and the strategy checks the entities index.
+    assert _kept({key: "buyer"}) == ["e1", "e2", "e3"]
 
 
 def test_neptune_strict_key_stays_strict() -> None:
     assert _kept({"type": "PERSON"}) == ["e1", "e2"]
-    assert _kept({"type": "PERSON", "attr_role": "vendor"}) == ["e2"]
+    assert _kept({"type": "PERSON", "attributes.role": "vendor"}) == ["e2"]
 
 
 _SOURCED = [
@@ -562,10 +566,21 @@ def test_neptune_document_source_kinds_is_or_has_or_has_not() -> None:
 
 def test_neptune_filter_fields(config: Config) -> None:
     declared = _neptune(config).filter_fields()
-    for key in ("id", "type", "description", "attr_role"):
+    for key in ("id", "type", "description", "attributes.role"):
         assert declared.declares(key), key
     # Community vertex fields: the traversal filters entity vertices only.
-    for key in ("status", "entity_type", "attributes.source", "size", "level"):
+    # Document filters, nested and internal attribute paths are no vertex's.
+    for key in (
+        "status",
+        "entity_type",
+        "size",
+        "level",
+        "attr_role",
+        "attributes.filters.category",
+        "attributes.address.city",
+        "attributes.seed_properties",
+        "attributes._internal",
+    ):
         assert not declared.declares(key), key
 
 
@@ -590,7 +605,13 @@ def test_neptune_schema_covers_indexed_entity_properties(config: Config) -> None
     assert {"attr_region", "in_schema", "type_iri", "iri", "source_kinds"} <= set(props)
     # name_key is the merge's lookup key, not a filter.
     props.pop(NAME_KEY_PROPERTY)
-    assert all(NEPTUNE_ENTITY_FILTER_FIELDS.declares(k) for k in props)
+    # An attribute is declared by its entities-index key.
+    assert all(
+        NEPTUNE_ENTITY_FILTER_FIELDS.declares(
+            f"attributes.{k.removeprefix('attr_')}" if k.startswith("attr_") else k
+        )
+        for k in props
+    )
 
 
 # --------------------------------------------------------------------------- #

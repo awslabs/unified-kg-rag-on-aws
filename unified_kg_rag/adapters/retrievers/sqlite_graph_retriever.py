@@ -23,7 +23,6 @@ from unified_kg_rag.adapters.retrievers.graph_expansion import (
     edge_source_kinds,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
-    ATTRIBUTE_KEY_PREFIX,
     SOURCE_KINDS_FIELD,
     source_kinds_values,
 )
@@ -74,10 +73,9 @@ def _matches(values: list[Any], value: Any) -> bool:
 def vertex_filter(filters: dict[str, Any] | None) -> VertexFilter | None:
     """The predicate ``NeptuneRetriever._apply_filters`` applies to a vertex.
 
-    ``id`` is the seed list, not a filter. An ``attr_*`` key applies only to
-    vertices that have the property, and a ``source_kinds`` entry naming
+    ``id`` is the seed list, not a filter. A ``source_kinds`` entry naming
     ``document`` passes vertices without it too (an entity no seed graph
-    states); every other key also drops vertices without it. A dict without
+    states); every other key drops vertices without it. A dict without
     a range operator filters nothing; the retriever refuses one before
     (``check_filter_values``), as the OpenSearch retriever does.
     """
@@ -96,7 +94,7 @@ def vertex_filter(filters: dict[str, Any] | None) -> VertexFilter | None:
         for key, value in entries:
             stored = value_map.get(key)
             if not stored:
-                if key.startswith(ATTRIBUTE_KEY_PREFIX) or (
+                if (
                     key == SOURCE_KINDS_FIELD
                     and isinstance(value, str | list)
                     and DOCUMENT_SOURCE_KIND in source_kinds_values(value)

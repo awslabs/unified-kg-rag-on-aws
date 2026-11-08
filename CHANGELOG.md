@@ -1249,6 +1249,11 @@ From a `main` checkout (formats and keys no release had):
 - `run-eval` exits 2 for a filter key no index declares, as `run-rag` does, and `run-rag` exits by the class of a
   failure `processing.ignore_errors` absorbed (2 for a `--suffix` nothing was ingested under; it exited 1).
 - Global search on a namespace without community reports declines with `abstention_reason: no_reports`.
+- A graph store filters an entity by its own attribute as `attributes.<key>`, the entities index's key, strictly;
+  `attr_<key>` is a document filter on every store. A graph matched `attr_<key>` against the entity's own attribute
+  where the vertex held one, so `attr_category:finance` dropped an entity of a finance document whose extracted
+  `category` was `hardware`, and `attributes.<key>` was left to the entities index. Write `attributes.role`, not
+  `attr_role`, for an extracted attribute.
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).

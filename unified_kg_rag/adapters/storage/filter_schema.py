@@ -25,12 +25,13 @@ index, check the graph walk against the entities index
 (``BaseSearchStrategy._vouch_by_entities_index``); under two or more keys
 both also check the survivors' text units.
 
-Neptune entity vertices carry ``attr_<key>`` for the entity's raw top-level
-attributes (e.g. ``attr_role`` from LLM extraction); document attribute filters
-sit inside one JSON property (``attr_filters``), so ``attr_category`` is absent
-on vertices. Neptune therefore applies ``attr_*`` keys "where present": a vertex
-passes when the property matches or when it has no such property
-(``NeptuneRetriever._filter_predicate``). Other keys are strict on both stores.
+Graph entity vertices store an entity's own attributes as ``attr_<key>``
+properties (``neptune_codec``) and its document filters inside one JSON
+property (``attr_filters``). A graph therefore declares an entity's own
+top-level attributes as ``attributes.<key>``, the key the entities index
+declares them by (``graph_attribute_key``), and no ``attr_<key>``: that is a
+document filter on every store, which the strategies check against the
+entities index. Every key is strict on every store.
 """
 
 import json
@@ -39,6 +40,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,
     SEED_SOURCE_KIND,
@@ -524,9 +526,42 @@ def opensearch_filter_fields(
 
 
 # The filterable properties of entity vertices, the only ones the graph
-# filters. ``attr_*`` keys on Neptune apply where present (see the module
-# docstring).
-NEPTUNE_ENTITY_FILTER_FIELDS = FilterFields(
+# filters. An entity's own attributes are stored as ``attr_<key>`` vertex
+# properties and filtered as ``attributes.<key>``, as on the entities index
+# (``graph_attribute_key``); a vertex holds no document filter (``attr_<key>``,
+# ``attributes.filters.<key>``) and no nested attribute path.
+class _GraphEntityFields(FilterFields):
+    def declares(self, key: str) -> bool:
+        return super().declares(key) or graph_attribute_key(key) is not None
+
+    def describe(self) -> list[str]:
+        return [*super().describe(), f"{ATTRIBUTES_OBJECT_PREFIX}<key>"]
+
+
+def graph_attribute_key(key: str) -> str | None:
+    """The vertex property (``attr_<key>``) an ``attributes.<key>`` filter
+    names on a graph, ``None`` for any other key: a document filter
+    (``attributes.filters.<key>``), a nested path (a vertex holds an
+    object attribute as one JSON string) or an internal attribute."""
+    if not key.startswith(ATTRIBUTES_OBJECT_PREFIX):
+        return None
+    name = key[len(ATTRIBUTES_OBJECT_PREFIX) :]
+    if (
+        not name
+        or "." in name
+        or name.startswith("_")
+        or name in _GRAPH_INTERNAL_ATTRIBUTES
+    ):
+        return None
+    return f"{ATTRIBUTE_KEY_PREFIX}{name}"
+
+
+# Entity attributes a vertex holds as JSON or bookkeeping, never filtered.
+_GRAPH_INTERNAL_ATTRIBUTES = frozenset(
+    {Constants.FILTERS.value, Constants.INDEX.value, SEED_PROPERTIES_ATTRIBUTE}
+)
+
+NEPTUNE_ENTITY_FILTER_FIELDS: FilterFields = _GraphEntityFields(
     frozenset(
         {
             "id",
@@ -543,5 +578,4 @@ NEPTUNE_ENTITY_FILTER_FIELDS = FilterFields(
             SOURCE_KINDS_FIELD,
         }
     ),
-    frozenset({ATTRIBUTE_KEY_PREFIX}),
 )
