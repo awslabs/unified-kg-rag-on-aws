@@ -11,6 +11,7 @@ outside its directories and edits the config file.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import Iterator
@@ -330,6 +331,16 @@ def test_a_foreign_host_is_refused_on_loopback(client: Any) -> None:
 @pytest.mark.parametrize("host", ["[::1]", "[::1]:8501", "127.0.0.2:8501", "localhost"])
 def test_every_loopback_host_is_answered(client: Any, host: str) -> None:
     assert client.get("/api/status", headers={"Host": host}).status_code == 200
+
+
+def test_the_loop_s_executor_is_sized_for_the_query_path(client: Any) -> None:
+    async def executor() -> Any:
+        return asyncio.get_running_loop()._default_executor  # type: ignore[attr-defined]
+
+    pool = client.portal.call(executor)
+    config = client.app.state.console.load_config()
+    assert pool._thread_name_prefix == "graphrag-io"
+    assert pool._max_workers == config.processing.io_workers
 
 
 def test_responses_carry_security_headers_and_no_cors(client: Any) -> None:

@@ -82,6 +82,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import ConfigurationError, DataProcessingError
+from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.files import temporary_sibling
 
 logger = get_logger(__name__)
@@ -301,11 +302,17 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Sized as every query path's loop is: the model and store calls the
+        # chain offloads run in its default executor.
+        loop = asyncio.get_running_loop()
+        config = state.try_config() or Config()
+        executor = event_loop.configure_event_loop(loop, config.processing.io_workers)
         try:
             yield
         finally:
             await state.jobs.shutdown()
             await state.ask.close()
+            event_loop.abandon_default_executor(loop, executor)
             state.store.close()
 
     app = FastAPI(
@@ -536,9 +543,14 @@ def create_app(
     async def dashboard_view(days: int = 30) -> dict[str, Any]:
         config = state.load_config()
         since = time.time() - max(1, min(days, 3650)) * 86400
-        queries = state.store.queries(since=since, limit=100000)
-        jobs = [j for j in state.jobs.all_jobs() if j["created"] >= since]
-        return dashboard.summarize(queries, jobs, config)
+        jobs = state.jobs.all_jobs(since=since, limit=None)
+
+        def summary() -> dict[str, Any]:
+            # Up to 100,000 rows: read and summed off the loop.
+            queries = state.store.queries(since=since, limit=100000)
+            return dashboard.summarize(queries, jobs, config)
+
+        return await asyncio.to_thread(summary)
 
     @app.delete("/api/history")
     async def clear_history() -> dict[str, Any]:
