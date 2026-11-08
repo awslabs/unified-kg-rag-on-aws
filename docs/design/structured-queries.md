@@ -245,7 +245,11 @@ internals. Layers, each independent of the next:
    labels and property keys; never `id`, `name_key`, `build_tag`,
    `text_unit_ids`, `community_ids` or `attr_filters` as a condition or a
    key; caps of 4 nodes, 6 conditions a node, 50 values an `in`, 256
-   characters a string, `max_hops` hops.
+   characters a string, `max_hops` hops; no type, relationship type,
+   property key or string value starting with `~` (a Gremlin hidden token
+   such as `~label`, which the checker below would refuse as a compiler
+   bug: refused here on every store, with a WARNING naming it, so the data
+   can be renamed).
 3. *Compiler* (adapters): read steps only. The label is computed by the
    retriever from `SearchQuery.suffix` and `indexing.additional_suffix`
    (`_get_label`), never taken from the request. Gremlin: every vertex step

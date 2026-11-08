@@ -56,7 +56,10 @@ from unified_kg_rag.domain.models.graph_query import (
     ValueKind,
 )
 from unified_kg_rag.domain.models.schema import ExtractionSchema, schema_key
+from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import InvalidGraphQueryError
+
+logger = get_logger(__name__)
 
 ATTRIBUTE_KEY_PREFIX = f"{Constants.ATTRIBUTE_PREFIX.value}_"
 # The vertex property that holds the seed properties, as one JSON string.
@@ -476,6 +479,49 @@ def _fail(field: str, reason: str) -> InvalidGraphQueryError:
     return InvalidGraphQueryError(field, reason)
 
 
+# Gremlin names its hidden tokens (``~label``, ``~id``) with this prefix; a
+# stored name or a value starting with it would reach the compiled query as
+# such a token, which the bytecode checker refuses as a compiler bug.
+HIDDEN_TOKEN_PREFIX = "~"
+
+
+def _refuse_hidden_tokens(plan: ValidatedPlan) -> None:
+    """Raise ``InvalidGraphQueryError`` (and log a WARNING: the data holds
+    such a name) for a type, relationship type, property key or string
+    value of ``plan`` that starts with ``HIDDEN_TOKEN_PREFIX``."""
+    named: list[tuple[str, str]] = []
+    for index, node in enumerate(plan.nodes):
+        named += [(f"nodes[{index}].types", t) for t in node.types]
+        for c_index, condition in enumerate(node.conditions):
+            field = f"nodes[{index}].where[{c_index}]"
+            named.append((f"{field}.prop", condition.prop.key))
+            values = (
+                condition.value
+                if isinstance(condition.value, tuple)
+                else (condition.value,)
+            )
+            named += [(f"{field}.value", v) for v in values if isinstance(v, str)]
+    for index, edge in enumerate(plan.edges):
+        named += [(f"edges[{index}].types", label) for label in edge.labels]
+    r = plan.returns
+    refs = [*r.properties, *(p for p in (r.group_prop, r.aggregate_prop) if p)]
+    named += [("returns", ref.key) for ref in refs]
+    for field, text in named:
+        if text.startswith(HIDDEN_TOKEN_PREFIX):
+            logger.warning(
+                "Structured query refused: %s %r starts with %r, a Gremlin hidden "
+                "token (rename it in the data)",
+                field,
+                text,
+                HIDDEN_TOKEN_PREFIX,
+            )
+            raise _fail(
+                field,
+                f"'{text}' starts with '{HIDDEN_TOKEN_PREFIX}', which no query may "
+                "name",
+            )
+
+
 def _listing(names: Iterable[str], limit: int = 20) -> str:
     shown = list(names)
     more = len(shown) - limit
@@ -573,7 +619,9 @@ def validate_plan(
             edge count other than nodes - 1, a repeated or unknown variable,
             more than ``max_hops`` hops, a type, relationship type or
             property the profile does not list, a value of another kind than
-            the property holds, or a return clause its kind cannot use.
+            the property holds, a return clause its kind cannot use, or a
+            name or string value starting with ``~`` (a Gremlin hidden
+            token; logged as a WARNING).
     """
     if not plan.nodes:
         raise _fail("nodes", "a plan needs at least one node")
@@ -638,9 +686,11 @@ def validate_plan(
             )
         )
     returns = _resolve_return(plan, profile, seen)
-    return ValidatedPlan(
+    validated = ValidatedPlan(
         nodes=tuple(nodes), edges=tuple(edges), returns=returns, plan=plan
     )
+    _refuse_hidden_tokens(validated)
+    return validated
 
 
 def _resolve_return(

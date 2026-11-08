@@ -232,6 +232,56 @@ def test_ids_lineage_and_internals_are_never_queryable(prop: str) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "where",
+    [
+        {"prop": "attr.code", "op": "eq", "value": "~id"},
+        {"prop": "attr.code", "op": "in", "value": ["A1", "~label"]},
+    ],
+)
+def test_a_value_naming_a_hidden_token_is_refused_with_a_warning(
+    where: dict, caplog: pytest.LogCaptureFixture
+) -> None:
+    graph = procurement_graph()
+    for vertex in graph.vertices.values():
+        vertex["attr_code"] = ["A1"]
+    plan = _plan(nodes=[{"var": "v", "where": [where]}], returns={"kind": "count"})
+    with caplog.at_level("WARNING"), pytest.raises(InvalidGraphQueryError, match="~"):
+        validate_plan(plan, profile_of(graph), max_hops=3)
+    assert "hidden token" in caplog.text
+
+
+def test_a_type_naming_a_hidden_token_is_refused_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A stored type or relationship type starting with "~" reached the
+    compiled Gremlin as a hidden token, refused there as a compiler bug."""
+    entities = [
+        Entity(id="t1", name="T1", type="~VENDOR"),
+        Entity(id="t2", name="T2", type="BUYER"),
+    ]
+    graph = property_graph(entities, [])
+    profile = build_profile(
+        graph.vertices.values(), [("~VENDOR", "~SUPPLIES", "BUYER")], sampled=False
+    )
+    for raw, field in [
+        ({"nodes": [{"var": "v", "types": ["~VENDOR"]}]}, "nodes[0].types"),
+        (
+            {
+                "nodes": [{"var": "v"}, {"var": "b", "types": ["BUYER"]}],
+                "edges": [{"types": ["~SUPPLIES"]}],
+            },
+            "edges[0].types",
+        ),
+    ]:
+        caplog.clear()
+        plan = _plan(**raw, returns={"kind": "count"})
+        with caplog.at_level("WARNING"), pytest.raises(InvalidGraphQueryError) as e:
+            validate_plan(plan, profile, max_hops=3)
+        assert e.value.field == field
+        assert "hidden token" in caplog.text
+
+
 def test_the_profile_lists_attributes_and_seed_properties_by_namespace() -> None:
     names = {p.name: p for p in profile_of(procurement_graph()).properties}
     assert names["attr.role"].examples == ("supplier",)
