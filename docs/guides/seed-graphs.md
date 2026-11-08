@@ -17,7 +17,7 @@ types: the vocabulary of types is the
 [extraction schema](./extraction-schema.md). The file formats:
 [Seed graph formats](../reference/seed-graph-formats.md). How the import
 works inside:
-[Design Doc §4.5](../design.md#45-seed-graphs-as-virtual-documents).
+[Design Doc §4.5](../design/ingestion.md#45-seed-graphs-as-virtual-documents).
 
 ## Configure
 
@@ -45,7 +45,7 @@ processing:
 | Key | Default | Meaning |
 |---|---|---|
 | `name` | required | Names the shard documents and the `seed_graph` document filter of everything the seed states. Up to 64 lowercase letters, digits, `-` and `_`, starting with a letter or digit; unique. Renaming it imports the seed again |
-| `kind` | required | `jsonl`, `csv`, `rdf` (with the `ontology` extra), or a kind a deployment registers ([Design Doc §15](../design.md#15-extension-guide)) |
+| `kind` | required | `jsonl`, `csv`, `rdf` (with the `ontology` extra), or a kind a deployment registers ([Design Doc §15](./extend.md#15-extension-guide)) |
 | `path` | required | A local file or directory, relative to the config file (also when set from the environment; a `file://` URL works too), an S3 object (`s3://bucket/key`) or an S3 prefix read as a directory (`s3://bucket/seed/`, the trailing `/` required), read with the run's AWS session. Other URLs fail |
 | `options` | `{}` | Settings of the kind ([Seed graph formats](../reference/seed-graph-formats.md)). An unknown option fails the import |
 | `secret_arn` | `null` | A Secrets Manager secret a registered service source reads; `jsonl`, `csv` and `rdf` refuse one |

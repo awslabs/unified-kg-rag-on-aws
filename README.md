@@ -122,7 +122,7 @@ Start at the [documentation hub](./docs/index.md) ([한국어](./docs/index.ko.m
 | **Builder on AWS** | [Getting started on AWS](./docs/getting-started/aws.md), then [Configuration](./docs/guides/configure.md), [Ingestion](./docs/guides/ingest.md) and [Querying](./docs/guides/query.md), or [`iac/README.md`](./iac/README.md) for the CDK stack |
 | **Operator** | The [Operator Runbook](./docs/operations.md) and [`iac/README.md`](./iac/README.md) |
 | **Evaluator or researcher** | [Evaluation](./docs/guides/evaluate.md), [Defaults and evidence](./docs/concepts/defaults-and-evidence.md) and [Beyond the papers](./docs/concepts/overview.md#beyond-the-papers) |
-| **Extender** | The [Design Doc](./docs/design.md) and its [Extension Guide](./docs/design.md#15-extension-guide) |
+| **Extender** | The [Design Doc](./docs/design.md) and its [Extension Guide](./docs/guides/extend.md#15-extension-guide) |
 | **Contributor** | [CONTRIBUTING.md](./CONTRIBUTING.md) |
 
 Every flag is in the [CLI Reference](./docs/reference/cli.md), every configuration key in the [Configuration Reference](./docs/reference/configuration.md), and the supported models in the [Model Catalog](./docs/reference/models.md). Release notes: [CHANGELOG.md](./CHANGELOG.md). The [AWS Open Source Blog post](https://aws.amazon.com/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/) introduced the first release, GraphRAG and LightRAG on one stack.
@@ -138,7 +138,7 @@ This project is a **reference framework provided for educational and illustrativ
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests and the pull-request workflow, and [Design Doc §15](./docs/design.md#15-extension-guide) for extension recipes; most extensions are a registry registration and need no dispatch-code edits.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests and the pull-request workflow, and [Design Doc §15](./docs/guides/extend.md#15-extension-guide) for extension recipes; most extensions are a registry registration and need no dispatch-code edits.
 
 ## License
 

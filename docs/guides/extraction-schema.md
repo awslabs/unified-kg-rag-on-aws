@@ -80,7 +80,7 @@ processing:
   resolve against the file's location, so moving the file renames them.
   See [Ontology](./ontology.md). Other formats
   (SHACL, a schema service) plug in as a registered schema source
-  ([Design Doc §15](../design.md#15-extension-guide)).
+  ([Design Doc §15](./extend.md#15-extension-guide)).
 - **On AWS**, ship the schema file in the image or in S3:
   [Operator Runbook: Schema sources in S3](../operations.md#schema-sources-in-s3)
   and [Ontology schema in the image](../operations.md#ontology-schema-in-the-image).

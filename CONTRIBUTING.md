@@ -212,7 +212,7 @@ its reason and an expiry.
 ### Extending the framework
 
 New search strategies, storage or model backends, parsers, renderers, evaluators and config sections each have a
-recipe in [docs/design.md §15 Extension Guide](./docs/design.md#15-extension-guide). Most need a registration rather
+recipe in the [Extension guide (§15)](./docs/guides/extend.md#15-extension-guide). Most need a registration rather
 than an edit to dispatch code.
 
 ### Documentation
@@ -230,7 +230,7 @@ to its page map, and link it from the pages around it.
 | `docs/reference/` | Reference | Complete lists to look up: CLI flags, configuration keys, models, filters, output files, exit codes, formats, telemetry |
 | `docs/operations.md` | Runbook | Procedures an operator runs against a deployment, and what to do when a run, an alarm or a query fails. `iac/README.md`, code and error messages link its section headings: keep them |
 | `docs/troubleshooting.md` | Reference | Frequent questions and every error message with its meaning and action |
-| `docs/design.md` | Explanation, for contributors | Architecture, algorithms and design decisions. Code cites its section numbers (`design §6.1.1`): never renumber a section |
+| `docs/design.md`, `docs/design/` | Explanation, for contributors | Architecture, algorithms and design decisions. `docs/design.md` is the index: every section heading with a summary and a link to the `docs/design/` page that holds it (§15 is `docs/guides/extend.md`). A new section adds its heading to both; code cites the section numbers (`design §6.1.1`), so never renumber or rename a section |
 | [`iac/README.md`](./iac/README.md) | How-to | The CDK stacks, their options and the after-deploy commands |
 
 - **Current behaviour only.** A page describes what the code does. Do not write "previously", "now", "no longer" or
@@ -241,7 +241,7 @@ to its page map, and link it from the pages around it.
   in [docs/concepts/defaults-and-evidence.md](./docs/concepts/defaults-and-evidence.md), with the method and how to
   reproduce it. Other pages state the rule and link the evidence.
 - **Extension recipes** (new strategies, backends, evaluators, renderers, parsers, config sections) live in
-  [docs/design.md §15 Extension Guide](./docs/design.md#15-extension-guide). Update the recipe there when the way to
+  the [Extension guide (§15)](./docs/guides/extend.md#15-extension-guide). Update the recipe there when the way to
   extend changes.
 - **Diagrams.** A change that adds, removes or renames a stage, a strategy or a methodology, or changes how a
   strategy fuses its results, updates the diagrams that show it in the same pull request: the

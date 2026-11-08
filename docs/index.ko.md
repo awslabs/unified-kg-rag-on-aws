@@ -15,8 +15,8 @@
 | **AWS에서 구축하는 개발자** | 실제 코퍼스를 수집하고 질의 | [AWS에서 시작하기](./getting-started/aws.ko.md)(기존 저장소, [필수 모델](./getting-started/aws.ko.md#필수-모델)) 또는 [`iac/README.md`](../iac/README.md#quick-start)(CDK, 영문) → [설정](./guides/configure.ko.md) → [수집](./guides/ingest.ko.md) → [질의](./guides/query.ko.md) → [증분 인덱싱](./guides/incremental.ko.md) → [도메인 적응](./guides/domain-adaptation.ko.md) | 증분 수집을 켜고, 필터로 질의하고, 스키마나 프롬프트를 도메인에 맞춤 |
 | **운영자** | 실행, 모니터링, 복구, 업그레이드 | [`iac/README.md`](../iac/README.md)(영문) → [운영 런북](./operations.md)(영문: [실행 전](./operations.md#before-a-run), [실행이 실패하면](./operations.md#when-a-run-fails), [경보](./operations.md#alarms), [문제 해결](./troubleshooting.md)) → [CHANGELOG](../CHANGELOG.md) | 모든 경보와 오류에서 대응 절차를 찾을 수 있음 |
 | **평가자·연구자** | 품질과 비용 측정, 기본값 재현, 논문과 비교 | [평가](./guides/evaluate.ko.md) → [전략 비교](./guides/evaluate.ko.md#전략-비교) → [Evaluation output](./reference/evaluation-output.md)(영문) → [Benchmarks](./guides/benchmarks.md)(영문) → [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) → [원 논문을 넘어서](./concepts/overview.ko.md#원-논문을-넘어서) | MuSiQue나 자체 데이터로 신뢰 구간과 게이트가 있는 짝지은 비교 실행 |
-| **확장 개발자** | 백엔드, 파서, 렌더러, 스키마, 시드 소스를 플러그인으로 추가하거나 전략, 평가기를 저장소 안에서 추가 | [개요](./concepts/overview.ko.md) → [설계 문서 §2](./design.md#2-hexagonal-architecture-ports--adapters)(영문) → [§15 확장 가이드](./design.md#15-extension-guide) → [Extraction schema](./guides/extraction-schema.md) / [Seed graphs](./guides/seed-graphs.md)(영문) | 등록한 플러그인이나 저장소 안에 추가한 전략·평가기가 가짜 포트(fake port) 적합성 테스트를 통과 |
-| **기여자** | 품질 게이트를 깨지 않고 코드와 문서 수정 | [CONTRIBUTING.md](../CONTRIBUTING.md)(영문) → [설계 문서 §2](./design.md#2-hexagonal-architecture-ports--adapters)와 [§13](./design.md#13-testing-strategy) → [문서 규칙](../CONTRIBUTING.md#documentation) | 문서 검사를 포함한 CI를 통과하는 풀 리퀘스트 |
+| **확장 개발자** | 백엔드, 파서, 렌더러, 스키마, 시드 소스를 플러그인으로 추가하거나 전략, 평가기를 저장소 안에서 추가 | [개요](./concepts/overview.ko.md) → [설계 문서 §2](./design/architecture.md#2-hexagonal-architecture-ports--adapters)(영문) → [§15 확장 가이드](./guides/extend.md#15-extension-guide) → [Extraction schema](./guides/extraction-schema.md) / [Seed graphs](./guides/seed-graphs.md)(영문) | 등록한 플러그인이나 저장소 안에 추가한 전략·평가기가 가짜 포트(fake port) 적합성 테스트를 통과 |
+| **기여자** | 품질 게이트를 깨지 않고 코드와 문서 수정 | [CONTRIBUTING.md](../CONTRIBUTING.md)(영문) → [설계 문서 §2](./design/architecture.md#2-hexagonal-architecture-ports--adapters)와 [§13](./design/architecture.md#13-testing-strategy) → [문서 규칙](../CONTRIBUTING.md#documentation) | 문서 검사를 포함한 CI를 통과하는 풀 리퀘스트 |
 
 ## 문서 지도
 
@@ -26,7 +26,7 @@
 | 튜토리얼 | [로컬에서 시작하기](./getting-started/local.ko.md), [AWS에서 시작하기](./getting-started/aws.ko.md) | 단계별 첫 실행. AWS 없이 예제 코퍼스로 GraphRAG·LightRAG 질의와 판정 모델 없는 평가, 기존 Neptune·OpenSearch를 쓸 때의 사전 요구사항, 필수 모델, 설치, 인증, IAM |
 | 설명 | [개요](./concepts/overview.ko.md) | 아키텍처, 파이프라인, 방법론과 프로필, 원 논문 대비 확장한 부분, 제한 사항 |
 | 설명 | [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) | 측정으로 정한 기본값, 측정 방법, 날짜를 밝힌 가격, 재현 방법 |
-| 설명 | [설계 문서](./design.md)(영문) | 헥사고날 아키텍처, 알고리즘, 데이터 모델, 확장 가이드, 참고 자료 |
+| 설명 | [설계 문서](./design.md)(영문) | 설계 문서의 절마다 요약을 단 목차. 절 본문(헥사고날 아키텍처, 알고리즘, 데이터 모델)은 `docs/design/`에 있음 |
 | 설명 | [검색](./concepts/retrieval.ko.md), [범위와 네임스페이스](./concepts/scopes-and-namespaces.ko.md) | 검색 전략과 언제 어떤 전략을 쓸지, 하이브리드 점수와 재순위화, 답변 형식, 컨텍스트 예산. 인덱스 접미사, 소스 범위, 네임스페이스, 접미사와 필터가 접근 제어가 아닌 이유 |
 | 사용 방법 | [`iac/README.md`](../iac/README.md)(영문) | CDK 스택, 배포 토폴로지, 비용 요인, `-c key=value` 옵션, Guardrail 배포, 배포 후 명령 |
 | 사용 방법 | [Local mode](./guides/local-mode.md)(영문), [설정](./guides/configure.ko.md) | 로컬 공급자, AWS 모드와 다른 점, 컨테이너로 띄운 저장소. 설정을 읽는 순서, 대부분의 실행에서 바꾸는 설정, 환경 변수, 로그에 남는 내용 |
@@ -38,6 +38,7 @@
 | 사용 방법 | [콘솔](./guides/console.ko.md) | 로컬 웹 콘솔(`run-console`): 그래프까지 이어지는 출처 추적과 함께 질문, 수집, 평가 비교, 그래프 탐색, 사용량과 비용, 설정. 데모와 포트 포워딩 |
 | 사용 방법 | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md)(영문) | 질의와 답변 검사, 컨텍스트 근거 검사. Jaeger, Langfuse, Phoenix, CloudWatch로 추적, 전송 제한과 개인정보 |
 | 사용 방법 | [Using the library from Python](./guides/python-library.md)(영문) | Python에서 수집과 질의, 구분해 처리할 결과와 오류, 비동기 코드, 닫기, 로깅, 백엔드 주입 |
+| 사용 방법 | [Extension guide](./guides/extend.md)(영문) | 백엔드, 파서, 렌더러, 스키마, 시드 소스를 플러그인으로 추가하거나 전략, 평가기를 저장소 안에서 추가 |
 | 사용 방법 | [MCP 서버](./guides/mcp.ko.md) | 인덱스를 읽기 전용 MCP 도구로 에이전트에 제공. 도구와 레코드, 범위와 한도, 인증 프록시 뒤의 HTTP, 비용과 텔레메트리 |
 | 레퍼런스 | [CLI 레퍼런스](./reference/cli.md)(영문) | 모든 CLI의 모든 플래그(파서에서 생성) |
 | 레퍼런스 | [CLI exit codes and JSON output](./reference/exit-codes-and-json.md)(영문) | 종료 코드의 의미, 신호를 받았을 때의 동작, `--output-format json` 문서 |
@@ -79,7 +80,7 @@
 | Python에서 사용 | [Using the library from Python](./guides/python-library.md)(영문) |
 | 스크립트에서 CLI 실행, JSON 결과 읽기 | [CLI exit codes and JSON output](./reference/exit-codes-and-json.md)(영문) |
 | 오류나 실패한 실행 해결 | [Troubleshooting](./troubleshooting.md)(영문), [실행이 실패하면](./operations.md#when-a-run-fails)(영문) |
-| 백엔드, 전략, 파서 추가 | [설계 문서 §15](./design.md#15-extension-guide)(영문) |
+| 백엔드, 전략, 파서 추가 | [설계 문서 §15](./guides/extend.md#15-extension-guide)(영문) |
 
 ## 용어집
 

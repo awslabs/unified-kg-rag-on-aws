@@ -15,7 +15,7 @@
 선택 사항이며 아직 측정 전입니다. 기본값으로 고르는 곳이 없고,
 `search.auto_routable_strategies`에 넣기 전까지 `auto`도 이 전략으로 분기하지
 않습니다. 내부 동작:
-[Design §6.6](../design.md#66-structured-graph-queries-structured-opt-in)(영문).
+[Design §6.6](../design/structured-queries.md#66-structured-graph-queries-structured-opt-in)(영문).
 
 ## 실행
 

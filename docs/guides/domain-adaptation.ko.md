@@ -8,7 +8,7 @@
 코퍼스 표본에서 앞의 두 가지 초안을 만듭니다. 엔티티 유형이나 추출 프롬프트를 바꾸면 다음
 증분 실행이 다른 설정으로 추출했던 문서를 다시 추출합니다
 ([증분 인덱싱: 작업 흐름](./incremental.ko.md#작업-흐름)). 프롬프트와 튜닝의 내부 동작은
-[설계 §11](../design.md#11-prompts-and-prompt-tuning)(영문)에 있습니다.
+[설계 §11](../design/surfaces.md#11-prompts-and-prompt-tuning)(영문)에 있습니다.
 
 ## 권장 흐름
 

@@ -3,7 +3,7 @@
 > 🇰🇷 한국어판: [ingest.ko.md](./ingest.ko.md)
 
 Ingestion turns a directory of documents into a knowledge graph in the graph
-and vector stores. `run-ingestion --source-directory <dir>` runs the 13 stages ([Design §4](../design.md#4-ingestion-pipeline) shows them),
+and vector stores. `run-ingestion --source-directory <dir>` runs the 13 stages ([Design §4](../design/ingestion.md#4-ingestion-pipeline) shows them),
 checkpoints each one, and resumes after the last valid stage when re-run with
 the same `--pipeline-id`. With the doc-status registry on it is incremental
 ([Incremental indexing](./incremental.md)).
@@ -115,8 +115,8 @@ only what its delta changes. Within what a run writes, unchanged text keeps
 its stored vector, and unchanged chunk boundaries, translations, description
 summaries and community reports keep their stored model answers, so a changed document or
 a reset of an unchanged corpus pays only for what changed
-([Design §4.4](../design.md#44-pipeline-infrastructure),
-[§5.2](../design.md#52-full-rebuild-indexingreset)).
+([Design §4.4](../design/ingestion.md#44-pipeline-infrastructure),
+[§5.2](../design/incremental.md#52-full-rebuild-indexingreset)).
 
 ## LLM response cache
 
@@ -264,7 +264,7 @@ indexing:
   tier (`models.roles.summary_tree: fast`) cost well under a dollar, against
   hundreds for its graph ingestion
   ([evidence](../concepts/defaults-and-evidence.md#raptor-summary-tree); the
-  default tier's estimate: [Design §6.5](../design.md#65-raptor-summary-tree-raptor-tree-opt-in)).
+  default tier's estimate: [Design §6.5](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in)).
   `tree`, `naive` and `simple` serve it; `auto` falls back to `tree`. It
   writes no graph store, so it needs no Neptune endpoint. A graph the
   namespace held before is left as it is by an incremental run; a full

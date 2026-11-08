@@ -32,8 +32,8 @@ HippoRAG 2(엔티티와 패시지에 대한 개인화 PageRank), 그리고 선�
 
 코드는 헥사고날(포트와 어댑터) 구조입니다. 알고리즘은 인터페이스에만 의존하고 AWS와 로컬
 백엔드는 그 뒤에 있으므로, 저장소, 모델 공급자, 전략, 파서, 렌더러를 분기 코드를 고치지
-않고 레지스트리에 등록해 추가합니다([설계 문서 §2](../design.md#2-hexagonal-architecture-ports--adapters),
-[§15 확장 가이드](../design.md#15-extension-guide), 영문).
+않고 레지스트리에 등록해 추가합니다([설계 문서 §2](../design/architecture.md#2-hexagonal-architecture-ports--adapters),
+[§15 확장 가이드](../guides/extend.md#15-extension-guide), 영문).
 
 ## 파이프라인
 
@@ -54,7 +54,7 @@ HippoRAG 2(엔티티와 패시지에 대한 개인화 PageRank), 그리고 선�
 
 문서 상태 레지스트리를 켜면 새 문서와 바뀐 문서만 다시 인덱싱하고 지운 문서는 제거합니다.
 단계 목록과 플래그는 [수집](../guides/ingest.ko.md#파이프라인-단계), 내부 구조는
-[설계 문서 §4](../design.md#4-ingestion-pipeline)와 [§5](../design.md#5-incremental-indexing)(영문)에
+[설계 문서 §4](../design/ingestion.md#4-ingestion-pipeline)와 [§5](../design/incremental.md#5-incremental-indexing)(영문)에
 있습니다.
 
 ## 방법론
@@ -77,7 +77,7 @@ PageRank로 텍스트 단위의 순서를 정합니다.
 (텍스트 단위는 `search.global_search.text_unit_slots`를 설정할 때만 합침).
 기본값인 `auto`는 LLM 라우터가 질의마다 `local`, `mix`, `global`, `iterative`(다중 홉 질문) 중 하나를 고릅니다. 언제 어떤
 전략을 쓸지는 [검색](./retrieval.ko.md#검색-전략-선택), 전략별 검색 방식은
-[설계 문서 §6](../design.md#6-retrieval-methodologies)(영문)에 있습니다.
+[설계 문서 §6](../design/retrieval-graphrag-lightrag.md#6-retrieval-methodologies)(영문)에 있습니다.
 
 ### 방법론 프로필
 
@@ -99,7 +99,7 @@ PageRank로 텍스트 단위의 순서를 정합니다.
 읽으면 모델을 호출하기 전에 실패하고, `auto`는 가진 방법론의 전략 중에서만 고릅니다. 나중에
 방법론을 추가하거나 뺄 때 무엇을 다시 만들고, 무엇을 재사용하며, 비용이 얼마나 드는지는
 [수집: 방법론 프로필](../guides/ingest.ko.md#방법론-프로필)에 있습니다(내부 동작:
-[설계 문서 §4.6](../design.md#46-methodology-profiles), 영문).
+[설계 문서 §4.6](../design/ingestion.md#46-methodology-profiles), 영문).
 
 ## Amazon Bedrock Knowledge Bases GraphRAG와 비교
 
@@ -138,10 +138,10 @@ S3에 있는 코퍼스, 한 가지 검색 방법, 운영할 인프라가 없는 
 
 | 영역 | GraphRAG | LightRAG | 이 프레임워크 | 문서 |
 |---|---|---|---|---|
-| 3중 하이브리드 검색 | 엔티티 설명, 텍스트 단위, 리포트 내용에 대한 벡터 검색(`config/embeddings.py`)과 인덱싱된 테이블에서 읽는 그래프 컨텍스트. 질의 코드에 어휘(lexical) 검색이나 재순위화 모델은 없음 | 엔티티, 관계, 청크 인덱스에 대한 벡터 검색과 그래프 저장소를 라운드 로빈으로 합치고, 재순위화 모델은 선택(`operate.py`, `rerank.py`) | BM25(OpenSearch), 벡터 검색(Bedrock 임베딩), Neptune 그래프 순회를 RRF로 합치고, Bedrock rerank 모델로 재순위화하고, MMR로 다양성을 맞춤. 커뮤니티 리포트를 map하는 `global`을 뺀 모든 전략이 점수 계산기 하나를 씀(`simple`과 `naive`는 그래프 제외) | [설계 문서 §7](../design.md#7-hybrid-scoring-and-token-management)(영문) |
-| 한 인덱스에서 여러 방법론 | 커뮤니티 리포트. 관계 벡터 인덱스(`config/embeddings.py`)와 키워드 수준 검색은 없음 | 엔티티와 관계 인덱스에 대한 이중 레벨 키워드. 커뮤니티 탐지와 리포트는 없음 | 한 번의 수집이 고른 방법론(기본값은 GraphRAG와 LightRAG이며, 이것으로 HippoRAG 2의 `ppr`도 씀)에 필요한 것을 모두 만들고, 방법론은 질의마다 직접 고르거나 `auto` 라우터가 고르며, 네임스페이스에 없는 방법론은 거절함 | [방법론 프로필](#방법론-프로필), [설계 문서 §6](../design.md#6-retrieval-methodologies)(영문) |
-| 삭제 계보(lineage)를 갖춘 증분 인덱싱 | `graphrag update`는 제목이 새로운 문서를 인덱싱함. 계산한 차이에 삭제된 문서도 들어 있지만 갱신 워크플로에는 새 문서만 전달됨(`index/update/incremental_index.py`, `index/workflows/load_update_documents.py`) | 문서 상태 저장소는 파일 이름이나 내용 해시가 이미 등록된 문서의 삽입을 건너뜀(`pipeline.py`). `adelete_by_doc_id`는 문서를 지우고, 다른 문서가 여전히 뒷받침하는 엔티티와 관계는 캐시된 추출 결과로 다시 만듦(`lightrag.py`) | 레지스트리(DynamoDB, 로컬에서는 SQLite)가 내용 해시로 코퍼스를 비교해 새 문서와 바뀐 문서를 다시 인덱싱하고, 지운 문서는 각 항목이 인용한 텍스트 단위를 따라 제거해 남은 텍스트 단위가 기술하지 않는 것만 지움. 선기록(write-ahead) 장애 복구, 네임스페이스마다 쓰기 실행 하나. 속성 기반 테스트로 증분 실행이 전체 구축과 같은 결과에 수렴하는지 확인 | [증분 인덱싱](../guides/incremental.ko.md), [설계 문서 §5](../design.md#5-incremental-indexing)(영문) |
-| 다국어 | `graphrag prompt-tune --language`가 튜닝한 프롬프트의 언어를 정함(`cli/main.py`) | `SUMMARY_LANGUAGE`가 추출과 요약의 출력 언어를 정함(`addon_params.py`) | 인덱싱과 질의 시점의 선택적 번역 단계(추가 대상 언어 포함), 언어별 OpenSearch 분석기(한국어는 `nori`), 다국어 키워드 추출, 한국어·CJK를 고려한 답변 일치 채점을 모든 방법론에 적용 | [다국어 코퍼스](../guides/multilingual.ko.md), [설계 문서 §8.3](../design.md#83-multilingual-processing)(영문) |
+| 3중 하이브리드 검색 | 엔티티 설명, 텍스트 단위, 리포트 내용에 대한 벡터 검색(`config/embeddings.py`)과 인덱싱된 테이블에서 읽는 그래프 컨텍스트. 질의 코드에 어휘(lexical) 검색이나 재순위화 모델은 없음 | 엔티티, 관계, 청크 인덱스에 대한 벡터 검색과 그래프 저장소를 라운드 로빈으로 합치고, 재순위화 모델은 선택(`operate.py`, `rerank.py`) | BM25(OpenSearch), 벡터 검색(Bedrock 임베딩), Neptune 그래프 순회를 RRF로 합치고, Bedrock rerank 모델로 재순위화하고, MMR로 다양성을 맞춤. 커뮤니티 리포트를 map하는 `global`을 뺀 모든 전략이 점수 계산기 하나를 씀(`simple`과 `naive`는 그래프 제외) | [설계 문서 §7](../design/scoring-and-citations.md#7-hybrid-scoring-and-token-management)(영문) |
+| 한 인덱스에서 여러 방법론 | 커뮤니티 리포트. 관계 벡터 인덱스(`config/embeddings.py`)와 키워드 수준 검색은 없음 | 엔티티와 관계 인덱스에 대한 이중 레벨 키워드. 커뮤니티 탐지와 리포트는 없음 | 한 번의 수집이 고른 방법론(기본값은 GraphRAG와 LightRAG이며, 이것으로 HippoRAG 2의 `ppr`도 씀)에 필요한 것을 모두 만들고, 방법론은 질의마다 직접 고르거나 `auto` 라우터가 고르며, 네임스페이스에 없는 방법론은 거절함 | [방법론 프로필](#방법론-프로필), [설계 문서 §6](../design/retrieval-graphrag-lightrag.md#6-retrieval-methodologies)(영문) |
+| 삭제 계보(lineage)를 갖춘 증분 인덱싱 | `graphrag update`는 제목이 새로운 문서를 인덱싱함. 계산한 차이에 삭제된 문서도 들어 있지만 갱신 워크플로에는 새 문서만 전달됨(`index/update/incremental_index.py`, `index/workflows/load_update_documents.py`) | 문서 상태 저장소는 파일 이름이나 내용 해시가 이미 등록된 문서의 삽입을 건너뜀(`pipeline.py`). `adelete_by_doc_id`는 문서를 지우고, 다른 문서가 여전히 뒷받침하는 엔티티와 관계는 캐시된 추출 결과로 다시 만듦(`lightrag.py`) | 레지스트리(DynamoDB, 로컬에서는 SQLite)가 내용 해시로 코퍼스를 비교해 새 문서와 바뀐 문서를 다시 인덱싱하고, 지운 문서는 각 항목이 인용한 텍스트 단위를 따라 제거해 남은 텍스트 단위가 기술하지 않는 것만 지움. 선기록(write-ahead) 장애 복구, 네임스페이스마다 쓰기 실행 하나. 속성 기반 테스트로 증분 실행이 전체 구축과 같은 결과에 수렴하는지 확인 | [증분 인덱싱](../guides/incremental.ko.md), [설계 문서 §5](../design/incremental.md#5-incremental-indexing)(영문) |
+| 다국어 | `graphrag prompt-tune --language`가 튜닝한 프롬프트의 언어를 정함(`cli/main.py`) | `SUMMARY_LANGUAGE`가 추출과 요약의 출력 언어를 정함(`addon_params.py`) | 인덱싱과 질의 시점의 선택적 번역 단계(추가 대상 언어 포함), 언어별 OpenSearch 분석기(한국어는 `nori`), 다국어 키워드 추출, 한국어·CJK를 고려한 답변 일치 채점을 모든 방법론에 적용 | [다국어 코퍼스](../guides/multilingual.ko.md), [설계 문서 §8.3](../design/aws-integration.md#83-multilingual-processing)(영문) |
 | 온톨로지와 시드 그래프 가져오기 | Bring Your Own Graph: 추출 대신 엔티티와 관계 테이블을 넣고 커뮤니티 워크플로를 실행(`docs/index/byog.md`) | `insert_custom_kg`가 주어진 청크, 엔티티, 관계를 삽입(`lightrag.py`) | 직접 선언하거나 OWL/RDFS 온톨로지에서 읽은 추출 스키마(유형, 패턴, IRI). 시드 그래프(JSONL, CSV, RDF)를 코퍼스의 가상 문서로 추출 그래프에 병합하므로 증분 실행과 삭제가 파일처럼 다루고, 문서가 기준(canonical)으로 남음 | [Extraction schema](../guides/extraction-schema.md), [Ontology](../guides/ontology.md), [Seed graphs](../guides/seed-graphs.md)(영문) |
 | 측정으로 정한 기본값과 평가 도구 | 논문은 답변을 맞비교로 판정함(포괄성, 다양성, 역량 강화, 직접성). 라이브러리 패키지에는 평가 명령이 없음 | RAGAS 평가 스크립트(`evaluation/eval_rag_quality.py`)와 논문의 맞비교 판정 프롬프트(`reproduce/batch_eval.py`) | LangChain·RAGAS 판정 모델과 함께 쓰는 LLM 없는 평가기, 반복 실행과 부트스트랩 신뢰 구간을 갖춘 짝지은 비교, 순서를 바꿔 판정하고 위치 일관성을 보고하는 맞비교 판정, 측정한 비용과 지연 시간, CI 게이트, MuSiQue 벤치마크. 기본값의 근거가 되는 측정 결과를 공개함 | [평가](../guides/evaluate.ko.md), [기본값과 근거](./defaults-and-evidence.md)(영문) |
 
@@ -155,21 +155,21 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
 - **관계 식별자.** 관계 유형이 ID에 포함되고 에지에 방향이 있으므로, 한 쌍 사이의 유형 두
   개는 에지 두 개입니다. MS GraphRAG는 관계를 출발점과 도착점으로 묶고(`extract_graph.py`),
   LightRAG는 정렬한 양 끝점 쌍을 에지 키로 씁니다(`operate.py`)
-  ([설계 문서 §4.2](../design.md#42-graph-identity-and-merging-stages-5-7), 영문).
+  ([설계 문서 §4.2](../design/ingestion.md#42-graph-identity-and-merging-stages-5-7), 영문).
 - **커뮤니티 계층.** 그래프 전체에 대한 Leiden 분할 하나에서 구성원이 20개를 넘는
   커뮤니티는 다시 나누고, 나눈 커뮤니티는 조각들의 부모로 남깁니다(MS GraphRAG의 계층적
   Leiden과 같음). 그 위의 상위 레벨은 커뮤니티 그래프를 다시 분할합니다.
   `min_community_size`보다 작은 연결 요소만 커뮤니티를 받지 않습니다. MS GraphRAG는 첫
   분할에서 멈추고, `max_cluster_size` 10을 쓰며, 기본값(`use_lcc`)으로는 가장 큰 연결
   요소만 군집화합니다(`config/defaults.py`)
-  ([설계 문서 §4.3](../design.md#43-communities-stages-10-11), 영문).
+  ([설계 문서 §4.3](../design/ingestion.md#43-communities-stages-10-11), 영문).
 - **글리닝.** 기본 라운드는 MS GraphRAG의 1회(`max_gleanings`)가 아니라 3회이고, 텍스트
   단위는 직전 답변이 새로운 것을 더했을 때만 다시 묻습니다. 그래프 재현율을 측정해 정했습니다
   ([근거](./defaults-and-evidence.md#gleaning-rounds), 영문).
 - **컨텍스트 몫.** 토큰 예산을 `max_context_tokens`(30,000, LightRAG의 전체 예산)에 대한
   유형별 몫으로 나눕니다. LightRAG는 엔티티를 6,000, 관계를 8,000 토큰으로 제한하고
   (`constants.py`), 여기서는 `mix`와 `hybrid`가 텍스트 18,072, 엔티티 7,228, 관계 4,698을
-  받습니다([설계 문서 §7](../design.md#7-hybrid-scoring-and-token-management), 영문).
+  받습니다([설계 문서 §7](../design/scoring-and-citations.md#7-hybrid-scoring-and-token-management), 영문).
 - **LightRAG 청크 선택.** `kg_chunk_pick_method` 기본값은 `weight`이고, upstream LightRAG의
   기본값은 `VECTOR`입니다(`constants.py`). 두 방식은 측정에서 차이가 없었습니다
   ([근거](./defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity), 영문).
@@ -207,7 +207,7 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   Bedrock이나 sentence-transformers 크로스 인코더([Local mode](../guides/local-mode.md), 영문).
   저장소: Neptune(또는 Gremlin Server)과 OpenSearch, 또는 내장 SQLite 저장소(호스트 한
   대, 인덱스당 문서 약 100,000개). 그 밖의 것은 `register_provider` 빌더나 사용자 정의
-  어댑터가 필요합니다([설계 문서 §15](../design.md#15-extension-guide), 영문).
+  어댑터가 필요합니다([설계 문서 §15](../guides/extend.md#15-extension-guide), 영문).
 - **재순위화는 리전에 따라 다릅니다**([필수 모델](../getting-started/aws.ko.md#필수-모델)). 없으면 융합 순서를 쓰며,
   `metadata.rerank`에 나타납니다([재순위화 상태](../guides/query.ko.md#재순위화-상태)).
 - **가벼운 수집은 쓸 수 있는 전략을 제한합니다.** 커뮤니티가 없는 네임스페이스

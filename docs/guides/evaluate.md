@@ -379,7 +379,7 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
 Open-ended (global) questions have no gold answer, and a pairwise judge
 prefers the longer answer. Three opt-in tools measure around both; none
 changes a default until a measured experiment decides
-([Design: §9.3](../design.md#93-length-controlled-judging-assertions-and-the-closed-book-arm)).
+([Design: §9.3](../design/evaluation.md#93-length-controlled-judging-assertions-and-the-closed-book-arm)).
 
 1. Generate questions and assertions from your own corpus, in the style of
    Microsoft BenchmarkQED (its code is MIT; none of its data is used):

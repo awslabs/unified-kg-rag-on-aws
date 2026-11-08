@@ -9,7 +9,7 @@ PageRank), RAPTOR(요약 트리, 선택 사항) 중 하나의 전략이나 `iter
 컨텍스트 예산 안에서 답변을 만들며, 모든 답변은 답변 모델이 실제로 본 출처를 함께
 돌려줍니다. 이 문서는 전략과 답변을 좌우하는 선택을 설명합니다. 질의 실행 방법은
 [질의](../guides/query.ko.md)에 있고, 전략별 검색 방식은
-[설계 §6](../design.md#6-retrieval-methodologies)(영문)의 그림에 있습니다.
+[설계 §6](../design/retrieval-graphrag-lightrag.md#6-retrieval-methodologies)(영문)의 그림에 있습니다.
 
 ## 검색 전략 선택
 
@@ -44,7 +44,7 @@ RRF, 재순위화)를 쓰며, `simple`과 `naive`는 그래프를 읽지 않습�
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `ppr` | 사실이 몇 개의 엔티티를 거쳐 이어지는 다중 홉 질문, 커뮤니티 보고서 없이 `hipporag`나 `lightrag`만으로 만든 네임스페이스(방법론 `hipporag`) | 질문의 관계 검색 결과(사실, kNN)와 텍스트 단위 검색 결과(BM25 + 벡터)를 시작점으로, 사실의 엔티티 주변 그래프와 그 엔티티가 인용하는 문단에 개인화 PageRank(Personalized PageRank)를 실행합니다(HippoRAG 2, 감쇠 계수 0.5). 순위를 매긴 문단, 문단 검색 결과, 사실을 다른 전략처럼 융합하고 재순위화합니다. 질의마다 LLM 호출은 답변 1회입니다. 비용과 지연 시간이 적은 선택지입니다. 답변은 `local`, `mix`와 오차 범위 안이면서 비용과 중앙값 지연 시간은 그 일부이고, 가장 긴 연쇄에서는 약했습니다([근거](./defaults-and-evidence.md#the-ppr-strategy), 영문). 어디서 나은지 측정으로 보이기 전까지 `auto`는 이 전략으로 보내지 않으므로 직접 지정해야 합니다([`search.ppr_search`](../reference/configuration.md#searchppr_search), [설계](../design.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking), 영문). `local`은 기본값으로 같은 PageRank로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking`). |
+| `ppr` | 사실이 몇 개의 엔티티를 거쳐 이어지는 다중 홉 질문, 커뮤니티 보고서 없이 `hipporag`나 `lightrag`만으로 만든 네임스페이스(방법론 `hipporag`) | 질문의 관계 검색 결과(사실, kNN)와 텍스트 단위 검색 결과(BM25 + 벡터)를 시작점으로, 사실의 엔티티 주변 그래프와 그 엔티티가 인용하는 문단에 개인화 PageRank(Personalized PageRank)를 실행합니다(HippoRAG 2, 감쇠 계수 0.5). 순위를 매긴 문단, 문단 검색 결과, 사실을 다른 전략처럼 융합하고 재순위화합니다. 질의마다 LLM 호출은 답변 1회입니다. 비용과 지연 시간이 적은 선택지입니다. 답변은 `local`, `mix`와 오차 범위 안이면서 비용과 중앙값 지연 시간은 그 일부이고, 가장 긴 연쇄에서는 약했습니다([근거](./defaults-and-evidence.md#the-ppr-strategy), 영문). 어디서 나은지 측정으로 보이기 전까지 `auto`는 이 전략으로 보내지 않으므로 직접 지정해야 합니다([`search.ppr_search`](../reference/configuration.md#searchppr_search), [설계](../design/retrieval-hipporag-raptor.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking), 영문). `local`은 기본값으로 같은 PageRank로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking`). |
 
 `mix`와 `hybrid`는 수집이 만드는 관계 인덱스를 읽습니다. 키워드가 나오지 않는 짧은
 질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`
@@ -64,19 +64,19 @@ RRF, 재순위화)를 쓰며, `simple`과 `naive`는 그래프를 읽지 않습�
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `iterative` | 마지막 홉이 질문에 이름이 나오지 않는 엔티티에 관한 다중 홉 질문 | `search.iterative_search.base`(기본 `mix`, 또는 `local`)를 실행한 뒤 fast 모델 컨트롤러(`models.roles.query_controller`)가 묶은 컨텍스트를 읽습니다. 컨텍스트로 답할 수 없으면 컨트롤러가 지목한 연결(bridge) 엔티티로 기본 검색을 다시 시작하고 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(2)번 반복합니다. 라운드마다 찾은 후보를 융합·재순위화하고 답변 모델은 한 번만 답합니다. 질의마다 기본 전략보다 fast 모델 호출이 1-3번 많습니다. `mix` 기반으로 실행하면 다중 홉 질문에서 `mix`보다 유의하게 잘 답했고 p95 지연 시간은 두 배 넘게 늘었으며, `auto`는 다중 홉 질문을 이 전략으로 보내고 요약형(sensemaking)·단일 홉 질문은 다른 전략에 맡겼습니다([근거](./defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 다중 홉 질문을 이 전략으로 보낼 수 있으며, 기본값으로 선택되지는 않습니다([설계](../design.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in), 영문). |
+| `iterative` | 마지막 홉이 질문에 이름이 나오지 않는 엔티티에 관한 다중 홉 질문 | `search.iterative_search.base`(기본 `mix`, 또는 `local`)를 실행한 뒤 fast 모델 컨트롤러(`models.roles.query_controller`)가 묶은 컨텍스트를 읽습니다. 컨텍스트로 답할 수 없으면 컨트롤러가 지목한 연결(bridge) 엔티티로 기본 검색을 다시 시작하고 후속 질의로 원문 구절을 검색하는 라운드를 최대 `max_rounds`(2)번 반복합니다. 라운드마다 찾은 후보를 융합·재순위화하고 답변 모델은 한 번만 답합니다. 질의마다 기본 전략보다 fast 모델 호출이 1-3번 많습니다. `mix` 기반으로 실행하면 다중 홉 질문에서 `mix`보다 유의하게 잘 답했고 p95 지연 시간은 두 배 넘게 늘었으며, `auto`는 다중 홉 질문을 이 전략으로 보내고 요약형(sensemaking)·단일 홉 질문은 다른 전략에 맡겼습니다([근거](./defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 다중 홉 질문을 이 전략으로 보낼 수 있으며, 기본값으로 선택되지는 않습니다([설계](../design/retrieval-graphrag-lightrag.md#63-iterative-bridge-follow-up-iterative_searchpy-opt-in), 영문). |
 
 **RAPTOR 요약 트리(선택 사항, `raptor` 방법론):**
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `tree` | 그래프 추출 없는 저렴한 인덱스(`[raptor]`)나 RAPTOR와의 비교. 멀티홉 질문에서는 `naive`보다 나았지만(`answer_contains` +8점, 1회 반복) 그래프 전략보다 크게 낮았습니다([근거](./defaults-and-evidence.md#raptor-summary-tree), 영문) | `indexing.methodologies`에 `raptor`를 넣어 만든 네임스페이스가 필요합니다. 인덱싱 뒤에 텍스트 유닛을 벡터로 군집화하고 군집마다 요약(`models.roles.summary_tree`)하는 일을 레벨마다 반복하며, 요약은 인덱스 언어로 씁니다. 질의는 텍스트 유닛의 BM25 + kNN 검색, 모든 레벨 요약의 검색(RAPTOR의 collapsed tree), 그리고 네임스페이스에 엔티티 인덱스가 있으면 원 질의로 찾은 엔티티를 인용하는 요약과 구절(모델 호출 없음)을 RRF로 융합합니다. 교차 인코더가 구절과 요약을 함께 재순위화하고, 레벨마다 요약은 최대 `max_nodes_per_level`(3)개만 남기며, 남은 요약마다 자기 계보의 구절 `expand_children`(2)개를 함께 가져와 답변이 원문을 인용하게 합니다. 요약은 계보(`text_unit_ids`, `child_ids`)와 함께 출처로 보고됩니다. 비용은 `naive` 질의에 검색 몇 번과 요약 컨텍스트가 더해지고, 더 느립니다. 명시적으로 고를 때만 실행되며, `naive`보다 나은 답을 내지 못했으므로 `auto`는 이 전략으로 분기하지 않습니다. 다만 `raptor`만 가진 네임스페이스에서는 `auto`가 이 전략으로 대체합니다([설계](../design.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). |
+| `tree` | 그래프 추출 없는 저렴한 인덱스(`[raptor]`)나 RAPTOR와의 비교. 멀티홉 질문에서는 `naive`보다 나았지만(`answer_contains` +8점, 1회 반복) 그래프 전략보다 크게 낮았습니다([근거](./defaults-and-evidence.md#raptor-summary-tree), 영문) | `indexing.methodologies`에 `raptor`를 넣어 만든 네임스페이스가 필요합니다. 인덱싱 뒤에 텍스트 유닛을 벡터로 군집화하고 군집마다 요약(`models.roles.summary_tree`)하는 일을 레벨마다 반복하며, 요약은 인덱스 언어로 씁니다. 질의는 텍스트 유닛의 BM25 + kNN 검색, 모든 레벨 요약의 검색(RAPTOR의 collapsed tree), 그리고 네임스페이스에 엔티티 인덱스가 있으면 원 질의로 찾은 엔티티를 인용하는 요약과 구절(모델 호출 없음)을 RRF로 융합합니다. 교차 인코더가 구절과 요약을 함께 재순위화하고, 레벨마다 요약은 최대 `max_nodes_per_level`(3)개만 남기며, 남은 요약마다 자기 계보의 구절 `expand_children`(2)개를 함께 가져와 답변이 원문을 인용하게 합니다. 요약은 계보(`text_unit_ids`, `child_ids`)와 함께 출처로 보고됩니다. 비용은 `naive` 질의에 검색 몇 번과 요약 컨텍스트가 더해지고, 더 느립니다. 명시적으로 고를 때만 실행되며, `naive`보다 나은 답을 내지 못했으므로 `auto`는 이 전략으로 분기하지 않습니다. 다만 `raptor`만 가진 네임스페이스에서는 `auto`가 이 전략으로 대체합니다([설계](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). |
 
 **구조화 그래프 질의(선택 사항, 측정 전):**
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `structured` | 타입, 관계, 속성으로 엔티티를 세거나 순위를 매기거나 나열하는 질문, 이름이 주어진 두 엔티티 사이의 경로, 시드 엔티티의 속성 | 계획 작성 호출 1회(`models.roles.graph_query`)가 질문을 그래프의 타입, 관계, 속성에 대한 JSON 계획으로 씁니다(질의 원문은 쓰지 않음). 코드는 그래프 프로필로 계획을 검증하고(거부되면 사유를 보여 주며 1회 재작성), 계획에 나온 이름을 하이브리드 엔티티 검색으로 연결하고, 질의의 접미사로 범위를 한정한 Gremlin이나 SQL로 컴파일해 그 결과를 검사한 뒤 읽기 전용으로 실행합니다. 결과 표, 결과가 가리키는 엔티티와 경로, 그것들이 인용하는 구절(그 구절 안의 하이브리드 구절 검색과 융합)이 답변으로 가고, 답변은 계산된 결과를 그대로 씁니다. 문서 필터나 시드 속성 조건 때문에 코드가 최대 `max_scan_rows`개의 일치 항목을 확인해야 하는 경우가 아니면 개수는 정확합니다(상한을 넘으면 "at least N"). 구조화된 답을 얻지 못하면 `search.structured.fallback_strategy`(`local`)를 실행하고 사유를 기록하며, `mode: augment`는 그래프 질의 옆에서 함께 실행합니다. 그래프가 있는 곳(`graphrag`, `lightrag`, `hipporag`)이면 모든 그래프 저장소에서 제공됩니다. `search.auto_routable_strategies`에 넣기 전까지 `auto`는 이 전략으로 분기하지 않습니다([가이드](../guides/structured-queries.ko.md), [설계](../design.md#66-structured-graph-queries-structured-opt-in), 영문). |
+| `structured` | 타입, 관계, 속성으로 엔티티를 세거나 순위를 매기거나 나열하는 질문, 이름이 주어진 두 엔티티 사이의 경로, 시드 엔티티의 속성 | 계획 작성 호출 1회(`models.roles.graph_query`)가 질문을 그래프의 타입, 관계, 속성에 대한 JSON 계획으로 씁니다(질의 원문은 쓰지 않음). 코드는 그래프 프로필로 계획을 검증하고(거부되면 사유를 보여 주며 1회 재작성), 계획에 나온 이름을 하이브리드 엔티티 검색으로 연결하고, 질의의 접미사로 범위를 한정한 Gremlin이나 SQL로 컴파일해 그 결과를 검사한 뒤 읽기 전용으로 실행합니다. 결과 표, 결과가 가리키는 엔티티와 경로, 그것들이 인용하는 구절(그 구절 안의 하이브리드 구절 검색과 융합)이 답변으로 가고, 답변은 계산된 결과를 그대로 씁니다. 문서 필터나 시드 속성 조건 때문에 코드가 최대 `max_scan_rows`개의 일치 항목을 확인해야 하는 경우가 아니면 개수는 정확합니다(상한을 넘으면 "at least N"). 구조화된 답을 얻지 못하면 `search.structured.fallback_strategy`(`local`)를 실행하고 사유를 기록하며, `mode: augment`는 그래프 질의 옆에서 함께 실행합니다. 그래프가 있는 곳(`graphrag`, `lightrag`, `hipporag`)이면 모든 그래프 저장소에서 제공됩니다. `search.auto_routable_strategies`에 넣기 전까지 `auto`는 이 전략으로 분기하지 않습니다([가이드](../guides/structured-queries.ko.md), [설계](../design/structured-queries.md#66-structured-graph-queries-structured-opt-in), 영문). |
 
 ## 하이브리드 점수와 재순위화
 
@@ -85,7 +85,7 @@ RRF, 재순위화)를 쓰며, `simple`과 `naive`는 그래프를 읽지 않습�
 전략의 그래프)를 RRF(reciprocal rank fusion)로 융합하되 버킷마다 `search.fusion.fusion_weights`로
 가중치를 준 뒤 재순위화하고, MMR 다양성을 적용하고, 유형별 할당량으로 자릅니다. 이 순서이므로
 융합 점수로 자르다가 재순위화 모델이 맨 위에 놓을 결과를 잃는 일이 없습니다
-([설계 §7](../design.md#7-hybrid-scoring-and-token-management), 영문). 재순위화 결과는
+([설계 §7](../design/scoring-and-citations.md#7-hybrid-scoring-and-token-management), 영문). 재순위화 결과는
 질의마다 보고합니다([재순위화 상태](../guides/query.ko.md#재순위화-상태)).
 
 ## 답변 형식
@@ -133,6 +133,6 @@ global search는 순위를 매긴 핵심 내용 뒤에 그 내용이 인용한 �
 프롬프트가 받는 검색 컨텍스트입니다. `models.roles.answer_generation`가 출력 예약분과
 함께 받을 수 있는 크기로 줄이며 줄일 때 경고를 남기고, `null`이면 그 모델의 컨텍스트
 창에서 도출합니다. 섹션 유형마다 그 일부를 상한으로 받아 점수 순서로 채우고, 한 유형이
-쓰지 않은 몫은 후보가 남은 유형에 넘어갑니다([설계 §7](../design.md#7-hybrid-scoring-and-token-management), 영문).
+쓰지 않은 몫은 후보가 남은 유형에 넘어갑니다([설계 §7](../design/scoring-and-citations.md#7-hybrid-scoring-and-token-management), 영문).
 유형별 비율과 `local` 슬롯 할당은
 [레퍼런스](../reference/configuration.md#searchtoken_manager)(영문)에 있습니다.

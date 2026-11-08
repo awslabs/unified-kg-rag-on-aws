@@ -8,7 +8,7 @@ rebuilding everything; a deleted document takes along what only its text
 units stated. Which documents a run compares, and may delete, follows from its
 index suffix and source scope
 ([Scopes and namespaces](../concepts/scopes-and-namespaces.md)). How it works
-inside: [Design §5](../design.md#5-incremental-indexing). Resuming a run,
+inside: [Design §5](../design/incremental.md#5-incremental-indexing). Resuming a run,
 recovering an interrupted one and the write lease are in the
 [Operator Runbook](../operations.md#incremental-runs).
 
@@ -359,9 +359,9 @@ A delta run merges what it extracts into the stored entities, relationships
 and claims it touches, so an entity shared with unchanged documents keeps
 their descriptions and chunk lineage, and what a changed or deleted document
 shared is derived again from the chunks left; the rules are in
-[Design §5.4](../design.md#54-identity-derived-content-and-merge-rules).
+[Design §5.4](../design/incremental.md#54-identity-derived-content-and-merge-rules).
 With `processing.fuzzy_entity_resolution` on, a delta entity merges into
 its one most similar stored entity and two stored entities stay apart even
 when a new name is similar to both, which a full build groups together
-([Design §4.2](../design.md#42-graph-identity-and-merging-stages-5-7)); run
+([Design §4.2](../design/ingestion.md#42-graph-identity-and-merging-stages-5-7)); run
 `indexing.reset: true` to regroup the corpus.

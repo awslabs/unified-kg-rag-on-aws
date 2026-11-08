@@ -41,8 +41,8 @@ The code is hexagonal (ports and adapters): the algorithms depend on
 interfaces, and the AWS and local backends sit behind them, so a store, a
 model provider, a strategy, a parser or a renderer is added through a
 registry rather than by editing dispatch code
-([Design Doc §2](../design.md#2-hexagonal-architecture-ports--adapters),
-[§15 Extension Guide](../design.md#15-extension-guide)).
+([Design Doc §2](../design/architecture.md#2-hexagonal-architecture-ports--adapters),
+[§15 Extension Guide](../guides/extend.md#15-extension-guide)).
 
 ## Pipeline
 
@@ -67,8 +67,8 @@ resumes after the last valid one:
 With the doc-status registry on, a run re-indexes only new and changed
 documents and removes deleted ones. Stage list and flags:
 [Ingestion](../guides/ingest.md#pipeline-stages); internals:
-[Design Doc §4](../design.md#4-ingestion-pipeline) and
-[§5](../design.md#5-incremental-indexing).
+[Design Doc §4](../design/ingestion.md#4-ingestion-pipeline) and
+[§5](../design/incremental.md#5-incremental-indexing).
 
 ## Methodologies
 
@@ -93,7 +93,7 @@ units only with `search.global_search.text_unit_slots`).
 `auto`, the default, lets an LLM router pick `local`, `mix`, `global` or
 `iterative` (for multi-hop questions) per query. When to use which:
 [Retrieval](./retrieval.md#search-strategies--when-to-use-which); how
-each one retrieves: [Design Doc §6](../design.md#6-retrieval-methodologies).
+each one retrieves: [Design Doc §6](../design/retrieval-graphrag-lightrag.md#6-retrieval-methodologies).
 
 ### Methodology profiles
 
@@ -118,7 +118,7 @@ methodology it does not hold fails before any model call, and `auto` routes
 only among the held ones. What adding or removing a methodology later
 rebuilds, reuses and costs:
 [Ingestion: Methodology profiles](../guides/ingest.md#methodology-profiles)
-(internals: [Design §4.6](../design.md#46-methodology-profiles)).
+(internals: [Design §4.6](../design/ingestion.md#46-methodology-profiles)).
 
 ## Compared with Amazon Bedrock Knowledge Bases GraphRAG
 
@@ -160,10 +160,10 @@ the repository root (`docs/`, `reproduce/`).
 
 | Area | GraphRAG | LightRAG | This framework | Where documented |
 |---|---|---|---|---|
-| Triple-hybrid retrieval | Vector search over entity descriptions, text units and report content (`config/embeddings.py`), with graph context read from the indexed tables; no lexical search or reranker in the query code | Vector search over entity, relationship and chunk indexes plus the graph storage, merged round-robin, with an optional rerank model (`operate.py`, `rerank.py`) | BM25 (OpenSearch), vector search (Bedrock embeddings) and Neptune graph traversal fused by RRF, reranked by a Bedrock rerank model and diversified by MMR; one scorer for every strategy but `global`, which maps community reports (`simple` and `naive` skip the graph) | [Design §7](../design.md#7-hybrid-scoring-and-token-management) |
-| Several methodologies on one index | Community reports; no relationship vector index (`config/embeddings.py`) and no keyword-level retrieval | Dual-level keywords over entity and relationship indexes; no community detection or reports | One ingestion builds the union of what the selected methodologies need (GraphRAG's and LightRAG's by default, which serve HippoRAG 2's `ppr` too); the methodology is chosen per query, or by the `auto` router, and a namespace refuses one it does not hold | [Methodology profiles](#methodology-profiles), [Design §6](../design.md#6-retrieval-methodologies) |
-| Incremental indexing with deletion lineage | `graphrag update` indexes the documents whose title is new; the delta it computes lists deleted documents, but only the new ones reach the update workflows (`index/update/incremental_index.py`, `index/workflows/load_update_documents.py`) | A doc-status store skips an insert whose file name or content hash is already registered (`pipeline.py`); `adelete_by_doc_id` removes a document and rebuilds the entities and relationships other documents still support from cached extractions (`lightrag.py`) | A registry (DynamoDB, or SQLite locally) diffs the corpus by content hash, re-indexes new and changed documents, and removes a deleted one by the text units every item cites, so only what no surviving text unit states goes; write-ahead crash recovery and one writing run per namespace; property tests check that incremental rounds converge with a full build | [Incremental indexing](../guides/incremental.md), [Design §5](../design.md#5-incremental-indexing) |
-| Multilingual | `graphrag prompt-tune --language` sets the language of the tuned prompts (`cli/main.py`) | `SUMMARY_LANGUAGE` sets the output language of extraction and summaries (`addon_params.py`) | An optional translation stage at indexing and query time (with extra target languages), per-language OpenSearch analyzers (`nori` for Korean), multilingual keyword extraction and Korean- and CJK-aware answer matching, for every methodology | [Multilingual corpora](../guides/multilingual.md), [Design §8.3](../design.md#83-multilingual-processing) |
+| Triple-hybrid retrieval | Vector search over entity descriptions, text units and report content (`config/embeddings.py`), with graph context read from the indexed tables; no lexical search or reranker in the query code | Vector search over entity, relationship and chunk indexes plus the graph storage, merged round-robin, with an optional rerank model (`operate.py`, `rerank.py`) | BM25 (OpenSearch), vector search (Bedrock embeddings) and Neptune graph traversal fused by RRF, reranked by a Bedrock rerank model and diversified by MMR; one scorer for every strategy but `global`, which maps community reports (`simple` and `naive` skip the graph) | [Design §7](../design/scoring-and-citations.md#7-hybrid-scoring-and-token-management) |
+| Several methodologies on one index | Community reports; no relationship vector index (`config/embeddings.py`) and no keyword-level retrieval | Dual-level keywords over entity and relationship indexes; no community detection or reports | One ingestion builds the union of what the selected methodologies need (GraphRAG's and LightRAG's by default, which serve HippoRAG 2's `ppr` too); the methodology is chosen per query, or by the `auto` router, and a namespace refuses one it does not hold | [Methodology profiles](#methodology-profiles), [Design §6](../design/retrieval-graphrag-lightrag.md#6-retrieval-methodologies) |
+| Incremental indexing with deletion lineage | `graphrag update` indexes the documents whose title is new; the delta it computes lists deleted documents, but only the new ones reach the update workflows (`index/update/incremental_index.py`, `index/workflows/load_update_documents.py`) | A doc-status store skips an insert whose file name or content hash is already registered (`pipeline.py`); `adelete_by_doc_id` removes a document and rebuilds the entities and relationships other documents still support from cached extractions (`lightrag.py`) | A registry (DynamoDB, or SQLite locally) diffs the corpus by content hash, re-indexes new and changed documents, and removes a deleted one by the text units every item cites, so only what no surviving text unit states goes; write-ahead crash recovery and one writing run per namespace; property tests check that incremental rounds converge with a full build | [Incremental indexing](../guides/incremental.md), [Design §5](../design/incremental.md#5-incremental-indexing) |
+| Multilingual | `graphrag prompt-tune --language` sets the language of the tuned prompts (`cli/main.py`) | `SUMMARY_LANGUAGE` sets the output language of extraction and summaries (`addon_params.py`) | An optional translation stage at indexing and query time (with extra target languages), per-language OpenSearch analyzers (`nori` for Korean), multilingual keyword extraction and Korean- and CJK-aware answer matching, for every methodology | [Multilingual corpora](../guides/multilingual.md), [Design §8.3](../design/aws-integration.md#83-multilingual-processing) |
 | Bring-your-own ontology and seed graphs | Bring Your Own Graph: supply entity and relationship tables in place of extraction, then run the community workflows (`docs/index/byog.md`) | `insert_custom_kg` inserts given chunks, entities and relationships (`lightrag.py`) | An extraction schema declared or imported from an OWL/RDFS ontology (types, patterns, IRIs); seed graphs (JSONL, CSV, RDF) merged into the extracted graph as virtual documents of the corpus, so incremental runs and removal treat them like files and the documents stay canonical | [Extraction schema](../guides/extraction-schema.md), [ontology](../guides/ontology.md), [seed graphs](../guides/seed-graphs.md) |
 | Measured defaults and evaluation tooling | The paper judges answers pairwise (comprehensiveness, diversity, empowerment, directness); the library package has no evaluation command | A RAGAS evaluation script (`evaluation/eval_rag_quality.py`) and the paper's pairwise judge prompt (`reproduce/batch_eval.py`) | `run-eval` with LLM-free evaluators beside LangChain and RAGAS judges, paired comparisons with bootstrap intervals and repeats, an order-swapped pairwise judge with position consistency, metered cost and latency, CI gates and a MuSiQue benchmark; defaults backed by published measurements | [Evaluation](../guides/evaluate.md), [Defaults and evidence](./defaults-and-evidence.md) |
 
@@ -179,7 +179,7 @@ purpose:
   the edge is directed, so two types between one pair are two edges. MS
   GraphRAG groups relationships by source and target (`extract_graph.py`),
   and LightRAG keys an edge by its sorted endpoint pair (`operate.py`)
-  ([Design §4.2](../design.md#42-graph-identity-and-merging-stages-5-7)).
+  ([Design §4.2](../design/ingestion.md#42-graph-identity-and-merging-stages-5-7)).
 - **Community hierarchy.** One Leiden partition of the whole graph, whose
   communities over 20 members are split again and stay the parents of
   their pieces (MS GraphRAG's hierarchical Leiden); coarser levels above it
@@ -187,7 +187,7 @@ purpose:
   `min_community_size` get no community. MS GraphRAG stops at the first
   partition, with `max_cluster_size` 10 and, by default (`use_lcc`), only
   the largest connected component (`config/defaults.py`)
-  ([Design §4.3](../design.md#43-communities-stages-10-11)).
+  ([Design §4.3](../design/ingestion.md#43-communities-stages-10-11)).
 - **Gleaning.** Three rounds by default against MS GraphRAG's one
   (`max_gleanings`), and a text unit is re-asked only while its last answer
   added something: measured for graph recall
@@ -196,7 +196,7 @@ purpose:
   `max_context_tokens` (30,000, LightRAG's total). LightRAG caps entities at
   6,000 and relationships at 8,000 tokens (`constants.py`); here `mix` and
   `hybrid` give text 18,072, entities 7,228 and relationships 4,698
-  ([Design §7](../design.md#7-hybrid-scoring-and-token-management)).
+  ([Design §7](../design/scoring-and-citations.md#7-hybrid-scoring-and-token-management)).
 - **LightRAG chunk picking.** `kg_chunk_pick_method` defaults to `weight`;
   upstream LightRAG defaults to `VECTOR` (`constants.py`). The two measured
   no different ([evidence](./defaults-and-evidence.md#lightrag-chunk-picking-and-mmr-diversity)).
@@ -238,7 +238,7 @@ purpose:
   cross-encoder ([Local mode](../guides/local-mode.md)). Stores: Neptune (or a
   Gremlin Server) with OpenSearch, or the embedded SQLite stores (one host,
   about 100,000 documents per index). Others need a `register_provider`
-  builder or custom adapters ([Design Doc §15](../design.md#15-extension-guide)).
+  builder or custom adapters ([Design Doc §15](../guides/extend.md#15-extension-guide)).
 - **Reranking is regional** ([Required models](../getting-started/aws.md#required-models)); without it
   results keep the fusion order, as `metadata.rerank` shows
   ([Rerank status](../guides/query.md#rerank-status)).

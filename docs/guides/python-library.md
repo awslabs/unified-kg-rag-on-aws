@@ -195,6 +195,6 @@ so it is an in-tree change). Both constructors take injected backends, either as
 both: `doc_status=`, `vector_indexer=` and `graph_indexer=` on the pipeline,
 `model_factory=` and `retriever_builders=` on the chain (which also takes
 `memory_manager=` and `guard=`); see
-[Design Doc §15](../design.md#15-extension-guide). An indexer passed as
+[Design Doc §15](./extend.md#15-extension-guide). An indexer passed as
 `vector_indexer=` / `graph_indexer=` stays yours to close: the pipeline never
 closes it.

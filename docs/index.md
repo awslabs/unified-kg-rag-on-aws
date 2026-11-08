@@ -13,8 +13,8 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | **Builder on AWS** | Ingest a real corpus and query it | [Getting started on AWS](./getting-started/aws.md) (existing stores, [required models](./getting-started/aws.md#required-models)) or [`iac/README.md`](../iac/README.md#quick-start) (CDK) → [Configuration](./guides/configure.md) → [Ingestion](./guides/ingest.md) → [Querying](./guides/query.md) → [Incremental indexing](./guides/incremental.md) → [Domain adaptation](./guides/domain-adaptation.md) | Incremental ingestion on, queries with filters, a tuned schema or prompts |
 | **Operator** | Run, monitor, recover, upgrade | [`iac/README.md`](../iac/README.md) → [Operator Runbook](./operations.md) ([before a run](./operations.md#before-a-run), [when a run fails](./operations.md#when-a-run-fails), [alarms](./operations.md#alarms), [troubleshooting](./troubleshooting.md)) → [CHANGELOG](../CHANGELOG.md) | Every alarm and error leads to a procedure |
 | **Evaluator or researcher** | Measure quality and cost, reproduce the defaults, compare with the papers | [Evaluation](./guides/evaluate.md) → [Comparing strategies](./guides/evaluate.md#comparing-strategies) → [Evaluation output](./reference/evaluation-output.md) → [Benchmarks](./guides/benchmarks.md) → [Defaults and evidence](./concepts/defaults-and-evidence.md) → [Beyond the papers](./concepts/overview.md#beyond-the-papers) | A paired comparison with intervals and a gate, on MuSiQue or your own data |
-| **Extender** | Add a backend, parser, renderer, schema or seed source as a plugin, or a strategy or evaluator in-tree | [Overview](./concepts/overview.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) → [§15 Extension Guide](./design.md#15-extension-guide) → [Extraction schema](./guides/extraction-schema.md) / [Seed graphs](./guides/seed-graphs.md) | A registered plugin, or an in-tree strategy or evaluator, that passes the fake-port conformance tests |
-| **Contributor** | Change code and docs without breaking the gate | [CONTRIBUTING.md](../CONTRIBUTING.md) → [Design Doc §2](./design.md#2-hexagonal-architecture-ports--adapters) and [§13](./design.md#13-testing-strategy) → [Documentation rules](../CONTRIBUTING.md#documentation) | The pull request passes CI, including the docs checks |
+| **Extender** | Add a backend, parser, renderer, schema or seed source as a plugin, or a strategy or evaluator in-tree | [Overview](./concepts/overview.md) → [Design Doc §2](./design/architecture.md#2-hexagonal-architecture-ports--adapters) → [§15 Extension Guide](./guides/extend.md#15-extension-guide) → [Extraction schema](./guides/extraction-schema.md) / [Seed graphs](./guides/seed-graphs.md) | A registered plugin, or an in-tree strategy or evaluator, that passes the fake-port conformance tests |
+| **Contributor** | Change code and docs without breaking the gate | [CONTRIBUTING.md](../CONTRIBUTING.md) → [Design Doc §2](./design/architecture.md#2-hexagonal-architecture-ports--adapters) and [§13](./design/architecture.md#13-testing-strategy) → [Documentation rules](../CONTRIBUTING.md#documentation) | The pull request passes CI, including the docs checks |
 
 ## Page map
 
@@ -24,7 +24,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Tutorial | [Getting started locally](./getting-started/local.md), [Getting started on AWS](./getting-started/aws.md) | Step-by-step first runs: a sample corpus without AWS (GraphRAG and LightRAG queries, a judge-free evaluation); prerequisites, required models, install, authentication and IAM for existing Neptune and OpenSearch |
 | Explanation | [Overview](./concepts/overview.md) | Architecture, pipeline, the methodologies and their profiles, what the framework adds beyond the papers, limitations |
 | Explanation | [Defaults and evidence](./concepts/defaults-and-evidence.md) | The measured defaults, how they were measured, dated prices, how to reproduce |
-| Explanation | [Design Doc](./design.md) | Hexagonal architecture, algorithms, data model, extension guide, further reading |
+| Explanation | [Design Doc](./design.md) | The index of the design sections, each with a summary; the sections themselves (hexagonal architecture, algorithms, data model) are in `docs/design/` |
 | Explanation | [Retrieval](./concepts/retrieval.md), [Scopes and namespaces](./concepts/scopes-and-namespaces.md) | The search strategies and when to use which, hybrid scoring and rerank, answer style, context budget; index suffix, source scope, namespace, and why neither the suffix nor filters are access control |
 | How-to | [`iac/README.md`](../iac/README.md) | CDK stacks, topology, cost drivers, `-c key=value` options, Guardrail deployment, after-deploy commands |
 | How-to | [Local mode](./guides/local-mode.md), [Configuration](./guides/configure.md) | Local providers, differences from AWS mode, stores in containers; how configuration loads, the settings most runs change, environment variables, what the logs contain |
@@ -36,6 +36,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | How-to | [Console](./guides/console.md) | The local web console (`run-console`): ask with a provenance trail into the graph, ingest, compare evaluations, explore the graph, usage and cost, settings; the demo and port forwarding |
 | How-to | [Guardrail](./guides/guardrail.md), [Observability](./guides/observability.md) | Screening queries and answers, the contextual grounding check; tracing with Jaeger, Langfuse, Phoenix or CloudWatch, export limits and privacy |
 | How-to | [Using the library from Python](./guides/python-library.md) | Ingesting and querying from Python, results and errors to tell apart, async code, closing, logging, injected backends |
+| How-to | [Extension guide](./guides/extend.md) | Adding a backend, parser, renderer, schema or seed source as a plugin, or a strategy or evaluator in-tree |
 | How-to | [MCP server](./guides/mcp.md) | Serving an index to agents as read-only MCP tools: the tools and their records, scope and limits, HTTP behind an authenticating proxy, cost and telemetry |
 | Reference | [CLI Reference](./reference/cli.md) | Every flag of every CLI (generated from the parsers) |
 | Reference | [CLI exit codes and JSON output](./reference/exit-codes-and-json.md) | What each exit code means, what a signal does, the `--output-format json` document |
@@ -77,7 +78,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 | Use it from Python | [Using the library from Python](./guides/python-library.md) |
 | Script a CLI or read its JSON result | [CLI exit codes and JSON output](./reference/exit-codes-and-json.md) |
 | Fix an error or a failed run | [Troubleshooting](./troubleshooting.md), [When a run fails](./operations.md#when-a-run-fails) |
-| Add a backend, strategy or parser | [Design Doc §15](./design.md#15-extension-guide) |
+| Add a backend, strategy or parser | [Design Doc §15](./guides/extend.md#15-extension-guide) |
 
 ## Glossary
 

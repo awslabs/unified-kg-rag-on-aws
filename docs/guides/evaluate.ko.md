@@ -320,7 +320,7 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
 
 열린(전역) 질문에는 정답이 없고, 맞비교 판정 모델은 긴 답변을 선호합니다. 이를 보완하는
 선택 기능 세 가지가 있으며, 측정 실험으로 결정하기 전까지 어느 것도 기본값을 바꾸지
-않습니다([Design: §9.3](../design.md#93-length-controlled-judging-assertions-and-the-closed-book-arm), 영문).
+않습니다([Design: §9.3](../design/evaluation.md#93-length-controlled-judging-assertions-and-the-closed-book-arm), 영문).
 
 1. Microsoft BenchmarkQED 방식으로 사용자의 코퍼스에서 질문과 단언문을 만듭니다(코드는 MIT
    라이선스이며 BenchmarkQED의 데이터는 쓰지 않음).

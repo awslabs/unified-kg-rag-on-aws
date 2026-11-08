@@ -4,7 +4,7 @@
 
 A corpus in Korean or another language, or in several, needs its language
 set for translation, for the search analyzers and for chunk sizes. How the
-pieces work inside: [Design §8.3](../design.md#83-multilingual-processing).
+pieces work inside: [Design §8.3](../design/aws-integration.md#83-multilingual-processing).
 
 ## Translation
 

@@ -3,7 +3,7 @@
 > 🇬🇧 English version: [ingest.md](./ingest.md)
 
 수집은 문서 디렉터리를 그래프 저장소와 벡터 저장소의 지식 그래프로 바꿉니다.
-`run-ingestion --source-directory <dir>`이 13개 단계([설계 §4](../design.md#4-ingestion-pipeline)(영문)에
+`run-ingestion --source-directory <dir>`이 13개 단계([설계 §4](../design/ingestion.md#4-ingestion-pipeline)(영문)에
 그림이 있음)를 실행하며 단계마다 체크포인트를 남기고, 같은 `--pipeline-id`로 다시
 실행하면 마지막으로 유효한 단계 다음부터 재개합니다. 문서 상태 레지스트리를 켜면
 증분으로 동작합니다([증분 인덱싱](./incremental.ko.md)).
@@ -104,8 +104,8 @@ run-ingestion --source-directory ./documents --config-path config.yaml \
 다시 임베딩하지 않게 합니다. 증분 실행은 델타가 바꾼 것만 임베딩합니다. 실행이 쓰는 항목
 중에서도 바뀌지 않은 텍스트는 저장된 벡터를 그대로 쓰고, 바뀌지 않은 청크 경계, 번역, 설명 요약,
 커뮤니티 리포트는 저장된 모델 응답을 그대로 씁니다. 그래서 문서를 고치거나 바뀌지 않은
-코퍼스를 reset해도 바뀐 부분에만 비용이 듭니다([설계 §4.4](../design.md#44-pipeline-infrastructure),
-[§5.2](../design.md#52-full-rebuild-indexingreset), 영문).
+코퍼스를 reset해도 바뀐 부분에만 비용이 듭니다([설계 §4.4](../design/ingestion.md#44-pipeline-infrastructure),
+[§5.2](../design/incremental.md#52-full-rebuild-indexingreset), 영문).
 
 ## LLM 응답 캐시
 
@@ -224,7 +224,7 @@ indexing:
   비용은 청크가 작을수록, 추론 수준(effort)이 높을수록 커집니다. MuSiQue 벤치마크 인덱스에서
   fast 티어(`models.roles.summary_tree: fast`)로 만든 트리는 1달러에 한참 못 미쳤고, 같은
   인덱스의 그래프 수집은 수백 달러였습니다([근거](../concepts/defaults-and-evidence.md#raptor-summary-tree),
-  default 티어 추정치: [설계 §6.5](../design.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). 이 네임스페이스는
+  default 티어 추정치: [설계 §6.5](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). 이 네임스페이스는
   `tree`, `naive`, `simple`이 서비스하며 `auto`는 `tree`로 갑니다. 그래프 저장소에 쓰지 않으므로 Neptune 엔드포인트가
   필요 없습니다. 네임스페이스에 있던 그래프는 증분 실행에서는 그대로 두고, 전체 구축
   (`indexing.reset: true`, 또는 레지스트리 없는 모든 실행)은 더 만들지 않는 벡터 인덱스를 비우듯

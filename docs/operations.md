@@ -126,7 +126,7 @@ its time.
 |---|---|---|---|
 | Finish an interrupted run | Re-run with the same `--pipeline-id` (CDK: a new execution with the same `pipeline_id`); it resumes at the first failed or incomplete stage, or at `--resume-from-stage <stage>` | Reused | Written by the stages that run |
 | Recompute every stage | `--force-rebuild` | Ignored and rewritten | Written as usual (incremental when enabled) |
-| Rebuild the stores | `indexing.reset: true` for one run | Unchanged | Rebuilt without going offline; the namespace's other records are deleted at the end ([Design §5.2](./design.md#52-full-rebuild-indexingreset)) |
+| Rebuild the stores | `indexing.reset: true` for one run | Unchanged | Rebuilt without going offline; the namespace's other records are deleted at the end ([Design §5.2](./design/incremental.md#52-full-rebuild-indexingreset)) |
 
 Use `indexing.reset: true` (plus `--force-rebuild` if stage outputs must
 change too) after changing what is baked into the stored data: the embedding
@@ -979,7 +979,7 @@ units, and every deleted one before its removal, and marks it `PROCESSED` or
 `FAILED` (or drops a deleted one's record) only after the writes, so the next
 run re-extracts each `PENDING` document still in the corpus, a deleted one
 restored meanwhile included, and removes what was written for one that is gone
-([Design §5.3](./design.md#53-crash-recovery-write-ahead-protocol)).
+([Design §5.3](./design/incremental.md#53-crash-recovery-write-ahead-protocol)).
 
 - **Leave `PENDING` records alone** (`status` `pending`, `content_hash`
   `pending`): their text units are how the next run finds the interrupted
@@ -1050,7 +1050,7 @@ the run warns with the file (`retry_count`, `documents_retrying`). Output
 errors alike on several documents count as each one's own, so a server-side
 output cap that persists excludes them after `indexing.max_document_failures`
 runs: fix the cap, then edit the files or change a setting. The full
-classification and output parsing: [Design Doc §5.1](./design.md#51-the-steps), step 6.
+classification and output parsing: [Design Doc §5.1](./design/incremental.md#51-the-steps), step 6.
 
 - **Claims are optional.** When only claim extraction failed on some of a
   document's units, for an error of their own (a request rejected for its
@@ -1140,7 +1140,7 @@ would stop every later run, so runs count deaths and isolate the culprit.
   'document_loading' ...` or `Rewinding resume point from ... to
   'document_loading'`). A finished pipeline id run again counts as resumed;
   one resumed after its own kill or stop keeps its delta. The checks:
-  [Design Doc §5.3](./design.md#53-crash-recovery-write-ahead-protocol).
+  [Design Doc §5.3](./design/incremental.md#53-crash-recovery-write-ahead-protocol).
 
 ### Concurrent runs
 
@@ -1166,7 +1166,7 @@ other run ended.
   stops once less than a third of the term is left since the last successful
   renewal. Keep `lease_seconds` at least three times the longest write
   request (180 s; less logs a WARNING)
-  ([Design §5.6](./design.md#56-concurrency)).
+  ([Design §5.6](./design/incremental.md#56-concurrency)).
 - **Takeover after a crash or a stop.** A write already past the fence can
   land after the lease expired (its process was frozen, or the request was
   slow), but no later than that expiry plus the longest request (registry

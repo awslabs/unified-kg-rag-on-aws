@@ -122,7 +122,7 @@ UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-rag --backend local --search-str
 | **AWS에서 구축하는 개발자** | [AWS에서 시작하기](./docs/getting-started/aws.ko.md), 이어서 [설정](./docs/guides/configure.ko.md), [수집](./docs/guides/ingest.ko.md), [질의](./docs/guides/query.ko.md), CDK 스택은 [`iac/README.md`](./iac/README.md)(영문) |
 | **운영자** | [운영 런북](./docs/operations.md)과 [`iac/README.md`](./iac/README.md)(영문) |
 | **평가자·연구자** | [평가](./docs/guides/evaluate.ko.md), [기본값과 근거](./docs/concepts/defaults-and-evidence.md)(영문), [원 논문을 넘어서](./docs/concepts/overview.ko.md#원-논문을-넘어서) |
-| **확장 개발자** | [설계 문서](./docs/design.md)와 [확장 가이드](./docs/design.md#15-extension-guide)(영문) |
+| **확장 개발자** | [설계 문서](./docs/design.md)와 [확장 가이드](./docs/guides/extend.md#15-extension-guide)(영문) |
 | **기여자** | [CONTRIBUTING.md](./CONTRIBUTING.md)(영문) |
 
 모든 플래그는 [CLI 레퍼런스](./docs/reference/cli.md), 모든 설정 키는 [설정 레퍼런스](./docs/reference/configuration.md), 지원 모델은 [모델 카탈로그](./docs/reference/models.md)에 있습니다(모두 영문). 릴리스 노트는 [CHANGELOG.md](./CHANGELOG.md)(영문)에 있습니다. [AWS Open Source Blog 글](https://aws.amazon.com/ko/blogs/opensource/unified-knowledge-graph-rag-on-aws-graphrag-and-lightrag-on-one-stack/)(영문)은 GraphRAG와 LightRAG를 한 스택에 올린 첫 릴리스를 소개합니다.
@@ -138,7 +138,7 @@ UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-rag --backend local --search-str
 
 ## 기여
 
-기여를 환영합니다. 개발 환경, 테스트, PR 절차는 [CONTRIBUTING.md](./CONTRIBUTING.md)를, 확장 방법은 [설계 문서 §15](./docs/design.md#15-extension-guide)를 참고하세요(모두 영문). 대부분의 확장은 레지스트리 등록만으로 끝나며 디스패치 코드를 고칠 필요가 없습니다.
+기여를 환영합니다. 개발 환경, 테스트, PR 절차는 [CONTRIBUTING.md](./CONTRIBUTING.md)를, 확장 방법은 [설계 문서 §15](./docs/guides/extend.md#15-extension-guide)를 참고하세요(모두 영문). 대부분의 확장은 레지스트리 등록만으로 끝나며 디스패치 코드를 고칠 필요가 없습니다.
 
 ## 라이선스
 
