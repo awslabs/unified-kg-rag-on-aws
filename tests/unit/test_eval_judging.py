@@ -215,6 +215,25 @@ class TestPairwiseLength:
         ] == pytest.approx(0.0)
         assert set(length["per_query"]) == {"a", "b"}
 
+    def test_each_criterion_has_a_sign_flip_p_value_and_per_query_scores(
+        self, mocker
+    ) -> None:
+        mocker.patch.object(pairwise, "setup_chain", return_value=_Judge())
+        mocker.patch.object(pairwise.Providers, "resolve")
+        judge = pairwise.PairwiseJudge(Config())
+        queries = [f"q{i}" for i in range(8)]
+        out = asyncio.run(
+            judge.acompare(
+                [_result(q, "short") for q in queries],
+                [_result(q, "a much longer answer") for q in queries],
+            )
+        )
+        stats = out["criteria"]["comprehensiveness"]
+        # Eight wins of eight: the exact two-sided sign test, 2 * 0.5**8.
+        assert stats["p_value"] == pytest.approx(2 * 0.5**8)
+        assert stats["per_query"] == dict.fromkeys(queries, 1.0)
+        assert "slots" not in out
+
     def test_a_pair_decided_by_a_failed_answer_has_no_length(self, mocker) -> None:
         mocker.patch.object(pairwise, "setup_chain", return_value=_Judge())
         mocker.patch.object(pairwise.Providers, "resolve")
@@ -246,7 +265,12 @@ class TestDifferentialJudge:
             )
         )
         calls = judge.chain.calls
-        assert len(calls) == 2 and len(overlap.calls) == 1
+        # Split in both slot orders, each split judged in both orders.
+        assert len(calls) == 4 and len(overlap.calls) == 2
+        assert [c["answer1"] for c in overlap.calls] == [
+            "Vendor supplies widgets. Delivery is weekly.",
+            "Vendor supplies widgets. Penalty ... cancel.",
+        ]
         # The shared statement is common ground in both orders; the unique
         # parts swap places.
         assert all("Vendor supplies widgets." in c["shared"] for c in calls)
@@ -254,12 +278,63 @@ class TestDifferentialJudge:
         assert "Delivery is weekly." in calls[1]["unique2"]
         assert all("answer1" not in c for c in calls)
         assert out["mode"] == "differential"
-        assert out["per_query"]["a"]["comprehensiveness"] == "candidate"
+        # The fake split reads unique_1 as Answer 1's: with the candidate
+        # first, the slot hands the baseline the longer list.
+        assert out["per_query"]["a"]["comprehensiveness"] == "tie"
+        slot = out["slots"]["criteria"]["comprehensiveness"]
+        assert (slot["baseline_first_win_rate"], slot["candidate_first_win_rate"]) == (
+            1.0,
+            0.0,
+        )
+        assert slot["slot_effect"] == 1.0
         assert out["position_consistency"] == 1.0
         assert out["identical_pairs"] == 0
-        split = out["differential"]["per_query"]["a"]
+        split = out["differential"]["per_query"]["a"]["baseline_first"]
         assert split["shared"] == ["Vendor supplies widgets."]
+        assert split["candidate"] == [
+            "Penalty is 100 credits per day.",
+            "Buyer may cancel.",
+        ]
+        assert split["outcome"]["comprehensiveness"] == "candidate"
+        swapped = out["differential"]["per_query"]["a"]["candidate_first"]
+        assert swapped["candidate"] == ["Delivery is weekly."]
         assert out["length"]["per_query"]["a"]["candidate_unique_tokens"] > 0
+
+    def test_an_aa_pair_with_a_slot_biased_split_is_even(self, mocker) -> None:
+        # A split model that keeps Answer 1's wording and lists Answer 2's
+        # paraphrases as unique (x5: one slot gave an A/A pair 0.645); the
+        # judge prefers the longer unique list. Judged in one slot order the
+        # candidate, always Answer 2, would win every pair.
+        def biased(inputs: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "shared": [inputs["answer1"]],
+                "unique_1": [],
+                "unique_2": [inputs["answer2"]],
+            }
+
+        judge = _differential_judge(mocker, _Overlap(biased))
+        queries = [f"q{i}" for i in range(12)]
+        out = asyncio.run(
+            judge.acompare(
+                [_result(q, f"The vendor ships on {q}.") for q in queries],
+                [_result(q, f"Shipping by the vendor is {q}.") for q in queries],
+            )
+        )
+        for criterion in pairwise.CRITERIA:
+            stats = out["criteria"][criterion]
+            assert stats["candidate_win_rate"] == 0.5
+            assert stats["p_value"] == 1.0
+            slot = out["slots"]["criteria"][criterion]
+            assert slot["baseline_first_win_rate"] == 1.0
+            assert slot["candidate_first_win_rate"] == 0.0
+            assert slot["slot_effect"] == 1.0
+        assert out["slots"]["order"] == list(pairwise.SPLIT_SLOTS)
+        assert set(out["per_query"]["q0"].values()) == {"tie"}
+
+    def test_the_overlap_prompt_words_shared_statements_symmetrically(self) -> None:
+        prompt = PairwiseOverlapPrompt.resolve().system_prompt_template
+        assert "as in Answer 1" not in prompt
+        assert "shorter of its two wordings" in prompt
 
     def test_no_unique_statement_is_a_tie_without_a_judge_call(self, mocker) -> None:
         overlap = _Overlap({"shared": ["Same."], "unique_1": [], "unique_2": [" "]})

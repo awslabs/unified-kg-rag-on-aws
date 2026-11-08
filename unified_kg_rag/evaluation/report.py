@@ -244,6 +244,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
                 for strategy, judged in pairwise.items()
             ],
         )
+        lines += _slot_lines(pairwise, pairs, baseline, criteria)
         lines += _length_lines(pairwise, pairs, baseline, criteria)
 
     gates = comparison.get("gates") or {}
@@ -279,6 +280,48 @@ def _multiplicity_lines(comparison: Mapping[str, Any]) -> list[str]:
         f"{multiplicity.get('alpha', 0.05):g}. The intervals in the table are "
         "unadjusted (adjusted_ci_low/high in the JSON are simultaneous over "
         "the family).",
+    ]
+
+
+def _slot_lines(
+    pairwise: Mapping[str, Any],
+    pairs: Mapping[str, str],
+    baseline: str,
+    criteria: Sequence[str],
+) -> list[str]:
+    """The differential mode's split slot effect per criterion: the
+    candidate's win rate as Answer 2 of the split minus as Answer 1."""
+    rows = [
+        [
+            f"{strategy} vs {pairs.get(strategy, baseline)}",
+            *(
+                (
+                    f"{effect:+.2f}"
+                    if (
+                        effect := (
+                            (judged["slots"]["criteria"].get(c) or {}).get(
+                                "slot_effect"
+                            )
+                        )
+                    )
+                    is not None
+                    else "-"
+                )
+                for c in criteria
+            ),
+        ]
+        for strategy, judged in pairwise.items()
+        if judged.get("slots")
+    ]
+    if not rows:
+        return []
+    return [
+        "",
+        "Split slot effect (differential mode): the candidate's win rate when "
+        "the overlap split read it as Answer 2 minus as Answer 1. Each pair is "
+        "split both ways and the win rates above average the two.",
+        "",
+        *_table(["Strategy", *criteria], rows),
     ]
 
 
