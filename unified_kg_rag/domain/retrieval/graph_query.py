@@ -1266,6 +1266,43 @@ def answer_vertex_ids(plan: ValidatedPlan, answer: QueryAnswer) -> list[str]:
     return list(ids)
 
 
+def literal_conditions(plan: ValidatedPlan) -> list[ResolvedCondition]:
+    """The string literals ``plan`` compares by equality (``eq``, and each
+    value of an ``in``), each once, as ``eq`` conditions: what a zero count
+    or a no rests on the data spelling as the plan does."""
+    found: dict[tuple[str, str, str], ResolvedCondition] = {}
+    for node in plan.nodes:
+        for condition in node.conditions:
+            if condition.op not in ("eq", "in"):
+                continue
+            values = (
+                condition.value
+                if isinstance(condition.value, tuple)
+                else (condition.value,)
+            )
+            for value in values:
+                if isinstance(value, str):
+                    key = (condition.prop.source, condition.prop.key, value)
+                    found.setdefault(
+                        key,
+                        ResolvedCondition(prop=condition.prop, op="eq", value=value),
+                    )
+    return list(found.values())
+
+
+def value_check_plan(
+    plan: ValidatedPlan, condition: ResolvedCondition
+) -> ValidatedPlan:
+    """A plan asking whether any vertex (of any type) satisfies
+    ``condition``: whether the data holds the value at all."""
+    return ValidatedPlan(
+        nodes=(ResolvedNode(var="x", conditions=(condition,)),),
+        edges=(),
+        returns=ResolvedReturn(kind="exists", vars=("x",)),
+        plan=plan.plan,
+    )
+
+
 def answer_holders(
     plan: ValidatedPlan, answer: QueryAnswer
 ) -> tuple[str, ResolvedCondition] | None:

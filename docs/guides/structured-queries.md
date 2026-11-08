@@ -82,7 +82,9 @@ Under `fallback` (the default) a question the plan cannot answer runs
 `fallback_strategy`: the planner's call failed or its plan stayed invalid
 after the repair (`planner_error`, `invalid_plan`), it judged the question
 `unanswerable`, a name linked to nothing (`unlinked_mention`), the result
-was empty (`empty_result`; a count of 0 and a "no" are answers), or the store
+was empty (`empty_result`; a count of 0 and a "no" are answers), a 0 or a "no"
+rests on a value no entity holds, as when the plan spells "Supplier" where the
+data writes "supplier" (`unknown_value`), or the store
 refused or timed out the query (`execution_error`, `timeout`). The fallback
 reads the entity names and themes the planner listed, so it adds no
 extraction call. A fallback the namespace does not serve gives way to

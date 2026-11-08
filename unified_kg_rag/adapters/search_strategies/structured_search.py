@@ -87,6 +87,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
 from unified_kg_rag.domain.retrieval.filters import document_filters
 from unified_kg_rag.domain.retrieval.graph_query import (
     FILTERS_KEY,
+    Operation,
     aggregate_bindings,
     answer_from_result,
     answer_holders,
@@ -95,11 +96,13 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     describe_plan,
     evidence_vertex_ids,
     hydrate_keys,
+    literal_conditions,
     matching_bindings,
     merge_declared,
     plan_operation,
     render_answer,
     validate_plan,
+    value_check_plan,
     with_condition,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
@@ -667,30 +670,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         unapplied = self._graph_unapplied_filters(query)
         op = plan_operation(plan, scan=bool(unapplied), cap=settings.max_scan_rows)
         run.operation = op.operation if not op.scan else f"{op.operation} (scan)"
-        filters = dict(query.filters or {})
-        allowed = filters.pop("id", None)
-        request = GraphQueryRequest(
-            plan=plan,
-            suffix=query.suffix,
-            operation=op.operation,
-            vars=op.vars,
-            group_var=op.group_var,
-            group_key=op.group_key,
-            order=op.order,
-            limit=op.limit,
-            filters=filters or None,
-            allowed_ids=(
-                None
-                if allowed is None
-                else tuple(
-                    str(i)
-                    for i in (allowed if isinstance(allowed, list) else [allowed])
-                )
-            ),
-            linked=linked,
-            hydrate=hydrate_keys(plan),
-            timeout_seconds=settings.store_timeout_seconds,
-        )
+        request = self._request(query, plan, op, linked)
         try:
             result = await self.graph_query.aexecute(request)
         except GraphQueryExecutionError as e:
@@ -722,8 +702,81 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         if answer.empty:
             run.fall_back("empty_result")
             return None
+        if (answer.count == 0 or answer.exists is False) and not await self._known(
+            query, plan, unapplied
+        ):
+            # A zero or a no over a value the data does not hold ("Supplier"
+            # for "supplier", a translated value) is no answer.
+            run.fall_back("unknown_value")
+            return None
         evidence, result = await self._evidence(plan, answer, result, request, kept)
         return answer, result, evidence
+
+    def _request(
+        self,
+        query: SearchQuery,
+        plan: ValidatedPlan,
+        op: Operation,
+        linked: dict[str, tuple[str, ...]],
+    ) -> GraphQueryRequest:
+        """The store request of ``plan``'s operation ``op`` within the
+        query's suffix and graph-applied filters."""
+        filters = dict(query.filters or {})
+        allowed = filters.pop("id", None)
+        return GraphQueryRequest(
+            plan=plan,
+            suffix=query.suffix,
+            operation=op.operation,
+            vars=op.vars,
+            group_var=op.group_var,
+            group_key=op.group_key,
+            order=op.order,
+            limit=op.limit,
+            filters=filters or None,
+            allowed_ids=(
+                None
+                if allowed is None
+                else tuple(
+                    str(i)
+                    for i in (allowed if isinstance(allowed, list) else [allowed])
+                )
+            ),
+            linked=linked,
+            hydrate=hydrate_keys(plan),
+            timeout_seconds=self.settings.store_timeout_seconds,
+        )
+
+    async def _known(
+        self, query: SearchQuery, plan: ValidatedPlan, unapplied: dict[str, Any]
+    ) -> bool:
+        """Whether some vertex the caller may read holds each string value
+        ``plan`` compares by equality (``literal_conditions``, one bounded
+        ``exists`` request each, concurrently); a failed check counts as
+        held, so it never turns an answer into a fallback on its own."""
+        checks = [value_check_plan(plan, c) for c in literal_conditions(plan)]
+        if not checks:
+            return True
+
+        async def holds(check: ValidatedPlan) -> bool:
+            op = plan_operation(
+                check, scan=bool(unapplied), cap=self.settings.max_scan_rows
+            )
+            try:
+                result = await self.graph_query.aexecute(
+                    self._request(query, check, op, {})
+                )
+            except Exception as e:
+                if is_fatal_retrieval_error(e):
+                    raise
+                logger.warning("Structured search: checking a value failed: %s", e)
+                return True
+            if op.scan:
+                answer, _ = await self._scanned(query, check, result, unapplied)
+            else:
+                answer = answer_from_result(check, result)
+            return bool(answer.exists)
+
+        return all(await gather_or_cancel(holds(check) for check in checks))
 
     async def _evidence(
         self,

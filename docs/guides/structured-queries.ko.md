@@ -77,7 +77,9 @@ search:
 실행합니다. 계획 작성 호출이 실패했거나 재작성 뒤에도 계획이 유효하지 않은 경우
 (`planner_error`, `invalid_plan`), 질문을 `unanswerable`로 판단한 경우, 이름이
 아무것에도 연결되지 않은 경우(`unlinked_mention`), 결과가 빈 경우
-(`empty_result`, 개수 0과 "아니오"는 답입니다), 저장소가 질의를 거부하거나 시간
+(`empty_result`, 개수 0과 "아니오"는 답입니다), 0이나 "아니오"가 어떤 엔티티에도
+없는 값에 근거한 경우(데이터는 "supplier"로 쓰는데 계획이 "Supplier"로 쓴 경우처럼,
+`unknown_value`), 저장소가 질의를 거부하거나 시간
 제한에 걸린 경우(`execution_error`, `timeout`)입니다. 대체 전략은 계획 작성기가
 적은 엔티티 이름과 주제를 읽으므로 추출 호출이 늘지 않습니다. 네임스페이스가
 제공하지 않는 대체 전략은 `local`, 그다음 `mix`로 바뀝니다. `augment`에서는 모든

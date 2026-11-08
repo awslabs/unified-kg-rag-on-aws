@@ -504,6 +504,73 @@ async def test_a_zero_count_and_a_no_are_answers() -> None:
     assert not fallback.queries
 
 
+def _role_count(
+    value: Any, prop: str = "attr.role", kind: str = "VENDOR"
+) -> dict[str, Any]:
+    op = "in" if isinstance(value, list) else "eq"
+    return _with(
+        {
+            "nodes": [
+                {
+                    "var": "v",
+                    "types": [kind],
+                    "where": [{"prop": prop, "op": op, "value": value}],
+                }
+            ],
+            "returns": {"kind": "count"},
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("plan", "status"),
+    [
+        # A genuine zero: no buyer is a supplier.
+        (_role_count("supplier", kind="BUYER"), "answered"),
+        # Spelled otherwise than the data, or translated: no vertex holds it.
+        (_role_count("Supplier"), "unknown_value"),
+        (_role_count("공급사"), "unknown_value"),
+        (_role_count(["supplier", "Supplier"], kind="BUYER"), "unknown_value"),
+        # A seed property is checked in code (a scan).
+        (_role_count("Norland", "seed.country", kind="BUYER"), "answered"),
+        (_role_count("Nordland", "seed.country"), "unknown_value"),
+    ],
+)
+async def test_a_zero_over_a_value_the_data_lacks_falls_back(
+    plan: dict[str, Any], status: str
+) -> None:
+    """A count of 0 (or a no) over a value no vertex holds is a misspelled
+    or translated value, not an answer: it falls back ``unknown_value``."""
+    strategy, graph, _, fallback = _strategy(_Planner(plan))
+    result = await strategy.asearch(_query("How many suppliers are there?"))
+    structured = result.metadata["structured"]
+    if status == "answered":
+        assert structured["status"] == "answered"
+        assert "\n0" in _table(result).content
+        assert not fallback.queries
+    else:
+        assert (structured["status"], structured["reason"]) == ("fallback", status)
+        assert fallback.queries
+    # One exists check per string value, of any type.
+    checks = [r for r in graph.requests if r.plan.vars == ("x",)]
+    assert checks and all(not r.plan.nodes[0].types for r in checks)
+
+
+async def test_a_failed_value_check_keeps_the_answer() -> None:
+    class _Failing(FakeGraphQueryRetriever):
+        async def aexecute(self, request: Any) -> Any:
+            if request.plan.vars == ("x",):
+                raise GraphQueryExecutionError("check failed", timed_out=True)
+            return await super().aexecute(request)
+
+    strategy, *_, fallback = _strategy(
+        _Planner(_role_count("Supplier")), graph=_Failing(procurement_graph())
+    )
+    result = await strategy.asearch(_query("How many suppliers are there?"))
+    assert result.metadata["structured"]["status"] == "answered"
+    assert not fallback.queries
+
+
 async def test_a_store_time_limit_falls_back_and_a_dead_store_fails() -> None:
     plan = _with(CONFORMANCE_PLANS["count_supply_pairs"])
     timed_out = FakeGraphQueryRetriever(

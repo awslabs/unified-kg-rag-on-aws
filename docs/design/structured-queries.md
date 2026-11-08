@@ -306,7 +306,10 @@ stores.
 **Fallback and augment.** `search.structured.mode: fallback` (default):
 on a planner failure, a plan still invalid after the repair,
 `unanswerable`, an unlinked mention, an empty result (no row, group or
-path; a count of 0 and `exists: false` are answers) or a non-fatal
+path; a count of 0 and `exists: false` are answers, unless a string value
+the plan compares by equality is held by no vertex the caller may read,
+`unknown_value`: one bounded `exists` request per value, of any type,
+`literal_conditions`; a failed check keeps the answer) or a non-fatal
 execution error (a malformed query, this query's server timeout), the
 query runs `fallback_strategy` (`local`; `null` answers from no context)
 and records `metadata.structured = {status: fallback, reason, ...}`. A

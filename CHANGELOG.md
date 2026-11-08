@@ -771,7 +771,8 @@ From a `main` checkout (formats and keys no release had):
   them cite first, as `local` orders its text units); counts are exact unless a document filter or seed-property
   condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a count cites its first matches
   as entities, a minimum or a maximum the entities holding it and groups by a property their listed groups'. Filter keys
-  are checked against the fallback that would run too. Without a structured
+  are checked against the fallback that would run too. A count of 0 or a "no" over a string
+  value no vertex holds (misspelled or translated) is no answer (`unknown_value`). Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
   `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
   `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the
