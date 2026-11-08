@@ -112,7 +112,9 @@ them with one warning naming the extra. See
 The `unstructured` extra tokenizes with a spaCy model (`en_core_web_sm`) that
 it downloads from GitHub at the first Markdown or HTML file. Without network
 access, install it beforehand, once, where the network is reachable:
-`python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')"`.
+`python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')"`,
+or, from a checkout, `python scripts/install_spacy_model.py`, which retries the
+download and checks the SHA-256 unstructured pins (the image build uses it).
 Otherwise the first such file waits up to 120 s and fails, and every later
 one of the run fails at once with the same error.
 

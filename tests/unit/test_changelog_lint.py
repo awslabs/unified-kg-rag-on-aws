@@ -26,7 +26,10 @@ pytestmark = pytest.mark.unit
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 # A passage this many words long repeated further than this many words away
 # is a duplicate (a phrase repeated within one sentence is not). Words, not
-# lines: both versions of one conflicting line sit on adjacent lines.
+# lines: both versions of one conflicting line sit on adjacent lines. A
+# repeat that starts a line is one at any distance: a conflict resolution
+# that kept both versions of a wrapped line starts the second on its own
+# line, often fewer than SHINGLE_MIN_DISTANCE words after the first.
 SHINGLE_WORDS = 14
 SHINGLE_MIN_DISTANCE = 40
 # Outside tables, no line is longer (the section wraps at 118).
@@ -68,18 +71,22 @@ def _step_references(section: str) -> list[int]:
 def _repeated_passages(section: str) -> list[tuple[int, int, str]]:
     """``(first line, repeat line, passage)`` of every run of
     ``SHINGLE_WORDS`` words that appears again more than
-    ``SHINGLE_MIN_DISTANCE`` words after its first occurrence."""
+    ``SHINGLE_MIN_DISTANCE`` words after its first occurrence, or again at
+    the start of a line."""
     words = [
         (word.lower().strip(".,;:()"), number)
         for number, line in enumerate(section.splitlines(), 1)
         for word in line.split()
         if re.search(r"\w", word)  # not a bullet or a dash
     ]
+    line_starts = {
+        i for i, (_, number) in enumerate(words) if i == 0 or words[i - 1][1] != number
+    }
     first: dict[tuple[str, ...], int] = {}
     repeats = []
     for i in range(len(words) - SHINGLE_WORDS + 1):
         key = tuple(word for word, _ in words[i : i + SHINGLE_WORDS])
-        if key in first and i - first[key] > SHINGLE_MIN_DISTANCE:
+        if key in first and (i - first[key] > SHINGLE_MIN_DISTANCE or i in line_starts):
             repeats.append((words[first[key]][1], words[i][1], " ".join(key)))
         first.setdefault(key, i)
     return repeats
@@ -168,14 +175,18 @@ def test_the_step_reference_scan() -> None:
 def test_the_repeat_scan() -> None:
     passage = " ".join(f"w{i}" for i in range(SHINGLE_WORDS))
     filler = " ".join(f"f{i}" for i in range(SHINGLE_MIN_DISTANCE))
-    # Within SHINGLE_MIN_DISTANCE words: one sentence repeating itself.
-    near = f"- {passage} {' '.join(filler.split()[: -SHINGLE_WORDS])}\n  {passage}\n"
+    # Within SHINGLE_MIN_DISTANCE words, mid-line: one sentence repeating
+    # itself.
+    near = f"- {passage} {' '.join(filler.split()[: -SHINGLE_WORDS])} {passage}\n"
+    # Within it too, but starting a line: both versions of a wrapped line.
+    near_line = f"- x {passage}\n  {passage}\n"
     # Both versions of one line, on adjacent lines, past it.
     adjacent = f"- {passage} {filler}\n  {passage}\n"
     lines = "\n".join(filler.split())
     far = f"- {passage}\n{lines}\n- {passage}\n"
     short = " ".join(passage.split()[:-1])
     assert _repeated_passages(near) == []
+    assert [r[:2] for r in _repeated_passages(near_line)] == [(1, 2)]
     assert _repeated_passages(f"- {short}\n{lines}\n- {short}\n") == []
     assert [r[:2] for r in _repeated_passages(adjacent)] == [(1, 2)]
     assert [r[:2] for r in _repeated_passages(far)] == [(1, SHINGLE_MIN_DISTANCE + 2)]

@@ -105,6 +105,21 @@ def _lookups(pins: Any, **changes: str) -> Any:
         check_pins.TRIVY_RELEASES: changes.get("trivy", f"v{pins.trivy_version}"),
     }
     npm = {check_pins.CDK_CLI_LATEST: changes.get("cdk", pins.cdk_cli_version)}
+    pinned_images = {
+        "linux/amd64": "sha256:" + "a" * 64,
+        "linux/arm64": "sha256:" + "b" * 64,
+    }
+    images = {
+        f"{pins.base_ref}@{pins.base_digest}": pinned_images,
+        pins.base_ref: {
+            **pinned_images,
+            **{
+                platform: changes[platform]
+                for platform in check_pins.IMAGE_PLATFORMS
+                if platform in changes
+            },
+        },
+    }
 
     def apt_policy(image: str, packages: tuple[str, ...]) -> dict[str, tuple[str, str]]:
         assert image == f"{pins.base_ref}@{pins.base_digest}"
@@ -120,6 +135,7 @@ def _lookups(pins: Any, **changes: str) -> Any:
 
     return check_pins.Lookups(
         digest=digests.__getitem__,
+        platform_digests=images.__getitem__,
         latest_release=releases.__getitem__,
         latest_npm=npm.__getitem__,
         apt_policy=apt_policy,
@@ -128,14 +144,21 @@ def _lookups(pins: Any, **changes: str) -> Any:
 
 def test_current_pins_report_nothing() -> None:
     pins = check_pins.read_pins()
-    assert check_pins.check(pins, _lookups(pins)) == []
+    assert check_pins.check(pins, _lookups(pins)) == check_pins.Report([], [])
 
 
 @pytest.mark.parametrize(
     ("change", "expected"),
     [
-        ({"base": "sha256:" + "1" * 64}, "Base image"),
-        ({"uv": "99.0.0"}, "uv 99.0.0 is released"),
+        (
+            {"base": "sha256:" + "1" * 64, "linux/amd64": "sha256:" + "6" * 64},
+            "Base image",
+        ),
+        (
+            {"base": "sha256:" + "1" * 64, "linux/arm64": "sha256:" + "7" * 64},
+            "Base image",
+        ),
+        ({"uv": "0.12.99"}, "uv 0.12.99 is released"),
         ({"uv_digest": "sha256:" + "2" * 64}, "the tag was re-pushed"),
         ({"adot": "v9.0.0"}, "ADOT collector v9.0.0 is released"),
         ({"collector_digest": "sha256:" + "3" * 64}, "the tag was re-pushed"),
@@ -154,14 +177,16 @@ def test_current_pins_report_nothing() -> None:
 )
 def test_each_drift_is_reported(change: dict[str, str], expected: str) -> None:
     pins = check_pins.read_pins()
-    (line,) = check_pins.check(pins, _lookups(pins, **change))
+    report = check_pins.check(pins, _lookups(pins, **change))
+    (line,) = report.behind
     assert expected in line
+    assert report.held == []
 
 
 def test_a_base_image_that_ships_the_pinned_version_drops_the_pin() -> None:
     pins = check_pins.read_pins()
     zlib = dict(pins.apt_pins)["zlib1g"]
-    (line,) = check_pins.check(pins, _lookups(pins, zlib1g_installed=zlib))
+    (line,) = check_pins.check(pins, _lookups(pins, zlib1g_installed=zlib)).behind
     assert "base image already ships the pinned" in line and "zlib1g" in line
 
 
@@ -182,7 +207,65 @@ def test_apt_cache_policy_output_is_read() -> None:
 def test_an_older_upstream_release_is_not_drift() -> None:
     # A "latest" release behind the pin (a yanked one) reports nothing.
     pins = check_pins.read_pins()
-    assert check_pins.check(pins, _lookups(pins, uv="0.0.1", cdk="1.0.0")) == []
+    report = check_pins.check(pins, _lookups(pins, uv="0.0.1", cdk="1.0.0"))
+    assert report == check_pins.Report([], [])
+
+
+def test_a_new_base_index_of_the_pinned_images_is_not_drift() -> None:
+    # The tag's index digest moved (an attestation re-pushed) while the
+    # amd64 and arm64 images stayed the pinned ones: nothing to bump.
+    pins = check_pins.read_pins()
+    report = check_pins.check(pins, _lookups(pins, base="sha256:" + "1" * 64))
+    assert report == check_pins.Report([], [])
+
+
+def test_a_release_past_a_held_series_is_held_not_behind() -> None:
+    pins = check_pins.read_pins()
+    hold = check_pins.HELD["uv"]
+    assert pins.uv_version.startswith(hold.series + ".")
+    report = check_pins.check(pins, _lookups(pins, uv="99.0.0"))
+    assert report.behind == []
+    (line,) = report.held
+    assert "uv 99.0.0 is released; held at " + hold.series in line
+    assert hold.reason in line
+    rendered = check_pins.render(report)
+    assert "Every pin is current." in rendered and "Held on purpose" in rendered
+
+
+def test_only_a_pin_behind_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    pins = check_pins.read_pins()
+    monkeypatch.setattr(check_pins, "NETWORK", _lookups(pins, uv="99.0.0"))
+    assert check_pins.main([]) == 0
+    monkeypatch.setattr(check_pins, "NETWORK", _lookups(pins, cdk="99.0.0"))
+    assert check_pins.main([]) == 1
+
+
+def test_platform_digests_leave_out_attestations() -> None:
+    manifest = {
+        "manifests": [
+            {
+                "digest": "sha256:a",
+                "platform": {"os": "linux", "architecture": "amd64"},
+            },
+            {
+                "digest": "sha256:b",
+                "platform": {"os": "linux", "architecture": "arm64", "variant": "v8"},
+            },
+            {
+                "digest": "sha256:c",
+                "platform": {"os": "unknown", "architecture": "unknown"},
+            },
+            {
+                "digest": "sha256:d",
+                "platform": {"os": "linux", "architecture": "arm", "variant": "v7"},
+            },
+        ]
+    }
+    assert check_pins.platform_digests(manifest) == {
+        "linux/amd64": "sha256:a",
+        "linux/arm64": "sha256:b",
+        "linux/arm/v7": "sha256:d",
+    }
 
 
 def test_the_workflow_runs_the_script_weekly_and_files_one_issue() -> None:

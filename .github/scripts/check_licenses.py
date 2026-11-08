@@ -6,13 +6,25 @@ Reads ``pip-licenses --format=json`` output on stdin (run it in an environment
 synced with every extra) and exits non-zero when a package's license matches
 DENIED and the package is not on ALLOWED. Each ALLOWED entry names why it is
 acceptable; add one only after reviewing the license.
+
+With ``--npm-lock console/web/package-lock.json`` it checks the console web
+client's npm dependencies instead, from the lockfile's own license fields
+(no network): the runtime ones, which the built client bundles; the
+devDependencies only build and test it and are not redistributed.
+
+Usage::
+
+    pip-licenses --format=json | python check_licenses.py
+    python check_licenses.py --npm-lock console/web/package-lock.json
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
+from pathlib import Path
 
 # Copyleft (strong and weak), source-available and proprietary terms. Weak
 # copyleft is denied too so each such package gets an explicit review below.
@@ -42,8 +54,36 @@ def _allowed(name: str) -> bool:
     )
 
 
-def main() -> int:
-    packages = json.load(sys.stdin)
+def npm_packages(lock: dict[str, object]) -> list[dict[str, str]]:
+    """The runtime packages of an npm lockfile (v2/v3) in pip-licenses' shape:
+    every installed package not marked ``dev`` (nor a workspace link)."""
+    found = []
+    for path, entry in (lock.get("packages") or {}).items():  # type: ignore[attr-defined]
+        if not path or entry.get("dev") or entry.get("link"):
+            continue
+        license_ = entry.get("license", "")
+        found.append(
+            {
+                "Name": path.rsplit("node_modules/", 1)[-1],
+                "Version": entry.get("version", ""),
+                "License": (
+                    license_ if isinstance(license_, str) else json.dumps(license_)
+                ),
+            }
+        )
+    return found
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--npm-lock", type=Path, help="check this npm lockfile's runtime packages"
+    )
+    args = parser.parse_args(argv)
+    if args.npm_lock:
+        packages = npm_packages(json.loads(args.npm_lock.read_text(encoding="utf-8")))
+    else:
+        packages = json.load(sys.stdin)
     if not packages:
         # An empty report means pip-licenses saw no environment, not that
         # every license passed.

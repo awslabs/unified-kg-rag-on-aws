@@ -102,6 +102,8 @@ uv sync --no-dev --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 GitHub에서 이 모델을 내려받습니다. 네트워크에 접근할 수 없는 환경이라면 네트워크가 되는 곳에서
 한 번 미리 설치하세요:
 `python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')"`.
+저장소를 내려받았다면 `python scripts/install_spacy_model.py`로도 설치할 수 있습니다. 이 스크립트는
+다운로드를 재시도하고 unstructured가 고정한 SHA-256을 확인하며, 이미지 빌드도 이 스크립트를 씁니다.
 설치하지 않으면 첫 파일은 최대 120초를 기다린 뒤 실패하고, 같은 실행의 나머지 파일은 같은
 오류로 바로 실패합니다.
 

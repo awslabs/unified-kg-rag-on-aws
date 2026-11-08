@@ -49,14 +49,58 @@ def test_the_eval_extra_is_opt_in_in_the_image() -> None:
     )
 
 
+def _step(job: str, name: str) -> dict[str, Any]:
+    (step,) = (s for s in _steps(job) if s.get("name", "").startswith(name))
+    return step
+
+
 def test_the_unstructured_image_is_built_with_its_spacy_model() -> None:
-    steps = _steps("docker-unstructured")
-    build, check = (step.get("run", "") for step in steps[1:3])
+    build = _step("docker-unstructured", "Build the image")["run"]
+    check = _step("docker-unstructured", "Check the image has the spaCy")["run"]
     assert "docker build -f docker/Dockerfile" in build
     assert '--build-arg "UV_EXTRAS=--extra unstructured --extra eval"' in build
     # Checked inside the image it built, with no network.
     assert "ci-unstructured" in build and "ci-unstructured" in check
     assert "--network none" in check and "import en_core_web_sm" in check
+
+
+_SPACY_CACHE = "~/.cache/unified-kg-rag/spacy-models"
+
+
+def test_the_spacy_model_wheel_is_cached_and_installed_with_retries() -> None:
+    # A 502 from GitHub releases, where unstructured downloads the model in
+    # one attempt, failed the optional-parsers and docker-unstructured jobs.
+    version = _step("optional-parsers", "Read the spaCy model version")
+    assert "install_spacy_model.py --print-version" in version["run"]
+    cache = _step("optional-parsers", "Cache the spaCy model wheel")
+    assert cache["uses"].startswith("actions/cache@")
+    assert cache["with"]["path"] == _SPACY_CACHE
+    assert cache["with"]["key"] == (
+        f"spacy-en_core_web_sm-${{{{ steps.{version['id']}.outputs.version }}}}"
+    )
+    steps = _steps("optional-parsers")
+    install = _step("optional-parsers", "Install the spaCy model")
+    tests = _step("optional-parsers", "Check optional parsing")
+    assert install["run"].endswith("python scripts/install_spacy_model.py")
+    assert steps.index(cache) < steps.index(install) < steps.index(tests)
+
+    # The image build takes the cached wheel as its spacy-wheels context and
+    # installs it through the same script.
+    restore = _step("docker-unstructured", "Restore the spaCy model wheel")
+    assert restore["uses"].startswith("actions/cache/restore@")
+    assert restore["uses"].split("@")[1] == cache["uses"].split("@")[1]
+    assert restore["with"]["path"] == _SPACY_CACHE
+    assert restore["with"]["restore-keys"] == "spacy-en_core_web_sm-"
+    build = _step("docker-unstructured", "Build the image")["run"]
+    assert (
+        '--build-context "spacy-wheels=$HOME/.cache/unified-kg-rag/spacy-models"'
+        in build
+    )
+    dockerfile = (_WORKFLOW.parents[2] / "docker" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert "FROM scratch AS spacy-wheels" in dockerfile
+    assert "install_spacy_model.py --cache-dir /var/cache/spacy-wheels" in dockerfile
 
 
 _TRIVY = (

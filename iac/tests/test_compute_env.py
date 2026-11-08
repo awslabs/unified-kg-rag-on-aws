@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 import aws_cdk as cdk
@@ -13,7 +14,7 @@ import pytest
 from aws_cdk.assertions import Template
 
 from iac.config import DeploymentConfig
-from iac.stacks.compute_stack import ComputeStack
+from iac.stacks.compute_stack import WRITABLE_VOLUMES, ComputeStack
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.orchestration_stack import OrchestrationStack
 from iac.stacks.storage_stack import StorageStack
@@ -750,3 +751,36 @@ def test_an_observability_secret_cannot_shadow_the_stack_environment() -> None:
                 "observability_secret_keys": "UKR__AWS__NEPTUNE__ENDPOINT",
             }
         )
+
+
+@pytest.mark.parametrize(
+    "context", [{}, {"enable_cloudwatch_tracing": True}], ids=["app", "with-collector"]
+)
+def test_the_app_runs_on_a_read_only_root_filesystem(context: dict[str, Any]) -> None:
+    # Security Hub ECS.5: the app writes only to task volumes, one per path.
+    task_defs = _compute_template(context).find_resources("AWS::ECS::TaskDefinition")
+    assert len(task_defs) == 2  # the ingestion and the query task
+    for task_def in task_defs.values():
+        properties = task_def["Properties"]
+        (app,) = [c for c in properties["ContainerDefinitions"] if c["Name"] == "app"]
+        assert app["ReadonlyRootFilesystem"] is True
+        mounts = {m["ContainerPath"]: m["SourceVolume"] for m in app["MountPoints"]}
+        assert mounts == {path: name for name, path in WRITABLE_VOLUMES.items()}
+        assert all(m["ReadOnly"] is False for m in app["MountPoints"])
+        # Bind mounts on the task's ephemeral storage: no host path, no EFS.
+        assert sorted(properties["Volumes"], key=lambda v: v["Name"]) == [
+            {"Name": name} for name in sorted(WRITABLE_VOLUMES)
+        ]
+        env = {e["Name"]: e["Value"] for e in app["Environment"]}
+        assert env["XDG_CACHE_HOME"].startswith(WRITABLE_VOLUMES["tmp"] + "/")
+
+
+def test_the_image_declares_the_task_volumes() -> None:
+    # A task volume starts with the content, owner and mode of the image's
+    # VOLUME at its path; without one Fargate creates it root-owned (0755),
+    # where the app user could write nothing.
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "docker" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    (line,) = [x for x in dockerfile.splitlines() if x.startswith("VOLUME ")]
+    assert json.loads(line.removeprefix("VOLUME ")) == list(WRITABLE_VOLUMES.values())

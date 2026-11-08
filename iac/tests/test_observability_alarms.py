@@ -12,7 +12,7 @@ from typing import Any
 
 import aws_cdk as cdk
 import pytest
-from aws_cdk.assertions import Template
+from aws_cdk.assertions import Annotations, Match, Template
 
 from iac.config import DeploymentConfig
 from iac.stacks.compute_stack import ComputeStack
@@ -36,6 +36,10 @@ _PACKAGE = Path(__file__).resolve().parents[2] / "unified_kg_rag"
 
 
 def _template(context: dict[str, Any] | None = None) -> Template:
+    return Template.from_stack(_stack(context))
+
+
+def _stack(context: dict[str, Any] | None = None) -> ObservabilityStack:
     app = cdk.App(context=context or {})
     config = DeploymentConfig.from_context(app)
     networking = NetworkingStack(app, "Net", config=config, env=_ENV)
@@ -60,7 +64,7 @@ def _template(context: dict[str, Any] | None = None) -> Template:
         storage=storage,
         env=_ENV,
     )
-    return Template.from_stack(stack)
+    return stack
 
 
 def _alarms(context: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
@@ -558,3 +562,49 @@ def test_the_dashboard_plots_a_partial_summary_tree() -> None:
     for name in SUMMARY_TREE_METRICS:
         # Emitted as the summary_tree stage finishes.
         assert stages[name] == {"summary_tree"}
+
+
+def _widget_regions(template: Template) -> dict[str, str]:
+    (dashboard,) = template.find_resources("AWS::CloudWatch::Dashboard").values()
+    _, parts = dashboard["Properties"]["DashboardBody"]["Fn::Join"]
+    body = json.loads("".join(p if isinstance(p, str) else "TOKEN" for p in parts))
+    return {
+        w["properties"]["title"]: w["properties"].get("region")
+        for w in body["widgets"]
+        if "title" in w["properties"]
+    }
+
+
+@pytest.mark.parametrize(
+    ("context", "bedrock", "warned"),
+    [
+        ({}, "TOKEN", False),  # the stack's own region (AWS::Region)
+        ({"bedrock_region": "us-west-2"}, "us-west-2", False),
+        ({"bedrock_region": "us-east-1", "network_mode": "public"}, "us-east-1", True),
+    ],
+    ids=["unset", "deploy-region", "other-region"],
+)
+def test_the_bedrock_widgets_read_the_bedrock_region(
+    context: dict[str, Any], bedrock: str, warned: bool
+) -> None:
+    # Bedrock publishes its metrics where the calls go; the widgets watched
+    # the deploy region, where a cross-region deployment's calls publish none.
+    stack = _stack(context)
+    regions = _widget_regions(Template.from_stack(stack))
+    bedrock_widgets = {t: r for t, r in regions.items() if t.startswith("Bedrock")}
+    assert len(bedrock_widgets) == 3
+    assert set(bedrock_widgets.values()) == {bedrock}
+    assert {r for t, r in regions.items() if t not in bedrock_widgets} <= {
+        "us-west-2",
+        "TOKEN",
+    }
+    # An alarm cannot read another region's metrics: the synth says so.
+    # has_warning/has_no_warning assert on the jsii side: find_warning returns
+    # MetadataEntry objects, which a process that has not imported
+    # aws_cdk.cloud_assembly_schema cannot deserialize.
+    annotations = Annotations.from_stack(stack)
+    message = Match.string_like_regexp("BedrockThrottling alarm watches the deploy")
+    if warned:
+        annotations.has_warning("*", message)
+    else:
+        annotations.has_no_warning("*", message)

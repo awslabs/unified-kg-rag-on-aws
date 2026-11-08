@@ -285,6 +285,10 @@ See [`iac/README.md`](iac/README.md).
   slower queries and ingestion, and no downgrade; *Upgrading*). The application's defaults behave the same on both
   versions and it still runs on 2.13 clusters; `vector_mode` / `compression_level` and faiss with `cosinesimil` now
   work on the CDK domain, opt-in as before (#457, #622, #626).
+- The app container runs on a read-only root filesystem, writing only to task volumes at `/tmp`, `/app/cache`,
+  `/app/outputs` and `/app/logs` (Security Hub ECS.5), and a created VPC's default security group allows no traffic
+  (EC2.2). An image of your own must declare those four paths as `VOLUME`s its user can write, as
+  `docker/Dockerfile` does, and write nowhere else.
 
 #### Library API
 - 0.2.3 exported only `__version__`. The public API is what `unified_kg_rag` exports (`unified_kg_rag.__all__`):
@@ -470,7 +474,6 @@ From a `main` checkout (formats and keys no release had):
   also asks again the community reports whose input held such a status (their input changed). Claim records stored
   since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again
   (#644).
-  since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again.
 - Claims and report switches: with claim extraction on and the registry on, a namespace whose build record does not
   name claims (claims turned on after its build, or an incremental claims-off run since) is rebuilt once by its next
   run from its stored extractions, asking claims only of the units without a stored claim record (every unit after
@@ -1357,8 +1360,9 @@ From a `main` checkout (formats and keys no release had):
 - The parser uses its own loaders on langchain-core (same text and ids; a 4,000-page PDF loads in about 1 s);
   `ParserFactory.register_loader` takes any `BaseLoader` (#460, #471). Markdown and HTML are read without an extra:
   Markdown as written, HTML through the standard library's parser (one paragraph per block element, no script or
-  style); the `unstructured` extra, when installed, reads both in its place, its image installs its spaCy model, and
-  an offline run without that model fails at once naming the install command (#534, #628). Word (`.docx`) files are
+  style); the `unstructured` extra, when installed, reads both in its place, its image installs its spaCy model
+  (retried and checked against the SHA-256 unstructured pins: `scripts/install_spacy_model.py`), and an offline run
+  without that model fails at once naming the install command (#534, #628). Word (`.docx`) files are
   read with the new `docx` extra (python-docx); without it they are skipped with a WARNING naming the extra (#628).
 - Gleaning refines each text unit's own record and a correction changes only what that unit says (#322).
 - `graph_aware`'s `retrieved_entity_coverage` and `retrieved_relationship_coverage` match by entity key (case, CJK
@@ -1407,6 +1411,8 @@ From a `main` checkout (formats and keys no release had):
 Bugs present in 0.2.3.
 
 Queries and retrieval.
+- `@register_strategy` on a registered class with other arguments raises instead of replacing its record, which
+  changed what that strategy reads for every caller in the process; the same arguments keep the record.
 - A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
   went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
@@ -1490,10 +1496,9 @@ Ingestion and incremental indexing.
   description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
   where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full
   build's (#640). Nor when the moved and the kept lines share a text unit (a delta that resolved `(주)벤더` into
-  `벤더`): an edge with an endpoint the derivation split off is summarized from its lines (#644).
-  `벤더`): an edge with an endpoint the derivation split off is summarized from its lines. Nor when the derivation
-  folded another stored spelling into the item (a delta `Depot -> Vendor` edge that folds the stored `Depot -> Vendor
-  Inc` into it): the extended summary lost the folded edge's line.
+  `벤더`): an edge with an endpoint the derivation split off is summarized from its lines (#644). Nor when the
+  derivation folded another stored spelling into the item (a delta `Depot -> Vendor` edge that folds the stored
+  `Depot -> Vendor Inc` into it): the extended summary lost the folded edge's line (#648).
 - A document's doc-status registry namespace and its artifacts' index suffix follow one rule
   (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
   fails the loading stage naming it instead of keying the document's record under a namespace no index has (#628).
@@ -1621,6 +1626,9 @@ CLIs, configuration and library.
 - `index_settings` keys reach the indices in either spelling (#260, #404).
 
 Deployment (CDK).
+- With a `bedrock_region` other than the deploy region the dashboard's Bedrock widgets read that region, where the
+  calls publish their metrics; the synth warns that the `BedrockThrottling` alarm, which can read only the deploy
+  region, cannot fire there.
 - Alarms deliver notifications (the topic policy allows CloudWatch to publish), the corpus no longer expires with
   the cache prefixes, multi-node domains get replicas, timed-out runs alarm, and `cdk destroy` leaves no fixed-name
   resources (#157, #166, #211, #534).
@@ -1690,6 +1698,10 @@ Deployment (CDK).
   pipelines or stored scripts (`_snapshot`, `_index_template`, `_component_template`, `_template`, `_ingest`,
   `_search/pipeline`, `_scripts`) (#636, #641); the logger-credential semgrep finding is suppressed on each
   matched line, not the whole package (#617).
+- CI audits every locked runtime dependency with pip-audit (`.github/pip-audit-accepted.txt` lists the two accepted
+  advisories, diskcache PYSEC-2026-2447 and ragas PYSEC-2026-3046, in the `eval` extra on paths it never runs) and
+  checks the licenses of the npm packages the console bundles; the secret scan suppresses in tests only the three
+  detectors synthetic credentials trip, so a real-format key there fails it.
 - A failed query step (routing, query processing, follow-up rewrite, context optimization, the answer and its
   stream, conversation memory) or claim extraction step logs its error as its type and a digest, its text at DEBUG,
   as the evaluators do (#617).

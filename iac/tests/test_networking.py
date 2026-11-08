@@ -271,3 +271,15 @@ def test_interface_endpoints_admit_only_this_account() -> None:
         assert statement["Condition"] == {
             "StringEquals": {"aws:PrincipalAccount": "111111111111"}
         }
+
+
+@pytest.mark.parametrize("context", [{}, {"network_mode": "public"}])
+def test_the_default_security_group_allows_nothing(context: dict[str, Any]) -> None:
+    # Security Hub EC2.2: CDK's custom resource removes the default security
+    # group's ingress and egress rules once the VPC exists.
+    template = Template.from_stack(_network(context))
+    (restrict,) = template.find_resources("Custom::VpcRestrictDefaultSG").values()
+    (vpc_id,) = template.find_resources("AWS::EC2::VPC")
+    assert restrict["Properties"]["DefaultSecurityGroupId"] == {
+        "Fn::GetAtt": [vpc_id, "DefaultSecurityGroup"]
+    }

@@ -7,12 +7,15 @@ from __future__ import annotations
 import os
 import subprocess  # nosec B404 - runs this interpreter on a fixed script
 import sys
+from typing import Any
 
 import pytest
 
 # Importing the package triggers @register_strategy on every strategy module.
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
+    _REGISTRY,
+    QueryInput,
     StrategySpec,
     get_strategy_spec,
     register_strategy,
@@ -75,12 +78,47 @@ def test_unknown_strategy_raises() -> None:
         get_strategy_spec(SearchStrategy.AUTO)
 
 
-def test_register_is_idempotent_for_same_class() -> None:
-    # Re-decorating the same class under the same key must not raise.
+def _same_arguments(spec: StrategySpec) -> dict[str, Any]:
+    return {
+        "required_roles": spec.required_roles,
+        "query_inputs": spec.query_inputs,
+        "wraps": spec.wraps,
+        "required_artifacts": spec.required_artifacts,
+    }
+
+
+def test_register_is_idempotent_for_same_class(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Re-decorating the same class with the same arguments keeps its record.
     spec = get_strategy_spec(SearchStrategy.SIMPLE)
-    register_strategy(SearchStrategy.SIMPLE, required_roles=(RetrieverRole.DOCUMENT,))(
+    monkeypatch.setitem(_REGISTRY, SearchStrategy.SIMPLE, spec)
+    register_strategy(SearchStrategy.SIMPLE, **_same_arguments(spec))(
         spec.strategy_class
     )
+    assert _REGISTRY[SearchStrategy.SIMPLE] is spec
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"required_roles": (RetrieverRole.DOCUMENT, RetrieverRole.GRAPH)},
+        {"query_inputs": frozenset({QueryInput.ENTITIES})},
+        {"required_artifacts": frozenset()},
+    ],
+)
+def test_register_same_class_with_other_arguments_raises(
+    monkeypatch: pytest.MonkeyPatch, change: dict[str, Any]
+) -> None:
+    # It replaced the record: one test re-registering SIMPLE with the default
+    # arguments changed what SIMPLE reads for every later test.
+    spec = get_strategy_spec(SearchStrategy.SIMPLE)
+    monkeypatch.setitem(_REGISTRY, SearchStrategy.SIMPLE, spec)
+    arguments = _same_arguments(spec) | change
+    assert arguments != _same_arguments(spec)
+    with pytest.raises(ValueError, match="other arguments"):
+        register_strategy(SearchStrategy.SIMPLE, **arguments)(spec.strategy_class)
+    assert _REGISTRY[SearchStrategy.SIMPLE] is spec
 
 
 def test_register_conflicting_class_raises() -> None:

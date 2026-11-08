@@ -54,6 +54,32 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
         ],
     )
 
+    # The custom resource that removes the default security group's rules
+    # (restrict_default_security_group): only for a VPC this stack creates.
+    restrict_default_sg = networking.node.try_find_child(
+        "Custom::VpcRestrictDefaultSGCustomResourceProvider"
+    )
+    if restrict_default_sg is not None:
+        NagSuppressions.add_resource_suppressions(
+            restrict_default_sg,
+            [
+                {
+                    "id": "AwsSolutions-IAM4",
+                    "appliesTo": [
+                        {
+                            "regex": "/^Policy::arn:<AWS::Partition>:iam::aws:"
+                            "policy/service-role/AWSLambdaBasicExecutionRole$/"
+                        }
+                    ],
+                    "reason": "Execution role CDK generates for the function "
+                    "that removes the default security group's rules; the "
+                    "managed policy grants only CloudWatch Logs writes, and its "
+                    "EC2 actions are inline on the one security group.",
+                }
+            ],
+            apply_to_children=True,
+        )
+
     # --- Storage / OpenSearch ---
     storage_suppressions: list[dict[str, Any]] = [
         {
@@ -157,8 +183,10 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
     scoped_models = [
         f"Resource::{arn}" for arn in config.bedrock_model_arns or [] if "*" in arn
     ]
-    NagSuppressions.add_stack_suppressions(
-        compute,
+    # ECS2 on the data-plane task definitions only, so a new task definition
+    # with environment variables is still flagged.
+    NagSuppressions.add_resource_suppressions(
+        compute.query_task_definition,
         [
             {
                 "id": "AwsSolutions-ECS2",
@@ -281,8 +309,8 @@ def apply(stacks: dict[str, Any], config: DeploymentConfig) -> None:
         )
 
     # --- Orchestration ---
-    NagSuppressions.add_stack_suppressions(
-        orchestration,
+    NagSuppressions.add_resource_suppressions(
+        orchestration.task_definition,
         [
             {
                 "id": "AwsSolutions-ECS2",

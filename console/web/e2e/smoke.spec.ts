@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /** One pass through the console against a demo workspace: a question, its
  * provenance trail into the graph, then every page, with no request to
- * another host and no error in the page. Skipped without a browser. */
+ * another host and no error in the page. Skipped without a browser, except
+ * in CI: a CI run without one would pass having tested nothing. */
 import { existsSync } from "node:fs";
 import { chromium, expect, test } from "@playwright/test";
 
 const browser = process.env.CHROMIUM_PATH ?? chromium.executablePath();
+if (process.env.CI && !existsSync(browser)) {
+  throw new Error(`no browser at ${browser} in CI (npx playwright install chromium)`);
+}
 test.skip(!existsSync(browser), `no browser at ${browser} (npx playwright install chromium)`);
 
 test("ask, follow the trail into the graph, visit every page", async ({ page, baseURL }) => {

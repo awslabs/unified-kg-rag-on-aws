@@ -112,6 +112,10 @@ class NetworkingStack(Stack):
             max_azs=self.config.max_azs,
             # No NAT gateways in private mode (cost + no-egress guarantee).
             nat_gateways=0 if self.config.is_private else self.config.max_azs,
+            # Security Hub EC2.2: the default security group allows nothing
+            # (no resource here uses it; the data plane uses service_sg). A
+            # custom resource removes its rules after the VPC is created.
+            restrict_default_security_group=True,
             subnet_configuration=[
                 # Reserved (address space kept, no subnet created) in private
                 # mode: CDK allocates CIDRs in this list's order, so dropping the

@@ -4,7 +4,8 @@
 
 - Neptune: IAM-auth Gremlin cluster in the app subnets (maps to NeptuneConfig).
 - OpenSearch: VPC domain with node-to-node + at-rest encryption + HTTPS
-  (maps to OpenSearchConfig; fine-grained access via IAM).
+  (maps to OpenSearchConfig). Access is IAM-signed through the domain
+  access policy; fine-grained access control is not enabled.
 - DynamoDB: the incremental doc-status registry (maps to DynamoDBConfig).
 - S3: pipeline cache bucket — reused if config.cache_bucket_name is set, else
   created with SSE-S3, or the shared CMK when config.use_cmk (maps to the

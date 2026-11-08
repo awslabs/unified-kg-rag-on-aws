@@ -212,6 +212,16 @@ def test_describing_where_nothing_was_ingested_creates_no_store(
 _DYNAMODB_INIT = DynamoDBDocStatusStore.__init__
 
 
+def _allow_dynamodb_store(mocker) -> None:
+    """Restore the constructor through the same ``mocker`` as ``no_aws``.
+
+    A ``monkeypatch.setattr`` here would record no_aws's forbidding mock as
+    the value to restore, and monkeypatch tears down after mocker, so every
+    later test in the process would find the constructor still forbidden.
+    """
+    mocker.patch.object(DynamoDBDocStatusStore, "__init__", _DYNAMODB_INIT)
+
+
 class _DeniedSession:
     """A boto3 session whose DynamoDB client is denied its first call, as
     the deployed query task's role is (it holds no DynamoDB grant). A
@@ -256,10 +266,10 @@ class _EarlierTableSession(_DeniedSession):
 
 
 def test_describe_reports_an_unreadable_registry_and_the_rest(
-    ingested, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ingested, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker, capsys
 ) -> None:
     config, providers = ingested
-    monkeypatch.setattr(DynamoDBDocStatusStore, "__init__", _DYNAMODB_INIT)
+    _allow_dynamodb_store(mocker)
     monkeypatch.setattr(
         providers,
         "build_doc_status",
@@ -287,11 +297,11 @@ def test_describe_reports_an_unreadable_registry_and_the_rest(
 
 
 def test_describe_reports_an_earlier_registry_table_without_the_run_step(
-    ingested, monkeypatch: pytest.MonkeyPatch
+    ingested, monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:
     # It said "re-run with indexing.reset: true", a step for an ingestion.
     config, providers = ingested
-    monkeypatch.setattr(DynamoDBDocStatusStore, "__init__", _DYNAMODB_INIT)
+    _allow_dynamodb_store(mocker)
     monkeypatch.setattr(
         providers,
         "build_doc_status",

@@ -54,6 +54,10 @@ COPY unified_kg_rag ./unified_kg_rag
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable ${UV_EXTRAS}
 
+# A wheel directory for the spaCy model install below: empty unless a build
+# passes one (`--build-context spacy-wheels=<dir>`), which replaces this stage.
+FROM scratch AS spacy-wheels
+
 FROM ${BASE_IMAGE} AS runtime
 
 # libgomp1 is the system OpenMP runtime that numba's `omp` threading layer
@@ -84,13 +88,20 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 
-# unstructured's own download (the version and SHA-256 it pins), run once at
-# build time into the venv; the import check fails the build if it did not
-# install.
+# The spaCy model, installed at build time into the venv: the version, URL
+# and SHA-256 unstructured pins, downloaded with retries by
+# scripts/install_spacy_model.py (bind-mounted, not copied). A wheel in the
+# `spacy-wheels` build context is used instead of a download: the empty stage
+# above by default, CI's cached wheel with
+# `--build-context spacy-wheels=<dir>`. The checks fail the build if
+# unstructured cannot tokenize with it.
 ARG UV_EXTRAS=""
-RUN case "${UV_EXTRAS}" in \
+RUN --mount=type=bind,from=spacy-wheels,target=/var/cache/spacy-wheels,rw \
+    --mount=type=bind,source=scripts/install_spacy_model.py,target=/tmp/install_spacy_model.py \
+    case "${UV_EXTRAS}" in \
       *unstructured*) \
-        /app/.venv/bin/python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')" \
+        /app/.venv/bin/python /tmp/install_spacy_model.py --cache-dir /var/cache/spacy-wheels \
+        && /app/.venv/bin/python -c "from unstructured.nlp.tokenize import sent_tokenize; sent_tokenize('Ready.')" \
         && /app/.venv/bin/python -c "import en_core_web_sm" ;; \
     esac
 
@@ -111,6 +122,11 @@ ENV PATH="/app/.venv/bin:${PATH}"
 # the libraries resolve a cache/config dir.
 RUN useradd --create-home --uid 10001 appuser \
     && install -d -o appuser -g appuser /app/cache /app/outputs /app/logs
+# The only paths a task writes: the ECS task runs with a read-only root
+# filesystem and mounts a volume at each (iac/stacks/compute_stack.py
+# WRITABLE_VOLUMES), which starts with the content, owner and mode declared
+# here. Keep the two lists the same.
+VOLUME ["/tmp", "/app/cache", "/app/outputs", "/app/logs"]
 ENV HOME=/home/appuser
 USER appuser
 

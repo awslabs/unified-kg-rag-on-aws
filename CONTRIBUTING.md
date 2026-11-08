@@ -129,10 +129,15 @@ commits and versions (outside the lock) and runs the parity tests that skip with
 When a pull request changes `pyproject.toml` or `uv.lock`, the
 [`licenses`](./.github/workflows/licenses.yml) workflow also syncs every extra and fails on a copyleft,
 source-available or unlabeled license among the runtime dependencies. Reviewed exceptions are listed, each with its
-reason, in `.github/scripts/check_licenses.py`; add one only after reviewing the license.
+reason, in `.github/scripts/check_licenses.py`; add one only after reviewing the license. The `console-web` job runs
+the same check over the runtime npm dependencies the console's web client bundles, from the license fields of
+`console/web/package-lock.json`.
 
 The [`security`](./.github/workflows/security.yml) workflow runs the Automated Security Helper (ASH: bandit, semgrep,
-detect-secrets, checkov, cdk-nag, npm-audit) and fails on an unsuppressed finding at MEDIUM or above. To run it locally
+detect-secrets, checkov, cdk-nag, npm-audit) and fails on an unsuppressed finding at MEDIUM or above. Its `pip-audit`
+job checks every locked runtime dependency (all extras, no dev group) for known vulnerabilities and fails on one
+that [`.github/pip-audit-accepted.txt`](./.github/pip-audit-accepted.txt) does not list with the reason it does not
+apply; remove a line once a fixed release is locked. To run ASH locally
 (the same pinned version and dependency date, as CI does; reports land in the gitignored `.ash/ash_output/`):
 
 ```bash
@@ -143,7 +148,9 @@ Fix a true positive. For a false positive, suppress it with its reason: on the s
 (`# nosec B608 - <reason>`, `# nosemgrep: <rule id> - <reason>` on the line above, `# pragma: allowlist secret`), or
 in `.ash/.ash.yaml` for a whole class of files (each entry has a `reason`). ASH matches `.gitignore` against the
 absolute path, so in a checkout below a directory the file ignores (for example `.claude/worktrees/`)
-detect-secrets, which scans ASH's file list, finds nothing: run it from a clone outside such a directory.
+detect-secrets, which scans ASH's file list, finds nothing; it also skips every path under a dot-directory, so a
+checkout anywhere below one (`~/.claude/...`, `~/.cache/...`) is not scanned for secrets either. Run it from a clone
+or a worktree outside such directories (`git worktree add --detach /tmp/ash-scan HEAD`).
 
 ### Pins Dependabot does not move
 
@@ -153,8 +160,8 @@ hand, together where they must match:
 
 - The uv version, `version: "0.12.23"` under every `astral-sh/setup-uv` step in `.github/workflows/` (Dependabot moves
   the action's SHA, not this input), and the `ghcr.io/astral-sh/uv` image `docker/Dockerfile` copies uv from
-  (`COPY --from`, tag and digest). Held at 0.12 for now, so the weekly issue lists uv 0.13 until the hold is lifted:
-  0.13.0 has breaking changes (Python 3.15 as the default, the tar codec, constraint-file parsing) to check against
+  (`COPY --from`, tag and digest). Held at 0.12 for now (`HELD` in `scripts/check_pins.py`: the weekly report lists
+  uv 0.13 as held, which opens no issue; delete the entry to lift the hold): 0.13.0 has breaking changes (Python 3.15 as the default, the tar codec, constraint-file parsing) to check against
   the locks, the workflows and the image, and its image digest needs a Docker build to verify.
 - The container base image, the `BASE_IMAGE` ARG default in `docker/Dockerfile` (tag and digest; Dependabot does not
   resolve an ARG in `FROM`).
@@ -169,7 +176,8 @@ hand, together where they must match:
 - The Trivy image the `docker` jobs scan with (`aquasec/trivy`, tag and digest, in `quality.yml`).
 
 The weekly [`pin-freshness`](./.github/workflows/pin-freshness.yml) workflow runs `scripts/check_pins.py`, which
-compares the base image, uv, apt, ADOT, CDK CLI and Trivy pins with upstream, and builds and scans the image with
+compares the base image, uv, apt, ADOT, CDK CLI and Trivy pins with upstream (a base index whose amd64 and arm64
+images are the pinned ones is current), and builds and scans the image with
 the opt-in extras (a superset of the default image) as the `docker-unstructured` job does. It opens (or updates) one
 issue listing the pins that are behind and the fixable findings, and another when the image does not build; a week
 that finds everything current (or the image built) closes it. The image scan (Trivy, `--severity HIGH,CRITICAL --ignore-unfixed`) fails a pull request on a fixable HIGH or CRITICAL
