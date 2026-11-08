@@ -87,6 +87,7 @@ _EXPORTS: dict[str, str] = {
     "CitedDocument": "unified_kg_rag.domain.models",
     "CitationMarkerScanner": "unified_kg_rag.domain.retrieval.citations",
     "SearchResult": "unified_kg_rag.domain.models",
+    "Source": "unified_kg_rag.domain.models",
     "SearchStrategy": "unified_kg_rag.domain.models",
     "SearchType": "unified_kg_rag.domain.models",
     "Methodology": "unified_kg_rag.domain.models",
@@ -228,6 +229,7 @@ if TYPE_CHECKING:
         SearchResult,
         SearchStrategy,
         SearchType,
+        Source,
     )
     from unified_kg_rag.domain.models.schema import SchemaDocument
     from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedGraph, SeedNode

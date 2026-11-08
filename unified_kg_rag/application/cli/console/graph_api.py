@@ -19,6 +19,7 @@ from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
     displayed_graph,
 )
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.shared.exceptions import DataProcessingError
 
 # The node attributes the page reads; the rest stay on the server.
@@ -72,15 +73,6 @@ def _text(value: Any, limit: int = MAX_DESCRIPTION) -> str | None:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def _kinds(value: Any) -> list[str]:
-    if isinstance(value, str):
-        try:
-            value = json.loads(value) if value.startswith("[") else [value]
-        except ValueError:
-            value = [value]
-    return [str(v) for v in value] if isinstance(value, list) else []
-
-
 def load_graph(path: Path) -> dict[str, Any]:
     """The graph of an exported file, as the page draws it.
 
@@ -115,7 +107,7 @@ def load_graph(path: Path) -> dict[str, Any]:
                 "description": _text(attrs.get("description")),
                 "community_id": attrs.get("community_id"),
                 "text_unit_ids": [str(t) for t in attrs.get("text_unit_ids") or []],
-                "source_kinds": _kinds(attrs.get("source_kinds")),
+                "source_kinds": source_fields.id_list(attrs.get("source_kinds")),
                 "iri": attrs.get("iri"),
                 "type_iri": attrs.get("type_iri"),
                 "in_schema": attrs.get("in_schema"),
@@ -136,7 +128,7 @@ def load_graph(path: Path) -> dict[str, Any]:
                 "description": _text(attrs.get("description"), 600),
                 "weight": attrs.get("weight"),
                 "text_unit_ids": [str(t) for t in attrs.get("text_unit_ids") or []],
-                "source_kinds": _kinds(attrs.get("source_kinds")),
+                "source_kinds": source_fields.id_list(attrs.get("source_kinds")),
                 "in_schema": attrs.get("in_schema"),
                 "predicate_iri": attrs.get("predicate_iri"),
             }

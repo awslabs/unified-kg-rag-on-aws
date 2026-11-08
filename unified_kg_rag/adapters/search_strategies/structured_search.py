@@ -40,7 +40,6 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
-    _listed,
     entity_content,
     record_degradation,
 )
@@ -80,6 +79,7 @@ from unified_kg_rag.domain.models.graph_query import (
 from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.domain.prompts import GraphQueryPlanPrompt
 from unified_kg_rag.domain.prompts.graph_query import REPAIR_FEEDBACK, schema_text
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
@@ -109,6 +109,7 @@ from unified_kg_rag.domain.retrieval.graph_query import (
 from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.linking import choose_links, hit_name
+from unified_kg_rag.domain.retrieval.source_fields import LIST_FIELDS
 from unified_kg_rag.ports.graph_query import GraphQueryPort
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
@@ -143,7 +144,6 @@ _DEGRADING = frozenset({"planner_error", "execution_error", "timeout", "compile_
 _FALLBACK_ORDER = (SearchStrategy.LOCAL, SearchStrategy.MIX)
 # The JSON keys of a plan, to tell it from an example the model echoes.
 _PLAN_KEYS = ("nodes", "returns", "unanswerable")
-_LIST_KEYS = frozenset({"text_unit_ids", "community_ids", "source_kinds"})
 # Suffixes whose profile a strategy keeps at most.
 _MAX_PROFILES = 256
 
@@ -1006,7 +1006,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         """A returned vertex as graph expansion projects one, with its
         document filters (seed provenance)."""
         node: dict[str, Any] = {
-            key: (values if key in _LIST_KEYS or len(values) != 1 else values[0])
+            key: (values if key in LIST_FIELDS or len(values) != 1 else values[0])
             for key, values in vertex.items()
             if key != FILTERS_KEY
         }
@@ -1033,7 +1033,10 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         then the best-ranked entity's): the query result's lineage, which
         its citation resolves to documents under the caller's filters."""
         return merge_lineages(
-            (_listed(entity.metadata.get("text_unit_ids")) for entity in entities),
+            (
+                source_fields.listed(entity.metadata, "text_unit_ids")
+                for entity in entities
+            ),
             order="support",
             scores=[float(entity.score or 0.0) for entity in entities],
         )

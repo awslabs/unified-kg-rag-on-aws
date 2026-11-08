@@ -33,9 +33,9 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodology
 from unified_kg_rag.application.cli.console.jobs import namespace_of
 from unified_kg_rag.application.cli.console.store import ConsoleStore
+from unified_kg_rag.application.presentation.answer_view import AnswerView, SourceView
 from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.application.retrieval.rag_chain import (
-    ROUTING_KEY,
     ConversationTurn,
     GraphRAGChain,
     RAGInput,
@@ -116,73 +116,51 @@ def trace_url(trace_id: str | None, template: str | None, config: Config) -> str
     return None
 
 
-def _listed(value: Any) -> list[str]:
-    if isinstance(value, list | tuple | set):
-        return [str(v) for v in value if v not in (None, "")]
-    if isinstance(value, str) and value:
-        return [value]
-    return []
-
-
-def source_view(rank: int, source: dict[str, Any]) -> dict[str, Any]:
-    """One source as the Ask page shows it: what it is, where it comes
-    from (file, chunk, text units, seed graph, IRI) and the graph ids it
-    links to."""
-    metadata: dict[str, Any] = source.get("metadata") or {}
-    raw_attributes = metadata.get("attributes")
-    attributes: dict[str, Any] = (
-        raw_attributes if isinstance(raw_attributes, dict) else {}
-    )
-    kind = str(metadata.get("section_type") or "text")
-    view: dict[str, Any] = {
-        "rank": rank,
-        "kind": kind,
-        "id": source.get("source"),
-        "score": source.get("score"),
-        "excerpt": str(source.get("content") or "")[
-            : TABLE_CHARACTERS if kind == "query_result" else EXCERPT_CHARACTERS
+def source_view(view: SourceView) -> dict[str, Any]:
+    """One source as the Ask page shows it (its :class:`SourceView` with
+    the excerpt cut and the graph ids it links to)."""
+    metadata = view.metadata
+    shown: dict[str, Any] = {
+        "rank": view.rank,
+        "kind": view.kind,
+        "id": view.id,
+        "score": view.score,
+        "excerpt": view.text[
+            : TABLE_CHARACTERS if view.kind == "query_result" else EXCERPT_CHARACTERS
         ],
-        "truncated": bool(metadata.get("truncated")),
-        "document_ids": _listed(metadata.get("document_ids")),
-        "file_name": attributes.get("file_name") or metadata.get("file_name"),
-        "chunk_id": metadata.get("chunk_id"),
-        "text_unit_ids": _listed(metadata.get("text_unit_ids")),
-        "source_kinds": _listed(metadata.get("source_kinds")),
-        "iri": metadata.get("iri") if isinstance(metadata.get("iri"), str) else None,
-        "provenance": metadata.get("provenance"),
+        "truncated": view.truncated,
+        "document_ids": view.document_ids,
+        "file_name": view.file_name,
+        "chunk_id": view.chunk_id,
+        "text_unit_ids": view.text_unit_ids,
+        "source_kinds": view.source_kinds,
+        "iri": view.iri,
+        "provenance": view.provenance,
+        "title": view.title or view.id,
+        "marker": view.marker,
     }
-    if kind == "entity":
-        view.update(
-            title=metadata.get("name"),
-            entity_type=metadata.get("type"),
-            node_ids=[source.get("source")],
+    if view.kind == "entity":
+        shown.update(entity_type=view.type, node_ids=[view.id])
+    elif view.kind == "relationship":
+        shown.update(
+            relation=view.type,
+            node_ids=[e.id for e in view.entities],
+            edge_id=view.id,
         )
-    elif kind == "relationship":
-        view.update(
-            title=f"{metadata.get('source_name')} → {metadata.get('target_name')}",
-            relation=metadata.get("type"),
-            node_ids=[metadata.get("source_id"), metadata.get("target_id")],
-            edge_id=source.get("source"),
-        )
-    elif kind == "query_result":
+    elif view.kind == "query_result":
         # The structured strategy's graph query: what it computed, how many
         # rows, whether the table is whole, and the entities it returned.
         rows = metadata.get("row_count")
-        view.update(
-            title=metadata.get("plan_description") or metadata.get("operation"),
+        shown.update(
             operation=metadata.get("operation"),
             row_count=rows if isinstance(rows, int) else None,
             exact=metadata.get("exact") is not False,
             backend=metadata.get("backend"),
-            node_ids=_listed(metadata.get("entity_ids")),
+            node_ids=[e.id for e in view.entities],
         )
-    elif kind == "community":
-        view.update(
-            title=metadata.get("name"), community_id=metadata.get("community_id")
-        )
-    else:
-        view.update(title=view["file_name"] or source.get("source"))
-    return view
+    elif view.kind == "community":
+        shown.update(community_id=metadata.get("community_id"))
+    return shown
 
 
 def link_sources(sources: list[dict[str, Any]]) -> None:
@@ -196,26 +174,6 @@ def link_sources(sources: list[dict[str, Any]]) -> None:
         if source["kind"] in ("entity", "relationship", "query_result") and units:
             source["supported_by"] = [by_unit[u] for u in units if u in by_unit]
             source["unread_passages"] = sum(1 for u in units if u not in by_unit)
-
-
-def mark_sources(
-    sources: list[dict[str, Any]], citations: list[dict[str, Any]]
-) -> None:
-    """Give each source the context marker it was shown under (``marker``,
-    ``None`` for none) and each citation the rank of its source
-    (``source_rank``, ``None`` for a section reported as no source, a
-    synthesized summary): the answer's ``[n]`` links to the trail through
-    them. A citation names its source by the source's id, in context order."""
-    unclaimed: dict[Any, list[dict[str, Any]]] = {}
-    for source in sources:
-        source["marker"] = None
-        unclaimed.setdefault(source["id"], []).append(source)
-    for citation in citations:
-        candidates = unclaimed.get(citation.get("source_id")) or []
-        shown = candidates.pop(0) if candidates else None
-        citation["source_rank"] = shown["rank"] if shown else None
-        if shown is not None:
-            shown["marker"] = citation["marker"]
 
 
 class AskService:
@@ -509,12 +467,19 @@ class AskService:
     def _result(
         output: RAGOutput, config: Config, latency: float, suffix: str | None = None
     ) -> dict[str, Any]:
-        metadata = output.metadata or {}
-        sources = [source_view(i, s) for i, s in enumerate(output.sources, start=1)]
+        view = AnswerView.from_output(output)
+        sources = [source_view(s) for s in view.sources]
         link_sources(sources)
-        citations = [c.model_dump(mode="json") for c in output.citations]
-        mark_sources(sources, citations)
-        usage_data = metadata.get("usage")
+        # Each citation's [n] links to the source it was shown as (None: a
+        # synthesized section, no source).
+        citations = [
+            {
+                **c.model_dump(mode="json"),
+                "source_rank": view.citation_ranks.get(c.marker),
+            }
+            for c in view.citations
+        ]
+        usage_data = view.usage
         cost: float | None = None
         unpriced: list[str] = []
         if isinstance(usage_data, dict):
@@ -525,41 +490,39 @@ class AskService:
                 cost, unpriced = usd, sorted(missing)
             except ValidationError:
                 usage_data = None
-        detail = (output.search_results.metadata or {}) if output.search_results else {}
-        error = bool(metadata.get("error"))
         return {
-            "answer": output.answer,
+            "answer": view.answer,
             "citations": citations,
             # Whether the answer's strategy cites (search.citations): the
             # page shows a [n] of an answer that does not as plain text.
-            "cites": citations_enabled(config, metadata.get("search_strategy")),
-            "unknown_citation_markers": metadata.get("unknown_citation_markers") or [],
-            "strategy": metadata.get("search_strategy"),
-            "routing": metadata.get(ROUTING_KEY),
-            "abstained": bool(metadata.get("abstained")),
-            "abstention_reason": metadata.get("abstention_reason"),
-            "blocked": bool(metadata.get("blocked")),
-            "guardrail": metadata.get("guardrail"),
-            "error": error,
+            "cites": citations_enabled(config, view.strategy),
+            "unknown_citation_markers": view.unknown_citation_markers,
+            "strategy": view.strategy,
+            "routing": view.routing,
+            "abstained": view.abstained,
+            "abstention_reason": view.abstention_reason,
+            "blocked": view.blocked,
+            "guardrail": view.guardrail or None,
+            "error": view.error,
             # The class of a failure the chain absorbed (ignore_errors), as
             # an error event names a raised one (_error_kind).
             "error_kind": (
-                error_class_of(metadata.get("error_class")).value if error else None
+                error_class_of(output.metadata.get("error_class")).value
+                if view.error
+                else None
             ),
-            "error_message": (
-                str(detail.get("error")) if error and detail.get("error") else None
-            ),
-            "rerank": metadata.get("rerank"),
+            "error_message": view.error_message,
+            "rerank": view.rerank,
             "usage": usage_data,
             "cost_usd": cost,
             "unpriced_models": unpriced,
             "prices_configured": bool(config.evaluation.prices),
             "latency_seconds": latency,
-            "processing_seconds": metadata.get("processing_time"),
-            "total_results": metadata.get("total_results"),
-            "context_sections_included": metadata.get("context_sections_included"),
-            "context_sections_excluded": metadata.get("context_sections_excluded"),
-            "processed_query": output.processed_query.model_dump(mode="json"),
+            "processing_seconds": view.processing_seconds,
+            "total_results": view.total_results,
+            "context_sections_included": view.context_sections_included,
+            "context_sections_excluded": view.context_sections_excluded,
+            "processed_query": view.processed_query.model_dump(mode="json"),
             "sources": sources,
             "namespace": namespace_of(config, suffix),
         }

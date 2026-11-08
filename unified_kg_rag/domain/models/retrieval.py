@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 import re
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator
+from typing_extensions import TypedDict
+
+from unified_kg_rag.domain.retrieval.source_fields import decode_list_fields
 
 _SAFE_NAME = re.compile(r"[a-z0-9_-]+")
 # One path segment: starts with a letter or digit, so "." and ".." (and hidden
@@ -96,8 +99,33 @@ class RetrievalResult(BaseModel):
     )
     chunk_id: str | None = Field(default=None, description="Source chunk identifier")
     metadata: dict[str, Any] = Field(
-        default_factory=dict, description="Additional retrieval result metadata"
+        default_factory=dict,
+        description="Additional retrieval result metadata (its id lists, "
+        "source_fields.LIST_FIELDS, are lists of strings)",
     )
+
+    @field_validator("metadata")
+    @classmethod
+    def _decoded_lists(cls, metadata: dict[str, Any]) -> dict[str, Any]:
+        # The one place a store's list encodings are undone (a Gremlin
+        # one-element list read as its value, an edge's JSON list string).
+        return decode_list_fields(metadata)
+
+
+class Source(TypedDict, total=False):
+    """One source of an answer (``RAGOutput.sources``): the text the answer
+    model saw (``content``), the stored item's id (``source``) and score,
+    and its metadata with its provenance (``source_id``, ``document_ids``,
+    ``chunk_id``, ``section_type``, ``score``, ``truncated``, and
+    ``provenance`` for seed-graph evidence). A plain ``dict`` at run time,
+    so it serializes and compares as one; a key may be missing (the chain
+    always sets all four), and its metadata's id lists
+    (``source_fields.LIST_FIELDS``) are validated into lists of strings."""
+
+    content: str
+    source: str | None
+    score: float | None
+    metadata: Annotated[dict[str, Any], AfterValidator(decode_list_fields)]
 
 
 class SearchQuery(BaseModel):

@@ -25,7 +25,11 @@ writes memory; no tool takes an index name, an endpoint or a file path.
 | `kg_describe_schema` | the namespace's build record and held artifacts, the resolved extraction schema | none (a schema source may read its file or S3 object once) | held methodologies, the strategies they serve, the build, entity and relationship types and patterns, the filter keys |
 
 **Supporting-content record.** Every search hit, answer source, entity and
-relationship comes back in one chunk-oriented shape, so a caller can map it
+relationship comes back in one chunk-oriented shape, mapped from the one
+view of an answer the console and `run-rag` read too
+(`application/presentation/answer_view.py` over
+`domain/retrieval/source_fields.py`: id lists, documents, file name, title,
+entities, seed provenance, the `[n]` marker), so a caller can map it
 onto the "supporting content" records other agent and ontology tooling
 exchanges without per-kind code: `kind` (the section type: `text`,
 `entity`, `relationship`, `community`, `claim`, `summary`), `chunk_id`,

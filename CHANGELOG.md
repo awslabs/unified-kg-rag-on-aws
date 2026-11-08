@@ -1517,6 +1517,12 @@ From a `main` checkout (formats and keys no release had):
 - Docs: the design reference is split by topic. [`docs/design.md`](docs/design.md) is an index of every section
   with a summary and a link, the sections are in `docs/design/`, and the extension guide (§15) is
   [`docs/guides/extend.md`](docs/guides/extend.md); section numbers and heading ids are unchanged.
+- `RAGOutput.sources` is typed: each is a `Source` (`content`, `source`, `score`, `metadata`; package root), a
+  `TypedDict`, so still the plain dict it was. The id lists of a result's metadata (`text_unit_ids`, `document_ids`,
+  `entity_ids`, `community_ids`, `source_kinds`, ...) are always lists of strings: a graph store's one-element value
+  or JSON list string is decoded where the result is made. The console, MCP `kg_answer` and `run-rag` read an answer
+  through one view, so they name a source's file (the last path segment, its stored attributes first), title (a
+  relationship's `A -> B`) and `[n]` alike.
 
 ### Fixed
 Bugs present in 0.2.3.

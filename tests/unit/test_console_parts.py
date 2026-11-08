@@ -9,11 +9,11 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import TypeAdapter
 
 from unified_kg_rag.application.cli.console import dashboard, jobs, settings_api, stages
 from unified_kg_rag.application.cli.console.ask import (
     link_sources,
-    mark_sources,
     source_view,
     trace_url,
 )
@@ -28,11 +28,13 @@ from unified_kg_rag.application.cli.console.paths import (
 )
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
+from unified_kg_rag.application.presentation.answer_view import SourceView
 from unified_kg_rag.domain.models import (
     Config,
     Methodology,
     PipelineConfig,
     PipelineStageType,
+    Source,
 )
 from unified_kg_rag.domain.models.config import ObservabilityBackend
 
@@ -368,8 +370,14 @@ def test_the_error_of_a_failed_job_is_read_from_its_log() -> None:
 # -- ask -------------------------------------------------------------------------
 
 
+def _view(rank: int, source: dict) -> dict:  # type: ignore[type-arg]
+    return source_view(
+        SourceView.of_source(rank, TypeAdapter(Source).validate_python(source))
+    )
+
+
 def test_sources_keep_their_provenance_and_link_to_passages() -> None:
-    entity = source_view(
+    entity = _view(
         1,
         {
             "source": "e1",
@@ -390,7 +398,7 @@ def test_sources_keep_their_provenance_and_link_to_passages() -> None:
             },
         },
     )
-    passage = source_view(
+    passage = _view(
         2,
         {
             "source": "t1",
@@ -408,7 +416,7 @@ def test_sources_keep_their_provenance_and_link_to_passages() -> None:
     assert entity["provenance"]["seed_graphs"] == ["g"]
     assert entity["node_ids"] == ["e1"]
     assert passage["file_name"] == "a.txt" and passage["title"] == "a.txt"
-    relation = source_view(
+    relation = _view(
         3,
         {
             "source": "r1",
@@ -422,7 +430,7 @@ def test_sources_keep_their_provenance_and_link_to_passages() -> None:
             },
         },
     )
-    assert relation["title"] == "A → B" and relation["node_ids"] == ["a", "b"]
+    assert relation["title"] == "A -> B" and relation["node_ids"] == ["a", "b"]
 
 
 def test_trace_links_follow_the_template_or_langfuse(
@@ -545,20 +553,3 @@ def test_a_saved_run_is_traced_to_the_console_job_that_wrote_it(tmp_path: Path) 
     assert console_job_of(job) == job.name
     assert console_job_of(job / "run_20261107_000001_12345678") == job.name
     assert console_job_of(tmp_path / "elsewhere" / "run_1") is None
-
-
-def test_citations_name_the_source_they_were_shown_as() -> None:
-    sources = [
-        {"rank": 1, "id": "u-2", "kind": "text"},
-        {"rank": 2, "id": "e-1", "kind": "entity"},
-        {"rank": 3, "id": "u-9", "kind": "text"},
-    ]
-    citations = [
-        {"marker": 1, "source_id": "e-1"},
-        {"marker": 2, "source_id": "u-2"},
-        # A synthesized summary the model read is no reported source.
-        {"marker": 3, "source_id": "summary"},
-    ]
-    mark_sources(sources, citations)
-    assert [c["source_rank"] for c in citations] == [2, 1, None]
-    assert [s["marker"] for s in sources] == [2, 1, None]
