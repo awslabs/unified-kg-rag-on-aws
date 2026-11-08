@@ -247,17 +247,25 @@ How to read it:
   30%. Compare on a few hundred queries, and run the same configuration
   twice to see your noise floor. `deltas_by_category` splits the deltas by dataset `category`;
   its intervals are not corrected for the many categories and metrics read,
-  so treat a lone excluded 0 among many as exploratory.
+  so treat a lone excluded 0 among many as exploratory. With
+  `--closed-book`, `deltas_by_closed_book` splits them the same way into the
+  questions the answer model gets right without retrieval in at least half
+  of the arm's repeats (`known`, on the primary metric) and the rest
+  (`unknown`): the unknown ones show what retrieval adds, where a pooled
+  delta can hide it. Exploratory and unadjusted too.
 - **Pairwise judge.** `--pairwise-judge` adds the GraphRAG / LightRAG
   head-to-head LLM judge (comprehensiveness, diversity, empowerment,
   directness), each pair judged in both orders; read `candidate_win_rate`
   next to `position_consistency` and the win rates per answer-length bucket
   (`length`): LLM judges prefer the longer answer, so a win rate that rises
-  with the length ratio is length, not quality. `--pairwise-mode
-  differential` judges only what differs between the answers (below). It
-  judges the first repeat's answers; `--pairwise-repeats all` judges every
-  repeat (its calls times `--repeats`), averaging each query's repeats
-  before the queries.
+  with the length ratio is length, not quality. Each criterion has a
+  sign-flip `p_value` against a 0.5 win rate, and the criteria of every
+  compared strategy form one Holm family (`pairwise`), so read
+  `adjusted_p_value` (`Holm p` in the report) for whether a win counts.
+  `--pairwise-mode differential` judges only what differs between the
+  answers (below). It judges the first repeat's answers; `--pairwise-repeats
+  all` judges every repeat (its calls times `--repeats`), averaging each
+  query's repeats before the queries.
 - **Cost and latency.** `cost.strategies.<s>` and `cost.deltas_vs_baseline`
   give the answers' calls, tokens and latency per query, paired like the
   metrics; a failed answer counts with what it spent before failing.
@@ -339,7 +347,10 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
 - Its runs are labelled `<strategy>@NAME` (`local@norerank`) in the files
   and the comparison, and each is compared with the same strategy's base
   run, so its deltas measure the overlay; the base strategies compare with
-  the first as usual. Holm adjusts the arms' deltas with the strategies'.
+  the first as usual. The arms' deltas are Holm-adjusted in families of
+  their own (`arm_primary`, `arm_secondary`, `arm_cost`, `arm_pairwise`),
+  apart from the strategies' against the first: the two answer different
+  questions.
 - The overlay is validated like a config file (an unknown key stops the
   run, exit 2, unless `--allow-unknown-keys`); its `evaluation` section and
   `models.roles.evaluation` / `answer_span` are ignored with a warning,
@@ -365,8 +376,12 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   `models.default_max_output_tokens`, the LLM provider (kind, `base_url`,
   temperature, output cap, context window), the Bedrock region or sets
   `search.query_extraction_cache_size: 0` extracts on its own.
-- An empty overlay (`aa.yaml` above) is an A/A arm: its deltas are the
-  noise floor of each metric for this dataset and repeat count. It shares
+- An empty overlay (`aa.yaml` above; one holding only the ignored
+  `evaluation` section counts too) on the run's own index is an A/A arm:
+  its deltas are the noise floor of each metric for this dataset and repeat
+  count. The manifest records it (`arm.aa`), the comparison lists it under
+  `aa_arms`, and it is left out of every Holm family, as the closed-book arm
+  is, so it does not widen the other tests' adjustment. It shares
   the base runs' extractions, so that floor leaves out the extraction's
   noise; an A/A overlay of `search: {query_extraction_cache_size: 0}`
   extracts on its own and includes it, at one extra extraction call per
@@ -419,8 +434,14 @@ changes a default until a measured experiment decides
      like any metric: `--fail-if "assertion/assertion_recall:ci_high<-0.02"`.
    - `--pairwise-mode differential` asks the fast tier
      (`models.roles.pairwise_overlap`) for the statements both answers make
-     and those only one makes, then judges the unique ones only; one more
-     fast call per pair. That call's output limit is
+     and those only one makes, then judges the unique ones only. The split
+     reads the answers in a slot order and a split model favours one slot
+     (an A/A pair won 0.645 with the candidate always second, 0.52
+     swapped), so each pair is split both ways, each split judged in both
+     orders, and the win rate averages the two; `slots` reports the win rate
+     per slot and their difference (`slot_effect`, the "Split slot effect"
+     table), which should sit near 0. Two fast calls and four judge calls
+     per pair. That call's output limit is
      `models.default_max_output_tokens` above the thinking budget of the
      effort it runs at (`evaluation.judge_effort`, else the fast tier's), so
      a higher effort leaves the copied statements as much room.

@@ -118,5 +118,7 @@ The `answer_match` evaluator tolerates Korean particles and units, ignores
 spacing next to CJK letters and reads Korean, Chinese and Japanese yes/no
 answers; under the default normalization token F1 counts a Han, Hangul or
 Kana letter as a token (character F1), while exact match still under-counts
-an answer with a particle. The rules:
+an answer with a particle. An answer in German, Spanish, French, Italian or
+Portuguese (the question's language) also drops that language's articles
+and reads its number words. The rules:
 [`answer_match`](../reference/evaluation-output.md#answer_match).

@@ -14,7 +14,8 @@ the base strategies are compared with the first, as before.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 # Between a run's strategy and its arm in a run label.
 ARM_SEPARATOR = "@"
@@ -48,3 +49,17 @@ def arm_pairs(labels: Iterable[str]) -> dict[str, str]:
         base = label_strategy(name)
         pairs[name] = base if is_arm_label(name) and base in names else first
     return pairs
+
+
+def aa_arms(manifests: Iterable[tuple[str, Mapping[str, Any] | None]]) -> list[str]:
+    """The A/A arms among ``(run label, run manifest)`` pairs: those whose
+    manifest records an arm that ran the base configuration unchanged
+    (``arm.aa``: an empty overlay on the run's own index). Their deltas are
+    the noise floor of the comparison, not a finding."""
+    return list(
+        dict.fromkeys(
+            label
+            for label, manifest in manifests
+            if ((manifest or {}).get("arm") or {}).get("aa") is True
+        )
+    )

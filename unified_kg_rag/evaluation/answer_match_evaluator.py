@@ -7,8 +7,11 @@ and judge models. Both the generated answer and each reference are normalized
 SQuAD-style after Unicode NFKC (``text_matching.normalize_answer``: lowercase,
 delete punctuation except a number's sign, decimal point and percent sign and
 "C++"-style suffixes, split dashed ranges and compounds, drop the English
-articles ``a``/``an``/``the``, collapse whitespace; not identical to the
-official SQuAD v1.1 script). With ``evaluation.answer_normalization:
+articles ``a``/``an``/``the`` and, for an answer in German, Spanish,
+French, Italian or Portuguese, that language's, collapse whitespace; not
+identical to the official SQuAD v1.1 script). The answer's language is the
+question's (``domain.retrieval.no_context.answer_language``: its script and
+function words, else the index language), recorded as ``answer_language``. With ``evaluation.answer_normalization:
 official_squad`` exact match and token F1 use the official script's
 normalization instead (``text_matching.normalize_answer_squad``, MuSiQue's
 too); ``hotpotqa`` adds the HotpotQA script's yes/no rule to it.
@@ -83,6 +86,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 from langchain_core.output_parsers import StrOutputParser
@@ -99,6 +103,7 @@ from unified_kg_rag.adapters.evaluators.base import (
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.retrieval.citations import citations_enabled
+from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -113,6 +118,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import NO_ANSWER_SPAN, AnswerSpanExtractionPrompt
 from unified_kg_rag.domain.retrieval.citations import strip_markers
+from unified_kg_rag.domain.retrieval.no_context import answer_language
 from unified_kg_rag.shared import EvaluationException, get_logger
 
 from .text_matching import (
@@ -139,6 +145,8 @@ TOKENS_KEY = "token_f1_tokens"
 SCRIPT_AWARE_TOKENS = "script_aware_v2"
 SCORED_SPAN_KEY = "scored_span"
 SPAN_FALLBACK_KEY = "answer_span_fallback"
+# The language the answer was normalized in (``answer_language``).
+ANSWER_LANGUAGE_KEY = "answer_language"
 ABSTAINED_KEY = "abstained"
 # Dataset metadata that says how a gold answer is matched (structural
 # benchmarks): ``answer_type`` "number" (the answer's leading number against
@@ -251,29 +259,37 @@ def _leading_polarity(prediction: str) -> str | None:
     return None
 
 
-def answer_contains(prediction: str, reference: str) -> float:
+def answer_contains(
+    prediction: str, reference: str, language: str | None = None
+) -> float:
     # A yes/no gold appears in almost any long answer ("no" in "there is no
     # ...", "예" in "예외"), so it is scored by the answer's leading polarity
     # instead, as HotpotQA does for its comparison questions.
     gold = normalize_answer(reference)
     if gold in _POLARITY:
         return float(_leading_polarity(prediction) == _POLARITY[gold])
-    return float(phrase_in_text(reference, prediction))
+    return float(phrase_in_text(reference, prediction, language))
 
 
-def number_matches(prediction: str, reference: str) -> float:
+def number_matches(
+    prediction: str, reference: str, language: str | None = None
+) -> float:
     """1.0 when the first number ``prediction`` states
     (``text_matching.leading_number``: digits, an English, Korean or Han
-    numeral) is the number ``reference`` is; 0.0 otherwise, and when the
-    reference is no number (then ``answer_contains`` reads it)."""
-    gold = number_value(reference)
+    numeral, or a number word of ``language``) is the number ``reference``
+    is; 0.0 otherwise, and when the reference is no number (then
+    ``answer_contains`` reads it)."""
+    gold = number_value(reference, language)
     if gold is None:
-        return answer_contains(prediction, reference)
-    return float(leading_number(prediction) == gold)
+        return answer_contains(prediction, reference, language)
+    return float(leading_number(prediction, language) == gold)
 
 
 def items_contained(
-    prediction: str, items: list[str], candidates: list[str] | None = None
+    prediction: str,
+    items: list[str],
+    candidates: list[str] | None = None,
+    language: str | None = None,
 ) -> float:
     """1.0 when every one of ``items`` appears in ``prediction`` as a phrase
     (``text_matching.phrase_in_text``), in any order and layout (a comma
@@ -285,10 +301,14 @@ def items_contained(
     if not items:
         return 0.0
     if not candidates:
-        return float(all(phrase_in_text(i, prediction) for i in items))
-    named = {c for c in {*candidates, *items} if phrase_in_text(c, prediction)}
+        return float(all(phrase_in_text(i, prediction, language) for i in items))
     named = {
-        c for c in named if not any(c != o and phrase_in_text(c, o) for o in named)
+        c for c in {*candidates, *items} if phrase_in_text(c, prediction, language)
+    }
+    named = {
+        c
+        for c in named
+        if not any(c != o and phrase_in_text(c, o, language) for o in named)
     }
     return float(named == set(items))
 
@@ -552,6 +572,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         references: list[str],
         result: EvaluationResult,
         span_metadata: dict[str, Any],
+        language: str,
     ) -> float:
         """``answer_contains`` as the item's ``answer_type`` reads it: a
         number by the leading number of the extracted span (of the answer
@@ -562,21 +583,24 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         kind = result.metadata.get(ANSWER_TYPE_KEY)
         if kind == "number":
             read = self._extracted_or(span, span_metadata, answer)
-            return max(number_matches(read, ref) for ref in references)
+            return max(number_matches(read, ref, language) for ref in references)
         if kind == "set":
             items = result.metadata.get(ANSWER_ITEMS_KEY)
             candidates = result.metadata.get(ANSWER_CANDIDATES_KEY)
             if isinstance(items, list) and items:
                 if not isinstance(candidates, list):
-                    return items_contained(answer, [str(i) for i in items])
+                    return items_contained(
+                        answer, [str(i) for i in items], language=language
+                    )
                 # The candidates it picks are those of the part that
                 # answers: a later "Delta is fourth" is no pick.
                 return items_contained(
                     self._extracted_or(span, span_metadata, first_answer_block(answer)),
                     [str(i) for i in items],
                     [str(c) for c in candidates],
+                    language,
                 )
-        return max(answer_contains(answer, ref) for ref in references)
+        return max(answer_contains(answer, ref, language) for ref in references)
 
     def _extracted_or(
         self, span: str, span_metadata: dict[str, Any], otherwise: str
@@ -634,10 +658,16 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                 },
             )
         answer = self._answer(result)
-        contains = self._contains(answer, span, references, result, span_metadata)
+        # Normalized in the answer's language: the question's.
+        language = answer_language(result.question, index_language(self.config)).value
+        contains = self._contains(
+            answer, span, references, result, span_metadata, language
+        )
         normalization = self.config.evaluation.answer_normalization
-        normalize = (
-            normalize_answer if normalization == "default" else normalize_answer_squad
+        normalize: Callable[[str], str] = (
+            partial(normalize_answer, language=language)
+            if normalization == "default"
+            else normalize_answer_squad
         )
         yes_no_exact = normalization == "hotpotqa"
         script_aware = token_f1_tokens(normalization) == SCRIPT_AWARE_TOKENS
@@ -670,6 +700,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
                 "num_references": len(references),
                 ANSWER_SPAN_KEY: self.answer_span,
                 TOKENS_KEY: token_f1_tokens(normalization),
+                ANSWER_LANGUAGE_KEY: language,
                 # The whole answer is in the result already.
                 **({} if self.answer_span == "full" else {SCORED_SPAN_KEY: span}),
                 **span_metadata,

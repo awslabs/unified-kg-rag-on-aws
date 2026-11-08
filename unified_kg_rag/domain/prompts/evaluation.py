@@ -133,7 +133,7 @@ class PairwiseOverlapPrompt(BasePrompt):
     system_prompt_template = """You compare two answers to the same question statement by statement.
 
 Split each answer into its factual statements and claims (ignore formatting, headings and filler). Then sort them:
-- shared: statements both answers make, even when worded differently. List each once, worded as in Answer 1.
+- shared: statements both answers make, even when worded differently. List each once, in the shorter of its two wordings.
 - unique_1: statements only Answer 1 makes.
 - unique_2: statements only Answer 2 makes.
 A statement both answers make with different values (another number, date or name) is unique to each, not shared.

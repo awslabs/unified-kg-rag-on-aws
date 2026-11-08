@@ -13,9 +13,18 @@ import pytest
 import yaml
 
 from unified_kg_rag.application.cli import run_evaluation
-from unified_kg_rag.application.cli.arm_args import arm_config, arm_spec
+from unified_kg_rag.application.cli.arm_args import (
+    arm_config,
+    arm_spec,
+    is_aa_overlay,
+)
 from unified_kg_rag.domain.models import Config, ModelRole
-from unified_kg_rag.evaluation.arms import arm_label, arm_pairs, label_strategy
+from unified_kg_rag.evaluation.arms import (
+    aa_arms,
+    arm_label,
+    arm_pairs,
+    label_strategy,
+)
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -65,6 +74,40 @@ def test_the_overlay_merges_over_the_run_config_but_not_its_scoring(
     overlay.write_text(yaml.safe_dump({"search": {"no_such_key": 1}}))
     with pytest.raises(ConfigurationError, match="no_such_key"):
         arm_config(base, arm_spec(f"a={overlay}"))
+
+
+@pytest.mark.parametrize(
+    ("content", "options", "aa"),
+    [
+        ("", "", True),
+        ("{}", "", True),
+        # The evaluation section is ignored (every arm is scored alike).
+        (yaml.safe_dump({"evaluation": {"answer_span": "full"}}), "", True),
+        # Another index namespace is another index, not an A/A copy.
+        ("", ",suffix=v2", False),
+        (yaml.safe_dump({"search": {"top_k": 3}}), "", False),
+    ],
+    ids=["empty", "empty-mapping", "evaluation-only", "suffix", "overlay"],
+)
+def test_an_arm_without_a_change_is_an_aa_arm(
+    tmp_path: Path, content: str, options: str, aa: bool
+) -> None:
+    overlay = tmp_path / "o.yaml"
+    overlay.write_text(content)
+    assert is_aa_overlay(arm_spec(f"a={overlay}{options}")) is aa
+
+
+def test_aa_arms_are_read_from_the_run_manifests() -> None:
+    manifests = [
+        ("local", {"repeat": 1}),
+        ("local@aa", {"arm": {"name": "aa", "aa": True}}),
+        ("local@aa", {"arm": {"name": "aa", "aa": True}}),  # a second repeat
+        ("local@rerank_off", {"arm": {"name": "rerank_off", "aa": False}}),
+        # Saved before the flag: not known to be one.
+        ("mix@aa", {"arm": {"name": "aa"}}),
+        ("mix", None),
+    ]
+    assert aa_arms(manifests) == ["local@aa"]
 
 
 def test_arm_runs_pair_with_their_strategy_base_run() -> None:

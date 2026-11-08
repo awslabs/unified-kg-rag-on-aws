@@ -33,6 +33,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.cli.arm_args import (
     arm_config,
     arm_spec,
+    is_aa_overlay,
     overlay_sha256,
 )
 from unified_kg_rag.application.cli.config_args import (
@@ -115,6 +116,7 @@ if TYPE_CHECKING:
     )
     from unified_kg_rag.evaluation.answer_match_evaluator import answer_scoring
     from unified_kg_rag.evaluation.arms import (
+        aa_arms,
         arm_label,
         arm_pairs,
         is_arm_label,
@@ -126,8 +128,10 @@ if TYPE_CHECKING:
         closed_book_chain,
     )
     from unified_kg_rag.evaluation.comparison import (
+        DEFAULT_PRIMARY_METRIC,
         adjust_for_multiplicity,
         baseline_comparison,
+        closed_book_strata,
         paired_comparison,
         per_query_rows,
     )
@@ -236,6 +240,8 @@ __getattr__, _load_evaluation = lazy_names(
         "closed_book_arms": _closed_book_module,
         "closed_book_chain": _closed_book_module,
         "adjust_for_multiplicity": _comparison_module,
+        "DEFAULT_PRIMARY_METRIC": _comparison_module,
+        "closed_book_strata": _comparison_module,
         "baseline_comparison": _comparison_module,
         "paired_comparison": _comparison_module,
         "per_query_rows": _comparison_module,
@@ -248,6 +254,7 @@ __getattr__, _load_evaluation = lazy_names(
         "delta_cell": _report_module,
         "SavedRun": _saved_results_module,
         "strategy_order": _saved_results_module,
+        "aa_arms": _arms_module,
         "arm_label": _arms_module,
         "arm_pairs": _arms_module,
         "is_arm_label": _arms_module,
@@ -1934,6 +1941,9 @@ class EvaluationRunner:
                     "overlay": arm["overlay"],
                     "overlay_sha256": overlay_sha256(arm),
                     "suffix": arm.get("suffix"),
+                    # The base configuration unchanged: its deltas are the
+                    # noise floor, not a finding (left out of Holm).
+                    "aa": is_aa_overlay(arm),
                 }
                 for label, (_, arm) in runs_of.items()
                 if arm is not None
@@ -2274,6 +2284,21 @@ class EvaluationRunner:
         # Runs saved before their usage counted rerank requests.
         unmetered = rerank_unmetered(manifests)
         names = list(runs)
+        primary_metric = (
+            getattr(self.args, "primary_metric", None)
+            or self.config.evaluation.primary_metric
+        )
+        closed = closed_book_arms(names)
+        # The questions the answer model knows without retrieval, by the
+        # closed-book arm of this run (else an earlier run's).
+        strata = (
+            closed_book_strata(
+                runs[CLOSED_BOOK_ARM if CLOSED_BOOK_ARM in closed else closed[0]],
+                primary_metric or DEFAULT_PRIMARY_METRIC,
+            )
+            if closed
+            else None
+        )
         if pairs:
             comparison = baseline_comparison(
                 {label: runs[label] for label in dict.fromkeys(pairs.values())},
@@ -2283,6 +2308,7 @@ class EvaluationRunner:
                 prices=prices,
                 unmetered_rerank=unmetered,
                 resamples=self.config.evaluation.resamples,
+                closed_book=strata,
             )
             rows = [
                 row
@@ -2305,6 +2331,7 @@ class EvaluationRunner:
                 prices=prices,
                 unmetered_rerank=unmetered,
                 resamples=self.config.evaluation.resamples,
+                closed_book=strata,
             )
             rows = [
                 row
@@ -2322,6 +2349,7 @@ class EvaluationRunner:
                 prices=prices,
                 unmetered_rerank=unmetered,
                 resamples=self.config.evaluation.resamples,
+                closed_book=strata,
             )
             rows = per_query_rows(runs, measured.categories, prices)
             pairs = dict.fromkeys(names[1:], names[0])
@@ -2373,17 +2401,18 @@ class EvaluationRunner:
                     self.args.max_failure_rate,
                 )
             )
-        arms = closed_book_arms(names)
-        if arms:
+        if closed:
             # No retrieval: a bound on prior knowledge, not a strategy to gate.
-            comparison["closed_book_arms"] = arms
+            comparison["closed_book_arms"] = closed
+        noise_floor = [label for label in aa_arms(manifests) if label in names]
+        if noise_floor:
+            # The base configuration again: its deltas are the noise floor.
+            comparison["aa_arms"] = noise_floor
         adjust_for_multiplicity(
             comparison,
-            primary_metric=(
-                getattr(self.args, "primary_metric", None)
-                or self.config.evaluation.primary_metric
-            ),
-            exclude=arms,
+            primary_metric=primary_metric,
+            exclude=[*closed, *noise_floor],
+            arms=[label for label in pairs if is_arm_label(label)],
         )
         comparison["run_manifest"] = measured.manifest
         if self._from_results is not None or baseline is not None:

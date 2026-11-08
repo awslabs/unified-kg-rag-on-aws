@@ -40,8 +40,21 @@ difference and the pair's score per criterion. With
 statements both make and those only one makes; the judge then decides each
 criterion on the unique statements, the shared ones shown as common ground
 that earns neither side credit (both orders, ties and position consistency
-as in the standard mode). A pair with no unique statement is a tie without a
-judge call (``identical_pairs``); a failed or malformed split fails the pair.
+as in the standard mode). The split itself reads the answers in a slot
+order, and a split model favours one slot (x5, 2026-11-08: an A/A pair won
+0.645 with the candidate always Answer 2, 0.52 swapped), so every pair is
+split in both slot orders (``SPLIT_SLOTS``), each split judged in both
+orders, and the pair's score per criterion is the mean of the two slots'
+(its outcome the side that mean favours); ``slots`` reports the candidate's
+win rate per slot and their difference (``slot_effect``). A slot with no
+unique statement is a tie without a judge call, a pair with none in either
+slot counts in ``identical_pairs``; a failed or malformed split fails the
+pair.
+
+Each criterion also has a sign-flip ``p_value`` (``comparison.
+sign_flip_p_value`` over the per-query scores minus 0.5, unadjusted) and its
+``per_query`` scores; ``comparison.adjust_for_multiplicity`` adds the Holm
+value over the comparison's pairwise family.
 docs/design.md#93-length-controlled-judging-assertions-and-the-closed-book-arm
 """
 
@@ -50,7 +63,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -81,7 +94,7 @@ from unified_kg_rag.domain.retrieval.citations import strip_markers
 from unified_kg_rag.ports.model_factory import EFFORT_THINKING_TOKENS
 from unified_kg_rag.shared import EvaluationException, get_logger, observability
 
-from .comparison import bootstrap_ci
+from .comparison import bootstrap_ci, sign_flip_p_value
 
 logger = get_logger(__name__)
 
@@ -93,6 +106,9 @@ _SCORES = {"candidate": 1.0, "tie": 0.5, "baseline": 0.0}
 _BOOTSTRAP: dict[str, Any] = {"resamples": 2000, "confidence": 0.95, "seed": 0}
 # The keys of the differential mode's statement split.
 _OVERLAP_KEYS = ("shared", "unique_1", "unique_2")
+# The differential mode's split slot orders: which answer the split reads
+# as Answer 1. Every pair is split in both.
+SPLIT_SLOTS = ("baseline_first", "candidate_first")
 
 
 def overlap_output_floor(config: Config) -> int | None:
@@ -121,10 +137,14 @@ _LOG_TOLERANCE = 1e-9
 # A correlation over fewer pairs says nothing.
 _MIN_CORRELATION_PAIRS = 3
 
-# Per judged pair: the outcome per criterion, whether the two orders agreed
-# per criterion (None: no judge call, a differential pair with nothing
-# unique), and the differential split (None in the standard mode).
-_Judged = tuple[dict[str, str], dict[str, bool] | None, dict[str, list[str]] | None]
+# One judged slot of a pair: the outcome per criterion and whether the two
+# judge orders agreed per criterion (None: no judge call, a differential
+# split with nothing unique).
+_Slot = tuple[dict[str, str], dict[str, bool] | None]
+# Per judged pair: its slots (one in the standard mode, ``SPLIT_SLOTS`` in
+# the differential mode) and the differential splits by slot (None in the
+# standard mode).
+_Judged = tuple[list[_Slot], dict[str, dict[str, list[str]]] | None]
 
 
 def length_bucket(ratio: float) -> str:
@@ -310,10 +330,11 @@ class PairwiseJudge:
         return outcome, consistent
 
     async def _split(
-        self, query: str, baseline: str, candidate: str
+        self, query: str, baseline: str, candidate: str, slot: str
     ) -> dict[str, list[str]]:
         """The differential mode's statement split: ``shared``, ``baseline``
-        (only the baseline's) and ``candidate`` (only the candidate's).
+        (only the baseline's) and ``candidate`` (only the candidate's), with
+        the answers in ``slot``'s order (``SPLIT_SLOTS``).
 
         Raises:
             EvaluationException: The reply lacks a key or a key is not a list
@@ -321,14 +342,23 @@ class PairwiseJudge:
         """
         if self.overlap_chain is None:
             raise EvaluationException("the differential mode has no overlap model")
+        swapped = slot == "candidate_first"
+        first, second = (candidate, baseline) if swapped else (baseline, candidate)
         async with self._semaphore:
             output = await self.overlap_chain.ainvoke(
-                {"query": query, "answer1": baseline, "answer2": candidate}
+                {"query": query, "answer1": first, "answer2": second}
             )
+        sides = (
+            ("shared", "candidate", "baseline")
+            if swapped
+            else (
+                "shared",
+                "baseline",
+                "candidate",
+            )
+        )
         split: dict[str, list[str]] = {}
-        for key, side in zip(
-            _OVERLAP_KEYS, ("shared", "baseline", "candidate"), strict=True
-        ):
+        for key, side in zip(_OVERLAP_KEYS, sides, strict=True):
             value = output.get(key) if isinstance(output, dict) else None
             if not isinstance(value, list) or not all(
                 isinstance(item, str) for item in value
@@ -343,11 +373,21 @@ class PairwiseJudge:
     async def _ajudge_differential(
         self, query: str, baseline: str, candidate: str
     ) -> _Judged:
-        """Split the answers, then judge the unique statements in both orders;
-        a pair with no unique statement ties without a judge call."""
-        split = await self._split(query, baseline, candidate)
+        """Split the answers in both slot orders, then judge each split's
+        unique statements in both orders; a split with no unique statement
+        ties without a judge call."""
+        splits = await asyncio.gather(
+            *(self._split(query, baseline, candidate, slot) for slot in SPLIT_SLOTS)
+        )
+        slots = await asyncio.gather(
+            *(self._judge_split(query, split) for split in splits)
+        )
+        return list(slots), dict(zip(SPLIT_SLOTS, splits, strict=True))
+
+    async def _judge_split(self, query: str, split: dict[str, list[str]]) -> _Slot:
+        """One split's outcome: its unique statements judged in both orders."""
         if not split["baseline"] and not split["candidate"]:
-            return dict.fromkeys(self.criteria, "tie"), None, split
+            return dict.fromkeys(self.criteria, "tie"), None
         shared = _statement_list(split["shared"])
         base, cand = _statement_list(split["baseline"]), _statement_list(
             split["candidate"]
@@ -360,8 +400,7 @@ class PairwiseJudge:
                 {"query": query, "shared": shared, "unique1": cand, "unique2": base}
             ),
         )
-        outcome, consistent = self._combine(forward, backward)
-        return outcome, consistent, split
+        return self._combine(forward, backward)
 
     async def acompare(
         self, baseline: list[EvaluationResult], candidate: list[EvaluationResult]
@@ -409,7 +448,9 @@ class PairwiseJudge:
                 if r.query_id in by_id
             )
         query_of = {key: qid for key, qid, _, _ in pairs}
-        outcomes: dict[str, dict[str, str]] = {}
+        # Per pair and criterion, the candidate's score: 1, 0.5 or 0, and in
+        # the differential mode the mean over its two split slots.
+        scores: dict[str, dict[str, float]] = {}
         errors: Counter[str] = Counter()
         to_judge: list[tuple[str, EvaluationResult, EvaluationResult]] = []
         for key, _, base, cand in pairs:
@@ -421,10 +462,10 @@ class PairwiseJudge:
                 to_judge.append((key, base, cand))
             elif base_ok:
                 errors["candidate_errors"] += 1
-                outcomes[key] = dict.fromkeys(self.criteria, "baseline")
+                scores[key] = dict.fromkeys(self.criteria, _SCORES["baseline"])
             elif cand_ok:
                 errors["baseline_errors"] += 1
-                outcomes[key] = dict.fromkeys(self.criteria, "candidate")
+                scores[key] = dict.fromkeys(self.criteria, _SCORES["candidate"])
             else:
                 errors["both_errors"] += 1
         # The judge calls nest under one span instead of each starting a root
@@ -437,45 +478,63 @@ class PairwiseJudge:
             )
         agreements: list[dict[str, bool]] = []
         judged_keys: list[str] = []
+        identical = 0
         lengths: dict[str, dict[str, Any]] = {}
         splits: dict[str, dict[str, Any]] = {}
+        # Differential mode: per split slot, each judged pair's scores.
+        slot_scores: dict[str, dict[str, dict[str, float]]] = {
+            slot: {} for slot in SPLIT_SLOTS
+        }
         for (key, base, cand), verdict in zip(to_judge, judged, strict=True):
             if verdict is None:
                 continue
-            outcome, agreed, split = verdict
-            outcomes[key] = outcome
+            slots, pair_splits = verdict
             judged_keys.append(key)
-            if agreed is not None:
-                agreements.append(agreed)
+            agreements.extend(agreed for _, agreed in slots if agreed is not None)
+            identical += all(agreed is None for _, agreed in slots)
+            scores[key] = {
+                c: float(np.mean([_SCORES[outcome[c]] for outcome, _ in slots]))
+                for c in self.criteria
+            }
             lengths[key] = answer_lengths(_words(base), _words(cand))
-            if split is not None:
-                lengths[key].update(
-                    {
-                        f"{side}_unique_tokens": estimate_token_count(
-                            "\n".join(split[side])
-                        )
-                        for side in ("baseline", "candidate")
+            if pair_splits is not None:
+                for slot, (outcome, _) in zip(SPLIT_SLOTS, slots, strict=True):
+                    slot_scores[slot][key] = {
+                        c: _SCORES[outcome[c]] for c in self.criteria
                     }
+                for side in ("baseline", "candidate"):
+                    lengths[key][f"{side}_unique_tokens"] = _mean_tokens(
+                        split[side] for split in pair_splits.values()
+                    )
+                lengths[key]["shared_tokens"] = _mean_tokens(
+                    split["shared"] for split in pair_splits.values()
                 )
-                lengths[key]["shared_tokens"] = estimate_token_count(
-                    "\n".join(split["shared"])
-                )
-                splits[key] = split
+                splits[key] = {
+                    slot: {**pair_splits[slot], "outcome": outcome}
+                    for slot, (outcome, _) in zip(SPLIT_SLOTS, slots, strict=True)
+                }
+        # Each pair's outcome: the side its score favours.
+        outcomes = {
+            key: {c: _outcome(score) for c, score in pair.items()}
+            for key, pair in scores.items()
+        }
         criteria: dict[str, Any] = {}
         for criterion in self.criteria:
             counts = Counter(o[criterion] for o in outcomes.values())
             # Ties split evenly, as the papers report win rates; each
             # query's repeats averaged first (one score per query).
-            by_query: dict[str, list[float]] = {}
-            for key, outcome in outcomes.items():
-                by_query.setdefault(query_of[key], []).append(
-                    _SCORES[outcome[criterion]]
-                )
-            scores = [float(np.mean(v)) for v in by_query.values()]
-            rate, low, high = None, None, None
+            by_query = _query_scores(scores, query_of, criterion)
+            values = list(by_query.values())
+            rate, low, high, p_value = None, None, None, None
             if judged_keys:
-                rate = float(sum(scores) / len(scores))
-                low, high = bootstrap_ci(scores, **_BOOTSTRAP)
+                rate = float(np.mean(values))
+                low, high = bootstrap_ci(values, **_BOOTSTRAP)
+                # Unadjusted; adjust_for_multiplicity adds the Holm value.
+                p_value = sign_flip_p_value(
+                    [v - _SCORES["tie"] for v in values],
+                    resamples=_BOOTSTRAP["resamples"],
+                    seed=_BOOTSTRAP["seed"],
+                )
             criteria[criterion] = {
                 "candidate_wins": counts["candidate"],
                 "baseline_wins": counts["baseline"],
@@ -483,12 +542,16 @@ class PairwiseJudge:
                 "candidate_win_rate": rate,
                 "ci_low": low,
                 "ci_high": high,
+                "p_value": p_value,
                 "decided": counts["candidate"] + counts["baseline"],
                 "position_consistency": (
                     sum(a[criterion] for a in agreements) / len(agreements)
                     if agreements
                     else None
                 ),
+                # Per query, the candidate's score (repeats and slots
+                # averaged): what the win rate, interval and p-value read.
+                "per_query": dict(sorted(by_query.items())) if judged_keys else {},
             }
         consistency = (
             sum(sum(a.values()) for a in agreements)
@@ -532,8 +595,9 @@ class PairwiseJudge:
             ),
         }
         if self.mode == "differential":
-            result["identical_pairs"] = len(judged_keys) - len(agreements)
+            result["identical_pairs"] = identical
             result["differential"] = {"per_query": dict(sorted(splits.items()))}
+            result["slots"] = _slot_summary(slot_scores, query_of, self.criteria)
         return result
 
     async def _safe_judge(
@@ -547,7 +611,7 @@ class PairwiseJudge:
             outcome, consistent = await self._ajudge_both_orders(
                 candidate.question, _words(baseline), _words(candidate)
             )
-            return outcome, consistent, None
+            return [(outcome, consistent)], None
         except Exception as e:  # noqa: BLE001 - a failed pair is counted, not fatal
             # The error may quote the judge's reply: a digest at WARNING.
             logger.warning(
@@ -557,6 +621,63 @@ class PairwiseJudge:
             )
             logger.debug("Pairwise judge error for '%s': %s", candidate.query_id, e)
             return None
+
+
+def _outcome(score: float) -> str:
+    """The side a pair's score favours (``"tie"`` at 0.5)."""
+    if score > _SCORES["tie"]:
+        return "candidate"
+    return "baseline" if score < _SCORES["tie"] else "tie"
+
+
+def _query_scores(
+    scores: Mapping[str, Mapping[str, float]],
+    query_of: Mapping[str, str],
+    criterion: str,
+) -> dict[str, float]:
+    """Per query, the mean of its pairs' (repeats') ``criterion`` scores."""
+    by_query: dict[str, list[float]] = {}
+    for key, pair in scores.items():
+        by_query.setdefault(query_of[key], []).append(pair[criterion])
+    return {q: float(np.mean(v)) for q, v in by_query.items()}
+
+
+def _slot_summary(
+    slot_scores: Mapping[str, Mapping[str, Mapping[str, float]]],
+    query_of: Mapping[str, str],
+    criteria: Sequence[str],
+) -> dict[str, Any]:
+    """The differential mode's slot effect per criterion: the candidate's
+    win rate over the judged pairs when the split read it as Answer 2
+    (``baseline_first``) and as Answer 1 (``candidate_first``), and the
+    first minus the second (``slot_effect``: 0 for a split model without a
+    slot preference; the reported win rate averages both)."""
+    summary: dict[str, Any] = {}
+    for criterion in criteria:
+        rates = {
+            slot: (
+                float(
+                    np.mean(list(_query_scores(by_pair, query_of, criterion).values()))
+                )
+                if by_pair
+                else None
+            )
+            for slot, by_pair in slot_scores.items()
+        }
+        first, second = (rates[slot] for slot in SPLIT_SLOTS)
+        summary[criterion] = {
+            **{f"{slot}_win_rate": rate for slot, rate in rates.items()},
+            "slot_effect": (
+                first - second if first is not None and second is not None else None
+            ),
+        }
+    return {"order": list(SPLIT_SLOTS), "criteria": summary}
+
+
+def _mean_tokens(statement_lists: Iterable[Sequence[str]]) -> float:
+    """The mean estimated tokens of the statement lists (one per split)."""
+    counts = [estimate_token_count("\n".join(s)) for s in statement_lists]
+    return float(np.mean(counts)) if counts else 0.0
 
 
 def _words(result: EvaluationResult) -> str:

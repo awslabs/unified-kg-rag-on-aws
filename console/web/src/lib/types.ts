@@ -255,13 +255,16 @@ export interface Delta {
   losses: number;
   // The sign-flip p-value, and (comparisons that adjust for multiplicity)
   // its Holm-adjusted value over the delta's family with the family's
-  // simultaneous (Bonferroni) interval.
+  // simultaneous (Bonferroni) interval; an --arm run's deltas have the
+  // arm_ families.
   p_value?: number;
-  family?: "primary" | "secondary" | "cost";
+  family?: DeltaFamily | `arm_${DeltaFamily}`;
   adjusted_p_value?: number;
   adjusted_ci_low?: number;
   adjusted_ci_high?: number;
 }
+
+export type DeltaFamily = "primary" | "secondary" | "cost";
 
 export interface Multiplicity {
   method: string;

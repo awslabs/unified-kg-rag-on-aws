@@ -321,6 +321,85 @@ class TestScriptAwareTokenF1:
         assert report.metadata["token_f1_tokens"] == "script_aware_v2"
 
 
+class TestLanguageNormalization:
+    @pytest.mark.parametrize(
+        ("language", "text", "normalized"),
+        [
+            ("de", "Der Rhein", "rhein"),
+            ("de", "eines Lieferanten", "lieferanten"),
+            ("es", "Los Andes", "andes"),
+            ("fr", "L'accord de la Banque", "accord de banque"),
+            ("fr", "l\u2019usine", "usine"),
+            ("it", "Gli Stati e l'Europa", "stati e europa"),
+            ("it", "un'altra fabbrica", "altra fabbrica"),
+            ("pt", "Os Estados e a Vendedora", "estados e vendedora"),
+            # English articles go in every language; only articles stay.
+            ("de", "The Beatles", "beatles"),
+            ("fr", "La", "la"),
+        ],
+    )
+    def test_the_answers_language_drops_its_articles(
+        self, language: str, text: str, normalized: str
+    ) -> None:
+        assert normalize_answer(text, language) == normalized
+
+    @pytest.mark.parametrize("language", [None, "en", "ko", "ja", "zh", "ru"])
+    def test_other_languages_drop_english_articles_only(
+        self, language: str | None
+    ) -> None:
+        # "die" is no English article, "l'" no elision outside fr/it.
+        assert normalize_answer("Die Hard and the l'Oreal", language) == (
+            "die hard and loreal"
+        )
+        assert normalize_answer("서울의 The Shilla", language) == "서울의 shilla"
+
+    def test_containment_reads_the_language(self) -> None:
+        assert answer_contains("Er fließt durch Rhein und Main.", "der Rhein", "de")
+        assert not answer_contains("Er fließt durch Rhein.", "der Rhein")
+
+    @pytest.mark.parametrize(
+        ("language", "answer", "number"),
+        [
+            ("de", "Drei Lieferanten liefern.", 3),
+            ("de", "Zwölf.", 12),
+            ("fr", "Trois fournisseurs.", 3),
+            ("es", "Dos proveedores.", 2),
+            ("it", "Quattro fornitori.", 4),
+            ("pt", "Três fornecedores e duas fábricas.", 3),
+            ("pt", "Duas fábricas.", 2),
+            # The article forms of one are no count: the digits count.
+            ("fr", "Un fournisseur sur 4.", 4),
+            ("de", "Eine Fabrik mit 7 Hallen.", 7),
+        ],
+    )
+    def test_number_words_of_the_language_count(
+        self, language: str, answer: str, number: int
+    ) -> None:
+        assert answer_match_evaluator.number_matches(answer, str(number), language)
+        # Not read as English.
+        if not any(ch.isdigit() for ch in answer):
+            assert not answer_match_evaluator.number_matches(answer, str(number))
+
+    def test_the_evaluator_normalizes_in_the_questions_language(
+        self, config: Config
+    ) -> None:
+        evaluator = AnswerMatchEvaluator(config)
+        result = EvaluationResult(
+            query_id="q",
+            question="Welcher Fluss fließt durch die Stadt?",
+            generated_answer="Der Rhein",
+            ground_truth="Rhein",
+        )
+        report = evaluator.evaluate_single(
+            EvaluationQuery(query_id="q", question=result.question), result, "Rhein"
+        )
+        assert _values(report)["exact_match"] == 1.0
+        assert report.metadata["answer_language"] == "de"
+        english = _report(config, "Der Rhein", "Rhein", {})
+        assert english.metadata["answer_language"] == "en"
+        assert _values(english)["exact_match"] == 0.0
+
+
 def _report(config: Config, answer: str, ground_truth: str, metadata: dict):
     evaluator = AnswerMatchEvaluator(config)
     result = EvaluationResult(

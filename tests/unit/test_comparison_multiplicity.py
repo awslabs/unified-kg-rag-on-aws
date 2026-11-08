@@ -27,8 +27,10 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.evaluation.comparison import (
     DEFAULT_PRIMARY_METRIC,
     adjust_for_multiplicity,
+    baseline_comparison,
     bootstrap_ci,
     bootstrap_cis,
+    closed_book_strata,
     family_resamples,
     holm_adjusted,
     paired_comparison,
@@ -122,6 +124,103 @@ class TestSignFlip:
             for _ in range(trials)
         )
         assert rejected / trials <= 0.06
+
+
+def _reference_percentile_ci(
+    deltas: list[float], *, resamples: int, confidence: float, seed: int
+) -> tuple[float, float]:
+    """The percentile bootstrap written out with numpy: ``resamples`` rows
+    of query indices drawn from the seed, each row's mean, and the
+    ``(1 - confidence) / 2`` tails by ``np.percentile``."""
+    data = np.asarray(deltas, dtype=float)
+    rng = np.random.default_rng(seed)
+    means = data[rng.integers(0, data.size, size=(resamples, data.size))].mean(axis=1)
+    tail = (1 - confidence) / 2 * 100
+    low, high = np.percentile(means, [tail, 100 - tail])
+    return float(low), float(high)
+
+
+class TestBootstrapPercentiles:
+    """The intervals against an independent numpy percentile bootstrap, and
+    the small samples and counts it special-cases."""
+
+    @pytest.mark.parametrize("confidence", [0.95, 0.9, 0.99])
+    @pytest.mark.parametrize("size", [3, 17, 60])
+    def test_matches_np_percentile(self, size: int, confidence: float) -> None:
+        deltas = np.random.default_rng(size).normal(0.1, 1, size).tolist()
+        kwargs = {"resamples": 3000, "confidence": confidence, "seed": 4}
+        assert bootstrap_ci(deltas, **kwargs) == pytest.approx(
+            _reference_percentile_ci(deltas, **kwargs)
+        )
+
+    def test_the_interval_is_wider_at_higher_confidence(self) -> None:
+        deltas = np.random.default_rng(1).normal(0, 1, 40).tolist()
+        narrow = bootstrap_ci(deltas, resamples=4000, confidence=0.8, seed=0)
+        wide = bootstrap_ci(deltas, resamples=4000, confidence=0.99, seed=0)
+        assert wide[0] < narrow[0] < narrow[1] < wide[1]
+
+    def test_one_query_is_its_own_interval(self) -> None:
+        assert bootstrap_ci([0.7], resamples=2000, confidence=0.95, seed=0) == (
+            0.7,
+            0.7,
+        )
+
+    def test_two_queries_are_resampled(self) -> None:
+        # Resampled means of two values are a, (a+b)/2 or b, each end with
+        # probability 1/4: the 95% interval spans both values.
+        assert bootstrap_ci([0.0, 1.0], resamples=2000, confidence=0.95, seed=0) == (
+            0.0,
+            1.0,
+        )
+
+    def test_wins_ties_and_losses_count_each_sign(self) -> None:
+        delta = paired_comparison(
+            {
+                "a": [_run(np.array([[0.0] * len(_METRICS)] * 5), "a")],
+                "b": [
+                    _run(np.array([[v] * len(_METRICS) for v in (1, 0, 0, 0, 1)]), "b")
+                ],
+            },
+            resamples=200,
+        )["deltas_vs_baseline"]["b"][DEFAULT_PRIMARY_METRIC]
+        assert (delta["wins"], delta["ties"], delta["losses"]) == (2, 3, 0)
+        losing = paired_comparison(
+            {
+                "a": [_run(np.array([[1.0] * len(_METRICS)] * 4), "a")],
+                "b": [_run(np.array([[v] * len(_METRICS) for v in (0, 1, 0, 1)]), "b")],
+            },
+            resamples=200,
+        )["deltas_vs_baseline"]["b"][DEFAULT_PRIMARY_METRIC]
+        assert (losing["wins"], losing["ties"], losing["losses"]) == (0, 2, 2)
+
+    def test_the_precision_delta_interval_is_a_percentile_interval(self) -> None:
+        from unified_kg_rag.evaluation.comparison import _precision_delta
+
+        rng = np.random.default_rng(2)
+        queries = [f"q{i}" for i in range(30)]
+        unanswerable = set(queries[:10])
+        one = {q: float(rng.random() < 0.4) for q in queries}
+        two = {q: float(rng.random() < 0.6) for q in queries}
+        one["q0"] = two["q0"] = 1.0  # both decline something
+        kwargs = {"resamples": 3000, "confidence": 0.9, "seed": 5}
+        delta = _precision_delta((one, unanswerable), (two, unanswerable), **kwargs)
+        assert delta is not None
+        # Written out: resample the queries (in sorted order, as paired),
+        # recompute both precisions.
+        queries = sorted(queries)
+        a = np.asarray([one[q] for q in queries])
+        b = np.asarray([two[q] for q in queries])
+        hit = np.asarray([q in unanswerable for q in queries], dtype=float)
+        index = np.random.default_rng(5).integers(0, 30, size=(3000, 30))
+        valid = (a[index].sum(axis=1) > 0) & (b[index].sum(axis=1) > 0)
+        diffs = (b * hit)[index].sum(axis=1)[valid] / b[index].sum(axis=1)[valid] - (
+            a * hit
+        )[index].sum(axis=1)[valid] / a[index].sum(axis=1)[valid]
+        low, high = np.percentile(diffs, [5, 95])
+        assert (delta["ci_low"], delta["ci_high"]) == pytest.approx((low, high))
+        assert delta["mean_delta"] == pytest.approx(
+            (b * hit).sum() / b.sum() - (a * hit).sum() / a.sum()
+        )
 
 
 class TestBatched:
@@ -330,6 +429,163 @@ class TestFamilies:
         ]
         assert latency["family"] == "cost"
         assert comparison["multiplicity"]["families"]["cost"]["tests"] == 1
+
+
+def _pairwise(scores: list[float]) -> dict:
+    """A pairwise_vs_baseline entry of one criterion with these per-query
+    candidate scores (its p-value as the judge computes it)."""
+    per_query = {f"q{i}": v for i, v in enumerate(scores)}
+    return {
+        "criteria": {
+            "comprehensiveness": {
+                "candidate_win_rate": float(np.mean(scores)),
+                "p_value": sign_flip_p_value(
+                    [v - 0.5 for v in scores], resamples=2000, seed=0
+                ),
+                "per_query": per_query,
+            }
+        }
+    }
+
+
+class TestPairwiseAndArmFamilies:
+    def test_pairwise_criteria_are_a_family_tested_against_one_half(self) -> None:
+        comparison = _comparison_with(["a", "b", "c", "d"])
+        comparison["pairwise_vs_baseline"] = {
+            "b": _pairwise([1.0] * 30 + [0.5] * 10),
+            "c": _pairwise([0.0] * 30 + [0.5] * 10),
+            "d": _pairwise([1.0, 0.0] * 20),
+        }
+        adjust_for_multiplicity(comparison)
+        families = comparison["multiplicity"]["families"]
+        assert families["pairwise"]["tests"] == 3
+        b, c, d = (
+            comparison["pairwise_vs_baseline"][s]["criteria"]["comprehensiveness"]
+            for s in ("b", "c", "d")
+        )
+        assert b["family"] == c["family"] == d["family"] == "pairwise"
+        # Thirty wins (or losses) and ten ties: far from 0.5 either way. Read
+        # again from the family's 1,200 resamples (20 x 3 tests / 0.05, more
+        # than the comparison's 500): the Monte Carlo floor 1 / 1201, Holm
+        # over the three tests.
+        assert families["pairwise"]["resamples"] == 1200
+        for strong in (b, c):
+            assert strong["p_value_resamples"] == 1200
+            assert strong["p_value"] == pytest.approx(1 / 1201)
+            assert strong["adjusted_p_value"] == pytest.approx(3 / 1201)
+        # Even wins and losses: no difference from 0.5.
+        assert d["adjusted_p_value"] == pytest.approx(1.0)
+        # The interval is of the win rate itself.
+        assert d["adjusted_ci_low"] < 0.5 < d["adjusted_ci_high"]
+        assert b["adjusted_ci_low"] > 0.5 > c["adjusted_ci_high"]
+
+    def test_aa_and_closed_book_arms_are_left_out_and_arms_are_their_own(
+        self,
+    ) -> None:
+        labels = ["local", "mix", "local@aa", "local@rerank_off", "closed_book"]
+        comparison = _comparison_with(labels)
+        comparison["pairwise_vs_baseline"] = {
+            label: _pairwise([1.0, 0.5, 0.0, 1.0] * 5) for label in labels[1:]
+        }
+        adjust_for_multiplicity(
+            comparison,
+            exclude=["closed_book", "local@aa"],
+            arms=["local@aa", "local@rerank_off"],
+        )
+        families = comparison["multiplicity"]["families"]
+        assert comparison["multiplicity"]["unadjusted"] == ["closed_book", "local@aa"]
+        # One strategy against the first, one arm against its base run.
+        for kind in ("primary", "pairwise"):
+            assert families[kind]["tests"] == 1
+            assert families[f"arm_{kind}"]["tests"] == 1
+        deltas = comparison["deltas_vs_baseline"]
+        assert deltas["mix"][DEFAULT_PRIMARY_METRIC]["family"] == "primary"
+        assert (
+            deltas["local@rerank_off"][DEFAULT_PRIMARY_METRIC]["family"]
+            == "arm_primary"
+        )
+        assert deltas["local@rerank_off"]["retrieval/mrr"]["family"] == "arm_secondary"
+        for excluded in ("local@aa", "closed_book"):
+            assert all("family" not in d for d in deltas[excluded].values())
+            judged = comparison["pairwise_vs_baseline"][excluded]["criteria"]
+            assert "adjusted_p_value" not in judged["comprehensiveness"]
+
+    def test_a_pairwise_criterion_without_a_decided_pair_is_no_test(self) -> None:
+        comparison = _comparison_with(["a", "b"])
+        comparison["pairwise_vs_baseline"] = {
+            "b": {
+                "criteria": {
+                    "comprehensiveness": {
+                        "candidate_win_rate": None,
+                        "p_value": None,
+                        "per_query": {},
+                    }
+                }
+            }
+        }
+        adjust_for_multiplicity(comparison)
+        assert "pairwise" not in comparison["multiplicity"]["families"]
+
+
+class TestClosedBookStrata:
+    def _runs(self) -> dict:
+        # q0-q3 the answer model knows without retrieval (two repeats: q3
+        # once of twice, still known), q4-q7 it does not.
+        n = len(_METRICS)
+        closed = [
+            _run(np.array([[v] * n for v in (1, 1, 1, 1, 0, 0, 0, 0)]), "closed_book"),
+            _run(np.array([[v] * n for v in (1, 1, 1, 0, 0, 0, 0, 1)]), "closed_book"),
+        ]
+        mix = np.array([[v] * n for v in (1, 1, 1, 1, 0, 0, 0, 0)])
+        local = np.array([[v] * n for v in (1, 1, 1, 0, 1, 1, 1, 1)])
+        return {
+            "mix": [_run(mix, "mix")],
+            "local": [_run(local, "local")],
+            "closed_book": closed,
+        }
+
+    def test_known_is_at_least_half_the_repeats_right(self) -> None:
+        strata = closed_book_strata(self._runs()["closed_book"], DEFAULT_PRIMARY_METRIC)
+        assert strata == {
+            **{f"q{i}": "known" for i in range(4)},
+            "q4": "unknown",
+            "q5": "unknown",
+            "q6": "unknown",
+            "q7": "known",
+        }
+        assert closed_book_strata(self._runs()["closed_book"], "ragas/x") == {}
+
+    def test_deltas_by_closed_book_split_the_paired_deltas(self) -> None:
+        runs = self._runs()
+        strata = closed_book_strata(runs["closed_book"], DEFAULT_PRIMARY_METRIC)
+        comparison = adjust_for_multiplicity(
+            paired_comparison(runs, resamples=500, closed_book=strata),
+            exclude=["closed_book"],
+        )
+        local = comparison["deltas_by_closed_book"]["local"]
+        # Retrieval adds the three answers the model does not know.
+        assert local["unknown"][DEFAULT_PRIMARY_METRIC]["mean_delta"] == 1.0
+        assert local["unknown"][DEFAULT_PRIMARY_METRIC]["pairs"] == 3
+        # On the known ones it loses q3 and wins q7.
+        assert local["known"][DEFAULT_PRIMARY_METRIC]["mean_delta"] == 0.0
+        assert local["known"][DEFAULT_PRIMARY_METRIC]["wins"] == 1
+        # Exploratory: no Holm value.
+        assert all(
+            "adjusted_p_value" not in d
+            for stratum in local.values()
+            for d in stratum.values()
+        )
+        assert "deltas_by_closed_book" not in paired_comparison(runs, resamples=200)
+        # Each strategy against its own baseline (--arm, --baseline-results).
+        merged = baseline_comparison(
+            {"mix": runs["mix"]},
+            {"local": runs["local"], "closed_book": runs["closed_book"]},
+            {"local": "mix", "closed_book": "mix"},
+            resamples=500,
+            closed_book=strata,
+        )["deltas_by_closed_book"]
+        assert merged["local"]["unknown"][DEFAULT_PRIMARY_METRIC]["mean_delta"] == 1.0
+        assert set(merged) == {"local", "closed_book"}
 
 
 class TestFamilyResamples:

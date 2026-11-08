@@ -59,8 +59,13 @@ choices:
   on few pairs, where the percentile bootstrap is anti-conservative), and
   `adjust_for_multiplicity` Holm-adjusts them in families: the pre-declared
   primary metric (`evaluation.primary_metric`, default `answer_contains`)
-  over the compared strategies only, every other metric, and the cost
-  measures, with Bonferroni-level intervals, each family reading at least
+  over the compared strategies only, every other metric, the cost
+  measures and the pairwise judge's criteria (each against a 0.5 win rate),
+  with Bonferroni-level intervals; the `--arm` runs against their own base
+  runs form the same four families apart (`arm_*`), and the closed-book and
+  A/A arms (an empty overlay on the run's own index, `arm.aa` in the
+  manifest) none, since their deltas bound prior knowledge or measure the
+  noise floor. Each family reads at least
   20 x tests / alpha resamples so the Monte Carlo floor cannot hold it above
   alpha; ten unadjusted metrics would
   show a "supported" difference on noise in 30-40% of A/A runs. Gates
@@ -277,20 +282,37 @@ no model call.
 **Differential mode (`evaluation.pairwise_mode: differential`, or
 `run-eval --pairwise-mode differential`).** Per judged pair:
 
-1. One `pairwise_overlap` call (fast tier, `PairwiseOverlapPrompt`) splits
-   the two answers into the statements both make and the statements only one
-   makes, copied from the answers in their own language (never translated).
-2. The judge (`models.roles.evaluation`, `PairwiseDifferentialPrompt`) sees
-   the shared statements as common ground that earns neither answer credit,
-   and decides each criterion on the unique statements only: both orders,
-   ties, the same criteria (with `overall` under `evaluation.pairwise_overall`)
-   and the same order-agreement rule and `position_consistency` as the
-   standard mode.
-3. When neither answer has a unique statement, every criterion is a tie
-   without a judge call (`identical_pairs`).
+1. Two `pairwise_overlap` calls (fast tier, `PairwiseOverlapPrompt`), one
+   per slot order (the baseline as Answer 1, then the candidate), split the
+   two answers into the statements both make and the statements only one
+   makes, copied from the answers in their own language (never translated);
+   a shared statement is kept in the shorter of its two wordings.
+2. For each split, the judge (`models.roles.evaluation`,
+   `PairwiseDifferentialPrompt`) sees the shared statements as common
+   ground that earns neither answer credit, and decides each criterion on
+   the unique statements only: both orders, ties, the same criteria (with
+   `overall` under `evaluation.pairwise_overall`) and the same
+   order-agreement rule and `position_consistency` as the standard mode.
+3. A split in which neither answer has a unique statement is a tie for
+   every criterion without a judge call (`identical_pairs` counts the
+   pairs with none in either split).
+4. The pair's score per criterion is the mean of its two slots' scores;
+   `slots` reports the candidate's win rate per slot and their difference
+   (`slot_effect`).
+
+Why both slots: one split per pair, the baseline always Answer 1, favoured
+the candidate. On an A/A pair (x5, 2026-11-08: `simple` against an empty
+overlay of itself, sensemaking-50, two repeats) the candidate won
+comprehensiveness 0.645 (p 0.005) in that slot, 0.52 swapped, and 0.562
+[0.49, 0.635] averaged over both (a slot effect of +0.165); the slot moved
+the measured citations on/off effect by 0.125-0.215. The judge's own two
+orders do not remove it: the bias is in what the split lists as unique, and
+the prompt asked for the shared statements "worded as in Answer 1".
+`tests/unit/test_eval_judging.py` pins it with an A/A pair and a split
+model biased to one slot.
 
 A failed or malformed overlap call fails the pair (`failed`, held to
-`--max-failure-rate`), never a tie. Cost: one fast call plus the two judge
+`--max-failure-rate`), never a tie. Cost: two fast calls plus four judge
 calls per pair, on shorter inputs than the standard mode's. The per-pair
 shared and unique token counts go to `length.per_query`, so a reader sees
 how much of each answer was common ground. The overlap model can miss a
@@ -439,7 +461,12 @@ on a question set measures prior knowledge, not retrieval. Its results carry
 `closed_book_arms` and the Markdown report marks it "(no retrieval)";
 retrieval and context metrics of it score an empty source list (read only
 the answer metrics); `--fail-if` gates skip it. Cost: one answer call per
-question and repeat.
+question and repeat. Its answers also split the questions into those the
+model knows (right in at least half of the arm's repeats on the primary
+metric) and the rest, and `deltas_by_closed_book` repeats every delta over
+each (exploratory, unadjusted): on MuSiQue the unknown subset carried
+differences the pooled deltas hid (iterative - mix +18.9 there; mix's
+lead over ppr only on known questions).
 
 **Layer placement.** Everything above lives in `evaluation/` (judges,
 evaluator, generator, closed-book runnable), `domain/prompts/evaluation.py`

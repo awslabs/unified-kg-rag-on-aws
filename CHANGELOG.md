@@ -545,6 +545,12 @@ From a `main` checkout (formats and keys no release had):
   `0.67-0.91x`, `0.91-1.1x`, `1.1-1.5x`, `>=1.5x`). `prepare-benchmark musique --unanswerable` without `--data-path`
   now also downloads the answerable split and draws the answerable questions from it (labelled `musique`); prepare
   again for that sample. Nothing else re-runs.
+- Evaluation results of German, Spanish, French, Italian or Portuguese datasets saved before the per-language answer
+  normalization scored exact match, token F1 and containment with English articles only: rescore them
+  (`run-eval --from-results DIR --rescore`, no answer call; a span call per answer with `answer_span: extracted`)
+  before comparing them with new runs. Saved `--arm` runs record no `arm.aa`, so a rebuilt comparison adjusts an
+  earlier A/A arm with the others; differential pairwise results judged before both answer slots favour the
+  candidate (re-judge with `--from-results DIR --pairwise-judge`, two fast and four judge calls per pair).
 - #607 rerank metering: a query's usage counts its rerank requests (`rerank_calls`, `rerank_search_units` under the
   `rerank` role and the rerank model's id), so `run-eval` with `evaluation.prices` gives no USD estimate until the
   rerank model has a price (`per_thousand_rerank_search_units`; 0 for a local cross-encoder). A price entry sets
@@ -611,18 +617,21 @@ From a `main` checkout (formats and keys no release had):
 
 ### Added
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
-  `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in
-  advance (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared
-  strategies only, every other metric, and the cost measures, each delta with `adjusted_p_value` and a simultaneous
-  `adjusted_ci_low`/`adjusted_ci_high`. On simulated A/A comparisons ten unadjusted metrics showed a difference on
-  noise in 30-40% of them, the Holm-adjusted family in about 5% or fewer. Each family reads at least 20 x tests /
-  alpha resamples (`multiplicity.families.<f>.resamples`; `evaluation.resamples` sets the base, 2,000): the Monte
-  Carlo p-value is never below 1 / (1 + resamples), so with a fixed 2,000 a family of 100 or more tests (15 strategies
-  x 7 metrics) could not reject at 0.05 however large the difference, and its simultaneous intervals read their tails
-  from a fraction of one resample (#639). A family's tests of one size draw their resamples once for all of them
-  (the same values; 120 tests over 300 queries adjust in 4.5 s instead of 25 s), holding at most 25 million resampled
-  means at once (a group of tests at a time past it, the same values again), and the console's paired-delta help
-  names the families' resample counts (#645, #646). `--fail-if` reads the four new statistics, and the tables print
+  `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in advance
+  (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared strategies
+  only, every other metric, the cost measures and the pairwise judge's criteria (`pairwise`, each a sign-flip `p_value`
+  of its per-query scores against a 0.5 win rate), each with `adjusted_p_value` and a simultaneous
+  `adjusted_ci_low`/`adjusted_ci_high`. `--arm` runs against their own base runs form the same families apart
+  (`arm_primary`, ...), and the closed-book and A/A arms (`aa_arms`) are in none: they bound prior knowledge or measure
+  the noise floor, and widened the other tests' adjustment. On simulated A/A comparisons ten unadjusted metrics showed a
+  difference on noise in 30-40% of them, the Holm-adjusted family in about 5% or fewer. Each family reads at least 20 x
+  tests / alpha resamples (`multiplicity.families.<f>.resamples`; `evaluation.resamples` sets the base, 2,000): the
+  Monte Carlo p-value is never below 1 / (1 + resamples), so with a fixed 2,000 a family of 100 or more tests (15
+  strategies x 7 metrics) could not reject at 0.05 however large the difference, and its simultaneous intervals read
+  their tails from a fraction of one resample (#639). A family's tests of one size draw their resamples once for all of
+  them (the same values; 120 tests over 300 queries adjust in 4.5 s instead of 25 s), holding at most 25 million
+  resampled means at once (a group of tests at a time past it, the same values again), and the console's paired-delta
+  help names the families' resample counts (#645, #646). `--fail-if` reads the four new statistics, and the tables print
   `Holm p` (#620).
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
@@ -1031,7 +1040,9 @@ From a `main` checkout (formats and keys no release had):
   falling back to the first line), `evaluation.answer_normalization` (`official_squad`, `hotpotqa`), recorded in the
   manifest's `answer_scoring` with the token-F1 tokenization; under `default`, token F1 counts a Han, Hangul or Kana
   letter as a token and drops a run of Korean particles (their closed class) on a gold word, so Chinese, Japanese and
-  Korean answers get partial credit (#324, #516, #606, #613).
+  Korean answers get partial credit, and a German, Spanish, French, Italian or Portuguese answer (the question's
+  language, `answer_language` in each report) drops that language's articles and reads its number words up to twelve
+  (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
@@ -1061,12 +1072,15 @@ From a `main` checkout (formats and keys no release had):
   their correlation with length;
   `evaluation.pairwise_mode: differential` (`run-eval --pairwise-mode differential`, model role
   `models.roles.pairwise_overlap`, its output limit `models.default_max_output_tokens` above the judge effort's
-  thinking budget) judges only the statements unique to each answer; the `assertion` evaluator
+  thinking budget) judges only the statements unique to each answer, split in both answer slots and averaged
+  (`slots.<criterion>.slot_effect` reports the split model's slot preference: one slot gave an A/A pair 0.645), two
+  fast and four judge calls per pair; the `assertion` evaluator
   (`assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`;
   `evaluation.assertion_trials`, a majority over trials in distinct assertion orders, every judge call within
   `processing.max_concurrency`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions
   in five classes and source-cited assertions from your corpus, after Microsoft BenchmarkQED (MIT; no BenchmarkQED
-  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval (#595, #606). See
+  data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval, and `deltas_by_closed_book`
+  splits the deltas into the questions it knows and those it does not, exploratory (#595, #606). See
   [evaluation](docs/guides/evaluate.md#assertions-length-control-and-a-closed-book-bound).
 - Comparison cost: per strategy calls, tokens and latency per query (mean, p50, p95) with paired deltas, a USD
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and
@@ -1085,8 +1099,9 @@ From a `main` checkout (formats and keys no release had):
   run's config under a YAML overlay (validated like a config file; the run's `evaluation` section and scoring models
   are kept: an unset judge is chosen over the base and every arm's answer models and pinned first), as a chain
   and evaluation manager of its own, with every `--search-strategy`, interleaved with the base runs. Its runs
-  (`<strategy>@NAME`) are compared with the same strategy's base run and Holm-adjusted with the other deltas; the
-  manifest records the overlay's path and sha256 and the comparison order, which `--from-results` keeps. An arm
+  (`<strategy>@NAME`) are compared with the same strategy's base run and Holm-adjusted in families of their own; the
+  manifest records the overlay's path and sha256 (and `aa` for an A/A arm) and the comparison order, which
+  `--from-results` keeps. An arm
   shares the base runs' query extractions only when its overlay leaves them alone (the extraction model, the default
   tier's effort, `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, the LLM provider with
   its context window and region, and a

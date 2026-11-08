@@ -69,6 +69,15 @@ def overlay_sha256(spec: dict[str, Any]) -> str:
     return hashlib.sha256(Path(spec["overlay"]).read_bytes()).hexdigest()
 
 
+def is_aa_overlay(spec: dict[str, Any]) -> bool:
+    """Whether the arm runs the base configuration unchanged: its overlay
+    sets nothing but the ``evaluation`` section ``arm_config`` ignores, and
+    it queries the run's own index (no ``suffix=``). Such an A/A arm
+    measures the noise floor."""
+    data = ConfigLoader._read_file(Path(spec["overlay"]))
+    return not spec.get("suffix") and not {k for k in data if k != "evaluation"}
+
+
 def arm_config(
     base: Config, spec: dict[str, Any], *, allow_unknown_keys: bool = False
 ) -> tuple[Config, list[str]]:
