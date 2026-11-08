@@ -90,6 +90,15 @@ subject of 72 characters or fewer. Types: `feat`, `fix`, `docs`, `refactor`, `te
 fix(incremental): retry documents whose extraction failed
 ```
 
+### Moving code and `git blame`
+
+Move or reformat code in a pull request of its own that changes nothing else, and add its commit on `main` to
+[`.git-blame-ignore-revs`](./.git-blame-ignore-revs). GitHub's blame view skips the commits listed there; locally,
+run `git blame --ignore-revs-file .git-blame-ignore-revs <file>`, or set it once with
+`git config blame.ignoreRevsFile .git-blame-ignore-revs`. To follow lines that moved into another file (for example
+from the former `config.py` into `unified_kg_rag/domain/models/config/`), add `-C -C`:
+`git blame -C -C <file>`.
+
 ### Checks to run before pushing
 
 CI ([`.github/workflows/quality.yml`](./.github/workflows/quality.yml)) runs the same checks, so run them locally first:

@@ -1,0 +1,7 @@
+# Commits that only move or reformat code, skipped by `git blame`:
+#   git blame --ignore-revs-file .git-blame-ignore-revs <file>
+# or once per clone: git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub's blame view reads this file automatically. List the commit on main.
+
+# refactor(config): split domain/models/config.py into a package
+b2eaa5742534bf5b03d505686a9e21af3a42f9eb
