@@ -254,19 +254,22 @@ def _visualization_file(tmp_path: Path, pipeline_id: str) -> Path:
     )
 
 
-def test_incremental_run_with_unchanged_documents_exports_no_partial_graph(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+def test_an_incremental_run_exports_the_whole_stored_graph(
+    tmp_path: Path,
 ) -> None:
     harness = _Harness(tmp_path)
     config = _base_config()
     harness.run(config, "full")
     full = json.loads(_visualization_file(tmp_path, "full").read_text())
-    assert len(full["nodes"]) == 3
+    assert len(full["nodes"]) == 3 and full["namespace"] == "default"
     # Every node carries its level-0 community, which the renderers color by.
     assert all(node["attributes"].get("community_id") for node in full["nodes"])
 
     (harness.source / "third.txt").write_text("Depot ships widgets to Buyer.")
-    with caplog.at_level("INFO"):
-        harness.run(config, "delta")
-    assert not _visualization_file(tmp_path, "delta").exists()
-    assert "Visualization skipped" in caplog.text
+    harness.run(config, "delta")
+    # Read from the stores: the unchanged documents' graph and the delta's,
+    # not the delta's alone.
+    delta = json.loads(_visualization_file(tmp_path, "delta").read_text())
+    names = {node["attributes"]["name"] for node in delta["nodes"]}
+    assert {node["attributes"]["name"] for node in full["nodes"]} <= names
+    assert "Vendor" in names  # in no document the delta read

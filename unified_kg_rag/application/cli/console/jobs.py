@@ -258,19 +258,18 @@ class JobManager:
         """Record the jobs an earlier console process left running as lost:
         it ended without seeing them end, so nothing watches them any more
         (their child may still run; the namespace lease guards the stores)."""
-        for record in self.store.jobs():
-            if record.get("status") in {s.value for s in _ACTIVE}:
-                pid = record.get("pid")
-                alive = isinstance(pid, int) and _alive(pid)
-                record.update(
-                    status=JobStatus.LOST.value,
-                    ended=record.get("ended") or time.time(),
-                    error=(
-                        "the console stopped while this job ran"
-                        + (f"; its process {pid} still runs" if alive else "")
-                    ),
-                )
-                self.store.save_job(record)
+        for record in self.store.jobs(limit=None, statuses=[s.value for s in _ACTIVE]):
+            pid = record.get("pid")
+            alive = isinstance(pid, int) and _alive(pid)
+            record.update(
+                status=JobStatus.LOST.value,
+                ended=record.get("ended") or time.time(),
+                error=(
+                    "the console stopped while this job ran"
+                    + (f"; its process {pid} still runs" if alive else "")
+                ),
+            )
+            self.store.save_job(record)
 
     # -- starting ---------------------------------------------------------
 
@@ -669,14 +668,19 @@ class JobManager:
         if job.status is JobStatus.RUNNING and job.process is not None:
             job.status = JobStatus.STOPPING
             self.store.save_job(job.record())
+            # The CLI's own stop (it stops its workers and checkpoints).
             with contextlib.suppress(ProcessLookupError):
                 job.process.send_signal(signal.SIGTERM)
             asyncio.get_running_loop().call_later(STOP_GRACE_SECONDS, self._kill, job)
         return job
 
     def _kill(self, job: Job) -> None:
+        """Kill a job that outlived its stop grace, with its process group
+        (its own session): worker processes it started are not left behind."""
         if job.process is not None and job.process.returncode is None:
             logger.warning("Job %s outlived its stop grace; killing it", job.id)
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(job.process.pid, signal.SIGKILL)
             with contextlib.suppress(ProcessLookupError):
                 job.process.kill()
 
@@ -703,22 +707,31 @@ class JobManager:
         """
         job = self.jobs.get(job_id)
         if job is None:
-            for record in self.store.jobs():
-                if record["id"] == job_id:
-                    return {**record, "progress": None, "log": []}
-            raise KeyError(job_id)
+            if (record := self.store.job(job_id)) is None:
+                raise KeyError(job_id)
+            return {**record, "progress": None, "log": []}
         return {
             **job.record(),
             "progress": self.progress(job),
             "log": self.log_tail(job),
         }
 
-    def all_jobs(self) -> list[dict[str, Any]]:
-        live = {job.id: job for job in self.jobs.values()}
+    def all_jobs(
+        self, *, since: float | None = None, limit: int | None = 200
+    ) -> list[dict[str, Any]]:
+        """This session's jobs and the stored ones (the newest ``limit``),
+        created at or after ``since`` when given."""
+        live = {
+            job.id: job
+            for job in self.jobs.values()
+            if since is None or job.created >= since
+        }
         records = [
             {**job.record(), "progress": self.progress(job)} for job in live.values()
         ]
-        records.extend(r for r in self.store.jobs() if r["id"] not in live)
+        records.extend(
+            r for r in self.store.jobs(limit=limit, since=since) if r["id"] not in live
+        )
         return sorted(records, key=lambda r: r["created"], reverse=True)
 
     def active(self) -> list[dict[str, Any]]:

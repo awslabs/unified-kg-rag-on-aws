@@ -186,7 +186,9 @@ the corpus resumes. A job a console left running when it stopped is shown
 as lost when the console starts again (its namespace is free; the
 pipeline's namespace lease still guards the stores). Uploads go in batches
 of up to 500 files or 100 MiB; the server takes up to 10,000 files and
-500 MiB a request.
+500 MiB a request. The page leaves out files of a type ingestion does not
+read, and the server refuses a request that holds one; a request is
+written all or none, so a refused one leaves the folder as it was.
 
 **Evaluate.** Pick a dataset (its questions, the unanswerable ones and
 which evaluators it feeds are shown), the strategies (the first is the
@@ -215,7 +217,7 @@ the pairwise judge, the win rate per answer-length bucket. A job's gates
 show as passed or failed.
 
 **Graph.** A `visualization_data.json` the ingestion exported (the newest
-by default), drawn with a seeded layout per connected component: pan with a
+by default; every run that indexed writes the namespace's whole graph), drawn with a seeded layout per connected component: pan with a
 drag or the arrow keys, zoom with the wheel or `+`/`-`. Colour by community
 or by type (the eight largest groups, the rest grey, named in the legend).
 Find an entity by name; selecting one shows its type, description,
@@ -248,10 +250,13 @@ a provider sends its requests (`providers.*.base_url`,
 `aws.neptune.endpoint`, `aws.opensearch.endpoint`, their ports) is listed in
 the review and saved only once confirmed there: the requests carry the
 credentials the console's environment holds for that provider (an API key,
-a store password, signed AWS requests). A change to a directory the
-console serves (`evaluation.outputs_directory`, read and written;
-`graph.visualization.outputs_directory`, read) is confirmed the same way:
-it opens the new directory to the page. The file is written whole (a
+a store password, signed AWS requests). A change to a file or directory
+path (every key named `path`, `directory` or ending in `_path` or
+`_directory`: the directories the console serves,
+`evaluation.outputs_directory` and `graph.visualization.outputs_directory`,
+and what its jobs read and write, such as the SQLite store files,
+`logging.log_file_path`, schema and seed graph files and the parsing
+directories) is confirmed the same way: it opens the new path to the page. The file is written whole (a
 temporary file beside it, renamed over it). The Methodologies
 tab edits `indexing.methodologies`; the Tracing tab edits `observability`
 and shows which `LANGFUSE_*`, `PHOENIX_*` and `OTEL_*` variables are set,

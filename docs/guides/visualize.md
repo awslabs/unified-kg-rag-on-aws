@@ -7,7 +7,10 @@ default: [CLI Reference](../reference/cli.md#run-visualization).
 ## Examples
 
 ```bash
-# Render all renderers
+# Render the newest export of the default namespace (run-ingestion prints its path)
+run-visualization --suffix default --output-directory ./viz --config-path config.yaml
+
+# Render all renderers of one file
 run-visualization --data-path visualization_data.json --output-directory ./viz --config-path config.yaml
 
 # Only the interactive renderer
@@ -25,17 +28,21 @@ Ingestion itself renders nothing. Another renderer plugs in through
 
 ## Input and output
 
-- **The input.** The community-detection stage of `run-ingestion` writes
-  `visualization_data.json` (the graph-analysis stage, without communities,
-  when no community detection runs: `indexing.methodologies` without
-  `graphrag`) on every run whose graph covers the whole corpus:
-  a full build, a reset, or an incremental run in which every document is new
-  or changed. An incremental run that skips unchanged documents writes
-  nothing (it logs an INFO line) and leaves an earlier file in place; run one
-  full build (`indexing.reset: true`) to visualize the whole graph. Nor does
-  a run into a namespace that holds other source scopes' documents (a second
-  corpus, `insert_documents`): its graph is one corpus's part; export the
-  whole namespace with `run-describe --output-path` (GraphML or JSON Lines).
+- **The input.** `run-ingestion` writes `visualization_data.json` at the end
+  of every run that indexed, read from the index namespace's stores, and
+  prints its path (`visualization_data` in its JSON result): the whole graph
+  as queries see it, also after an incremental run and in a namespace other
+  corpora share. The entities, claims and community reports are read a page
+  at a time from the vector store, each entity's communities from the graph
+  store, and the relationships from the vector store (the graph store
+  without a relationships index); a namespace without community detection
+  (`indexing.methodologies` without `graphrag`) has an empty hierarchy. A
+  failed export is logged and never fails the run. The file names its
+  namespace first (`"namespace"`).
+- **Which file.** `--data-path`, else the newest `visualization_data.json`
+  under `graph.visualization.outputs_directory`, `outputs/visualization` and
+  `--cache-directory` (default `cache`), of `--suffix`'s namespace when given
+  (exit 2 when there is none).
 - **Where.** `graph.visualization.outputs_directory`, by default
   `<cache directory>/<pipeline_id>/visualization/`. S3 cache sync uploads the
   `.json` only; re-render the HTML locally.

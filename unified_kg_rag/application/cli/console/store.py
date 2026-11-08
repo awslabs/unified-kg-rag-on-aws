@@ -14,6 +14,7 @@ import json
 import sqlite3
 import threading
 import time
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -124,12 +125,36 @@ class ConsoleStore:
             )
             self._db.commit()
 
-    def jobs(self, *, limit: int = 200) -> list[dict[str, Any]]:
+    def jobs(
+        self,
+        *,
+        limit: int | None = 200,
+        since: float | None = None,
+        statuses: Collection[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """The newest job records (``limit``; ``None``: all), created at or
+        after ``since`` and in one of ``statuses`` when given."""
+        where = ["created >= ?"]
+        params: list[float | str] = [since or 0.0]
+        if statuses is not None:
+            marks = ", ".join("?" for _ in statuses)
+            where.append(f"json_extract(record, '$.status') IN ({marks})")
+            params.extend(statuses)
         with self._lock:
             rows = self._db.execute(
-                "SELECT record FROM jobs ORDER BY created DESC LIMIT ?", (limit,)
+                f"SELECT record FROM jobs WHERE {' AND '.join(where)} "  # nosec B608 - fixed clauses, values bound
+                "ORDER BY created DESC LIMIT ?",
+                (*params, -1 if limit is None else limit),
             ).fetchall()
         return [json.loads(row["record"]) for row in rows]
+
+    def job(self, job_id: str) -> dict[str, Any] | None:
+        """The record of job ``job_id``, or ``None``."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT record FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+        return json.loads(row["record"]) if row else None
 
 
 def _query_row(row: sqlite3.Row) -> dict[str, Any]:

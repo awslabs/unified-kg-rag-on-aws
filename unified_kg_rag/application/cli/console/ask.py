@@ -238,6 +238,9 @@ class AskService:
         self._chain: GraphRAGChain | None = None
         self._config: Config | None = None
         self._lock = asyncio.Lock()
+        # Moved on by each reset: a chain whose build began before one was
+        # built from the config the reset replaced, and is not kept.
+        self._generation = 0
         # Chains a reset replaced, closed once their questions finish, and
         # the questions each chain is answering (by id()).
         self._retired: list[GraphRAGChain] = []
@@ -246,11 +249,17 @@ class AskService:
 
     async def chain(self) -> tuple[GraphRAGChain, Config]:
         async with self._lock:
-            if self._chain is None:
+            while self._chain is None:
+                generation = self._generation
                 config = self.load_config()
                 # Built off the loop: it builds the model and store clients.
-                self._chain = await asyncio.to_thread(self._chain_factory, config)
-                self._config = config
+                built = await asyncio.to_thread(self._chain_factory, config)
+                if generation != self._generation:
+                    # Reset while it was built: from a replaced config.
+                    self._retired.append(built)
+                    self._close_idle()
+                    continue
+                self._chain, self._config = built, config
             assert self._config is not None
             return self._chain, self._config
 
@@ -258,6 +267,7 @@ class AskService:
         """Build the chain again at the next question (the config was
         saved, or an ingestion changed the index); the replaced chain is
         closed once the questions it is answering finish."""
+        self._generation += 1
         if self._chain is not None:
             self._retired.append(self._chain)
             self._close_idle()

@@ -19,6 +19,7 @@ and vector stores, and the in-memory or moto-backed DynamoDB registry.
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from collections import Counter
@@ -697,12 +698,12 @@ def test_a_new_scope_beside_another_is_recorded_as_an_incremental_build(
     assert record["communities"]["runs_since"] == 1
 
 
-def test_a_new_scope_beside_another_keeps_the_namespaces_visualization(
+def test_a_new_scope_beside_another_exports_the_whole_namespace(
     registry, tmp_path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # The second scope's run exported its own graph (or failed to: its
-    # delta held no community), replacing the namespace's visualization
-    # data with one corpus's part.
+    # The second scope's run once exported its own graph, replacing the
+    # namespace's visualization data with one corpus's part; it reads the
+    # namespace's stores.
     config = scope_test_config()
     config.graph.visualization.export_data = True
     config.graph.visualization.outputs_directory = str(tmp_path / "viz")
@@ -719,6 +720,8 @@ def test_a_new_scope_beside_another_keeps_the_namespaces_visualization(
 
     with caplog.at_level("INFO"):
         stack.run(write_corpus(tmp_path / "src-b", {"b.txt": B_TEXT}))
-    assert data.read_text(encoding="utf-8") == written
-    assert "other source scope(s)" in caplog.text
+    after = json.loads(data.read_text(encoding="utf-8"))
+    # Scope a's entities are still there (scope b states no Vendor).
+    names = {node["attributes"]["name"] for node in after["nodes"]}
+    assert "Vendor" in names and {"Buyer", "Bank"} <= names
     assert "Visualization data export failed" not in caplog.text

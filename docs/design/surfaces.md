@@ -217,9 +217,12 @@ real-AWS verification before they are documented as supported.
 
 ## 10. Visualization & Analytics
 
-Ingestion renders nothing: the community-detection stage writes the graph
-and its community hierarchy as JSON (`graph.visualization.export_data`,
-`domain/ingestion/visualization_data.py`). `run-visualization` renders that
+Ingestion renders nothing: at the end of every run that indexed it writes
+the index namespace's graph and community hierarchy, read from the stores,
+as JSON (`graph.visualization.export_data`,
+`application/storage/visualization_export.py` over
+`domain/ingestion/visualization_data.py`), so the file is the whole
+namespace also after an incremental run. `run-visualization` renders that
 file without ingestion through the renderers of `adapters/renderers/`
 (`BaseRenderer`, `@register_renderer`, `RenderContext`, `resolve_renderers`,
 `render_resolved`):

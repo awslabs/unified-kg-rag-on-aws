@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -67,6 +68,7 @@ from unified_kg_rag.application.cli.console.settings_api import (
     schema,
 )
 from unified_kg_rag.application.cli.console.store import ConsoleStore
+from unified_kg_rag.application.cli.conventions import host_without_port, is_loopback
 from unified_kg_rag.application.config import get_config
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
@@ -80,11 +82,12 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import ConfigurationError, DataProcessingError
+from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils.files import temporary_sibling
 
 logger = get_logger(__name__)
 
 REQUEST_HEADER = "X-Console-Request"
-LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 MAX_UPLOAD_FILES = 10000
 _SECURITY_HEADERS = {
@@ -159,11 +162,26 @@ class SaveBody(BaseModel):
     text: str = Field(max_length=2_000_000)
     base_sha: str = Field(min_length=64, max_length=64)
     confirm_endpoints: list[str] = Field(default_factory=list, max_length=50)
-    confirm_directories: list[str] = Field(default_factory=list, max_length=10)
+    confirm_directories: list[str] = Field(default_factory=list, max_length=200)
 
 
 class UploadTooLarge(ConfigurationError):
     """An upload over the size limit (or without a Content-Length)."""
+
+
+class UnsupportedUpload(ConfigurationError):
+    """An upload holding a file of a type ingestion does not parse."""
+
+
+def _same_token(offered: str, token: str) -> bool:
+    """Whether a client's token is the console's, in constant time.
+
+    Compared as UTF-8 bytes: ``compare_digest`` refuses ``str`` arguments
+    holding non-ASCII characters, which would answer 500, not 401.
+    """
+    return secrets.compare_digest(
+        offered.encode("utf-8", "surrogateescape"), token.encode("utf-8")
+    )
 
 
 class ConsoleState:
@@ -284,11 +302,17 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Sized as every query path's loop is: the model and store calls the
+        # chain offloads run in its default executor.
+        loop = asyncio.get_running_loop()
+        config = state.try_config() or Config()
+        executor = event_loop.configure_event_loop(loop, config.processing.io_workers)
         try:
             yield
         finally:
             await state.jobs.shutdown()
             await state.ask.close()
+            event_loop.abandon_default_executor(loop, executor)
             state.store.close()
 
     app = FastAPI(
@@ -306,8 +330,7 @@ def create_app(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         if options.loopback:
-            host = (request.headers.get("host") or "").rsplit(":", 1)[0].lower()
-            if host not in LOOPBACK_HOSTS:
+            if not is_loopback(host_without_port(request.headers.get("host") or "")):
                 return _error(
                     421,
                     "foreign_host",
@@ -316,7 +339,7 @@ def create_app(
         if options.token:
             offered = request.query_params.get("token")
             if offered is not None and not request.url.path.startswith("/api/"):
-                if not secrets.compare_digest(offered, options.token):
+                if not _same_token(offered, options.token):
                     return HTMLResponse(_UNAUTHORIZED_PAGE, status_code=401)
                 # The token moves from the address to a cookie once.
                 redirect = RedirectResponse(request.url.path or "/", status_code=303)
@@ -331,7 +354,7 @@ def create_app(
             carried = request.cookies.get(TOKEN_COOKIE) or request.headers.get(
                 TOKEN_HEADER
             )
-            if not carried or not secrets.compare_digest(carried, options.token):
+            if not carried or not _same_token(carried, options.token):
                 if request.url.path.startswith("/api/"):
                     return _error(
                         401, "unauthorized", "the console's access token is missing"
@@ -397,6 +420,10 @@ def create_app(
     @app.exception_handler(UploadTooLarge)
     async def _too_large(_: Request, e: UploadTooLarge) -> JSONResponse:
         return _error(413, "too_large", str(e))
+
+    @app.exception_handler(UnsupportedUpload)
+    async def _unsupported(_: Request, e: UnsupportedUpload) -> JSONResponse:
+        return _error(415, "unsupported", str(e))
 
     @app.exception_handler(ConfigurationError)
     async def _config(_: Request, e: ConfigurationError) -> JSONResponse:
@@ -516,9 +543,14 @@ def create_app(
     async def dashboard_view(days: int = 30) -> dict[str, Any]:
         config = state.load_config()
         since = time.time() - max(1, min(days, 3650)) * 86400
-        queries = state.store.queries(since=since, limit=100000)
-        jobs = [j for j in state.jobs.all_jobs() if j["created"] >= since]
-        return dashboard.summarize(queries, jobs, config)
+        jobs = state.jobs.all_jobs(since=since, limit=None)
+
+        def summary() -> dict[str, Any]:
+            # Up to 100,000 rows: read and summed off the loop.
+            queries = state.store.queries(since=since, limit=100000)
+            return dashboard.summarize(queries, jobs, config)
+
+        return await asyncio.to_thread(summary)
 
     @app.delete("/api/history")
     async def clear_history() -> dict[str, Any]:
@@ -536,9 +568,11 @@ def create_app(
     @app.post("/api/uploads")
     async def upload(request: Request) -> dict[str, Any]:
         """Files into ``uploads/<name>/`` (form fields ``name`` and
-        ``files``, each file named by its path in the folder): refused
-        whole before parsing when over the size limit, and the files
-        written before a refusal removed."""
+        ``files``, each file named by its path in the folder), all or none:
+        refused whole before parsing when over the size limit, every name
+        and type checked before a byte is written, and each file written
+        beside its target and moved into place only once all are written,
+        so a refused upload leaves the folder as it was."""
         length = request.headers.get("content-length")
         if length is None or not length.isdigit():
             raise UploadTooLarge("an upload needs its Content-Length")
@@ -547,7 +581,7 @@ def create_app(
                 f"an upload takes at most {MAX_UPLOAD_BYTES // 2**20} MiB"
             )
         form = await request.form(max_files=MAX_UPLOAD_FILES, max_fields=8)
-        written: list[Path] = []
+        staged: dict[Path, Path] = {}
         try:
             name = form.get("name")
             files = [f for f in form.getlist("files") if not isinstance(f, str)]
@@ -555,15 +589,32 @@ def create_app(
                 raise PathRefused("an upload names its folder and holds files")
             folder = safe_name(name, "the corpus name")
             target = state.roots.resolve(f"uploads:{folder}", write=True)
-            total = 0
-            for upload_file in files:
-                relative = safe_relative(upload_file.filename or "")
-                path = state.roots.resolve(
-                    f"uploads:{folder}/{relative.as_posix()}", write=True
+            planned = [
+                (
+                    upload_file,
+                    state.roots.resolve(
+                        f"uploads:{folder}/"
+                        f"{safe_relative(upload_file.filename or '').as_posix()}",
+                        write=True,
+                    ),
                 )
+                for upload_file in files
+            ]
+            supported = ParserFactory.get_supported_extensions()
+            if unsupported := sorted(
+                {p.name for _, p in planned if p.suffix.lower() not in supported}
+            ):
+                raise UnsupportedUpload(
+                    f"ingestion does not read {', '.join(unsupported[:5])}"
+                    f"{' and others' if len(unsupported) > 5 else ''}; it reads "
+                    f"{' '.join(sorted(supported))}"
+                )
+            total = 0
+            for upload_file, path in planned:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                written.append(path)
-                with path.open("wb") as out:
+                temporary = staged.pop(path, None) or temporary_sibling(path)
+                staged[path] = temporary
+                with temporary.open("wb") as out:
                     while chunk := await upload_file.read(1024 * 1024):
                         total += len(chunk)
                         if total > MAX_UPLOAD_BYTES:
@@ -571,15 +622,19 @@ def create_app(
                                 f"an upload takes at most {MAX_UPLOAD_BYTES // 2**20} MiB"
                             )
                         out.write(chunk)
+            for path, temporary in staged.items():
+                os.replace(temporary, path)
+            staged_count = len(staged)
+            staged = {}
         except BaseException:
-            for path in written:
-                path.unlink(missing_ok=True)
+            for temporary in staged.values():
+                temporary.unlink(missing_ok=True)
             raise
         finally:
             await form.close()
         return {
             "corpus": state.roots.ref(target),
-            "files": len(written),
+            "files": staged_count,
             "bytes": total,
         }
 

@@ -15,6 +15,7 @@ import pytest
 
 from tests.fixtures.console_demo import requires_console
 from unified_kg_rag.application.cli import run_console
+from unified_kg_rag.application.cli.conventions import host_without_port
 
 pytestmark = pytest.mark.unit
 
@@ -37,6 +38,21 @@ ALL_INTERFACES = ".".join(["0"] * 4)
 )
 def test_loopback_addresses(host: str, loopback: bool) -> None:
     assert run_console.is_loopback(host) is loopback
+
+
+@pytest.mark.parametrize(
+    ("header", "host"),
+    [
+        ("127.0.0.1:8501", "127.0.0.1"),
+        ("127.0.0.2", "127.0.0.2"),
+        ("[::1]:8501", "[::1]"),
+        ("[::1]", "[::1]"),
+        ("LOCALHOST:8501", "localhost"),
+        ("::1", "::1"),
+    ],
+)
+def test_the_host_header_loses_only_its_port(header: str, host: str) -> None:
+    assert host_without_port(header) == host
 
 
 def test_the_default_host_is_loopback() -> None:

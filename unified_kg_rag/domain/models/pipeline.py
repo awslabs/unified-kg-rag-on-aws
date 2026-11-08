@@ -631,6 +631,12 @@ class PipelineContext(BaseModel):
         "count.",
     )
 
+    visualization_data_path: str | None = Field(
+        default=None,
+        description="Where the run wrote the namespace's visualization_data.json "
+        "(graph.visualization.export_data), read from the stores once it "
+        "indexed; None when it wrote none.",
+    )
     claims_missing_doc_ids: list[str] = Field(
         default_factory=list,
         description="Registry ids of the documents this run indexed without "

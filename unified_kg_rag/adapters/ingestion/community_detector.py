@@ -276,30 +276,6 @@ class CommunityDetector:
         self.node_to_community_l0.clear()
         self.node_to_community_l0.update(node_to_l0)
 
-    def export_community_data(self) -> dict[str, Any]:
-        if not self.all_communities:
-            raise GraphError("Communities must be detected before exporting.")
-
-        metrics = self.get_community_metrics()
-        hierarchy_output = [
-            {
-                "community_id": comm.community_id,
-                "level": comm.level,
-                # ``nodes`` is a set: its order of str ids follows the hash seed.
-                "nodes": sorted(comm.nodes, key=str),
-                "size": len(comm.nodes),
-                "parent": comm.parent_id,
-                "children": comm.children_ids,
-            }
-            for comm in self.all_communities.values()
-        ]
-
-        return {
-            "resolution": self.community_detection_config.resolution,
-            "metrics_level_0": metrics.model_dump() if metrics else {},
-            "hierarchy": hierarchy_output,
-        }
-
     def generate_community_objects(self) -> list[Community]:
         # No entity, or none in a component large enough for a community.
         if len(self.unclustered) == self.graph.number_of_nodes():

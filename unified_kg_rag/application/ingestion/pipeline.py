@@ -79,6 +79,9 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
 )
 from unified_kg_rag.application.ingestion.summary_tree_stage import SummaryTreeStage
 from unified_kg_rag.application.observability import configure_observability
+from unified_kg_rag.application.storage.visualization_export import (
+    write_visualization_data,
+)
 from unified_kg_rag.domain.ingestion.cache_keys import (
     corpus_manifest_fingerprint,
     seed_corpus_fingerprint,
@@ -105,6 +108,10 @@ from unified_kg_rag.domain.ingestion.methodologies import (
     switches_set_off,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
+from unified_kg_rag.domain.ingestion.visualization_data import (
+    DEFAULT_OUTPUTS_DIRECTORY,
+    VISUALIZATION_DATA_FILENAME,
+)
 from unified_kg_rag.domain.models import (
     CacheStrategy,
     Config,
@@ -129,6 +136,7 @@ from unified_kg_rag.domain.models.methodology import (
     artifacts_of,
     methodologies_holding,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     CacheSyncError,
@@ -152,7 +160,7 @@ from unified_kg_rag.shared.store_lookups import (
     remove_lookup_cache,
 )
 from unified_kg_rag.shared.usage import usage_scope
-from unified_kg_rag.shared.utils import compute_hash
+from unified_kg_rag.shared.utils import compute_hash, error_digest
 from unified_kg_rag.shared.write_fence import (
     check_fences_held,
     install_write_fence,
@@ -572,11 +580,7 @@ class DataIngestionPipeline:
             PipelineStageType.CLAIM_EXTRACTION: {
                 "reuse_stored": not self.pipeline_config.force_rebuild
             },
-            # Both export the visualization data (the community stage with
-            # the communities) under the pipeline's cache directory.
-            PipelineStageType.GRAPH_ANALYSIS: {"cache_directory": cache_directory},
             PipelineStageType.COMMUNITY_DETECTION: {
-                "cache_directory": cache_directory,
                 "doc_status": doc_status,
                 "reuse_stored": not self.pipeline_config.force_rebuild,
             },
@@ -2393,6 +2397,51 @@ class DataIngestionPipeline:
                 return True
         return False
 
+    def _visualization_path(self, context: PipelineContext) -> Path:
+        """Where ``visualization_data.json`` goes: ``graph.visualization.
+        outputs_directory``, else the pipeline's cache directory, which the
+        S3 cache sync uploads (a deployed task's local outputs are lost on
+        exit), else ``outputs/visualization``."""
+        configured = self.config.graph.visualization.outputs_directory
+        if configured:
+            directory = Path(configured)
+        elif self.pipeline_config.local_directory:
+            directory = (
+                Path(self.pipeline_config.local_directory)
+                / context.pipeline_id
+                / "visualization"
+            )
+        else:
+            directory = Path(DEFAULT_OUTPUTS_DIRECTORY)
+        return directory / VISUALIZATION_DATA_FILENAME
+
+    def _export_visualization(self, context: PipelineContext) -> None:
+        """Write the namespace's ``visualization_data.json`` from its stores
+        once a run indexed (``graph.visualization.export_data``): the whole
+        graph, also after an incremental run or beside another corpus's
+        documents. Best effort: a failed export never fails the run."""
+        if not self.config.graph.visualization.export_data:
+            return
+        if PipelineStageType.INDEXING.value not in self._executed_stages:
+            return
+        suffix = resolve_namespace(self.config, None)
+        path = self._visualization_path(context)
+        try:
+            counts = write_visualization_data(self.providers, suffix, path)
+        except Exception as e:  # noqa: BLE001 - the export is optional
+            logger.warning("Visualization data export failed: %s", error_digest(e))
+            logger.debug("Visualization data export error: %s", e)
+            return
+        context.visualization_data_path = str(path)
+        logger.info(
+            "Exported the namespace's graph (%d nodes, %d edges, %d "
+            "communities) to '%s' for run-visualization",
+            counts["nodes"],
+            counts["edges"],
+            counts["communities"],
+            path,
+        )
+
     def _finalize_pipeline_execution(
         self, context: PipelineContext, start_time: float
     ) -> None:
@@ -2418,6 +2467,7 @@ class DataIngestionPipeline:
         else:
             context.status = PipelineStageStatus.COMPLETED
             logger.info("Pipeline completed successfully with all stages passed")
+            self._export_visualization(context)
         self._warn_failed_units(context)
 
         with self._checkpoint_write():

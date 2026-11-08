@@ -61,14 +61,15 @@ uv run --no-dev run-ingestion --backend local --source-directory ./sample-corpus
 ```
 
 - **파일.** 설정 파일이 없으면 저장소가 작업 디렉터리의 `.unified-kg-rag/`에
-  생기므로(`graph.sqlite3`, `vector.sqlite3`, 레지스트리를 켜면 `doc-status.sqlite3`도),
+  생기므로(`graph.sqlite3`, `vector.sqlite3`과 레지스트리의 `doc-status.sqlite3`),
   모든 명령을 같은 디렉터리에서 실행하거나 `backend: local`을 적은 설정 파일을
   쓰세요(상대 경로는 그 파일이 있는 디렉터리 기준으로 해석함). 처음부터 다시 하려면
   `.unified-kg-rag/` 디렉터리를 지우거나 `indexing.reset: true`로 한 번 실행합니다.
-- **증분 인덱싱**은 프리셋에서 꺼져 있으며 `providers.doc_status.enabled: true`로
-  켭니다(실행 로그에 레지스트리의 절대 경로가 남음). 이전 실행이 만든 저장소에는 새
-  레지스트리가 모르는 문서가 들어 있으므로, 레지스트리를 켠 첫 실행은 종료 코드 2("was
-  built by a run with the doc-status registry off")로 멈춥니다. 이 실행만
+- **증분 인덱싱**은 프리셋에서 켜져 있습니다(SQLite 문서 상태 레지스트리, 실행 로그에
+  절대 경로가 남음). 같은 폴더를 다시 실행하면 새 문서, 변경된 문서, 실패한 문서만
+  처리합니다. `providers.doc_status.enabled: false`로 끌 수 있습니다. 레지스트리를 끈
+  실행이 만든 저장소에는 레지스트리가 모르는 문서가 들어 있으므로, 레지스트리를 켠 첫
+  실행은 종료 코드 2("was built by a run with the doc-status registry off")로 멈춥니다. 이 실행만
   `indexing.reset: true`로(예: `UKR__INDEXING__RESET=true`) 한 번 돌리면 저장소를 다시
   만들고 레지스트리를 채우며, 그다음 실행부터 증분으로 처리합니다.
 

@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import json
-import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -18,6 +17,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.shared.logging import get_logger
 from unified_kg_rag.shared.utils import compute_hash
+from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
 T = TypeVar("T", bound=BaseModel)
@@ -26,23 +26,6 @@ T = TypeVar("T", bound=BaseModel)
 class _CorruptCacheEntry(Exception):
     """A cached entry's files are missing, truncated, fail their hash or no
     longer validate as the requested model."""
-
-
-def _atomic_write_text(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` so a reader sees the old file or the new one.
-
-    The data goes to a uniquely named sibling first and is then renamed over
-    ``path`` (atomic on POSIX and Windows), so a crash mid-write leaves the
-    previous file intact instead of a truncated one. The temp name does not end
-    in ``.json``, so the S3 cache sync never uploads one.
-    """
-    temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        temp_path.write_text(text, encoding="utf-8")
-        temp_path.replace(path)
-    except BaseException:
-        temp_path.unlink(missing_ok=True)
-        raise
 
 
 class CacheManager:
@@ -415,7 +398,7 @@ class CacheManager:
         content_hash = compute_hash(serialized_data, length=16)
         cache_file = stage_cache_dir / f"{cache_key}.json"
 
-        _atomic_write_text(cache_file, serialized_data)
+        atomic_write_text(cache_file, serialized_data)
 
         entry = CacheEntry(
             key=cache_key,
@@ -480,7 +463,7 @@ class CacheManager:
             chunk_file = stage_cache_dir / f"{cache_key}_chunk_{i:04d}.json"
             chunk_json = self.serialize_data(chunk)
 
-            _atomic_write_text(chunk_file, chunk_json)
+            atomic_write_text(chunk_file, chunk_json)
 
             chunk_size = chunk_file.stat().st_size
             total_size += chunk_size
@@ -562,6 +545,6 @@ class CacheManager:
         index_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            _atomic_write_text(index_path, index.model_dump_json(indent=2))
+            atomic_write_text(index_path, index.model_dump_json(indent=2))
         except OSError as e:
             logger.error("Failed to save cache index to '%s': %s", index_path, e)

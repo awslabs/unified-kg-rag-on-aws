@@ -133,9 +133,11 @@ stored is read again: follow *Upgrading* in order.
   `evaluation.ragas_metrics` takes only the five metrics ragas scores (`answer_correctness`, `answer_relevancy`,
   `context_precision`, `context_recall`, `faithfulness`); another fails the load instead of the evaluator.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
-  `true`); `run-visualization` renders it with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA)
-  are gone. `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown
-  key (#344, #467). See [visualize](docs/guides/visualize.md).
+  `true`), at the end of every run that indexed, from the namespace's stores, and prints its path;
+  `run-visualization` renders it (without `--data-path` the newest export, of `--suffix`'s namespace when given)
+  with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are gone.
+  `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown key (#344,
+  #467). See [visualize](docs/guides/visualize.md).
 - Environment variables: `UKR__<SECTION>__<KEY>` sets any key (double underscores between segments, any case, JSON
   for lists and mappings); the 0.2.3 names are no longer read (#335). `NEPTUNE_ENDPOINT` is
   `UKR__AWS__NEPTUNE__ENDPOINT`; `OPENSEARCH_ENDPOINT` / `_USERNAME` / `_PASSWORD` are
@@ -414,7 +416,10 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
 12. Local mode: a `backend: local` config that relied on the preset for the stores gets the embedded SQLite stores;
     add `providers.graph.kind: gremlin` and `providers.vector.kind: opensearch` (as `docker/config.local.yaml` does)
     to keep the containers (#273). Its reranker needs the `cross-encoder` extra: with `local` alone queries run
-    with reranking off (#628).
+    with reranking off (#628). The preset turns the SQLite doc-status registry on, so runs are incremental: stores
+    a run built with it off make the next run exit 2 until one run with `indexing.reset: true` rebuilds them (a
+    first build's cost, less what the LLM response cache holds); `providers.doc_status.enabled: false` keeps full
+    reloads.
 13. After the rebuild succeeds: delete the old registry table, the OpenSearch pipeline 0.2.3 wrote (`DELETE
     _search/pipeline/graphrag-hybrid-search-pipeline`) and `s3://<bucket>/embedding-cache/` if you used it. Delete
     the three log groups 0.2.3 created that the stacks no longer manage (CloudFormation retains them, also with
@@ -817,10 +822,11 @@ From a `main` checkout (formats and keys no release had):
   interval for older comparisons; gates, cost, declines, win rates by answer length) and open saved runs; explore the
   exported graph (search, neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a
   dashboard of the questions and jobs run through it (time, tokens, cost per strategy, model and role); and edit the
-  config file with validation, a diff before saving, a confirmation before a provider endpoint or a directory the
-  console serves changes, and secrets never shown or written. Jobs run the unchanged `run-ingestion` and `run-eval` in
-  child processes. It binds `127.0.0.1` (another address needs `--allow-remote`), requires a per-launch access token,
-  refuses paths outside its directories and cross-site requests, and loads nothing from another host. The web client
+  config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
+  path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged
+  `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),
+  requires a per-launch access token, refuses paths outside its directories, cross-site requests and uploads of a
+  type ingestion does not read, writes an upload all or none, and loads nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
   figures; self-hosted, SIL OFL), with a force-directed canvas graph (the focused node and its neighbours labelled,
@@ -1614,6 +1620,9 @@ Ingestion and incremental indexing.
 - A run into a namespace that holds other source scopes' documents no longer exports `visualization_data.json`
   from its own corpus's graph (or fails to, `Communities must be detected before exporting`): it logs an INFO line
   pointing at `run-describe --output-path` and leaves the earlier file in place (#640).
+- An incremental run, and a run into a namespace that holds other source scopes' documents, export the whole
+  namespace's graph, read from its stores, not only its own delta or corpus (or none, or `Communities must be
+  detected before exporting`), so the console's graph and `run-visualization` show what queries read (#640).
 - A source scope's first run into a namespace that holds other scopes' documents is recorded as the incremental
   build it is: the build record kept only that run's documents and artifacts as a full build, restarted the
   community counters and dropped the full build it was applied on (#640).
@@ -1802,8 +1811,9 @@ Deployment (CDK).
   unknown operator, a null or empty range raises `InvalidFilterError`), and a string value is converted to the
   field's type (`true`/`false`, `1`/`0`, `yes`/`no`; `in_schema:maybe` is refused) (#354, #356, #360, #370, #376,
   #381, #479, #483, #490, #581). See [filters](docs/reference/filters.md).
-- A guardrail-blocked answer returns no sources or search results, and the query span records only the screened
-  query (#345).
+- A guardrail-blocked answer returns no sources, search results or model-written query texts, and the query span
+  records only the screened query (#345). With `check_output`, the rewritten and translated query, its entities and
+  LightRAG keywords (`processed_query`, `search_results.query`) are screened as model output.
 - IaC: queries run under a read-only role that cannot write through a `_search` path, lists only `eval/` and has no
   DynamoDB access; `bedrock:ApplyGuardrail` is granted on the configured guardrail only; unused Neptune, S3 delete
   and `GetInferenceProfile` actions are dropped, and private-mode endpoint policies admit only the account (#204,

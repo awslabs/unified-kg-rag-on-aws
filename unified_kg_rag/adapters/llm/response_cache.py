@@ -49,6 +49,7 @@ from unified_kg_rag.domain.models import ModelPurpose
 from unified_kg_rag.ports.model_factory import LLMFactoryPort
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.usage import CACHED_RESPONSE_KEY
+from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
 
@@ -243,14 +244,12 @@ class LLMResponseCache(BaseCache):
             on_segment = self._on_segment
             directory.mkdir(parents=True, exist_ok=True)
             path = directory / f"{time.time_ns():020d}-{secrets.token_hex(4)}.json"
-            temp = path.with_suffix(".tmp")
-            temp.write_text(
+            atomic_write_text(
+                path,
                 json.dumps(
                     {"version": _SEGMENT_VERSION, "entries": pending}, default=str
                 ),
-                encoding="utf-8",
             )
-            temp.replace(path)
             self._written.update(
                 e["key"] for e in pending if e["generations"] is not None
             )

@@ -255,7 +255,10 @@ LOCAL_PRESET: dict[str, Any] = {
         "rerank": {"kind": CROSS_ENCODER},
         "graph": {"kind": SQLITE},
         "vector": {"kind": SQLITE},
-        "doc_status": {"kind": SQLITE},
+        # On: a local run is incremental (only new and changed documents
+        # are processed) as the console's Ingest page says, not a full
+        # reload each time.
+        "doc_status": {"kind": SQLITE, "enabled": True},
     },
     "models": {
         "default": "qwen2.5:7b-instruct",
@@ -353,6 +356,10 @@ def apply_backend_preset(data: dict[str, Any]) -> dict[str, Any]:
         preset["models"].pop("embedding")
     if kind("rerank") != CROSS_ENCODER:
         preset["models"].pop("rerank")
+    # Only the embedded registry is on by default: a DynamoDB table is
+    # switched on by the config that names it.
+    if kind("doc_status") != SQLITE:
+        preset["providers"]["doc_status"].pop("enabled")
     # The context budget is derived from the default non-Bedrock window, so it
     # only fits a non-Bedrock LLM left at that window. Bedrock models (sized
     # from the catalog) or an explicit window keep the regular default.

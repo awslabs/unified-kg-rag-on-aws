@@ -112,6 +112,59 @@ def test_jobs_a_stopped_console_left_running_are_marked_lost(tmp_path: Path) -> 
     manager._claim("default", "new")  # the namespace is free again
 
 
+def test_jobs_past_the_newest_200_are_found_by_id_and_marked_lost(
+    tmp_path: Path,
+) -> None:
+    store = ConsoleStore(tmp_path / "console.sqlite3")
+    now = time.time()
+    store.save_job(
+        {"id": "old", "kind": "ingest", "namespace": "n", "created": now - 900}
+        | {"status": "running", "pid": 2**22 + 7}
+    )
+    for index in range(250):
+        store.save_job(
+            {"id": f"j{index}", "kind": "ingest", "namespace": "n"}
+            | {"created": now - index, "status": "succeeded"}
+        )
+    manager = _manager(tmp_path, store)
+    assert manager.get("old")["status"] == "lost"  # older than the newest 200
+    with pytest.raises(KeyError):
+        manager.get("missing")
+    assert len(manager.all_jobs()) == 200
+    assert len(manager.all_jobs(since=now - 99.5, limit=None)) == 100
+    assert len(manager.all_jobs(since=0.0, limit=None)) == 251
+
+
+def test_a_job_that_outlives_its_stop_grace_is_killed_with_its_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    killed: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        jobs_module.os, "killpg", lambda pid, sig: killed.append((pid, sig))
+    )
+
+    class _Process:
+        pid, returncode = 4321, None
+
+        def kill(self) -> None:
+            killed.append((self.pid, -1))
+
+    manager = _manager(tmp_path)
+    job = jobs_module.Job(
+        id="j",
+        kind=jobs_module.JobKind.INGEST,
+        namespace="n",
+        params={},
+        argv=[],
+        env={},
+        work_dir=tmp_path,
+        log_path=tmp_path / "log",
+    )
+    job.process = _Process()  # type: ignore[assignment]
+    manager._kill(job)
+    assert killed[0] == (4321, jobs_module.signal.SIGKILL)
+
+
 def test_pipeline_ids_differ_per_folder_and_name(tmp_path: Path) -> None:
     folders = ["docs", "uploads/docs", "a b", "a-b", "계약서", "契約書", "合同"]
     paths = []
@@ -211,6 +264,39 @@ async def test_a_replaced_chain_closes_once_its_question_finishes(
     service.reset()  # idle: closed at once
     await asyncio.sleep(0.05)
     assert second.closed == 1
+    await service.close()
+
+
+async def test_a_reset_during_a_chain_build_rebuilds_from_the_new_config(
+    tmp_path: Path,
+) -> None:
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+    configs = iter(["old", "new"])
+    built: list[tuple[str, _Chain]] = []
+
+    def factory(config: str) -> _Chain:
+        chain = _Chain(_output())
+        built.append((config, chain))
+        if config == "old":  # a slow build the save lands during
+            started.set()
+            release.wait(5)
+        return chain
+
+    service = AskService(
+        lambda: next(configs),  # type: ignore[arg-type,return-value]
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=factory,  # type: ignore[arg-type]
+    )
+    pending = asyncio.create_task(service.chain())
+    await asyncio.to_thread(started.wait, 5)
+    service.reset()  # the config was saved while the old one was built
+    release.set()
+    chain, config = await pending
+    assert config == "new" and chain is built[1][1]
+    await asyncio.sleep(0.05)
+    assert built[0][1].closed == 1  # the stale build is closed, not kept
     await service.close()
 
 

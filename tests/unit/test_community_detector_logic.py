@@ -801,7 +801,7 @@ class TestEndToEndDetection:
         assert set().union(*level0) == set(g.nodes())
 
 
-class TestMetricsAndExport:
+class TestMetrics:
     def test_get_community_metrics_summarizes_l0(self) -> None:
         cd = _detector()
         cd.graph = _two_triangle_graph()
@@ -827,40 +827,6 @@ class TestMetricsAndExport:
         cd = _detector()
         cd.graph = _two_triangle_graph()
         assert cd.get_community_metrics() is None
-
-    def test_export_requires_detected_communities(self) -> None:
-        cd = _detector()
-        cd.graph = _two_triangle_graph()
-        with pytest.raises(GraphError):
-            cd.export_community_data()
-
-    def test_export_community_data_shape(self) -> None:
-        cd = _detector()
-        cd.graph = _two_triangle_graph()
-        cd.all_communities = {
-            "L0_C0": HierarchicalCommunity(
-                community_id="L0_C0", level=0, nodes={"n0", "n1", "n2"}
-            )
-        }
-        exported = cd.export_community_data()
-        assert "hierarchy" in exported
-        assert "metrics_level_0" in exported
-        entry = exported["hierarchy"][0]
-        assert entry["community_id"] == "L0_C0"
-        assert entry["size"] == 3
-        assert entry["level"] == 0
-
-    def test_export_lists_members_sorted(self) -> None:
-        # ``nodes`` is a set; listing it as is wrote the members in hash-seed
-        # order, so two runs of one build exported different files.
-        cd = _detector()
-        cd.graph = _two_triangle_graph()
-        members = {f"entity-{i:02d}" for i in range(30)}
-        cd.all_communities = {
-            "L0_C0": HierarchicalCommunity(community_id="L0_C0", level=0, nodes=members)
-        }
-        entry = cd.export_community_data()["hierarchy"][0]
-        assert entry["nodes"] == sorted(members)
 
 
 class TestGenerateCommunityObjects:

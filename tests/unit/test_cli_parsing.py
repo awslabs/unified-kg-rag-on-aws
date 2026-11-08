@@ -1909,9 +1909,16 @@ def test_prompt_tuning_main_no_texts_returns_1(config, mocker, tmp_path) -> None
 # --- run_visualization: parser + helpers ---------------------------------
 
 
-def test_visualization_parser_requires_data_path() -> None:
+def test_visualization_parser_finds_the_newest_export_without_a_data_path() -> None:
+    args = run_visualization._build_parser().parse_args([])
+    assert args.data_path is None and args.suffix is None
+    assert args.cache_directory == Path("cache")
+    assert (
+        run_visualization._build_parser().parse_args(["--suffix", "t-1"]).suffix
+        == "t-1"
+    )
     with pytest.raises(SystemExit):
-        run_visualization._build_parser().parse_args([])
+        run_visualization._build_parser().parse_args(["--suffix", "../x"])
 
 
 def test_visualization_parser_defaults() -> None:
