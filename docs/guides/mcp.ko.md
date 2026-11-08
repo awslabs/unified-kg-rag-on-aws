@@ -46,7 +46,7 @@ extra가 없으면 `run-mcp-server`는 extra 이름을 알려 주고 종료 코�
 | 도구 | 하는 일 | 모델 호출 |
 |---|---|---|
 | `kg_search` | 검색만 합니다. 질의(어느 언어든)에 대한 근거 콘텐츠를 순위대로 돌려주며, `strategy`, `search_type`, `top_k`, `filters`는 `run-rag --mode search`와 같습니다 | 전략의 질의 처리, 질의 임베딩, 재순위화 |
-| `kg_answer` | RAG 답변 전체, 답변 모델이 본 출처, `usage`, 답변 거절 필드(`abstained`, `abstention_reason`). 후속 질문이면 지금까지의 대화를 `history`로 넘깁니다(아래 참고) | 위의 호출, `history`가 있으면 후속 질문 재작성, 답변 생성 |
+| `kg_answer` | RAG 답변 전체와 답변 거절 필드(`abstained`, `abstention_reason`)를 먼저, 그다음 답변의 근거 레코드와 `usage`. `records`: `cited`(기본값: 답변이 인용한 출처와 모델 작성 섹션, 하나도 인용하지 않으면 모든 출처), `all`(답변 모델이 본 모든 출처), `none`. 실제 적용된 값은 `records_kept`. 후속 질문이면 지금까지의 대화를 `history`로 넘깁니다(아래 참고) | 위의 호출, `history`가 있으면 후속 질문 재작성, 답변 생성 |
 | `kg_get_entity` | `id`, `iri`, `name`으로 엔터티를 찾습니다(이름은 먼저 정확히 일치하는 것을, 없으면 가장 비슷한 이름을 찾고 `match: search`로 표시) | 없음 |
 | `kg_neighbors` | 한 엔터티에서 `max_hops` 안에 있는 엔터티와 그 사이의 관계 | 없음 |
 | `kg_describe_schema` | 네임스페이스가 가진 방법론과 전략, 마지막 빌드, 추출 스키마의 타입과 패턴, 필터 키, 서버 한도 | 없음 |

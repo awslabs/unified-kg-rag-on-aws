@@ -466,7 +466,7 @@ async def test_a_record_lists_at_most_twenty_text_units() -> None:
 
 async def test_answer_returns_the_sources_usage_and_abstention() -> None:
     chain = FakeChain(abstained=True, abstention_reason="marker")
-    result = await _tools(chain).answer("Who stores widgets?")
+    result = await _tools(chain).answer("Who stores widgets?", records="all")
     assert result.answer == "Depot stores widgets for Vendor."
     assert (result.abstained, result.abstention_reason) == (True, "marker")
     assert [r.kind for r in result.records] == ["text", "entity", "relationship"]
@@ -485,12 +485,20 @@ async def test_answer_records_carry_their_citation_markers() -> None:
             source_id=chain.results[1].source,
         ),
     ]
-    records = (await _tools(chain).answer("창고는 누구의 부품을 보관하나요?")).records
+    records = (
+        await _tools(chain).answer("창고는 누구의 부품을 보관하나요?", records="all")
+    ).records
     assert [(r.citation, r.cited) for r in records] == [
         (1, True),
         (2, False),
         (None, None),
     ]
+    # By default only what the answer cites; none on request.
+    cited = await _tools(chain).answer("창고는 누구의 부품을 보관하나요?")
+    assert [(r.citation, r.cited) for r in cited.records] == [(1, True)]
+    assert cited.records_kept == "cited"
+    bare = await _tools(chain).answer("q", records="none")
+    assert bare.records == [] and bare.answer
     # kg_search has no answer: no markers.
     found = (await _tools(chain).search("q")).records
     assert all(r.citation is None and r.cited is None for r in found)
@@ -558,7 +566,7 @@ async def test_a_cited_model_written_section_is_a_record(
         ),
         Citation(marker=2, cited=False, section_type="text", source_id=_UNIT),
     ]
-    records = (await _tools(chain).answer("q")).records
+    records = (await _tools(chain).answer("q", records="all")).records
     # First, as the strategy ranks it (and kg_search lists it).
     assert [(r.rank, r.kind, r.citation, r.cited) for r in records] == [
         (1, kind, 1, True),
@@ -576,6 +584,23 @@ async def test_a_cited_model_written_section_is_a_record(
     # kg_search lists the section among the results, uncited.
     found = (await _tools(chain).search("q")).records
     assert [r.citation for r in found] == [None, None]
+
+
+async def test_an_answer_that_cites_nothing_keeps_every_record() -> None:
+    # Citations off (global and drift by default) or no marker written:
+    # nothing tells which sources the answer rests on.
+    result = await _tools(FakeChain()).answer("q")
+    assert result.records_kept == "all"
+    assert [r.kind for r in result.records] == ["text", "entity", "relationship"]
+
+
+async def test_the_answer_comes_before_its_records() -> None:
+    chain = FakeChain()
+    dumped = (await _tools(chain).answer("q", records="all")).model_dump_json()
+    assert dumped.startswith('{"answer":')
+    assert dumped.index('"answer"') < dumped.index('"records"')
+    with pytest.raises(ToolArgumentError, match="records must be one of"):
+        await _tools(chain).answer("q", records="some")  # type: ignore[arg-type]
 
 
 async def test_a_blocked_query_says_so() -> None:
@@ -606,7 +631,7 @@ async def test_a_text_record_names_its_document_from_its_attributes() -> None:
     passage.metadata["attributes"]["document_id"] = "doc-42"
     chain.results = [passage]
     (searched,) = (await _tools(chain).search("q")).records
-    (answered,) = (await _tools(chain).answer("q")).records
+    (answered,) = (await _tools(chain).answer("q", records="all")).records
     assert searched.document_id == answered.document_id == "doc-42"
 
 

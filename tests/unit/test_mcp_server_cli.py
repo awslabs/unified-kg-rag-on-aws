@@ -204,6 +204,10 @@ def test_kg_answer_takes_a_bounded_history_over_the_protocol(
 
     answer_schema, search_schema, refused = asyncio.run(run())
     assert "history" in answer_schema and "history" not in search_schema
+    # Which records kg_answer returns: an enum, cited by default.
+    assert answer_schema["records"]["enum"] == ["cited", "all", "none"]
+    assert answer_schema["records"]["default"] == "cited"
+    assert "records" not in search_schema
     assert refused
     (rag_input,) = chain.inputs
     assert rag_input.history is not None

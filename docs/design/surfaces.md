@@ -19,7 +19,7 @@ writes memory; no tool takes an index name, an endpoint or a file path.
 | Tool | Runs | Model calls | Returns |
 |---|---|---|---|
 | `kg_search` | `GraphRAGChain.asearch` | those of the strategy's query processing (the `auto` router, query entities or keywords), the query embedding, the rerank | ranked supporting-content records |
-| `kg_answer` | `GraphRAGChain.ainvoke` (with the caller's `history`, if given) | the above plus the follow-up rewrite (with a `history`) and the answer | the answer, its sources as records, `usage`, `abstained`/`abstention_reason`, `blocked`, the strategy run |
+| `kg_answer` | `GraphRAGChain.ainvoke` (with the caller's `history`, if given) | the above plus the follow-up rewrite (with a `history`) and the answer | the answer first, `abstained`/`abstention_reason`, then the records it cites (`records`: `cited`, `all`, `none`), `usage`, `blocked`, the strategy run |
 | `kg_get_entity` | the entities index by `id`, `iri` or exact `name.keyword`; without an exact match, a lexical search of `name` | none | up to `limit` entities, how they matched |
 | `kg_neighbors` | the graph walk from one entity (`max_hops`, the configured per-hop budget) and its incident relationships | none | the neighbours (hop distance, path) and the relationships with their text units and documents |
 | `kg_describe_schema` | the namespace's build record and held artifacts, the resolved extraction schema | none (a schema source may read its file or S3 object once) | held methodologies, the strategies they serve, the build, entity and relationship types and patterns, the filter keys |
