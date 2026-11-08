@@ -49,7 +49,7 @@ export function deltaInterval(delta: Delta, multiplicity: Multiplicity | null | 
  * family's simultaneous interval, the primary metric marked. */
 export function DeltaPlot({ deltas, confidence = 0.95, multiplicity }: { deltas: [string, Delta][]; confidence?: number; multiplicity?: Multiplicity | null }) {
   const { t, number, percent } = useI18n();
-  const width = 220;
+  const width = 180;
   const pad = 10;
   const adjusted = deltas.some(([, d]) => d.adjusted_p_value != null) && multiplicity != null;
   const alpha = multiplicity?.alpha ?? null;

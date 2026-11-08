@@ -4504,7 +4504,10 @@ white sheets over a grey-green ground (`#F1F3F0`). Type is one
 superfamily, IBM Plex (OFL), self-hosted as WOFF2 subsets: Plex Serif for
 page titles, Plex Sans for text, Plex Mono for ids and numbers, Plex Sans KR
 and JP for Korean and Japanese (Chinese takes the system faces), set per
-locale through `:lang()`. UI copy is English
+locale through `:lang()`. A light and a dark theme are two full token sets
+(the dark one stepped for its ground, not inverted), following the system
+setting unless the rail's toggle picks one; a same-origin script sets the
+theme before the first paint, as the CSP allows no inline script. UI copy is English
 with nine more locales (the languages `LanguageCode` lists), English being
 the source and the fallback.
 

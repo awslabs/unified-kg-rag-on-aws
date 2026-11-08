@@ -74,7 +74,19 @@ test("ask, follow the trail into the graph, visit every page", async ({ page, ba
   await expect(page.getByRole("columnheader", { name: "Holm p" })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator("td .badge", { hasText: "primary" }).first()).toBeVisible();
 
+  // The theme: chosen in the shell, kept across a reload, back to the system's.
   await page.goto("/settings");
+  const theme = page.getByRole("group", { name: "Theme" });
+  await theme.getByRole("button", { name: "Dark" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(theme.getByRole("button", { name: "Dark" })).toHaveAttribute("aria-pressed", "true");
+  await theme.getByRole("button", { name: "Light" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await theme.getByRole("button", { name: "System" }).click();
+  expect(await page.evaluate(() => window.localStorage.getItem("ukr-console-theme"))).toBeNull();
+
   await page.getByLabel("Language").first().selectOption("ko");
   await expect(page.locator("html")).toHaveAttribute("lang", "ko");
 

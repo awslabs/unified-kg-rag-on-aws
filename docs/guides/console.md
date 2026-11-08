@@ -287,6 +287,14 @@ The next question and job use the saved file.
   guards against a `run-ingestion` started elsewhere. Stopping the console
   stops its jobs and waits up to the CLIs' stop grace (110 s) for them.
 
+## Light and dark
+
+The page has a light and a dark theme. It follows the operating system's
+setting by default; **Theme** in the side bar (at the top on a narrow
+screen) switches it to *System*, *Light* or *Dark*, and the browser keeps
+the choice. The graph, the charts and the evidence highlights follow the
+theme.
+
 ## Languages
 
 The page is in English, Korean, Japanese, Simplified Chinese, German,

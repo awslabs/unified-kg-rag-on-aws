@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useRef, type ReactElement } from "react";
 import { LocalePicker } from "./components/LocalePicker";
+import { ThemePicker } from "./components/ThemePicker";
 import { useI18n } from "./i18n/i18n";
 import { get } from "./lib/api";
 import { navigate, PAGES, useRoute, type Page } from "./lib/router";
@@ -92,6 +93,7 @@ export function App() {
               <dd className="mono">{status.data.backend ? `${status.data.backend.graph} · ${status.data.backend.vector}` : "—"}</dd>
             </dl>
           ) : null}
+          <ThemePicker />
           <LocalePicker />
         </div>
       </nav>
