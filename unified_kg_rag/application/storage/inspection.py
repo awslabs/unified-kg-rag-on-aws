@@ -45,6 +45,7 @@ from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.ports.indexer import StoredItemKind
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import (
+    DocStatusFormatError,
     DocStatusRegistryError,
     MethodologyNotIndexedError,
 )
@@ -240,7 +241,11 @@ def _registry_counts(
                 close()
     except (DocStatusRegistryError, ConfigurationError) as e:
         # Without the hint for an indexing run: describing needs no registry.
-        reason = e.reason if isinstance(e, DocStatusRegistryError) else str(e)
+        reason = (
+            e.reason
+            if isinstance(e, (DocStatusRegistryError, DocStatusFormatError))
+            else str(e)
+        )
         logger.warning(
             "The doc-status registry is unavailable; describing the namespace "
             "without its records: %s",

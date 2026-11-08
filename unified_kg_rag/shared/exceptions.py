@@ -69,6 +69,18 @@ class DocStatusRegistryError(AWSServiceError):
         self.reason = message
 
 
+class DocStatusFormatError(ConfigurationError):
+    """The doc-status registry's table holds an earlier release's format.
+
+    Like :class:`DocStatusRegistryError`, ``indexing_hint`` ends the message
+    and :attr:`reason` is the message without it.
+    """
+
+    def __init__(self, message: str = "", *, indexing_hint: str = "") -> None:
+        super().__init__(f"{message} {indexing_hint}" if indexing_hint else message)
+        self.reason = message
+
+
 class EvaluationException(GraphRAGException):
     pass
 
