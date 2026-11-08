@@ -400,6 +400,11 @@ jobs:
         run: npm run build
       - name: Audit
         run: npm audit --audit-level=moderate
+      - name: Licenses of the bundled dependencies
+        # The runtime dependencies the built client bundles, from the
+        # lockfile, against the Python dependencies' denylist (copyleft,
+        # source-available, unlabeled) and its reviewed exceptions.
+        run: python3 ../../.github/scripts/check_licenses.py --npm-lock package-lock.json
 
   console-smoke:
     # One browser pass through the console on the demo workspace with the

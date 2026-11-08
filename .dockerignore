@@ -5,6 +5,11 @@ references/
 tests/
 docs/
 iac/
+# The console (its web client's node_modules among it) and local corpus
+# copies: the image copies neither, and a copy of a corpus must not reach a
+# build context.
+console/
+.test-corpus-backup/
 outputs/
 logs/
 *.md

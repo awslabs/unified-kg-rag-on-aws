@@ -85,10 +85,14 @@ jobs:
           wc -c release-notes.md
 
       - name: Build the sdist and wheel
-        run: uv build --out-dir dist
+        # The build backend is pinned (hatchling in pyproject.toml), its own
+        # dependencies resolve as of this date, as twine's below: a release
+        # published later cannot change the artifacts of one commit. Move the
+        # date when bumping hatchling or twine.
+        run: uv build --out-dir dist --exclude-newer 2026-11-01T00:00:00Z
 
       - name: Check the distribution metadata
-        run: uvx twine@7.0.0 check --strict dist/*
+        run: uvx --exclude-newer 2026-11-01T00:00:00Z twine@7.0.0 check --strict dist/*
 
       - name: Check the artifacts' version and contents
         # One sdist and one wheel of the package version; both carry LICENSE

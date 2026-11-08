@@ -129,7 +129,9 @@ commits and versions (outside the lock) and runs the parity tests that skip with
 When a pull request changes `pyproject.toml` or `uv.lock`, the
 [`licenses`](./.github/workflows/licenses.yml) workflow also syncs every extra and fails on a copyleft,
 source-available or unlabeled license among the runtime dependencies. Reviewed exceptions are listed, each with its
-reason, in `.github/scripts/check_licenses.py`; add one only after reviewing the license.
+reason, in `.github/scripts/check_licenses.py`; add one only after reviewing the license. The `console-web` job runs
+the same check over the runtime npm dependencies the console's web client bundles, from the license fields of
+`console/web/package-lock.json`.
 
 The [`security`](./.github/workflows/security.yml) workflow runs the Automated Security Helper (ASH: bandit, semgrep,
 detect-secrets, checkov, cdk-nag, npm-audit) and fails on an unsuppressed finding at MEDIUM or above. To run it locally
