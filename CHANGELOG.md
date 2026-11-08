@@ -234,6 +234,8 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   the timestamp with a random suffix); the JSON output's
   `output_directory` names the run directory, and `evaluation.run_subdirectories: false` keeps the flat layout
   (#121, #620). See [evaluation output](docs/reference/evaluation-output.md).
+- `pipeline_metadata.json`: the `document_parsing` stage's `success_rate` is a fraction (0.5), as every other rate
+  there, not a percentage (50).
 - The `indexing_results` stage metrics in `pipeline_metadata.json` (and the index types an `Indexing failed` error
   names) start `vector_` / `graph_` instead of `opensearch_` / `neptune_` (`vector_text_units`, `graph_entities`,
   ...); the EMF metrics are unchanged (#584).

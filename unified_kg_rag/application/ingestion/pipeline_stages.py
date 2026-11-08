@@ -903,9 +903,8 @@ class DocumentParsingStage(PipelineStage):
             "failed_files": failed_files,
             "files_failed": len(failed_files),
             "files_skipped": len(skipped_files),
-            "success_rate": (
-                (output_count / input_count * 100) if input_count > 0 else 0
-            ),
+            # A fraction, as every rate in the run metadata.
+            "success_rate": output_count / input_count if input_count > 0 else 0,
         }
 
         return input_count, output_count, metrics
