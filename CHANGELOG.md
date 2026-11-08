@@ -614,26 +614,25 @@ From a `main` checkout (formats and keys no release had):
   budget left its reports out of the context; it stays model-written (screened, never a source). The answer prompt
   (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those markers, ASCII in
   every answer language; global and DRIFT answers are asked to cite where possible and keep a relevant point with no
-  marker (pairwise judges preferred their uncited answers on comprehensiveness). `RAGOutput.citations` lists one `Citation` per number: whether the answer
-  cites it, its documents (`CitedDocument`: document id, file name, path relative to the corpus root, pages), text
-  units, chunk id, title, seed-graph provenance and IRI; a graph section names the documents of up to
-  `search.citations.lineage_units` (10) of its text units that its query's suffix and filters let through, read
-  in batched fetches (an excluded or another tenant's document is never named; the next units fill its place),
-  alongside the answer call. A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation
-  (a marker has at most three digits: a bracketed year such as `[2020]` is text, and sections past the 999th get no
-  number); a blocked answer has none. Earlier
-  answers reach the follow-up rewrite without their markers. `CitationMarkerScanner`
-  reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`, and a
-  cited key point or intermediate answer is a record of its own (`key_point`, `intermediate_answer`) with its
-  citation's documents. The
-  document converter keeps where each PDF page starts and text units store `page_start` / `page_end`, `relative_path`
-  and `document_id` in their attributes (ids and texts unchanged). `run-rag` prints the cited sources and its JSON
-  output carries every citation. The retrieval evaluator adds `citation_precision` and `citation_recall` against
-  `reference_sources`, each cited citation weighted by its files (a graph section of ten lineage files counts a tenth
-  per reference file, not 1 when any matches), and `citation_precision_passages` over the cited passages alone; the
-  run manifest records `citations.enabled` and the scoring, and a comparison warns when its runs differ in either. The
-  pairwise judge, `graph_aware`'s answer coverage and `answer_length` read the answers without their markers, as
-  `answer_match` does ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
+  marker (pairwise judges preferred their uncited answers on comprehensiveness). `RAGOutput.citations` lists one
+  `Citation` per number: whether the answer cites it, its documents (`CitedDocument`: document id, file name, path
+  relative to the corpus root, pages), text units, chunk id, title, seed-graph provenance and IRI; a graph section
+  names the documents of up to `search.citations.lineage_units` (10) of its text units that its query's suffix and
+  filters let through, read in batched fetches (an excluded or another tenant's document is never named; the next
+  units fill its place), alongside the answer call. A number the context did not show is reported in
+  `metadata.unknown_citation_markers`, never as a citation (a marker has at most three digits: a bracketed year such
+  as `[2020]` is text, and sections past the 999th get no number); a blocked answer has none. Earlier answers reach
+  the follow-up rewrite without their markers. `CitationMarkerScanner` reads the markers from streamed chunks; MCP
+  `kg_answer` records carry their `citation` marker and `cited`, and a cited key point or intermediate answer is a
+  record of its own (`key_point`, `intermediate_answer`) with its citation's documents. The document converter keeps
+  where each PDF page starts and text units store `page_start` / `page_end`, `relative_path` and `document_id` in
+  their attributes (ids and texts unchanged). `run-rag` prints the cited sources and its JSON output carries every
+  citation. The retrieval evaluator adds `citation_precision` and `citation_recall` against `reference_sources`, each
+  cited citation weighted by its files (a graph section of ten lineage files counts a tenth per reference file, not 1
+  when any matches), and `citation_precision_passages` over the cited passages alone; the run manifest records
+  `citations.enabled` and the scoring, and a comparison warns when its runs differ in either. The pairwise judge,
+  `graph_aware`'s answer coverage and `answer_length` read the answers without their markers, as `answer_match` does
+  ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
 - `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the
   follow-up rewrite reads where it reads memory otherwise, bounded to `memory.max_messages_per_conversation` turns
   and `memory.max_history_tokens` (4,000, estimated) and screened by the input guardrail like the query (a masked
@@ -645,12 +644,12 @@ From a `main` checkout (formats and keys no release had):
   by default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
   seed-graph provenance; a text record's document id as its text unit stores it; a structured query's
-  `query_result` with its table up to 6000 characters and the entities it returned, by id and name). `kg_answer` takes the caller's
-  conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the server keeps
-  none). The namespace is fixed at start (`--suffix`, else `index_value`) unless
-  `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the `mcp.max_*` bounds limit what a call
-  may ask and costs (`mcp.strategies` binds the chain's new `allowed_strategies`: `auto` routes, and falls back, only
-  within it, and is refused before any model call when the namespace serves none of it); every call runs under
+  `query_result` with its table up to 6000 characters and the entities it returned, by id and name). `kg_answer` takes
+  the caller's conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the server
+  keeps none). The namespace is fixed at start (`--suffix`, else `index_value`) unless `mcp.allowed_namespaces` lists
+  others; `mcp.tools`, `mcp.strategies` and the `mcp.max_*` bounds limit what a call may ask and costs
+  (`mcp.strategies` binds the chain's new `allowed_strategies`: `auto` routes, and falls back, only within it, and is
+  refused before any model call when the namespace serves none of it); every call runs under
   `search.query_timeout_seconds` and returns its model `usage`. The graph tools read the stores through the chain's
   retrievers and make no model call; they look names, IRIs and ids up in NFC (and a name again in NFKC), as search
   composes a query. Over HTTP only POST is served (405 otherwise), and on any loopback address the `Host` and `Origin`
@@ -677,11 +676,11 @@ From a `main` checkout (formats and keys no release had):
   its first matches as entities. Filter keys are checked against the fallback that would run too. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
   `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
-  `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the model-written plan text is screened wherever
-  it is returned: the search and answer metadata, the result table and the query-result source the console, MCP and
-  `run-rag` JSON show. `GraphQueryPort` is exported for custom
-  graph backends, and `search.token_manager.type_budgets.query_result` sizes the result's context share
-  (docs/design.md §6.6, [guide](docs/guides/structured-queries.md)).
+  `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the
+  model-written plan text is screened wherever it is returned: the search and answer metadata, the result table and
+  the query-result source the console, MCP and `run-rag` JSON show. `GraphQueryPort` is exported for custom graph
+  backends, and `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md
+  §6.6, [guide](docs/guides/structured-queries.md)).
 - `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed,
   procurement world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`,
   `MAKES`), a document per vendor and buyer (part of those facts, and a chief executive only text states), the schema
@@ -781,14 +780,18 @@ From a `main` checkout (formats and keys no release had):
   query by the config and is not cached (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()`
   are public (#619). Adding a methodology to an incremental namespace rebuilds it once from its stored extractions
   (only the added model calls are new); removing one stops maintaining its artifacts without deleting them, and the
-  next run records them gone, one with no document change too (in every suffix its documents hold); while the namespace holds other source scopes' documents, a run (`insert_documents` and `delete_documents` too) that would drop a methodology it holds for them is refused before any model call (exit 2), naming the scopes and the ways out (the namespace's methodologies, a namespace of its own, a reset), as one that would add a methodology by a rebuild is; the build record names the source scopes it holds (`source_scopes`, absent from older records), so a query's refusal advises a rebuild only where one is allowed; a reset to fewer methodologies keeps the extraction
-  next run records them gone, one with no document change too (in every suffix its documents hold, which the registry's diff
-  reads, `DocumentDelta.unchanged_suffixes`, rather than a second read of the records); a reset to fewer methodologies keeps the extraction
-  records, so adding one back extracts nothing again (#626), and so does any reset that builds nothing from them
-  (`raptor` alone, a second time too) (#640); a reset prunes only the kinds of record it produces, so the report
-  answers stay through any number of resets without `graphrag`, and the claim records through any number with
-  claims off (the second such reset dropped them, and adding them back asked the model again); the
-  `VectorIndexer` port gains `extraction_record_keys`, whose "cannot" default keeps every record. Every strategy class declares
+  next run records them gone, one with no document change too (in every suffix its documents hold, which the
+  registry's diff reads, `DocumentDelta.unchanged_suffixes`, rather than a second read of the records); while the
+  namespace holds other source scopes' documents, a run (`insert_documents` and `delete_documents` too) that would
+  drop a methodology it holds for them is refused before any model call (exit 2), naming the scopes and the ways out
+  (the namespace's methodologies, a namespace of its own, a reset), as one that would add a methodology by a rebuild
+  is; the build record names the source scopes it holds (`source_scopes`, absent from older records), so a query's
+  refusal advises a rebuild only where one is allowed; a reset to fewer methodologies keeps the extraction records, so
+  adding one back extracts nothing again (#626), and so does any reset that builds nothing from them (`raptor` alone,
+  a second time too) (#640); a reset prunes only the kinds of record it produces, so the report answers stay through
+  any number of resets without `graphrag`, and the claim records through any number with claims off (the second such
+  reset dropped them, and adding them back asked the model again); the `VectorIndexer` port gains
+  `extraction_record_keys`, whose "cannot" default keeps every record. Every strategy class declares
   `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that reads less declares its artifacts
   (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace that holds the text units, and
   `simple` sweeps only the indexes it holds (#607). A filter key is checked, after the methodology check, against the
@@ -820,7 +823,8 @@ From a `main` checkout (formats and keys no release had):
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
   doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
   (#628), and a methodology the namespace does not hold yet raises `ConfigurationError` before the run, naming the
-  methodologies held and the directory run that adds it. See [Python library](docs/guides/python-library.md#documents-from-memory).
+  methodologies held and the directory run that adds it. See [Python
+  library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
@@ -1120,11 +1124,11 @@ From a `main` checkout (formats and keys no release had):
   overrides the expansion depth (#597).
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
   (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
-  (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot
-  the instances after the deploy (#617). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue
-  when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617); it also
-  checks the Trivy image and the Dockerfile's apt pins, and builds and scans the image with the opt-in extras, so a
-  fix released after the last pull request (or a build that broke) lands in the same issue. Dependabot also moves the console's npm lock.
+  (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after
+  the deploy (#617). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue when the base image
+  or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617); it also checks the Trivy image
+  and the Dockerfile's apt pins, and builds and scans the image with the opt-in extras, so a fix released after the
+  last pull request (or a build that broke) lands in the same issue. Dependabot also moves the console's npm lock.
 - Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
   (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).
