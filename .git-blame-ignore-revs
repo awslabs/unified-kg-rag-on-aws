@@ -4,4 +4,4 @@
 # GitHub's blame view reads this file automatically. List the commit on main.
 
 # refactor(config): split domain/models/config.py into a package
-b2eaa5742534bf5b03d505686a9e21af3a42f9eb
+7ec90dd6c3bd1994dea8b64cefc85ebd80cbfbd6
