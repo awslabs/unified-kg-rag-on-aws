@@ -102,9 +102,12 @@ the model-written plan text the output guardrail screens).
    (capped at `max_schema_tokens` by the configured token counter, least
    frequent entries cut first), the grammar, nine neutral few-shot plans
    (one of them unanswerable) and the question in `<question>` tags marked
-   as data. Mentions are written as the question writes them (the query
-   language, `query_language`), the string values of conditions as the data
-   writes them (the index language), and a text or order comparison is
+   as data. Mentions, the entity names and themes and the string values of
+   conditions are written as the data writes them (the index language,
+   `data_language`), whatever language the question is in: a Korean
+   question on an English corpus names its entities in English, so they
+   link (and the fallback looks them up) instead of falling back
+   `unlinked_mention`. A text or order comparison is
    allowed only on a property of one value kind (`contains` on strings
    alone: Gremlin fails a substring test of a number). The plan also lists the question's entity names and
    themes (`entities`, `keywords`), which the fallback strategy reads in
@@ -121,11 +124,18 @@ the model-written plan text the output guardrail screens).
    hits whose `compact_name_key` equals the mention's (Han, Hangul and Kana
    spacing and legal forms do not matter, as for `local`'s seeds); else
    the top `link_candidates` of a **lexical** (BM25) search of the name,
-   above `link_min_score`. A kNN search returns its nearest entities for
-   any text, so without a name match or a shared word a name links
-   nothing and the query falls back (`unlinked_mention`): an existence
-   question about an entity the data does not name is never answered from
-   a lookalike. The linked entities' names are written into the plan's
+   above `link_min_score`, whose names cover the mention
+   (`domain/retrieval/linking.py` `choose_links`, the rule `local`'s seeds
+   use too): every term of the mention's `compact_name_key` (its words,
+   legal-form designators left out; a Han, Hangul or Kana word as its
+   character bigrams) is a term of the entity's name, or one at least
+   `processing.similarity_threshold` alike (a spelling variant). A kNN
+   search returns its nearest entities for any text and BM25 every name
+   sharing one word, so without a name match or a covering name a mention
+   links nothing and the query falls back (`unlinked_mention`): an
+   existence question about an entity the data does not name ("Zorblax
+   Supplies" beside `Acme Supplies`, 라마바 상사 beside `가나다 상사`) is
+   never answered from a lookalike. The linked entities' names are written into the plan's
    description (`named "Acme" = "Acme Supplies"`), so the answer sees what
    was counted.
 5. *Compile, check, execute* (`GraphQueryPort.aexecute`), below.
@@ -139,14 +149,20 @@ the model-written plan text the output guardrail screens).
    own context budget share `search.token_manager.type_budgets.query_result`)
    holding the code-rendered plan and the result table, numbered `[n]` like
    any evidence section (§7.1), its citation's lineage (`text_unit_ids`) the
-   units its evidence entities cite, the most cited first; one entity result
+   units its evidence entities cite, the most cited first, then those of
+   the best-ranked entity (`domain/retrieval/lineage.py` `merge`, order
+   `support`, as `local` orders its text units); one entity result
    per returned vertex (the graph projection, with `source_kinds`, `iri` and
    the entities-index document's filters, so `seed_provenance` applies);
    relationship results for a path's edges (the relationships-index
    documents when built); for an answer that names no entity (a count, an
    aggregate, a yes, groups by a property) the first `rows_in_context`
-   matches by rank instead, read by a second bounded `tuples` request (or
-   from the scan), so it still cites entities and passages; and the
+   matches instead (`evidence_vertex_ids`): the vertices holding the
+   answer's value first (`answer_holders`: a `min` or `max` value, the
+   listed groups' keys, by group order; a second bounded `tuples` request
+   adds that condition), then by rank, read from the scan, the store's rows
+   or that request, so it still cites entities and passages and a maximum
+   cites the entity that has it; and the
    supporting passages, fused by RRF from
    two buckets: the text units the returned items cite, by how many cite
    each, and a hybrid text-unit search of the question restricted to them,
@@ -195,7 +211,11 @@ plan's `order`, then by key; tuples by the first node's `rank`, then the
 ids; paths by length), so a page shorter than the matches still holds the
 plan's exact top: the group counts and the top rows are exact whenever the
 plan's `limit` fits the page (`max_scan_rows`), and the answer says when
-more matched. Under a document filter or a seed-property condition (which
+more matched. A group key is canonical (`canonical_scalar`): an integral
+float is the int it equals, so a property stored as 5 on some vertices and
+5.0 on others is one group on every store (SQLite groups the canonical
+JSON; Gremlin's groups merge when decoded, after the server's page cut, so
+there a key split near the cut can still rank one place low). Under a document filter or a seed-property condition (which
 the store cannot evaluate: vertices hold no document filters and seed
 properties are one JSON string) every plan runs as `tuples` (or `paths`)
 of all nodes, at most `max_scan_rows` (5,000), checked and aggregated in
@@ -225,7 +245,11 @@ internals. Layers, each independent of the next:
    labels and property keys; never `id`, `name_key`, `build_tag`,
    `text_unit_ids`, `community_ids` or `attr_filters` as a condition or a
    key; caps of 4 nodes, 6 conditions a node, 50 values an `in`, 256
-   characters a string, `max_hops` hops.
+   characters a string, `max_hops` hops; no type, relationship type,
+   property key or string value starting with `~` (a Gremlin hidden token
+   such as `~label`, which the checker below would refuse as a compiler
+   bug: refused here on every store, with a WARNING naming it, so the data
+   can be renamed).
 3. *Compiler* (adapters): read steps only. The label is computed by the
    retriever from `SearchQuery.suffix` and `indexing.additional_suffix`
    (`_get_label`), never taken from the request. Gremlin: every vertex step
@@ -246,10 +270,13 @@ internals. Layers, each independent of the next:
    predicates, the ordering tokens, nested traversals: no lambda, no `T`
    token, no `~` key), and its only source instruction is
    `OptionsStrategy` with `evaluationTimeout`. SQL starts with `SELECT` or
-   `WITH`, holds no `;`, quote, comment, numbered placeholder, `OR`, comma
-   join, recursive CTE or write/administration keyword, references only
-   `vertices`, `edges` and its own CTEs, calls only the registered
-   functions and `count`, and binds `L` at every alias's `label = ?`.
+   `WITH`, holds no `;`, quote, comment, numbered placeholder, `OR`,
+   `NOT`, `IS` (but the compiler's `IS NOT NULL`), `CASE`, `BETWEEN`, comma,
+   outer, cross or natural join, recursive CTE or write/administration
+   keyword, references only `vertices`, `edges` and its own CTEs, calls
+   only the registered functions and `count`, and binds `L` at every
+   alias's `label = ?`, each a top-level conjunct of its `WHERE` or `ON`
+   clause (`NOT v.label = ?` or `(v.label = ?) = 0` is refused).
    Behind it the read-only connection installs a SQLite authorizer for the
    statement: `SELECT`, reads of `vertices` and `edges`, the registered
    functions; everything else (a schema table, recursion, another
@@ -286,10 +313,21 @@ stores.
 **Fallback and augment.** `search.structured.mode: fallback` (default):
 on a planner failure, a plan still invalid after the repair,
 `unanswerable`, an unlinked mention, an empty result (no row, group or
-path; a count of 0 and `exists: false` are answers) or a non-fatal
+path; a count of 0 and `exists: false` are answers, unless a string value
+the plan compares by equality is held by no vertex the caller may read,
+`unknown_value`: one bounded `exists` request per value, of any type,
+`literal_conditions`; a failed check keeps the answer) or a non-fatal
 execution error (a malformed query, this query's server timeout), the
 query runs `fallback_strategy` (`local`; `null` answers from no context)
 and records `metadata.structured = {status: fallback, reason, ...}`. A
+failed planner or store call (`planner_error`, `execution_error`,
+`timeout`, `compile_error`) is also a degradation of the query
+(`metadata.degraded`, step `structured_query`, the reason and the error
+type), so the answer and `run-eval`'s `degraded_step_counts` show it. The
+designed fallbacks (`unanswerable`, `invalid_plan`, `no_schema`,
+`empty_result`, `unlinked_mention`, `unknown_value`) are not: the
+structural benchmark's absent-entity questions fall back by design and
+count as no degraded query. A
 fallback the namespace does not serve gives way to `local`, then `mix`.
 The fallback reads the plan's `entities` as its entity focus (`local`,
 `drift`) or low-level keywords (with the `keywords` as high-level ones:

@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 from langchain_core.runnables import RunnableConfig
 
-from unified_kg_rag.adapters.retrieval.base import scope_filters
+from unified_kg_rag.adapters.retrieval.base import _listed, scope_filters
 from unified_kg_rag.adapters.retrieval.ppr_ranking import (
     PPRRankingMixin,
     document_unit_ids,
@@ -18,7 +18,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     Constants,
@@ -31,6 +30,8 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
+from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
+from unified_kg_rag.domain.retrieval.linking import choose_links
 from unified_kg_rag.domain.retrieval.ppr import summed_seed_weights
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
@@ -414,12 +415,12 @@ class LocalSearchStrategy(PPRRankingMixin):
         Each focus entity is looked up on its own, concurrently (at most
         ``search.max_concurrency`` at once), and seeds the expansion with
         the hits that are its name (``compact_name_key``), else with its top
-        hit when that scores at least
-        ``search.local_search.seed_score_ratio`` of the best hit of any
-        focus entity. One query of the joined names, two hits per name and
-        no floor seeded a wrong neighbour beside the right entity on every
-        query of a synthetic 12-query multi-hop corpus, and a generic focus
-        word ("province") seeded unrelated entities. Without an
+        hit when that scores at least ``search.local_search.seed_score_ratio``
+        of the best hit of any focus entity and is no one-word lookalike
+        (``focus_seeds``). One query of the joined names, two
+        hits per name and no floor seeded a wrong neighbour beside the right
+        entity on every query of a synthetic 12-query multi-hop corpus, and
+        a generic focus word ("province") seeded unrelated entities. Without an
         entity focus the raw query text is looked up instead (as the
         claims/community-report/relationship sections do), its ``top_k``
         hits the seeds, so local search still seeds graph expansion.
@@ -509,25 +510,18 @@ class LocalSearchStrategy(PPRRankingMixin):
         focus: list[str], per_focus: list[list[RetrievalResult]], ratio: float
     ) -> list[RetrievalResult]:
         """The seeds of the focus entities ``focus`` from their own hits
-        ``per_focus`` (best first): a focus entity's exact name matches
-        (every entity of that ``compact_name_key``), else its top hit if it
-        scores at least ``ratio`` times the best hit of all; each seed once,
-        in focus order."""
+        ``per_focus`` (best first), by ``choose_links``'s ``rank`` policy: a
+        focus entity's exact name matches (every entity of that
+        ``compact_name_key``), else its top hit if it scores at least
+        ``ratio`` times the best hit of all and is no one-word lookalike
+        ("Acme Supplies" for "Zorblax Supplies"); each seed once, in focus
+        order."""
         best = max(
             (hit.score or 0.0 for hits in per_focus for hit in hits), default=0.0
         )
         seeds: dict[str, RetrievalResult] = {}
         for name, hits in zip(focus, per_focus, strict=True):
-            key = compact_name_key(name)
-            chosen = [
-                hit
-                for hit in hits
-                if key
-                and compact_name_key(str((hit.metadata or {}).get("name") or "")) == key
-            ]
-            if not chosen and hits and (hits[0].score or 0.0) >= ratio * best:
-                chosen = hits[:1]
-            for hit in chosen:
+            for hit in choose_links(name, hits, policy="rank", floor=ratio * best):
                 seeds.setdefault(str(hit.source), hit)
         return list(seeds.values())
 
@@ -811,31 +805,20 @@ class LocalSearchStrategy(PPRRankingMixin):
         # the candidate text units by the rank of the first selected entity
         # that cites them, then by how many of that entity's relationships
         # the unit states, before applying its text-unit budget. This ranks
-        # by graph support instead: each chunk by (number of expanded
-        # entities citing it, best citing entity score), in descending order,
-        # so downstream truncation keeps the chunks most entities point to.
+        # by graph support instead (``domain.retrieval.lineage``): each chunk
+        # by the number of expanded entities citing it, then the best citing
+        # entity's score, then first seen, so downstream truncation keeps the
+        # chunks most entities point to. A lineage a graph store returns as
+        # its JSON text is read as the list it encodes.
         #
         # A seed graph's units are no text chunks (the retriever leaves them
         # out of every text search too): they take no slot of the quota.
-        hit_count: dict[str, int] = {}
-        best_score: dict[str, float] = {}
-        for node in entity_nodes:
-            ids = node.metadata.get("text_unit_ids") or []
-            if not isinstance(ids, list):
-                continue
-            score = node.score
-            for raw_id in ids:
-                unit_id = str(raw_id)
-                if is_seed_unit(unit_id):
-                    continue
-                hit_count[unit_id] = hit_count.get(unit_id, 0) + 1
-                if score > best_score.get(unit_id, float("-inf")):
-                    best_score[unit_id] = score
-        return sorted(
-            hit_count,
-            key=lambda unit_id: (hit_count[unit_id], best_score.get(unit_id, 0.0)),
-            reverse=True,
+        ranked = merge_lineages(
+            (_listed(node.metadata.get("text_unit_ids")) for node in entity_nodes),
+            order="support",
+            scores=[float(node.score or 0.0) for node in entity_nodes],
         )
+        return [unit_id for unit_id in ranked if not is_seed_unit(unit_id)]
 
     @staticmethod
     def _text_unit_count(node: RetrievalResult) -> int:

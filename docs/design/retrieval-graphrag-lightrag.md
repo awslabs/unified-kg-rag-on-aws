@@ -108,8 +108,10 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   text units, plus a community-report section and a relationship section
   (MS GraphRAG local search). Each query entity is looked up in the entities
   index on its own, concurrently: the entities of its name
-  (`compact_name_key`) seed the expansion, else its top hit when that scores
-  at least `search.local_search.seed_score_ratio` (0.6) of the best hit of
+  (`compact_name_key`) seed the expansion, else its top hit
+  (`domain/retrieval/linking.py` `choose_links`, policy `rank`; the
+  structured strategy's mentions use `cover`) when that
+  scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit of
   any query entity (`seed_floor`: on a hybrid search the ratio is read at
   equal weights, where a hit only the kNN side found scores at most 0.5 of
   one both found, and rescaled piecewise linearly so 0.5 lands on
@@ -117,7 +119,13 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   lexical search compares raw scores, where the floor separates less); the seeds share the expansion budget in proportion to
   their scores (`seed_shares`; Neptune walks the seeds of each share in a
   request of its own). One lookup of the joined names seeded a wrong
-  neighbour beside every right seed on a synthetic multi-hop corpus. With
+  neighbour beside every right seed on a synthetic multi-hop corpus. A top
+  hit that shares a term with the name while neither name covers the other
+  (a one-word lookalike: "Acme Supplies" for an absent "Zorblax Supplies")
+  seeds nothing; a hit sharing no term (semantic or alias: "New York City"
+  for "NYC") or covering either way seeds as before, so the measured
+  seeding is otherwise unchanged. Requiring full coverage, as `cover` does,
+  is an unmeasured experiment. With
   `search.local_search.include_bridge_relationships` (default on), the
   relationships incident to the expanded entities are fetched too (one
   request naming both endpoint fields, `SearchQuery.any_of`, of at most

@@ -35,6 +35,7 @@ from unified_kg_rag.domain.models.graph_query import (
 from unified_kg_rag.domain.retrieval.graph_query import (
     EdgePredicate,
     VertexPredicate,
+    canonical_scalar,
     node_holds,
     value_kind,
     vertex_rank,
@@ -131,13 +132,14 @@ class SQLiteQuery:
         return found
 
     def _kg_key(self, props: str) -> str | None:
-        """The group key of a vertex: its first scalar value of the key, as
-        JSON (so a boolean stays one), or NULL."""
+        """The group key of a vertex: its first scalar value of the key,
+        canonical (``canonical_scalar``: 5.0 groups with 5) and as JSON (so
+        a boolean stays one), or NULL."""
         key = self.request.group_key
         assert key is not None
         for value in json.loads(props).get(key) or ():
             if value_kind(value) is not None:
-                return json.dumps(value)
+                return json.dumps(canonical_scalar(value))
         return None
 
     # --- the statement -----------------------------------------------------------

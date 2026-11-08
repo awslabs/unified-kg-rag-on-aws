@@ -172,9 +172,13 @@ async def test_injected_values_are_literals_and_the_graph_is_unchanged(
     }
     strategy, _, sent = _strategy(graph, _Planner(plan))
     result = await strategy.asearch(_query("How many?"))
-    assert result.metadata["structured"]["status"] == "answered"
-    assert "\n0" in next(r for r in result.results if r.source == "graph-query").content
-    assert [request.suffix for request in sent] == ["alpha"]
+    # Its count is 0 and no vertex holds the injected text as a name: the
+    # value check (a literal too) makes it a fallback, not an answer.
+    structured = result.metadata["structured"]
+    assert (structured["status"], structured["reason"]) == ("fallback", "unknown_value")
+    assert [request.suffix for request in sent] == ["alpha", "alpha"]
+    check = sent[1].plan.nodes[0].conditions[0]
+    assert (check.op, check.value) == ("eq", INJECTED_VALUE)
     assert _counts(graph) == before
 
 

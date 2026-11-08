@@ -753,20 +753,31 @@ From a `main` checkout (formats and keys no release had):
   lists, paths between two named entities and seed-entity properties from a query the graph store runs. One planner
   call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`;
   `search.output_ceilings.graph_query`) writes the question as a closed JSON plan over the graph's schema profile
-  (declared types plus a sampled profile of what the suffix holds), never query text; code validates it (one repair
+  (declared types plus a sampled profile of what the suffix holds), never query text, its names and values in the
+  index language whatever the question's; code validates it (one repair
   call with the refusal), links the names it mentions through the hybrid entity search (a name without a name match
-  needs a lexical hit, so an absent entity links nothing and falls back), compiles it to Gremlin bytecode (Neptune,
+  needs a lexical hit whose name holds every word of it, legal forms aside, Han, Hangul and Kana by character pairs
+  and a word spelled alike past `processing.similarity_threshold`, so an absent entity that shares one word with a
+  stored one links nothing and falls back), compiles it to Gremlin bytecode (Neptune,
   Gremlin Server; each branch of a hop range ends in its own `simplePath()`, since Neptune ignores one after a
   `union`, and a fixed length walks one chain without a `union`, whose one-branch form Neptune rejects) or
   parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
-  form against a read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer,
+  form against a read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer
+  (each alias's label restriction a top-level conjunct, no `NOT`, `IS`, `CASE` or outer join),
   and runs it read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and
-  top rows are exact. The result table, the entities and paths it names (with seed provenance) and their passages are
-  fused (buckets `structured_query_result`, `structured_entities`, `structured_relationships`,
-  `structured_text_units`, `structured_text_hits`), the table numbered `[n]` like any evidence section and its
-  citation naming the documents of its evidence rows; counts are exact unless a document filter or seed-property
-  condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a count or an aggregate cites
-  its first matches as entities. Filter keys are checked against the fallback that would run too. Without a structured
+  top rows are exact, and groups an integral float with the int it equals (5.0 with 5). The result table, the entities
+  and paths it names (with seed provenance) and their passages are fused (buckets `structured_query_result`,
+  `structured_entities`, `structured_relationships`, `structured_text_units`, `structured_text_hits`), the table
+  numbered `[n]` like any evidence section and its citation naming the documents of its evidence rows (the units most of
+  them cite first, as `local` orders its text units); counts are exact unless a document filter or seed-property
+  condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a count cites its first matches
+  as entities, a minimum or a maximum the entities holding it and groups by a property their listed groups'. Filter keys
+  are checked against the fallback that would run too. A count of 0 or a "no" over a string
+  value no vertex holds (misspelled or translated) is no answer (`unknown_value`); a failed planner or store call is
+  also a degradation of the query (`metadata.degraded`, step `structured_query`), a designed fallback is not. A
+  stored name or a value starting with `~` (a Gremlin hidden token) is refused at validation with a WARNING, not as a
+  compiler bug; a type the sampled profile missed is refused saying so, and a count over a symmetric `both` pattern says
+  it counts each pair twice. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
   `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
   `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the
@@ -1505,7 +1516,13 @@ Queries and retrieval.
   went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
   top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal
-  hybrid weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530).
+  hybrid weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530). A top
+  hit sharing one word with the name and covering neither way (an absent "Zorblax Supplies" for "Acme Supplies")
+  seeds nothing; semantic and alias hits ("NYC" for "New York City") seed as before.
+- Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
+  structured query result's lineage): the units most expanded entities cite, then the best-scored citing entity's,
+  then first seen; an entity citing a unit twice counts once, and a lineage a graph store returns as its JSON text
+  is read as its list (it was skipped).
 - Graph expansion returns every seed and its neighbourhood ranked by distance (#161, #218), fetches at most its
   per-seed budget (#310), and no longer depends on the store's edge order (`indexing.neptune.deterministic_order:
   false` keeps it) (#470, #473); an expanded entity shows its type (#567).

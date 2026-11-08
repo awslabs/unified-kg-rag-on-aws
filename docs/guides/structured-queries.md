@@ -55,14 +55,23 @@ sampled values of a low-cardinality string property); it never sees entity
 names. A plan naming a type, relationship or property the schema does not
 list is refused, and the planner is called once more with the refusal; so
 is a substring or order comparison on a property that holds values of
-several kinds. Under a filter the schema shows no sampled value.
+several kinds. Under a filter the schema shows no sampled value. The
+profile is a sample (`profile_sample_vertices`), so a type too rare to be
+in it is refused like an unknown one unless the extraction schema declares
+it; the refusal says so. An edge of either direction (`both`) matches a
+pair once in each order both nodes fit: a count over a symmetric pattern
+counts each pair twice, which the plan's description in the context states.
 
 A name in the plan links to the stored entities whose name it is
 (spacing and legal forms aside, so `가나다상사` finds `가나다 상사`) among
 the hits of a hybrid entity search, else to the best hits of a lexical
-search for it. A name no entity shares a word with links nothing, and the
-query falls back (`unlinked_mention`): "Does Zorblax Industries supply
-Acme?" is not answered from a lookalike. The context shows which entities
+search for it whose names hold every word of it (legal forms aside; Han,
+Hangul and Kana compared by character pairs). Any other name links nothing,
+and the query falls back (`unlinked_mention`): neither "Does Zorblax
+Industries supply Acme?" nor "Does Zorblax Supplies ...", which shares one
+word with `Acme Supplies`, is answered from a lookalike. The plan names
+entities and values as the data writes them (the index language), so a
+Korean question on an English corpus links its names in English. The context shows which entities
 each name linked to.
 
 ## When no plan answers
@@ -78,7 +87,9 @@ Under `fallback` (the default) a question the plan cannot answer runs
 `fallback_strategy`: the planner's call failed or its plan stayed invalid
 after the repair (`planner_error`, `invalid_plan`), it judged the question
 `unanswerable`, a name linked to nothing (`unlinked_mention`), the result
-was empty (`empty_result`; a count of 0 and a "no" are answers), or the store
+was empty (`empty_result`; a count of 0 and a "no" are answers), a 0 or a "no"
+rests on a value no entity holds, as when the plan spells "Supplier" where the
+data writes "supplier" (`unknown_value`), or the store
 refused or timed out the query (`execution_error`, `timeout`). The fallback
 reads the entity names and themes the planner listed, so it adds no
 extraction call. A fallback the namespace does not serve gives way to

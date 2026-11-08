@@ -40,7 +40,9 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    _listed,
     entity_content,
+    record_degradation,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
@@ -52,7 +54,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
-from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     Config,
@@ -83,23 +84,31 @@ from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
 )
+from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.domain.retrieval.filters import document_filters
 from unified_kg_rag.domain.retrieval.graph_query import (
     FILTERS_KEY,
+    Operation,
     aggregate_bindings,
     answer_from_result,
+    answer_holders,
     answer_vertex_ids,
     build_profile,
     describe_plan,
+    evidence_vertex_ids,
     hydrate_keys,
+    literal_conditions,
     matching_bindings,
     merge_declared,
     plan_operation,
     render_answer,
     validate_plan,
-    vertex_rank,
+    value_check_plan,
+    with_condition,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
+from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
+from unified_kg_rag.domain.retrieval.linking import choose_links, hit_name
 from unified_kg_rag.ports.graph_query import GraphQueryPort
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
@@ -125,6 +134,11 @@ FALLBACK_BUCKET = "structured_fallback"
 
 # metadata.structured.status
 ANSWERED, FALLBACK, FAILED = "answered", "fallback", "failed"
+# The fallback reasons the query's degradation ledger records: a failed
+# planner or store call and a compiler refusal. A designed fallback (an
+# absent name, an unknown value, an unanswerable question) is no failure:
+# metadata.structured.reason alone keeps it.
+_DEGRADING = frozenset({"planner_error", "execution_error", "timeout", "compile_error"})
 # What a fallback gives way to when the namespace does not serve it.
 _FALLBACK_ORDER = (SearchStrategy.LOCAL, SearchStrategy.MIX)
 # The JSON keys of a plan, to tell it from an example the model echoes.
@@ -158,8 +172,12 @@ class _Run:
     schema_cut: bool = False
     elapsed_ms: dict[str, float] = field(default_factory=dict)
 
-    def fall_back(self, reason: str) -> None:
+    def fall_back(self, reason: str, error: BaseException | None = None) -> None:
+        """Give way to the fallback for ``reason``; one the query answers
+        without (``_DEGRADING``) is also a degradation of the query."""
         self.status, self.reason = FALLBACK, reason
+        if reason in _DEGRADING:
+            record_degradation(DegradationStep.STRUCTURED_QUERY, reason, error)
 
     def record(self) -> dict[str, Any]:
         return {
@@ -483,7 +501,6 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                     {
                         "query": query.query,
                         "schema": schema,
-                        "target_language": self.query_language(query),
                         "data_language": language_name(index_language(self.config)),
                         "max_hops": str(settings.max_hops),
                         "feedback": feedback,
@@ -494,7 +511,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 if is_fatal_retrieval_error(e):
                     raise
                 logger.warning("Structured search: the planner call failed: %s", e)
-                run.fall_back("planner_error")
+                run.fall_back("planner_error", e)
                 return None
             error = self._parsed(str(raw), profile, run)
             if isinstance(error, ValidatedPlan):
@@ -540,13 +557,15 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     async def _link(
         self, query: SearchQuery, plan: ValidatedPlan, run: _Run
     ) -> dict[str, tuple[str, ...]]:
-        """Each mention node's entity ids: the hits of a hybrid entity search
-        (under the caller's filters and the node's types) whose name has the
-        mention's ``compact_name_key``; else the best ``link_candidates`` of a
-        lexical (BM25) search above ``link_min_score``, so a name no stored
-        entity shares a word with links nothing (a kNN search returns its
-        nearest entities for any text). A mention that links nothing sets
-        the fallback reason ``unlinked_mention``."""
+        """Each mention node's entity ids (``domain.retrieval.linking``): the
+        hits of a hybrid entity search (under the caller's filters and the
+        node's types) whose name has the mention's ``compact_name_key``;
+        else the best ``link_candidates`` hits of a lexical (BM25) search
+        above ``link_min_score`` whose names cover every term of the
+        mention (or one ``processing.similarity_threshold`` alike), so an
+        absent name that shares a word with a stored one ("Zorblax
+        Supplies", "Acme Supplies") links nothing. A mention that links
+        nothing sets the fallback reason ``unlinked_mention``."""
         nodes = [node for node in plan.nodes if node.mention is not None]
         if not nodes:
             return {}
@@ -575,33 +594,28 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 "Structured query entity link",
             )
 
-        def name(hit: RetrievalResult) -> str:
-            return str((hit.metadata or {}).get("name") or "")
-
         async def link(node: Any) -> list[RetrievalResult]:
             mention = str(node.mention)
-            key = compact_name_key(mention)
             hits = await search(
                 mention,
                 node.types,
                 query.search_type,
                 max(settings.link_candidates * 3, 10),
             )
-            exact = [
-                h for h in hits if h.source and key and compact_name_key(name(h)) == key
-            ]
+            exact = choose_links(mention, hits, policy="cover", limit=0)
             if exact:
                 return exact
             lexical = await search(
                 mention, node.types, SearchType.LEXICAL, settings.link_candidates
             )
-            return [
-                h
-                for h in lexical
-                if h.source
-                and float(h.score or 0.0) > 0.0
-                and float(h.score or 0.0) >= settings.link_min_score
-            ]
+            return choose_links(
+                mention,
+                lexical,
+                policy="cover",
+                limit=settings.link_candidates,
+                floor=settings.link_min_score,
+                similarity=self.config.processing.similarity_threshold,
+            )
 
         found = await gather_or_cancel(link(node) for node in nodes)
         linked: dict[str, tuple[str, ...]] = {}
@@ -612,7 +626,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 run.fall_back("unlinked_mention")
                 return {}
             linked[node.var] = tuple(str(h.source) for h in chosen)
-            names[node.var] = [name(h) or str(h.source) for h in chosen]
+            names[node.var] = [hit_name(h) or str(h.source) for h in chosen]
         run.linked = {var: list(ids) for var, ids in linked.items()}
         run.linked_names = names
         return linked
@@ -668,9 +682,60 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         unapplied = self._graph_unapplied_filters(query)
         op = plan_operation(plan, scan=bool(unapplied), cap=settings.max_scan_rows)
         run.operation = op.operation if not op.scan else f"{op.operation} (scan)"
+        request = self._request(query, plan, op, linked)
+        try:
+            result = await self.graph_query.aexecute(request)
+        except GraphQueryExecutionError as e:
+            logger.warning("Structured search: the graph query failed: %s", e)
+            run.fall_back("timeout" if e.timed_out else "execution_error", e)
+            return None
+        except GraphQueryCompileError as e:
+            run.fall_back("compile_error", e)
+            return None
+        except Exception as e:
+            if is_fatal_retrieval_error(e):
+                raise
+            logger.warning("Structured search: the graph query failed: %s", e)
+            run.fall_back("execution_error", e)
+            return None
+        run.backend, run.compiled_digest = result.backend, result.compiled_digest
+        kept: list[dict[str, str]] | None = None
+        if op.scan:
+            answer, kept = await self._scanned(query, plan, result, unapplied)
+        else:
+            answer = answer_from_result(plan, result)
+        run.truncated = answer.truncated
+        run.exact = not answer.truncated
+        run.row_count = (
+            answer.count
+            if answer.count is not None
+            else len(answer.rows) or len(answer.groups) or len(answer.paths)
+        ) or 0
+        if answer.empty:
+            run.fall_back("empty_result")
+            return None
+        if (answer.count == 0 or answer.exists is False) and not await self._known(
+            query, plan, unapplied
+        ):
+            # A zero or a no over a value the data does not hold ("Supplier"
+            # for "supplier", a translated value) is no answer.
+            run.fall_back("unknown_value")
+            return None
+        evidence, result = await self._evidence(plan, answer, result, request, kept)
+        return answer, result, evidence
+
+    def _request(
+        self,
+        query: SearchQuery,
+        plan: ValidatedPlan,
+        op: Operation,
+        linked: dict[str, tuple[str, ...]],
+    ) -> GraphQueryRequest:
+        """The store request of ``plan``'s operation ``op`` within the
+        query's suffix and graph-applied filters."""
         filters = dict(query.filters or {})
         allowed = filters.pop("id", None)
-        request = GraphQueryRequest(
+        return GraphQueryRequest(
             plan=plan,
             suffix=query.suffix,
             operation=op.operation,
@@ -690,41 +755,40 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             ),
             linked=linked,
             hydrate=hydrate_keys(plan),
-            timeout_seconds=settings.store_timeout_seconds,
+            timeout_seconds=self.settings.store_timeout_seconds,
         )
-        try:
-            result = await self.graph_query.aexecute(request)
-        except GraphQueryExecutionError as e:
-            logger.warning("Structured search: the graph query failed: %s", e)
-            run.fall_back("timeout" if e.timed_out else "execution_error")
-            return None
-        except GraphQueryCompileError:
-            run.fall_back("compile_error")
-            return None
-        except Exception as e:
-            if is_fatal_retrieval_error(e):
-                raise
-            logger.warning("Structured search: the graph query failed: %s", e)
-            run.fall_back("execution_error")
-            return None
-        run.backend, run.compiled_digest = result.backend, result.compiled_digest
-        kept: list[dict[str, str]] | None = None
-        if op.scan:
-            answer, kept = await self._scanned(query, plan, result, unapplied)
-        else:
-            answer = answer_from_result(plan, result)
-        run.truncated = answer.truncated
-        run.exact = not answer.truncated
-        run.row_count = (
-            answer.count
-            if answer.count is not None
-            else len(answer.rows) or len(answer.groups) or len(answer.paths)
-        ) or 0
-        if answer.empty:
-            run.fall_back("empty_result")
-            return None
-        evidence, result = await self._evidence(plan, answer, result, request, kept)
-        return answer, result, evidence
+
+    async def _known(
+        self, query: SearchQuery, plan: ValidatedPlan, unapplied: dict[str, Any]
+    ) -> bool:
+        """Whether some vertex the caller may read holds each string value
+        ``plan`` compares by equality (``literal_conditions``, one bounded
+        ``exists`` request each, concurrently); a failed check counts as
+        held, so it never turns an answer into a fallback on its own."""
+        checks = [value_check_plan(plan, c) for c in literal_conditions(plan)]
+        if not checks:
+            return True
+
+        async def holds(check: ValidatedPlan) -> bool:
+            op = plan_operation(
+                check, scan=bool(unapplied), cap=self.settings.max_scan_rows
+            )
+            try:
+                result = await self.graph_query.aexecute(
+                    self._request(query, check, op, {})
+                )
+            except Exception as e:
+                if is_fatal_retrieval_error(e):
+                    raise
+                logger.warning("Structured search: checking a value failed: %s", e)
+                return True
+            if op.scan:
+                answer, _ = await self._scanned(query, check, result, unapplied)
+            else:
+                answer = answer_from_result(check, result)
+            return bool(answer.exists)
+
+        return all(await gather_or_cancel(holds(check) for check in checks))
 
     async def _evidence(
         self,
@@ -736,41 +800,52 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     ) -> tuple[list[str], GraphQueryResult]:
         """The vertices the answer cites: those it names (rows, groups of
         vertices, paths), else, for a count, an aggregate, a yes or groups by
-        a property, the first ``rows_in_context`` matches by rank (the
-        scan's, or a second bounded store request), so the answer still has
-        entities and passages to cite."""
+        a property, the first ``rows_in_context`` matches
+        (``evidence_vertex_ids``: those holding the answer's value first, a
+        ``min``/``max``'s value or the listed groups' keys, then by rank),
+        from the scan, the store's rows or a second bounded store request
+        (of the holders, when the answer has any), so the answer still has
+        entities and passages to cite, and a maximum cites the vertex that
+        holds it."""
         cap = self.settings.rows_in_context
         named = answer_vertex_ids(plan, answer)
         if named or answer.exists is False or answer.count == 0:
             return named[:cap], result
         if kept is not None:
             rows = matching_bindings(plan, kept, result.vertices)
-            ranked = sorted(
-                rows,
-                key=lambda row: (
-                    -vertex_rank(result.vertices.get(row[plan.vars[0]])),
-                    tuple(row.values()),
-                ),
+            return (
+                evidence_vertex_ids(plan, answer, rows, result.vertices)[:cap],
+                result,
             )
-            ids = list(dict.fromkeys(v for row in ranked for v in row.values()))
-            return ids[:cap], result
         if result.rows and request.vars == plan.vars:
-            ids = list(dict.fromkeys(v for row in result.rows for v in row.values()))
+            ids = evidence_vertex_ids(plan, answer, result.rows, result.vertices)
             return ids[:cap], result
+        holders = answer_holders(plan, answer)
+        sampled = with_condition(plan, *holders) if holders is not None else plan
         sample = request.model_copy(
-            update={"operation": "tuples", "vars": plan.vars, "limit": cap}
+            update={
+                "plan": sampled,
+                "operation": "tuples",
+                "vars": plan.vars,
+                "limit": cap,
+            }
         )
         try:
             found = await self.graph_query.aexecute(sample)
+            if holders is not None and not found.rows:
+                # No vertex holds it as compared (a store's number
+                # semantics): the first matches instead.
+                found = await self.graph_query.aexecute(
+                    sample.model_copy(update={"plan": plan})
+                )
         except Exception as e:
             if is_fatal_retrieval_error(e):
                 raise
             logger.warning("Structured search: reading the evidence failed: %s", e)
             return [], result
-        ids = list(dict.fromkeys(v for row in found.rows for v in row.values()))
-        merged = result.model_copy(
-            update={"vertices": {**found.vertices, **result.vertices}}
-        )
+        vertices = {**found.vertices, **result.vertices}
+        ids = evidence_vertex_ids(plan, answer, found.rows, vertices)
+        merged = result.model_copy(update={"vertices": vertices})
         return ids[:cap], merged
 
     async def _scanned(
@@ -953,14 +1028,15 @@ class StructuredSearchStrategy(BaseSearchStrategy):
 
     @staticmethod
     def _lineage(entities: list[RetrievalResult]) -> list[str]:
-        """The text units the evidence entities cite, the ones most of them
-        cite first (then by id): the query result's lineage, which its
-        citation resolves to documents under the caller's filters."""
-        cited: dict[str, int] = {}
-        for entity in entities:
-            for unit in entity.metadata.get("text_unit_ids") or []:
-                cited[str(unit)] = cited.get(str(unit), 0) + 1
-        return sorted(cited, key=lambda unit: (-cited[unit], unit))
+        """The text units the evidence entities cite, by support
+        (``domain.retrieval.lineage``: the ones most of them cite first,
+        then the best-ranked entity's): the query result's lineage, which
+        its citation resolves to documents under the caller's filters."""
+        return merge_lineages(
+            (_listed(entity.metadata.get("text_unit_ids")) for entity in entities),
+            order="support",
+            scores=[float(entity.score or 0.0) for entity in entities],
+        )
 
     @staticmethod
     def _provenance(entities: list[RetrievalResult]) -> dict[str, Any] | None:
@@ -1053,14 +1129,9 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         documents = self.document_retriever
         if count == 0 or documents is None or not entities:
             return {}
-        cited: dict[str, int] = {}
-        for entity in entities:
-            for unit in entity.metadata.get("text_unit_ids") or []:
-                if not is_seed_unit(str(unit)):
-                    cited[str(unit)] = cited.get(str(unit), 0) + 1
-        if not cited:
+        ranked = [unit for unit in self._lineage(entities) if not is_seed_unit(unit)]
+        if not ranked:
             return {}
-        ranked = sorted(cited, key=lambda unit: (-cited[unit], unit))
         prefix = self.config.indexing.opensearch.text_units_index_prefix
         chosen = await self._passing_ranked_units(query, ranked, count * 2)
 

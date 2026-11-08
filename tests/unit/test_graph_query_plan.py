@@ -28,18 +28,23 @@ from unified_kg_rag.domain.models.graph_query import (
     GraphQueryPlan,
     GraphQueryRequest,
     GroupRow,
+    PropertyRef,
     QueryAnswer,
+    ResolvedCondition,
 )
 from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.domain.retrieval.graph_query import (
     aggregate_bindings,
     answer_from_result,
     build_profile,
+    condition_holds,
     describe_plan,
     hydrate_keys,
+    is_queryable_key,
     merge_declared,
     plan_operation,
     reference_execute,
+    scalar_holds,
     validate_plan,
 )
 from unified_kg_rag.shared.exceptions import InvalidGraphQueryError
@@ -232,6 +237,84 @@ def test_ids_lineage_and_internals_are_never_queryable(prop: str) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("key", "queryable"),
+    [
+        ("name", True),
+        ("rank", True),
+        ("attr_role", True),
+        # Neither a core property nor an extracted attribute.
+        ("role", False),
+        ("label", False),
+        ("attrs_role", False),
+        # An internal attribute ("_" first) and the store's bookkeeping.
+        ("attr__internal", False),
+        ("attr_", True),
+        ("build_tag", False),
+        ("attr_text_unit_weights", False),
+    ],
+)
+def test_only_core_properties_and_extracted_attributes_are_plan_keys(
+    key: str, queryable: bool
+) -> None:
+    assert is_queryable_key(key) is queryable
+    profile = build_profile(
+        [{"id": ["v"], "type": ["VENDOR"], key: ["x"]}], [], sampled=False
+    )
+    listed = {p.key for p in profile.properties}
+    assert (key in listed) is queryable
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        {"prop": "attr.code", "op": "eq", "value": "~id"},
+        {"prop": "attr.code", "op": "in", "value": ["A1", "~label"]},
+    ],
+)
+def test_a_value_naming_a_hidden_token_is_refused_with_a_warning(
+    where: dict, caplog: pytest.LogCaptureFixture
+) -> None:
+    graph = procurement_graph()
+    for vertex in graph.vertices.values():
+        vertex["attr_code"] = ["A1"]
+    plan = _plan(nodes=[{"var": "v", "where": [where]}], returns={"kind": "count"})
+    with caplog.at_level("WARNING"), pytest.raises(InvalidGraphQueryError, match="~"):
+        validate_plan(plan, profile_of(graph), max_hops=3)
+    assert "hidden token" in caplog.text
+
+
+def test_a_type_naming_a_hidden_token_is_refused_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A stored type or relationship type starting with "~" reached the
+    compiled Gremlin as a hidden token, refused there as a compiler bug."""
+    entities = [
+        Entity(id="t1", name="T1", type="~VENDOR"),
+        Entity(id="t2", name="T2", type="BUYER"),
+    ]
+    graph = property_graph(entities, [])
+    profile = build_profile(
+        graph.vertices.values(), [("~VENDOR", "~SUPPLIES", "BUYER")], sampled=False
+    )
+    for raw, field in [
+        ({"nodes": [{"var": "v", "types": ["~VENDOR"]}]}, "nodes[0].types"),
+        (
+            {
+                "nodes": [{"var": "v"}, {"var": "b", "types": ["BUYER"]}],
+                "edges": [{"types": ["~SUPPLIES"]}],
+            },
+            "edges[0].types",
+        ),
+    ]:
+        caplog.clear()
+        plan = _plan(**raw, returns={"kind": "count"})
+        with caplog.at_level("WARNING"), pytest.raises(InvalidGraphQueryError) as e:
+            validate_plan(plan, profile, max_hops=3)
+        assert e.value.field == field
+        assert "hidden token" in caplog.text
+
+
 def test_the_profile_lists_attributes_and_seed_properties_by_namespace() -> None:
     names = {p.name: p for p in profile_of(procurement_graph()).properties}
     assert names["attr.role"].examples == ("supplier",)
@@ -390,6 +473,42 @@ def test_the_plan_is_described_by_code() -> None:
     assert '(x, named "가나다 상사" = "가나다 상사")' in text
     assert "(linked to nothing)" in describe_plan(mention, {})
     assert "-[MAKES *1..2]->" in text
+    assert "twice" not in text
+    # A symmetric pattern's count: each pair in both orders, and it says so.
+    pairs = validated(
+        {
+            "nodes": [
+                {"var": "a", "types": ["VENDOR"]},
+                {"var": "b", "types": ["VENDOR"]},
+            ],
+            "edges": [{"direction": "both", "hops": [1, 2]}],
+            "returns": {"kind": "count"},
+        }
+    )
+    assert "counts each pair twice" in describe_plan(pairs)
+    distinct = pairs.model_copy(
+        update={"returns": pairs.returns.model_copy(update={"kind": "count_distinct"})}
+    )
+    assert "twice" not in describe_plan(distinct)
+
+
+def test_a_type_the_sample_missed_is_refused_saying_so() -> None:
+    profile = profile_of(procurement_graph()).model_copy(
+        update={"sampled": True, "sample_size": 2000}
+    )
+    plan = _plan(nodes=[{"var": "v", "types": ["CARRIER"]}], returns={"kind": "count"})
+    with pytest.raises(InvalidGraphQueryError, match="a sample of 2000 entities"):
+        validate_plan(plan, profile, max_hops=3)
+    with pytest.raises(InvalidGraphQueryError) as e:
+        validate_plan(plan, profile_of(procurement_graph()), max_hops=3)
+    assert "sample" not in str(e.value)
+    edge = _plan(
+        nodes=[{"var": "v"}, {"var": "b"}],
+        edges=[{"types": ["SHIPS"]}],
+        returns={"kind": "count"},
+    )
+    with pytest.raises(InvalidGraphQueryError, match="edges.0..types.*a sample"):
+        validate_plan(edge, profile, max_hops=3)
 
 
 def test_the_store_aggregates_unless_code_must_check_the_bindings() -> None:
@@ -604,3 +723,83 @@ def test_text_and_order_comparisons_need_one_value_kind() -> None:
         profile,
         max_hops=3,
     )
+
+
+@pytest.mark.parametrize(
+    ("stored", "op", "value", "holds"),
+    [
+        # eq: within one kind; a number never equals a boolean.
+        (5, "eq", 5, True),
+        (5, "eq", 5.0, True),
+        (5, "eq", 6, False),
+        (1, "eq", True, False),
+        (True, "eq", 1, False),
+        ("Acme", "eq", "Acme", True),
+        ("Acme", "eq", "acme", False),
+        ("5", "eq", 5, False),
+        # neq holds across kinds, as Gremlin's does.
+        (5, "neq", 5, False),
+        (5, "neq", 6, True),
+        (True, "neq", 1, True),
+        ("Acme", "neq", 5, True),
+        ("Acme", "neq", "Acme", False),
+        # in: any listed value of the same kind.
+        (5, "in", (1, 5), True),
+        (5, "in", (1, 2), False),
+        (1, "in", (True,), False),
+        ("b", "in", ("a", "b"), True),
+        # contains: case-sensitive, strings only.
+        ("Acme Supplies", "contains", "Supp", True),
+        ("Acme Supplies", "contains", "supp", False),
+        (55, "contains", "5", False),
+        # Order comparisons: within one kind, never booleans.
+        (5, "gt", 4, True),
+        (5, "gt", 5, False),
+        (5, "gte", 5, True),
+        (4, "gte", 5, False),
+        (4, "lt", 5, True),
+        (5, "lt", 5, False),
+        (5, "lte", 5, True),
+        (6, "lte", 5, False),
+        (5.5, "gt", 5, True),
+        ("b", "gt", "a", True),
+        ("a", "gte", "b", False),
+        (5, "gt", "4", False),
+        (True, "gt", False, False),
+        (True, "lte", True, False),
+        (5, "exists", True, False),
+    ],
+)
+def test_one_stored_value_against_each_operator(
+    stored: Any, op: str, value: Any, holds: bool
+) -> None:
+    """The comparison semantics the reference and SQLite share: each
+    operator pinned on its own, so a store answering alike from the same
+    wrong predicate cannot hide it (a neq read as eq, a gt as gte)."""
+    assert scalar_holds(stored, op, value) is holds
+
+
+@pytest.mark.parametrize(
+    ("values", "op", "value", "holds"),
+    [
+        ([], "exists", True, False),
+        ([], "exists", False, True),
+        ([None], "exists", True, False),
+        ([None], "exists", False, True),
+        ([0], "exists", True, True),
+        ([0], "exists", False, False),
+        ([False], "exists", True, True),
+        # Any stored value; no value fails every operator but exists: false.
+        (["a", "b"], "eq", "b", True),
+        ([1, 9], "gt", 5, True),
+        ([1, 2], "gt", 5, False),
+        ([], "neq", "a", False),
+        ([None], "eq", None, False),
+    ],
+)
+def test_a_property_holds_a_condition_by_any_of_its_values(
+    values: list[Any], op: str, value: Any, holds: bool
+) -> None:
+    prop = PropertyRef(name="p", key="p", source="vertex", kinds=(), multi=True)
+    condition = ResolvedCondition(prop=prop, op=op, value=value)
+    assert condition_holds(values, condition) is holds

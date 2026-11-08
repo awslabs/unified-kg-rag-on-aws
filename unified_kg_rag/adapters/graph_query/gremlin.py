@@ -38,7 +38,7 @@ from unified_kg_rag.domain.models.graph_query import (
     ResolvedNode,
 )
 from unified_kg_rag.domain.retrieval.filters import KindsRule, Range, Term
-from unified_kg_rag.domain.retrieval.graph_query import value_kind
+from unified_kg_rag.domain.retrieval.graph_query import canonical_scalar, value_kind
 from unified_kg_rag.shared.utils.common import compute_hash
 
 # The property every vertex and edge is looked up by.
@@ -306,13 +306,19 @@ class GremlinQuery:
         if request.operation == "count":
             return {"count": int(rows[0]) if rows else 0}
         if request.operation == "group":
-            groups = []
+            # A property holding 5 and 5.0 is grouped apart by the server:
+            # their counts are one group (``canonical_scalar``), as on every
+            # other store. (The server cut its page before they merge, so a
+            # split key near the page's end can still rank low.)
+            counts: dict[Any, int] = {}
             for row in rows:
                 if not isinstance(row, dict):
                     continue
                 for key, count in row.items():
                     if value_kind(key) is not None:
-                        groups.append(GroupRow(key=key, count=int(count)))
+                        canonical = canonical_scalar(key)
+                        counts[canonical] = counts.get(canonical, 0) + int(count)
+            groups = [GroupRow(key=key, count=count) for key, count in counts.items()]
             return {"groups": tuple(groups[:keep]), "truncated": len(groups) > keep}
         if request.operation == "paths":
             paths = [p for p in (self._path(row) for row in rows) if p is not None]

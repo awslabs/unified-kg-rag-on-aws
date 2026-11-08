@@ -56,7 +56,10 @@ from unified_kg_rag.domain.models.graph_query import (
     ValueKind,
 )
 from unified_kg_rag.domain.models.schema import ExtractionSchema, schema_key
+from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import InvalidGraphQueryError
+
+logger = get_logger(__name__)
 
 ATTRIBUTE_KEY_PREFIX = f"{Constants.ATTRIBUTE_PREFIX.value}_"
 # The vertex property that holds the seed properties, as one JSON string.
@@ -220,6 +223,23 @@ def vertex_rank(vertex: VertexMap | None) -> float:
         if value_kind(value) == "number":
             return float(value)
     return 0.0
+
+
+# Integral floats up to this magnitude are exact as ints.
+_EXACT_INTEGRAL = 2**53
+
+
+def canonical_scalar(value: Any) -> Any:
+    """A stored scalar as one group key: an integral float as its int (5.0
+    is 5, as every store's numeric comparison reads them; a JSON or Gremlin
+    group of the raw values kept 5 and 5.0 apart), anything else as is."""
+    if (
+        isinstance(value, float)
+        and value.is_integer()
+        and abs(value) <= _EXACT_INTEGRAL
+    ):
+        return int(value)
+    return value
 
 
 def scalar_sort_key(value: Any) -> tuple[int, Any]:
@@ -459,6 +479,49 @@ def _fail(field: str, reason: str) -> InvalidGraphQueryError:
     return InvalidGraphQueryError(field, reason)
 
 
+# Gremlin names its hidden tokens (``~label``, ``~id``) with this prefix; a
+# stored name or a value starting with it would reach the compiled query as
+# such a token, which the bytecode checker refuses as a compiler bug.
+HIDDEN_TOKEN_PREFIX = "~"
+
+
+def _refuse_hidden_tokens(plan: ValidatedPlan) -> None:
+    """Raise ``InvalidGraphQueryError`` (and log a WARNING: the data holds
+    such a name) for a type, relationship type, property key or string
+    value of ``plan`` that starts with ``HIDDEN_TOKEN_PREFIX``."""
+    named: list[tuple[str, str]] = []
+    for index, node in enumerate(plan.nodes):
+        named += [(f"nodes[{index}].types", t) for t in node.types]
+        for c_index, condition in enumerate(node.conditions):
+            field = f"nodes[{index}].where[{c_index}]"
+            named.append((f"{field}.prop", condition.prop.key))
+            values = (
+                condition.value
+                if isinstance(condition.value, tuple)
+                else (condition.value,)
+            )
+            named += [(f"{field}.value", v) for v in values if isinstance(v, str)]
+    for index, edge in enumerate(plan.edges):
+        named += [(f"edges[{index}].types", label) for label in edge.labels]
+    r = plan.returns
+    refs = [*r.properties, *(p for p in (r.group_prop, r.aggregate_prop) if p)]
+    named += [("returns", ref.key) for ref in refs]
+    for field, text in named:
+        if text.startswith(HIDDEN_TOKEN_PREFIX):
+            logger.warning(
+                "Structured query refused: %s %r starts with %r, a Gremlin hidden "
+                "token (rename it in the data)",
+                field,
+                text,
+                HIDDEN_TOKEN_PREFIX,
+            )
+            raise _fail(
+                field,
+                f"'{text}' starts with '{HIDDEN_TOKEN_PREFIX}', which no query may "
+                "name",
+            )
+
+
 def _listing(names: Iterable[str], limit: int = 20) -> str:
     shown = list(names)
     more = len(shown) - limit
@@ -556,7 +619,9 @@ def validate_plan(
             edge count other than nodes - 1, a repeated or unknown variable,
             more than ``max_hops`` hops, a type, relationship type or
             property the profile does not list, a value of another kind than
-            the property holds, or a return clause its kind cannot use.
+            the property holds, a return clause its kind cannot use, or a
+            name or string value starting with ``~`` (a Gremlin hidden
+            token; logged as a WARNING).
     """
     if not plan.nodes:
         raise _fail("nodes", "a plan needs at least one node")
@@ -579,9 +644,25 @@ def validate_plan(
             "edges", f"the pattern spans up to {total} hops; at most {max_hops}"
         )
 
+    def resolve(
+        names: Sequence[str], known: tuple[TypeProfile, ...], field: str, what: str
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        try:
+            return _resolve_types(names, known, field, what)
+        except InvalidGraphQueryError as e:
+            if not profile.sampled:
+                raise
+            # A rare type the sample missed is refused too: say so, so the
+            # repair picks a listed one and the operator can declare it.
+            raise _fail(
+                e.field,
+                f"{e.reason} (the schema lists the types of a sample of "
+                f"{profile.sample_size} entities and the declared ones)",
+            ) from e
+
     nodes: list[ResolvedNode] = []
     for index, node in enumerate(plan.nodes):
-        types, labels = _resolve_types(
+        types, labels = resolve(
             node.types, profile.entity_types, f"nodes[{index}].types", "entity type"
         )
         conditions: list[ResolvedCondition] = []
@@ -608,7 +689,7 @@ def validate_plan(
         )
     edges = []
     for index, edge in enumerate(plan.edges):
-        labels_, type_labels = _resolve_types(
+        labels_, type_labels = resolve(
             edge.types, profile.edge_types, f"edges[{index}].types", "relationship type"
         )
         edges.append(
@@ -621,9 +702,11 @@ def validate_plan(
             )
         )
     returns = _resolve_return(plan, profile, seen)
-    return ValidatedPlan(
+    validated = ValidatedPlan(
         nodes=tuple(nodes), edges=tuple(edges), returns=returns, plan=plan
     )
+    _refuse_hidden_tokens(validated)
+    return validated
 
 
 def _resolve_return(
@@ -796,7 +879,15 @@ def describe_plan(
     shown = (
         f"; showing {', '.join(p.name for p in r.properties)}" if r.properties else ""
     )
-    return f"Match {pattern}. Return {what}{shown}."
+    note = ""
+    counts_matches = r.kind == "count" or (r.kind == "group_count" and len(r.vars) != 1)
+    if counts_matches and any(edge.direction == "both" for edge in plan.edges):
+        # A match is a binding of every node: (a, b) and (b, a) are two.
+        note = (
+            " An edge of either direction matches a pair once in each order"
+            " both nodes fit, so a symmetric pattern counts each pair twice."
+        )
+    return f"Match {pattern}. Return {what}{shown}.{note}"
 
 
 # --- the store operation ------------------------------------------------------------
@@ -1020,7 +1111,7 @@ def aggregate_bindings(
             )
             if key is None or value_kind(key) is None:
                 continue
-            counted[key].add(tuple(row[v] for v in r.vars))
+            counted[canonical_scalar(key)].add(tuple(row[v] for v in r.vars))
         groups = _ordered_groups(
             (GroupRow(key=key, count=len(ids)) for key, ids in counted.items()),
             r.order,
@@ -1247,6 +1338,126 @@ def answer_vertex_ids(plan: ValidatedPlan, answer: QueryAnswer) -> list[str]:
     for path in answer.paths:
         ids.update(dict.fromkeys(path.vertex_ids))
     return list(ids)
+
+
+def literal_conditions(plan: ValidatedPlan) -> list[ResolvedCondition]:
+    """The string literals ``plan`` compares by equality (``eq``, and each
+    value of an ``in``), each once, as ``eq`` conditions: what a zero count
+    or a no rests on the data spelling as the plan does."""
+    found: dict[tuple[str, str, str], ResolvedCondition] = {}
+    for node in plan.nodes:
+        for condition in node.conditions:
+            if condition.op not in ("eq", "in"):
+                continue
+            values = (
+                condition.value
+                if isinstance(condition.value, tuple)
+                else (condition.value,)
+            )
+            for value in values:
+                if isinstance(value, str):
+                    key = (condition.prop.source, condition.prop.key, value)
+                    found.setdefault(
+                        key,
+                        ResolvedCondition(prop=condition.prop, op="eq", value=value),
+                    )
+    return list(found.values())
+
+
+def value_check_plan(
+    plan: ValidatedPlan, condition: ResolvedCondition
+) -> ValidatedPlan:
+    """A plan asking whether any vertex (of any type) satisfies
+    ``condition``: whether the data holds the value at all."""
+    return ValidatedPlan(
+        nodes=(ResolvedNode(var="x", conditions=(condition,)),),
+        edges=(),
+        returns=ResolvedReturn(kind="exists", vars=("x",)),
+        plan=plan.plan,
+    )
+
+
+def answer_holders(
+    plan: ValidatedPlan, answer: QueryAnswer
+) -> tuple[str, ResolvedCondition] | None:
+    """The node whose vertices hold an answer's value and the condition
+    that selects them, for an answer that names no vertex: a ``min`` or
+    ``max`` aggregate's value on its var, a group count by a property's
+    listed keys on the group var; ``None`` for any other answer (a count,
+    a yes, a sum or a mean rests on every match alike)."""
+    r = plan.returns
+    if (
+        r.kind == "aggregate"
+        and r.aggregate_fn in ("min", "max")
+        and r.aggregate_var is not None
+        and r.aggregate_prop is not None
+        and answer.value is not None
+    ):
+        condition = ResolvedCondition(
+            prop=r.aggregate_prop, op="eq", value=canonical_scalar(answer.value)
+        )
+        return r.aggregate_var, condition
+    if (
+        r.kind == "group_count"
+        and r.group_var is not None
+        and r.group_prop is not None
+        and answer.groups
+    ):
+        keys = tuple(dict.fromkeys(canonical_scalar(g.key) for g in answer.groups))
+        return r.group_var, ResolvedCondition(prop=r.group_prop, op="in", value=keys)
+    return None
+
+
+def with_condition(
+    plan: ValidatedPlan, var: str, condition: ResolvedCondition
+) -> ValidatedPlan:
+    """``plan`` with ``condition`` added to the node of ``var``."""
+    nodes = tuple(
+        (
+            node.model_copy(update={"conditions": (*node.conditions, condition)})
+            if node.var == var
+            else node
+        )
+        for node in plan.nodes
+    )
+    return plan.model_copy(update={"nodes": nodes})
+
+
+def evidence_vertex_ids(
+    plan: ValidatedPlan,
+    answer: QueryAnswer,
+    rows: Iterable[Mapping[str, str]],
+    vertices: Mapping[str, VertexMap],
+) -> list[str]:
+    """The vertices of matching ``rows`` that evidence an answer naming
+    none, each once: the rows whose vertex holds the answer's value first
+    (``answer_holders``; by the listed groups' order), then by the first
+    node's rank and the ids; in each row, the holding node's vertex first."""
+    holders = answer_holders(plan, answer)
+    var = holders[0] if holders else plan.vars[0]
+    order = [var, *(v for v in plan.vars if v != var)]
+    keys: dict[Any, int] = {}
+    if holders is not None and isinstance(holders[1].value, tuple):
+        keys = {key: index for index, key in enumerate(holders[1].value)}
+
+    def place(row: Mapping[str, str]) -> int:
+        if holders is None:
+            return 0
+        vertex = vertices.get(row[var]) or {}
+        values = property_values(vertex, holders[1].prop)
+        if not condition_holds(values, holders[1]):
+            return len(keys) + 1
+        return min((keys.get(canonical_scalar(v), 0) for v in values), default=0)
+
+    ranked = sorted(
+        _distinct(rows, plan.vars),
+        key=lambda row: (
+            place(row),
+            -vertex_rank(vertices.get(row[plan.vars[0]])),
+            tuple(row[v] for v in plan.vars),
+        ),
+    )
+    return list(dict.fromkeys(row[v] for row in ranked for v in order))
 
 
 def _vertex_label(vertex_id: str, vertices: Mapping[str, VertexMap]) -> str:

@@ -476,6 +476,43 @@ async def test_no_structured_answer_runs_the_fallback(reply: Any, reason: str) -
     assert len(fallback.queries) == 1
     if reason == "unanswerable":
         assert fallback.queries[0].entity_focus == ["Acme"]
+    # A failed call is a degradation of the query (the ledger); a designed
+    # fallback (an unanswerable question, an absent name, an empty result)
+    # is not.
+    degraded = result.metadata.get("degraded") or []
+    if reason == "planner_error":
+        assert degraded == [
+            {
+                "step": "structured_query",
+                "reason": reason,
+                "error_type": "RuntimeError",
+            }
+        ]
+    else:
+        assert degraded == []
+
+
+async def test_store_failures_are_degradations_unknown_values_not() -> None:
+    class _Failing(FakeGraphQueryRetriever):
+        async def aexecute(self, request: Any) -> Any:
+            raise GraphQueryExecutionError("too slow", timed_out=True)
+
+    plan = _with(CONFORMANCE_PLANS["count_supply_pairs"])
+    strategy, *_ = _strategy(_Planner(plan), graph=_Failing(procurement_graph()))
+    result = await strategy.asearch(_query())
+    assert result.metadata["structured"]["reason"] == "timeout"
+    assert result.metadata["degraded"] == [
+        {
+            "step": "structured_query",
+            "reason": "timeout",
+            "error_type": "GraphQueryExecutionError",
+        }
+    ]
+    assert result.metadata["degraded_error"] == "GraphQueryExecutionError"
+    strategy, *_ = _strategy(_Planner(_role_count("Supplier")))
+    result = await strategy.asearch(_query("How many suppliers are there?"))
+    assert result.metadata["structured"]["reason"] == "unknown_value"
+    assert "degraded" not in result.metadata
 
 
 async def test_a_zero_count_and_a_no_are_answers() -> None:
@@ -501,6 +538,73 @@ async def test_a_zero_count_and_a_no_are_answers() -> None:
     )
     result = await strategy.asearch(_query("Does Initech supply anyone?"))
     assert _table(result).content.endswith("\nno")
+    assert not fallback.queries
+
+
+def _role_count(
+    value: Any, prop: str = "attr.role", kind: str = "VENDOR"
+) -> dict[str, Any]:
+    op = "in" if isinstance(value, list) else "eq"
+    return _with(
+        {
+            "nodes": [
+                {
+                    "var": "v",
+                    "types": [kind],
+                    "where": [{"prop": prop, "op": op, "value": value}],
+                }
+            ],
+            "returns": {"kind": "count"},
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("plan", "status"),
+    [
+        # A genuine zero: no buyer is a supplier.
+        (_role_count("supplier", kind="BUYER"), "answered"),
+        # Spelled otherwise than the data, or translated: no vertex holds it.
+        (_role_count("Supplier"), "unknown_value"),
+        (_role_count("공급사"), "unknown_value"),
+        (_role_count(["supplier", "Supplier"], kind="BUYER"), "unknown_value"),
+        # A seed property is checked in code (a scan).
+        (_role_count("Norland", "seed.country", kind="BUYER"), "answered"),
+        (_role_count("Nordland", "seed.country"), "unknown_value"),
+    ],
+)
+async def test_a_zero_over_a_value_the_data_lacks_falls_back(
+    plan: dict[str, Any], status: str
+) -> None:
+    """A count of 0 (or a no) over a value no vertex holds is a misspelled
+    or translated value, not an answer: it falls back ``unknown_value``."""
+    strategy, graph, _, fallback = _strategy(_Planner(plan))
+    result = await strategy.asearch(_query("How many suppliers are there?"))
+    structured = result.metadata["structured"]
+    if status == "answered":
+        assert structured["status"] == "answered"
+        assert "\n0" in _table(result).content
+        assert not fallback.queries
+    else:
+        assert (structured["status"], structured["reason"]) == ("fallback", status)
+        assert fallback.queries
+    # One exists check per string value, of any type.
+    checks = [r for r in graph.requests if r.plan.vars == ("x",)]
+    assert checks and all(not r.plan.nodes[0].types for r in checks)
+
+
+async def test_a_failed_value_check_keeps_the_answer() -> None:
+    class _Failing(FakeGraphQueryRetriever):
+        async def aexecute(self, request: Any) -> Any:
+            if request.plan.vars == ("x",):
+                raise GraphQueryExecutionError("check failed", timed_out=True)
+            return await super().aexecute(request)
+
+    strategy, *_, fallback = _strategy(
+        _Planner(_role_count("Supplier")), graph=_Failing(procurement_graph())
+    )
+    result = await strategy.asearch(_query("How many suppliers are there?"))
+    assert result.metadata["structured"]["status"] == "answered"
     assert not fallback.queries
 
 
@@ -573,7 +677,7 @@ async def test_mentions_link_through_the_hybrid_entity_search_in_any_script() ->
     assert result.metadata["structured"]["linked"] == {"x": ["v3"]}
     names = _table(result).content
     assert "株式会社サクラ" in names and "Hooli Retail" in names
-    assert "(it is in Korean)" in planner.calls[0][0]
+    assert "(English), whatever language" in planner.calls[0][0]
     link = next(c for c in documents.calls if c.query == "가나다상사")
     assert link.index_prefixes == [ENTITIES]
     assert link.search_type.value == "hybrid"
@@ -610,13 +714,41 @@ async def test_augment_fuses_the_fallback_beside_the_query_result() -> None:
     assert "context_sufficient" not in result.metadata
 
 
-async def test_the_planner_writes_in_the_query_language() -> None:
-    planner = _Planner(_with(CONFORMANCE_PLANS["count_supply_pairs"]))
-    strategy, *_ = _strategy(planner)
-    await strategy.asearch(
-        _query(metadata={"search_strategy": "structured", "query_language": "Japanese"})
+async def test_a_question_in_another_language_names_entities_as_the_data() -> None:
+    """A Korean question on an English corpus: the planner is told to write
+    its mentions in English, so they link, and the fallback's focus names
+    are the data's (the probe linked 애크미 서플라이즈 to nothing)."""
+    plan = _with(
+        {
+            "nodes": [
+                {"var": "a", "mention": "Acme Supplies"},
+                {"var": "b", "mention": "Umbrella Buyer"},
+            ],
+            "edges": [{"direction": "both", "hops": [1, 2]}],
+            "returns": {"kind": "exists"},
+        },
+        entities=["Acme Supplies", "Umbrella Buyer"],
     )
-    assert "(it is in Japanese)" in planner.calls[0][0]
+    planner = _Planner(plan)
+    strategy, *_ = _strategy(planner)
+    result = await strategy.asearch(
+        _query(
+            "애크미 서플라이즈는 엄브렐라 바이어와 연결되어 있나요?",
+            metadata={"search_strategy": "structured", "query_language": "Korean"},
+        )
+    )
+    assert result.metadata["structured"]["status"] == "answered"
+    system = planner.calls[0][0]
+    assert "in another language as the data would name it" in system
+    assert "(English), whatever language" in system and "Korean" not in system
+    # A Japanese corpus is named in Japanese.
+    config = Config(
+        processing={"translation": {"enabled": False, "source_language": "ja"}}
+    )
+    planner = _Planner(plan)
+    strategy, *_ = _strategy(planner, config=config)
+    await strategy.asearch(_query())
+    assert "(Japanese), whatever language" in planner.calls[0][0]
 
 
 async def test_the_profile_is_read_once_per_suffix_and_ttl() -> None:
@@ -701,10 +833,21 @@ async def test_the_declared_schema_alone_still_lists_the_core_properties() -> No
     assert "\n3" in _table(result).content
 
 
-@pytest.mark.parametrize("absent", ["Zorblax Industries", "존재하지않는회사"])
+@pytest.mark.parametrize(
+    "absent",
+    [
+        "Zorblax Industries",
+        "존재하지않는회사",
+        # One word shared with a stored name (Acme Supplies, 가나다 상사).
+        "Zorblax Supplies",
+        "라마바 상사",
+        "Zorblax Supplies Inc",
+    ],
+)
 async def test_a_name_no_entity_has_links_nothing(absent: str) -> None:
-    """A vector search returns its nearest entities for any name: without a
-    name match or a lexical hit the mention links nothing, so an existence
+    """A vector search returns its nearest entities for any name, a lexical
+    one every name that shares a word: without a name match or a hit whose
+    name covers every term of it the mention links nothing, so an existence
     question about an absent entity falls back instead of answering yes."""
     plan = _with(
         {
@@ -787,6 +930,57 @@ async def test_a_count_cites_matches_as_evidence(name: str) -> None:
     assert counts == sorted(counts, reverse=True)
 
 
+@pytest.mark.parametrize(
+    ("returns", "nodes", "holder"),
+    [
+        # The least-ranked buyer a vendor supplies is Hooli Retail (2); by
+        # the vendors' rank the first match was Acme Supplies' buyers.
+        (
+            {
+                "kind": "aggregate",
+                "aggregate": {"fn": "min", "var": "b", "prop": "rank"},
+            },
+            [{"var": "v", "types": ["VENDOR"]}, {"var": "b", "types": ["BUYER"]}],
+            "b3",
+        ),
+        # Scanned (a seed property): the most employees are 가나다 상사's.
+        (
+            {
+                "kind": "aggregate",
+                "aggregate": {"fn": "max", "var": "v", "prop": "seed.employees"},
+            },
+            [{"var": "v", "types": ["VENDOR"]}],
+            "v3",
+        ),
+        # The fewest kind (BUYER, before PRODUCT by key): a buyer, not the
+        # top-ranked vendor.
+        (
+            {
+                "kind": "group_count",
+                "group_by": {"var": "x", "prop": "type"},
+                "order": "asc",
+                "limit": 1,
+            },
+            [{"var": "x"}],
+            "b1",
+        ),
+    ],
+)
+async def test_an_aggregate_cites_the_vertex_holding_its_value(
+    returns: dict, nodes: list, holder: str
+) -> None:
+    config = Config()
+    config.search.structured.rows_in_context = 1
+    edges = [{"types": ["SUPPLIES"]}] if len(nodes) == 2 else []
+    plan = _with({"nodes": nodes, "edges": edges, "returns": returns})
+    strategy, graph, *_ = _strategy(_Planner(plan), config=config)
+    result = await strategy.asearch(_query("Which one?"))
+    assert result.metadata["structured"]["status"] == "answered"
+    assert _table(result).metadata["entity_ids"] == [holder]
+    entities = [r.source for r in result.results if r.retriever_type == "entity"]
+    assert entities == [holder]
+
+
 async def test_under_filters_no_stored_value_reaches_the_planner() -> None:
     """The profile is read without the caller's filters: its sampled values
     may be an excluded document's, so a filtered query's schema shows none."""
@@ -820,5 +1014,7 @@ async def test_values_are_asked_in_the_data_language() -> None:
         _query(metadata={"search_strategy": "structured", "query_language": "Korean"})
     )
     system = planner.calls[0][0]
-    assert "(it is in Korean)" in system
-    assert "the language and spelling of the data (" in system
+    # The question's language is not the mentions': the data's is.
+    assert "Korean" not in system
+    assert "Write mentions, entities, keywords and the string values" in system
+    assert "(English), whatever language" in system

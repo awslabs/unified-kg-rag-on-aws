@@ -266,7 +266,9 @@ class LocalSearchConfig(BaseModel):
             "Each query entity is looked up in the entities index on its own "
             "and seeds graph expansion with the entities of its name; with "
             "none, with its top hit only when that scores at least this "
-            "fraction of the best hit of any query entity, so a generic word "
+            "fraction of the best hit of any query entity (and is no one-word "
+            "lookalike: a name sharing one word with it, neither holding the "
+            "other), so a generic word "
             "the entity extraction returned seeds no unrelated entity. The "
             "fraction is read at equal hybrid weights, where a hit only the "
             "vector search found scores at most 0.5 of one both found, so "
@@ -942,10 +944,12 @@ class StructuredSearchConfig(BaseModel):
         description=(
             "Entities a name in the question links to at most when no entity "
             "has its name (by compact_name_key) among a hybrid entity search's "
-            "hits: the best hits of a lexical (BM25) search for it, under the "
-            "caller's filters and the node's types. A name no entity shares a "
-            "word with links nothing (the query falls back): a vector search "
-            "returns its nearest entities for any text."
+            "hits: the best hits of a lexical (BM25) search for it whose names "
+            "hold every word of it (legal forms aside; Han, Hangul and Kana by "
+            "character pairs), under the caller's filters and the node's "
+            "types. Any other name links nothing (the query falls back): a "
+            "vector search returns its nearest entities for any text, a "
+            "lexical one every name sharing a word."
         ),
     )
     link_min_score: float = Field(
