@@ -80,6 +80,11 @@ WRITABLE_VOLUMES = {
     "app-outputs": "/app/outputs",
     "app-logs": "/app/logs",
 }
+# The trace collector's own writable paths on its read-only root: its /tmp
+# (the Go runtime's temporary directory), nothing else.
+COLLECTOR_VOLUMES = {
+    "collector-tmp": "/tmp",  # nosec B108 - a task volume, the sidecar's /tmp
+}
 
 
 class _TaskImports(NamedTuple):
@@ -832,7 +837,7 @@ class ComputeStack(Stack):
                 "telemetry": {"metrics": {"level": "none"}},
             },
         }
-        return task_def.add_container(
+        collector = task_def.add_container(
             "otel-collector",
             image=ecs.ContainerImage.from_ecr_repository(repository, COLLECTOR_DIGEST),
             # Losing the collector loses traces, never the run.
@@ -851,4 +856,12 @@ class ComputeStack(Stack):
                 retries=3,
                 start_period=Duration.seconds(10),
             ),
+            # Security Hub ECS.5, as the app: writes go to task volumes only.
+            readonly_root_filesystem=True,
         )
+        for name, path in COLLECTOR_VOLUMES.items():
+            task_def.add_volume(name=name)
+            collector.add_mount_points(
+                ecs.MountPoint(source_volume=name, container_path=path, read_only=False)
+            )
+        return collector

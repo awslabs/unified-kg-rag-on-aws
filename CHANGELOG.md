@@ -291,8 +291,9 @@ See [`iac/README.md`](iac/README.md).
   versions and it still runs on 2.13 clusters; `vector_mode` / `compression_level` and faiss with `cosinesimil` now
   work on the CDK domain, opt-in as before (#457, #622, #626).
 - The app container runs on a read-only root filesystem, writing only to task volumes at `/tmp`, `/app/cache`,
-  `/app/outputs` and `/app/logs` (Security Hub ECS.5), and a created VPC's default security group allows no traffic
-  (EC2.2). An image of your own must declare those four paths as `VOLUME`s its user can write, as
+  `/app/outputs` and `/app/logs` (Security Hub ECS.5), as does the trace collector sidecar
+  (`enable_cloudwatch_tracing`) with a `/tmp` volume of its own, and a created VPC's default security group allows no
+  traffic (EC2.2). An image of your own must declare those four paths as `VOLUME`s its user can write, as
   `docker/Dockerfile` does, and write nowhere else.
 
 #### Library API
