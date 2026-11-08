@@ -225,7 +225,7 @@ sample).
   in `tests/integration/test_doc_status_conformance.py`.
 - Coverage gate ratchets up with measured coverage (the `--cov-fail-under` floor in
   `quality.yml` sits just under it: currently 95, measured ~96%). Run:
-  `uv run --extra otel --extra eval --extra viz --extra ontology pytest -m "not aws and not perf and not weekly" -n logical --cov=unified_kg_rag`.
+  `uv run --extra otel --extra eval --extra viz --extra ontology --extra mcp --extra docx --extra console pytest -m "not aws and not perf and not weekly" -n logical --cov=unified_kg_rag`.
 
 ## Quality gate
 
