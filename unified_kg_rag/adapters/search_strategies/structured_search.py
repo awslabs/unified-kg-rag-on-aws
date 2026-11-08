@@ -552,9 +552,10 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         node's types) whose name has the mention's ``compact_name_key``;
         else the best ``link_candidates`` hits of a lexical (BM25) search
         above ``link_min_score`` whose names cover every term of the
-        mention (or one ``processing.similarity_threshold`` alike), so an absent name that shares a word with a stored one
-        ("Zorblax Supplies", "Acme Supplies") links nothing. A mention that
-        links nothing sets the fallback reason ``unlinked_mention``."""
+        mention (or one ``processing.similarity_threshold`` alike), so an
+        absent name that shares a word with a stored one ("Zorblax
+        Supplies", "Acme Supplies") links nothing. A mention that links
+        nothing sets the fallback reason ``unlinked_mention``."""
         nodes = [node for node in plan.nodes if node.mention is not None]
         if not nodes:
             return {}

@@ -417,10 +417,10 @@ class LocalSearchStrategy(PPRRankingMixin):
         the hits that are its name (``compact_name_key``), else with its best
         hit whose name covers the focus name's terms when that scores at
         least ``search.local_search.seed_score_ratio`` of the best hit of any
-        focus entity (``focus_seeds``). One query of the joined names, two hits per name and
-        no floor seeded a wrong neighbour beside the right entity on every
-        query of a synthetic 12-query multi-hop corpus, and a generic focus
-        word ("province") seeded unrelated entities. Without an
+        focus entity (``focus_seeds``). One query of the joined names, two
+        hits per name and no floor seeded a wrong neighbour beside the right
+        entity on every query of a synthetic 12-query multi-hop corpus, and
+        a generic focus word ("province") seeded unrelated entities. Without an
         entity focus the raw query text is looked up instead (as the
         claims/community-report/relationship sections do), its ``top_k``
         hits the seeds, so local search still seeds graph expansion.
