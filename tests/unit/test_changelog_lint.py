@@ -8,8 +8,11 @@ landing script never filled, two *Upgrading* steps with one number (an old
 and a new version of the same instruction), a "step N" reference past the
 last step (left by a step removed or merged), the same passage kept twice by
 a conflict resolution (often on adjacent lines, both versions of one
-wrapped line), a line a conflict resolution joined unwrapped, and an extra
-the install instructions do not name.
+wrapped line), a shorter fragment of an entry kept twice in it (the old and
+the new tail of one sentence, the second starting a line), two entries of a
+subsection that contradict each other ("no longer exports X" beside
+"exports X", sharing a quoted message), a line a conflict resolution
+joined unwrapped, and an extra the install instructions do not name.
 """
 
 from __future__ import annotations
@@ -32,6 +35,15 @@ CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 # line, often fewer than SHINGLE_MIN_DISTANCE words after the first.
 SHINGLE_WORDS = 14
 SHINGLE_MIN_DISTANCE = 40
+# Within one entry (a bullet or an Upgrading step), a run of this many words
+# that comes again starting a line is the old and the new version of one
+# wrapped sentence a merge kept both of; a run of ENTRY_REPEAT_WORDS words
+# that comes again anywhere in it is one too.
+FRAGMENT_WORDS = 6
+ENTRY_REPEAT_WORDS = 10
+# A quoted span this many words long that two contradicting entries share
+# says they describe the same behaviour.
+SHARED_SPAN_WORDS = 3
 # Outside tables, no line is longer (the section wraps at 118).
 MAX_LINE = 120
 _PLACEHOLDER = re.compile(r"\(#\(?PR\)?\)|#\(PR\)|\(#PR\b", re.I)
@@ -92,6 +104,104 @@ def _repeated_passages(section: str) -> list[tuple[int, int, str]]:
     return repeats
 
 
+def _entries(section: str) -> list[list[tuple[int, str]]]:
+    """The section's entries: each bullet or numbered step at the margin
+    with its continuation lines, as ``(line number, line)``."""
+    entries: list[list[tuple[int, str]]] = []
+    for number, line in enumerate(section.splitlines(), 1):
+        if re.match(r"(- |\d+\. )", line):
+            entries.append([(number, line)])
+        elif entries and line.startswith(" ") and line.strip():
+            entries[-1].append((number, line))
+        elif entries and entries[-1]:
+            entries.append([])  # a heading, a blank or a paragraph ends it
+    return [entry for entry in entries if entry]
+
+
+def _words(entry: list[tuple[int, str]]) -> list[tuple[str, int, bool]]:
+    """``(word, line number, starts its line)`` of an entry's words."""
+    words = []
+    for number, line in entry:
+        first = True
+        for word in line.split():
+            if re.search(r"\w", word):  # not a bullet or a dash
+                words.append((word.lower().strip(".,;:()"), number, first))
+                first = False
+    return words
+
+
+def _repeated_fragments(section: str) -> list[tuple[int, int, str]]:
+    """``(first line, repeat line, fragment)`` of every run of
+    ``FRAGMENT_WORDS`` words an entry holds again starting a line, and of
+    ``ENTRY_REPEAT_WORDS`` words it holds again anywhere (not overlapping
+    the first)."""
+    repeats = []
+    for entry in _entries(section):
+        words = _words(entry)
+        for size, at_line_start in (
+            (FRAGMENT_WORDS, True),
+            (ENTRY_REPEAT_WORDS, False),
+        ):
+            first: dict[tuple[str, ...], int] = {}
+            for i in range(len(words) - size + 1):
+                key = tuple(word for word, _, _ in words[i : i + size])
+                seen = first.setdefault(key, i)
+                if i - seen >= size and (words[i][2] or not at_line_start):
+                    repeats.append((words[seen][1], words[i][1], " ".join(key)))
+    return sorted(set(repeats))
+
+
+def _stem(word: str) -> str:
+    for suffix in ("es", "s", "ed", "ing"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
+def _contradictions(section: str) -> list[tuple[int, int, str]]:
+    """``(line, line, verb)`` of two entries of one subsection where one
+    says it "no longer <verb>s" what the other says it does, both quoting
+    the same span of at least ``SHARED_SPAN_WORDS`` words."""
+    lines = section.splitlines()
+    # Each line's subsection: the count of `### ` headings up to it.
+    subsection_of = [0]
+    for line in lines:
+        subsection_of.append(subsection_of[-1] + line.startswith("### "))
+    found = []
+    for subsection in sorted(set(subsection_of)):
+        entries = [
+            (entry[0][0], " ".join(line.strip() for _, line in entry))
+            for entry in _entries(section)
+            if subsection_of[entry[0][0]] == subsection
+        ]
+        spans = [
+            {
+                span
+                for span in re.findall(r"`([^`]+)`", text)
+                if len(span.split()) >= SHARED_SPAN_WORDS
+            }
+            for _, text in entries
+        ]
+        for a, (line_a, text_a) in enumerate(entries):
+            denied = {
+                _stem(m.group(1).lower())
+                for m in re.finditer(r"\bno longer (\w+)", text_a)
+            }
+            for b, (line_b, text_b) in enumerate(entries):
+                if a == b or not denied or not spans[a] & spans[b]:
+                    continue
+                # What the entry says, not what it quotes.
+                prose = re.sub(r"`[^`]*`", "``", text_b)
+                for m in re.finditer(r"\b(\w+)\b", prose):
+                    negated = re.search(
+                        r"(?:no longer|not|never|n't)\s+$", prose[: m.start()]
+                    )
+                    if _stem(m.group(1).lower()) in denied and not negated:
+                        found.append((line_a, line_b, _stem(m.group(1).lower())))
+                        break
+    return found
+
+
 def _long_lines(section: str) -> list[tuple[int, int]]:
     """``(line, length)`` of every line over ``MAX_LINE`` outside a table."""
     return [
@@ -129,6 +239,15 @@ def test_every_step_reference_names_a_step() -> None:
 def test_no_passage_is_repeated() -> None:
     repeats = _repeated_passages(SECTION)
     assert not repeats, repeats[:3]
+
+
+def test_no_fragment_is_repeated_within_an_entry() -> None:
+    repeats = _repeated_fragments(SECTION)
+    assert not repeats, repeats[:3]
+
+
+def test_no_two_entries_contradict() -> None:
+    assert _contradictions(SECTION) == []
 
 
 def test_no_line_is_over_long() -> None:
@@ -190,6 +309,45 @@ def test_the_repeat_scan() -> None:
     assert _repeated_passages(f"- {short}\n{lines}\n- {short}\n") == []
     assert [r[:2] for r in _repeated_passages(adjacent)] == [(1, 2)]
     assert [r[:2] for r in _repeated_passages(far)] == [(1, SHINGLE_MIN_DISTANCE + 2)]
+
+
+def test_the_fragment_scan() -> None:
+    # The old and the new tail of one wrapped sentence, both kept: the
+    # second starts a line, fewer words than SHINGLE_WORDS long.
+    kept_both = (
+        "- Local mode runs with reranking off, logged once; `local` declares it.\n"
+        "  with reranking off, logged once; `local` declares httpx.\n"
+    )
+    assert [r[:2] for r in _repeated_fragments(kept_both)] == [(1, 2)]
+    # The same fragment in two entries, or mid-line in one, is wording.
+    apart = (
+        "- one stops before any model call (exit 2), naming it.\n"
+        "- another stops before any model call (exit 2), naming it.\n"
+    )
+    mid_line = (
+        "- it stops before any model call here, and then before any model call there.\n"
+    )
+    assert _repeated_fragments(apart) == []
+    assert _repeated_fragments(mid_line) == []
+    # A long run repeated anywhere in one entry is a duplicate too.
+    run = " ".join(f"w{i}" for i in range(ENTRY_REPEAT_WORDS))
+    assert [r[:2] for r in _repeated_fragments(f"- {run} x {run}\n")] == [(1, 1)]
+    short = " ".join(run.split()[:-1])
+    assert _repeated_fragments(f"- {short} x {short}\n") == []
+
+
+def test_the_contradiction_scan() -> None:
+    message = "`Communities must be detected before exporting`"
+    no_longer = f"- A run no longer exports the file (or fails to, {message}).\n"
+    exports = f"- A run exports the whole graph (or none, or {message}).\n"
+    assert [r[2] for r in _contradictions(no_longer + exports)] == ["export"]
+    # Without a shared quoted span the two describe different things.
+    assert _contradictions(no_longer + "- A run exports the whole graph.\n") == []
+    # A negated mention agrees.
+    agrees = f"- It does not export it ({message}).\n"
+    assert _contradictions(no_longer + agrees) == []
+    # Other subsections are other documents.
+    assert _contradictions(no_longer + "### Fixed\n" + exports) == []
 
 
 def test_the_line_length_scan() -> None:
