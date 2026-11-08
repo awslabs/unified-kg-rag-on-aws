@@ -250,10 +250,13 @@ a provider sends its requests (`providers.*.base_url`,
 `aws.neptune.endpoint`, `aws.opensearch.endpoint`, their ports) is listed in
 the review and saved only once confirmed there: the requests carry the
 credentials the console's environment holds for that provider (an API key,
-a store password, signed AWS requests). A change to a directory the
-console serves (`evaluation.outputs_directory`, read and written;
-`graph.visualization.outputs_directory`, read) is confirmed the same way:
-it opens the new directory to the page. The file is written whole (a
+a store password, signed AWS requests). A change to a file or directory
+path (every key named `path`, `directory` or ending in `_path` or
+`_directory`: the directories the console serves,
+`evaluation.outputs_directory` and `graph.visualization.outputs_directory`,
+and what its jobs read and write, such as the SQLite store files,
+`logging.log_file_path`, schema and seed graph files and the parsing
+directories) is confirmed the same way: it opens the new path to the page. The file is written whole (a
 temporary file beside it, renamed over it). The Methodologies
 tab edits `indexing.methodologies`; the Tracing tab edits `observability`
 and shows which `LANGFUSE_*`, `PHOENIX_*` and `OTEL_*` variables are set,

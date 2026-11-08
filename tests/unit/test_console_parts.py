@@ -144,6 +144,40 @@ def test_secrets_are_found_and_masked() -> None:
     assert "sk-1" not in json.dumps(masked)
 
 
+def test_every_file_and_directory_key_of_the_config_is_confirmed() -> None:
+    keys = {".".join(p) for p in settings_api.path_keys()}
+    assert {
+        "evaluation.outputs_directory",
+        "graph.visualization.outputs_directory",
+        "logging.log_file_path",
+        "providers.graph.sqlite_path",
+        "providers.vector.sqlite_path",
+        "providers.doc_status.sqlite_path",
+        "processing.seed_graphs.*.path",
+        "processing.graph_extraction.schema_source.path",
+        "processing.document_parsing.source_directory",
+        "processing.document_parsing.target_directory",
+    } <= keys
+    # A switch named like one is not a path.
+    assert "logging.log_to_file" not in keys
+
+
+@pytest.mark.parametrize(
+    "new",
+    [
+        {"logging": {"log_file_path": "/elsewhere/run.log"}},
+        {"providers": {"graph": {"sqlite_path": "/elsewhere/graph.sqlite3"}}},
+        {"processing": {"seed_graphs": [{"name": "s", "path": "/elsewhere/seed.ttl"}]}},
+        {"processing": {"document_parsing": {"source_directory": "/elsewhere"}}},
+    ],
+)
+def test_a_moved_path_is_a_directory_change(new: dict) -> None:  # type: ignore[type-arg]
+    changes = settings_api.directory_changes({}, new)
+    assert len(changes) == 1 and changes[0]["from"] is None
+    assert changes[0]["to"].startswith("/elsewhere")
+    assert settings_api.directory_changes(new, new) == []
+
+
 def test_changes_set_and_unset_keys(tmp_path: Path) -> None:
     data = {"search": {"top_k": 3}, "a": {"b": 1}}
     changed = settings_api.apply_changes(

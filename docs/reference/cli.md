@@ -244,7 +244,7 @@ Guide: [Console](../guides/console.md).
 
 | Flag | Default | Description |
 |---|---|---|
-| `--source-directory` | — | Workspace the console reads corpora and datasets from, and writes uploads to (its uploads/ folder); nothing outside it, the cache directory and the evaluation outputs is read or written (default: the working directory). |
+| `--source-directory` | — | Workspace the console reads corpora and datasets from, and writes uploads to (its uploads/ folder); the page reads and writes nothing outside it, the cache directory and the evaluation outputs, and Settings saves a config path elsewhere only once confirmed (default: the working directory). |
 | `--cache-directory` | — | Directory of the ingestion jobs' pipeline caches and of the console's own records (console/: questions asked, jobs, their logs) (default: cache). |
 | `--host` | `127.0.0.1` | Address to bind (default 127.0.0.1). Any other needs --allow-remote; the console has no login, so put an authenticating reverse proxy in front of it. |
 | `--port` | `8501` | Port to bind (default 8501; 0 picks a free one). |

@@ -161,7 +161,7 @@ class SaveBody(BaseModel):
     text: str = Field(max_length=2_000_000)
     base_sha: str = Field(min_length=64, max_length=64)
     confirm_endpoints: list[str] = Field(default_factory=list, max_length=50)
-    confirm_directories: list[str] = Field(default_factory=list, max_length=10)
+    confirm_directories: list[str] = Field(default_factory=list, max_length=200)
 
 
 class UploadTooLarge(ConfigurationError):

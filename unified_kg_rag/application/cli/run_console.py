@@ -95,8 +95,9 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Workspace the console reads corpora and datasets from, and "
-        "writes uploads to (its uploads/ folder); nothing outside it, the "
-        "cache directory and the evaluation outputs is read or written "
+        "writes uploads to (its uploads/ folder); the page reads and writes "
+        "nothing outside it, the cache directory and the evaluation outputs, "
+        "and Settings saves a config path elsewhere only once confirmed "
         "(default: the working directory)",
     )
     parser.add_argument(

@@ -230,9 +230,12 @@ diff, 오류, 경고를 보여 줍니다. 저장하면 파일을 쓰며, 그사�
 `aws.opensearch.endpoint`, 그 포트)을 바꾸는 변경은 검토 화면에 표시되고,
 거기서 확인해야 저장됩니다. 그 요청에는 콘솔 환경에 있는 해당 공급자의 자격
 증명(API 키, 저장소 비밀번호, 서명된 AWS 요청)이 함께 가기 때문입니다.
-콘솔이 다루는 디렉터리(`evaluation.outputs_directory`는 읽고 쓰기,
-`graph.visualization.outputs_directory`는 읽기)를 바꾸는 변경도 같은 방식으로
-확인합니다. 새 디렉터리를 페이지에 여는 것이기 때문입니다. 파일은 통째로 씁니다(옆에 임시 파일을 만들어 이름을 바꿔 덮어씀). 방법론
+파일이나 디렉터리 경로(이름이 `path`, `directory`이거나 `_path`, `_directory`로
+끝나는 모든 키: 콘솔이 다루는 `evaluation.outputs_directory`와
+`graph.visualization.outputs_directory`, 그리고 SQLite 저장소 파일,
+`logging.log_file_path`, 스키마·시드 그래프 파일, 파싱 디렉터리처럼 콘솔의
+작업이 읽고 쓰는 경로)를 바꾸는 변경도 같은 방식으로 확인합니다. 새 경로를
+페이지에 여는 것이기 때문입니다. 파일은 통째로 씁니다(옆에 임시 파일을 만들어 이름을 바꿔 덮어씀). 방법론
 탭은 `indexing.methodologies`를, 트레이싱 탭은 `observability`를 편집하고
 `LANGFUSE_*`, `PHOENIX_*`, `OTEL_*` 변수가 설정됐는지만(값은 절대 아님)
 보여 줍니다. 유효 설정 탭은 실행이 받는 설정을 보여 줍니다. 다음 질문과

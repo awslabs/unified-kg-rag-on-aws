@@ -12,6 +12,7 @@ should hold it instead, so the console never writes a credential to disk.
 from __future__ import annotations
 
 import difflib
+import functools
 import hashlib
 import importlib.util
 import os
@@ -64,24 +65,26 @@ class EndpointNotConfirmed(ConfigurationError):
         self.paths = paths
 
 
-# The keys whose directories the console reads (and writes) as roots of its
-# own: changing one opens another directory to the page. Confirmed on Save.
-DIRECTORY_KEYS = (
-    "evaluation.outputs_directory",
-    "graph.visualization.outputs_directory",
-)
+# A config key whose last segment is one of these, or ends in ``_`` and one,
+# names a file or directory on this machine: the directories the console
+# serves (evaluation.outputs_directory, graph.visualization.outputs_directory)
+# and the files and directories its jobs read and write (the SQLite stores,
+# the log file, schema and seed graph files, the parsing directories).
+# Changing one opens another path to the page. Confirmed on Save.
+PATH_KEY_WORDS = ("path", "directory")
 
 
 class DirectoriesNotConfirmed(ConfigurationError):
-    """A save that moves a directory the console serves without confirming
-    it."""
+    """A save that moves a file or directory the console or its jobs use
+    without confirming it."""
 
     def __init__(self, paths: list[str]) -> None:
         super().__init__(
-            "the change moves a directory the console reads and writes ("
+            "the change moves a file or directory the console serves or its "
+            "jobs read and write ("
             + ", ".join(paths)
-            + "): it opens that directory to anyone with this console's "
-            "address; confirm the directories to save it"
+            + "): it opens that path to anyone with this console's address; "
+            "confirm the paths to save it"
         )
         self.paths = paths
 
@@ -114,11 +117,16 @@ def endpoint_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str,
 
 
 def directory_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, Any]]:
-    """The directories the console serves that ``new`` moves from ``old``."""
-    before, after = _flat(old), _flat(new)
+    """The files and directories (:func:`path_keys`) ``new`` moves from
+    ``old``."""
+    before: dict[str, Any] = {}
+    after: dict[str, Any] = {}
+    for pattern in path_keys():
+        before.update((".".join(p), v) for p, v in _matches(old, pattern))
+        after.update((".".join(p), v) for p, v in _matches(new, pattern))
     return [
         {"path": path, "from": before.get(path), "to": after.get(path)}
-        for path in DIRECTORY_KEYS
+        for path in sorted(set(before) | set(after))
         if before.get(path) != after.get(path)
     ]
 
@@ -162,6 +170,50 @@ def _secret_paths(
         yield from _secret_paths(
             schema_doc, node["additionalProperties"], (*prefix, "*"), depth + 1
         )
+
+
+def _is_path_key(name: str) -> bool:
+    return any(name == w or name.endswith(f"_{w}") for w in PATH_KEY_WORDS)
+
+
+def _takes_text(schema_doc: dict[str, Any], node: dict[str, Any]) -> bool:
+    node = _resolve(schema_doc, node)
+    return node.get("type") == "string" or any(
+        _takes_text(schema_doc, option) for option in node.get("anyOf") or []
+    )
+
+
+def _path_keys(
+    schema_doc: dict[str, Any],
+    node: dict[str, Any],
+    prefix: tuple[str, ...],
+    depth: int = 0,
+) -> Iterator[tuple[str, ...]]:
+    node = _resolve(schema_doc, node)
+    if depth > 12:
+        return
+    for option in node.get("anyOf") or node.get("allOf") or []:
+        yield from _path_keys(schema_doc, option, prefix, depth + 1)
+    for name, child in (node.get("properties") or {}).items():
+        if _is_path_key(name) and _takes_text(schema_doc, child):
+            yield (*prefix, name)
+        else:
+            yield from _path_keys(schema_doc, child, (*prefix, name), depth + 1)
+    if isinstance(node.get("items"), dict):
+        yield from _path_keys(schema_doc, node["items"], (*prefix, "*"), depth + 1)
+    if isinstance(node.get("additionalProperties"), dict):
+        yield from _path_keys(
+            schema_doc, node["additionalProperties"], (*prefix, "*"), depth + 1
+        )
+
+
+@functools.cache
+def path_keys() -> tuple[tuple[str, ...], ...]:
+    """The paths of every config key that names a file or directory
+    (``PATH_KEY_WORDS``; ``*`` for a list item or map key), from the
+    schema, so a new one is confirmed on Save without a list to keep."""
+    doc = schema()
+    return tuple(sorted(set(_path_keys(doc, doc, ()))))
 
 
 def secret_paths() -> list[tuple[str, ...]]:
@@ -429,7 +481,7 @@ class SettingsFile:
         """Write ``text`` to the file if it validates, the file did not
         change since ``base_sha`` was read, every provider endpoint it
         changes is in ``confirm_endpoints`` and every served directory it
-        moves (``DIRECTORY_KEYS``) in ``confirm_directories``.
+        moves (:func:`path_keys`) in ``confirm_directories``.
 
         Raises:
             SecretRefused: ``text`` sets a secret.
