@@ -210,14 +210,18 @@ differential`) splits a pair into the points both answers make and the
 points unique to each. Until 2026-11-08 it split each pair once, with the
 baseline as Answer 1, and the split favoured Answer 2. A run on 2026-11-08
 (package at commit `d6fc92ce`) judged one configuration against itself on
-the 50 sensemaking questions, two repeats: the answer in the Answer 2 slot
-won comprehensiveness 0.645, and 0.48 with the slots swapped; averaged
-over both orders 0.562 [0.490, 0.635] 95%, n.s. That slot effect (as
+the 50 sensemaking questions, two repeats: the candidate won
+comprehensiveness 0.645 as Answer 2 and 0.48 as Answer 1 (the baseline
+0.52); averaged over both slots 0.562 [0.490, 0.635] 95%, n.s. That slot effect (as
 Answer 2 minus as Answer 1) was +0.165 on comprehensiveness, and +0.125 to
 +0.215 in the citation comparisons below, larger than most differences
 between strategies there (-0.12 to +0.07). So the comparisons from
-2026-11-08 on average both slot orders
-([Sensemaking strategies](#sensemaking-strategies), [Citations](#citations)).
+2026-11-08 on average both slot orders, as `run-eval` does
+([Evaluation](../guides/evaluate.md); results in
+[Sensemaking strategies](#sensemaking-strategies) and [Citations](#citations)).
+They used the earlier overlap prompt, which kept a shared statement in
+Answer 1's wording; `run-eval`'s split keeps the shorter wording, which
+these runs did not measure.
 
 ## Gleaning rounds
 
