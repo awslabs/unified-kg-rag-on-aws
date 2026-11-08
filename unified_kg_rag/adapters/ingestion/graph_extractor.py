@@ -14,6 +14,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 )
 from unified_kg_rag.adapters.llm.langchain import (
     BATCH_ITEM_FAILED,
+    SECTIONS_READ_EMPTY_KEY,
     BatchProcessor,
     RobustXMLOutputParser,
     output_excerpt,
@@ -102,6 +103,12 @@ class ExtractionStats(BaseModel):
     confidence_threshold_applied: float = Field(
         default=0.0,
         description="Confidence threshold value used for filtering",
+    )
+    sections_read_empty_from_text: int = Field(
+        default=0,
+        description="Sections (entities, relationships) whose answer held text "
+        "and no element even after the output fixer, read as empty: a "
+        "nonzero count may be entities or relationships written as prose",
     )
     entities_ungrounded: int = Field(
         default=0,
@@ -411,6 +418,9 @@ class GraphExtractor(BaseProcessor):
         relationships: list[Relationship] = []
 
         _checked(result)
+        self.stats.sections_read_empty_from_text += len(
+            result.get(SECTIONS_READ_EMPTY_KEY) or ()
+        )
         raw_entities = result["entities"]
         raw_relationships = result.get("relationships", {})
 

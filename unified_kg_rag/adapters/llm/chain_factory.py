@@ -31,8 +31,10 @@ from langchain_core.runnables import Runnable, RunnableConfig
 from pydantic import BaseModel, PrivateAttr
 
 from unified_kg_rag.adapters.llm.langchain import (
+    READ_TEXT_SECTIONS_AS_EMPTY,
     LLMJsonOutputParser,
     RobustXMLOutputParser,
+    TextOnlySectionError,
 )
 from unified_kg_rag.adapters.llm.retry import (
     TransientErrorPredicate,
@@ -605,7 +607,9 @@ def with_transient_retry(
 
 class XMLOutputFixingParser(OutputFixingParser[Any]):
     """``OutputFixingParser`` that never asks the fixer to repair a blank answer
-    (the XML parsers' and the JSON parser's fixer).
+    (the XML parsers' and the JSON parser's fixer). A list section the fixer
+    still answers with text only (``TextOnlySectionError``) is read as empty
+    and recorded instead of failing the item.
 
     An empty or whitespace-only completion (e.g. a thinking-only response)
     carries nothing to repair, so a fixer could only invent the structure;
@@ -616,12 +620,28 @@ class XMLOutputFixingParser(OutputFixingParser[Any]):
     def parse(self, completion: str) -> Any:
         if not completion.strip():
             return self.parser.parse(completion)
-        return super().parse(completion)
+        try:
+            return super().parse(completion)
+        except TextOnlySectionError as e:
+            return self._read_text_as_empty(e)
 
     async def aparse(self, completion: str) -> Any:
         if not completion.strip():
             return await self.parser.aparse(completion)
-        return await super().aparse(completion)
+        try:
+            return await super().aparse(completion)
+        except TextOnlySectionError as e:
+            return self._read_text_as_empty(e)
+
+    def _read_text_as_empty(self, error: TextOnlySectionError) -> Any:
+        """The fixer's answer (``error.llm_output``) whose list section still
+        holds text only, read with that section empty and recorded: the
+        model and its repair both said, in prose, that it lists nothing."""
+        token = READ_TEXT_SECTIONS_AS_EMPTY.set(True)
+        try:
+            return self.parser.parse(str(error.llm_output or ""))
+        finally:
+            READ_TEXT_SECTIONS_AS_EMPTY.reset(token)
 
 
 def usage_model_id(factory: object, model_id: str) -> str:

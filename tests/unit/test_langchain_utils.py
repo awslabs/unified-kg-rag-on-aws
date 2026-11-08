@@ -785,6 +785,18 @@ class TestRobustXMLOutputParser:
         # The entities beside it are kept.
         assert out == {"entities": {"entity": {"name": "Acme"}}, "relationships": {}}
 
+    def test_a_container_section_holding_prose_goes_to_the_fixer(self) -> None:
+        from unified_kg_rag.adapters.llm.langchain import TextOnlySectionError
+
+        parser = RobustXMLOutputParser(
+            tags=["entities"], container_tags=frozenset({"entities"})
+        )
+        # Several lines, or one longer than three tokens, may be the list.
+        for prose in ("Acme and Globex, both vendors.", "Acme\nGlobex"):
+            with pytest.raises(TextOnlySectionError):
+                parser.parse(f"<entities>{prose}</entities>")
+        assert "<entities></entities>" in parser.get_format_instructions()
+
     def test_a_text_section_is_kept(self) -> None:
         # A text section is an answer for some prompts (a report's <summary>):
         # only a section that lists elements reads its text as empty.

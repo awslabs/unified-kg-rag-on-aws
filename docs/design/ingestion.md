@@ -421,7 +421,13 @@ gets its models and stores from the run's `Providers` bundle.
   element wrapping the expected sections and reads a section that lists
   elements (`container_tags`: entities, relationships, claims, the
   refinement plan, findings, chunk boundaries) but holds text and no
-  element as empty, whatever language the model says "none" in; the
+  element as empty when the text is a short "nothing here" marker (one line
+  of at most three estimated tokens: "None.", "없음", "なし"; counted, so no
+  word list is needed). Longer text may be the list written as prose: it
+  goes to the fixer once (told that an empty section is the empty
+  element), and a repair that still holds text only is read as empty,
+  counted (`sections_read_empty_from_text` in the extraction stats) and
+  logged at WARNING with the section's name and length, never its text. The
   extraction, claims and gleaning parsers raise `OutputParserException`
   for any other answer that parses but is not the prompt's shape (no
   section, nameless entities in a complete answer), so the fixer repairs
