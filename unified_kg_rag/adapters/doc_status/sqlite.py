@@ -12,8 +12,9 @@ SQLite has no item limit, so every record fits (``record_fits``). Each record
 is stored as its JSON dump next to the columns ``diff`` reads, so the diff
 never deserializes the text-unit lists. (The table of the earlier format,
 ``doc_status``, is left as it is: run once with ``indexing.reset: true``.)
-Writes are transactions; a single connection is shared under a lock (the
-pipeline calls the store from worker threads) and waits up to
+Writes are transactions and create the file; a read before it exists reads
+an empty registry and creates nothing. A single connection is shared under
+a lock (the pipeline calls the store from worker threads) and waits up to
 ``search.store_timeout_seconds`` for another writer's lock. Every SQLite error is raised as ``DocStatusRegistryError``, as
 the DynamoDB store raises its errors.
 """
@@ -103,10 +104,13 @@ class SQLiteDocStatusStore:
         self.path = str(path or config.providers.doc_status.sqlite_path)
         self.timeout_seconds = config.search.store_timeout_seconds
         self._connection: sqlite3.Connection | None = None
+        # What a read uses before the database file exists (see _reader).
+        self._empty: sqlite3.Connection | None = None
         self._lock = threading.RLock()
 
     @property
     def connection(self) -> sqlite3.Connection:
+        """The connection a write uses (it creates the database file)."""
         with self._lock:
             if self._connection is None:
                 with self._registry_errors("open the database"):
@@ -122,12 +126,29 @@ class SQLiteDocStatusStore:
                     )
             return self._connection
 
+    def _reader(self) -> sqlite3.Connection:
+        """The connection a read uses: before the database file exists, an
+        empty in-memory one, so a read (``run-describe``) creates no file."""
+        with self._lock:
+            if (
+                self._connection is None
+                and self.path != ":memory:"
+                and not Path(self.path).exists()
+            ):
+                if self._empty is None:
+                    self._empty = connect(
+                        ":memory:", timeout_seconds=self.timeout_seconds, schema=_SCHEMA
+                    )
+                return self._empty
+            return self.connection
+
     def close(self) -> None:
         """Close the database connection (reopened on next use)."""
         with self._lock:
-            if self._connection is not None:
-                self._connection.close()
-                self._connection = None
+            for connection in (self._connection, self._empty):
+                if connection is not None:
+                    connection.close()
+            self._connection = self._empty = None
 
     def _registry_errors(self, operation: str) -> AbstractContextManager[None]:
         """Re-raise SQLite and file errors as :class:`DocStatusRegistryError`."""
@@ -169,8 +190,9 @@ class SQLiteDocStatusStore:
             for start in range(0, len(ids), _BATCH):
                 batch = ids[start : start + _BATCH]
                 marks = ",".join("?" * len(batch))
+                reader = self._reader()
                 # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query - sqlite3 with bound values
-                rows = self.connection.execute(
+                rows = reader.execute(
                     f"SELECT doc_id, record FROM documents WHERE doc_id IN ({marks})",  # nosec B608 - ? marks only, values bound
                     batch,
                 ).fetchall()
@@ -234,10 +256,14 @@ class SQLiteDocStatusStore:
 
     def lease_holder(self, namespace: str) -> tuple[str, float] | None:
         with self._lock, self._registry_errors("read the namespace lease"):
-            row = self.connection.execute(
-                "SELECT owner, expires_at FROM leases WHERE namespace = ?",
-                (namespace,),
-            ).fetchone()
+            row = (
+                self._reader()
+                .execute(
+                    "SELECT owner, expires_at FROM leases WHERE namespace = ?",
+                    (namespace,),
+                )
+                .fetchone()
+            )
         return (row[0], row[1]) if row else None
 
     def release_lease(self, namespace: str, owner: str) -> None:
@@ -253,11 +279,15 @@ class SQLiteDocStatusStore:
         self, scope: str
     ) -> tuple[str, ExtractionSettings] | None:
         with self._lock, self._registry_errors("read the extraction settings"):
-            row = self.connection.execute(
-                "SELECT fingerprint, settings FROM extraction_settings "
-                "WHERE scope = ?",
-                (scope,),
-            ).fetchone()
+            row = (
+                self._reader()
+                .execute(
+                    "SELECT fingerprint, settings FROM extraction_settings "
+                    "WHERE scope = ?",
+                    (scope,),
+                )
+                .fetchone()
+            )
         if row is None:
             return None
         return row[0], ExtractionSettings.model_validate_json(row[1])
@@ -276,10 +306,14 @@ class SQLiteDocStatusStore:
 
     def get_annotation_digest(self, namespace: str) -> str | None:
         with self._lock, self._registry_errors("read the annotation digest"):
-            row = self.connection.execute(
-                "SELECT digest FROM annotation_digests WHERE namespace = ?",
-                (namespace,),
-            ).fetchone()
+            row = (
+                self._reader()
+                .execute(
+                    "SELECT digest FROM annotation_digests WHERE namespace = ?",
+                    (namespace,),
+                )
+                .fetchone()
+            )
         return None if row is None else str(row[0])
 
     def put_annotation_digest(self, namespace: str, digest: str) -> None:
@@ -292,7 +326,8 @@ class SQLiteDocStatusStore:
 
     def list_namespace(self, namespace: str) -> list[DocStatusRecord]:
         with self._lock, self._registry_errors("read the records"):
-            rows = self.connection.execute(
+            reader = self._reader()
+            rows = reader.execute(
                 "SELECT record FROM documents WHERE namespace = ? ORDER BY rowid",
                 (namespace,),
             ).fetchall()
@@ -318,12 +353,14 @@ class SQLiteDocStatusStore:
         namespace = scope_namespace(scope)
         with self._lock, self._registry_errors("read the records"):
             if namespace is None:
+                reader = self._reader()
                 # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query, python.lang.security.audit.formatted-sql-query.formatted-sql-query - literal columns
-                rows = self.connection.execute(
+                rows = reader.execute(
                     f"SELECT {columns} FROM documents ORDER BY rowid"  # nosec B608 - literal columns
                 ).fetchall()
             else:
-                rows = self.connection.execute(
+                reader = self._reader()
+                rows = reader.execute(
                     f"SELECT {columns} FROM documents WHERE namespace = ? "  # nosec B608 - literal columns, values bound
                     "ORDER BY rowid",
                     (namespace,),

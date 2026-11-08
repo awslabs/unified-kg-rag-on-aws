@@ -493,6 +493,26 @@ def test_sqlite_registry_persists_across_instances(tmp_path: Path) -> None:
     second.close()
 
 
+def test_sqlite_reads_create_no_file_until_a_write(tmp_path: Path) -> None:
+    # run-describe of an empty directory left an empty doc-status file.
+    path = tmp_path / "registry" / "doc-status.db"
+    store = SQLiteDocStatusStore(Config(), path)
+    assert store.list_namespace("ns") == []
+    assert store.get_many(["ns#d1"]) == {}
+    assert store.lease_holder("ns") is None
+    assert store.get_extraction_settings("ns|s") is None
+    assert store.get_annotation_digest("ns") is None
+    assert store.diff({"ns#d1": "h1"}, scope="ns|s").new == ["ns#d1"]
+    assert not path.exists() and not path.parent.exists()
+
+    # Another process creates it: the next read sees its records.
+    other = SQLiteDocStatusStore(Config(), path)
+    other.put(_record("ns#d1", "h1", status=DocStatus.PROCESSED, scope="ns|s"))
+    other.close()
+    assert [r.doc_id for r in store.list_namespace("ns")] == ["ns#d1"]
+    store.close()
+
+
 def test_sqlite_locked_registry_waits_store_timeout_seconds(tmp_path: Path) -> None:
     # Another process's write lock is waited for search.store_timeout_seconds
     # (not sqlite3's 5 s default), then named in the error.
@@ -530,8 +550,11 @@ def test_sqlite_errors_are_registry_errors(tmp_path: Path) -> None:
     blocker = tmp_path / "file"
     blocker.write_text("not a directory", encoding="utf-8")
     store = SQLiteDocStatusStore(Config(), blocker / "doc-status.db")
+    # A read finds no file (an empty registry); the write that creates it
+    # fails.
+    assert store.get("d1") is None
     with pytest.raises(DocStatusRegistryError, match="sqlite_path"):
-        store.get("d1")
+        store.put(_record("d1"))
 
 
 def test_sqlite_interrupted_write_is_rolled_back(tmp_path: Path) -> None:

@@ -196,12 +196,16 @@ def test_run_describe_names_a_wrong_suffix_on_stderr(
 def test_describing_where_nothing_was_ingested_creates_no_store(
     tmp_path: Path,
 ) -> None:
-    # It left an empty .unified-kg-rag/vector.sqlite3 in the working
-    # directory.
+    # It left an empty .unified-kg-rag/vector.sqlite3 (and, with the
+    # registry on, doc-status.sqlite3) in the working directory.
     config = embedded._config(tmp_path / "stores", tmp_path / "viz")
+    assert config.providers.doc_status.enabled
     description = describe_namespace(config)
     assert not description.exists
     assert not (tmp_path / "stores" / "vector.sqlite3").exists()
+    # Nor an empty doc-status.sqlite3 with the registry on.
+    assert description.registry == {}
+    assert not (tmp_path / "stores" / "doc-status.sqlite3").exists()
 
 
 # The registry adapter's own constructor (no_aws forbids building one).
