@@ -124,6 +124,103 @@ class TestSignFlip:
         assert rejected / trials <= 0.06
 
 
+def _reference_percentile_ci(
+    deltas: list[float], *, resamples: int, confidence: float, seed: int
+) -> tuple[float, float]:
+    """The percentile bootstrap written out with numpy: ``resamples`` rows
+    of query indices drawn from the seed, each row's mean, and the
+    ``(1 - confidence) / 2`` tails by ``np.percentile``."""
+    data = np.asarray(deltas, dtype=float)
+    rng = np.random.default_rng(seed)
+    means = data[rng.integers(0, data.size, size=(resamples, data.size))].mean(axis=1)
+    tail = (1 - confidence) / 2 * 100
+    low, high = np.percentile(means, [tail, 100 - tail])
+    return float(low), float(high)
+
+
+class TestBootstrapPercentiles:
+    """The intervals against an independent numpy percentile bootstrap, and
+    the small samples and counts it special-cases."""
+
+    @pytest.mark.parametrize("confidence", [0.95, 0.9, 0.99])
+    @pytest.mark.parametrize("size", [3, 17, 60])
+    def test_matches_np_percentile(self, size: int, confidence: float) -> None:
+        deltas = np.random.default_rng(size).normal(0.1, 1, size).tolist()
+        kwargs = {"resamples": 3000, "confidence": confidence, "seed": 4}
+        assert bootstrap_ci(deltas, **kwargs) == pytest.approx(
+            _reference_percentile_ci(deltas, **kwargs)
+        )
+
+    def test_the_interval_is_wider_at_higher_confidence(self) -> None:
+        deltas = np.random.default_rng(1).normal(0, 1, 40).tolist()
+        narrow = bootstrap_ci(deltas, resamples=4000, confidence=0.8, seed=0)
+        wide = bootstrap_ci(deltas, resamples=4000, confidence=0.99, seed=0)
+        assert wide[0] < narrow[0] < narrow[1] < wide[1]
+
+    def test_one_query_is_its_own_interval(self) -> None:
+        assert bootstrap_ci([0.7], resamples=2000, confidence=0.95, seed=0) == (
+            0.7,
+            0.7,
+        )
+
+    def test_two_queries_are_resampled(self) -> None:
+        # Resampled means of two values are a, (a+b)/2 or b, each end with
+        # probability 1/4: the 95% interval spans both values.
+        assert bootstrap_ci([0.0, 1.0], resamples=2000, confidence=0.95, seed=0) == (
+            0.0,
+            1.0,
+        )
+
+    def test_wins_ties_and_losses_count_each_sign(self) -> None:
+        delta = paired_comparison(
+            {
+                "a": [_run(np.array([[0.0] * len(_METRICS)] * 5), "a")],
+                "b": [
+                    _run(np.array([[v] * len(_METRICS) for v in (1, 0, 0, 0, 1)]), "b")
+                ],
+            },
+            resamples=200,
+        )["deltas_vs_baseline"]["b"][DEFAULT_PRIMARY_METRIC]
+        assert (delta["wins"], delta["ties"], delta["losses"]) == (2, 3, 0)
+        losing = paired_comparison(
+            {
+                "a": [_run(np.array([[1.0] * len(_METRICS)] * 4), "a")],
+                "b": [_run(np.array([[v] * len(_METRICS) for v in (0, 1, 0, 1)]), "b")],
+            },
+            resamples=200,
+        )["deltas_vs_baseline"]["b"][DEFAULT_PRIMARY_METRIC]
+        assert (losing["wins"], losing["ties"], losing["losses"]) == (0, 2, 2)
+
+    def test_the_precision_delta_interval_is_a_percentile_interval(self) -> None:
+        from unified_kg_rag.evaluation.comparison import _precision_delta
+
+        rng = np.random.default_rng(2)
+        queries = [f"q{i}" for i in range(30)]
+        unanswerable = set(queries[:10])
+        one = {q: float(rng.random() < 0.4) for q in queries}
+        two = {q: float(rng.random() < 0.6) for q in queries}
+        one["q0"] = two["q0"] = 1.0  # both decline something
+        kwargs = {"resamples": 3000, "confidence": 0.9, "seed": 5}
+        delta = _precision_delta((one, unanswerable), (two, unanswerable), **kwargs)
+        assert delta is not None
+        # Written out: resample the queries (in sorted order, as paired),
+        # recompute both precisions.
+        queries = sorted(queries)
+        a = np.asarray([one[q] for q in queries])
+        b = np.asarray([two[q] for q in queries])
+        hit = np.asarray([q in unanswerable for q in queries], dtype=float)
+        index = np.random.default_rng(5).integers(0, 30, size=(3000, 30))
+        valid = (a[index].sum(axis=1) > 0) & (b[index].sum(axis=1) > 0)
+        diffs = (b * hit)[index].sum(axis=1)[valid] / b[index].sum(axis=1)[valid] - (
+            a * hit
+        )[index].sum(axis=1)[valid] / a[index].sum(axis=1)[valid]
+        low, high = np.percentile(diffs, [5, 95])
+        assert (delta["ci_low"], delta["ci_high"]) == pytest.approx((low, high))
+        assert delta["mean_delta"] == pytest.approx(
+            (b * hit).sum() / b.sum() - (a * hit).sum() / a.sum()
+        )
+
+
 class TestBatched:
     """A family's p-values and intervals are drawn together, one draw per
     size for all its tests: exactly what one draw per test gives."""
