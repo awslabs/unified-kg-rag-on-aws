@@ -382,3 +382,118 @@ async def test_no_copy_of_the_plan_reaches_the_caller_unscreened(
     assert source["metadata"]["plan"]["entities"] == []
     assert source["metadata"]["row_count"] == 3
     await chain.aclose()
+
+
+async def test_the_linked_entity_names_are_screened_with_the_plan() -> None:
+    # Regression (rv8): metadata.structured.linked_names (the stored names a
+    # mention linked to, which the plan description renders) was returned
+    # unscreened under a masking guardrail.
+    config = Config()
+    config.aws.bedrock.guardrail.identifier = "test-guardrail"
+    chain = GraphRAGChain(
+        config=config,
+        model_factory=ScriptedLLMFactory(lambda _s, _h: "unused"),
+        retriever_builders={
+            "document": lambda: _Documents(),
+            "graph": lambda: _Documents(),
+        },
+        guard=_MaskingGuard(),  # type: ignore[arg-type]
+    )
+    result = SearchResult(
+        query=SearchQuery(query="q"),
+        results=[],
+        total_results=0,
+        search_strategy="structured_search",
+        processing_time=0.0,
+        metadata={
+            "structured": {
+                "status": "answered",
+                "plan": {"nodes": [{"var": "x", "mention": "depot"}]},
+                "linked": {"x": ["e1", "e2", "e3"]},
+                "linked_names": {
+                    "x": ["Secret Depot", "Secret 창고", "Forbidden 倉庫"]
+                },
+            }
+        },
+    )
+    screened = await chain._screen_synthesized(result, [])
+    meta = screened.metadata["structured"]
+    assert meta["linked_names"] == {"x": ["{NAME} Depot", "{NAME} 창고"]}
+    # The ids are the store's, not text: kept.
+    assert meta["linked"] == {"x": ["e1", "e2", "e3"]}
+    await chain.aclose()
+
+
+class _AnswerBlockingGuard:
+    """Refuses the answer; passes everything else."""
+
+    async def acheck(self, text: str, source: Any, **kwargs: Any) -> Any:
+        from unified_kg_rag.ports.guardrail import (
+            GuardAction,
+            GuardSource,
+            GuardVerdict,
+        )
+
+        if source is GuardSource.OUTPUT and "holds" in text:
+            return GuardVerdict(action=GuardAction.BLOCKED, text="Refused.")
+        return GuardVerdict(action=GuardAction.NONE, text=text)
+
+
+@pytest.mark.parametrize(
+    "mention",
+    ["Kestrel Depot", "케스트럴 창고", "ケストレル倉庫"],
+    ids=["en", "ko", "ja"],
+)
+async def test_a_refused_answer_keeps_no_strategy_evidence(mention: str) -> None:
+    # Regression (rv8): a blocked answer dropped its sources and results but
+    # kept metadata.structured (the plan, its linked entities and row count)
+    # and metadata.iterative (the follow-up queries searched).
+    config = Config()
+    config.aws.bedrock.guardrail.identifier = "test-guardrail"
+    config.providers.rerank.kind = "none"
+    chain = GraphRAGChain(
+        config=config,
+        model_factory=ScriptedLLMFactory(lambda _s, _h: "The depot holds 3 items [1]."),
+        retriever_builders={
+            "document": lambda: _Documents(),
+            "graph": lambda: _Documents(),
+        },
+        guard=_AnswerBlockingGuard(),  # type: ignore[arg-type]
+    )
+    plan = {"nodes": [{"var": "x", "mention": mention}], "entities": [mention]}
+    table = RetrievalResult(
+        content=f'Graph query: Match (x, named "{mention}").\nRows: 3',
+        score=1.0,
+        source="graph-query",
+        retriever_type="query_result",
+        metadata={"plan": plan, "row_count": 3},
+    )
+    planned = SearchResult(
+        query=SearchQuery(query="q"),
+        results=[table],
+        total_results=1,
+        search_strategy="structured_search",
+        processing_time=0.0,
+        metadata={
+            "structured": {
+                "status": "answered",
+                "plan": plan,
+                "linked_names": {"x": [mention]},
+                "row_count": 3,
+            },
+            "iterative": {"searched": [f"Where is {mention}?"], "verdicts": []},
+        },
+    )
+    chain._get_strategy_instance = lambda strategy: _PlannedResult(planned)  # type: ignore[method-assign]
+    out = await chain.ainvoke(
+        {
+            "query": "How many items does the depot hold?",
+            "search_strategy": SearchStrategy.SIMPLE,
+            "enable_query_processing": False,
+        }
+    )
+    assert out.answer == "Refused."
+    assert mention not in out.model_dump_json()
+    for metadata in (out.metadata, out.search_results.metadata):
+        assert "structured" not in metadata and "iterative" not in metadata
+    await chain.aclose()

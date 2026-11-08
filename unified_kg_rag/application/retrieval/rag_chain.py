@@ -302,10 +302,11 @@ def _replace_query_texts(
 
 
 # The search metadata of the structured strategy, whose plan (model output:
-# its names, values, entities and keywords) and plan description are
+# its names, values, entities and keywords), plan description and the names
+# of the entities its mentions linked to (which the description renders) are
 # returned with the search results and written into its query result.
 _STRUCTURED_KEY = "structured"
-_STRUCTURED_MODEL_TEXT = ("plan", "plan_description")
+_STRUCTURED_MODEL_TEXT = ("plan", "plan_description", "linked_names")
 
 
 def _string_leaves(value: Any) -> list[str]:
@@ -2382,6 +2383,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         )
                         # Nor the model's reading of the question.
                         self._clear_query_texts(output)
+                        self._clear_evidence_metadata(output)
                     elif screened:
                         self._mark_citations(output)
                 plan_texts: dict[str, str | None] = {}
@@ -2760,6 +2762,25 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 else (one.text if one.intervened else text)
             )
         return screened
+
+    @staticmethod
+    def _clear_evidence_metadata(output: RAGOutput) -> None:
+        """Drop the evidence a strategy's metadata holds (a refused answer):
+        the structured plan, its linked entities and rows, and iterative
+        search's follow-up queries and verdicts (``_STRUCTURED_KEY``,
+        ``_ITERATIVE_KEY``), in the answer's and its search results'
+        metadata."""
+        for key in (_STRUCTURED_KEY, _ITERATIVE_KEY):
+            output.metadata.pop(key, None)
+        output.search_results = output.search_results.model_copy(
+            update={
+                "metadata": {
+                    k: v
+                    for k, v in output.search_results.metadata.items()
+                    if k not in (_STRUCTURED_KEY, _ITERATIVE_KEY)
+                }
+            }
+        )
 
     @staticmethod
     def _clear_query_texts(output: RAGOutput | SearchOutput) -> None:
