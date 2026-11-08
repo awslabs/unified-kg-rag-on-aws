@@ -1424,6 +1424,10 @@ Ingestion and incremental indexing.
   English, Korean, Japanese and Chinese (`uncertain`, `불확실`, `未確認` are all `unknown`; English read `uncertain` as
   `disputed` and Korean as unrecognised); the claims whose status is none of them are counted in the
   `total_unrecognised_claim_statuses` metric (#644).
+  English, Korean, Japanese and Chinese: `confirmed` and `verified` are `true`, `denied` and `refuted` `false`, and
+  `uncertain` and `unverified` (`불확실`, `未確認`) `disputed`, as the prompt's DISPUTED ("uncertainty indicated") and
+  MS GraphRAG's SUSPECTED ("not verified") say (Korean read them as unrecognised); the claims whose status is none
+  of them are counted in the `total_unrecognised_claim_statuses` metric.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed

@@ -819,20 +819,32 @@ def test_a_claim_keyed_by_its_written_cjk_date_is_found_under_it() -> None:
         ("虚假", "false"),
         ("有争议", "disputed"),
         ("ＴＲＵＥ", "true"),  # full-width
-        # Uncertain and unverified: unknown in every language (English read
-        # them as disputed, Korean as unrecognised).
-        ("Uncertain", "unknown"),
-        ("unverified", "unknown"),
-        ("불확실", "unknown"),
-        ("미확인", "unknown"),
-        ("未確認", "unknown"),
-        ("不确定", "unknown"),
+        # Uncertain and unverified: disputed in every language (the prompt's
+        # DISPUTED covers "uncertainty indicated", MS GraphRAG's SUSPECTED
+        # "not verified"); Korean read them as unrecognised.
+        ("Uncertain", "disputed"),
+        ("unverified", "disputed"),
+        ("불확실", "disputed"),
+        ("미확인", "disputed"),
+        ("未確認", "disputed"),
+        ("不确定", "disputed"),
         # Suspected in every language.
         ("의심", "disputed"),
         ("疑い", "disputed"),
         ("涉嫌", "disputed"),
+        # MS GraphRAG's wording of its TRUE and FALSE: confirmed and
+        # verified, denied and refuted, in every language.
+        ("Confirmed", "true"),
+        ("verified", "true"),
+        ("확인됨", "true"),
+        ("確認済み", "true"),
+        ("已证实", "true"),
+        ("Denied", "false"),
+        ("refuted", "false"),
+        ("부인됨", "false"),
+        ("否定", "false"),
+        ("已驳斥", "false"),
         # Not a status word.
-        ("confirmed", "unknown"),
         ("alleged", "unknown"),
     ],
 )

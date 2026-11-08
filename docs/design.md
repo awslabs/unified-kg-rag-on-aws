@@ -450,9 +450,12 @@ gets its models and stores from the run's `Providers` bundle.
   model's status is read into the prompt's four (`claim_status`: `true`,
   `false`, `disputed`, `unknown`, as stored) at extraction and in each merge:
   the prompt's words, MS GraphRAG's `SUSPECTED` (`disputed`) and a few plain
-  synonyms, each in English, Korean, Japanese and Chinese (`uncertain`,
-  `불확실`, `未確認` are `unknown` alike); any other word is `unknown`, counted
-  in `total_unrecognised_claim_statuses`. Each unit's statement is resolved
+  synonyms, each in English, Korean, Japanese and Chinese: `confirmed` and
+  `verified` are `true` and `denied` and `refuted` `false` (MS GraphRAG's
+  TRUE is "the claim is confirmed"), `uncertain` and `unverified` (`불확실`,
+  `未確認`) `disputed` (the prompt's DISPUTED is "conflicting information or
+  uncertainty indicated", MS GraphRAG's SUSPECTED "not verified"); any other
+  word is `unknown`, counted in `total_unrecognised_claim_statuses`. Each unit's statement is resolved
   on its own, and resolution merges the statements that resolve to one
   claim id.
 - **The extraction store** keeps each record, keyed by
