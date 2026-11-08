@@ -599,7 +599,12 @@ def test_the_bedrock_widgets_read_the_bedrock_region(
         "TOKEN",
     }
     # An alarm cannot read another region's metrics: the synth says so.
-    warnings = Annotations.from_stack(stack).find_warning(
-        "*", Match.string_like_regexp("BedrockThrottling alarm watches the deploy")
-    )
-    assert bool(warnings) is warned
+    # has_warning/has_no_warning assert on the jsii side: find_warning returns
+    # MetadataEntry objects, which a process that has not imported
+    # aws_cdk.cloud_assembly_schema cannot deserialize.
+    annotations = Annotations.from_stack(stack)
+    message = Match.string_like_regexp("BedrockThrottling alarm watches the deploy")
+    if warned:
+        annotations.has_warning("*", message)
+    else:
+        annotations.has_no_warning("*", message)
