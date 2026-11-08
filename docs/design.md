@@ -4500,9 +4500,10 @@ signature element: the *provenance trace*, an indigo rail from an answer
 through each source it read (ranked), the passage and file it came from, to
 the entity or relationship in the graph, where the traced node wears a
 dashed ring and its edge carries particles; matched words are in a
-highlighter. Text takes the platform's UI face (Korean in Apple SD Gothic
-Neo or Malgun Gothic), ids and figures JetBrains Mono (OFL, self-hosted),
-set per locale through `:lang()`. A light and a dark theme are two full
+highlighter. Text is set in Pretendard (Latin and Hangul; Pretendard JP for
+a Japanese page), ids and figures in JetBrains Mono, both OFL and
+self-hosted (Pretendard as its vendor ships it, unmodified), per locale
+through `:lang()`. A light and a dark theme are two full
 token sets (the dark one its own, not inverted), following the system
 setting unless the top bar's toggle picks one; a same-origin script sets
 the theme before the first paint, as the CSP allows no inline script. The

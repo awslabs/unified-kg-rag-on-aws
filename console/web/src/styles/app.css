@@ -34,7 +34,7 @@ html {
   --font-body: var(--font-latin), var(--cjk-ko), var(--cjk-ja), sans-serif;
   --font-data: var(--font-mono), var(--cjk-ko), var(--cjk-ja), monospace;
   --leading-body: var(--leading-cjk);
-  --tracking-display: -0.015em;
+  --tracking-display: -0.02em;
 }
 :lang(ja) {
   --font-body: var(--font-latin), var(--cjk-ja), var(--cjk-ko), sans-serif;

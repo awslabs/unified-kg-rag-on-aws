@@ -17,6 +17,13 @@ const FACES = [
   { pkg: "jetbrains-mono", weights: [400, 600], subsets: ["latin", "latin-ext", "cyrillic"] },
 ];
 
+// Faces the styles import as their vendor ships them (unmodified files, so
+// a Reserved Font Name stays valid): only their licences are copied here.
+const VENDOR_LICENSES = [
+  { pkg: "pretendard", file: "dist/LICENSE.txt" },
+  { pkg: "pretendard-jp", file: "dist/LICENSE.txt" },
+];
+
 const root = new URL("..", import.meta.url).pathname;
 const modules = join(root, "node_modules", "@fontsource");
 const out = [
@@ -42,6 +49,13 @@ for (const face of FACES) {
     }
   }
   await copyFile(join(modules, face.pkg, "LICENSE"), join(root, "public", "licenses", `${face.pkg}.txt`));
+}
+for (const { pkg, file } of VENDOR_LICENSES) {
+  // The text as shipped, less its lines' trailing blanks (the repository's
+  // whitespace check).
+  const text = await readFile(join(root, "node_modules", pkg, file), "utf8");
+  const clean = text.replace(/[ \t]+$/gm, "").replace(/\s*$/, "\n");
+  await writeFile(join(root, "public", "licenses", `${pkg}.txt`), clean);
 }
 await writeFile(join(root, "src", "styles", "fonts.css"), `${out.join("\n")}\n`);
 console.log(`fonts.css: ${out.length - 2} faces`);

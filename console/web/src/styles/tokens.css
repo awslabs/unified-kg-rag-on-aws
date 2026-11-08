@@ -139,17 +139,17 @@
 }
 
 :root {
-  /* Type: the platform's own UI face, so Korean takes Apple SD Gothic Neo
-   * on macOS and Malgun Gothic on Windows; JetBrains Mono (self-hosted,
-   * src/styles/fonts.css, generated) for ids, strategies and figures.
-   * Documents and questions can be in any language whatever the page's,
-   * so every stack carries the CJK faces; a locale's stack (app.css) puts
-   * its script first, for the Han glyphs. */
-  --cjk-ko: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR";
-  --cjk-ja: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo", "Noto Sans JP",
-    "Noto Sans CJK JP";
+  /* Type: Pretendard (Latin and Hangul in one design; Pretendard JP for a
+   * Japanese page), the platform's own faces after it; JetBrains Mono for
+   * ids, strategies and figures. Documents and questions can be in any
+   * language whatever the page's, so every stack carries the CJK faces; a
+   * locale's stack (app.css) puts its script first, for the Han glyphs. */
+  --cjk-ko: "Pretendard Variable", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR";
+  --cjk-ja: "Pretendard JP Variable", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic",
+    "Meiryo", "Noto Sans JP", "Noto Sans CJK JP";
   --cjk-zh: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC";
-  --font-latin: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial;
+  --font-latin: "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue",
+    Arial;
   --font-body: var(--font-latin), var(--cjk-ko), var(--cjk-ja), var(--cjk-zh), sans-serif;
   --font-display: var(--font-body);
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas;

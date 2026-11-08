@@ -77,16 +77,21 @@ since the page's CSP allows no inline script).
 | `--good` / `--warn` / `--bad` | 4.6 / 4.5 / 4.7:1 on their washes | 6.3 / 6.2 / 4.9:1 | Status, with a label |
 | `--series-1..8` | dataviz reference, light steps | the same hues, dark steps (3:1 on sheet) | Graph communities and types, charts |
 
-Type: the platform's own UI face (`-apple-system`, Segoe UI, `system-ui`),
-so Korean renders in Apple SD Gothic Neo on macOS and Malgun Gothic on
-Windows (Noto Sans KR elsewhere), Japanese in Hiragino Sans or Yu Gothic,
-Chinese in PingFang SC or Microsoft YaHei; JetBrains Mono (SIL OFL 1.1,
-self-hosted as WOFF2 subsets by `console/web/scripts/gen-fonts.mjs`, the
-licence in `console/web/public/licenses/`) for ids, strategies and figures.
-Titles use the same face at 700 with tighter tracking (-0.02em Latin,
--0.015em Korean). Scale (px): 12 labels, 13 small, 14 body compact (tables,
-forms, nav), 15 answers, 18 card headings, 22 sections, 28 page titles; CJK
-text takes a 1.7 line height and Korean keeps words whole.
+Type: Pretendard (SIL OFL 1.1), one design for Latin and Hangul, with
+Pretendard JP for a Japanese page and the system's faces after them (Chinese
+in PingFang SC or Microsoft YaHei); JetBrains Mono (OFL) for ids, strategies
+and figures. Pretendard is served as its vendor ships it, unmodified (its
+Reserved Font Name stays valid): the variable font's own dynamic-subset
+stylesheet, where one file per unicode slice carries every weight, so a page
+using 400 to 700 fetches each slice once (three static weights would fetch it
+three times and add three stylesheets). Pretendard JP's stylesheet loads only
+when the page turns Japanese. JetBrains Mono is subset from its @fontsource
+package by `console/web/scripts/gen-fonts.mjs`. Licences are in
+`console/web/public/licenses/`. Titles use the sans at 700 with -0.02em
+tracking (Korean too; no serif display face, which clashed with Hangul).
+Scale (px): 12 labels, 13 small, 14 body compact (tables, forms, nav), 15
+answers, 18 card headings, 22 sections, 28 page titles; CJK text takes a 1.7
+line height and Korean keeps words whole (`word-break: keep-all`).
 
 Space: a 4px base. Radius: 6px controls, 8px cards, pills for chips and
 badges. Cards carry a hairline border and the faintest shadow; raised
