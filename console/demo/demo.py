@@ -58,7 +58,10 @@ import fake_models  # noqa: E402
 from unified_kg_rag.application.cli.preflight import (  # noqa: E402
     missing_extras_error,
 )
-from unified_kg_rag.application.cli.run_console import missing_extra  # noqa: E402
+from unified_kg_rag.application.cli.run_console import (  # noqa: E402
+    missing_extra,
+    web_directory,
+)
 from unified_kg_rag.domain.models import Config  # noqa: E402
 
 # Illustrative prices of the fake models, so the dashboard and the
@@ -249,6 +252,11 @@ def ingest(workspace: Path, config_path: Path, source: Path) -> None:
     subprocess.run(command, check=True, cwd=workspace)
 
 
+def missing_web_build() -> bool:
+    """Whether the console's web client (``npm run build``) is missing."""
+    return not (web_directory() / "index.html").is_file()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Prepare and start the console demo.")
     parser.add_argument(
@@ -300,6 +308,13 @@ def main(argv: list[str] | None = None) -> int:
             f"The console demo needs the console extra (missing: "
             f"{', '.join(missing)}): uv run --no-dev --extra console python "
             "console/demo/demo.py ..."
+        )
+
+    # Nor without the built web client: the console would serve no page.
+    if not args.prepare_only and missing_web_build():
+        raise SystemExit(
+            f"The console's web client is not built ({web_directory()} has no "
+            "index.html): cd console/web && npm ci && npm run build"
         )
 
     # The fake and Ollama models run in local mode, whose providers come
@@ -380,6 +395,11 @@ def main(argv: list[str] | None = None) -> int:
             cwd=workspace,
             env={**os.environ, "UKR_CONSOLE_TOKEN": token},
         )
+        # A SIGTERM (a container stop, kill) stops the console too, as
+        # Ctrl-C does, instead of leaving it running without the demo.
+        previous = signal.signal(
+            signal.SIGTERM, lambda *_: console.send_signal(signal.SIGTERM)
+        )
         print(f"Dataset: {dataset}", flush=True)
         print(f"Open http://127.0.0.1:{args.port}/?token={token}", flush=True)
         try:
@@ -387,6 +407,8 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             console.send_signal(signal.SIGINT)
             return console.wait()
+        finally:
+            signal.signal(signal.SIGTERM, previous)
     finally:
         if server is not None:
             server.shutdown()

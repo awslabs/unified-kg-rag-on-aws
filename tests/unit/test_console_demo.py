@@ -107,6 +107,16 @@ def test_the_fake_models_answer_every_prompt_kind() -> None:
         "Orion Labs inspects.</context>",
     )
     assert streamed and answer.startswith("Umbra Freight carries")
+    # RAPTOR's tree summary is the passages' text, so the tree is built
+    # (an empty reply left every cluster unsummarized, retried each run).
+    summary, streamed = fake.respond(
+        "You write the summaries of a summary tree that a retrieval system searches",
+        "Summarize the following passages in English, in 200 words at most.\n\n"
+        "<passages>\nUmbra Freight carries each lidar unit.\n\n"
+        "케스트럴 창고가 부품을 보관한다.\n</passages>\n",
+    )
+    assert not streamed and "Umbra Freight carries each lidar unit." in summary
+    assert "케스트럴 창고" in summary
     assert fake.route("What are the overall themes?") == "global"
     assert fake.route("How are Acme Robotics and Globex Sensors related?") == "mix"
     # The router, the rewrite, the translation and the rating answer JSON.
@@ -221,3 +231,50 @@ def test_the_local_model_demos_name_the_local_extra_before_any_work(
 
 def test_the_bedrock_demo_needs_no_local_extra() -> None:
     assert load("demo").missing_local_extra("bedrock") is None
+
+
+def test_without_the_built_web_client_the_demo_stops_before_ingesting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # It ingested and printed an address that served no page.
+    demo = load("demo")
+    monkeypatch.setattr(demo, "missing_extra", lambda: [])
+    monkeypatch.setattr(demo, "web_directory", lambda: tmp_path / "no-dist")
+    monkeypatch.setattr(demo, "ingest", lambda *a: pytest.fail("ingested"))
+    workspace = tmp_path / "ws"
+    with pytest.raises(SystemExit, match="npm run build"):
+        demo.main(["--models", "fake", "--workspace", str(workspace)])
+    assert not workspace.exists()
+
+
+def test_a_sigterm_stops_the_console_the_demo_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import signal
+    import threading
+
+    demo = load("demo")
+    signals: list[int] = []
+
+    class _Console:
+        def __init__(self, *_: object, **__: object) -> None:
+            self.stopped = threading.Event()
+
+        def send_signal(self, signum: int) -> None:
+            signals.append(signum)
+            self.stopped.set()
+
+        def wait(self) -> int:
+            # The demo's own SIGTERM, while it waits on the console.
+            os.kill(os.getpid(), signal.SIGTERM)
+            assert self.stopped.wait(5)
+            return 143
+
+    monkeypatch.setattr(demo, "missing_extra", lambda: [])
+    monkeypatch.setattr(demo, "missing_web_build", lambda: False)
+    monkeypatch.setattr(demo.subprocess, "Popen", _Console)
+    before = signal.getsignal(signal.SIGTERM)
+    code = demo.main(["--models", "fake", "--workspace", str(tmp_path), "--no-ingest"])
+    assert code == 143 and signals == [signal.SIGTERM]
+    assert signal.getsignal(signal.SIGTERM) is before  # restored
