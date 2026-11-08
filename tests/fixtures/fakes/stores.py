@@ -28,13 +28,20 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
 )
 from unified_kg_rag.domain.ingestion.base_processor import SEED_PROPERTIES_ATTRIBUTE
 from unified_kg_rag.domain.ingestion.claim_resolver import claim_date_value
+from unified_kg_rag.domain.ingestion.report_references import repointed_findings
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SEED_ONLY_SOURCE_KINDS,
     SEED_SOURCE_KIND,
     SOURCE_KINDS_FIELD,
     is_seed_unit,
 )
-from unified_kg_rag.domain.models import Claim, Config, Constants, IndexBuildRecord
+from unified_kg_rag.domain.models import (
+    Claim,
+    CommunityFinding,
+    Config,
+    Constants,
+    IndexBuildRecord,
+)
 from unified_kg_rag.ports.indexer import (
     STORED_ITEM_KINDS,
     AnnotatedKind,
@@ -1010,6 +1017,30 @@ class FakeVectorStore(_Recorder):
             and bucket[i].description
             and BaseIndexer.get_suffix(bucket[i]) == wanted
         }
+
+    def repoint_report_findings(
+        self, id_remap: Mapping[str, str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Point the stored reports' cited ids at their new ids in place."""
+        stats = IndexingStats()
+        wanted = suffix or Constants.DEFAULT_SUFFIX.value
+        bucket = self.data.get("community_reports", {})
+        for report_id, report in list(bucket.items()):
+            if BaseIndexer.get_suffix(report) != wanted:
+                continue
+            findings = repointed_findings(
+                [f.model_dump(mode="json") for f in report.findings], id_remap
+            )
+            if findings is None:
+                continue
+            bucket[report_id] = report.model_copy(
+                update={
+                    "findings": [CommunityFinding.model_validate(f) for f in findings]
+                }
+            )
+            stats.total_items += 1
+            stats.add_success()
+        return stats
 
     def update_claim_lineage(self, claims: list[Any]) -> IndexingStats:
         return self._update("claims", claims, ("text_unit_ids",))

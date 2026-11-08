@@ -166,11 +166,14 @@ unless noted.
    records only removed text units named are then deleted (best effort).
 
 **Limitation:** shared communities and reports keep what a changed or deleted
-document contributed, and a re-keyed entity's old id, until a full rebuild
-(§5.5); descriptions, names, ids, types, filters, ranks and claims are
-derived again on every run. A kept report's findings keep the ids of the
-records they cite: a removal does not strip them, so they may name records
-no longer stored. They are filtered where they are read: global and DRIFT
+document contributed, and a community a re-keyed entity's old id, until a
+full rebuild (§5.5); descriptions, names, ids, types, filters, ranks and
+claims are derived again on every run. A kept report's findings cite the
+ids of records: a re-key points them at the new id before it deletes the
+old one (the stored reports citing it are found by their flat
+`findings_record_ids` keyword list, `VectorIndexer.repoint_report_findings`;
+a report stored before that list keeps the old id), but a removal does not
+strip them, so they may name records no longer stored. They are filtered where they are read: global and DRIFT
 search read the cited records by id (§7.1) and a removed one names no text
 unit, and a reported source of the report lists only each finding's ids,
 not its text, which the report's content renders already.

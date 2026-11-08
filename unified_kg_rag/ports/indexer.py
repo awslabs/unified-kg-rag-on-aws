@@ -1001,6 +1001,18 @@ class VectorIndexer(BaseIndexer):
         (:meth:`retain_extraction_records`). Default stores nothing."""
         return IndexingStats()
 
+    def repoint_report_findings(
+        self, id_remap: Mapping[str, str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Point the record ids the findings of ``suffix``'s stored community
+        reports cite at their new ids (``id_remap``: old id -> new id), in
+        place: an incremental run re-keyed those items (their name changed)
+        and deletes the old ids. One item per report rewritten. Default
+        rewrites nothing (the reports keep citing the old ids, which a query
+        reading the records skips); adapters that override it raise when
+        the read of the citing reports fails."""
+        return IndexingStats()
+
     def update_claim_lineage(self, claims: list[Claim]) -> IndexingStats:
         """Rewrite stored claims' ``text_unit_ids`` (text-unit removal); see
         :meth:`update_entity_lineage`."""

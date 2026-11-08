@@ -859,13 +859,47 @@ class IndexingManager:
             for suffix in self._rekeyed.keys() | self._dropped.keys()
         }
         vector_only = dict(self._vector_only)
+        rekeyed = {suffix: dict(rekey) for suffix, rekey in self._rekeyed.items()}
         self._reset_run_state()
+        # The stored community reports citing an old id cite the new one
+        # first: deleted, nothing would point them at it.
+        repointed = self._repoint_reports(rekeyed)
         if retired:
             logger.info(
                 "Deleting %d items re-keyed to follow their current name",
                 sum(len(ids) for ids in retired.values()),
             )
-        return self.delete_documents(retired, vector_only)
+        return {**repointed, **self.delete_documents(retired, vector_only)}
+
+    def _repoint_reports(
+        self, rekeyed: Mapping[str, Mapping[str, str]]
+    ) -> dict[str, IndexingStats]:
+        """Point the findings of the stored reports at the ids ``rekeyed``
+        (by suffix: old id -> new id) gives
+        (``VectorIndexer.repoint_report_findings``). A failure keeps the old
+        ids in them (a query reading the records skips an id not stored)."""
+        results: dict[str, IndexingStats] = {}
+        for suffix, rekey in sorted(rekeyed.items()):
+            moved = {old: new for old, new in rekey.items() if old != new}
+            if not moved:
+                continue
+            try:
+                stats = self.vector_indexer.repoint_report_findings(moved, suffix)
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - reported as a failed item
+                stats = IndexingStats(total_items=1)
+                stats.add_error(str(e))
+            if stats.failed_items:
+                logger.warning(
+                    "Pointing the stored community reports of '%s' at re-keyed "
+                    "ids failed; they keep citing the old ids: %s",
+                    suffix,
+                    stats.errors[:1],
+                )
+            if stats.total_items or stats.failed_items:
+                results[f"vector_report_findings_{suffix}"] = stats
+        return results
 
     def note_pending_commit(self) -> None:
         """Note, per suffix, the stored entities this commit's derivation

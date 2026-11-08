@@ -36,7 +36,12 @@ from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KINDS,
 )
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
-from unified_kg_rag.domain.ingestion.report_references import REPORT_FINDINGS_FIELD
+from unified_kg_rag.domain.ingestion.report_references import (
+    FINDINGS_RECORD_IDS_FIELD,
+    REPORT_FINDINGS_FIELD,
+    findings_record_ids,
+    repointed_findings,
+)
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_SOURCE_KIND, is_seed_unit
 from unified_kg_rag.domain.models import (
     SUMMARY_TREE_META,
@@ -1135,6 +1140,11 @@ class OpenSearchIndexer(VectorIndexer):
             REPORT_FINDINGS_FIELD: [
                 finding.model_dump(mode="json") for finding in report.findings
             ],
+            # Every id they cite, searchable: a re-key repoints the reports
+            # citing the old id (repoint_report_findings).
+            FINDINGS_RECORD_IDS_FIELD: findings_record_ids(
+                [finding.model_dump(mode="json") for finding in report.findings]
+            ),
         }
 
     def index_community_reports(
@@ -2026,6 +2036,64 @@ class OpenSearchIndexer(VectorIndexer):
             },
             with_filters=True,
         )
+
+    def repoint_report_findings(
+        self, id_remap: Mapping[str, str], suffix: str | None = None
+    ) -> IndexingStats:
+        """Point the stored reports' cited ids at their new ids (see the
+        port): the reports citing an old id are found by their
+        ``findings_record_ids`` and their findings partially updated. A
+        report stored before that field keeps the old ids. Raises when the
+        read fails."""
+        stats = IndexingStats()
+        prefix = self.opensearch_config.community_reports_index_prefix
+        citing = self.find_documents(
+            prefix, FINDINGS_RECORD_IDS_FIELD, sorted(id_remap), suffix
+        )
+        if not citing:
+            return stats
+        updates = []
+        for source in self._read_sources(
+            prefix, sorted(citing), suffix, fields=[REPORT_FINDINGS_FIELD]
+        ):
+            findings = repointed_findings(source.get(REPORT_FINDINGS_FIELD), id_remap)
+            if findings is not None:
+                updates.append(
+                    {
+                        "id": source["id"],
+                        REPORT_FINDINGS_FIELD: findings,
+                        FINDINGS_RECORD_IDS_FIELD: findings_record_ids(findings),
+                    }
+                )
+        stats.total_items = len(updates)
+        if not updates:
+            return stats
+        alias_name = self._get_name(prefix, suffix)
+        try:
+            index_name = self._live_index(alias_name)
+            if not index_name:
+                return stats
+            response = self.opensearch_client.bulk_update(
+                index_name, updates, refresh=self.opensearch_config.refresh_after_batch
+            )
+        except NamespaceLeaseError:
+            raise
+        except Exception as e:  # noqa: BLE001 - reported as failed items
+            stats.add_error(
+                f"Update of '{alias_name}' failed: {e}",
+                len(updates),
+                ids=[u["id"] for u in updates],
+            )
+            return stats
+        failed = [next(iter(r.values())) for r in response.get("items", [])]
+        stats.add_success(len(updates) - len(failed))
+        if failed:
+            stats.add_error(
+                f"Bulk update errors: {len(failed)}",
+                len(failed),
+                ids=[str(f["_id"]) for f in failed if "_id" in f],
+            )
+        return stats
 
     def _update_fields(
         self,
@@ -3470,6 +3538,7 @@ class OpenSearchIndexer(VectorIndexer):
                 "parent_community_id": {"type": "keyword"},
                 "child_community_ids": {"type": "keyword"},
                 REPORT_FINDINGS_FIELD: {"type": "object", "enabled": False},
+                FINDINGS_RECORD_IDS_FIELD: {"type": "keyword"},
                 "attributes": {"type": "object", "dynamic": True},
             }
         )
