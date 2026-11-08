@@ -13,6 +13,7 @@ rebinding).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import secrets
@@ -70,6 +71,7 @@ from unified_kg_rag.application.cli.console.settings_api import (
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.cli.conventions import host_without_port, is_loopback
 from unified_kg_rag.application.config import get_config
+from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
 )
@@ -81,7 +83,11 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
 from unified_kg_rag.shared import get_logger
-from unified_kg_rag.shared.exceptions import ConfigurationError, DataProcessingError
+from unified_kg_rag.shared.exceptions import (
+    ConfigurationError,
+    DataProcessingError,
+    classify,
+)
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.files import temporary_sibling
 
@@ -170,7 +176,38 @@ class UploadTooLarge(ConfigurationError):
 
 
 class UnsupportedUpload(ConfigurationError):
-    """An upload holding a file of a type ingestion does not parse."""
+    """An upload holding a file ingestion does not read: of a type it does
+    not parse, or hidden (``is_excluded_source_path``)."""
+
+
+class UploadConflict(ConfigurationError):
+    """An upload naming one path as a file and as a folder (two of its
+    files, or one of its files and what the folder holds)."""
+
+
+def _upload_conflicts(target: Path, paths: list[Path]) -> list[str]:
+    """The paths of an upload into ``target`` that name a file and a folder
+    at once: a file under another of its files, a file where the folder
+    holds a folder, or under a file the folder holds. Relative to
+    ``target``."""
+    planned = set(paths)
+    found: list[str] = []
+    for path in paths:
+        parents = [d for d in path.parents if d == target or d.is_relative_to(target)]
+        clash = path.is_dir() or any(
+            d in planned or (d.exists() and not d.is_dir()) for d in parents
+        )
+        if clash:
+            found.append(path.relative_to(target).as_posix())
+    return sorted(found)
+
+
+def _remove_created(directories: list[Path]) -> None:
+    """Remove the directories a refused upload created, deepest first, each
+    only while empty."""
+    for directory in sorted(directories, key=lambda d: len(d.parts), reverse=True):
+        with contextlib.suppress(OSError):
+            directory.rmdir()
 
 
 def _same_token(offered: str, token: str) -> bool:
@@ -425,9 +462,18 @@ def create_app(
     async def _unsupported(_: Request, e: UnsupportedUpload) -> JSONResponse:
         return _error(415, "unsupported", str(e))
 
+    @app.exception_handler(UploadConflict)
+    async def _upload_conflict(_: Request, e: UploadConflict) -> JSONResponse:
+        return _error(409, "upload_conflict", str(e))
+
     @app.exception_handler(ConfigurationError)
     async def _config(_: Request, e: ConfigurationError) -> JSONResponse:
-        return _error(400, "invalid", str(e))
+        # Its class (ErrorClass) as every surface names it: a methodology
+        # the namespace does not hold, a store or schema the configuration
+        # cannot serve. A plain one is the console refusing a value of the
+        # request itself: "invalid".
+        code = "invalid" if type(e) is ConfigurationError else classify(e).value
+        return _error(400, code, str(e))
 
     @app.exception_handler(DataProcessingError)
     async def _data(_: Request, e: DataProcessingError) -> JSONResponse:
@@ -582,6 +628,7 @@ def create_app(
             )
         form = await request.form(max_files=MAX_UPLOAD_FILES, max_fields=8)
         staged: dict[Path, Path] = {}
+        created: list[Path] = []
         try:
             name = form.get("name")
             files = [f for f in form.getlist("files") if not isinstance(f, str)]
@@ -609,8 +656,30 @@ def create_app(
                     f"{' and others' if len(unsupported) > 5 else ''}; it reads "
                     f"{' '.join(sorted(supported))}"
                 )
+            # The loader's own rule: a hidden file or folder is never read.
+            if hidden := sorted(
+                p.relative_to(target).as_posix()
+                for _, p in planned
+                if is_excluded_source_path(p, target)
+            ):
+                raise UnsupportedUpload(
+                    f"ingestion skips hidden files and folders (a name starting "
+                    f"with '.', __pycache__): {', '.join(hidden[:5])}"
+                    f"{' and others' if len(hidden) > 5 else ''}"
+                )
+            if conflicts := _upload_conflicts(target, [p for _, p in planned]):
+                raise UploadConflict(
+                    "these paths name a file and a folder at once (in the "
+                    f"upload or in the folder): {', '.join(conflicts[:5])}"
+                    f"{' and others' if len(conflicts) > 5 else ''}"
+                )
             total = 0
             for upload_file, path in planned:
+                created.extend(
+                    d
+                    for d in reversed([path.parent, *path.parent.parents])
+                    if (d == target or d.is_relative_to(target)) and not d.exists()
+                )
                 path.parent.mkdir(parents=True, exist_ok=True)
                 temporary = staged.pop(path, None) or temporary_sibling(path)
                 staged[path] = temporary
@@ -629,6 +698,7 @@ def create_app(
         except BaseException:
             for temporary in staged.values():
                 temporary.unlink(missing_ok=True)
+            _remove_created(created)
             raise
         finally:
             await form.close()

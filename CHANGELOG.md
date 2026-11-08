@@ -834,7 +834,9 @@ From a `main` checkout (formats and keys no release had):
   path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged
   `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),
   requires a per-launch access token, refuses paths outside its directories, cross-site requests and uploads of a
-  type ingestion does not read, writes an upload all or none, and loads nothing from another host. The web client
+  file ingestion does not read (another type, or hidden) or naming one path as a file and a folder, writes an
+  upload all or none (a refused one leaves no folder), names an error by its class (`ErrorClass`), and loads
+  nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
   figures; self-hosted, SIL OFL), with a force-directed canvas graph (the focused node and its neighbours labelled,

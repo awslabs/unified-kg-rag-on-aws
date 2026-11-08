@@ -351,6 +351,8 @@ class AskService:
         async def run() -> None:
             try:
                 async with self._using() as (chain, config):
+                    # The namespace asked, resolved as the chain resolves it.
+                    record["suffix"] = namespace_of(config, request.suffix)
                     output, trace_id = await self._invoke(
                         chain, config, request, query_id, queue
                     )

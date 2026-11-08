@@ -3,7 +3,8 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { I18nProvider } from "../i18n/i18n";
+import { I18nProvider, translate } from "../i18n/i18n";
+import { ApiError, errorMessage } from "../lib/api";
 import { fieldsOf, parseValue, type JsonSchema } from "../lib/schema";
 import { answerSegments, markerNumbers } from "../lib/citations";
 import type { AskResult, Citation, Comparison, Delta, Multiplicity, Source, StrategyInfo } from "../lib/types";
@@ -132,6 +133,17 @@ describe("helpers", () => {
     expect(queryTerms("케스트럴 창고")).toEqual(["케스", "스트", "트럴", "창고"]);
     expect(queryTerms("in 2026")).toEqual(["2026"]);
   });
+  it("splits a mixed-script word where its script changes", () => {
+    // Regression: "Depot으로" was cut into bigrams across the whole word
+    // ("de", "ep", ..., "t으"), so "Depot" in a passage was never marked.
+    expect(queryTerms("Depot으로 가는 Kestrel")).toEqual(["kestrel", "depot", "으로", "가는"]);
+    expect(queryTerms("AcmeのロボットAI")).toEqual(["acme", "のロ", "ロボ", "ボッ", "ット"]);
+    expect(highlightRuns("Kestrel Depot stores units.", "Depot으로").map((r) => r.text)).toEqual([
+      "Kestrel ",
+      "Depot",
+      " stores units.",
+    ]);
+  });
   it("joins marked terms that only spaces separate into one highlight", () => {
     expect(highlightRuns("Kestrel Depot stores units.", "kestrel depot units")).toEqual([
       { text: "Kestrel Depot", marked: true },
@@ -219,6 +231,18 @@ describe("helpers", () => {
   });
 });
 
+describe("errorMessage", () => {
+  const t = (key: string) => translate("en", key);
+  it("names a refusal by its own kind, else by its error class", () => {
+    const refused = new ApiError(403, "'x' is not a relative path", { code: "path_refused" });
+    expect(errorMessage(t, refused)).toBe("Path refused: 'x' is not a relative path");
+    // Regression: every ConfigurationError was "invalid"; it is its class.
+    const missing = new ApiError(400, "holds no hipporag", { code: "not_indexed" });
+    expect(errorMessage(t, missing)).toBe("This index does not hold what the strategy reads: holds no hipporag");
+    expect(errorMessage(t, new ApiError(400, "odd", { code: "no_such_kind" }))).toBe("odd");
+  });
+});
+
 describe("upload batches", () => {
   it("stay under the file and size limits", async () => {
     const { batches } = await import("../pages/IngestPage");
@@ -233,7 +257,21 @@ describe("upload batches", () => {
     const { readable } = await import("../pages/IngestPage");
     const files = [{ name: "a.PDF" }, { name: "b.txt" }, { name: ".DS_Store" }, { name: "c.exe" }, { name: "README" }];
     expect(readable(files, [".pdf", ".txt"]).map((f) => f.name)).toEqual(["a.PDF", "b.txt"]);
-    expect(readable(files, undefined)).toEqual(files);
+    // Before the list loads only the hidden ones are left out.
+    expect(readable(files, undefined).map((f) => f.name)).toEqual(["a.PDF", "b.txt", "c.exe", "README"]);
+  });
+
+  it("leave out what the loader skips: hidden files and folders", async () => {
+    const { readable } = await import("../pages/IngestPage");
+    const files = [
+      { name: "a.txt", webkitRelativePath: "corpus/a.txt" },
+      { name: ".b.txt", webkitRelativePath: "corpus/.b.txt" },
+      { name: "c.txt", webkitRelativePath: "corpus/.git/c.txt" },
+      { name: "d.txt", webkitRelativePath: "corpus/__pycache__/d.txt" },
+      { name: "e.txt", webkitRelativePath: ".corpus/e.txt" },
+    ];
+    // The picked folder's own name is the upload's, not a path segment.
+    expect(readable(files, [".txt"]).map((f) => f.webkitRelativePath)).toEqual(["corpus/a.txt", ".corpus/e.txt"]);
   });
 });
 
