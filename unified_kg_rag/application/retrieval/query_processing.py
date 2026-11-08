@@ -586,8 +586,11 @@ async def read_rewrite(chain: GraphRAGChain, raw: str) -> str | None:
         answer = await chain._json_parser(
             QueryRewritePrompt, schema=_RewriteAnswer, instructions=_REWRITE_FIX
         ).aparse(raw)
-    except OutputParserException:
+    except OutputParserException as e:
         logger.warning("Follow-up rewrite answer is not a rewrite; using the query")
+        record_degradation(
+            DegradationStep.FOLLOW_UP_REWRITE, "rewrite answer unreadable", e
+        )
         return None
     text = str(answer.question).strip()
     if not text or CANNOT_REWRITE_MARKER in text:

@@ -510,9 +510,14 @@ async def test_an_unreadable_verdict_answers_from_what_is_there(reply: str) -> N
     meta = result.metadata["iterative"]
     assert meta["stop_reason"] == meta["degraded"] == "controller_unparsed"
     assert "context_sufficient" not in result.metadata
-    # The answer is marked degraded (it was not before), and only an answer
-    # that does not parse is sent to the output fixer, once.
-    assert result.metadata["degraded_error"] == "OutputParserException"
+    # The answer is marked degraded in the query's ledger: with the parse
+    # error when the answer does not parse (after its one repair), without
+    # one for an object that holds no verdict.
+    (entry,) = result.metadata["degraded"]
+    assert entry["step"] == "iterative_controller"
+    parsed = reply.startswith('{"next')
+    assert entry["error_type"] == (None if parsed else "OutputParserException")
+    assert result.metadata.get("degraded_error") == entry["error_type"]
     # A cut-off answer is not repaired either: a fixer could only invent it.
     assert len(script.repairs) == (1 if reply == "no JSON at all" else 0)
 

@@ -310,3 +310,42 @@ async def test_a_translation_the_fixer_cannot_repair_is_degraded(
     result = await chain._process_query_step({"query": "織田信長について"})
     assert result.final_query == "織田信長について"
     assert result.degraded_error == "OutputParserException"
+
+
+async def test_unreadable_answers_are_recorded_in_the_query_ledger(
+    config: Config,
+) -> None:
+    # The translation and the follow-up rewrite: one repair, then a
+    # degraded step with the parse error, in the query's ledger.
+    from unified_kg_rag.adapters.retrieval.base import degradation_scope
+
+    config.processing.translation.source_language = "ja"
+    config.processing.translation.target_language = "en"
+    chain = _chain(config)
+    chain.factory = ScriptedLLMFactory(lambda _system, _human: "still not JSON")
+    _install_fakes(chain, translation="I cannot do that.", entities=["nobunaga"])
+    with degradation_scope() as ledger:
+        await chain._process_query_step({"query": "織田信長について"})
+        assert await query_processing.read_rewrite(chain, "Sorry, no.") is None
+    assert [(e.step, e.error_type) for e in ledger.entries] == [
+        ("translation", "OutputParserException"),
+        ("follow_up_rewrite", "OutputParserException"),
+    ]
+
+
+async def test_an_unreachable_fixer_is_never_absorbed(config: Config) -> None:
+    # The repair call meets the same unreachable server: the query fails,
+    # under ignore_errors too, instead of degrading.
+    def unreachable(_system: str, _human: str) -> str:
+        raise httpx.ConnectError("All connection attempts failed")
+
+    config.processing.ignore_errors = True
+    config.processing.translation.source_language = "ja"
+    config.processing.translation.target_language = "en"
+    chain = _chain(config)
+    chain.factory = ScriptedLLMFactory(unreachable)
+    _install_fakes(chain, translation="I cannot do that.", entities=["nobunaga"])
+    with pytest.raises(httpx.ConnectError):
+        await chain._process_query_step({"query": "織田信長について"})
+    with pytest.raises(httpx.ConnectError):
+        await query_processing.read_rewrite(chain, "Sorry, no.")

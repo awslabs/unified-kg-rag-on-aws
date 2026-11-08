@@ -1277,10 +1277,12 @@ From a `main` checkout (formats and keys no release had):
   search read in pages of `max_result_window` by `search_after`, which the embedded engine supports too).
 - Every JSON answer is read one way (`parse_model_object`: prose and fences around it, comments, trailing commas,
   typographic quotes, invalid escapes, a Python literal, a self-correction ending on the answer), then repaired once
-  by `models.roles.fixing`, before its step degrades (`degraded_error`): the keyword extraction, DRIFT's primer and
-  actions, iterative's controller, the structured planner, global's map, prompt tuning and the LLM judges. A Python
-  dict or a trailing comma failed `mix`, `hybrid` and `iterative`, and left DRIFT with no intermediate answer and
-  no degraded mark; an unreadable iterative verdict and DRIFT step now mark the answer degraded. A global map
+  by `models.roles.fixing`, before its step degrades (a `metadata.degraded` entry with the parse error): the
+  keyword extraction, DRIFT's primer and actions, iterative's controller, the structured planner, global's map,
+  prompt tuning and the LLM judges. A Python dict or a trailing comma failed `mix`, `hybrid` and `iterative`, and
+  left DRIFT with no intermediate answer and no degraded mark; an unreadable DRIFT step, router, translation or
+  rewrite answer is now recorded in the query's degradation ledger. A model server unreachable on the repair call
+  still fails the query. A global map
   output that is not map JSON goes to the fixer, not to a second map call over its batch. A response cut inside
   its last object is not repaired.
 - The router, the query translation, the follow-up rewrite and the community relevance rating answer JSON:

@@ -1053,8 +1053,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     StrategySelectionPrompt, schema=_RouteAnswer
                 ).aparse(raw)
                 name = str(answer.strategy).strip().casefold()
-            except OutputParserException:
+            except OutputParserException as e:
                 name = ""
+                record_degradation(
+                    DegradationStep.ROUTING, "router answer unreadable", e
+                )
         by_value = {strategy.value: strategy for strategy in routable}
         if (strategy := by_value.get(name)) is not None:
             return strategy, True
