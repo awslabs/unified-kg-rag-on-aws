@@ -166,8 +166,10 @@ exposes a best-effort `close()` / `aclose()` that never raises:
   (`15. März 2024`, `15 de marzo de 2024`), and corpus-language
   placeholders (`不明`, `미상`, `해당없음`) as unknown; an object-less claim's
   object is `NONE` whatever placeholder the model wrote.
-  The follow-up rewrite's refusal check knows English, Korean, Japanese and
-  Chinese openings; a refusal in another language passes as a rewrite.
+  The follow-up rewrite and the query translation answer JSON, and a model
+  that cannot give one answers a fixed ASCII sentinel (`[CANNOT_REWRITE]`,
+  `[CANNOT_TRANSLATE]`), so no refusal phrase list (it knew four languages)
+  is needed.
 - **Encoding.** A text, CSV or JSON file is first read with the locale's
   preferred encoding, as `open()` reads (UTF-8 in the container image; it
   can be another on a host whose locale is not UTF-8). Only when that read

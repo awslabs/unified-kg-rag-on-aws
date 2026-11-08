@@ -15,11 +15,13 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Collection
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
 
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.retrievers import opensearch_fields_for
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
@@ -166,7 +168,8 @@ class _MapChain:
 
 
 class _Rater:
-    """Rates a report 9 when its community is in ``relevant``, else 1."""
+    """Rates a report 4 of 5 when its community is in ``relevant``, else 0
+    (MS GraphRAG's JSON rating)."""
 
     def __init__(self, relevant: set[str], fail: Exception | None = None) -> None:
         self.relevant = relevant
@@ -180,7 +183,8 @@ class _Rater:
         self.configs.append(config)
         if self.fail is not None:
             raise self.fail
-        return "9" if community in self.relevant else "1"
+        rating = 4 if community in self.relevant else 0
+        return json.dumps({"reason": "r", "rating": rating})
 
 
 class _Tokens:
@@ -208,6 +212,10 @@ def _strategy(
     strat.hybrid_scorer = HybridScorer(config)
     strat.token_manager = _Tokens()  # type: ignore[assignment]
     strat.map_rater = _MapChain()
+    # The output fixer's model: it cannot repair what it is shown.
+    strat.providers = SimpleNamespace(  # type: ignore[assignment]
+        llm_factory=ScriptedLLMFactory(lambda _system, _human: "still no JSON")
+    )
     return strat
 
 

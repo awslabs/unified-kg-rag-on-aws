@@ -440,6 +440,12 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     process that runs threads (a lock another thread held could hang the worker). The console scripts and a
     notebook need nothing; what a custom pool task gets must pickle (#628).
 
+17. A `custom_prompts` override of `strategy_selection_*`, `query_rewrite_*`, the query translation or the
+    community relevance rating should answer the JSON its built-in prompt now asks for (*Changed*): another answer
+    costs one output-fixer call per query, and a 1-10 relevance prompt is read on the 0-5 scale (rescale it). No
+    stored data is re-keyed; the query-extraction cache keys on the prompts' text, so only its in-memory entries of
+    changed prompts are re-extracted.
+
 From a `main` checkout (formats and keys no release had):
 - #622 OpenSearch 2.19: the next deploy of `GraphRagStorage` upgrades a 2.13 domain deployed from #457 on (it has
   the update policy; `cdk diff GraphRagStorage` must change only `EngineVersion`) in place; a domain deployed
@@ -911,6 +917,11 @@ From a `main` checkout (formats and keys no release had):
   with reranking off, logged once; `local` declares `httpx`, which its adapters import (#628). As on OpenSearch, the
   embedded vector store matches nothing inside an `enabled: false` object or an unmapped field of a `dynamic: false`
   one, and refuses a search of an `index: false` field. See [local mode](docs/guides/local-mode.md).
+  with reranking off, logged once; `local` declares `httpx`, which its adapters import (#628). A reasoning model's
+  leading `<think>`, `<thinking>` or `<reasoning>` block is dropped before every parser, streamed answers included:
+  it began every answer, was stored in descriptions, misled the router and hid the `[NO_ANSWER]` token. An Ollama
+  model whose `/api/show` lists `thinking` is built with `reasoning=True`, and an OpenAI-compatible server's
+  `reasoning_content` is kept beside the answer. See [local mode](docs/guides/local-mode.md).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
@@ -1264,6 +1275,23 @@ From a `main` checkout (formats and keys no release had):
   the best twice `max_query_size` of them, where each end got its own page of `max_query_size`. `SearchQuery` gains
   `any_of` (filter groups one of which a hit passes; a graph retriever refuses them) and `page_through` (a text-less
   search read in pages of `max_result_window` by `search_after`, which the embedded engine supports too).
+- Every JSON answer is read one way (`parse_model_object`: prose and fences around it, comments, trailing commas,
+  typographic quotes, invalid escapes, a Python literal, a self-correction ending on the answer), then repaired once
+  by `models.roles.fixing`, before its step degrades (a `metadata.degraded` entry with the parse error): the
+  keyword extraction, DRIFT's primer and actions, iterative's controller, the structured planner, global's map,
+  prompt tuning and the LLM judges. A Python dict or a trailing comma failed `mix`, `hybrid` and `iterative`, and
+  left DRIFT with no intermediate answer and no degraded mark; an unreadable DRIFT step, router, translation or
+  rewrite answer is now recorded in the query's degradation ledger. A model server unreachable on the repair call
+  still fails the query. A global map
+  output that is not map JSON goes to the fixer, not to a second map call over its batch. A response cut inside
+  its last object is not repaired.
+- The router, the query translation, the follow-up rewrite and the community relevance rating answer JSON:
+  `{"strategy": ...}` (a bare strategy name still reads), `{"translation": ...}`, `{"question": ...}`, and MS
+  GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`; the rating is divided by 5, so
+  `relevance_threshold: 0.2` is still a rating of 1 or more). A model that cannot translate or rewrite answers
+  `[CANNOT_TRANSLATE]` or `[CANNOT_REWRITE]`, which replace the refusal phrase lists of four languages; the
+  router no longer routes prose naming several strategies ("not global ... local") to the first one named, and a
+  rating's reason in any language no longer reads as the rating ("Auf einer Skala von 1 bis 10: 8" was 1).
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).
@@ -1520,6 +1548,13 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- An extraction, claims, gleaning, report-findings or chunk-boundary section that lists elements reads as empty when
+  it holds a short "nothing here" marker, in any language (one line of at most three estimated tokens:
+  `<relationships>없음</relationships>`, `なし`, `None.`, `Keine`): only `None`, `N/A`, `null`, `nil` and `-` did,
+  so another answer failed its text unit, which was retried on every run. Longer text there may be the list written
+  as prose: it gets one output-fixer call, and a repair that still holds text only is read as empty, counted
+  (`sections_read_empty_from_text` in the graph and claim extraction stats) and logged with the section and its
+  length.
 - A run into a namespace that holds other source scopes' documents no longer exports `visualization_data.json`
   from its own corpus's graph (or fails to, `Communities must be detected before exporting`): it logs an INFO line
   pointing at `run-describe --output-path` and leaves the earlier file in place (#640).

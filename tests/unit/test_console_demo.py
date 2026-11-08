@@ -109,6 +109,18 @@ def test_the_fake_models_answer_every_prompt_kind() -> None:
     assert streamed and answer.startswith("Umbra Freight carries")
     assert fake.route("What are the overall themes?") == "global"
     assert fake.route("How are Acme Robotics and Globex Sensors related?") == "mix"
+    # The router, the rewrite, the translation and the rating answer JSON.
+    routed, _ = fake.respond(
+        "You are an expert search strategy selector",
+        'Query: "What are the overall themes?"',
+    )
+    assert json.loads(routed) == {"strategy": "global"}
+    rating, _ = fake.respond(
+        "You are a helpful assistant responsible for deciding whether the provided "
+        "information is useful",
+        "x",
+    )
+    assert json.loads(rating)["rating"] == 4
     verdict = json.loads(fake.judge("Answer 1:\nlong long answer\n\nAnswer 2:\nshort"))
     assert verdict["comprehensiveness"]["winner"] == "1"
     assert verdict["directness"]["winner"] == "2"

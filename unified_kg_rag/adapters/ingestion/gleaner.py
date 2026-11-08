@@ -113,11 +113,13 @@ class RefinementOutputParser(RobustXMLOutputParser):
 
     A plan written without its root (its ``<identified_issues>`` at the top
     level) is read as the plan. Any other answer without the root (prose, a
-    list), or a root holding text, raises ``OutputParserException``, so the
+    list), or a root holding text around unparsed tags, raises ``OutputParserException``, so the
     output fixer repairs it, as it repairs output that does not parse; it
     was read as a plan with no issue, and the unit marked gleaned for good.
-    A root holding only "None" is a plan with no issue.
+    A root holding text without any element is a plan with no issue.
     """
+
+    container_tags: frozenset[str] = frozenset({"refinement_plan"})
 
     def parse(self, text: str) -> dict[str, Any]:
         result = super().parse(text)

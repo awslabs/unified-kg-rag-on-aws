@@ -371,6 +371,58 @@ class _LocalLanguageModelFactory:
         raise NotImplementedError
 
 
+# Where OpenAI-compatible servers that reason (vLLM's and SGLang's reasoning
+# parsers, DeepSeek, llama.cpp) return the reasoning, beside the answer.
+_REASONING_FIELDS = ("reasoning_content", "reasoning")
+
+
+def _reasoning_of(choice: Any) -> str | None:
+    """The reasoning a chat completion choice returned beside its answer."""
+    message = choice.get("message") if isinstance(choice, dict) else choice.message
+    if message is None:
+        return None
+    fields = (
+        message
+        if isinstance(message, dict)
+        else {**(getattr(message, "model_extra", None) or {}), **vars(message)}
+    )
+    for name in _REASONING_FIELDS:
+        if isinstance(value := fields.get(name), str) and value:
+            return value
+    return None
+
+
+@functools.cache
+def _reasoning_chat_openai_class(module: Any) -> type:
+    """``ChatOpenAI`` that keeps a server's separate reasoning.
+
+    ``ChatOpenAI`` reads the official API's fields only and drops a
+    ``reasoning_content`` (or ``reasoning``) field; this one puts it in the
+    message's ``additional_kwargs["reasoning_content"]``, where
+    ``ChatOllama`` puts it, so the chain normaliser (``ReasoningStripper``)
+    reads one place for both servers.
+    """
+
+    class ReasoningChatOpenAI(module.ChatOpenAI):
+        def _create_chat_result(
+            self, response: Any, generation_info: Any = None
+        ) -> Any:
+            result = super()._create_chat_result(response, generation_info)
+            choices = (
+                response.get("choices")
+                if isinstance(response, dict)
+                else getattr(response, "choices", None)
+            ) or []
+            for generation, choice in zip(result.generations, choices, strict=False):
+                if reasoning := _reasoning_of(choice):
+                    generation.message.additional_kwargs["reasoning_content"] = (
+                        reasoning
+                    )
+            return result
+
+    return ReasoningChatOpenAI
+
+
 class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
     """Chat models on an OpenAI-compatible server (``ChatOpenAI``).
 
@@ -403,7 +455,7 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
             extra["http_client"] = httpx.Client(
                 transport=self.transport, timeout=timeout
             )
-        model: BaseChatModel = module.ChatOpenAI(
+        model: BaseChatModel = _reasoning_chat_openai_class(module)(
             model=model_id,
             base_url=self.settings.base_url,
             api_key=api_key_value(self.settings),
@@ -416,6 +468,10 @@ class OpenAICompatibleLanguageModelFactory(_LocalLanguageModelFactory):
             **extra,
         )
         return model
+
+
+# Seconds the capability lookup (``/api/show``) of a model may take.
+_SHOW_TIMEOUT_SECONDS = 10.0
 
 
 class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
@@ -433,10 +489,50 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
     provider_name = "ollama"
     kind = "ollama"
 
+    def __init__(self, config: Config, *, transport: Any = None) -> None:
+        super().__init__(config, transport=transport)
+        self._thinks: dict[str, bool] = {}
+        self._thinks_lock = threading.Lock()
+
     @property
     def transient_retry(self) -> TransientRetryConfig:
         """The retry policy ``setup_chain`` applies to query chains."""
         return local_transient_retry(self.config)
+
+    def thinks(self, model_id: str) -> bool:
+        """Whether the server lists ``thinking`` among ``model_id``'s
+        capabilities (``/api/show``), asked once per model.
+
+        Such a model is built with ``reasoning=True``: its reasoning comes
+        back beside the answer (``additional_kwargs["reasoning_content"]``)
+        instead of as a ``<think>`` block in it. Ollama refuses that setting
+        for a model without the capability (HTTP 400 "does not support
+        thinking"), and an older server lists no capabilities, so anything
+        but a listed ``thinking`` keeps the server's default; the chain
+        normaliser strips a block left in the answer either way.
+        """
+        with self._thinks_lock:
+            if (known := self._thinks.get(model_id)) is not None:
+                return known
+        module = import_optional("ollama", self.kind)
+        # Short: building a model made no request before, and a server that
+        # does not answer this fails the model's first call anyway.
+        kwargs: dict[str, Any] = {
+            "timeout": min(self.settings.timeout_seconds, _SHOW_TIMEOUT_SECONDS),
+            "verify": tls_context(),
+        }
+        if self.transport is not None:
+            kwargs["transport"] = self.transport
+        try:
+            shown = module.Client(host=self.settings.base_url, **kwargs).show(model_id)
+            capabilities = getattr(shown, "capabilities", None) or []
+        except Exception as e:  # noqa: BLE001 - the server's default is kept
+            logger.debug("Ollama capabilities of '%s' unknown: %s", model_id, e)
+            capabilities = []
+        thinks = "thinking" in capabilities
+        with self._thinks_lock:
+            self._thinks[model_id] = thinks
+        return thinks
 
     def _build(
         self,
@@ -454,6 +550,7 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
         async_timeout = timeout if purpose is ModelPurpose.QUERY else None
         if self.transport is not None:
             client_kwargs["transport"] = self.transport
+        reasoning = {"reasoning": True} if self.thinks(model_id) else {}
 
         def build() -> BaseChatModel:
             chat: BaseChatModel = module.ChatOllama(
@@ -465,6 +562,7 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
                 client_kwargs=client_kwargs,
                 async_client_kwargs=ollama_async_client_kwargs(async_timeout),
                 callbacks=callbacks,
+                **reasoning,
             )
             return chat
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
     get_strategy_spec,
@@ -74,7 +75,10 @@ class TestRegisteredQueryInputs:
 
 @pytest.fixture
 def chain(config: Config) -> GraphRAGChain:
-    return GraphRAGChain(config=config)
+    chain = GraphRAGChain(config=config)
+    # The output fixer's model: it cannot repair what it is shown.
+    chain.factory = ScriptedLLMFactory(lambda _system, _human: "still not JSON")
+    return chain
 
 
 class TestExtractDualKeywords:
@@ -157,7 +161,6 @@ class TestExtractDualKeywords:
     async def test_raises_when_not_ignoring(
         self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import json
 
         chain.ignore_errors = False
         monkeypatch.setattr(
@@ -169,7 +172,7 @@ class TestExtractDualKeywords:
             await chain._extract_dual_keywords("q", "English")
         # The parser's error alone ('Expecting value') named neither the
         # model that answered nor what to do.
-        assert isinstance(raised.value.__cause__, json.JSONDecodeError)
+        assert isinstance(raised.value.__cause__, ValueError)
         message = str(raised.value)
         assert "model role entity_extraction" in message
         assert "models.roles.entity_extraction" in message

@@ -95,7 +95,7 @@ def _respond(system: str, human: str) -> str:
     if "knowledge graph extraction expert" in system:
         return stages._extraction(stages._source_text(human), NAMES)
     if "search strategy selector" in system:
-        return "local"
+        return '{"strategy": "local"}'
     if "specialized entity extraction expert" in system:
         return "Depot, Vendor"
     if "expert keyword extractor" in system:
@@ -126,8 +126,8 @@ def _respond(system: str, human: str) -> str:
                 "entities": ["Depot"],
             }
         )
-    if "precision relevance evaluator" in system:
-        return "9"
+    if "deciding whether the provided information is useful" in system:
+        return json.dumps({"reason": "It names Depot.", "rating": 4})
     if "search convergence analyst" in system:
         return "0.9"
     return stages._respond(system, human)

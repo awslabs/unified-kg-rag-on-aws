@@ -878,3 +878,20 @@ async def test_every_drift_prompt_writes_in_the_query_language(
     # The hypothetical answer searches the community reports only, which
     # are written in the index language.
     assert {call["target_language"] for call in strat.hyde.calls} == {reports_language}
+
+
+async def test_an_unreadable_primer_answer_is_a_degraded_step() -> None:
+    # Prose the fixer cannot repair skips its fold and is recorded in the
+    # search's ledger (degraded_error): it answered from nothing unmarked.
+    from types import SimpleNamespace
+
+    from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+
+    strat = _strategy(primer=lambda inputs: "Here is what the reports say.")
+    strat.providers = SimpleNamespace(  # type: ignore[assignment]
+        llm_factory=ScriptedLLMFactory(lambda _system, _human: "still not JSON")
+    )
+    result = await strat.asearch(SearchQuery(query="Who supplies Buyer?"))
+    steps = {(e["step"], e["error_type"]) for e in result.metadata["degraded"]}
+    assert ("drift_primer", "OutputParserException") in steps
+    assert result.metadata["degraded_error"] == "OutputParserException"

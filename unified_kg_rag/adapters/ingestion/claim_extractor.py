@@ -15,6 +15,7 @@ from unified_kg_rag.adapters.llm.chain_factory import (
 )
 from unified_kg_rag.adapters.llm.langchain import (
     BATCH_ITEM_FAILED,
+    SECTIONS_READ_EMPTY_KEY,
     BatchProcessor,
     RobustXMLOutputParser,
     output_excerpt,
@@ -95,6 +96,9 @@ class ClaimExtractionStats(BaseModel):
     # Claims whose status the model wrote outside the words claim_status
     # knows: stored as unknown.
     unrecognised_statuses: int = 0
+    # Claims sections whose answer held text and no claim even after the
+    # output fixer, read as empty (maybe claims written as prose).
+    sections_read_empty_from_text: int = 0
     total_processing_time: float = 0.0
 
     @property
@@ -316,6 +320,9 @@ class ClaimExtractor(BaseProcessor):
         """The unit's claims; raise ``LLMOutputTruncatedError`` if the output
         was cut off (:func:`_checked`)."""
         _checked(result)
+        self.stats.sections_read_empty_from_text += len(
+            result.get(SECTIONS_READ_EMPTY_KEY) or ()
+        )
         claims_data = ensure_list(result.get("claims"), inner_key="claim")
         claims = []
         for claim_data in claims_data:
@@ -443,9 +450,12 @@ class ClaimsOutputParser(RobustXMLOutputParser):
     stored with the fields before the cut: a description or source text cut
     short, or none at all.
 
-    Output that parses but has no ``<claims>`` section (prose, a list) or
-    one holding text raises ``OutputParserException``, so the output fixer
+    A ``<claims>`` section holding text and no element is empty
+    (``container_tags``). Output that parses but has no ``<claims>``
+    section (prose, a list) or one holding text around unparsed tags raises ``OutputParserException``, so the output fixer
     repairs it as it repairs output that does not parse."""
+
+    container_tags: frozenset[str] = frozenset({"claims"})
 
     def _check_shape(self, result: dict[str, Any], text: str) -> None:
         section = result.get("claims")

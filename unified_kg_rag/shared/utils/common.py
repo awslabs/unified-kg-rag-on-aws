@@ -244,6 +244,9 @@ def parse_llm_score(value: Any) -> int:
 # A `{` that plausibly starts a JSON object: a key's quote, or the end of a
 # response cut right after it.
 _RE_OPENS_OBJECT = re.compile(r'\{\s*(?:"|\Z)')
+# The message of the strict parse's error for a response cut inside its
+# last object (``parse_model_object`` tells it from other parse errors).
+UNCLOSED_JSON_MESSAGE = "The last JSON object is unclosed (cut off?)"
 
 
 def parse_llm_json(
@@ -284,9 +287,7 @@ def parse_llm_json(
             # Lone braces in prose after the answer, no cut-off object.
             cut_at = None
         if strict and cut_at is not None:
-            raise json.JSONDecodeError(
-                "The last JSON object is unclosed (cut off?)", text, cut_at
-            )
+            raise json.JSONDecodeError(UNCLOSED_JSON_MESSAGE, text, cut_at)
         if objects:
             return next(
                 (o for o in reversed(objects) if any(k in o for k in answer_keys)),

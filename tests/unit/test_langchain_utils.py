@@ -770,9 +770,14 @@ class TestRobustXMLOutputParser:
         out = parser.parse("<a><claims>x</claims></a>\n<b><claims>y</claims></b>")
         assert set(out) == {"a", "b"}
 
-    @pytest.mark.parametrize("none", ["None", "none.", " N/A ", "null", "-"])
-    def test_a_section_saying_none_is_empty(self, none: str) -> None:
-        parser = RobustXMLOutputParser(tags=["entities", "relationships"])
+    @pytest.mark.parametrize(
+        "none", ["None", "none.", " N/A ", "-", "없음", "なし", "无", "Keine", "Нет"]
+    )
+    def test_a_container_section_holding_text_only_is_empty(self, none: str) -> None:
+        parser = RobustXMLOutputParser(
+            tags=["entities", "relationships"],
+            container_tags=frozenset({"entities", "relationships"}),
+        )
         out = parser.parse(
             "<entities><entity><name>Acme</name></entity></entities>\n"
             f"<relationships>{none}</relationships>"
@@ -780,11 +785,27 @@ class TestRobustXMLOutputParser:
         # The entities beside it are kept.
         assert out == {"entities": {"entity": {"name": "Acme"}}, "relationships": {}}
 
-    def test_a_section_holding_other_text_is_kept(self) -> None:
-        # A text section is an answer for some prompts (a report's <summary>).
-        parser = RobustXMLOutputParser(tags=["summary"])
-        assert parser.parse("<summary>None of them</summary>") == {
-            "summary": "None of them"
+    def test_a_container_section_holding_prose_goes_to_the_fixer(self) -> None:
+        from unified_kg_rag.adapters.llm.langchain import TextOnlySectionError
+
+        parser = RobustXMLOutputParser(
+            tags=["entities"], container_tags=frozenset({"entities"})
+        )
+        # Several lines, or one longer than three tokens, may be the list.
+        for prose in ("Acme and Globex, both vendors.", "Acme\nGlobex"):
+            with pytest.raises(TextOnlySectionError):
+                parser.parse(f"<entities>{prose}</entities>")
+        assert "<entities></entities>" in parser.get_format_instructions()
+
+    def test_a_text_section_is_kept(self) -> None:
+        # A text section is an answer for some prompts (a report's <summary>):
+        # only a section that lists elements reads its text as empty.
+        parser = RobustXMLOutputParser(
+            tags=["summary", "findings"], container_tags=frozenset({"findings"})
+        )
+        assert parser.parse("<summary>None</summary>\n<findings>None</findings>") == {
+            "summary": "None",
+            "findings": {},
         }
 
     def test_clean_xml_strips_control_chars(self) -> None:

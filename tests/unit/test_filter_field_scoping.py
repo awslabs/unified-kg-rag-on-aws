@@ -758,6 +758,10 @@ def _strategy_chain(config: Config) -> GraphRAGChain:
     chain._held_artifacts = {}
     chain._present_namespaces = set()
     chain._get_retriever = lambda role: both[role.value]  # type: ignore[method-assign]
+    # The output fixer's model: it cannot repair what it is shown.
+    from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+
+    chain.factory = ScriptedLLMFactory(lambda _system, _human: "not JSON")
     return chain
 
 

@@ -463,7 +463,9 @@ repeated the comparison and measured the routing:
 
 So `iterative` stays routable and the router's guidance stands; route a
 sample of your own questions with `run-eval --search-strategy auto` before
-relying on it. To keep `auto` off it, list the strategies without
+relying on it. Both runs predate the router's JSON answer
+(`{"strategy": ...}`, the same candidates and guide entries); its agreement
+with these routes has not been measured yet. To keep `auto` off it, list the strategies without
 `iterative`:
 
 ```yaml

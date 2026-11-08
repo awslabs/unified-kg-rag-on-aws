@@ -171,6 +171,7 @@ class CommunityDetector:
                     "rating_explanation",
                     "findings",
                 ],
+                container_tags=["findings"],
             )
             self.report_generator = setup_chain(
                 model_purpose=ModelPurpose.INGESTION,

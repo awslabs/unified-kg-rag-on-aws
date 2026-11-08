@@ -117,6 +117,27 @@ def _no_rerank_scorer() -> Any:
     return HybridScorer(config)
 
 
+class _ScriptedFixer:
+    """A factory whose output fixer answers ``replies`` in turn (then text
+    that is no JSON), counting its calls."""
+
+    def __init__(self, replies: list[str] | None = None) -> None:
+        self.replies = list(replies or [])
+        self.calls = 0
+
+    def get_model(self, **_kwargs: Any) -> Any:
+        from langchain_core.messages import AIMessage
+        from langchain_core.runnables import RunnableLambda
+
+        def answer(_prompt: Any) -> AIMessage:
+            self.calls += 1
+            return AIMessage(
+                content=self.replies.pop(0) if self.replies else "still no JSON"
+            )
+
+        return RunnableLambda(answer)
+
+
 def _strategy(
     *,
     map_batch_size: int = 2,
@@ -147,6 +168,7 @@ def _strategy(
     strat.ignore_errors = ignore_errors
     strat.hybrid_scorer = _no_rerank_scorer()
     strat.map_rater = _SyncMapChain(map_outputs or [])
+    strat.providers = SimpleNamespace(llm_factory=_ScriptedFixer())
     strat.token_manager = _TokenCounter(cost=token_cost)
     # The stub assigns outputs in call order, so run the map calls serially.
     strat.max_concurrency = 1
@@ -448,28 +470,30 @@ def test_an_object_without_points_is_unrated_not_rated_empty() -> None:
     assert GlobalSearchStrategy._parse_map_payload('{"points": []}') == []
 
 
-async def test_an_unparseable_map_output_is_asked_once_more(caplog) -> None:
+async def test_an_unparseable_map_output_goes_to_the_output_fixer_once(
+    caplog,
+) -> None:
+    # One repair of the output, not another map call over the whole batch;
+    # a blank output has nothing to repair.
     strat = _strategy(
         map_batch_size=1,
-        map_outputs=[
-            "Sorry, here they are: points: none",
-            _map_payload(("retried", 70)),
-            "",
-            "still not json",
-        ],
+        map_outputs=["Sorry, here they are: points: none", "", "still not json"],
     )
+    fixer = _ScriptedFixer([_map_payload(("fixed", 70))])
+    strat.providers = SimpleNamespace(llm_factory=fixer)
     with degradation_scope() as ledger:
         points, unrated = await strat._run_map_phase(
-            _batches(strat, _communities(2)), SearchQuery(query="q")
+            _batches(strat, _communities(3)), SearchQuery(query="q")
         )
-    assert [(p.description, p.batch) for p in points] == [("retried", 0)]
-    assert [r.source for r in unrated] == ["c1"]
-    assert len(strat.map_rater.batch_inputs) == 4
+    assert [(p.description, p.batch) for p in points] == [("fixed", 0)]
+    assert [r.source for r in unrated] == ["c1", "c2"]
+    assert len(strat.map_rater.batch_inputs) == 3
+    assert fixer.calls == 2
     assert _types(ledger) == [("global_map", "LanguageModelError")]
     # The log names the shape, never the text.
     messages = [r.getMessage() for r in caplog.records if "not map JSON" in r.message]
     assert len(messages) == 3
-    assert "asking once more" in messages[0] and "no JSON object" in messages[0]
+    assert "asking the output fixer" in messages[0] and "no JSON object" in messages[0]
     assert "empty" in messages[1] and "still not json" not in " ".join(messages)
 
 

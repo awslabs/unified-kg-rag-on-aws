@@ -88,7 +88,7 @@ def _chain(
             system = "".join(b["text"] for b in ast.literal_eval(system))
         prompts.append((system, human))
         if _REWRITER in system:
-            return "Where does Depot store the widgets of Vendor?"
+            return '{"question": "Where does Depot store the widgets of Vendor?"}'
         return "Depot stores them [1]."
 
     chain = GraphRAGChain(

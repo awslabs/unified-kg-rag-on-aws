@@ -23,13 +23,15 @@ from tenacity import RetryCallState
 from tqdm import tqdm
 from tqdm.asyncio import tqdm as async_tqdm
 
+from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
-from unified_kg_rag.shared.utils.common import parse_llm_json, text_digest
+from unified_kg_rag.shared.utils.common import text_digest
 from unified_kg_rag.shared.utils.concurrency import (
     ContextThreadPoolExecutor,
     cancel_on_exit,
 )
+from unified_kg_rag.shared.utils.model_output import parse_model_object
 
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models import Config
@@ -597,7 +599,9 @@ class BatchProcessor(BaseModel):
 _FORMAT_INSTRUCTIONS = (
     "Return the completion as well-formed XML made of {sections}. Keep every "
     "element and all of its text, add nothing that is not in the completion, "
-    "and open and close every tag. Return only the XML."
+    "and open and close every tag. A section with nothing in it is the empty "
+    "element (<{example}></{example}>), never text saying so. Return only the "
+    "XML."
 )
 # Synthetic root the response is wrapped in before lxml recovery.
 _RESPONSE_ROOT = b"llm_response"
@@ -608,17 +612,43 @@ _BARE_AMPERSAND = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+
 # `<` not followed by what can start a tag, end tag, comment or declaration.
 _TEXT_LESS_THAN = re.compile(r"<(?![A-Za-z_/!?])")
 _TAG = re.compile(r"<(/?)([A-Za-z_][\w.\-:]*)([^<>]*)>")
-# The tag-free text of a section a model writes for "nothing here"
-# (``<relationships>None</relationships>``), casefolded, a final "." dropped.
-_NO_CONTENT = frozenset({"none", "n/a", "null", "nil", "-"})
 
 
-def _is_no_content(value: Any) -> bool:
-    """Whether a parsed section is the text a model writes for "nothing
-    here" ("None", "N/A", ...): an empty answer, not prose."""
-    return isinstance(value, str) and value.strip().rstrip(".").casefold() in (
-        _NO_CONTENT
-    )
+def _holds_text_only(value: Any) -> bool:
+    """Whether a parsed section is text without any element."""
+    return isinstance(value, str) and _TAG.search(value) is None
+
+
+# The most tokens (estimate_token_count) of a one-line text a section that
+# lists elements may hold and still read as "nothing here" without a repair.
+_NOTHING_MARKER_TOKENS = 3
+
+
+def _says_nothing(text: str) -> bool:
+    """Whether a list section's text is a short "nothing here" marker: one
+    line of at most ``_NOTHING_MARKER_TOKENS`` estimated tokens ("None.",
+    "없음", "なし", "Keine", "-"). Counted, not matched against a word list,
+    so it reads the same in every language and script; a longer text may
+    be the list written as prose and goes to the output fixer."""
+    text = text.strip()
+    return "\n" not in text and estimate_token_count(text) <= _NOTHING_MARKER_TOKENS
+
+
+# Set by the output fixer around its last reading of a repaired answer whose
+# list section still holds text only: the section is then read as empty and
+# recorded (``SECTIONS_READ_EMPTY_KEY``) instead of failing the item.
+READ_TEXT_SECTIONS_AS_EMPTY: ContextVar[bool] = ContextVar(
+    "kg_rag_read_text_as_empty", default=False
+)
+# The parse-result key listing the sections read as empty that way, for the
+# extraction stats (``sections_read_empty_from_text``).
+SECTIONS_READ_EMPTY_KEY = "#sections_read_empty_from_text"
+
+
+class TextOnlySectionError(OutputParserException):
+    """A section that lists elements holds text that is not a short "nothing
+    here" marker: maybe the list written as prose, which the output fixer
+    repairs once (``XMLOutputFixingParser``)."""
 
 
 def _escape_markup(tag: str) -> str:
@@ -694,7 +724,14 @@ class RobustXMLOutputParser(XMLOutputParser):
     (``{"claims": [{"claim": [{"subject": ...}, ...]}]}``) that the
     extractors cannot read, so a well-formed single-root response would parse
     into a different shape than a recovered one.
+
+    ``container_tags`` are the expected sections that hold child elements
+    (``<entities>`` holds ``<entity>`` elements; a ``<summary>`` holds
+    text): one of them holding a short text only reads as empty, a longer
+    text goes to the output fixer (``TextOnlySectionError``).
     """
+
+    container_tags: frozenset[str] = frozenset()
 
     def get_format_instructions(self) -> str:
         """Instructions for the output fixer, naming the expected sections.
@@ -704,8 +741,10 @@ class RobustXMLOutputParser(XMLOutputParser):
         multi-section answer such as ``<entities>`` + ``<relationships>``.
         """
         tags = ", ".join(f"<{tag}>" for tag in self.tags or [])
+        example = min(self.container_tags, default=None) or (self.tags or ["x"])[0]
         return _FORMAT_INSTRUCTIONS.format(
-            sections=f"the top-level elements {tags}" if tags else "XML elements"
+            sections=f"the top-level elements {tags}" if tags else "XML elements",
+            example=example,
         )
 
     def parse(self, text: str) -> dict[str, Any]:
@@ -713,8 +752,12 @@ class RobustXMLOutputParser(XMLOutputParser):
 
         With expected sections (``tags``), one element wrapping them (an
         ``<output>`` around ``<entities>`` and ``<relationships>``) is
-        unwrapped, and a section holding only "None" (or "N/A", "null",
-        "-") reads as empty. Subclasses check the rest of the shape
+        unwrapped. A section of ``container_tags`` holding text without any
+        element reads as empty when the text is a short "nothing here"
+        marker (``_says_nothing``: a model says it in the language it
+        writes, so it is counted, not matched against a word list); a longer
+        text raises ``TextOnlySectionError``, for the output fixer, since it
+        may be the list written as prose. Subclasses check the rest of the shape
         (``_check_shape``) and raise ``OutputParserException`` for output
         that parses but is not what the prompt asked for, as for output
         that does not parse, so the output fixer repairs it.
@@ -723,15 +766,45 @@ class RobustXMLOutputParser(XMLOutputParser):
             # Nothing to recover (e.g. a thinking-only answer); the output
             # fixer skips it too, since it could only invent the structure.
             raise OutputParserException("The model returned no output", llm_output=text)
+        answer = text
         text = self.final_answer(text)
         result = self._parse_elements(text)
         if self.tags and isinstance(result, dict):
             result = self._unwrapped(result)
-            for tag in set(self.tags) & result.keys():
-                if _is_no_content(result[tag]):
-                    result[tag] = {}
+            self._read_text_sections(result, answer)
         self._check_shape(result, text)
         return result
+
+    def _read_text_sections(self, result: dict[str, Any], answer: str) -> None:
+        """Empty each list section of ``result`` holding text only: at once
+        for a "nothing here" marker; for other text only on the output
+        fixer's last reading (``READ_TEXT_SECTIONS_AS_EMPTY``), recorded under
+        ``SECTIONS_READ_EMPTY_KEY`` and logged with the section's name and
+        length (never its text); else raise ``TextOnlySectionError``."""
+        read_empty: list[str] = []
+        for tag in sorted(self.container_tags & result.keys()):
+            value = result[tag]
+            if not _holds_text_only(value):
+                continue
+            if _says_nothing(value):
+                logger.debug("XML section <%s> says it holds nothing: empty", tag)
+            elif READ_TEXT_SECTIONS_AS_EMPTY.get():
+                logger.warning(
+                    "XML section <%s> still holds %s characters of text and no "
+                    "element after the output fixer: read as empty",
+                    tag,
+                    len(value),
+                )
+                read_empty.append(tag)
+            else:
+                raise TextOnlySectionError(
+                    f"the <{tag}> section holds {len(value)} characters of text "
+                    "and no element",
+                    llm_output=answer,
+                )
+            result[tag] = {}
+        if read_empty:
+            result[SECTIONS_READ_EMPTY_KEY] = read_empty
 
     def _check_shape(self, result: dict[str, Any], text: str) -> None:
         """Raise ``OutputParserException`` when ``result`` (parsed from
@@ -1342,27 +1415,51 @@ class RobustXMLOutputParser(XMLOutputParser):
         return result
 
 
-class LLMJsonOutputParser(BaseOutputParser[dict[str, Any]]):
-    """Parse a JSON object answer with :func:`parse_llm_json` (strict).
+_JSON_FORMAT_INSTRUCTIONS = (
+    "Return the completion as one JSON object{keys}. Keep every value it "
+    "states, add nothing it does not state, and use double quotes. Return "
+    "only the JSON."
+)
+
+
+class LLMJsonOutputParser(BaseOutputParser[Any]):
+    """Parse a JSON object answer with :func:`parse_model_object`: the one
+    reading of model JSON every prompt shares.
 
     LangChain's ``JsonOutputParser`` reads the first object of a response
     that holds several, so a model that corrects itself ("Correction: ...
-    final output:" and the object again) was read by its superseded answer.
-    This one reads the last object that parses, and raises
-    ``OutputParserException`` when none does; non-object JSON is ``{}``.
-    With ``answer_keys``, the last object holding any of them is read.
+    final output:" and the object again) was read by its superseded answer,
+    and refuses what other model families write (a trailing comma, a Python
+    dict, comments). With ``answer_keys``, the last object holding any of
+    them is read; with ``schema`` (a Pydantic model) the answer is that
+    model. Raises ``OutputParserException`` when nothing parses, which an
+    output fixer (``create_json_output_parser``) repairs; ``instructions``
+    is added to what the fixer is told (e.g. a prompt's sentinel).
     """
 
     answer_keys: tuple[str, ...] = ()
+    schema_model: type[BaseModel] | None = None
+    instructions: str = ""
 
-    def parse(self, text: str) -> dict[str, Any]:
+    def parse(self, text: str) -> Any:
+        if not text.strip():
+            raise OutputParserException("The model returned no output", llm_output=text)
         try:
-            return parse_llm_json(text, strict=True, answer_keys=self.answer_keys)
+            return parse_model_object(text, self.schema_model, self.answer_keys)
         except ValueError as e:
             raise OutputParserException(
                 f"The answer is not a JSON object (content {text_digest(text)}): {e}",
                 llm_output=text,
             ) from e
+
+    def get_format_instructions(self) -> str:
+        keys = (
+            " with the keys " + ", ".join(f'"{k}"' for k in self.answer_keys)
+            if self.answer_keys
+            else ""
+        )
+        text = _JSON_FORMAT_INSTRUCTIONS.format(keys=keys)
+        return f"{text} {self.instructions}" if self.instructions else text
 
     @property
     def _type(self) -> str:

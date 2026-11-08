@@ -19,6 +19,7 @@ import pytest
 from langchain_core.callbacks import BaseCallbackHandler
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
     ProcessedQuery,
@@ -68,7 +69,8 @@ class _FakeFactory:
             EntityExtractionPrompt: "Vendor, Buyer",
             KeywordsExtractionPrompt: _KEYWORDS_JSON,
             StrategySelectionPrompt: route,
-            TranslationPrompt: translation,
+            # TranslationPrompt answers JSON.
+            TranslationPrompt: json.dumps({"translation": translation}),
         }
 
     def get_chain(self, prompt_class: type, parser: Any, **kwargs: Any) -> Any:
@@ -93,6 +95,8 @@ def same_language_config(config: Config) -> Config:
 
 def _chain_with(config: Config, factory: _FakeFactory) -> GraphRAGChain:
     chain = GraphRAGChain(config=config)
+    # The output fixer's model: it cannot repair what it is shown.
+    chain.factory = ScriptedLLMFactory(lambda _system, _human: "not JSON")
     chain._get_chain_for_prompt = factory.get_chain  # type: ignore[assignment]
     return chain
 
@@ -221,7 +225,7 @@ async def test_keyword_failure_propagates_without_ignore_errors(
         await chain._process_query_step(
             {"query": "q", "resolved_strategy": SearchStrategy.MIX}
         )
-    assert isinstance(e.value.__cause__, json.JSONDecodeError)
+    assert isinstance(e.value.__cause__, ValueError)
 
 
 async def test_auto_routed_to_local_extracts_entities(

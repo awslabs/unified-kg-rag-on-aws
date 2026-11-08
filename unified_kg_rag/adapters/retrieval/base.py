@@ -19,7 +19,12 @@ from langchain_core.callbacks import (
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.runnables import RunnableConfig
+from pydantic import BaseModel
 
+from unified_kg_rag.adapters.llm.chain_factory import (
+    FixingJsonOutputParser,
+    create_json_output_parser,
+)
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer, RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import citations_enabled
@@ -43,6 +48,7 @@ from unified_kg_rag.domain.models import (
     GraphEdge,
     IndexArtifact,
     Methodology,
+    ModelRole,
     RetrievalResult,
     RetrieverRole,
     SearchQuery,
@@ -610,6 +616,31 @@ class BaseSearchStrategy(ABC):
         self.providers = Providers.resolve(config, providers)
         self.hybrid_scorer = HybridScorer(self.config, providers=self.providers)
         self.token_manager = TokenManager(self.config, providers=self.providers)
+
+    def json_answers(
+        self,
+        *,
+        answer_keys: tuple[str, ...] = (),
+        schema: type[BaseModel] | None = None,
+    ) -> FixingJsonOutputParser:
+        """The reader of one of the strategy's JSON prompts' answers
+        (``create_json_output_parser``: every model family's JSON, then one
+        repair by ``models.roles.fixing``), built once per strategy and
+        spec. What it still cannot read raises ``OutputParserException``,
+        which the strategy records as a degraded step."""
+        readers: dict[Any, FixingJsonOutputParser] = self.__dict__.setdefault(
+            "_json_answers", {}
+        )
+        key = (answer_keys, schema)
+        if (reader := readers.get(key)) is None:
+            providers = getattr(self, "providers", None)
+            reader = readers[key] = create_json_output_parser(
+                getattr(providers, "llm_factory", None),  # type: ignore[arg-type]
+                self.config.model_id(ModelRole.FIXING),
+                answer_keys=answer_keys,
+                schema=schema,
+            )
+        return reader
 
     def query_language(self, query: SearchQuery) -> str:
         """The language (its name, ``"Korean"``) the strategy's own prompts

@@ -26,6 +26,7 @@ from pydantic import ValidationError
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
 from tests.fixtures.fakes.boto import FakeBotoSession
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from tests.fixtures.fakes.model_servers import FakeOllama
 from unified_kg_rag.adapters.aws.bedrock import BedrockLanguageModelFactory
 from unified_kg_rag.adapters.local.models import OllamaLanguageModelFactory
@@ -99,7 +100,7 @@ class _Factory:
             StrategySelectionPrompt: route,
             EntityExtractionPrompt: "Vendor, Buyer",
             KeywordsExtractionPrompt: _KEYWORDS,
-            TranslationPrompt: "translated",
+            TranslationPrompt: '{"translation": "translated"}',
         }
         self.calls: list[tuple[type, dict[str, Any]]] = []
         self.kwargs: dict[type, dict[str, Any]] = {}
@@ -133,6 +134,8 @@ def _config(**search: Any) -> Config:
 
 def _chain(config: Config, factory: _Factory) -> GraphRAGChain:
     chain = GraphRAGChain(config=config)
+    # The output fixer's model: it cannot repair what it is shown.
+    chain.factory = ScriptedLLMFactory(lambda _system, _human: "not JSON")
     chain._get_chain_for_prompt = factory.get_chain  # type: ignore[assignment]
     return chain
 

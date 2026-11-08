@@ -12,10 +12,12 @@ asserted elsewhere.
 from __future__ import annotations
 
 import pytest
+from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import RunnableLambda
 from pydantic import ValidationError
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
+from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
 from unified_kg_rag.adapters.retrieval.token_manager import EMPTY_CONTEXT_PLACEHOLDER
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
@@ -35,42 +37,60 @@ from unified_kg_rag.domain.models import (
 pytestmark = pytest.mark.unit
 
 
-# --- query-translation refusal guard (Issue F side observation) ----------
+# --- query translation: a JSON answer or the sentinel -------------------
+
+
+def _fixing(chain: GraphRAGChain, fixed: str = "still not JSON") -> GraphRAGChain:
+    """``chain`` with an output fixer that answers ``fixed``."""
+    chain.factory = ScriptedLLMFactory(lambda _system, _human: fixed)
+    return chain
 
 
 @pytest.mark.parametrize(
-    "candidate",
+    ("answer", "expected"),
     [
-        "I appreciate your request, but I notice the text you provided...",
+        ('{"translation": "Tell me about Oda Nobunaga"}', "Tell me about Oda Nobunaga"),
+        # Other families' JSON.
+        (
+            "{'translation': 'The relationship between X and Y'}",
+            "The relationship between X and Y",
+        ),
+        # The sentinel, written alone or in the object: no refusal phrase list.
+        ("[CANNOT_TRANSLATE]", None),
+        ('{"translation": "[CANNOT_TRANSLATE]"}', None),
+        ('{"translation": "  "}', None),
+    ],
+)
+async def test_a_translation_is_its_json_or_none(
+    config: Config, answer: str, expected: str | None
+) -> None:
+    chain = _fixing(GraphRAGChain(config=config))
+    chain._get_chain_for_prompt = lambda *a, **k: _FakeRewriter(answer)  # type: ignore[assignment]
+    assert await chain._translate_query("오다 노부나가", "English", None) == expected
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
         "I notice the text you provided is already in English.",
-        "There is no text to translate.",
-        "As an AI, I cannot translate this.",
-        # A typographic apostrophe, as the rewrite guard already accepts.
-        "I\u2019m sorry, but this is already English.",
-        "I can\u2019t translate an empty request.",
+        "죄송하지만 번역할 수 없습니다.",
+        "Je ne peux pas traduire cette demande.",
     ],
 )
-def test_translation_refusal_detected(candidate) -> None:
-    # LLM meta-output (not a translation) must be flagged so the caller falls
-    # back to the original query instead of searching for the commentary.
-    assert (
-        GraphRAGChain._looks_like_translation_refusal(candidate, "오다 노부나가")
-        is True
+async def test_a_translation_answered_in_prose_is_repaired_or_degraded(
+    config: Config, prose: str
+) -> None:
+    # The fixer is told a refusal is the sentinel.
+    chain = _fixing(
+        GraphRAGChain(config=config), '{"translation": "[CANNOT_TRANSLATE]"}'
     )
-
-
-@pytest.mark.parametrize(
-    "candidate,original",
-    [
-        ("Tell me about Oda Nobunaga", "오다 노부나가"),  # a real translation
-        ("오다 노부나가", "오다 노부나가"),  # identical passthrough
-        ("The relationship between X and Y", "X와 Y의 관계"),
-    ],
-)
-def test_genuine_translation_not_flagged(candidate, original) -> None:
-    # A real translation (even one containing 'the') and an identical passthrough
-    # must NOT be treated as refusals.
-    assert GraphRAGChain._looks_like_translation_refusal(candidate, original) is False
+    chain._get_chain_for_prompt = lambda *a, **k: _FakeRewriter(prose)  # type: ignore[assignment]
+    assert await chain._translate_query("q", "English", None) is None
+    # A fixer that cannot repair it raises; process_query marks it degraded.
+    chain = _fixing(GraphRAGChain(config=config))
+    chain._get_chain_for_prompt = lambda *a, **k: _FakeRewriter(prose)  # type: ignore[assignment]
+    with pytest.raises(OutputParserException):
+        await chain._translate_query("q", "English", None)
 
 
 # --- RAGInput / ProcessedQuery / RAGOutput boundaries --------------------
@@ -303,7 +323,9 @@ def test_context_building_empty_retrieval_answers_no_data(config: Config) -> Non
 
 
 class _FakeRewriter:
-    def __init__(self, output: str = "What is the price of the Widget?") -> None:
+    def __init__(
+        self, output: str = '{"question": "What is the price of the Widget?"}'
+    ) -> None:
         self.output = output
         self.inputs: list[dict] = []
 
@@ -324,7 +346,7 @@ async def test_rewrite_skips_the_llm_without_history(config: Config) -> None:
 
 async def test_rewrite_resolves_a_follow_up_from_history(config: Config) -> None:
     chain = GraphRAGChain(config=config)
-    rewriter = _FakeRewriter(" What is the price of the Widget? \n")
+    rewriter = _FakeRewriter('{"question": " What is the price of the Widget? \\n"}')
     chain._get_chain_for_prompt = lambda *a, **k: rewriter  # type: ignore[assignment]
 
     out = await chain._rewrite_query_step(_ctx_state("Human: Tell me about the Widget"))
@@ -342,24 +364,28 @@ async def test_rewrite_resolves_a_follow_up_from_history(config: Config) -> None
     ("output", "expected"),
     [
         ("   ", None),
+        ('{"question": ""}', None),
+        # The sentinel in any language's answer: no apology list.
+        ("[CANNOT_REWRITE]", None),
+        ('{"question": "[CANNOT_REWRITE]"}', None),
+        # Prose the fixer cannot repair keeps the query.
         ("I'm sorry, but I can't rewrite that.", None),
-        ("I cannot help with that request.", None),
+        ("죄송하지만 어떤 계약을 말씀하시는 건가요?", None),
+        # A question about a refusal is a question.
         (
-            "Standalone question: What is the Widget's price?",
-            "What is the Widget's price?",
+            '{"question": "Why did the Vendor say it cannot ship?"}',
+            "Why did the Vendor say it cannot ship?",
         ),
-        ("Standalone question:", None),
-        # Only the opening counts: a question about a refusal is kept.
         (
-            "Why did the Vendor say it cannot ship?",
-            "Why did the Vendor say it cannot ship?",
+            "{'question': '공급사의 지급 조건은 무엇인가요?'}",
+            "공급사의 지급 조건은 무엇인가요?",
         ),
     ],
 )
 async def test_unusable_rewrite_keeps_the_query(
     config: Config, output: str, expected: str | None
 ) -> None:
-    chain = GraphRAGChain(config=config)
+    chain = _fixing(GraphRAGChain(config=config))
     chain._get_chain_for_prompt = lambda *a, **k: _FakeRewriter(output)  # type: ignore[assignment]
 
     assert await chain._rewrite_query_step(_ctx_state("earlier turn")) == expected

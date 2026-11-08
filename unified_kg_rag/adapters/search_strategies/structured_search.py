@@ -107,9 +107,10 @@ from unified_kg_rag.shared.exceptions import (
     GraphQueryCompileError,
     GraphQueryExecutionError,
     InvalidGraphQueryError,
+    ModelOutputError,
 )
 from unified_kg_rag.shared.usage import usage_scope
-from unified_kg_rag.shared.utils import parse_llm_json, text_digest
+from unified_kg_rag.shared.utils import parse_model_object, text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
 
 logger = get_logger(__name__)
@@ -510,7 +511,11 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     ) -> ValidatedPlan | str | None:
         """The validated plan of the planner's answer, the refusal to
         repair (a string), or ``None`` for an unanswerable question."""
-        parsed = parse_llm_json(raw, answer_keys=_PLAN_KEYS)
+        # The planner's repair loop (REPAIR_FEEDBACK) is this prompt's fixer.
+        try:
+            parsed = parse_model_object(raw, answer_keys=_PLAN_KEYS)
+        except ModelOutputError:
+            parsed = {}
         if not parsed:
             return "plan: the answer is not one JSON object"
         try:

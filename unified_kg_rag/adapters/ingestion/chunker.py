@@ -811,6 +811,7 @@ class IntelligentTextChunker(BaseChunker):
             enable_output_fixing=True,
             output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
             output_tags=["chunk_boundaries"],
+            container_tags=["chunk_boundaries"],
         )
         self.chunker = setup_chain(
             model_purpose=ModelPurpose.INGESTION,

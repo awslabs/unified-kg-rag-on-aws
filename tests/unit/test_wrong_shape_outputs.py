@@ -8,8 +8,12 @@ said "None" or that one ``<output>`` element wrapped failed the unit after
 every retry without a repair, a gleaning answer without its
 ``<refinement_plan>`` root was read as "nothing to add" and the unit marked
 gleaned for good, and a claims answer in prose was counted as cut off (never
-retried). The parsers now unwrap one wrapper, read a "None" section as
-empty, and raise ``OutputParserException`` for any other wrong shape, which
+retried). The parsers now unwrap one wrapper, read a section that should
+list elements but holds a short "nothing here" marker as empty (in any
+language: "None.", "없음", "なし"; counted, not matched against a word
+list), send any longer text there to the fixer once (it may be the list
+written as prose) and read a repair that still holds text as empty, counted
+and logged; and they raise ``OutputParserException`` for any other wrong shape, which
 the fixer repairs. The chains run for real on a scripted model.
 """
 
@@ -85,14 +89,23 @@ def _extract(config: Config, answer: str) -> tuple[list[str], list[str], list[st
     [
         "<entities>None</entities>\n<relationships>None</relationships>",
         "<entities>N/A</entities>",
+        # Text in the model's language: no word list recognised these.
+        "<entities>없음</entities>\n<relationships>없음</relationships>",
+        "<entities>なし</entities>\n<relationships>无</relationships>",
+        "<entities>Keine</entities>\n<relationships>Нет</relationships>",
+        "<entities>None.</entities>\n<relationships>-</relationships>",
     ],
 )
 def test_an_extraction_saying_none_is_empty(config: Config, answer: str) -> None:
+    # A short marker: no fixer call.
     assert _extract(config, answer) == (["model"], [], [])
 
 
-def test_a_none_relationships_section_keeps_the_entities(config: Config) -> None:
-    answer = f"<entities>{_ENTITY}</entities>\n<relationships>None</relationships>"
+@pytest.mark.parametrize("none", ["None", "없음", "なし", "Aucune", "None."])
+def test_a_none_relationships_section_keeps_the_entities(
+    config: Config, none: str
+) -> None:
+    answer = f"<entities>{_ENTITY}</entities>\n<relationships>{none}</relationships>"
     assert _extract(config, answer) == (["model"], ["Acme"], [])
 
 
@@ -104,7 +117,8 @@ def test_a_wrapped_extraction_is_unwrapped(config: Config) -> None:
 @pytest.mark.parametrize(
     "answer",
     [
-        # Prose in a section, bullets, entities named by an attribute.
+        # Prose in a list section (it may be the list), bullets, entities
+        # named by an attribute.
         "<entities>No entities in this text.</entities>\n<relationships/>",
         "Nothing to extract:\n- a list of numbers\n- no entities",
         '<entities><entity name="Acme" type="ORG"/></entities>\n<relationships/>',
@@ -134,6 +148,7 @@ def _claims(config: Config, answer: str) -> tuple[list[str], list[str], list[str
         # It raised LLMOutputTruncatedError: counted as cut off, never repaired.
         ("No claims:\n- nothing factual", (["model", "fixer"], ["Vendor"], [])),
         ("<claims>There are none here.</claims>", (["model", "fixer"], ["Vendor"], [])),
+        ("<claims>없음</claims>", (["model"], [], [])),
     ],
 )
 def test_a_wrong_claims_shape_is_unwrapped_or_repaired(
@@ -171,6 +186,7 @@ def _glean(config: Config, answer: str) -> tuple[list[str], list[str], bool]:
             (["model"], ["Vendor", "Depot"], True),
         ),
         ("<refinement_plan>None</refinement_plan>", (["model"], ["Vendor"], True)),
+        ("<refinement_plan>なし</refinement_plan>", (["model"], ["Vendor"], True)),
         (
             "The extraction looks complete to me.",
             (["model", "fixer"], ["Vendor", "Depot"], True),
@@ -186,3 +202,46 @@ def test_a_wrong_gleaning_shape_is_read_or_repaired(
     config: Config, answer: str, expected: tuple
 ) -> None:
     assert _glean(config, answer) == expected
+
+
+_PROSE = (
+    "<entities>The text names two organizations: Acme, a vendor, and Globex, "
+    "its buyer.</entities>\n<relationships></relationships>"
+)
+_TWO_ENTITIES = (
+    "<entities>"
+    + _ENTITY
+    + _ENTITY.replace("Acme", "Globex")
+    + "</entities>\n<relationships></relationships>"
+)
+
+
+def test_entities_written_as_prose_are_recovered_by_one_repair(config: Config) -> None:
+    calls: list[str] = []
+    extractor = GraphExtractor(
+        config, providers=_providers(config, _PROSE, _TWO_ENTITIES, calls)
+    )
+    records, stats = extractor.extract_units([TextUnit(id="t1", text="Acme Globex")])
+    assert calls == ["model", "fixer"]
+    assert [e.name for e in records[0].entities] == ["Acme", "Globex"]
+    assert stats.sections_read_empty_from_text == 0
+
+
+def test_prose_the_repair_keeps_is_read_empty_and_counted(
+    config: Config, caplog: pytest.LogCaptureFixture
+) -> None:
+    calls: list[str] = []
+    extractor = GraphExtractor(
+        config, providers=_providers(config, _PROSE, _PROSE, calls)
+    )
+    with caplog.at_level("WARNING"):
+        records, stats = extractor.extract_units([TextUnit(id="t1", text="Acme")])
+    # One repair, then empty: not a failed unit retried on every run.
+    assert calls == ["model", "fixer"]
+    assert [e.name for record in records for e in record.entities] == []
+    assert stats.failed_text_unit_ids == []
+    assert stats.sections_read_empty_from_text == 1
+    warnings = [r.getMessage() for r in caplog.records if "read as empty" in r.message]
+    # The section's name and length, never its text.
+    assert warnings and "<entities>" in warnings[0] and "characters" in warnings[0]
+    assert "Globex" not in " ".join(warnings)

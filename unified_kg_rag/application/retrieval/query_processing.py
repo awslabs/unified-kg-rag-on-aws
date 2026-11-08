@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Query processing of ``GraphRAGChain``: the translation of a query and
 the entity and keyword extractions its strategy reads, the extraction
-cache, and the heuristics that tell a model's refusal from the text asked
-for (a translation, a follow-up rewrite).
+cache, and the reading of the translation's and the follow-up rewrite's
+JSON answers (a sentinel, not a refusal phrase, says the model could not).
 
 The functions take the chain they process for: it holds the config, the
 prompt chains (``_get_chain_for_prompt``) and the extraction cache, and it
@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableConfig
+from pydantic import BaseModel
 
 from unified_kg_rag.adapters.llm.chain_factory import usage_model_id
 from unified_kg_rag.adapters.llm.reachability import is_unreachable_error
@@ -42,13 +43,18 @@ from unified_kg_rag.domain.prompts import (
     BasePrompt,
     EntityExtractionPrompt,
     KeywordsExtractionPrompt,
+    QueryRewritePrompt,
     TranslationPrompt,
+)
+from unified_kg_rag.domain.prompts.retrieval import (
+    CANNOT_REWRITE_MARKER,
+    CANNOT_TRANSLATE_MARKER,
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.domain.retrieval.query_entities import split_entity_list
 from unified_kg_rag.shared import LanguageModelError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
-from unified_kg_rag.shared.utils import parse_llm_json, text_digest
+from unified_kg_rag.shared.utils import text_digest
 
 if TYPE_CHECKING:
     from unified_kg_rag.application.retrieval.rag_chain import (
@@ -58,68 +64,35 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Openings of a model refusal or meta-reply rather than the requested text
-# (a rewritten question, a translation). Matched case-insensitively, in
-# English, Korean, Japanese and Chinese (a model replies in the user's
-# language); a refusal in another language is not recognised.
-_REFUSAL_OPENINGS: tuple[str, ...] = (
-    "i'm sorry",
-    "i am sorry",
-    "sorry,",
-    "i cannot",
-    "i can't",
-    "i can not",
-    "i'm unable",
-    "i am unable",
-    "as an ai",
-    "죄송",
-    "유감스럽게도",
-    "ai로서",
-    "申し訳",
-    "すみません",
-    "恐れ入りますが",
-    "aiとして",
-    "抱歉",
-    "对不起",
-    "對不起",
-    "很抱歉",
-    "我无法",
-    "我無法",
-    "我不能",
-    "作为ai",
-    "作为一个ai",
-)
-# A translation request also draws commentary about the input (seen when
-# the query is already in the target language).
-_TRANSLATION_REFUSAL_MARKERS: tuple[str, ...] = _REFUSAL_OPENINGS + (
-    "i appreciate",
-    "i notice",
-    "it appears",
-    "the text you",
-    "there is no text",
-    "no text was provided",
-)
-
 # The two keyword lists of the keyword extraction's answer.
 _KEYWORD_LEVELS: tuple[str, str] = (
     "high_level_keywords",
     "low_level_keywords",
 )
 
-# A request for clarification aimed back at the user: after a refusal
-# opening it is a meta-reply even though it ends with a question mark.
-_CLARIFICATION_REQUEST: re.Pattern[str] = re.compile(
-    r"\b(?:could|can|would) you (?:please )?(?:clarify|specify|confirm)"
-    r"|\bplease (?:clarify|specify)"
-    r"|\b(?:what|which)\b[^?]*\b(?:do|did) you (?:mean|refer)"
-    r"|\bare you referring\b"
-    # Korean, Japanese, Chinese.
-    r"|명확히\s*해\s*주|구체적으로\s*(?:말씀|알려)|말씀하시는|의미하시는"
-    r"|具体的に(?:教え|お知らせ|ご指定)|指していますか|どの.*(?:ですか|でしょうか)"
-    r"|请(?:澄清|说明|具体说明|明确)|請(?:澄清|說明)|您(?:是指|指的是)|你(?:是指|指的是)"
+
+class _TranslationAnswer(BaseModel):
+    """The query translation's answer (``TranslationPrompt``)."""
+
+    translation: str
+
+
+class _RewriteAnswer(BaseModel):
+    """The follow-up rewrite's answer (``QueryRewritePrompt``)."""
+
+    question: str
+
+
+# What the output fixer is told besides the JSON shape: a refusal is the
+# sentinel, never an answer dressed as one.
+_TRANSLATION_FIX = (
+    "If the completion is not a translation (a refusal, a comment about the "
+    f'request), return {{"translation": "{CANNOT_TRANSLATE_MARKER}"}}.'
 )
-# A question's closing mark: ASCII or fullwidth (Chinese, Japanese).
-_QUESTION_MARKS = ("?", "\uff1f")
+_REWRITE_FIX = (
+    "If the completion is not a rewritten question (a refusal, a request "
+    f'for clarification), return {{"question": "{CANNOT_REWRITE_MARKER}"}}.'
+)
 
 
 def _query_language(chain: GraphRAGChain, inputs: dict[str, Any]) -> tuple[str, bool]:
@@ -211,13 +184,26 @@ async def translate_query(
     query: str,
     target_language: str,
     config: RunnableConfig | None,
-) -> str:
+) -> str | None:
+    """The query in ``target_language``, or None when the model answered
+    that it cannot translate it (``CANNOT_TRANSLATE_MARKER``).
+
+    Raises ``OutputParserException`` when the answer is no translation
+    JSON even after one repair (``process_query`` marks it degraded).
+    """
     translator = chain._get_chain_for_prompt(TranslationPrompt, StrOutputParser())
-    return str(
+    raw = str(
         await translator.ainvoke(
             {"query": query, "target_language": target_language}, config
         )
     )
+    if CANNOT_TRANSLATE_MARKER in raw:
+        return None
+    answer = await chain._json_parser(
+        TranslationPrompt, schema=_TranslationAnswer, instructions=_TRANSLATION_FIX
+    ).aparse(raw)
+    text = str(answer.translation).strip()
+    return None if not text or CANNOT_TRANSLATE_MARKER in text else text
 
 
 async def process_query(
@@ -263,29 +249,33 @@ async def process_query(
     # (searched untranslated, or without entities or keywords).
     degraded: str | None = None
     translated_query = results_map.get("translation")
-    if not isinstance(translated_query, str):
-        if isinstance(translated_query, Exception):
-            if chain.ignore_errors and not is_unreachable_error(translated_query):
-                logger.warning("Query translation failed: %s", translated_query)
-                degraded = type(translated_query).__name__
-                record_degradation(
-                    DegradationStep.TRANSLATION,
-                    "searched untranslated",
-                    translated_query,
-                )
-            else:
-                raise translated_query
-        translated_query = None
-    elif chain._looks_like_translation_refusal(translated_query, question):
-        # The translator returned prose about the request instead of a
-        # translation (common when the query is already in the target
-        # language). Fall back to the original query rather than searching
-        # for the LLM's meta-response.
+    if isinstance(translated_query, OutputParserException):
+        # No translation JSON even repaired: search the query as written
+        # rather than the model's prose, and say the answer is degraded.
         logger.warning(
-            "Query translation looks like non-translation LLM output; "
-            "falling back to the original query."
+            "Query translation answer is not a translation; searching the "
+            "query as written"
+        )
+        degraded = type(translated_query).__name__
+        record_degradation(
+            DegradationStep.TRANSLATION,
+            "translation answer unreadable, searched untranslated",
+            translated_query,
         )
         translated_query = None
+    elif isinstance(translated_query, Exception):
+        if not chain.ignore_errors or is_unreachable_error(translated_query):
+            raise translated_query
+        logger.warning("Query translation failed: %s", translated_query)
+        degraded = type(translated_query).__name__
+        record_degradation(
+            DegradationStep.TRANSLATION, "searched untranslated", translated_query
+        )
+        translated_query = None
+    elif "translation" in results_map and translated_query is None:
+        logger.info(
+            "The translator could not translate the query; searching it as written"
+        )
 
     entity_data = results_map.get("entities", [])
     if not isinstance(entity_data, list):
@@ -357,32 +347,6 @@ def query_language(chain: GraphRAGChain, inputs: dict[str, Any]) -> str:
     or is context for the answer model (DRIFT's intermediate answers,
     global's map points), which answers in the query's language itself."""
     return _extraction_language(chain)
-
-
-def _refusal_text(text: str) -> str:
-    """``text`` normalised for matching the refusal phrases: stripped,
-    lower-cased, a typographic apostrophe (``I\u2019m``) made ASCII."""
-    return text.strip().lower().replace("\u2019", "'")
-
-
-def looks_like_translation_refusal(candidate: str, original: str) -> bool:
-    """Heuristic: does the 'translation' look like LLM meta-output, not a
-    translation? Only flags when the candidate differs from the original
-    (an identical passthrough is fine) and opens with a known refusal/notice
-    phrase, so genuine translations that merely contain such words mid-text
-    are not caught.
-
-    The openings are English, Korean, Japanese and Chinese
-    (``_REFUSAL_OPENINGS``), the notices English: a meta-reply written
-    otherwise passes as a translation. No language-agnostic test separates the two
-    reliably (a script mismatch misses a reply in the target language,
-    which is the common case, and lengths differ legitimately across
-    scripts), so the miss is accepted; the reply then searches as the
-    query."""
-    text = _refusal_text(candidate)
-    if not text or text == _refusal_text(original):
-        return False
-    return text.startswith(_TRANSLATION_REFUSAL_MARKERS)
 
 
 async def extract_query_entities(
@@ -533,10 +497,14 @@ async def extract_dual_keywords(
             raw = await extractor.ainvoke(
                 {"query": query, "target_language": target_language}, config
             )
-            # Strict: with ignore_errors=False a broken keyword extraction
-            # surfaces instead of silently yielding empty keyword lists.
+            # The one JSON reading (and one repair); what still fails it
+            # surfaces under ignore_errors=False instead of silently
+            # yielding empty keyword lists.
+            reader = chain._json_parser(
+                KeywordsExtractionPrompt, answer_keys=_KEYWORD_LEVELS
+            )
             try:
-                payload = parse_llm_json(raw, strict=True, answer_keys=_KEYWORD_LEVELS)
+                payload = await reader.aparse(str(raw))
                 hl_keywords, ll_keywords = _keyword_lists(payload)
             except (ValueError, LanguageModelError) as e:
                 raise _keyword_json_error(chain, e) from e
@@ -601,26 +569,30 @@ def _keyword_lists(payload: dict[str, Any]) -> tuple[list[str], list[str]]:
     return lists[0], lists[1]
 
 
-def usable_rewrite(rewritten: str) -> str | None:
-    """The rewrite, or None (keep the query as is) when it is unusable.
+async def read_rewrite(chain: GraphRAGChain, raw: str) -> str | None:
+    """The follow-up rewrite's standalone question, or None (keep the query
+    as is) when the model answered that it cannot rewrite it
+    (``CANNOT_REWRITE_MARKER``), the question is empty, or the answer is no
+    rewrite JSON even after one repair.
 
     An empty reply or a refusal would replace the user's question for
-    routing, retrieval and the answer, so the original query is kept.
+    routing, retrieval and the answer; the sentinel says so in any
+    language, where a list of apology openings knew four.
     """
-    text = rewritten.strip()
-    prefix = "standalone question:"
-    if text.lower().startswith(prefix):
-        text = text[len(prefix) :].strip()
-    if not text:
+    if CANNOT_REWRITE_MARKER in raw:
+        logger.info("The model could not rewrite the follow-up; using it as is")
         return None
-    # A refusal opens with an apology or an inability and asks nothing; a
-    # rewritten question may start the same way ("I can't find …; where
-    # is it?") but ends with a question mark, unless the question asks
-    # the user to clarify ("I'm sorry, could you clarify which contract?").
-    opening = _refusal_text(text)
-    if opening.startswith(_REFUSAL_OPENINGS) and (
-        not text.endswith(_QUESTION_MARKS) or _CLARIFICATION_REQUEST.search(opening)
-    ):
-        logger.warning("Follow-up rewrite was a refusal; using the query as is")
+    try:
+        answer = await chain._json_parser(
+            QueryRewritePrompt, schema=_RewriteAnswer, instructions=_REWRITE_FIX
+        ).aparse(raw)
+    except OutputParserException as e:
+        logger.warning("Follow-up rewrite answer is not a rewrite; using the query")
+        record_degradation(
+            DegradationStep.FOLLOW_UP_REWRITE, "rewrite answer unreadable", e
+        )
+        return None
+    text = str(answer.question).strip()
+    if not text or CANNOT_REWRITE_MARKER in text:
         return None
     return text

@@ -77,10 +77,10 @@ class GlobalSearchConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Dynamic selection keeps a report whose relevance (the 1-10 rating "
-            "divided by 10) is at least this. 0.2 = anything rated above "
-            "irrelevant, MS GraphRAG's threshold of 1 on its 0-5 scale: a "
-            "pruned report prunes its whole subtree."
+            "Dynamic selection keeps a report whose relevance (MS GraphRAG's "
+            "0-5 rating divided by 5) is at least this. 0.2 = a rating of 1 or "
+            "more, MS GraphRAG's threshold: a pruned report prunes its whole "
+            "subtree."
         ),
     )
     enable_map_reduce: bool = Field(
