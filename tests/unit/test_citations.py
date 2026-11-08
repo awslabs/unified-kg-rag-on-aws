@@ -997,7 +997,16 @@ async def test_a_failed_lineage_read_leaves_the_answer_and_passages(
     store.aretrieve = broken  # type: ignore[method-assign]
     out = await chain.ainvoke(_query())
     assert out.answer.startswith("Depot stores widgets [1]")
-    assert out.metadata["citations_unresolved"] is True
+    # Recorded in the query's ledger as an unresolved read (rv8: a state
+    # flag reported as True, beside the ledger).
+    assert out.metadata["citations_unresolved"] == [
+        {
+            "step": "citation_lineage",
+            "reason": "graph citations name no document",
+            "error_type": "RuntimeError",
+        }
+    ]
+    assert "degraded" not in out.metadata
     assert out.citations[0].file_name == "contract.txt"
     assert out.citations[1].documents == []
 

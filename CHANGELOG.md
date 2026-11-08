@@ -1062,8 +1062,8 @@ From a `main` checkout (formats and keys no release had):
 - Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284). In `run-eval`, queries
   whose rerank call failed (a throttled rerank model keeps the fused order) and answers whose retrieval absorbed a step
   failure (each result's `degraded_error`, the summary's `degraded_error_counts`; a query translation or entity or
-  keyword extraction that `processing.ignore_errors` skipped among them, `ProcessedQuery.degraded_error` and the
-  chain's `metadata.degraded_error`) count against `--max-failure-rate`,
+  keyword extraction that `processing.ignore_errors` skipped among them, in the chain's `metadata.degraded_error`)
+  count against `--max-failure-rate`,
   so at the default 1.0 a run whose every rerank call failed exits 1; a comparison names each run's rerank failures and
   degraded answers with their rates and warns louder (`NOT COMPARABLE AS IS`) when the lowest and highest rate differ
   beyond chance (two-sided Fisher's exact p below 0.05), with a note when they differ within it.

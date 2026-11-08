@@ -245,9 +245,8 @@ async def process_query(
         await asyncio.gather(*tasks.values(), return_exceptions=True) if tasks else []
     )
     results_map = dict(zip(tasks.keys(), results, strict=True))
-    # The first failure ignore_errors absorbed: the answer is degraded
-    # (searched untranslated, or without entities or keywords).
-    degraded: str | None = None
+    # A failure ignore_errors absorbed degrades the answer (searched
+    # untranslated, or without entities or keywords): the query's ledger.
     translated_query = results_map.get("translation")
     if isinstance(translated_query, OutputParserException):
         # No translation JSON even repaired: search the query as written
@@ -256,7 +255,6 @@ async def process_query(
             "Query translation answer is not a translation; searching the "
             "query as written"
         )
-        degraded = type(translated_query).__name__
         record_degradation(
             DegradationStep.TRANSLATION,
             "translation answer unreadable, searched untranslated",
@@ -267,7 +265,6 @@ async def process_query(
         if not chain.ignore_errors or is_unreachable_error(translated_query):
             raise translated_query
         logger.warning("Query translation failed: %s", translated_query)
-        degraded = type(translated_query).__name__
         record_degradation(
             DegradationStep.TRANSLATION, "searched untranslated", translated_query
         )
@@ -282,7 +279,6 @@ async def process_query(
         if isinstance(entity_data, Exception):
             if chain.ignore_errors and not is_unreachable_error(entity_data):
                 logger.warning("Entity extraction failed: %s", entity_data)
-                degraded = degraded or type(entity_data).__name__
                 record_degradation(
                     DegradationStep.ENTITY_EXTRACTION,
                     "searched without query entities",
@@ -301,7 +297,6 @@ async def process_query(
             # ignore_errors, so an exception here must propagate.
             raise keyword_data
         if isinstance(keyword_data, AbsorbedKeywordFailure):
-            degraded = degraded or keyword_data.error_type
             record_degradation(
                 DegradationStep.KEYWORD_EXTRACTION,
                 "searched without keywords",
@@ -315,7 +310,6 @@ async def process_query(
         "entities": entity_data,
         "hl_keywords": hl_keywords,
         "ll_keywords": ll_keywords,
-        "degraded_error": degraded,
     }
 
 
@@ -463,7 +457,7 @@ def cache_extraction(chain: GraphRAGChain, key: tuple[str, ...], value: Any) -> 
 class AbsorbedKeywordFailure(tuple[list[str], list[str]]):
     """The ``([], [])`` of a keyword extraction whose failure
     ``ignore_errors`` absorbed, with the error's type name, so the answer
-    is marked degraded (``ProcessedQuery.degraded_error``)."""
+    is marked degraded (the query's ledger, ``keyword_extraction``)."""
 
     error_type: str
 

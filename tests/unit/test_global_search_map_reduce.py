@@ -1293,7 +1293,15 @@ async def test_a_failed_findings_read_keeps_the_membership_lineage() -> None:
     with degradation_scope() as ledger:
         await strat._apply_map_reduce([report], query)
     assert not ledger.entries
-    assert ledger.metadata() == {"citations_unresolved": True}
+    assert ledger.metadata() == {
+        "citations_unresolved": [
+            {
+                "step": "findings_lineage",
+                "reason": ledger.unresolved[0].reason,
+                "error_type": "RuntimeError",
+            }
+        ]
+    }
 
 
 class _FilteringRecordStore(_RecordStore):

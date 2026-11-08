@@ -18,7 +18,7 @@ from collections.abc import (
     Collection,
     Iterator,
 )
-from contextlib import AbstractContextManager, aclosing, contextmanager
+from contextlib import AbstractContextManager, aclosing, contextmanager, nullcontext
 from typing import Any, Literal, TypeVar, cast
 
 from langchain_core.exceptions import OutputParserException
@@ -54,6 +54,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
     current_ledger,
+    degradation_scope,
     query_scope,
     record_degradation,
     scope_filters,
@@ -434,13 +435,6 @@ class ProcessedQuery(BaseModel):
     ll_keywords: list[str] = Field(
         default_factory=list,
         description="Low-level keywords (LightRAG modes only)",
-    )
-    degraded_error: str | None = Field(
-        default=None,
-        description="The type name of a query processing failure "
-        "processing.ignore_errors absorbed (the translation, the entity or "
-        "keyword extraction, or the whole step): the query was searched "
-        "without it. None when every step succeeded",
     )
 
 
@@ -846,10 +840,10 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             | RunnableLambda(self._format_output_step)
         )
 
-        self._search_chain: Runnable[Any, Any] = base_chain | RunnableLambda(
-            self._format_search_output_step
+        self._search_chain: Runnable[Any, Any] = _Ledgered(
+            base_chain | RunnableLambda(self._format_search_output_step)
         )
-        return base_chain | rag_branch
+        return _Ledgered(base_chain | rag_branch)
 
     async def _route_and_process_step(
         self, state: dict[str, Any], config: RunnableConfig | None = None
@@ -1201,7 +1195,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 original_query=original_query,
                 standalone_query=standalone_query,
                 final_query=question,
-                degraded_error=type(e).__name__,
             )
 
     async def _extract_query_entities(
@@ -1877,15 +1870,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             raise
         await lineage
         answered["citations"] = read_state["citations"]
-        if read_state.get("citations_unresolved"):
-            answered["citations_unresolved"] = True
         return answered
 
     async def _citations_step(self, state: dict[str, Any]) -> dict[str, Any]:
         """Set ``state["citations"]``: the context's citations, the
         documents of graph sections read from their lineage
         (``citations.aresolve_documents``). A failed read leaves those
-        without documents (``citations_unresolved``); the answer stands."""
+        without documents, recorded as unresolved (``citations_unresolved``);
+        the answer stands."""
         cited = self._context_citations(state)
         state["citations"] = cited
         if not cited:
@@ -1905,7 +1897,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 error_digest(e),
             )
             logger.debug("Citation lineage read error", exc_info=True)
-            state["citations_unresolved"] = True
+            record_degradation(
+                DegradationStep.CITATION_LINEAGE,
+                "graph citations name no document",
+                e,
+                unresolved=True,
+            )
         return state
 
     async def _fetch_text_units(
@@ -2002,8 +1999,6 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if unknown and optimized is not None and optimized.numbered:
             # Only an answer asked to cite has markers that can be wrong.
             metadata["unknown_citation_markers"] = unknown
-        if state.get("citations_unresolved"):
-            metadata["citations_unresolved"] = True
 
         return RAGOutput(
             answer=state["answer"],
@@ -2019,13 +2014,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     def _report_degradation(state: dict[str, Any], metadata: dict[str, Any]) -> None:
         """Set the query's degraded steps on ``metadata`` (its ledger's
         ``degraded``, ``degraded_error`` and ``citations_unresolved``,
-        ``DegradationLedger.metadata``), over the strategy's own. Without a
-        query scope (a caller driving the composed runnable), a query
-        processing failure ignore_errors absorbed degrades it too."""
+        ``DegradationLedger.metadata``), over the strategy's own. The
+        composed runnable opens a ledger when no query did
+        (:class:`_Ledgered`)."""
         if (ledger := current_ledger()) is not None:
             metadata.update(ledger.metadata())
-        if degraded := state["processed_query"].degraded_error:
-            metadata.setdefault(DEGRADED_ERROR_KEY, degraded)
 
     @staticmethod
     def _is_synthesized(metadata: dict[str, Any] | None) -> bool:
@@ -2774,9 +2767,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         the query reads as the user's own, with no extractions."""
         original = output.processed_query.original_query
         output.processed_query = ProcessedQuery(
-            original_query=original,
-            final_query=original,
-            degraded_error=output.processed_query.degraded_error,
+            original_query=original, final_query=original
         )
         output.search_results = output.search_results.model_copy(
             update={
@@ -3413,6 +3404,32 @@ _GROUNDING_CAPTURE: contextvars.ContextVar[list[GroundingContext | None] | None]
 _ANSWER_CHUNKS: contextvars.ContextVar[Callable[[str], None] | None] = (
     contextvars.ContextVar("kg_rag_answer_chunks", default=None)
 )
+
+
+class _Ledgered(Runnable[Any, Any]):
+    """The composed runnable ``inner`` with a degradation ledger of its own
+    when no query opened one (a caller driving ``GraphRAGChain.chain``
+    directly), so its steps record what they answered without where its
+    output reports it; within a query it records into the query's."""
+
+    def __init__(self, inner: Runnable[Any, Any]) -> None:
+        self.inner = inner
+
+    def invoke(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> Any:
+        with self._ledger():
+            return self.inner.invoke(input, config, **kwargs)
+
+    async def ainvoke(
+        self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
+    ) -> Any:
+        with self._ledger():
+            return await self.inner.ainvoke(input, config, **kwargs)
+
+    @staticmethod
+    def _ledger() -> AbstractContextManager[Any]:
+        return nullcontext() if current_ledger() is not None else degradation_scope()
 
 
 def _streamed_to(
