@@ -24,6 +24,7 @@ import yaml
 from unified_kg_rag.application.config import ConfigLoader, env_var, unknown_keys
 from unified_kg_rag.domain.models import Config, Methodology
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.utils.files import atomic_write_text
 
 MASK = "********"
 # The tracing variables the observability panel reports as set or not.
@@ -456,12 +457,5 @@ class SettingsFile:
         moved = [c["path"] for c in directory_changes(parse(current), data)]
         if moved and sorted(confirm_directories or []) != sorted(moved):
             raise DirectoriesNotConfirmed(moved)
-        # Written whole or not at all: a temporary file beside it, renamed
-        # over it.
-        temporary = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
-        try:
-            temporary.write_text(text, encoding="utf-8")
-            os.replace(temporary, self.path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        atomic_write_text(self.path, text)
         return {"sha": digest(text), **result}

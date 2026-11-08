@@ -1,7 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -25,6 +24,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.pipeline import PIPELINE_METADATA_FILE
 from unified_kg_rag.shared.exceptions import PipelineResumeError, PipelineStateError
 from unified_kg_rag.shared.logging import get_logger
+from unified_kg_rag.shared.utils.files import atomic_write_text
 
 if TYPE_CHECKING:
     from .cache_manager import CacheManager
@@ -158,8 +158,6 @@ class PipelineStateManager:
             context.pipeline_id
         )
         metadata_path = metadata_directory / self.PIPELINE_METADATA_FILE
-        temp_path = metadata_path.with_suffix(".tmp")
-
         try:
             metadata_directory.mkdir(parents=True, exist_ok=True)
             # Phased executions (each a separate task sharing one pipeline_id via
@@ -182,12 +180,7 @@ class PipelineStateManager:
                 exclude=self.EXCLUDED_DATA_FIELDS, exclude_none=True, indent=2
             )
 
-            with open(temp_path, "w", encoding="utf-8") as f:
-                f.write(json_data)
-                f.flush()
-                os.fsync(f.fileno())
-
-            temp_path.replace(metadata_path)
+            atomic_write_text(metadata_path, json_data, fsync=True)
 
             if not self._verify_saved_metadata(metadata_path):
                 raise PipelineStateError("Metadata verification failed after save")
@@ -202,13 +195,6 @@ class PipelineStateManager:
             logger.error(
                 "Failed to save pipeline metadata for '%s': %s", context.pipeline_id, e
             )
-            if temp_path and temp_path.exists():
-                try:
-                    temp_path.unlink(missing_ok=True)
-                except OSError as cleanup_error:
-                    logger.warning(
-                        "Failed to clean up temporary file: %s", cleanup_error
-                    )
             raise PipelineStateError(
                 f"Critical error saving pipeline metadata: {e}"
             ) from e
