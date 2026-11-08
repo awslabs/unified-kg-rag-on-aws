@@ -695,7 +695,8 @@ class IncrementalIndexer:
             )
             # The items the merge re-keyed to follow their current name are now
             # written under the new ids: delete the old ones, unless a write
-            # failed (deleting them would lose the item; the next run re-keys it).
+            # failed (deleting them would lose the item; the commit note names
+            # them, and the next commit derives what they hold again).
             if any(stats.failed_items for stats in results.values() if stats):
                 self.indexing_manager.discard_retired_ids()
             else:

@@ -231,6 +231,62 @@ def test_an_interrupted_replay_converges(point: str) -> None:
     assert harness.extracted == []
 
 
+# Two spellings of one entity: the second document's edges turn the
+# spelling the first stored them under, so the commit re-keys their ids.
+_SPELLINGS: tuple[Corpus, Corpus] = (
+    {
+        "/corpus/d.txt": [
+            [("Acme Corp", _D, 2), ("Acme Corp", _B, 2), (_B, _D, 1)],
+            [(_B, _D, 1), ("Acme Inc", _D, 2)],
+        ]
+    },
+    {
+        "/corpus/c.txt": [[(_D, "Acme Corp", 1), ("Acme Inc", _B, 1)]],
+        "/corpus/d.txt": [
+            [("Acme Corp", _D, 2), ("Acme Corp", _B, 2), (_B, _D, 1)],
+            [(_B, _D, 1), ("Acme Inc", _D, 2)],
+        ],
+    },
+)
+
+
+def _depot_ids(config: Config) -> list[str]:
+    return sorted(
+        {e.id for c in _SPELLINGS for e in extract(c, config).entities if e.name == _D}
+    )
+
+
+def test_a_rejected_write_does_not_keep_a_re_keyed_items_old_copy() -> None:
+    # The commit keeps the old ids when a write fails (deleting them could
+    # lose an item); its note names them, so the next commit deletes them.
+    harness = _harness()
+    before, after = _SPELLINGS
+    harness.run(before)
+
+    harness.run(
+        after, fail=_rejecting("graph.upsert_entities", *_depot_ids(harness.config))
+    )
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, harness.config)
+    assert harness.vector.read_extraction_records(["pending-commit"]) == {}
+    harness.run(after)
+    assert harness.extracted == []
+
+
+@pytest.mark.parametrize("point", POINTS)
+def test_an_interrupted_re_key_converges(point: str) -> None:
+    harness = _harness()
+    before, after = _SPELLINGS
+    harness.run(before)
+
+    harness.run(after, interrupt=point)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, harness.config)
+    assert harness.registry_problems(after) == []
+
+
 class _Summarizing(IncrementalRun):
     """A harness whose runs summarize every merged description (with the
     model-free :class:`AtomSetSummarizer`), recording what they summarize."""

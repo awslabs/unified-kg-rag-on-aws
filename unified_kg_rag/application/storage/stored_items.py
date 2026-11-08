@@ -45,8 +45,9 @@ _PENDING_STRIP = "pending-strip"
 
 
 # Extraction-store key of a suffix's commit note: the stored entities an
-# incremental commit splits, re-keys or rewires, written before its first
-# write and deleted once the old ids are (see note_pending_commit).
+# incremental commit splits, re-keys or rewires and the old ids it retires,
+# written before its first write and deleted once the old ids are (see
+# note_pending_commit).
 _PENDING_COMMIT = "pending-commit"
 
 

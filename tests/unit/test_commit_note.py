@@ -102,6 +102,32 @@ def test_a_note_carries_the_ids_of_the_note_it_finishes() -> None:
     assert set((_note(vector) or {})["entity_ids"]) == {"e-earlier", "e-now"}
 
 
+def test_a_note_lists_the_old_ids_the_commit_retires() -> None:
+    # Edges re-keyed or dropped alone (no entity changed): without them in
+    # the note, a commit whose write fails keeps their old copies for good.
+    manager, _, vector = _manager()
+    manager._rekeyed["default"] = {"r-old": "r-new"}
+    manager._dropped["default"] = {"r-loop"}
+    manager._noted_retired["default"] = {"r-earlier"}
+
+    manager.note_pending_commit()
+
+    note = _note(vector) or {}
+    assert note["retired_ids"] == ["r-earlier", "r-loop", "r-old"]
+    assert note["entity_ids"] == []
+
+
+def test_a_read_note_derives_the_items_under_its_old_ids_again() -> None:
+    manager, _, vector = _manager()
+    vector.write_extraction_records(
+        {NOTE: {"entity_ids": ["e1"], "retired_ids": ["r-old"]}}
+    )
+
+    assert manager._merge._read_commit_note("default") == {"e1", "r-old"}
+    assert manager._noted_retired == {"default": {"r-old"}}
+    assert manager._noted_commit_entities == {"default": {"e1"}}
+
+
 def test_a_read_note_is_deleted_with_this_commits(mocker) -> None:
     # A note read (an earlier commit's) is the suffix's to delete once this
     # commit retired its old ids.

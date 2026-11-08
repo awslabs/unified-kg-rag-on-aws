@@ -70,6 +70,12 @@ unless noted.
    the noted entities' copies only the vector store holds, with the vector
    edges at them (the killed commit got to its vector writes only), and a
    run that only removes in the suffix reads the note all the same.
+   The note also lists the old ids the commit retires (an item re-keyed to
+   follow the spelling that now names it, an edge dropped). A commit whose
+   write fails keeps them (deleting one could lose its item), and the next
+   commit reads the items still stored under them with the noted entities
+   and derives them again: the derivation re-keys or drops what a full build
+   does not have, and those ids are deleted with its own.
    An item write a store rejects (an entity, relationship, claim, community
    or report; an edge held back for a rejected endpoint) does not fail the
    documents owning it: the commit notes the rejected items as written in

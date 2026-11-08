@@ -207,6 +207,10 @@ class IndexingManager:
         # wrote or read (clear_pending_commit deletes those).
         self._noted_commit_entities: dict[str, set[str]] = {}
         self._commit_note_suffixes: set[str] = set()
+        # Per suffix: the old ids an earlier commit's note retires (re-keyed
+        # away or dropped) and may not have deleted (a write failed, or it
+        # was killed): this commit derives the items stored under them again.
+        self._noted_retired: dict[str, set[str]] = {}
         # The stored community reports a removal kept although they cite a
         # removed text unit (see community_drift).
         self.outdated_reports: set[str] = set()
@@ -851,13 +855,7 @@ class IndexingManager:
         edges then hold the new endpoints, and deleting the old entity vertex
         drops no edge still in use.
         """
-        retired = {
-            suffix: sorted(
-                (set(self._rekeyed.get(suffix, {})) | self._dropped.get(suffix, set()))
-                - set(self._rekeyed.get(suffix, {}).values())
-            )
-            for suffix in self._rekeyed.keys() | self._dropped.keys()
-        }
+        retired = self._retired_ids()
         vector_only = dict(self._vector_only)
         rekeyed = {suffix: dict(rekey) for suffix, rekey in self._rekeyed.items()}
         self._reset_run_state()
@@ -870,6 +868,17 @@ class IndexingManager:
                 sum(len(ids) for ids in retired.values()),
             )
         return {**repointed, **self.delete_documents(retired, vector_only)}
+
+    def _retired_ids(self) -> dict[str, list[str]]:
+        """By suffix, the ids this run's derivations re-keyed away or
+        dropped, but none an item is re-keyed to."""
+        return {
+            suffix: sorted(
+                (set(self._rekeyed.get(suffix, {})) | self._dropped.get(suffix, set()))
+                - set(self._rekeyed.get(suffix, {}).values())
+            )
+            for suffix in self._rekeyed.keys() | self._dropped.keys()
+        }
 
     def _repoint_reports(
         self, rekeyed: Mapping[str, Mapping[str, str]]
@@ -903,24 +912,38 @@ class IndexingManager:
 
     def note_pending_commit(self) -> None:
         """Note, per suffix, the stored entities this commit's derivation
-        split, re-keyed or rewired (with those of an earlier note it
-        finishes), before its first write. Those decisions live in memory
-        only: a run killed between the writes leaves the stored state half
-        changed, and the next run, deriving from it, would not split or
-        re-key them again, so their stored edges and claims would stay as
-        they were. The next commit of the suffix derives them again
+        split, re-keyed or rewired and the old ids it retires (re-keyed away
+        or dropped), with those of an earlier note it finishes, before its
+        first write. Those decisions live in memory only: a run killed
+        between the writes, or one whose write failed (it keeps the old ids,
+        :meth:`discard_retired_ids`), leaves the stored state half changed,
+        and the next run, deriving from it, would not split or re-key them
+        again, so their stored edges and claims and the old copies would
+        stay as they were. The next commit of the suffix derives the noted
+        entities and the items stored under the old ids again
         (:meth:`_merge_suffix`). Raises when a write fails, before anything
         is written."""
+        retired = self._retired_ids()
         for suffix in sorted(
-            self._commit_entities.keys() | self._noted_commit_entities.keys()
+            self._commit_entities.keys()
+            | self._noted_commit_entities.keys()
+            | retired.keys()
+            | self._noted_retired.keys()
         ):
             ids = {
                 *self._commit_entities.get(suffix, set()),
                 *self._noted_commit_entities.get(suffix, set()),
             }
-            if not ids:
+            old_ids = {
+                *retired.get(suffix, []),
+                *self._noted_retired.get(suffix, set()),
+            }
+            if not ids and not old_ids:
                 continue
-            self._write_note(_PENDING_COMMIT, suffix, {"entity_ids": sorted(ids)})
+            note: dict[str, Any] = {"entity_ids": sorted(ids)}
+            if old_ids:
+                note["retired_ids"] = sorted(old_ids)
+            self._write_note(_PENDING_COMMIT, suffix, note)
             self._commit_note_suffixes.add(suffix)
 
     def read_pending_writes(
@@ -1032,6 +1055,7 @@ class IndexingManager:
             self._vector_only,
             self._commit_entities,
             self._noted_commit_entities,
+            self._noted_retired,
             self._split_from,
             self._renamed,
             self._fresh,
