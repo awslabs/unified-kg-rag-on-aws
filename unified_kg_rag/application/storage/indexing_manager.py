@@ -1115,7 +1115,10 @@ class IndexingManager:
 
     def collect_extraction_records(self) -> dict[str, IndexingStats]:
         """Delete the extraction records the removed text units named that no
-        stored text unit names any more (see :meth:`remove_text_units`).
+        stored text unit names any more (see :meth:`remove_text_units`), but
+        those of a kind the run does not produce (claim records with claims
+        off, ``unbuilt_record_prefixes``), which a run that builds it again
+        reuses.
 
         Run after the delta is written: a changed document's unchanged chunk
         names the same record as its removed copy. Best-effort: a failure

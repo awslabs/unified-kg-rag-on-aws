@@ -33,6 +33,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 from unified_kg_rag.domain.models import (
     Config,
     DocStatus,
+    IndexArtifact,
     IndexBuildRecord,
     Methodology,
     PipelineConfig,
@@ -704,3 +705,232 @@ def test_two_claims_off_resets_keep_the_claim_records(
     context = e2e._ingest(config, providers, source, tmp_path / "run-4")
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert asked - before == Counter()
+
+
+def _second_scope(tmp_path: Path) -> Path:
+    second = tmp_path / "b" / "corpus"
+    second.mkdir(parents=True)
+    (second / "notes.txt").write_text("Bank lends money to Vendor.")
+    return second
+
+
+def test_switching_off_reports_beside_another_scope_is_refused(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Regression: report generation off kept graphrag (local reads it
+    # without reports), so a run of a second corpus passed and its record
+    # dropped the reports for the first corpus too; turning the switch back
+    # on then needed the rebuild a namespace of two scopes refuses, and
+    # global was refused for both. The run is refused before any model call
+    # instead, naming the switch.
+    config, providers, server, _ = _setup(tmp_path)
+    first, second = _corpus(tmp_path / "a"), _second_scope(tmp_path)
+    for source, run in ((first, "run-a"), (second, "run-b")):
+        context = e2e._ingest(config, providers, source, tmp_path / run)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(providers)
+    assert "community_reports" in record["artifacts"]
+
+    config.graph.community_detection.report_generation.enabled = False
+    (second / "more.txt").write_text("Carrier ships for Bank.")
+    calls = len(server.chat_models)
+    with pytest.raises(ConfigurationError) as error:
+        e2e._ingest(config, providers, second, tmp_path / "run-b2")
+    message = str(error.value)
+    assert (
+        "graph.community_detection.report_generation.enabled: false stops "
+        "building community_reports"
+    ) in message
+    assert str(first.resolve()) in message
+    assert "needs a rebuild of the namespace" in message
+    assert "graph.community_detection.report_generation.enabled: true" in message
+    assert len(server.chat_models) == calls
+    assert _record(providers) == record
+
+    # With the switch on, the run adds the document and global answers.
+    config.graph.community_detection.report_generation.enabled = True
+    context = e2e._ingest(config, providers, second, tmp_path / "run-b3")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert "community_reports" in _record(providers)["artifacts"]
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        assert _ask(chain, SearchStrategy.GLOBAL).answer == e2e.ANSWER
+    finally:
+        chain.close()
+
+
+def _drop_from_record(providers: Providers, artifact: IndexArtifact) -> None:
+    indexer = providers.build_vector_indexer()
+    try:
+        assert indexer.drop_build_artifacts([artifact], None)
+    finally:
+        indexer.close()
+
+
+def _claims_setup(
+    tmp_path: Path,
+) -> tuple[Config, Providers, FakeOllama, Counter[str]]:
+    from tests.integration.test_claim_convergence import _respond
+
+    config = e2e._config(tmp_path / "stores", tmp_path / "viz")
+    config.processing.claim_extraction.enabled = True
+    asked = Counter[str]()
+
+    def respond(system: str, human: str) -> str:
+        if "claim extraction specialist" in system:
+            asked["claims"] += 1
+        return _respond(system, human)
+
+    server = FakeOllama(CountingResponder(respond), e2e.ANSWER, e2e.DIM)
+    providers = e2e._providers(config, server, e2e.FakeCrossEncoder("r"))
+    return config, providers, server, asked
+
+
+def _claims_corpus(root: Path) -> Path:
+    source = root / "corpus"
+    source.mkdir(parents=True)
+    (source / "a.txt").write_text("Acme supplies Buyer.")
+    (source / "b.txt").write_text("Globex pays Depot and Acme.")
+    return source
+
+
+def test_turning_claims_back_on_rebuilds_from_the_kept_claim_records(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Regression: an incremental claims-off run deleted every claim record
+    # (its re-extracted units name none), and a claims-on run after it kept
+    # the record without claims (an incremental record keeps what both
+    # name), so local stopped reading the claims it stored again. Turning
+    # claims back on rebuilds the namespace once instead, from the records
+    # the claims-off run kept: no claim is asked again.
+    config, providers, _, asked = _claims_setup(tmp_path)
+    source = _claims_corpus(tmp_path)
+    claims = config.indexing.opensearch.claims_index_prefix
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert "claims" in _record(providers)["artifacts"]
+    stored = len(e2e._stored(config, providers, claims))
+    assert stored > 0 and asked["claims"] > 0
+
+    config.processing.claim_extraction.enabled = False
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert "claims" not in _record(providers)["artifacts"]
+
+    config.processing.claim_extraction.enabled = True
+    before = Counter(asked)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-3")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert asked - before == Counter()
+    record = _record(providers)
+    assert record["mode"] == "full"
+    assert "claims" in record["artifacts"]
+    assert len(e2e._stored(config, providers, claims)) == stored
+
+    # Incremental runs keep them named: an added document, then a deletion.
+    (source / "c.txt").write_text("Initech owes Acme.")
+    context = e2e._ingest(config, providers, source, tmp_path / "run-4")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert _record(providers)["mode"] == "incremental"
+    assert "claims" in _record(providers)["artifacts"]
+    (source / "c.txt").unlink()
+    context = e2e._ingest(config, providers, source, tmp_path / "run-5")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert "claims" in _record(providers)["artifacts"]
+
+
+def test_claim_switch_changes_beside_another_scope_are_refused(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # Claims off would drop them from the record for the other scope's
+    # documents too, and claims on over a namespace without them needs a
+    # rebuild: both are refused before any model call while the namespace
+    # holds another source scope's documents.
+    config, providers, server, _ = _claims_setup(tmp_path)
+    first, second = _claims_corpus(tmp_path / "a"), _second_scope(tmp_path)
+    for source, run in ((first, "run-a"), (second, "run-b")):
+        context = e2e._ingest(config, providers, source, tmp_path / run)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(providers)
+    assert "claims" in record["artifacts"]
+
+    config.processing.claim_extraction.enabled = False
+    (second / "more.txt").write_text("Carrier ships for Bank.")
+    calls = len(server.chat_models)
+    with pytest.raises(
+        ConfigurationError,
+        match="processing.claim_extraction.enabled: false stops building claims",
+    ):
+        e2e._ingest(config, providers, second, tmp_path / "run-b2")
+    assert len(server.chat_models) == calls
+    assert _record(providers) == record
+
+    # A record without claims (as an earlier version's claims-off run of
+    # one scope left it): turning them on needs a rebuild, refused as one
+    # that adds a methodology is.
+    _drop_from_record(providers, IndexArtifact.CLAIMS)
+    assert "claims" not in _record(providers)["artifacts"]
+    config.processing.claim_extraction.enabled = True
+    with pytest.raises(ConfigurationError) as error:
+        e2e._ingest(config, providers, second, tmp_path / "run-b3")
+    assert str(error.value).startswith(
+        "indexing.methodologies with processing.claim_extraction.enabled: true "
+        "builds claims, which the index namespace does not hold"
+    )
+    assert "also holds documents of source" in str(error.value)
+    assert len(server.chat_models) == calls
+
+
+def test_leaving_out_raptor_beside_another_scope_is_refused_without_a_rebuild(
+    tmp_path: Path, no_aws  # noqa: F811 - the fixture
+) -> None:
+    # The refusal stays (the record is the namespace's), but adding raptor
+    # back needs no rebuild: its stage builds the tree from every stored
+    # text unit, the other scope's too, so the message does not say one is
+    # needed.
+    config, providers, server, _ = _setup(tmp_path)
+    config.indexing.methodologies = [
+        Methodology.GRAPHRAG,
+        Methodology.LIGHTRAG,
+        Methodology.RAPTOR,
+    ]
+    first, second = _corpus(tmp_path / "a"), _second_scope(tmp_path)
+    for source, run in ((first, "run-a"), (second, "run-b")):
+        context = e2e._ingest(config, providers, source, tmp_path / run)
+        assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(providers)
+    assert "raptor" in record["methodologies"]
+
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    (second / "more.txt").write_text("Carrier ships for Bank.")
+    calls = len(server.chat_models)
+    with pytest.raises(ConfigurationError, match="leaves out raptor") as error:
+        e2e._ingest(config, providers, second, tmp_path / "run-b2")
+    message = str(error.value)
+    assert "needs a rebuild" not in message
+    assert "adding it back needs no rebuild" in message
+    assert len(server.chat_models) == calls
+    assert _record(providers) == record
+
+    # As the message says: a record without the tree (as a failed tree
+    # build leaves it) gets it back from a run of either scope, with no
+    # rebuild.
+    _drop_from_record(providers, IndexArtifact.SUMMARY_TREE)
+    assert "raptor" not in _record(providers)["methodologies"]
+    config.indexing.methodologies = [
+        Methodology.GRAPHRAG,
+        Methodology.LIGHTRAG,
+        Methodology.RAPTOR,
+    ]
+    context = e2e._ingest(config, providers, second, tmp_path / "run-b3")
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(providers)
+    assert record["mode"] == "incremental"
+    assert "raptor" in record["methodologies"]
+    assert set(e2e._registry(providers)) == {
+        "contract.txt",
+        "logistics.txt",
+        "freight.txt",
+        "notes.txt",
+        "more.txt",
+    }

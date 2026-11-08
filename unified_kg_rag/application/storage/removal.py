@@ -17,6 +17,7 @@ from unified_kg_rag.application.storage.stored_items import (
     _vector_stale,
 )
 from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+from unified_kg_rag.domain.ingestion.cache_keys import unbuilt_record_prefixes
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     RECORD_KINDS,
@@ -27,6 +28,7 @@ from unified_kg_rag.domain.ingestion.merge import (
     remove_claim_text_units,
     remove_text_units,
 )
+from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import Entity, Relationship
 from unified_kg_rag.ports.indexer import IndexingStats
 from unified_kg_rag.shared import NamespaceLeaseError, get_logger
@@ -826,6 +828,10 @@ class TextUnitRemoval:
         results: dict[str, IndexingStats] = {}
         vector = m.vector_indexer
         prefix = m.config.indexing.opensearch.text_units_index_prefix
+        # The records of a kind this run does not produce (claims with
+        # claims off) stay, as a reset keeps them: the units it extracted
+        # again name none, and a run that builds the kind again reuses them.
+        unbuilt = tuple(unbuilt_record_prefixes(m.config, artifacts_to_build(m.config)))
         for suffix, keys in sorted(m._removed_record_keys.items()):
             try:
                 naming: set[str] = set()
@@ -846,7 +852,11 @@ class TextUnitRemoval:
                     ).values()
                     for key in attribute_record_keys(attributes).values()
                 }
-                unused = sorted(keys - still_named)
+                unused = sorted(
+                    key
+                    for key in keys - still_named
+                    if not (unbuilt and key.startswith(unbuilt))
+                )
                 if unused:
                     logger.info(
                         "Deleting %d extraction records no text unit of '%s' "

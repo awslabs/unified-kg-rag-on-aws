@@ -189,7 +189,13 @@ indexing:
   false` keeps the Leiden pass and skips the report calls: the namespace
   holds `graphrag` for `local`, while `global` and `drift`, which answer
   from the reports, are refused naming the switch (a WARNING at load says
-  so) and `auto` leaves them out.
+  so) and `auto` leaves them out. Turning the switch off for a namespace
+  that holds reports, or claim extraction off for one that holds claims,
+  stops maintaining them like removing a methodology (below): refused while
+  the namespace holds another source scope's documents. Turning claim
+  extraction on for a namespace without claims rebuilds it once, as adding
+  a methodology does (the stored claim records are reused, so only the
+  units without one are asked).
 - **What the namespace holds.** Each run records it in the build record
   (`artifacts`, `methodologies`, and with the registry the `source_scopes`
   whose documents it holds). A query whose strategy reads a methodology
@@ -214,7 +220,9 @@ indexing:
   run with fewer is refused before any model call (`ConfigurationError`,
   exit 2, nothing written), naming the scopes: it would stop maintaining
   the methodology for their documents too, and adding it back needs the
-  rebuild a run of one corpus is refused. Run with the namespace's
+  rebuild a run of one corpus is refused (not for `raptor`: its tree is
+  built again from every stored text unit on the next run that selects it,
+  so the refusal says no rebuild is needed). Run with the namespace's
   methodologies, give the corpus a namespace of its own
   (`processing.document_parsing.index_value`), or rebuild from one corpus
   with `indexing.reset: true`, deleting the others. `insert_documents` and

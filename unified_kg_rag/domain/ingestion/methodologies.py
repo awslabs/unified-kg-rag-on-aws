@@ -84,14 +84,17 @@ OPTIONAL_STAGES: frozenset[PipelineStageType] = frozenset(
 
 # Artifacts an incremental run cannot add to a namespace that lacks them: it
 # builds them for its delta only (communities cluster the run's graph, the
-# relationship vectors embed the run's relationships). Adding one rebuilds
-# the namespace from its stored extractions instead. Not the summary tree:
-# its stage builds it over every stored text unit on any run.
+# relationship vectors embed the run's relationships, claims are extracted
+# from the run's text units), and its record keeps only what the stored one
+# names too. Adding one rebuilds the namespace from its stored extractions
+# instead. Not the summary tree: its stage builds it over every stored text
+# unit on any run.
 CORPUS_WIDE_ARTIFACTS: frozenset[IndexArtifact] = frozenset(
     {
         _A.RELATIONSHIP_VECTORS,
         _A.COMMUNITIES,
         _A.COMMUNITY_REPORTS,
+        _A.CLAIMS,
     }
 )
 
@@ -225,6 +228,37 @@ def missing_artifacts(
     if stored is None:
         return frozenset()
     return (artifacts_to_build(config) & CORPUS_WIDE_ARTIFACTS) - stored
+
+
+def dropped_artifacts(
+    record: Mapping[str, Any] | None, config: Config
+) -> frozenset[IndexArtifact]:
+    """The corpus-wide artifacts the namespace's build record names that a
+    run of ``config`` does not build: the record it writes no longer names
+    them, and building them again rebuilds the namespace
+    (``missing_artifacts``). Those of a methodology the run leaves out, and
+    those a switch turns off beside the methodologies it keeps (report
+    generation and claims). None without a record that names its
+    artifacts."""
+    stored = stored_artifacts(record)
+    if stored is None:
+        return frozenset()
+    return (stored & CORPUS_WIDE_ARTIFACTS) - artifacts_to_build(config)
+
+
+def switches_set_off(config: Config, artifacts: Iterable[IndexArtifact]) -> list[str]:
+    """The keys of the switches ``config`` sets false that turn any of
+    ``artifacts`` off (``ARTIFACT_SWITCHES``, in table order), as a message
+    names them."""
+    wanted = frozenset(artifacts)
+    off = []
+    for switch in ARTIFACT_SWITCHES:
+        value: Any = config
+        for part in switch.key.split("."):
+            value = getattr(value, part)
+        if switch.artifacts & wanted and not value:
+            off.append(switch.key)
+    return off
 
 
 def dropped_methodologies(

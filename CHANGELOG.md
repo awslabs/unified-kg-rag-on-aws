@@ -457,6 +457,13 @@ From a `main` checkout (formats and keys no release had):
   also asks again the community reports whose input held such a status (their input changed). Claim records stored
   since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again
   (#644).
+  since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again.
+- Claims and report switches: with claim extraction on and the registry on, a namespace whose build record does not
+  name claims (claims turned on after its build, or an incremental claims-off run since) is rebuilt once by its next
+  run from its stored extractions, asking claims only of the units without a stored claim record (every unit after
+  an incremental claims-off run of an earlier `main`, which deleted them). While a namespace holds other source
+  scopes' documents, that rebuild, and a run turning report generation or claim extraction off for a namespace that
+  holds reports or claims, are refused (exit 2): keep the switches the namespace was built with.
 - Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
   (#564, #589), also a run resumed after dying between its removal and its commit (#592), and a summary that kept
   the lines of a spelling a later run split off or lost those of a spelling a run folded in (#624), or the line of
@@ -801,6 +808,25 @@ From a `main` checkout (formats and keys no release had):
   answers stay through any number of resets without `graphrag`, and the claim records through any number with claims
   off (the second such reset dropped them, and adding them back asked the model again); the `VectorIndexer` port gains
   `extraction_record_keys`, whose "cannot" default keeps every record (#644). Every strategy class declares
+  registry's diff reads, `DocumentDelta.unchanged_suffixes`, rather than a second read of the records); while the
+  namespace holds other source scopes' documents, a run (`insert_documents` and `delete_documents` too) that would
+  drop a methodology it holds for them is refused before any model call (exit 2), naming the scopes and the ways out
+  (the namespace's methodologies, a namespace of its own, a reset), as one that would add a methodology by a rebuild
+  is, and so is one whose switches would stop building the reports or claims it holds
+  (`report_generation.enabled: false`, which keeps `graphrag` for `local`, or claim extraction off), naming the
+  switch (it passed, and its record
+  dropped them for every scope, so turning the switch back on was refused and `global` refused for all); for
+  `raptor` alone the refusal says adding it back needs no rebuild, its tree being built from every stored text unit;
+  the build record names the source scopes it holds (`source_scopes`, absent from older records), so a query's
+  refusal advises a rebuild only where one is allowed; a reset to fewer methodologies keeps the extraction
+  records, so adding one back extracts nothing again (#626), and so does any reset that builds nothing from them
+  (`raptor` alone, a second time too) (#640); a reset prunes only the kinds of record it produces, so the report
+  answers stay through any number of resets without `graphrag`, and the claim records through any number with
+  claims off (the second such reset dropped them, and adding them back asked the model again), and so do incremental
+  runs with claims off (they deleted the claim records of every unit they extracted again); claim extraction turned
+  on for a namespace without claims rebuilds it once, as an added methodology does (an incremental run extracted
+  them for its delta alone and its record never named them, so `local` did not read them); the
+  `VectorIndexer` port gains `extraction_record_keys`, whose "cannot" default keeps every record. Every strategy class declares
   `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that reads less declares its artifacts
   (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace that holds the text units, and
   `simple` sweeps only the indexes it holds (#607). A filter key is checked, after the methodology check, against the

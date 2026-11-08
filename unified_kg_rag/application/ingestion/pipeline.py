@@ -10,7 +10,7 @@ import threading
 import time
 import unicodedata
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -90,6 +90,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
 )
 from unified_kg_rag.domain.ingestion.methodologies import (
     SWITCHABLE_STAGES,
+    dropped_artifacts,
     dropped_methodologies,
     missing_artifacts,
     selected_stages,
@@ -97,6 +98,7 @@ from unified_kg_rag.domain.ingestion.methodologies import (
     stage_switched_off,
     stages_for,
     stored_artifacts,
+    switches_set_off,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import SeedConversion
 from unified_kg_rag.domain.models import (
@@ -115,8 +117,12 @@ from unified_kg_rag.domain.models import (
     validate_path_segment,
 )
 from unified_kg_rag.domain.models.methodology import (
+    ARTIFACT_SWITCHES,
     METHODOLOGY_PROFILES,
+    IndexArtifact,
     Methodology,
+    artifact_switches,
+    artifacts_of,
     methodologies_holding,
 )
 from unified_kg_rag.ports import DocStatusPort, GraphIndexer, VectorIndexer
@@ -186,6 +192,26 @@ class _Borrowed:
 
     def close(self) -> None:
         return None
+
+
+def _builders(
+    artifacts: Collection[IndexArtifact], record: Mapping[str, Any] | None
+) -> str:
+    """What makes a run build ``artifacts`` the namespace's ``record`` does
+    not name, as a refusal names it: ``indexing.methodologies``, with the
+    switch of each that a methodology the record holds already reads (a
+    switch turned back on, not a methodology added)."""
+    read = artifacts_of(methodologies_holding(stored_artifacts(record) or ()))
+    keys = {
+        min(
+            (s for s in ARTIFACT_SWITCHES if artifact in s.artifacts),
+            key=lambda s: len(s.artifacts),
+        ).key
+        for artifact in artifacts
+        if artifact in read and artifact_switches([artifact])
+    }
+    switches = ", ".join(f"{key}: true" for key in sorted(keys))
+    return f"indexing.methodologies{f' with {switches}' if switches else ''} builds"
 
 
 def _unless_switched_off(stage: PipelineStageType) -> Callable[[Config], bool]:
@@ -886,12 +912,13 @@ class DataIngestionPipeline:
             return
         held = (record or {}).get("methodologies") or []
         raise ConfigurationError(
-            f"indexing.methodologies builds {', '.join(sorted(a.value for a in missing))}, "
-            "which the index namespace does not hold: adding a methodology "
+            f"{_builders(missing, record)} {', '.join(sorted(a.value for a in missing))}, "
+            "which the index namespace does not hold: adding it "
             "rebuilds the namespace from every document, and "
             "insert_documents and delete_documents run only the documents "
             "they are given. Run them with the methodologies the namespace "
-            f"holds (indexing.methodologies: {', '.join(map(str, held)) or 'as built'}); "
+            f"holds (indexing.methodologies: {', '.join(map(str, held)) or 'as built'}, "
+            "with the artifact switches it was built with); "
             "or add the methodology with DataIngestionPipeline.run over a "
             "directory holding every document of the namespace, each a file "
             "named by its id, with processing.document_parsing.source_scope: "
@@ -1160,21 +1187,22 @@ class DataIngestionPipeline:
         added = ", ".join(sorted(a.value for a in missing))
         if others := other_source_scopes(self._doc_status, self.config, source_path):
             raise ConfigurationError(
-                f"indexing.methodologies reads {added}, which the index "
+                f"{_builders(missing, record)} {added}, which the index "
                 "namespace does not hold: building it needs a rebuild of the "
                 "namespace, and the namespace also holds documents of source "
                 f"scope(s) {', '.join(others)}, which a rebuild from this "
                 "corpus would delete. Keep the methodologies the namespace "
-                "was built with, give each corpus its own namespace "
+                "was built with (and the artifact switches it was built "
+                "with), give each corpus its own namespace "
                 "(processing.document_parsing.index_value), or rebuild it "
                 "from this corpus with indexing.reset: true, deleting them."
             )
         logger.warning(
-            "The index namespace holds no %s, which indexing.methodologies "
-            "(%s) reads: this run rebuilds it from the whole corpus "
-            "(indexing.reset), reusing the stored chunk boundaries, "
-            "extractions, summaries and vectors, so only the model calls "
-            "that build what it adds are new",
+            "The index namespace holds no %s, which this run builds "
+            "(indexing.methodologies: %s): it rebuilds the namespace from the "
+            "whole corpus (indexing.reset), reusing the stored chunk "
+            "boundaries, extractions, summaries and vectors, so only the "
+            "model calls that build what it adds are new",
             added,
             ", ".join(m.value for m in self.config.effective_methodologies),
         )
@@ -1184,15 +1212,21 @@ class DataIngestionPipeline:
     def _refuse_dropped_methodologies(
         self, record: Mapping[str, Any] | None, source_path: Path
     ) -> None:
-        """Refuse a run whose methodologies leave out one the namespace's
-        build record holds while the namespace also holds documents of other
-        source scopes: the build record is the namespace's, so the run would
-        stop maintaining the methodology for their documents too, and adding
-        it back needs a rebuild, which a run of one corpus refuses
-        (``_rebuild_for_added_artifacts``). Narrowing a namespace of one
-        source scope is allowed. Scopes this run retires do not count.
-        Called before any model call, on corpus runs and runs of document
-        changes (``insert_documents``, ``delete_documents``) alike.
+        """Refuse a run that stops maintaining what the namespace's build
+        record holds while the namespace also holds documents of other
+        source scopes: a methodology its methodologies leave out, or a
+        corpus-wide artifact a switch turns off beside the methodologies it
+        keeps (community reports without report generation, claims without
+        claim extraction; ``dropped_artifacts``). The build record is the
+        namespace's, so the run would stop maintaining it for their
+        documents too, and building a corpus-wide artifact again needs a
+        rebuild, which a run of one corpus refuses
+        (``_rebuild_for_added_artifacts``); the summary tree alone does not
+        (its stage builds it from every stored text unit), and the message
+        says so. Narrowing a namespace of one source scope is allowed.
+        Scopes this run retires do not count. Called before any model call,
+        on corpus runs and runs of document changes (``insert_documents``,
+        ``delete_documents``) alike.
 
         Raises:
             ConfigurationError: Such a run.
@@ -1200,7 +1234,9 @@ class DataIngestionPipeline:
         """
         assert self._doc_status is not None
         dropped = dropped_methodologies(record, self.config)
-        if not dropped:
+        lost = dropped_artifacts(record, self.config)
+        switched = lost & self.config.artifacts_switched_off
+        if not dropped and not switched:
             return
         retired = {
             normalize_source_scope(s) for s in self.config.indexing.retire_source_scopes
@@ -1215,20 +1251,58 @@ class DataIngestionPipeline:
         held = ", ".join(
             m.value for m in methodologies_holding(stored_artifacts(record) or ())
         )
+        stops = []
+        if dropped:
+            stops.append(
+                f"indexing.methodologies ({', '.join(m.value for m in self.config.effective_methodologies)}) "
+                f"leaves out {', '.join(m.value for m in dropped)}"
+            )
+        if switched:
+            stops.append(
+                " and ".join(
+                    f"{key}: false" for key in switches_set_off(self.config, switched)
+                )
+                + f" stops building {', '.join(sorted(a.value for a in switched))}"
+            )
+        if lost:
+            back = (
+                f"building {', '.join(sorted(a.value for a in lost))} again "
+                "needs a rebuild of the namespace from one corpus, which "
+                "deletes the others"
+            )
+        elif dropped == (Methodology.RAPTOR,):
+            # Its stage builds the tree from every stored text unit, the
+            # other scopes' too, on the next run that selects it.
+            back = (
+                "adding it back needs no rebuild (the next run that selects "
+                "it builds the summary tree from every stored text unit), but "
+                "until then the namespace serves it to none of them"
+            )
+        else:
+            back = (
+                "adding it back needs a rebuild of the namespace from one "
+                "corpus, which deletes the others"
+            )
         raise ConfigurationError(
-            f"indexing.methodologies ({', '.join(m.value for m in self.config.effective_methodologies)}) "
-            f"leaves out {', '.join(m.value for m in dropped)}, which the index "
-            "namespace holds for the documents of all its source scopes, "
-            f"among them {', '.join(others)}: this run would stop maintaining "
-            "it for those too, and adding it back needs a rebuild of the namespace "
-            "from one corpus, which deletes the others. Run with the "
-            f"methodologies the namespace holds (indexing.methodologies: {held}, "
-            "with the artifact switches it was built with); give each corpus "
-            "its own namespace (processing.document_parsing.index_value), "
-            "which extracts it again; retire a scope that is this corpus "
-            "before a move (indexing.retire_source_scopes); or rebuild the "
-            "namespace from this corpus with indexing.reset: true, deleting "
-            "the others."
+            f"{'; '.join(stops)}, which the index namespace holds for the "
+            "documents of all its source scopes, among them "
+            f"{', '.join(others)}: this run would stop maintaining it for "
+            f"those too, and {back}. Run with what the namespace holds "
+            f"(indexing.methodologies: {held}, with the artifact switches it "
+            "was built with"
+            + (
+                ": "
+                + ", ".join(
+                    f"{key}: true" for key in switches_set_off(self.config, switched)
+                )
+                if switched
+                else ""
+            )
+            + "); give each corpus its own namespace "
+            "(processing.document_parsing.index_value), which extracts it "
+            "again; retire a scope that is this corpus before a move "
+            "(indexing.retire_source_scopes); or rebuild the namespace from "
+            "this corpus with indexing.reset: true, deleting the others."
         )
 
     def _incremental_delta(self, context: PipelineContext | None) -> bool:

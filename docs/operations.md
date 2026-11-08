@@ -237,7 +237,8 @@ Then deploy and start runs as usual:
   `graphrag`, `lightrag` or `hipporag` to a namespace that lacks their
   artifacts rebuilds the namespace once (a WARNING says so), and is refused
   (exit 2, nothing written) when the namespace holds another source scope
-  ([Methodology profiles](./guides/ingest.md#methodology-profiles)). Adding
+  ([Methodology profiles](./guides/ingest.md#methodology-profiles)), and so
+  does turning claim extraction on for a namespace without claims. Adding
   `raptor` builds only the summary tree, from the stored text units, an
   unchanged corpus included: plan for its calls and memory
   ([Capacity sizing](#capacity-sizing)).
@@ -250,7 +251,10 @@ Then deploy and start runs as usual:
   artifacts gone, one with no document change too, and its strategies are
   refused from then on. While the namespace also holds another source
   scope's documents, the run is refused instead (exit 2, nothing written),
-  naming them ([Methodology profiles](./guides/ingest.md#methodology-profiles)). Nothing is
+  naming them ([Methodology profiles](./guides/ingest.md#methodology-profiles)), and so
+  is one that turns report generation or claim extraction off for a
+  namespace that holds reports or claims; for `raptor` alone the refusal
+  says adding it back needs no rebuild. Nothing is
   deleted: a [one-off](#run-a-one-off-ingestion-task) run with
   `UKR__INDEXING__RESET=true` empties the community-reports index and drops
   the community vertices.
