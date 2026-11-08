@@ -206,8 +206,11 @@ models:
   Bedrock reserves input + `max_tokens` against the tokens-per-minute quota
   when a request starts; asking for the model maximum throttles concurrent
   ingestion. Long-output prompts derive a higher floor that wins (by default
-  23192 for graph extraction and gleaning, 18992 for document translation,
-  29792 for claims), rising with their per-chunk limits. The short-answer
+  23192 for graph extraction and gleaning, 29792 for claims): the longest
+  answer their per-chunk limits allow plus the thinking budget of the effort
+  the call runs at (the role's tier's ingestion effort, `high` 8192 by
+  default; document translation, on the fast tier at `low`, 2048, stays under
+  the cap). The short-answer
   query calls ask for less (`search.output_ceilings`, 4096 each: the
   router, the query entity and keyword extractions, the dynamic-selection
   report ratings; `evaluation.answer_span_output_ceiling` for the answer-span

@@ -272,7 +272,9 @@ class GraphGleaner(BaseProcessor):
             factory=self.factory,
             enable_output_fixing=True,
             output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
-            min_output_tokens=GraphRefinementPrompt.output_floor(self.config),
+            min_output_tokens=GraphRefinementPrompt.output_floor(
+                self.config, ModelRole.FIXING
+            ),
             output_tags=["refinement_plan"],
             parser_class=RefinementOutputParser,
         )

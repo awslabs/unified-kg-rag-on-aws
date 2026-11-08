@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from typing import TYPE_CHECKING
 
+from unified_kg_rag.domain.models.config import ModelRole
+
 from .base import BasePrompt, chunk_output_floor
 
 if TYPE_CHECKING:
@@ -237,14 +239,16 @@ class TextTranslationPrompt(BasePrompt):
     fragment, its markup stays as it is) and translated whole."""
 
     prompt_key = "text_translation"
+    model_role = ModelRole.TRANSLATION
 
     input_variables = ["text", "target_language"]
 
     @classmethod
-    def output_floor(cls, config: "Config") -> int:
-        # The output is the whole translated chunk: 8000 chars x 1.35 + 8192 =
-        # 18992 by default.
-        return chunk_output_floor(config)
+    def output_floor(cls, config: "Config", role: ModelRole | None = None) -> int:
+        # The output is the whole translated chunk: 8000 chars x 1.35 + 2048
+        # (the fast tier's low effort) = 12848 by default, under the default
+        # 16384 cap, which then applies.
+        return chunk_output_floor(config, role or cls.model_role)
 
     system_prompt_template = """You are a professional translator of technical and specialized documents. You translate
 one passage of a larger document at a time, so a passage may begin or end in the middle of a sentence.

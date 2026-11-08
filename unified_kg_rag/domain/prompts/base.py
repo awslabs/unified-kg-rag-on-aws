@@ -32,9 +32,6 @@ if TYPE_CHECKING:
 # uses), and the Claude 4.7+ tokenizer counts up to 1.35x the tokens of older
 # Claude tokenizers. English runs at ~0.25-0.35, so this is 4-5x headroom there.
 WORST_CASE_TOKENS_PER_CHAR = 1.35
-# Adaptive-thinking models (Claude 4.7+) count their reasoning toward
-# max_tokens, so every floor adds this much on top of the answer itself.
-THINKING_HEADROOM_TOKENS = 8192
 # One extracted entity or relationship record in the XML answer: ~35 tokens of
 # tags, a name or source/target pair and a type (~15), a 1-2 sentence
 # description (~40), a score and a short verbatim evidence span (~20) is ~110
@@ -49,17 +46,36 @@ def max_chunk_chars(config: "Config") -> int:
     return max_chars(longest, chunking.length_unit)
 
 
-def chunk_output_floor(config: "Config", copies: int = 1) -> int:
+def thinking_tokens(config: "Config", role: "ModelRole | None") -> int:
+    """The reasoning budget an ingestion call on ``role``'s model is sized
+    for: its tier's ingestion effort (``aws.bedrock.tier_effort``) in
+    ``EFFORT_THINKING_TOKENS``, the same budget an output ceiling leaves.
+    Adaptive-thinking models count their reasoning toward max_tokens, so
+    every floor adds it on top of the answer itself. The default tier's
+    without a role."""
+    from unified_kg_rag.domain.models.config import (
+        EFFORT_THINKING_TOKENS,
+        ModelPurpose,
+    )
+
+    tier = config.model_tier(config.model_id(role)) if role is not None else "default"
+    effort = config.aws.bedrock.tier_effort(tier, ModelPurpose.INGESTION)
+    return EFFORT_THINKING_TOKENS[effort]
+
+
+def chunk_output_floor(
+    config: "Config", role: "ModelRole | None", copies: int = 1
+) -> int:
     """Floor for an answer up to ``copies`` x a chunk's text, plus reasoning."""
     answer = copies * max_chunk_chars(config) * WORST_CASE_TOKENS_PER_CHAR
-    return int(answer) + THINKING_HEADROOM_TOKENS
+    return int(answer) + thinking_tokens(config, role)
 
 
-def graph_output_floor(config: "Config") -> int:
+def graph_output_floor(config: "Config", role: "ModelRole | None") -> int:
     """Floor for a per-chunk graph answer at the configured record caps."""
     extraction = config.processing.graph_extraction
     records = extraction.max_entities_per_chunk + extraction.max_relationships_per_chunk
-    return records * TOKENS_PER_GRAPH_RECORD + THINKING_HEADROOM_TOKENS
+    return records * TOKENS_PER_GRAPH_RECORD + thinking_tokens(config, role)
 
 
 def fill_slots(template: str, values: Mapping[str, str]) -> str:
@@ -141,8 +157,11 @@ class BasePrompt:
     required_output_tags: ClassVar[tuple[str, ...]] = ()
 
     @classmethod
-    def output_floor(cls, config: "Config") -> int:
-        """Output-token floor for this prompt under ``config``.
+    def output_floor(cls, config: "Config", role: "ModelRole | None" = None) -> int:
+        """Output-token floor for this prompt under ``config``, on the model
+        of ``role`` (the prompt's ``model_role`` by default; the output
+        fixer's when it re-emits the answer), whose reasoning it leaves room
+        for (:func:`thinking_tokens`).
 
         Prompts whose longest answer depends on configured limits (chunk size,
         per-chunk entity caps, report length) override this to derive it; the

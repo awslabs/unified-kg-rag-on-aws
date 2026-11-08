@@ -161,7 +161,9 @@ class CommunityDetector:
                 factory=self.factory,
                 enable_output_fixing=True,
                 output_fixing_model_id=self.config.model_id(ModelRole.FIXING),
-                min_output_tokens=CommunityReportPrompt.output_floor(self.config),
+                min_output_tokens=CommunityReportPrompt.output_floor(
+                    self.config, ModelRole.FIXING
+                ),
                 output_tags=[
                     "community_name",
                     "summary",

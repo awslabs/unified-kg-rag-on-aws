@@ -50,11 +50,11 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import (
     EFFORT_LEVELS,
+    EFFORT_THINKING_TOKENS,
     ModelTier,
     TransientRetryConfig,
 )
 from unified_kg_rag.ports.model_factory import (
-    EFFORT_THINKING_TOKENS,
     EmbeddingModelInfo,
     LanguageModelInfo,
     RerankModelInfo,
