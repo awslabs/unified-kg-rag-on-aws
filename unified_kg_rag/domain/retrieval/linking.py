@@ -32,8 +32,8 @@ from difflib import SequenceMatcher
 from typing import Literal
 
 from unified_kg_rag.domain.ingestion.names import compact_name_key
+from unified_kg_rag.domain.languages.legal_forms import latin_legal_form
 from unified_kg_rag.domain.models import RetrievalResult
-from unified_kg_rag.shared.utils.legal_forms import latin_legal_form
 from unified_kg_rag.shared.utils.scripts import DENSE_SCRIPT_LETTERS
 
 __all__ = ["LinkPolicy", "choose_links", "covers", "hit_name", "name_terms"]
