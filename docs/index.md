@@ -20,7 +20,7 @@ the project? Read the [Overview](./concepts/overview.md) first.
 
 | Type | Page | Covers |
 |---|---|---|
-| Tutorial | [README Quickstart](../README.md#quickstart) | Choose how to run, install, first ingestion, query and evaluation |
+| Tutorial | [README Quickstart](../README.md#quickstart) | Choose how to run, install, a first ingestion and query; [Getting started locally](./getting-started/local.md) adds an evaluation |
 | Tutorial | [Getting started locally](./getting-started/local.md), [Getting started on AWS](./getting-started/aws.md) | Step-by-step first runs: a sample corpus without AWS (GraphRAG and LightRAG queries, a judge-free evaluation); prerequisites, required models, install, authentication and IAM for existing Neptune and OpenSearch |
 | Explanation | [Overview](./concepts/overview.md) | Architecture, pipeline, the methodologies and their profiles, what the framework adds beyond the papers, limitations |
 | Explanation | [Defaults and evidence](./concepts/defaults-and-evidence.md) | The measured defaults, how they were measured, dated prices, how to reproduce |

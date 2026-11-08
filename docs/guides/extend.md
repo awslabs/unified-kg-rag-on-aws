@@ -92,8 +92,9 @@ This section is the single reference for extending the framework. Extensions com
   - `boto_session()`: the run's AWS session (the injected `Providers`
     one, else one from `aws.profile_name` and `aws.region_name`), built on
     the first call only, and `client(service)`, a client in the region the
-    config sends that service to (`aws.bedrock_region` for Bedrock,
-    `aws.region_name` for the rest).
+    config sends that service to (for Bedrock `aws.bedrock.region_name`,
+    else `aws.region_name`, read as the `config.aws.bedrock_region`
+    property; `aws.region_name` for the rest).
   - `location`: `path` without the userinfo, query and fragment of a URL.
     Log and raise with it, never with `path` or the secret's value.
 

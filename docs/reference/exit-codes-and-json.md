@@ -13,9 +13,35 @@ prints. Every flag: [CLI Reference](./cli.md); what an error message means:
 |---|---|
 | `0` | Success |
 | `1` | The run failed: a failed stage or query (in `run-ingestion` also a `ConfigurationError` a stage meets, an unreachable store or an unreachable model server), a breached `--max-failure-rate`, a failed `run-eval --fail-if` gate, a failed upload, nothing rendered or a failed renderer |
-| `2` | Usage or configuration error: a bad flag, a `run-rag` or `run-eval` `--suffix` nothing was ingested under (the message lists the ingested ones), a filter key no index declares, a `run-rag` or `run-eval` `--search-strategy` (or a `run-eval` query's own strategy) whose methodology the index namespace does not hold ([methodology profiles](../concepts/overview.md#methodology-profiles)), a missing or invalid input (a `run-eval` dataset, a `run-visualization` data file, a `prepare-benchmark` data file), an invalid config file or override, an unset store endpoint, a missing extra the selected providers need (`local`) (all before any work), or a `ConfigurationError` found while running outside a stage, such as `run-ingestion`'s pre-run refusal before its first model call (the search engine refused to create an index the run needs, an incremental run's live indices, a deletion-only run's included, were built for other embedding, language or registry settings, an incremental run would add a methodology to a namespace that also holds other source scopes' documents, or the embedding model returned vectors of another dimension than `models.embedding.dimension` for the probe text it embeds first) |
+| `2` | Usage or configuration error, before any work or outside a stage ([exit code 2](#exit-code-2)) |
 | `130` | Interrupted with Ctrl-C (SIGINT) |
 | `143` | Stopped by SIGTERM (ECS `StopTask`, a Step Functions timeout); `run-ingestion` checkpoints its finished stages first, and `run-eval` uploads the finished runs' results to an `s3://` output (or keeps them locally and logs the path) |
+
+<a id="exit-code-2"></a>
+
+Exit code `2` covers:
+
+- **Usage.** A bad flag.
+- **What the run reads.** A `run-rag` or `run-eval` `--suffix` nothing was
+  ingested under (the message lists the ingested ones); a filter key no
+  index declares; a `run-rag` or `run-eval`
+  `--search-strategy` (or a `run-eval` query's own strategy) whose
+  methodology the index namespace does not hold
+  ([methodology profiles](../concepts/overview.md#methodology-profiles));
+  a missing or invalid input (a `run-eval` dataset, a `run-visualization`
+  data file, a `prepare-benchmark` data file).
+- **Configuration**, all before any work: an invalid config file or
+  override, an unset store endpoint, or a missing extra the selected
+  providers need (`local`).
+- **A `ConfigurationError` found outside a stage**, such as `run-ingestion`'s
+  pre-run refusal before its first model call:
+  - the search engine refused to create an index the run needs;
+  - an incremental run's live indices (a deletion-only run's included) were
+    built for other embedding, language or registry settings;
+  - an incremental run would add a methodology to a namespace that also
+    holds other source scopes' documents;
+  - the embedding model returned vectors of another dimension than
+    `models.embedding.dimension` for the probe text it embeds first.
 
 Flags must be spelled out in full: a prefix such as `--output` is rejected.
 
