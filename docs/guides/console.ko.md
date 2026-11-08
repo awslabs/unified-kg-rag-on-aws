@@ -83,7 +83,8 @@ uv run --no-dev --extra console --extra local python console/demo/demo.py --mode
 ```
 
 가짜 모델과 Ollama는 로컬 모드로 실행되므로 `local` extra도 필요합니다(`bedrock`은
-필요 없음). 데모는 무엇을 쓰거나 수집하기 전에 두 extra를 확인합니다.
+필요 없음). 데모는 무엇을 쓰거나 수집하기 전에 두 extra와 빌드된 웹 클라이언트를
+확인하며, 데모에 SIGTERM을 보내면 데모가 띄운 콘솔도 멈춥니다.
 
 | `--models` | 답하는 쪽 | 필요한 것 |
 |---|---|---|

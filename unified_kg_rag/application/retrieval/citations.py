@@ -20,8 +20,7 @@ docs/design.md §7.1.
 
 from __future__ import annotations
 
-import json
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,7 +29,12 @@ from unified_kg_rag.domain.ingestion.report_references import (
     FINDINGS_TEXT_UNITS_FIELD,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_UNIT_PREFIX
-from unified_kg_rag.domain.models import Citation, CitedDocument
+from unified_kg_rag.domain.models import (
+    Citation,
+    CitedDocument,
+    Source,
+)
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.citations import cited_markers
 
 __all__ = [
@@ -62,21 +66,6 @@ class _Unit:
     file_path: str | None
     page: int | None
     page_end: int | None
-
-
-def _ids(value: Any) -> list[str]:
-    """A stored id list as strings: a graph store may return a list as its
-    JSON string, or one id as the value."""
-    if isinstance(value, str) and value.startswith("["):
-        try:
-            value = json.loads(value)
-        except ValueError:
-            return [value]
-    if isinstance(value, str):
-        return [value] if value else []
-    if isinstance(value, list | tuple | set):
-        return [str(v) for v in value if v is not None and v != ""]
-    return []
 
 
 def _first_text(*values: Any) -> str | None:
@@ -117,9 +106,7 @@ def unit_from_metadata(metadata: dict[str, Any], fallback_id: str | None) -> _Un
     attributes = metadata.get("attributes")
     attributes = attributes if isinstance(attributes, dict) else {}
     unit_id = _first_text(metadata.get("id"), fallback_id) or ""
-    file_name = _first_text(attributes.get("file_name"), metadata.get("file_name"))
-    if file_name is not None:
-        file_name = file_name.replace("\\", "/").rsplit("/", 1)[-1]
+    file_name = source_fields.file_name(metadata)
     page = _page(attributes.get("page_start"))
     page_end = _page(attributes.get("page_end"))
     return _Unit(
@@ -136,18 +123,7 @@ def unit_from_metadata(metadata: dict[str, Any], fallback_id: str | None) -> _Un
     )
 
 
-def _title(section_type: str, metadata: dict[str, Any]) -> str | None:
-    if section_type == _TEXT:
-        return None
-    if section_type == "relationship":
-        source = _first_text(metadata.get("source_name"), metadata.get("source"))
-        target = _first_text(metadata.get("target_name"), metadata.get("target"))
-        if source and target:
-            return f"{source} -> {target}"
-    return _first_text(metadata.get("title"), metadata.get("name"))
-
-
-def citation_from_entry(marker: int, entry: dict[str, Any]) -> Citation:
+def citation_from_entry(marker: int, entry: Source | Mapping[str, Any]) -> Citation:
     """The citation of a numbered section from its reported source entry.
 
     A passage's citation is complete; a graph section's names its lineage,
@@ -161,7 +137,11 @@ def citation_from_entry(marker: int, entry: dict[str, Any]) -> Citation:
         marker=marker,
         section_type=section_type,
         source_id=_first_text(entry.get("source"), metadata.get("source_id")),
-        title=_title(section_type, metadata),
+        title=(
+            None
+            if section_type == _TEXT
+            else source_fields.title(section_type, metadata)
+        ),
         provenance=provenance,
         iri=iri,
     )
@@ -174,9 +154,11 @@ def citation_from_entry(marker: int, entry: dict[str, Any]) -> Citation:
         return citation
     # A report whose findings cite stored records rests on their units
     # (the strategy's ``findings_text_unit_ids``), not on its community's.
-    findings = _ids(metadata.get(FINDINGS_TEXT_UNITS_FIELD))
-    citation.text_unit_ids = findings or _ids(metadata.get("text_unit_ids"))
-    if not citation.text_unit_ids and (documents := _ids(metadata.get("document_ids"))):
+    findings = source_fields.listed(metadata, FINDINGS_TEXT_UNITS_FIELD)
+    citation.text_unit_ids = findings or source_fields.listed(metadata, "text_unit_ids")
+    if not citation.text_unit_ids and (
+        documents := source_fields.listed(metadata, "document_ids")
+    ):
         # A report holds its documents' ids beside its lineage; with no
         # unit to name their files, the ids are still what it rests on.
         citation.documents = [CitedDocument(document_id=d) for d in documents]

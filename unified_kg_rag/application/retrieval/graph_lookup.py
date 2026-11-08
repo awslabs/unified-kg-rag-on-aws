@@ -36,6 +36,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.domain.models.schema import ExtractionSchema
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
@@ -302,15 +303,9 @@ async def text_unit_file_names(
 
 
 def file_name(metadata: dict[str, Any]) -> str | None:
-    """The file name a text unit's stored ``attributes`` name (the last
-    path segment of ``file_name``, else of ``file_path``)."""
-    attributes = metadata.get("attributes")
-    for source in (attributes if isinstance(attributes, dict) else {}, metadata):
-        for key in ("file_name", "file_path"):
-            value = source.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip().replace("\\", "/").rsplit("/", 1)[-1]
-    return None
+    """The file name a text unit's stored ``attributes`` name
+    (``source_fields.file_name``)."""
+    return source_fields.file_name(metadata)
 
 
 class NamespaceDescription(BaseModel):

@@ -50,6 +50,8 @@
   "ask.evidenceFor": "“{{question}}”的来源",
   "ask.evidenceEmptyTitle": "暂无回答",
   "ask.evidenceWaiting": "正在等待回答",
+  "ask.evidenceNone": "没有来源",
+  "ask.evidenceNoneBody": "该问题未得到回答，因此没有读取任何来源。",
   "ask.evidenceEmpty": "回答返回后，来源会按回答模型读取的顺序显示在这里。打开任一来源即可查看其溯源路径。",
   "ask.routing.router": "auto 选择了 {{strategy}}：路由器从 {{candidates}} 中选出了它。",
   "ask.routing.only_candidate": "auto 使用了 {{strategy}}：它是此索引上唯一能应用这些筛选条件的策略。",

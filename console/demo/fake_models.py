@@ -368,6 +368,10 @@ def respond(system: str, human: str) -> tuple[str, bool]:
         return json.dumps({"reason": "It names the parties.", "rating": 4}), False
     if "community analysis" in system:
         return community_report(human), False
+    if "summaries of a summary tree" in system:
+        # RAPTOR's cluster summary: the passages' sentences, each once.
+        passages = _between(human, "<passages>\n", "\n</passages>")
+        return " ".join(dict.fromkeys(_sentences(passages)))[:600], False
     if "knowledge-graph editor" in system:
         descriptions = _between(human, "<descriptions>", "</descriptions>")
         return " ".join(dict.fromkeys(_sentences(descriptions)))[:600], False

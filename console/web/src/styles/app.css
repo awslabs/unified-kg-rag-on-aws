@@ -414,40 +414,42 @@ kbd {
     display: none;
   }
 }
+/* The top bar collapses into its menu when its row does not fit
+   (useCompactNav measures it: the links' width follows the language). */
+.nav[data-compact="true"] .nav-inner {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: var(--nav-height);
+  padding: var(--space-2) var(--space-4);
+  row-gap: var(--space-2);
+}
+.nav[data-compact="true"] .nav-menu {
+  display: inline-flex;
+  align-items: center;
+}
+.nav[data-compact="true"] .nav-list,
+.nav[data-compact="true"] .nav-tools {
+  display: none;
+  width: 100%;
+  order: 3;
+}
+.nav[data-compact="true"][data-open="true"] .nav-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-bottom: var(--space-2);
+}
+.nav[data-compact="true"][data-open="true"] .nav-tools {
+  display: flex;
+  flex-wrap: wrap;
+  padding: var(--space-2) 0 var(--space-3);
+  border-top: 1px solid var(--rule);
+  order: 4;
+}
+.nav[data-compact="true"] .nav-tools .field-label {
+  display: inline;
+}
 @media (max-width: 1040px) {
-  .nav-inner {
-    flex-wrap: wrap;
-    height: auto;
-    min-height: var(--nav-height);
-    padding: var(--space-2) var(--space-4);
-    row-gap: var(--space-2);
-  }
-  .nav-menu {
-    display: inline-flex;
-    align-items: center;
-  }
-  .nav-list,
-  .nav-tools {
-    display: none;
-    width: 100%;
-    order: 3;
-  }
-  .nav[data-open="true"] .nav-list {
-    display: grid;
-    gap: 2px;
-    margin: 0;
-    padding-bottom: var(--space-2);
-  }
-  .nav[data-open="true"] .nav-tools {
-    display: flex;
-    flex-wrap: wrap;
-    padding: var(--space-2) 0 var(--space-3);
-    border-top: 1px solid var(--rule);
-    order: 4;
-  }
-  .nav-tools .field-label {
-    display: inline;
-  }
   .main {
     padding: var(--space-4) var(--space-4) var(--space-6);
   }

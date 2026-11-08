@@ -741,19 +741,21 @@ From a `main` checkout (formats and keys no release had):
   by default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
   seed-graph provenance; a text record's document id as its text unit stores it; a structured query's
-  `query_result` with its table up to 6000 characters and the entities it returned, by id and name). `kg_answer` takes
-  the caller's conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the server
-  keeps none) (#635, #643). The namespace is fixed at start (`--suffix`, else `index_value`) unless
-  `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the `mcp.max_*` bounds limit what a call
-  may ask and costs (`mcp.strategies` binds the chain's new `allowed_strategies`: `auto` routes, and falls back, only
-  within it, and is refused before any model call when the namespace serves none of it); every call runs under
-  `search.query_timeout_seconds` and returns its model `usage`. The graph tools read the stores through the chain's
-  retrievers and make no model call; they look names, IRIs and ids up in NFC (and a name again in NFKC), as search
-  composes a query. Over HTTP only POST is served (405 otherwise), and on any loopback address the `Host` and `Origin`
-  headers must name it or a loopback name (421/403). `build_mcp_server` and `build_mcp_app` (package root; the latter
-  the stateless ASGI application, its `Host`/`Origin` checks on with `allowed_hosts`) mount the same server in a
-  host's application; neither changes the chain given. Under `processing.ignore_errors` the error answer names its
-  error in `metadata.error_type`. Guide: [MCP server](docs/guides/mcp.md).
+  `query_result` with its table up to 6000 characters and the entities it returned, by id and name). `kg_answer`
+  returns the answer first, then by default only the records it cites (`records`: `cited`, `all`, `none`; every
+  source when it cites none), and takes the caller's conversation as an optional bounded `history` for a follow-up
+  question (`RAGInput.history`; the server keeps none) (#635, #643). The namespace is fixed at start (`--suffix`,
+  else `index_value`) unless `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the
+  `mcp.max_*` bounds limit what a call may ask and costs (`mcp.strategies` binds the chain's new
+  `allowed_strategies`: `auto` routes, and falls back, only within it, and is refused before any model call when the
+  namespace serves none of it); every call runs under `search.query_timeout_seconds` and returns its model `usage`.
+  The graph tools read the stores through the chain's retrievers and make no model call; they look names, IRIs and
+  ids up in NFC (and a name again in NFKC), as search composes a query. Over HTTP only POST is served (405
+  otherwise), and on any loopback address the `Host` and `Origin` headers must name it or a loopback name (421/403).
+  `build_mcp_server` and `build_mcp_app` (package root; the latter the stateless ASGI application, its
+  `Host`/`Origin` checks on with `allowed_hosts`) mount the same server in a host's application; neither changes the
+  chain given. Under `processing.ignore_errors` the error answer names its error in `metadata.error_type`. Guide:
+  [MCP server](docs/guides/mcp.md).
 - Structured graph queries, opt-in and unmeasured (#630): the `structured` search strategy answers counts, rankings,
   lists, paths between two named entities and seed-entity properties from a query the graph store runs. One planner
   call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`;
@@ -833,8 +835,8 @@ From a `main` checkout (formats and keys no release had):
   the rest dimmed), to the brief in `console/web/DESIGN.md`; `console/demo/demo.py` prepares a synthetic corpus of
   the formats the core install parses (multi-page PDFs, whose citations name their page, Markdown, HTML, CSV, JSON
   and text), a dataset and a config (kept on a restart, `--reset-config` to write it again) for fake, Ollama or
-  Bedrock models, and stops before it writes anything without the `console` extra, or the `local` extra the fake and
-  Ollama models need ([Console](docs/guides/console.md)).
+  Bedrock models, and stops before it writes anything without the `console` extra, the built web client, or the
+  `local` extra the fake and Ollama models need; a SIGTERM to it stops its console ([Console](docs/guides/console.md)).
 - `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose inputs
   changed (#631).
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
@@ -1517,6 +1519,12 @@ From a `main` checkout (formats and keys no release had):
 - Docs: the design reference is split by topic. [`docs/design.md`](docs/design.md) is an index of every section
   with a summary and a link, the sections are in `docs/design/`, and the extension guide (§15) is
   [`docs/guides/extend.md`](docs/guides/extend.md); section numbers and heading ids are unchanged.
+- `RAGOutput.sources` is typed: each is a `Source` (`content`, `source`, `score`, `metadata`; package root), a
+  `TypedDict`, so still the plain dict it was. The id lists of a result's metadata (`text_unit_ids`, `document_ids`,
+  `entity_ids`, `community_ids`, `source_kinds`, ...) are always lists of strings: a graph store's one-element value
+  or JSON list string is decoded where the result is made. The console, MCP `kg_answer` and `run-rag` read an answer
+  through one view, so they name a source's file (the last path segment, its stored attributes first), title (a
+  relationship's `A -> B`) and `[n]` alike.
 
 ### Fixed
 Bugs present in 0.2.3.

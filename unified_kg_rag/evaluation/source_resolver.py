@@ -17,7 +17,6 @@ search uses to fetch chunks), caching each id once per index suffix.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from pathlib import Path
 from typing import Any, Protocol
 
 from unified_kg_rag.domain.models import (
@@ -26,6 +25,7 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchType,
 )
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -53,16 +53,9 @@ class _DocumentRetriever(Protocol):
 
 
 def file_name_of(payload: dict[str, Any]) -> str | None:
-    """File name from a source/hit payload (top-level or under ``attributes``)."""
-    candidates = [payload]
-    if isinstance(payload.get("attributes"), dict):
-        candidates.append(payload["attributes"])
-    for candidate in candidates:
-        for key in ("file_name", "file_path"):
-            value = candidate.get(key)
-            if isinstance(value, str) and value.strip():
-                return Path(value.strip()).name
-    return None
+    """File name from a source/hit payload (``source_fields.file_name``:
+    under ``attributes`` first, then top-level; the last path segment)."""
+    return source_fields.file_name(payload)
 
 
 class TextUnitFileResolver:

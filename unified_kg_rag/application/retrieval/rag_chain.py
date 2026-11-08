@@ -4,7 +4,6 @@ import asyncio
 import concurrent.futures
 import contextvars
 import functools
-import json
 import threading
 import time
 import unicodedata
@@ -102,16 +101,9 @@ from unified_kg_rag.application.retrieval import (
 )
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.report_references import REPORT_FINDINGS_FIELD
-from unified_kg_rag.domain.ingestion.seed_graph import (
-    DOCUMENT_SOURCE_KIND,
-    SEED_FILTER_KEY,
-    SEED_SOURCE_KIND,
-    SOURCE_KINDS_FIELD,
-)
 from unified_kg_rag.domain.models import (
     Citation,
     Config,
-    Constants,
     IndexArtifact,
     LanguageCode,
     Methodology,
@@ -122,6 +114,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    Source,
 )
 from unified_kg_rag.domain.prompts import (
     AnswerGenerationPrompt,
@@ -138,6 +131,7 @@ from unified_kg_rag.domain.prompts.retrieval import (
     QUERY_RESULT_INSTRUCTIONS,
     describe_routable_strategies,
 )
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.abstention import (
     ABSTENTION_REASON_KEY,
     CONTEXT_SUFFICIENT_KEY,
@@ -153,7 +147,6 @@ from unified_kg_rag.domain.retrieval.degradation import (
     DegradationStep,
 )
 from unified_kg_rag.domain.retrieval.filters import (
-    ATTRIBUTE_KEY_PREFIX,
     check_filter_values,
     typed_filter_values,
 )
@@ -163,6 +156,7 @@ from unified_kg_rag.domain.retrieval.no_context import (
     is_no_context_answer,
     no_context_answer,
 )
+from unified_kg_rag.domain.retrieval.source_fields import seed_provenance
 from unified_kg_rag.domain.retrieval.store_names import (
     namespace_suffix,
     resolve_namespace,
@@ -203,56 +197,6 @@ logger = get_logger(__name__)
 def _names(strategies: Collection[SearchStrategy]) -> str:
     """``strategies`` as a message lists them, in declaration order."""
     return ", ".join(s.value for s in SearchStrategy if s in strategies)
-
-
-def _listed(value: Any) -> list[str]:
-    """A stored list value as a list of strings: a store may return a
-    one-element list as its value (Gremlin), and a graph edge holds a list
-    as its JSON string."""
-    if isinstance(value, str) and value.startswith("["):
-        try:
-            value = json.loads(value)
-        except ValueError:
-            return [value]
-    if isinstance(value, str):
-        return [value] if value else []
-    if isinstance(value, list | tuple | set):
-        return [str(v) for v in value if v is not None and v != ""]
-    return []
-
-
-def seed_provenance(metadata: dict[str, Any]) -> dict[str, Any] | None:
-    """Where a result's statement comes from, when a seed graph states it.
-
-    ``kind`` is ``seed_graph`` for an item only seed graphs state and
-    ``document+seed_graph`` for one documents state as well; ``seed_graphs``
-    names the graphs (their ``seed_graph`` document filter, where the store
-    keeps the filters) and ``iri`` the entity's IRI. ``None`` for an item
-    without seed evidence (no ``source_kinds``): its source is reported as
-    before.
-    """
-    kinds = _listed(metadata.get(SOURCE_KINDS_FIELD))
-    if SEED_SOURCE_KIND not in kinds:
-        return None
-    attributes = metadata.get("attributes")
-    filters = (
-        attributes.get(Constants.FILTERS.value)
-        if isinstance(attributes, dict)
-        else None
-    )
-    names = filters.get(SEED_FILTER_KEY) if isinstance(filters, dict) else None
-    if names is None:
-        names = metadata.get(f"{ATTRIBUTE_KEY_PREFIX}{SEED_FILTER_KEY}")
-    iri = metadata.get("iri")
-    return {
-        "kind": (
-            f"{DOCUMENT_SOURCE_KIND}+{SEED_SOURCE_KIND}"
-            if DOCUMENT_SOURCE_KIND in kinds
-            else SEED_SOURCE_KIND
-        ),
-        "seed_graphs": sorted(set(_listed(names))),
-        "iri": iri if isinstance(iri, str) and iri else None,
-    }
 
 
 # The fixed reply when retrieval produced no context is no_context_answer's,
@@ -660,8 +604,9 @@ class RAGOutput(BaseModel):
     """
 
     answer: str = Field(description="The generated answer to the user's query")
-    sources: list[dict[str, Any]] = Field(
-        description="List of source documents used to generate the answer"
+    sources: list[Source] = Field(
+        description="The sources the answer model was given: the text it saw "
+        "and the stored item's metadata with its provenance"
     )
     search_results: SearchResult = Field(
         description="Detailed search results from the retrieval process"
@@ -2089,7 +2034,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     @staticmethod
     def _source_entry(
         result: RetrievalResult, content: str, *, truncated: bool
-    ) -> dict[str, Any]:
+    ) -> Source:
         """One reported source: the text the model saw plus its provenance.
 
         Embedding vectors are dropped (any retriever, not only OpenSearch, may
@@ -2109,24 +2054,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 for finding in findings
                 if isinstance(finding, dict)
             ]
-        attributes = metadata.get("attributes")
-        # A text unit stores its document id in its attributes.
-        raw_doc_ids = (
-            metadata.get("document_ids")
-            or metadata.get("document_id")
-            or (attributes.get("document_id") if isinstance(attributes, dict) else None)
-        )
-        document_ids = (
-            [str(d) for d in raw_doc_ids]
-            if isinstance(raw_doc_ids, list | tuple | set)
-            else [str(raw_doc_ids)] if raw_doc_ids else []
-        )
         chunk_id = result.chunk_id
         if chunk_id is None and result.retriever_type == SectionType.TEXT.value:
             chunk_id = metadata.get("id") or result.source
         provenance: dict[str, Any] = {
             "source_id": result.source,
-            "document_ids": document_ids,
+            "document_ids": source_fields.document_ids(metadata),
             "chunk_id": chunk_id,
             "section_type": result.retriever_type,
             "score": result.score,
@@ -2136,17 +2069,17 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         for key, value in provenance.items():
             metadata.setdefault(key, value)
         metadata["truncated"] = truncated
-        return {
-            "content": content,
-            "source": result.source,
-            "score": result.score,
-            "metadata": metadata,
-        }
+        return Source(
+            content=content,
+            source=result.source,
+            score=result.score,
+            metadata=metadata,
+        )
 
     @staticmethod
     def _sources_from_sections(
         sections: list[ContextSection], results: list[RetrievalResult]
-    ) -> list[dict[str, Any]]:
+    ) -> list[Source]:
         """Map the budgeter's selected sections back to their results.
 
         Reported in retrieval-rank order (the selection itself is grouped by
@@ -2159,7 +2092,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             index = section.result_index
             return index if index is not None else len(results)
 
-        sources: list[dict[str, Any]] = []
+        sources: list[Source] = []
         for section in sorted(sections, key=_rank):
             if GraphRAGChain._is_synthesized(
                 GraphRAGChain._section_result(section, results).metadata
@@ -2188,7 +2121,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     @staticmethod
     def _section_source(
         section: ContextSection, results: list[RetrievalResult]
-    ) -> dict[str, Any]:
+    ) -> Source:
         """The reported source of ``section``: the text the model saw plus
         its result's provenance."""
         return GraphRAGChain._source_entry(
@@ -2520,22 +2453,31 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """Give ``output`` the screened model text of its search results
         where it holds copies made before the screening: its metadata's
         ``iterative`` and ``structured`` (``_format_output_step`` copies the
-        search metadata) and the reported query-result sources, whose text
-        and metadata render the structured plan (``plan_texts``: each plan
+        search metadata) and the reported query-result sources and their
+        citations, whose text, metadata and title render the structured plan (``plan_texts``: each plan
         text and what the guardrail made of it)."""
         for key in (_ITERATIVE_KEY, _STRUCTURED_KEY):
             if key in output.metadata:
                 output.metadata[key] = output.search_results.metadata.get(key)
         if not any(text != screened for text, screened in plan_texts.items()):
             return
+        # A query result's citation is titled by its plan description.
+        output.citations = [
+            (
+                c.model_copy(update={"title": _replace_texts(c.title, plan_texts)})
+                if c.title and c.section_type == SectionType.QUERY_RESULT.value
+                else c
+            )
+            for c in output.citations
+        ]
         output.sources = [
             (
                 {
                     **source,
-                    "content": _replace_texts(
-                        str(source.get("content") or ""), plan_texts
+                    "content": _replace_texts(source.get("content") or "", plan_texts),
+                    "metadata": _replace_leaves(
+                        source.get("metadata") or {}, plan_texts
                     ),
-                    "metadata": _replace_leaves(source.get("metadata"), plan_texts),
                 }
                 if (source.get("metadata") or {}).get("section_type")
                 == SectionType.QUERY_RESULT.value

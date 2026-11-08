@@ -50,6 +50,8 @@
   "ask.evidenceFor": "「{{question}}」のソース",
   "ask.evidenceEmptyTitle": "まだ回答がありません",
   "ask.evidenceWaiting": "回答を待っています",
+  "ask.evidenceNone": "出典なし",
+  "ask.evidenceNoneBody": "質問は回答なしで終わったため、読まれた出典はありません。",
   "ask.evidenceEmpty": "回答が届くと、回答モデルが読んだ順にソースがここに表示されます。ソースを開くと出典の経路をたどれます。",
   "ask.routing.router": "auto が {{strategy}} を選択しました。ルーターが {{candidates}} から選びました。",
   "ask.routing.only_candidate": "auto が {{strategy}} を使用しました。このインデックスでこれらのフィルターを適用できる唯一の戦略です。",

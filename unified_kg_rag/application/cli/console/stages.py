@@ -50,8 +50,10 @@ def stage_progress(
     started_after: str | None = None,
 ) -> list[dict[str, Any]]:
     """Each planned stage's state: ``completed`` / ``failed`` / ``skipped``
-    from the metadata, ``running`` for the first one without a result while
-    the job runs, ``pending`` after it (``stopped`` once the job ended).
+    from the metadata; ``running`` for the stage the metadata says started
+    (else the first one without a result) while the job runs, ``pending``
+    after it; ``stopped`` for that stage once the job ended, ``not_run``
+    after it.
 
     A resumed run keeps the results of the stages an earlier run finished;
     those started before ``started_after`` (ISO time) are ``restored``.
@@ -70,6 +72,11 @@ def stage_progress(
         result = results.get(name)
         if result is not None:
             status = str(result.get("status") or "completed")
+            if status == "running":
+                # Saved as it started: the stage the run is in, or was in
+                # when it stopped (the next one did not run).
+                current_found = True
+                status = "running" if running else "stopped"
             start = str(result.get("start_time") or "")
             if (
                 started_after

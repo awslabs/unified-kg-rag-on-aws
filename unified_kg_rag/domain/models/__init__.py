@@ -75,6 +75,7 @@ from .retrieval import (
     SearchResult,
     SearchStrategy,
     SearchType,
+    Source,
     validate_path_segment,
     validate_safe_name,
 )
@@ -165,6 +166,7 @@ __all__ = [
     "RerankStage",
     "RerankStatus",
     "RetrievalResult",
+    "Source",
     "RetrieverRole",
     "S3EncryptionType",
     "model_id_value",

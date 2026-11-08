@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.mcp_tools import (
     UNTRUSTED_NOTE,
+    AnswerRecords,
     AnswerToolResult,
     EntityToolResult,
     KnowledgeGraphTools,
@@ -224,9 +225,10 @@ def _descriptions(tools: KnowledgeGraphTools) -> dict[str, str]:
         ),
         "kg_answer": (
             "Answer a question from the knowledge graph index (retrieval and "
-            "a generated answer) and return the sources the answer used, the "
-            "model usage, and whether the answer abstained because the index "
-            "does not cover the question. For a follow-up question, pass the "
+            "a generated answer): the answer first, whether it abstained "
+            "because the index does not cover the question, then the sources "
+            "it cites (records: all for every source it saw, none for "
+            "none) and the model usage. For a follow-up question, pass the "
             "conversation so far as history (the server keeps none). Costs "
             "model calls; prefer kg_search when you write the answer yourself."
         ),
@@ -407,6 +409,21 @@ def build_mcp_server(
                 ),
             ],
             None,
+        ),
+        _parameter(
+            "records",
+            Annotated[
+                AnswerRecords,
+                Field(
+                    description=(
+                        "Which supporting records to return after the answer: "
+                        "cited (the sections the answer cites; every source "
+                        "when it cites none), all (every source the answer "
+                        "model saw) or none"
+                    ),
+                ),
+            ],
+            "cited",
         ),
     ]
     entity_parameters = [

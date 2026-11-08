@@ -86,8 +86,9 @@ uv run --no-dev --extra console --extra local python console/demo/demo.py --mode
 ```
 
 The fake and Ollama models run in local mode and need the `local` extra
-as well (`bedrock` does not); the demo checks both extras before it writes
-or ingests anything.
+as well (`bedrock` does not); the demo checks both extras and the built web
+client before it writes or ingests anything, and a SIGTERM to it stops the
+console it started.
 
 | `--models` | What answers | Needs |
 |---|---|---|

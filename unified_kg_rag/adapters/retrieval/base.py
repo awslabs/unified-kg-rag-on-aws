@@ -57,6 +57,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.models.config import language_name
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.degradation import (
     DegradationLedger,
     DegradationStep,
@@ -309,19 +310,6 @@ def _text_unit_ids(result: RetrievalResult) -> list[str]:
     return [str(i) for i in (result.metadata or {}).get("text_unit_ids") or []]
 
 
-def _listed(value: Any) -> list[str]:
-    """A stored id list as strings (a graph store may return a list as its
-    JSON string, or one id as the value)."""
-    if isinstance(value, str) and value.startswith("["):
-        try:
-            value = json.loads(value)
-        except ValueError:
-            return [value]
-    if isinstance(value, list | tuple):
-        return [str(v) for v in value if v not in (None, "")]
-    return [str(value)] if value not in (None, "") else []
-
-
 def evidence_lineage(
     results: Iterable[RetrievalResult],
     reports: Mapping[str, dict[str, list[str]]] | None = None,
@@ -351,19 +339,10 @@ def evidence_lineage(
             continue
         if result.retriever_type == SectionType.TEXT.value:
             own = result.chunk_id or metadata.get("id") or result.source
-            units.append(_listed(own))
+            units.append(source_fields.id_list(own))
         else:
-            units.append(_listed(metadata.get("text_unit_ids")))
-        attributes = metadata.get("attributes")
-        documents.append(
-            _listed(metadata.get("document_ids"))
-            or _listed(metadata.get("document_id"))
-            or (
-                _listed(attributes.get("document_id"))
-                if isinstance(attributes, dict)
-                else []
-            )
-        )
+            units.append(source_fields.listed(metadata, "text_unit_ids"))
+        documents.append(source_fields.document_ids(metadata))
     return {
         "text_unit_ids": merge_lineages(units),
         "document_ids": merge_lineages(documents),
@@ -375,12 +354,12 @@ def findings_lineage(result: RetrievalResult) -> dict[str, list[str]] | None:
     set it on the report (``BaseSearchStrategy._with_findings_lineages``),
     or ``None``."""
     metadata = result.metadata or {}
-    units = _listed(metadata.get(FINDINGS_TEXT_UNITS_FIELD))
+    units = source_fields.listed(metadata, FINDINGS_TEXT_UNITS_FIELD)
     if not units:
         return None
     return {
         "text_unit_ids": units,
-        "document_ids": _listed(metadata.get(FINDINGS_DOCUMENTS_FIELD)),
+        "document_ids": source_fields.listed(metadata, FINDINGS_DOCUMENTS_FIELD),
     }
 
 
@@ -911,8 +890,12 @@ class BaseSearchStrategy(ABC):
             documents: dict[str, None] = {}
             for record in records:
                 metadata = stored.get(record) or {}
-                units.update(dict.fromkeys(_listed(metadata.get("text_unit_ids"))))
-                documents.update(dict.fromkeys(_listed(metadata.get("document_ids"))))
+                units.update(
+                    dict.fromkeys(source_fields.listed(metadata, "text_unit_ids"))
+                )
+                documents.update(
+                    dict.fromkeys(source_fields.listed(metadata, "document_ids"))
+                )
             if units:
                 lineages[report] = {
                     "text_unit_ids": list(units),

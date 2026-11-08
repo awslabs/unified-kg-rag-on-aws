@@ -46,6 +46,7 @@ from unified_kg_rag.domain.models import (
     RetrievalResult,
     SearchQuery,
 )
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.filters import (
     ATTRIBUTE_KEY_PREFIX,
     GRAPH_ENTITY_FILTER_FIELDS,
@@ -67,10 +68,10 @@ from unified_kg_rag.shared.utils import safe_float_parse, text_digest
 
 logger = get_logger(__name__)
 
-# Vertex list properties: a list however many values they hold, where a
-# value_map's one-element list is otherwise read as its value (an entity in
-# one text unit read as a str, and every consumer had to re-wrap it).
-_LIST_PROPERTIES = frozenset({"text_unit_ids", "community_ids", SOURCE_KINDS_FIELD})
+# Vertex list properties (source_fields.LIST_FIELDS) stay lists however many
+# values they hold, where a value_map's one-element list is otherwise read as
+# its value.
+_LIST_PROPERTIES = source_fields.LIST_FIELDS
 
 
 VertexClause = Term | Range | KindsRule

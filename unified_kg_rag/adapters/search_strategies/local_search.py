@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 from langchain_core.runnables import RunnableConfig
 
-from unified_kg_rag.adapters.retrieval.base import _listed, scope_filters
+from unified_kg_rag.adapters.retrieval.base import scope_filters
 from unified_kg_rag.adapters.retrieval.ppr_ranking import (
     PPRRankingMixin,
     document_unit_ids,
@@ -29,6 +29,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.linking import choose_links
@@ -814,7 +815,10 @@ class LocalSearchStrategy(PPRRankingMixin):
         # A seed graph's units are no text chunks (the retriever leaves them
         # out of every text search too): they take no slot of the quota.
         ranked = merge_lineages(
-            (_listed(node.metadata.get("text_unit_ids")) for node in entity_nodes),
+            (
+                source_fields.listed(node.metadata, "text_unit_ids")
+                for node in entity_nodes
+            ),
             order="support",
             scores=[float(node.score or 0.0) for node in entity_nodes],
         )

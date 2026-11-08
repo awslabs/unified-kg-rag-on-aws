@@ -9,7 +9,6 @@ import sys
 import time
 import uuid
 from collections.abc import Callable
-from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
@@ -65,6 +64,7 @@ from unified_kg_rag.application.cli.query_args import (
 )
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.domain.models import SearchStrategy
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
@@ -192,20 +192,13 @@ def _hit_kind(item: dict[str, Any]) -> str:
 
 def _hit_file(item: dict[str, Any]) -> str | None:
     """The file a text-unit result was chunked from, when it says so."""
-    metadata = item.get("metadata") or {}
-    attributes = metadata.get("attributes") or {}
-    for record in (attributes, metadata):
-        if name := record.get("file_name"):
-            return str(name)
-        if path := record.get("file_path"):
-            return Path(str(path)).name
-    return None
+    return source_fields.file_name(item.get("metadata") or {})
 
 
 def _hit_label(item: dict[str, Any]) -> str:
     """What a result is, for a person: the file of a text unit (and its
-    chunk when the file has several), the entity or community name, a
-    relationship's ends, else the result's id."""
+    chunk when the file has several), else its title (the entity or
+    community name, a relationship's ends), else the result's id."""
     metadata = item.get("metadata") or {}
     if file := _hit_file(item):
         attributes = metadata.get("attributes") or {}
@@ -213,11 +206,9 @@ def _hit_label(item: dict[str, Any]) -> str:
         if isinstance(total, int) and total > 1:
             return f"{file} (chunk {attributes.get('chunk_id')}/{total})"
         return file
-    if metadata.get("source_name") and metadata.get("target_name"):
-        return f"{metadata['source_name']} -> {metadata['target_name']}"
-    if name := metadata.get("name"):
-        return str(name)
-    return str(item.get("source") or "N/A")
+    return source_fields.title(_hit_kind(item), metadata) or str(
+        item.get("source") or "N/A"
+    )
 
 
 def _snippet(text: str) -> str:

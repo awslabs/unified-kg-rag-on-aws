@@ -52,6 +52,8 @@
   "ask.evidenceFor": "para “{{question}}”",
   "ask.evidenceEmptyTitle": "Ainda sem resposta",
   "ask.evidenceWaiting": "Resposta pendente",
+  "ask.evidenceNone": "Sem fontes",
+  "ask.evidenceNoneBody": "A pergunta terminou sem resposta, por isso nenhuma fonte foi lida.",
   "ask.evidenceEmpty": "Quando chegar uma resposta, as suas fontes aparecem aqui pela ordem em que o modelo de resposta as leu. Abra uma para seguir o caminho de proveniência.",
   "ask.routing.router": "auto escolheu {{strategy}}: o router selecionou esta estratégia entre {{candidates}}.",
   "ask.routing.only_candidate": "auto usou {{strategy}}: é a única estratégia que aplica estes filtros a este índice.",
