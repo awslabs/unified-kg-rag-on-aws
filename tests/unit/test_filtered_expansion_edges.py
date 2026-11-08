@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
+from tests.fixtures.fakes.retrievers import incident_ends
 from unified_kg_rag.adapters.retrieval import base as retrieval_base
 from unified_kg_rag.adapters.retrieval.base import query_scope, seed_share, seed_shares
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
@@ -124,8 +125,8 @@ class _Index:
             self.edge_fields.append(query.source_fields)
             if not self.has_relationships:
                 return []
-            side = "source_id" if "source_id" in filters else "target_id"
-            ends = set(filters[side])
+            asked = incident_ends(query)
+            side = "/".join(sorted(asked))
             self.excludes.append((side, query.exclude))
             # The store leaves the excluded edges out before the page is cut.
             excluded = {
@@ -142,7 +143,9 @@ class _Index:
                 endpoints = {"source_id": a, "target_id": b}
                 if any(endpoints[k] in v for k, v in excluded.items()):
                     continue
-                if eid in self.passing and endpoints[side] in ends:
+                if eid in self.passing and any(
+                    endpoints[end] in ids for end, ids in asked.items()
+                ):
                     out.append(
                         RetrievalResult(
                             content=eid,

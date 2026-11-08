@@ -1227,8 +1227,8 @@ From a `main` checkout (formats and keys no release had):
   ([evidence](docs/concepts/defaults-and-evidence.md#local-ppr-ranking)) (#602); DRIFT's follow-up local searches
   keep `support` (`search.drift_search.text_unit_ranking`) (#607). Graph retrievers gain `aneighbourhood_edges`
   (Neptune, Gremlin Server, SQLite; the relationships index under a document filter and on Neptune, which reads every
-  edge within the set, not one 100-edge page of them, before the per-vertex cap), and `SearchQuery.max_hops`
-  overrides the expansion depth (#597).
+  edge within the set, not one 100-edge page of them, before the per-vertex cap, paged by `search_after` in one
+  request per batch of sources), and `SearchQuery.max_hops` overrides the expansion depth (#597).
 - CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
   (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
   (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after
@@ -1260,6 +1260,10 @@ From a `main` checkout (formats and keys no release had):
   `가나다 상사`), a graph the whole name. A filter on analyzed text (`description`, `text`, `summary`, the
   relationship and claim names, ...) raises `InvalidFilterError`, as does one on the seed properties
   (`attributes.seed_properties...`, kept unindexed), and community reports no longer take `name`.
+- Local and LightRAG ask the relationships incident to their entities in one request naming both endpoint fields,
+  the best twice `max_query_size` of them, where each end got its own page of `max_query_size`. `SearchQuery` gains
+  `any_of` (filter groups one of which a hit passes; a graph retriever refuses them) and `page_through` (a text-less
+  search read in pages of `max_result_window` by `search_after`, which the embedded engine supports too).
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).

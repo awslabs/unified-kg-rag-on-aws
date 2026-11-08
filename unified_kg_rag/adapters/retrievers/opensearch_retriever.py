@@ -56,6 +56,7 @@ from unified_kg_rag.domain.retrieval.filters import (
     Range,
     check_filter_values,
     kinds_rule,
+    parse_any_of,
     parse_filters,
     union_filter_fields,
 )
@@ -431,6 +432,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 asked = self._within_terms(query, terms_limit)
                 self._check_filter_values(asked.filters, terms_limit)
                 self._check_filter_values(asked.exclude, terms_limit)
+                for group in asked.any_of or ():
+                    self._check_filter_values(group, terms_limit)
+                parse_any_of(asked.any_of)
                 if any(value == [] for value in (asked.filters or {}).values()):
                     # A strategy scope that allows nothing matches nothing.
                     # Not sent: OpenSearch refuses an empty terms clause
@@ -596,6 +600,19 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 continue
 
             index_query = query
+            for group in query.any_of or ():
+                undeclared = sorted(
+                    key
+                    for key in group
+                    if (declared := self._index_filter_fields.get(prefix)) is not None
+                    and not declared.declares(key)
+                )
+                if undeclared:
+                    # Dropped, the group would match every document.
+                    raise InvalidFilterError(
+                        f"Filter group key(s) {', '.join(undeclared)} of any_of "
+                        f"are not declared on index '{prefix}'."
+                    )
             if query.filters:
                 index_query = query.model_copy(
                     update={
@@ -618,7 +635,19 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
 
             window = limits[prefix].max_result_window
             target_alias = self._get_name(prefix, query.suffix)
-            size = self._hit_count(index_query, window, target_alias)
+            sort = self._importance_sort(prefix, index_query, search_type)
+            # Paged past one search: every hit up to top_k (search_after
+            # needs the sort, which ends on the unique id).
+            wanted = (
+                query.top_k * query.retrieval_multiplier
+                if query.page_through and sort is not None
+                else None
+            )
+            size = (
+                min(wanted, window)
+                if wanted is not None
+                else self._hit_count(index_query, window, target_alias)
+            )
             bodies = self._build_search_bodies(
                 index_query,
                 search_type,
@@ -626,7 +655,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 vector_fields,
                 query_vector,
                 size=size,
-                sort=self._importance_sort(prefix, index_query, search_type),
+                sort=sort,
                 window=window,
             )
             if query.source_fields is not None:
@@ -643,7 +672,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 else None
             )
             search_tasks.append(
-                self._search_index(target_alias, bodies, size, query.suffix, probe)
+                self._search_index(
+                    target_alias, bodies, size, query.suffix, probe, wanted=wanted
+                )
             )
 
         return search_tasks
@@ -1167,6 +1198,8 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         shared 75% of their hits); ``_fuse`` cuts to ``size``.
         """
         filters = self._build_filter_clauses(query.filters)
+        if (any_of := parse_any_of(query.any_of)) is not None:
+            filters.extend(opensearch_filter_clauses([any_of]))
         # The exclusions sit beside the filters, in their bool: a bool of
         # must_not alone matches every other document, which the embedded
         # engine builds in full before the filters narrow it.
@@ -1326,8 +1359,13 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         size: int,
         suffix: str | None,
         probe: dict[str, Any] | None = None,
+        *,
+        wanted: int | None = None,
     ) -> list[RetrievalResult]:
-        """The hits of ``bodies`` on ``alias``; two (hybrid) are fused.
+        """The hits of ``bodies`` on ``alias``; two (hybrid) are fused. With
+        ``wanted`` (``SearchQuery.page_through``; one sorted body) the pages
+        after a full one are read too (``search_after`` the last hit's sort
+        values), up to ``wanted`` hits.
 
         With a ``probe`` (``_attribute_probe``) that finds nothing, none. The
         searches start alongside the probe, so a filtered query waits for one
@@ -1362,8 +1400,41 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 return await self._degraded_search(alias, suffix, outcome)
             responses.append(outcome)
         if len(responses) == 1:
-            return [self._parse_hit(hit) for hit in responses[0]]
+            found = responses[0]
+            if wanted is not None:
+                found = await self._next_pages(alias, bodies[0], found, wanted)
+                if isinstance(found, Exception):
+                    return await self._degraded_search(alias, suffix, found)
+            return [self._parse_hit(hit) for hit in found]
         return self._fuse(responses, size)
+
+    async def _next_pages(
+        self,
+        alias: str,
+        body: dict[str, Any],
+        found: list[dict[str, Any]],
+        wanted: int,
+    ) -> list[dict[str, Any]] | Exception:
+        """``found`` (the first page of the sorted ``body``) and the pages
+        after it, each after the last hit's sort values (``search_after``),
+        until a page comes back short or ``wanted`` hits are read; the error
+        of a page that failed transiently."""
+        hits = list(found)
+        page = found
+        while len(page) >= body["size"] and len(hits) < wanted and page[-1].get("sort"):
+            outcome = await self._search(
+                alias,
+                {
+                    **body,
+                    "size": min(body["size"], wanted - len(hits)),
+                    "search_after": page[-1]["sort"],
+                },
+            )
+            if isinstance(outcome, Exception):
+                return outcome
+            page = outcome
+            hits.extend(page)
+        return hits
 
     async def _probe(
         self, alias: str, probe: dict[str, Any]

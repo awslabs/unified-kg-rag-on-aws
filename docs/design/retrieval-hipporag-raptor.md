@@ -186,15 +186,16 @@ cannot tell; the strategy then reads the relationships index.
   the graph cannot tell which edges a passing document states, so the
   edges come from the relationships index
   (`_indexed_neighbourhood_edges`: one request per batch of source ids
-  with the target pinned to the set, a page of at most `max_query_size`
-  edges best first; a batch whose page comes back full is asked again in
-  halves down to one vertex, and a source with more than a page is asked
-  from its targets' end with the source pinned, so a hub's edges are all
-  read; under two or more document keys an edge also needs one passing
-  document by its text units), cut per vertex alike. Only a vertex past a
-  page at both ends keeps its best-ranked page there. Without the halving
-  the whole set got one page: on a real Neptune graph 100 of 178-678
-  edges, and the PageRank ran on a rank-biased cut. A `source_kinds` filter applies to the edges of every path; there
+  with the target pinned to the set, which reads every edge within the
+  set best first, in pages of the index's `max_result_window`
+  (`SearchQuery.page_through`, `search_after`), up to two pages of
+  `max_query_size` per vertex; under two or more document keys an edge
+  also needs one passing document by its text units), cut per vertex
+  alike. A page of `max_query_size` for the whole set read 100 of
+  178-678 edges on a real Neptune graph, and the PageRank ran on a
+  rank-biased cut; asked again in halves down to one vertex, a crowded set
+  took one request per crowded vertex (52 for 60 entities around six hubs
+  of 150 edges, one now). A `source_kinds` filter applies to the edges of every path; there
   the index also applies the caller's relationship keys (`predicate_iri`,
   `in_schema`, `weight`), which the graph path does not apply to edges, as
   the graph walk crosses every edge.

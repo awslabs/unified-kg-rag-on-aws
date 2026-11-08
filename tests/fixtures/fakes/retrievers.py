@@ -128,3 +128,21 @@ def opensearch_fields_for(config: Config, prefixes: Collection[str]) -> FilterFi
     return union_filter_fields(
         fields for prefix, fields in by_prefix.items() if prefix in prefixes
     )
+
+
+_ENDS = ("source_id", "target_id")
+
+
+def incident_ends(query: SearchQuery) -> dict[str, set[str]]:
+    """The endpoint fields an incident-edge search names and their ids: the
+    ``any_of`` groups' (an edge passes at either end) or else the filters'
+    (one end per request), for a fake relationships index."""
+    groups = query.any_of or [query.filters or {}]
+    asked: dict[str, set[str]] = {}
+    for group in groups:
+        for end in _ENDS:
+            if end in group:
+                values = group[end]
+                listed = values if isinstance(values, list) else [values]
+                asked.setdefault(end, set()).update(str(v) for v in listed)
+    return asked

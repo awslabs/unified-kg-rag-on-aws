@@ -16,6 +16,7 @@ import asyncio
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
+from tests.fixtures.fakes.retrievers import incident_ends
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import (
@@ -72,11 +73,11 @@ class FakeDocumentRetriever:
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
-        filters = query.filters or {}
         if query.index_prefixes == [self.relationships_prefix]:
-            for field in ("source_id", "target_id"):
-                if field in filters:
-                    return [r.model_copy() for r in _EDGES[field]]
+            # Both endpoint fields in one query (any_of), each end's edges.
+            return [
+                r.model_copy() for field in incident_ends(query) for r in _EDGES[field]
+            ]
         prefix = query.index_prefixes[0] if query.index_prefixes else "doc"
         return [
             RetrievalResult(
@@ -219,15 +220,12 @@ async def test_local_search_adds_bridge_section_for_expanded_entities(
         "r-out",
         "r-in",
     ]
-    bridge_calls = [
-        q
-        for q in doc.calls
-        if q.filters and ({"source_id", "target_id"} & set(q.filters))
-    ]
-    assert len(bridge_calls) == 2
-    for call in bridge_calls:
-        (ids,) = [v for k, v in call.filters.items() if k in ("source_id", "target_id")]
-        assert set(ids) == {"vendor", "buyer"}
+    # Either endpoint in one request (any_of), not one request per end.
+    (bridge_call,) = [q for q in doc.calls if incident_ends(q)]
+    assert incident_ends(bridge_call) == {
+        "source_id": {"vendor", "buyer"},
+        "target_id": {"vendor", "buyer"},
+    }
 
 
 async def test_a_failed_bridge_lookup_cancels_the_text_unit_lookup(
@@ -278,11 +276,7 @@ async def test_bridge_section_off_by_flag_or_missing_index(
     await strategy.asearch(SearchQuery(query="q", entity_focus=["Vendor"]))
 
     assert "bridge_relationships" not in captured
-    assert not [
-        q
-        for q in doc.calls
-        if q.filters and ({"source_id", "target_id"} & set(q.filters))
-    ]
+    assert not [q for q in doc.calls if incident_ends(q)]
 
 
 async def test_bridge_stream_is_capped_at_the_relationship_quota(

@@ -185,6 +185,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         # ``eq``) was dropped, so the filter matched every vertex. A
         # strategy's own scope may allow nothing (an empty list).
         check_filter_values(query.filters, allow_empty_lists=True)
+        self._refuse_any_of(query)
 
         try:
             seed_ids = self._seed_ids(query)
@@ -239,6 +240,15 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         """``exc`` typed by the backend's error policy (identity by default)."""
         return exc
 
+    def _refuse_any_of(self, query: SearchQuery) -> None:
+        """Refuse ``SearchQuery.any_of``: a walk filters its vertices by
+        every key, and ignoring the groups would widen it."""
+        if query.any_of:
+            raise InvalidFilterError(
+                f"{self._store_name} graph expansion applies no any_of filter "
+                "groups."
+            )
+
     async def aneighbourhood_edges(
         self, vertex_ids: list[str], query: SearchQuery, *, per_vertex: int
     ) -> list[GraphEdge] | None:
@@ -250,6 +260,7 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
         error policy is :meth:`aretrieve`'s: a request the store failed
         degrades to no edges, a fatal one raises."""
         check_filter_values(query.filters, allow_empty_lists=True)
+        self._refuse_any_of(query)
         ids = list(dict.fromkeys(str(v) for v in vertex_ids if v))
         if len(ids) < 2 or per_vertex < 1:
             return []

@@ -679,40 +679,66 @@ def top_hits(hits: list[Hit], size: int) -> list[Hit]:
     return heapq.nsmallest(size, hits, key=rank_key)
 
 
-def sort_hits(hits: list[Hit], sort: Any, size: int) -> list[Hit]:
-    """The first ``size`` of ``hits`` in a search body's ``sort`` order.
+def sort_values(hit: Hit, sort: Any) -> list[Any]:
+    """The values ``hit`` sorts by under a body's ``sort`` (a hit's
+    ``sort`` in the response, which ``search_after`` takes back): a numeric
+    field's number, any other's keyword; of a multi-valued field the
+    smallest ascending, the largest descending; ``None`` without one."""
+    index, doc_id, _score = hit
+    values: list[Any] = []
+    for path, descending in _sort_fields(sort):
+        spec = index.spec(path)
+        raw = resolve_path(index.sources[doc_id], path)
+        if spec is not None and spec.type in NUMERIC_TYPES:
+            held: list[Any] = [n for v in raw if (n := _number(v)) is not None]
+        else:
+            held = [_keyword(v) for v in raw]
+        values.append((max(held) if descending else min(held)) if held else None)
+    return values
+
+
+def _compare_values(sort: Any, x: list[Any], y: list[Any]) -> int:
+    """``x`` against ``y`` (``sort_values``) in sort order; a missing value
+    comes last either way. 0: tied on every field."""
+    for (_, descending), a, b in zip(_sort_fields(sort), x, y, strict=True):
+        if a == b:
+            continue
+        if a is None or b is None:
+            return 1 if a is None else -1
+        if isinstance(a, str) != isinstance(b, str):
+            raise rejected(f"[search_after] value {b!r} is not of the sort's type")
+        return -1 if (a > b if descending else a < b) else 1
+    return 0
+
+
+def sort_hits(
+    hits: list[Hit], sort: Any, size: int, after: list[Any] | None = None
+) -> list[Hit]:
+    """The first ``size`` of ``hits`` in a search body's ``sort`` order,
+    after ``after`` (``search_after``: the sort values of the last hit of
+    the page before) when given.
 
     As OpenSearch sorts: a numeric field by number, any other by keyword; a
     multi-valued field by its smallest value ascending and its largest
     descending; a document without the field comes last either way. Ties
     keep the score order (``rank_key``).
     """
-    fields = _sort_fields(sort)
-
-    def value(hit: Hit, path: str, descending: bool) -> Any:
-        index, doc_id, _score = hit
-        spec = index.spec(path)
-        raw = resolve_path(index.sources[doc_id], path)
-        if spec is not None and spec.type in NUMERIC_TYPES:
-            values: list[Any] = [n for v in raw if (n := _number(v)) is not None]
-        else:
-            values = [_keyword(v) for v in raw]
-        if not values:
-            return None
-        return max(values) if descending else min(values)
-
-    keyed = [
-        ([value(hit, path, descending) for path, descending in fields], hit)
-        for hit in hits
-    ]
+    keyed = [(sort_values(hit, sort), hit) for hit in hits]
+    if after is not None:
+        if not isinstance(after, list) or len(after) != len(_sort_fields(sort)):
+            raise rejected(
+                "[search_after] takes one value per sort field, got " f"{after!r}"
+            )
+        keyed = [
+            (values, hit)
+            for values, hit in keyed
+            if _compare_values(sort, values, after) > 0
+        ]
 
     def compare(a: tuple[list[Any], Hit], b: tuple[list[Any], Hit]) -> int:
-        for (_, descending), x, y in zip(fields, a[0], b[0], strict=True):
-            if x == y:
-                continue
-            if x is None or y is None:
-                return 1 if x is None else -1
-            return -1 if (x > y if descending else x < y) else 1
+        order = _compare_values(sort, a[0], b[0])
+        if order:
+            return order
         first, second = rank_key(a[1]), rank_key(b[1])
         return -1 if first < second else int(first > second)
 

@@ -932,6 +932,45 @@ def test_sort_orders_by_each_field_in_turn_missing_last(engine) -> None:
     assert {hit["_score"] for hit in response["hits"]["hits"]} == {1.0}
 
 
+def test_search_after_pages_through_the_sorted_hits(engine) -> None:
+    engine.bulk_index(
+        INDEX,
+        [{"id": f"x{i}", "name": f"X{i}", "rank": i % 2} for i in range(5)]
+        + [{"id": "y", "name": "Y"}],
+    )
+    sort = [{"rank": {"order": "desc"}}, {"id": {"order": "asc"}}]
+    whole = _search(engine, {"match_all": {}}, size=20, body={"sort": sort})
+    expected = [hit["_id"] for hit in whole["hits"]["hits"]]
+    # A document without the field comes last.
+    assert expected[0] == "a" and expected[-1] == "y" and len(expected) == 9
+    # Each hit carries the values it sorts by: the cursor of the next page.
+    assert whole["hits"]["hits"][0]["sort"] == [3.0, "a"]
+    assert whole["hits"]["hits"][-1]["sort"] == [None, "y"]
+    pages: list[str] = []
+    after = None
+    while True:
+        body: dict[str, Any] = {"sort": sort}
+        if after is not None:
+            body["search_after"] = after
+        hits = _search(engine, {"match_all": {}}, size=4, body=body)["hits"]["hits"]
+        pages += [hit["_id"] for hit in hits]
+        if len(hits) < 4:
+            break
+        after = hits[-1]["sort"]
+    assert pages == expected
+
+
+def test_search_after_needs_a_sort(engine) -> None:
+    with pytest.raises(StoreRequestRejectedError, match="search_after"):
+        _search(engine, {"match_all": {}}, body={"search_after": [1]})
+    with pytest.raises(StoreRequestRejectedError, match="search_after"):
+        _search(
+            engine,
+            {"match_all": {}},
+            body={"sort": [{"rank": {"order": "desc"}}], "search_after": [1, 2]},
+        )
+
+
 def test_unsupported_space_type_is_rejected_at_create(engine) -> None:
     body = {"mappings": {"properties": {"v": _knn("l1")}}}
     with pytest.raises(StoreRequestRejectedError):

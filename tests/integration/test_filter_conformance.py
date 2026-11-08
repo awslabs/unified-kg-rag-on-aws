@@ -16,6 +16,7 @@ Service and Neptune.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ from tests.fixtures.store_backends import (
     backends,
     open_harness,
 )
+from unified_kg_rag.adapters.retrieval.base import query_scope
+from unified_kg_rag.adapters.search_strategies import LocalSearchStrategy
 from unified_kg_rag.domain.models import (
     Entity,
     Relationship,
@@ -311,3 +314,166 @@ def test_a_filter_never_reads_another_namespace(harness: StoreHarness) -> None:
                     role,
                     filters,
                 )
+
+
+def _hub_edges(suffix: str | None = None) -> list[Relationship]:
+    """``hub`` with eleven edges, out and in, and two among its neighbours."""
+    index = {"index": suffix} if suffix else {}
+    edges = [
+        Relationship(
+            id=f"h{i:02d}",
+            source_id="hub" if i % 2 else f"n{i}",
+            target_id=f"n{i}" if i % 2 else "hub",
+            description=f"hub edge {i}{' of tenant b' if suffix else ''}",
+            rank=i,
+            weight=1.0,
+            attributes=dict(index),
+        )
+        for i in range(11)
+    ]
+    edges += [
+        Relationship(
+            id=f"x{i}",
+            source_id=f"n{i}",
+            target_id=f"n{i + 1}",
+            description=f"neighbour edge {i}",
+            rank=0,
+            attributes=dict(index),
+        )
+        for i in (1, 2)
+    ]
+    return edges
+
+
+def test_any_of_and_paging_read_every_incident_edge(harness: StoreHarness) -> None:
+    # A page of 3 hits: the edges are read in four pages of the window,
+    # either end of an edge in one request (any_of), no other namespace's.
+    h = harness.derive(
+        lambda c: setattr(
+            c.indexing.opensearch,
+            "index_settings",
+            {**c.indexing.opensearch.index_settings, "max_result_window": 3},
+        )
+    )
+    other = h.suffix("tenant-b")
+    h.initialize()
+    assert h.vector_indexer.index_relationships(_hub_edges()).failed_items == 0
+    assert h.vector_indexer.index_relationships(_hub_edges(other)).failed_items == 0
+    prefix = h.config.indexing.opensearch.relationships_index_prefix
+
+    def ask(suffix: str, **fields: Any) -> SearchQuery:
+        return SearchQuery(
+            query="",
+            suffix=suffix,
+            search_type=SearchType.LEXICAL,
+            index_prefixes=[prefix],
+            retrieval_multiplier=1,
+            **fields,
+        )
+
+    either = [{"source_id": ["hub"]}, {"target_id": ["hub"]}]
+    paged, first, scoped, foreign = h.retrieve(
+        RetrieverRole.DOCUMENT,
+        ask(_SUFFIX, top_k=50, any_of=either, page_through=True),
+        ask(_SUFFIX, top_k=50, any_of=either),
+        ask(
+            _SUFFIX,
+            top_k=50,
+            any_of=either,
+            page_through=True,
+            filters={"rank": {"gte": 5}},
+        ),
+        ask(other, top_k=50, any_of=either, page_through=True),
+    )
+    hub = [f"h{i:02d}" for i in range(11)]
+    # By rank, every page in turn: the eleven hub edges and no other.
+    assert [r.source for r in paged] == hub[::-1]
+    # Without paging one window.
+    assert [r.source for r in first] == hub[::-1][:3]
+    assert [r.source for r in scoped] == hub[::-1][:6]
+    assert sorted(r.source for r in foreign) == hub
+    assert all("tenant b" in r.content for r in foreign)
+    assert not any("tenant b" in r.content for r in (*paged, *first, *scoped))
+    with pytest.raises(InvalidFilterError):
+        h.retrieve(RetrieverRole.DOCUMENT, ask(_SUFFIX, any_of=[{"description": "x"}]))
+    graph = h.graph_retriever
+    assert graph is not None
+    with pytest.raises(InvalidFilterError, match="any_of"):
+        h.retrieve(
+            RetrieverRole.GRAPH,
+            SearchQuery(query="", filters={"id": ["hub"]}, any_of=either),
+        )
+
+
+class _NoGraph:
+    """A graph retriever that cannot tell its edges and scans each vertex's
+    (as Neptune does): the strategies read them from the index."""
+
+    scans_incident_edges = True
+
+    async def aneighbourhood_edges(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def filter_fields(self) -> None:
+        return None
+
+
+def test_crowded_neighbourhoods_and_incident_edges_take_one_request(
+    harness: StoreHarness,
+) -> None:
+    # Six hubs of 30 edges inside a set of 20 entities: the neighbourhood
+    # took one request per crowded vertex (pages of max_query_size asked
+    # again in halves), and incident edges one request per endpoint field.
+    h = harness.derive(lambda c: setattr(c.indexing.opensearch, "max_query_size", 10))
+    ids = [f"v{i:02d}" for i in range(20)]
+    edges = [
+        Relationship(
+            id=f"r{hub}{j:02d}",
+            source_id=ids[hub],
+            target_id=ids[(hub + j + 1) % len(ids)],
+            description="edge",
+            rank=j,
+        )
+        for hub in range(6)
+        for j in range(30)
+    ]
+    h.initialize()
+    assert h.vector_indexer.index_relationships(edges).failed_items == 0
+
+    async def run() -> tuple[int, int, int, int]:
+        assert h.vector_retriever is not None
+        retriever = h.vector_retriever()
+        client = retriever._opensearch_client
+        asked = 0
+        search = client.asearch
+
+        async def counting(**kwargs: Any) -> Any:
+            nonlocal asked
+            asked += 1
+            return await search(**kwargs)
+
+        client.asearch = counting
+        strategy = LocalSearchStrategy(
+            h.config,
+            {
+                RetrieverRole.DOCUMENT.value: retriever,
+                RetrieverRole.GRAPH.value: _NoGraph(),  # type: ignore[dict-item]
+            },
+        )
+        query = SearchQuery(query="q", suffix=_SUFFIX)
+        try:
+            with query_scope():
+                found = await strategy._neighbourhood_edges(query, ids, 40)
+            neighbourhood, asked = asked, 0
+            with query_scope():
+                incident = await strategy._fetch_incident_relationships(query, ids[:1])
+            return len(found), neighbourhood, len(incident), asked
+        finally:
+            await retriever.aclose()
+
+    found, neighbourhood, incident, asked = asyncio.run(run())
+    assert found == len({e.id for e in edges})
+    assert neighbourhood == 1
+    # v00's 30 out-edges and the in-edges from the hubs before it, the best
+    # twice max_query_size of them, in one request.
+    assert incident == 20 and asked == 1
