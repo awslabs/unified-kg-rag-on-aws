@@ -178,8 +178,13 @@ class TestMergeEntitiesFuzzy:
     @staticmethod
     def _matcher(old_names: list[str]):
         from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
+        from unified_kg_rag.domain.models import ResolutionMethod
 
-        return FuzzyMatcher(candidates=old_names, similarity_threshold=0.5)
+        return FuzzyMatcher(
+            candidates=old_names,
+            resolution_method=ResolutionMethod.SEQUENCE_MATCHER,
+            similarity_threshold=0.5,
+        )
 
     def test_near_duplicate_collapses_onto_old_without_matcher_stays_split(
         self,

@@ -57,7 +57,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Annotated, Any, Literal, TypeVar
 
@@ -148,21 +148,22 @@ class SeedConversionSettings:
     the seed from is not one of them.
     """
 
+    # No defaults: the configuration's (SeedGraphConfig) are the only ones.
     name: str
-    filters: Mapping[str, SeedFilterValue] = field(default_factory=dict)
-    on_name_collision: SeedNameCollision = "error"
+    filters: Mapping[str, SeedFilterValue]
+    on_name_collision: SeedNameCollision
     # Property whose value qualifies a colliding name; else the IRI's local
     # name, else the node id.
-    qualifier_property: str | None = None
-    description_properties: tuple[str, ...] = ()
-    confidence: float = 1.0
-    shards: int = 16
-    max_items_per_unit: int = 50
-    max_nodes: int = 100_000
-    max_edges: int = 500_000
-    max_property_keys: int = 64
-    max_description_chars: int = 1000
-    dangling: SeedDangling = "error"
+    qualifier_property: str | None
+    description_properties: tuple[str, ...]
+    confidence: float
+    shards: int
+    max_items_per_unit: int
+    max_nodes: int
+    max_edges: int
+    max_property_keys: int
+    max_description_chars: int
+    dangling: SeedDangling
 
     def __post_init__(self) -> None:
         problems = []

@@ -19,6 +19,7 @@ import pytest
 
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models.config import DEFAULT_VECTOR_SEARCH
 
 pytestmark = pytest.mark.unit
 
@@ -48,3 +49,27 @@ def test_lucene_default_supports_cosinesimil_space_type(config: Config) -> None:
     vs = config.indexing.opensearch.vector_search
     assert vs["engine"] == "lucene"
     assert vs["space_type"] == "cosinesimil"
+
+
+def test_a_partial_vector_search_map_keeps_every_other_default(config: Config) -> None:
+    # A set map replaces the default one; the mapping, the index setting and
+    # the query's k read each left-out key from one table.
+    config.indexing.opensearch.vector_search = {"m": 16}
+    inst = OpenSearchIndexer.__new__(OpenSearchIndexer)
+    inst.config = config
+    inst.opensearch_config = config.indexing.opensearch
+    inst._embedding_dimension = 1024
+    method = inst._get_knn_vector_mapping()["method"]
+    assert method == {
+        "name": "hnsw",
+        "space_type": DEFAULT_VECTOR_SEARCH["space_type"],
+        "engine": DEFAULT_VECTOR_SEARCH["engine"],
+        "parameters": {
+            "ef_construction": DEFAULT_VECTOR_SEARCH["ef_construction"],
+            "m": 16,
+        },
+    }
+    assert config.indexing.opensearch.vector_search_value("ef_search") == (
+        DEFAULT_VECTOR_SEARCH["ef_search"]
+    )
+    assert Config().indexing.opensearch.vector_search == DEFAULT_VECTOR_SEARCH

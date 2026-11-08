@@ -117,8 +117,8 @@ def is_grounded(
     source_text: str | None,
     chunk_text: str,
     *,
-    min_span_tokens: int = 4,
-    min_overlap_ratio: float = 0.6,
+    min_span_tokens: int,
+    min_overlap_ratio: float,
 ) -> bool:
     """Decide whether an evidence ``source_text`` span is grounded in ``chunk_text``.
 

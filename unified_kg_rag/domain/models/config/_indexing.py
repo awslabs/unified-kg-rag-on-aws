@@ -173,6 +173,26 @@ DEFAULT_INDEX_SETTINGS: dict[str, Any] = {
     "refresh_interval": "1s",
 }
 
+# The HNSW parameters of vector_search unless set; a key a configured map
+# leaves out reads as its value here (vector_search_value).
+# lucene HNSW natively supports the cosinesimil space type on all supported
+# OpenSearch versions. faiss HNSW does NOT: it accepts only l2/innerproduct
+# until OpenSearch 2.19 (cosine support) / 2.18 (auto-normalization), so
+# faiss + cosinesimil is rejected at index creation with a
+# mapper_parsing_exception on 2.13. lucene takes up to 16,000 dimensions from
+# OpenSearch 2.12 (1,024 before), the same cap as faiss and nmslib, so the
+# 2.13 default needs no engine switch for wide models
+# (tests/integration/test_local_stores.py creates a 3,072-dim index).
+DEFAULT_VECTOR_SEARCH: dict[str, Any] = {
+    "engine": "lucene",
+    "space_type": "cosinesimil",
+    "ef_construction": 128,
+    "m": 24,
+    "ef_search": 100,
+}
+# The method a vector_search map without a name builds.
+_DEFAULT_VECTOR_METHOD = "hnsw"
+
 # The text analyzer of each LanguageCode. All but nori (the analysis-nori
 # plugin) are built into OpenSearch; cjk indexes Han and Kana runs as
 # overlapping character bigrams, which needs no dictionary plugin (kuromoji,
@@ -333,23 +353,7 @@ class OpenSearchIndexingConfig(BaseModel):
         ),
     )
     vector_search: dict[str, Any] = Field(
-        default_factory=lambda: {
-            # lucene HNSW natively supports the cosinesimil space type on all
-            # supported OpenSearch versions. faiss HNSW does NOT: it accepts only
-            # l2/innerproduct until OpenSearch 2.19 (cosine support) / 2.18
-            # (auto-normalization), so faiss + cosinesimil is rejected at index
-            # creation with a mapper_parsing_exception on 2.13. lucene takes
-            # up to 16,000 dimensions from OpenSearch 2.12 (1,024 before), the
-            # same cap as faiss and nmslib, so the 2.13 default needs no engine
-            # switch for wide models (tests/integration/test_local_stores.py
-            # creates a 3,072-dim index). Kept in sync with the index mapping
-            # default in OpenSearchIndexer.
-            "engine": "lucene",
-            "space_type": "cosinesimil",
-            "ef_construction": 128,
-            "m": 24,
-            "ef_search": 100,
-        },
+        default_factory=lambda: dict(DEFAULT_VECTOR_SEARCH),
         description=(
             "HNSW algorithm parameters for approximate nearest neighbor search. "
             "ef_search is the candidate list size of a query: on faiss and "
@@ -400,6 +404,12 @@ class OpenSearchIndexingConfig(BaseModel):
             storage["compression_level"] = self.compression_level
         return storage
 
+    def vector_search_value(self, key: str) -> Any:
+        """``vector_search[key]``, or its default (``DEFAULT_VECTOR_SEARCH``;
+        ``hnsw`` for the method ``name``) when the map leaves it out."""
+        defaults = {**DEFAULT_VECTOR_SEARCH, "name": _DEFAULT_VECTOR_METHOD}
+        return self.vector_search.get(key, defaults[key])
+
     @model_validator(mode="after")
     def _check_vector_storage(self) -> "OpenSearchIndexingConfig":
         # Refused by every OpenSearch version: fail at config load instead
@@ -408,10 +418,9 @@ class OpenSearchIndexingConfig(BaseModel):
         # the creation probe, which asks the live cluster.
         if not self.vector_storage():
             return self
-        method = self.vector_search
-        engine = method.get("engine", "lucene")
-        space = method.get("space_type", "cosinesimil")
-        name = method.get("name", "hnsw")
+        engine = self.vector_search_value("engine")
+        space = self.vector_search_value("space_type")
+        name = self.vector_search_value("name")
         prefix = "indexing.opensearch"
         if engine not in ("lucene", "faiss"):
             raise ValueError(

@@ -137,6 +137,7 @@ def test_what_crosses_into_a_worker_pickles(method: ResolutionMethod) -> None:
     matcher = FuzzyMatcher(
         ["Acme Corporation Holdings", "한빛상사 주식회사", "東邦商事"],
         resolution_method=method,
+        similarity_threshold=Config().processing.similarity_threshold,
     )
     # The test's own bytes: what multiprocessing pickles to a worker.
     copy = pickle.loads(pickle.dumps(matcher))  # nosec B301 - own round trip

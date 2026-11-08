@@ -72,6 +72,7 @@ from ._graph import (
 from ._indexing import (
     DEFAULT_INDEX_SETTINGS,
     DEFAULT_LANGUAGE_ANALYZERS,
+    DEFAULT_VECTOR_SEARCH,
     CommunityCompactionConfig,
     IndexingConfig,
     NeptuneIndexingConfig,
@@ -220,6 +221,7 @@ __all__ = [
     "DEFAULT_CITATION_STRATEGIES",
     "DEFAULT_INDEX_SETTINGS",
     "DEFAULT_LANGUAGE_ANALYZERS",
+    "DEFAULT_VECTOR_SEARCH",
     "DEFAULT_MODEL_ID",
     "DescriptionSummarizationConfig",
     "DocumentParsingConfig",

@@ -224,7 +224,11 @@ def test_relationships_keep_distinct_identifier_endpoints() -> None:
 def test_incremental_merge_does_not_collapse_distinct_identifier() -> None:
     old = [Entity(id="po1", name="Purchase Order 1001", type="document")]
     delta = [Entity(id="po2", name="Purchase Order 1002", type="document")]
-    matcher = FuzzyMatcher(["Purchase Order 1001"], similarity_threshold=0.6)
+    matcher = FuzzyMatcher(
+        ["Purchase Order 1001"],
+        resolution_method=ResolutionMethod.SEQUENCE_MATCHER,
+        similarity_threshold=0.6,
+    )
     merged, remap = merge_entities(old, delta, fuzzy_matcher=matcher)
     assert remap == {}
     assert {e.id for e in merged} == {"po1", "po2"}
@@ -233,7 +237,11 @@ def test_incremental_merge_does_not_collapse_distinct_identifier() -> None:
 def test_incremental_merge_respects_type() -> None:
     old = [Entity(id="o1", name="Acme Corporation", type="organization")]
     delta = [Entity(id="d1", name="Acme Corporatio", type="product")]
-    matcher = FuzzyMatcher(["Acme Corporation"], similarity_threshold=0.5)
+    matcher = FuzzyMatcher(
+        ["Acme Corporation"],
+        resolution_method=ResolutionMethod.SEQUENCE_MATCHER,
+        similarity_threshold=0.5,
+    )
     merged, remap = merge_entities(old, delta, fuzzy_matcher=matcher)
     assert remap == {}
     assert len(merged) == 2
@@ -242,7 +250,11 @@ def test_incremental_merge_respects_type() -> None:
 def test_incremental_merge_still_merges_untyped_variant() -> None:
     old = [Entity(id="o1", name="Acme Corporation", type="organization")]
     delta = [Entity(id="d1", name="Acme Corporatio", type="")]
-    matcher = FuzzyMatcher(["Acme Corporation"], similarity_threshold=0.5)
+    matcher = FuzzyMatcher(
+        ["Acme Corporation"],
+        resolution_method=ResolutionMethod.SEQUENCE_MATCHER,
+        similarity_threshold=0.5,
+    )
     _, remap = merge_entities(old, delta, fuzzy_matcher=matcher)
     assert remap == {"d1": "o1"}
 
