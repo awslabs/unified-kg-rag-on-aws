@@ -21,16 +21,19 @@ You need Python 3.11–3.12, [uv](https://docs.astral.sh/uv/) and Ollama.
 Install the `local` extra and pull the two default models:
 
 ```bash
-uv sync --extra local
+uv sync --no-dev --extra local
 ollama pull qwen2.5:7b-instruct
 ollama pull bge-m3
 ```
 
+`--no-dev` leaves out the contributors' test and lint tools, which `uv sync`
+and `uv run` install without it.
+
 - **Reranking.** The local preset reranks with a cross-encoder, which needs
-  the `cross-encoder` extra: `uv sync --extra local --extra cross-encoder`.
+  the `cross-encoder` extra: `uv sync --no-dev --extra local --extra cross-encoder`.
   Without it queries keep the fused order (logged once). On Linux that extra
   installs the locked CUDA build of PyTorch (several GB); for the CPU build
-  run `uv sync --extra local` then
+  run `uv sync --no-dev --extra local` then
   `uv pip install --torch-backend cpu -e '.[local,cross-encoder]'` (a later
   plain `uv sync` removes it).
 
@@ -56,7 +59,7 @@ EOF
 Index it:
 
 ```bash
-uv run run-ingestion --backend local --source-directory ./sample-corpus
+uv run --no-dev run-ingestion --backend local --source-directory ./sample-corpus
 ```
 
 - **Files.** Without a config file the stores live in `.unified-kg-rag/` of
@@ -79,8 +82,8 @@ uv run run-ingestion --backend local --source-directory ./sample-corpus
 their relationships; `mix` is the general LightRAG strategy:
 
 ```bash
-uv run run-rag --backend local --search-strategy local --verbose --query "Who is the chief engineer at Acme Robotics?"
-uv run run-rag --backend local --search-strategy mix --verbose --query "How are Acme Robotics and Globex Sensors related?"
+uv run --no-dev run-rag --backend local --search-strategy local --verbose --query "Who is the chief engineer at Acme Robotics?"
+uv run --no-dev run-rag --backend local --search-strategy mix --verbose --query "How are Acme Robotics and Globex Sensors related?"
 ```
 
 `--verbose` prints, after the answer, the sources it used (text-unit ids
@@ -130,7 +133,7 @@ The three evaluators on by default need no LLM judge. Compare the two
 strategies on the same questions:
 
 ```bash
-uv run run-eval --backend local --data-path sample-eval.json --search-strategy local,mix
+uv run --no-dev run-eval --backend local --data-path sample-eval.json --search-strategy local,mix
 ```
 
 Each strategy's results, reports and summary, and
