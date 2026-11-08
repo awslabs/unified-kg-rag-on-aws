@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import random
+from collections.abc import Iterator
 from typing import Any
 from unittest import mock
 
@@ -26,17 +27,18 @@ from pydantic import ValidationError
 from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.domain.ingestion.community_clustering import (
-    base_partition,
     build_cluster_graph,
     build_hierarchy,
     canonical_graph,
     community_content_id,
+    community_sort_key,
     entity_subgraph,
     find_optimal_resolution,
     leiden,
     leiden_communities,
     merge_small_communities,
     partition_dict_to_communities,
+    partition_tree,
 )
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.models import (
@@ -52,6 +54,23 @@ from unified_kg_rag.domain.prompts import CommunityReportPrompt
 from unified_kg_rag.shared import GraphError
 
 pytestmark = pytest.mark.unit
+
+
+def base_partition(
+    graph: nx.Graph, config: CommunityDetectionConfig, *, entity_level: bool = True
+) -> list[set[Any]]:
+    """The finest communities of ``graph`` (the leaves of ``partition_tree``),
+    in canonical order."""
+
+    def leaves(nodes: list[Any]) -> Iterator[set[Any]]:
+        for node in nodes:
+            if node.children:
+                yield from leaves(node.children)
+            else:
+                yield node.members
+
+    roots = partition_tree(graph, config, entity_level=entity_level)
+    return sorted(leaves(roots), key=community_sort_key)
 
 
 def _detector(

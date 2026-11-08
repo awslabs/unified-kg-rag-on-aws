@@ -13,7 +13,7 @@ from typing import Any, NoReturn
 import pytest
 from pydantic import ValidationError
 
-from tests.fixtures.seed_graphs import seed_statements
+from tests.fixtures.seed_graphs import render_unit, seed_statements
 from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.contributions import (
     record_from_payload,
@@ -35,7 +35,6 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     parse_statement,
     parse_unit_statements,
     render_statement,
-    render_unit,
     seed_text_units,
     shard_of,
 )

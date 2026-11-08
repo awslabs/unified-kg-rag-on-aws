@@ -7,12 +7,15 @@ are Korean and Japanese, some vertices carry seed properties and an
 extracted attribute, one edge only a seed graph states. Everything is
 made up. :func:`property_graph` encodes it with the real Neptune codec
 (what every graph backend stores), so the reference executor reads what
-the stores hold.
+the stores hold. :func:`reference_operation` answers a store operation over
+such a graph by the match semantics: what the conformance suite compares
+every store with.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from unified_kg_rag.adapters.storage.neptune_codec import (
@@ -25,12 +28,26 @@ from unified_kg_rag.domain.models.graph_query import (
     GraphEdgeRecord,
     GraphProfile,
     GraphQueryPlan,
+    GraphQueryRequest,
+    GraphQueryResult,
+    GroupRow,
+    PathEdge,
+    PathRow,
     PropertyGraph,
     ValidatedPlan,
 )
 from unified_kg_rag.domain.retrieval.graph_query import (
+    EdgePredicate,
+    VertexMap,
+    VertexPredicate,
+    Walk,
+    _ordered_groups,
+    _ordered_paths,
     build_profile,
+    match_walks,
     validate_plan,
+    value_kind,
+    vertex_rank,
 )
 
 MAX_LENGTH = 1000
@@ -344,3 +361,108 @@ CONFORMANCE_PLANS: dict[str, dict[str, Any]] = {
         "returns": {"kind": "count"},
     },
 }
+
+
+def reference_operation(
+    request: GraphQueryRequest,
+    graph: PropertyGraph,
+    *,
+    vertex_ok: VertexPredicate | None = None,
+    edge_ok: EdgePredicate | None = None,
+) -> GraphQueryResult:
+    """``request`` answered over ``graph`` by the match semantics
+    (``match_walks``); ``vertex_ok`` / ``edge_ok`` stand for the caller's
+    filters as the store applies them."""
+    plan = request.plan
+    walks = match_walks(
+        plan,
+        graph,
+        linked=request.linked,
+        allowed_ids=request.allowed_ids,
+        vertex_ok=vertex_ok,
+        edge_ok=edge_ok,
+    )
+    index = {var: i for i, var in enumerate(plan.vars)}
+
+    def project(walk: Walk, vars_: Sequence[str]) -> tuple[str, ...]:
+        return tuple(walk.binding[index[v]] for v in vars_)
+
+    named: set[str] = set()
+    if request.operation == "count":
+        distinct = {project(w, request.vars) for w in walks}
+        return _result(request, graph, set(), count=len(distinct))
+    if request.operation == "group":
+        assert request.group_var is not None
+        counted: dict[Any, set[tuple[str, ...]]] = defaultdict(set)
+        for walk in walks:
+            vertex_id = walk.binding[index[request.group_var]]
+            key: Any = vertex_id
+            if request.group_key is not None:
+                values = graph.vertices[vertex_id].get(request.group_key) or ()
+                key = next((v for v in values if value_kind(v) is not None), None)
+                if key is None:
+                    continue
+            counted[key].add(project(walk, request.vars))
+        groups = _ordered_groups(
+            (GroupRow(key=k, count=len(v)) for k, v in counted.items()),
+            request.order,
+        )
+        truncated = len(groups) > request.limit
+        groups = groups[: request.limit]
+        if request.group_key is None:
+            named = {str(g.key) for g in groups}
+        return _result(request, graph, named, groups=tuple(groups), truncated=truncated)
+    if request.operation == "paths":
+        found: dict[tuple[tuple[str, ...], tuple[str, ...]], PathRow] = {}
+        for walk in walks:
+            row = PathRow(
+                vertex_ids=walk.vertices,
+                edges=tuple(
+                    PathEdge(
+                        id=e.id,
+                        type=e.type,
+                        source_id=e.source_id,
+                        target_id=e.target_id,
+                    )
+                    for e in walk.edges
+                ),
+            )
+            found.setdefault((row.vertex_ids, tuple(e.id for e in row.edges)), row)
+        walked = _ordered_paths(found.values())
+        truncated = len(walked) > request.limit
+        walked = walked[: request.limit]
+        named = {v for p in walked for v in p.vertex_ids}
+        return _result(request, graph, named, paths=tuple(walked), truncated=truncated)
+    tuples = sorted(
+        {project(w, request.vars) for w in walks},
+        key=lambda t: (-vertex_rank(graph.vertices.get(t[0])) if t else 0.0, t),
+    )
+    truncated = len(tuples) > request.limit
+    rows = tuple(
+        dict(zip(request.vars, t, strict=True)) for t in tuples[: request.limit]
+    )
+    named = {v for row in rows for v in row.values()}
+    return _result(request, graph, named, rows=rows, truncated=truncated)
+
+
+def _result(
+    request: GraphQueryRequest,
+    graph: PropertyGraph,
+    named: set[str],
+    **fields: Any,
+) -> GraphQueryResult:
+    return GraphQueryResult(
+        operation=request.operation,
+        vertices={
+            vertex_id: hydrated(graph.vertices[vertex_id], request.hydrate)
+            for vertex_id in sorted(named)
+            if vertex_id in graph.vertices
+        },
+        backend="reference",
+        **fields,
+    )
+
+
+def hydrated(vertex: VertexMap, keys: Sequence[str]) -> dict[str, list[Any]]:
+    """The ``keys`` of a stored value map (every value a list)."""
+    return {key: list(vertex[key]) for key in keys if vertex.get(key)}

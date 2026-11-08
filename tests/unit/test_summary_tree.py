@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import Any
 
 import numpy as np
 import pytest
@@ -24,7 +25,6 @@ from unified_kg_rag.domain.ingestion.summary_tree import (
     gmm_clusters,
     kmeans,
     kmeans_clusters,
-    leaf_digest,
     leaf_entries_digest,
     leaf_entry,
     node_id,
@@ -179,6 +179,10 @@ def test_gmm_two_step_clusters_cover_every_point() -> None:
     assert set().union(*map(set, clusters)) == set(range(90))
 
 
+def leaf_digest(leaves: list[tuple[str, str, dict[str, Any]]]) -> str:
+    return leaf_entries_digest(leaf_entry(*leaf) for leaf in leaves)
+
+
 def test_kmeans_clusters_aim_at_the_target_size() -> None:
     clusters = kmeans_clusters(_blobs(60), TreeSettings(target_children=6))
     assert len(clusters) == 10
@@ -206,9 +210,6 @@ def test_a_streamed_leaf_digest_is_the_stored_one() -> None:
     # again once after an upgrade.
     leaves = [("b", "텍스트 b", {"category": "x"}), ("a", "text a", {})]
     assert leaf_digest(leaves) == "1e67697b0fd505f7fe14978e918d0c30"
-    assert leaf_entries_digest(leaf_entry(*leaf) for leaf in leaves) == (
-        leaf_digest(leaves)
-    )
 
 
 def test_uniform_filters_keep_only_shared_values() -> None:

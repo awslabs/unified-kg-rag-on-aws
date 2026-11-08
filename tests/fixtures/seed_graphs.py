@@ -8,7 +8,7 @@ them (for the incremental properties)."""
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, NamedTuple
 
 from hypothesis import strategies as st
@@ -21,8 +21,11 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     SEED_RECORD_FINGERPRINT,
     SeedConversion,
     SeedConversionSettings,
+    SeedEdgeStatement,
+    SeedNodeStatement,
     convert_seed,
     parse_seed_unit,
+    render_statement,
     seed_text_units,
 )
 from unified_kg_rag.domain.models import (
@@ -263,3 +266,8 @@ def seed_statements(conversion: SeedConversion) -> list[str]:
         for line in unit.text.split("\n")
         if line
     ]
+
+
+def render_unit(statements: Iterable[SeedNodeStatement | SeedEdgeStatement]) -> str:
+    """The text of a seed unit holding ``statements``: one line each."""
+    return "\n".join(render_statement(statement) for statement in statements)

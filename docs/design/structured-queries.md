@@ -201,12 +201,14 @@ of all nodes, at most `max_scan_rows` (5,000), checked and aggregated in
 code: past the cap the result is marked `truncated`, and a count reads "at
 least N" in the context and in `metadata.structured`. Without either the
 store aggregates and counts are exact. The reference executor
-(`domain/retrieval/graph_query.py`, in the package because the benchmark
-generator computes its gold answers with it) implements the same
-operations over a `PropertyGraph`, and the conformance suite
-(`tests/integration/test_graph_query_conformance.py`) runs the same plans
-on it, SQLite, Gremlin Server (`LOCAL_STORES=1`, both vertex-id modes) and
-Neptune (`-m aws`), comparing values and sets.
+(`match_walks` and `reference_execute` in `domain/retrieval/graph_query.py`,
+in the package because the benchmark generator computes its gold answers
+with it) answers a plan over a `PropertyGraph`; its per-operation form
+(`tests/fixtures/graph_query.py`) implements the store operations, the
+caller's filters applied as the stores apply them, and the conformance
+suite (`tests/integration/test_graph_query_conformance.py`) runs the same
+plans on it, SQLite, Gremlin Server (`LOCAL_STORES=1`, both vertex-id
+modes) and Neptune (`-m aws`), comparing values and sets.
 
 **Safety.** The question, the history and the stored text can carry
 instructions to the planner, so the plan is treated as any JSON a model may

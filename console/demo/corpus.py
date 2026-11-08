@@ -252,13 +252,6 @@ def page_texts(name: str) -> list[str]:
     return pages
 
 
-def text_of(name: str) -> str:
-    """A corpus file's text (a PDF's pages joined)."""
-    if name in PDF_DOCUMENTS:
-        return "\n".join(page_texts(name))
-    return TEXT_DOCUMENTS[name]
-
-
 # Earlier demo corpora's file names, removed from a workspace's corpus
 # directory when the demo rewrites it, so a kept workspace does not ingest
 # both the old and the new copy of a document.

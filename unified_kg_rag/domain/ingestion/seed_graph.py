@@ -334,13 +334,9 @@ def parse_statement(line: str) -> SeedNodeStatement | SeedEdgeStatement:
         raise DataProcessingError(f"not a seed graph statement: {e}") from e
 
 
-def render_unit(statements: Iterable[SeedNodeStatement | SeedEdgeStatement]) -> str:
-    """The text of a seed unit: one line per statement."""
-    return "\n".join(render_statement(statement) for statement in statements)
-
-
 def parse_unit_statements(text: str) -> list[SeedNodeStatement | SeedEdgeStatement]:
-    """The statements of a seed unit's text (:func:`render_unit`)."""
+    """The statements of a seed unit's text: one line each
+    (:func:`render_statement`)."""
     # "\n" only: ensure_ascii=False lets U+2028 and friends through, which
     # str.splitlines would split on.
     return [parse_statement(line) for line in text.split("\n") if line]

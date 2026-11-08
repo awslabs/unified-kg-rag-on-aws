@@ -293,22 +293,6 @@ def _leaves(roots: list[ClusterNode]) -> list[ClusterNode]:
     return [node for node in _postorder(roots) if not node.children]
 
 
-def base_partition(
-    graph: nx.Graph, config: CommunityDetectionConfig, *, entity_level: bool = True
-) -> list[set[Any]]:
-    """The finest communities of ``graph`` (the leaves of
-    :func:`partition_tree`), in canonical order."""
-    return sorted(
-        (
-            leaf.members
-            for leaf in _leaves(
-                partition_tree(graph, config, entity_level=entity_level)
-            )
-        ),
-        key=community_sort_key,
-    )
-
-
 def partition_tree(
     graph: nx.Graph, config: CommunityDetectionConfig, *, entity_level: bool = True
 ) -> list[ClusterNode]:
