@@ -17,7 +17,7 @@ SNS topic.
 
 from __future__ import annotations
 
-from aws_cdk import Duration, Stack
+from aws_cdk import Annotations, Duration, Stack, Token
 from aws_cdk import aws_cloudwatch as cw
 from aws_cdk import aws_cloudwatch_actions as cw_actions
 from constructs import Construct
@@ -305,8 +305,6 @@ class ObservabilityStack(Stack):
         # they fire into the void. Warn at synth (rather than silently) when no
         # email is wired so the operator knows to add one (`-c alarm_email=...`).
         if not config.alarm_email:
-            from aws_cdk import Annotations
-
             Annotations.of(self).add_warning(
                 "No alarm_email configured: pipeline-failure and store-health "
                 "alarms publish to SNS with no subscriber. Pass "
@@ -454,9 +452,13 @@ class ObservabilityStack(Stack):
         # One Metrics Insights query per widget: GetMetricWidgetImage (the
         # API that renders a widget to a PNG, e.g. for a report) refuses a
         # widget holding two ("Maximum number of queries (1) exceeded").
+        # Bedrock publishes its metrics in the region the calls go to
+        # (bedrock_region), which a dashboard widget can name.
+        bedrock_region = config.bedrock_region
         dashboard.add_widgets(
             cw.GraphWidget(
                 title="Bedrock invocations by model",
+                region=bedrock_region,
                 left=[
                     self._insights(
                         'SELECT SUM(Invocations) FROM SCHEMA("AWS/Bedrock", ModelId)'
@@ -467,10 +469,12 @@ class ObservabilityStack(Stack):
             ),
             cw.GraphWidget(
                 title="Bedrock throttles (all models)",
+                region=bedrock_region,
                 left=[self._insights(BEDROCK_THROTTLES, "Throttles")],
             ),
             cw.GraphWidget(
                 title="Bedrock invocation latency by model (ms, average)",
+                region=bedrock_region,
                 left=[
                     self._insights(
                         'SELECT AVG(InvocationLatency) FROM SCHEMA("AWS/Bedrock",'
@@ -507,6 +511,15 @@ class ObservabilityStack(Stack):
             dimensions_map={"Environment": self.config.env_name},
             period=Duration.minutes(5),
         )
+
+    @property
+    def bedrock_region(self) -> str | None:
+        """The region the model calls go to, when it is not this stack's
+        (``None`` too when the deploy region is not known at synth)."""
+        region = self.config.bedrock_region
+        if not region or Token.is_unresolved(self.region) or region == self.region:
+            return None
+        return region
 
     @staticmethod
     def _insights(query: str, label: str) -> cw.MathExpression:
@@ -566,6 +579,17 @@ class ObservabilityStack(Stack):
             "region): lower processing.max_concurrency or raise the quota",
         )
         throttles.add_alarm_action(action)
+        if self.bedrock_region:
+            # An alarm reads metrics of its own region only, and Bedrock
+            # publishes them where the calls go.
+            Annotations.of(self).add_warning(
+                f"bedrock_region ({self.bedrock_region}) is not the deploy "
+                f"region ({self.region}): the BedrockThrottling alarm watches "
+                "the deploy region, where this deployment's model calls publish "
+                "no metrics, so it cannot fire. The dashboard's Bedrock widgets "
+                f"read {self.bedrock_region}; create a throttling alarm there to "
+                "be notified (docs/operations.md, Alarms)."
+            )
         # Memory pressure: Fargate kills a task that exceeds its memory (exit
         # 137, OutOfMemoryError), which loses the running stage.
         memory = cw.Alarm(
