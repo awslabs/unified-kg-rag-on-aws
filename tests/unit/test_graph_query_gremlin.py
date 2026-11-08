@@ -307,3 +307,23 @@ def test_every_valid_plan_compiles_to_a_checked_traversal(raw: dict) -> None:
             timeout_ms=5000,
         )
         _assert_scoped(query.build(g).bytecode)
+
+
+def test_groups_of_an_integral_float_and_its_int_are_one() -> None:
+    """The server groups 5 and 5.0 apart; the decoded groups merge them."""
+    query = _query(
+        {
+            "nodes": [{"var": "v", "types": ["VENDOR"]}],
+            "returns": {
+                "kind": "group_count",
+                "group_by": {"var": "v", "prop": "rank"},
+            },
+        }
+    )
+    decoded = query.decode([{5.0: 2}, {7.5: 2}, {5: 1}, {True: 9}])
+    assert [(g.key, g.count) for g in decoded["groups"]] == [
+        (5, 3),
+        (7.5, 2),
+        (True, 9),
+    ]
+    assert type(decoded["groups"][0].key) is int

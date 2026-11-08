@@ -44,6 +44,7 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     _ordered_groups,
     _ordered_paths,
     build_profile,
+    canonical_scalar,
     match_walks,
     validate_plan,
     value_kind,
@@ -402,6 +403,7 @@ def reference_operation(
                 key = next((v for v in values if value_kind(v) is not None), None)
                 if key is None:
                     continue
+                key = canonical_scalar(key)
             counted[key].add(project(walk, request.vars))
         groups = _ordered_groups(
             (GroupRow(key=k, count=len(v)) for k, v in counted.items()),

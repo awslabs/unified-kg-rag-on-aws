@@ -222,6 +222,23 @@ def vertex_rank(vertex: VertexMap | None) -> float:
     return 0.0
 
 
+# Integral floats up to this magnitude are exact as ints.
+_EXACT_INTEGRAL = 2**53
+
+
+def canonical_scalar(value: Any) -> Any:
+    """A stored scalar as one group key: an integral float as its int (5.0
+    is 5, as every store's numeric comparison reads them; a JSON or Gremlin
+    group of the raw values kept 5 and 5.0 apart), anything else as is."""
+    if (
+        isinstance(value, float)
+        and value.is_integer()
+        and abs(value) <= _EXACT_INTEGRAL
+    ):
+        return int(value)
+    return value
+
+
 def scalar_sort_key(value: Any) -> tuple[int, Any]:
     """One order over group keys of any kind: numbers (booleans as 0/1),
     then strings."""
@@ -1020,7 +1037,7 @@ def aggregate_bindings(
             )
             if key is None or value_kind(key) is None:
                 continue
-            counted[key].add(tuple(row[v] for v in r.vars))
+            counted[canonical_scalar(key)].add(tuple(row[v] for v in r.vars))
         groups = _ordered_groups(
             (GroupRow(key=key, count=len(ids)) for key, ids in counted.items()),
             r.order,

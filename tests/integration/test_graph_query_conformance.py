@@ -480,3 +480,82 @@ def test_a_capped_store_page_keeps_the_first_by_the_plan_order(
     assert (answer.groups, answer.rows) == (full.groups, full.rows)
     if name == "top_vendor":
         assert [(g.key, g.count) for g in answer.groups] == [("v8", 8)]
+
+
+MIXED_NUMBER_PLANS = {
+    "per_size": {
+        "nodes": [{"var": "v", "types": ["VENDOR"]}],
+        "returns": {
+            "kind": "group_count",
+            "group_by": {"var": "v", "prop": "attr.size"},
+        },
+    },
+    "size_five": {
+        "nodes": [
+            {
+                "var": "v",
+                "types": ["VENDOR"],
+                "where": [{"prop": "attr.size", "op": "eq", "value": 5}],
+            }
+        ],
+        "returns": {"kind": "count"},
+    },
+    "size_in": {
+        "nodes": [
+            {
+                "var": "v",
+                "where": [{"prop": "attr.size", "op": "in", "value": [5.0, 7.5]}],
+            }
+        ],
+        "returns": {"kind": "rows"},
+    },
+    "largest": {
+        "nodes": [{"var": "v", "types": ["VENDOR"]}],
+        "returns": {
+            "kind": "aggregate",
+            "aggregate": {"fn": "max", "var": "v", "prop": "attr.size"},
+        },
+    },
+}
+
+
+@pytest.mark.parametrize("name", sorted(MIXED_NUMBER_PLANS))
+def test_an_integral_float_is_the_int_it_equals(
+    harness: StoreHarness, name: str
+) -> None:
+    """A property stored as 5 on some vertices and 5.0 on others (two
+    extraction runs, a seed file) is one value: one group, one match."""
+    suffix = harness.suffix("mixed")
+    entities = [
+        Entity(
+            id=f"m{i}",
+            name=f"M{i}",
+            type="VENDOR",
+            rank=1,
+            attributes={"index": suffix, "size": size},
+        )
+        for i, size in enumerate([5.0, 5, 5, 7.5, 5.0])
+    ]
+    harness.graph_indexer.index_entities(entities, suffixes=[suffix])
+    graph = property_graph(entities, [])
+    plan = _plan(MIXED_NUMBER_PLANS[name], graph)
+    request = _request(plan, suffix)
+
+    async def run() -> Any:
+        port = (
+            FakeGraphQueryRetriever({suffix: graph_of(harness.graph_indexer, suffix)})
+            if harness.kind == "fake"
+            else harness.graph_retriever()  # type: ignore[misc]
+        )
+        try:
+            return await port.aexecute(request)
+        finally:
+            await _close(port)
+
+    answer = answer_from_result(plan, asyncio.run(run()))
+    assert answer == _expected(plan, request, graph, False)
+    if name == "per_size":
+        assert [(g.key, g.count) for g in answer.groups] == [(5, 4), (7.5, 1)]
+        assert type(answer.groups[0].key) is int
+    elif name == "size_five":
+        assert answer.count == 4

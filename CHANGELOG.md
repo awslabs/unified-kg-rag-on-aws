@@ -764,7 +764,8 @@ From a `main` checkout (formats and keys no release had):
   parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
   form against a read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer,
   and runs it read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and
-  top rows are exact. The result table, the entities and paths it names (with seed provenance) and their passages are
+  top rows are exact, and groups an integral float with the int it equals (5.0 with 5). The result table, the
+  entities and paths it names (with seed provenance) and their passages are
   fused (buckets `structured_query_result`, `structured_entities`, `structured_relationships`,
   `structured_text_units`, `structured_text_hits`), the table numbered `[n]` like any evidence section and its
   citation naming the documents of its evidence rows (the units most of them cite first, as `local` orders its text

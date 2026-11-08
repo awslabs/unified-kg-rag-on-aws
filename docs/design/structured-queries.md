@@ -207,7 +207,11 @@ plan's `order`, then by key; tuples by the first node's `rank`, then the
 ids; paths by length), so a page shorter than the matches still holds the
 plan's exact top: the group counts and the top rows are exact whenever the
 plan's `limit` fits the page (`max_scan_rows`), and the answer says when
-more matched. Under a document filter or a seed-property condition (which
+more matched. A group key is canonical (`canonical_scalar`): an integral
+float is the int it equals, so a property stored as 5 on some vertices and
+5.0 on others is one group on every store (SQLite groups the canonical
+JSON; Gremlin's groups merge when decoded, after the server's page cut, so
+there a key split near the cut can still rank one place low). Under a document filter or a seed-property condition (which
 the store cannot evaluate: vertices hold no document filters and seed
 properties are one JSON string) every plan runs as `tuples` (or `paths`)
 of all nodes, at most `max_scan_rows` (5,000), checked and aggregated in
