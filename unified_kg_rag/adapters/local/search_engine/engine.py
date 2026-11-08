@@ -61,6 +61,7 @@ from unified_kg_rag.adapters.local.search_engine.query import (
     VectorField,
     evaluate,
     field_specs,
+    parse_sort,
     rejected,
     sort_hits,
     sort_values,
@@ -1041,6 +1042,7 @@ class SQLiteSearchEngine:
             for name in names:
                 self._check_window(connection, name, size)
             sort = body.get("sort")
+            fields = None if sort is None else parse_sort(sort)
             after = body.get("search_after")
             if after is not None and sort is None:
                 raise rejected(
@@ -1055,7 +1057,9 @@ class SQLiteSearchEngine:
             for doc_id, score in evaluate(index, query).items()
         ]
         top = (
-            top_hits(hits, size) if sort is None else sort_hits(hits, sort, size, after)
+            top_hits(hits, size)
+            if fields is None
+            else sort_hits(hits, fields, size, after)
         )
         return self._response(
             [
@@ -1065,7 +1069,7 @@ class SQLiteSearchEngine:
             total=len(hits),
             track=track,
             sorted_by=(
-                None if sort is None else [sort_values(hit, sort) for hit in top]
+                None if fields is None else [sort_values(hit, fields) for hit in top]
             ),
         )
 

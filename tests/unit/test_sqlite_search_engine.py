@@ -32,6 +32,7 @@ from unified_kg_rag.adapters.local.search_engine.query import (
     LoadedIndex,
     VectorField,
     evaluate,
+    parse_sort,
     resolve_path,
     sort_hits,
     top_hits,
@@ -911,7 +912,10 @@ def test_top_hits_and_sort_hits_select_the_head_of_the_full_sort() -> None:
     for size in (0, 1, 5, 79, 80, 200):
         assert top_hits(hits, size) == _sorted_in_full(hits, [])[:size]
         for sort in sorts:
-            assert sort_hits(hits, sort, size) == _sorted_in_full(hits, sort)[:size]
+            assert (
+                sort_hits(hits, parse_sort(sort), size)
+                == _sorted_in_full(hits, sort)[:size]
+            )
 
 
 def test_sort_orders_by_each_field_in_turn_missing_last(engine) -> None:
@@ -930,6 +934,27 @@ def test_sort_orders_by_each_field_in_turn_missing_last(engine) -> None:
     assert sorted_ids({"rank": {"order": "asc"}}, query=lookup) == ["c", "a"]
     response = _search(engine, {"match_all": {}}, body={"sort": [desc]})
     assert {hit["_score"] for hit in response["hits"]["hits"]} == {1.0}
+
+
+def test_a_sorted_search_parses_its_sort_once(engine, monkeypatch) -> None:
+    # Parsed per comparison it took most of a sorted page walk's time.
+    from unified_kg_rag.adapters.local.search_engine import query as query_module
+
+    engine.bulk_index(INDEX, [{"id": f"x{i}", "rank": i % 3} for i in range(50)])
+    single = query_module._single_field
+    parsed: list[str] = []
+
+    def counted(clause, entry):  # noqa: ANN001, ANN202
+        if clause == "sort":
+            parsed.append(clause)
+        return single(clause, entry)
+
+    monkeypatch.setattr(query_module, "_single_field", counted)
+    sort = [{"rank": {"order": "desc"}}, {"id": {"order": "asc"}}]
+    hits = _search(engine, {"match_all": {}}, size=20, body={"sort": sort})
+
+    assert len(hits["hits"]["hits"]) == 20
+    assert len(parsed) == len(sort)
 
 
 def test_search_after_pages_through_the_sorted_hits(engine) -> None:

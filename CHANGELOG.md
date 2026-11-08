@@ -1394,7 +1394,8 @@ From a `main` checkout (formats and keys no release had):
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
   beside `match_all` nor every other document for a kNN filter that only excludes (the seed-graph predicate on text
-  units). `run-eval` and `run-rag` default `OPENBLAS_NUM_THREADS` to 1 (a value in the environment wins): with a BLAS
+  units), and parses a search's `sort` once instead of at every comparison (a sorted 10k page of 50k hits: 2.1 s to
+  0.8 s). `run-eval` and `run-rag` default `OPENBLAS_NUM_THREADS` to 1 (a value in the environment wins): with a BLAS
   thread per core for each kNN product, 40 concurrent local queries on the embedded stores spent about 8 times the
   CPU. Results are unchanged; on 200 MuSiQue questions on the embedded stores, 40 at once with the model calls faked,
   a local query's retrieval took about half as long (`support` 19-20 s to 9-10 s, `ppr` 23-25 s to 11 s on a loaded
