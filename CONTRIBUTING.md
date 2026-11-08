@@ -143,7 +143,9 @@ Fix a true positive. For a false positive, suppress it with its reason: on the s
 (`# nosec B608 - <reason>`, `# nosemgrep: <rule id> - <reason>` on the line above, `# pragma: allowlist secret`), or
 in `.ash/.ash.yaml` for a whole class of files (each entry has a `reason`). ASH matches `.gitignore` against the
 absolute path, so in a checkout below a directory the file ignores (for example `.claude/worktrees/`)
-detect-secrets, which scans ASH's file list, finds nothing: run it from a clone outside such a directory.
+detect-secrets, which scans ASH's file list, finds nothing; it also skips every path under a dot-directory, so a
+checkout anywhere below one (`~/.claude/...`, `~/.cache/...`) is not scanned for secrets either. Run it from a clone
+or a worktree outside such directories (`git worktree add --detach /tmp/ash-scan HEAD`).
 
 ### Pins Dependabot does not move
 

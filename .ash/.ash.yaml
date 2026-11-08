@@ -57,12 +57,27 @@ global_settings:
     - path: tests/*
       rule_id: B608
       reason: test-store SQL interpolates only literal table names and ? placeholders
+    # Only the detectors synthetic credentials trip (moto keys, fake
+    # OpenSearch auth, digests): a real-format key (AWS, Slack, GitHub, a
+    # private key) in a test still fails the scan.
     - path: tests/*
-      rule_id: SECRET-*
+      rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      reason: test digests and ids are synthetic hex strings
+    - path: tests/*
+      rule_id: SECRET-SECRET-KEYWORD
       reason: test credentials are synthetic placeholders (moto, fake OpenSearch auth)
+    - path: tests/*
+      rule_id: SECRET-BASIC-AUTH-CREDENTIALS
+      reason: test URLs carry synthetic user:password pairs for fake stores
     - path: iac/tests/*
-      rule_id: SECRET-*
+      rule_id: SECRET-HEX-HIGH-ENTROPY-STRING
+      reason: test digests and ids are synthetic hex strings
+    - path: iac/tests/*
+      rule_id: SECRET-SECRET-KEYWORD
       reason: test credentials are synthetic placeholders
+    - path: iac/tests/*
+      rule_id: SECRET-BASIC-AUTH-CREDENTIALS
+      reason: test URLs carry synthetic user:password pairs
 
     # --- Repository files ----------------------------------------------------
     - path: .pre-commit-config.yaml
