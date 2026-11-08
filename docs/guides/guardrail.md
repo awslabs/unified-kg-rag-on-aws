@@ -17,13 +17,20 @@ To create the guardrail with the CDK stack, see
   too: joined checks of at most 12,000 characters, one after another, and
   only for a chunk whose check intervened (recorded in `metadata.guardrail`
   with `scope: joined`) one check each (`search.max_concurrency` at a time),
-  a refused one dropped from `search_results`, a masked one masked. Only these are billed.
+  a refused one dropped from `search_results`, a masked one masked. So are
+  the model-written query texts a caller sees: the rewritten and translated
+  query, its entities and LightRAG keywords (`processed_query`,
+  `search_results.query`), iterative search's follow-up queries and bridge
+  entities, and the structured plan. They take one joined check, and one
+  check each only when it intervened; a refused one is left out (a refused
+  searched query reads as the original). Only these are billed.
 - **What happens.**
   - A blocked query gets the guardrail's message, retrieves nothing, writes
     no memory and sets `RAGOutput.metadata.blocked`. A masked query continues
     with the masked text only.
   - A blocked or masked answer is replaced by the guardrail's text (blocked:
-    no `sources` either). Masking covers the answer, not its sources (corpus
+    no `sources`, search results or model-written query texts either:
+    `processed_query` keeps only the original query). Masking covers the answer, not its sources (corpus
     text as retrieved): keep text a caller must not see out of the corpus.
   - Interventions are in `RAGOutput.metadata.guardrail`, the WARNING log and
     the trace. A guardrail API error fails the query, or with

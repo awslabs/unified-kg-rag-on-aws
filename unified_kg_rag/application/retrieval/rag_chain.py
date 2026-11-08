@@ -304,6 +304,58 @@ def _model_texts(iterative: dict[str, Any]) -> list[tuple[str, str]]:
     return found
 
 
+# The model-written query texts a caller sees (query processing's rewrite,
+# translation, entities and LightRAG keywords, and the search query built
+# from them), screened as a synthesized result is: (text fields, list fields).
+_PROCESSED_QUERY_MODEL_TEXT = (
+    ("standalone_query", "translated_query", "final_query"),
+    ("entities", "hl_keywords", "ll_keywords"),
+)
+_SEARCH_QUERY_MODEL_TEXT = (("query",), ("entity_focus", "hl_keywords", "ll_keywords"))
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+
+def _query_model_texts(
+    model: BaseModel, fields: tuple[tuple[str, ...], ...]
+) -> list[str]:
+    """The non-empty strings of ``model``'s ``fields`` (text, then list)."""
+    text_fields, list_fields = fields
+    found = [getattr(model, name) for name in text_fields]
+    found.extend(v for name in list_fields for v in getattr(model, name))
+    return [v for v in found if isinstance(v, str) and v]
+
+
+def _replace_query_texts(
+    model: _ModelT,
+    fields: tuple[tuple[str, ...], ...],
+    screened: dict[str, str | None],
+    *,
+    refused: str | None,
+) -> _ModelT:
+    """``model`` with its ``fields`` screened: a masked text replaced, a
+    refused list item left out and a refused text field set to ``refused``
+    (the original query for a required one, else ``None``)."""
+    text_fields, list_fields = fields
+    update: dict[str, Any] = {}
+    for name in text_fields:
+        value = getattr(model, name)
+        if isinstance(value, str) and value in screened:
+            kept = screened[value]
+            update[name] = (
+                kept
+                if kept is not None
+                else (refused if model.model_fields[name].is_required() else None)
+            )
+    for name in list_fields:
+        values = getattr(model, name)
+        update[name] = [
+            kept
+            for v in values
+            if (kept := screened.get(v, v) if isinstance(v, str) else v) is not None
+        ]
+    return model.model_copy(update=update)
+
+
 # The search metadata of the structured strategy, whose plan (model output:
 # its names, values, entities and keywords) and plan description are
 # returned with the search results and written into its query result.
@@ -2402,12 +2454,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                         output.search_results = output.search_results.model_copy(
                             update={"results": [], "total_results": 0}
                         )
+                        # Nor the model's reading of the question.
+                        self._clear_query_texts(output)
                     elif screened:
                         self._mark_citations(output)
                 plan_texts: dict[str, str | None] = {}
                 output.search_results = await self._screen_synthesized(
                     output.search_results, guard_records, plan_texts=plan_texts
                 )
+                await self._screen_query_texts(output, guard_records)
                 if isinstance(output, RAGOutput):
                     self._refresh_screened_copies(output, plan_texts)
                 if guard_records:
@@ -2746,6 +2801,92 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             update={"results": kept, "total_results": len(kept)}
         )
 
+    async def _screen_texts(
+        self, texts: list[str], records: list[dict[str, Any]]
+    ) -> dict[str, str | None] | None:
+        """Each of the short model-written ``texts`` and what the output
+        guardrail made of it (``None``: refused), or ``None`` when nothing
+        needs replacing. One check reads them all; only when it intervenes
+        is each checked on its own (and each intervention recorded)."""
+        if not texts:
+            return None
+        assert self.guard is not None
+        verdict = await self.guard.acheck("\n".join(texts), GuardSource.OUTPUT)
+        if not verdict.intervened:
+            return None
+        screened: dict[str, str | None] = {}
+        for text in dict.fromkeys(texts):
+            one = await self.guard.acheck(text, GuardSource.OUTPUT)
+            if one.intervened:
+                records.append(_guard_record(GuardSource.OUTPUT, one))
+            screened[text] = (
+                None
+                if one.intervened and one.action is GuardAction.BLOCKED
+                else (one.text if one.intervened else text)
+            )
+        return screened
+
+    @staticmethod
+    def _clear_query_texts(output: RAGOutput | SearchOutput) -> None:
+        """Drop ``output``'s model-written query texts (a refused answer):
+        the query reads as the user's own, with no extractions."""
+        original = output.processed_query.original_query
+        output.processed_query = ProcessedQuery(
+            original_query=original,
+            final_query=original,
+            degraded_error=output.processed_query.degraded_error,
+        )
+        output.search_results = output.search_results.model_copy(
+            update={
+                "query": output.search_results.query.model_copy(
+                    update={
+                        "query": original,
+                        "entity_focus": [],
+                        "hl_keywords": [],
+                        "ll_keywords": [],
+                    }
+                )
+            }
+        )
+
+    async def _screen_query_texts(
+        self, output: RAGOutput | SearchOutput, records: list[dict[str, Any]]
+    ) -> None:
+        """Screen ``output``'s model-written query texts (the rewritten and
+        translated query, the entities and LightRAG keywords, and the search
+        query built from them; ``_PROCESSED_QUERY_MODEL_TEXT``) as a
+        synthesized result is: masked, or left out when refused (a refused
+        searched query reads as the original). The original query is the
+        user's own, screened as input. One check reads them all; only when
+        it intervenes is each checked on its own."""
+        if not self._screen_outputs:
+            return
+        processed, query = output.processed_query, output.search_results.query
+        original = processed.original_query
+        texts = [
+            text
+            for text in dict.fromkeys(
+                [
+                    *_query_model_texts(processed, _PROCESSED_QUERY_MODEL_TEXT),
+                    *_query_model_texts(query, _SEARCH_QUERY_MODEL_TEXT),
+                ]
+            )
+            if text != original
+        ]
+        screened = await self._screen_texts(texts, records)
+        if screened is None:
+            return
+        output.processed_query = _replace_query_texts(
+            processed, _PROCESSED_QUERY_MODEL_TEXT, screened, refused=original
+        )
+        output.search_results = output.search_results.model_copy(
+            update={
+                "query": _replace_query_texts(
+                    query, _SEARCH_QUERY_MODEL_TEXT, screened, refused=original
+                )
+            }
+        )
+
     async def _screen_model_metadata(
         self,
         search_results: SearchResult,
@@ -2765,22 +2906,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         if not isinstance(iterative, dict):
             return search_results
         texts = [text for _, text in _model_texts(iterative)]
-        if not texts:
+        screened = await self._screen_texts(texts, records)
+        if screened is None:
             return search_results
-        assert self.guard is not None
-        verdict = await self.guard.acheck("\n".join(texts), GuardSource.OUTPUT)
-        if not verdict.intervened:
-            return search_results
-        screened: dict[str, str | None] = {}
-        for text in dict.fromkeys(texts):
-            one = await self.guard.acheck(text, GuardSource.OUTPUT)
-            if one.intervened:
-                records.append(_guard_record(GuardSource.OUTPUT, one))
-            screened[text] = (
-                None
-                if one.intervened and one.action is GuardAction.BLOCKED
-                else (one.text if one.intervened else text)
-            )
         return search_results.model_copy(
             update={
                 "metadata": {
@@ -2813,22 +2941,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 for text in _string_leaves(structured.get(key))
             )
         )
-        if not texts:
+        screened = await self._screen_texts(texts, records)
+        if screened is None:
             return search_results
-        assert self.guard is not None
-        verdict = await self.guard.acheck("\n".join(texts), GuardSource.OUTPUT)
-        if not verdict.intervened:
-            return search_results
-        screened: dict[str, str | None] = {}
-        for text in texts:
-            one = await self.guard.acheck(text, GuardSource.OUTPUT)
-            if one.intervened:
-                records.append(_guard_record(GuardSource.OUTPUT, one))
-            screened[text] = (
-                None
-                if one.intervened and one.action is GuardAction.BLOCKED
-                else (one.text if one.intervened else text)
-            )
         if plan_texts is not None:
             plan_texts.update(screened)
         results = []

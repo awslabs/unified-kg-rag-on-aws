@@ -1803,8 +1803,9 @@ Deployment (CDK).
   unknown operator, a null or empty range raises `InvalidFilterError`), and a string value is converted to the
   field's type (`true`/`false`, `1`/`0`, `yes`/`no`; `in_schema:maybe` is refused) (#354, #356, #360, #370, #376,
   #381, #479, #483, #490, #581). See [filters](docs/reference/filters.md).
-- A guardrail-blocked answer returns no sources or search results, and the query span records only the screened
-  query (#345).
+- A guardrail-blocked answer returns no sources, search results or model-written query texts, and the query span
+  records only the screened query (#345). With `check_output`, the rewritten and translated query, its entities and
+  LightRAG keywords (`processed_query`, `search_results.query`) are screened as model output.
 - IaC: queries run under a read-only role that cannot write through a `_search` path, lists only `eval/` and has no
   DynamoDB access; `bedrock:ApplyGuardrail` is granted on the configured guardrail only; unused Neptune, S3 delete
   and `GetInferenceProfile` actions are dropped, and private-mode endpoint policies admit only the account (#204,
