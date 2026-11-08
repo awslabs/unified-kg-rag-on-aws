@@ -320,11 +320,7 @@ def partition_tree(
         )
         return [ClusterNode({node}) for node in sorted(graph.nodes(), key=str)]
 
-    if config.auto_resolution:
-        resolution = find_optimal_resolution(graph, config)
-    else:
-        resolution = config.resolution
-
+    resolution = config.resolution
     communities = leiden_communities(graph, resolution, config)
 
     # Every leaf is bounded by max_cluster_size: in entities at level 0, in
@@ -483,61 +479,6 @@ def partition_dict_to_communities(
         missing = [node for node in graph.nodes() if node not in partition_dict]
         ordered.extend({node} for node in sorted(missing, key=str))
     return dict(enumerate(ordered))
-
-
-def find_optimal_resolution(graph: nx.Graph, config: CommunityDetectionConfig) -> float:
-    best_resolution = config.resolution
-    best_modularity = -1.0
-
-    # Size short-circuit: the sweep runs a full Leiden partition + modularity
-    # computation for EACH candidate (~10x the base cost) at every hierarchy
-    # level. On a large graph that dominates the analysis phase, so above the
-    # configured node cap we skip the sweep and use the fixed resolution.
-    max_nodes = config.auto_resolution_max_nodes
-    if graph.number_of_nodes() > max_nodes:
-        logger.info(
-            "Graph has %s nodes (> %s); skipping the auto-resolution sweep "
-            "and using the fixed resolution %s.",
-            graph.number_of_nodes(),
-            max_nodes,
-            best_resolution,
-        )
-        return best_resolution
-
-    resolution_candidates = config.auto_resolution_candidates
-    canonical = canonical_graph(graph)
-
-    for resolution in resolution_candidates:
-        try:
-            partition_dict = leiden(
-                canonical,
-                resolution=resolution,
-                random_seed=config.random_state,
-                trials=1,
-            )
-
-            communities = partition_dict_to_communities(partition_dict, graph)
-            partition = list(communities.values())
-
-            if len(partition) < 2:
-                continue
-
-            modularity = graph_modularity(graph, partition)
-
-            if modularity > best_modularity:
-                best_modularity = modularity
-                best_resolution = resolution
-
-        except Exception as e:  # noqa: BLE001 - a failed resolution is skipped
-            logger.warning("Resolution %s failed: %s", resolution, e)
-            continue
-
-    logger.info(
-        "Auto-selected resolution %s with modularity %.4f",
-        best_resolution,
-        best_modularity,
-    )
-    return best_resolution
 
 
 def merge_small_communities(

@@ -59,7 +59,6 @@ from ._fusion import (
     _warn_retired_bucket,
 )
 from ._graph import (
-    _AUTO_RESOLUTION_KEYS,
     CentralityConfig,
     CommunityDetectionConfig,
     GraphConfig,
@@ -67,7 +66,6 @@ from ._graph import (
     ReportGenerationConfig,
     StaticChartSettings,
     VisualizationConfig,
-    _warn_auto_resolution,
 )
 from ._indexing import (
     DEFAULT_INDEX_SETTINGS,
@@ -171,7 +169,6 @@ from ._strategies import (
 
 __all__ = [
     "_ABSENT",
-    "_AUTO_RESOLUTION_KEYS",
     "_bare_model_id",
     "_changes",
     "_CHUNK_SIZE_FIELDS",
@@ -193,7 +190,6 @@ __all__ = [
     "_sets",
     "_structured_fallback",
     "_template_variables",
-    "_warn_auto_resolution",
     "_warn_missing_output_tags",
     "_warn_renamed_bucket",
     "_warn_retired_bucket",

@@ -172,6 +172,15 @@ REMOVED_KEYS: dict[str, str] = {
         "run-eval always answers one untimed, unscored warm-up query per "
         "strategy and run (the default before)"
     ),
+    **dict.fromkeys(
+        (
+            "graph.community_detection.auto_resolution",
+            "graph.community_detection.auto_resolution_candidates",
+            "graph.community_detection.auto_resolution_max_nodes",
+        ),
+        "the modularity sweep is gone (it merged unrelated communities on the "
+        "upper levels); set graph.community_detection.resolution",
+    ),
     "aws.dynamodb.billing_mode": (
         "a table the library creates is on-demand (PAY_PER_REQUEST, the only "
         "value that worked); provision the table yourself, with "
