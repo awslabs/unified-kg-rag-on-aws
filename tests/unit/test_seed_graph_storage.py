@@ -27,7 +27,10 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
 from unified_kg_rag.application.storage import stored_items
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
-from unified_kg_rag.domain.ingestion.seed_graph import seed_unit_id
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    encoded_source_kinds,
+    seed_unit_id,
+)
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 from unified_kg_rag.shared.exceptions import StoreRequestRejectedError
 
@@ -358,3 +361,25 @@ def test_the_source_kinds_filter_reads_alike_on_the_embedded_stores(
         i: {"id": [i], **({"source_kinds": k} if k else {})} for i, k in kinds.items()
     }
     assert {i for i, v in vertices.items() if keep(v)} == kept
+
+
+def test_one_decode_reads_every_edge_list(caplog: pytest.LogCaptureFixture) -> None:
+    # One inverse of the codec's json.dumps for every edge list property
+    # (rv8 design L8: three decoders): bare, as Gremlin's one-element list,
+    # absent or unreadable.
+    from unified_kg_rag.adapters.retrievers.graph_expansion import edge_source_kinds
+    from unified_kg_rag.adapters.storage.neptune_codec import (
+        decode_edge_list,
+        edge_text_unit_ids,
+    )
+
+    encoded = encoded_source_kinds(["seed_graph", "document"])
+    assert decode_edge_list(encoded) == ["document", "seed_graph"]
+    assert decode_edge_list([encoded]) == ["document", "seed_graph"]
+    assert edge_source_kinds(encoded) == ["document", "seed_graph"]
+    for unreadable in (None, "", "seed_graph", '{"a": 1}', []):
+        assert decode_edge_list(unreadable) is None
+        assert edge_source_kinds(unreadable) is None
+    with caplog.at_level("WARNING"):
+        assert edge_text_unit_ids("tu-1") == []
+    assert "Edge property 'text_unit_ids' is not a JSON list" in caplog.text

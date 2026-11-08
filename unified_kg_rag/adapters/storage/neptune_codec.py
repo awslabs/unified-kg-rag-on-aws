@@ -184,23 +184,28 @@ def _vertex_list(value: Any) -> list[str] | None:
     return [str(v) for v in values] if values else None
 
 
-def _edge_list(key: str, value: Any) -> list[str] | None:
+def decode_edge_list(value: Any, key: str | None = None) -> list[str] | None:
+    """An edge's list property as written (one JSON list string, the
+    inverse of the write's ``json.dumps``), read bare or as Gremlin's
+    one-element list; ``None`` when absent or unreadable, WARNed naming
+    ``key`` when given (a read that skips a malformed value passes none)."""
+    value = _single(value)
     if value is None:
         return None
     try:
         decoded = json.loads(value)
     except (TypeError, ValueError):
-        logger.warning("Edge property '%s' is not a JSON list; ignoring it", key)
-        return None
+        decoded = None
     if not isinstance(decoded, list):
-        logger.warning("Edge property '%s' is not a JSON list; ignoring it", key)
+        if key is not None:
+            logger.warning("Edge property '%s' is not a JSON list; ignoring it", key)
         return None
     return [str(v) for v in decoded]
 
 
 def edge_text_unit_ids(value: Any) -> list[str]:
     """The text units of an edge's ``text_unit_ids`` property (a JSON list)."""
-    return _edge_list("text_unit_ids", _single(value)) or []
+    return decode_edge_list(value, "text_unit_ids") or []
 
 
 def _attribute_value(value: Any) -> Any:
@@ -303,8 +308,8 @@ def relationship_from_edge(
         "source_name": _single(value_map.get("source_name")),
         "target_name": _single(value_map.get("target_name")),
         "description": _single(value_map.get("description")),
-        "text_unit_ids": _edge_list(
-            "text_unit_ids", _single(value_map.get("text_unit_ids"))
+        "text_unit_ids": decode_edge_list(
+            value_map.get("text_unit_ids"), "text_unit_ids"
         ),
         "attributes": _attributes(value_map),
     }
@@ -313,7 +318,7 @@ def relationship_from_edge(
         if value is not None:
             fields[key] = value
     fields.update(_annotations(value_map, "predicate_iri"))
-    kinds = _edge_list(SOURCE_KINDS_FIELD, _single(value_map.get(SOURCE_KINDS_FIELD)))
+    kinds = decode_edge_list(value_map.get(SOURCE_KINDS_FIELD), SOURCE_KINDS_FIELD)
     if kinds:
         fields[SOURCE_KINDS_FIELD] = sorted(kinds)
     return Relationship.model_validate(fields)
