@@ -518,7 +518,8 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
         # Short: building a model made no request before, and a server that
         # does not answer this fails the model's first call anyway.
         kwargs: dict[str, Any] = {
-            "timeout": min(self.settings.timeout_seconds, _SHOW_TIMEOUT_SECONDS)
+            "timeout": min(self.settings.timeout_seconds, _SHOW_TIMEOUT_SECONDS),
+            "verify": tls_context(),
         }
         if self.transport is not None:
             kwargs["transport"] = self.transport
