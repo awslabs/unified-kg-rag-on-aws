@@ -357,7 +357,8 @@ def _reject_auto_strategy(strategies: list[SearchStrategy]) -> list[SearchStrate
     if SearchStrategy.TREE in strategies:
         raise ValueError(
             "auto_routable_strategies cannot include 'tree': it is opt-in (it "
-            "answered no better than naive, docs/concepts/"
+            "answered better than naive but well below the graph strategies, "
+            "docs/concepts/"
             "defaults-and-evidence.md#raptor-summary-tree), so the router does "
             "not pick it; select it explicitly"
         )
@@ -555,8 +556,8 @@ class CitationConfig(BaseModel):
             "Per strategy, whether its answers cite, over enabled (an entry "
             "wins either way). The map is merged over the default {global: "
             "false, drift: false}: on 50 sensemaking questions their answers "
-            "without citations won comprehensiveness (global 0.68, drift "
-            "0.75, a pairwise judge) "
+            "without citations won comprehensiveness (global 0.62, drift "
+            "0.64, a pairwise judge averaged over both answer orders) "
             "(docs/concepts/defaults-and-evidence.md#citations). {global: "
             "true, drift: true} turns them back on, with the plain citation "
             "instruction. An auto query follows the strategy it routes to, "

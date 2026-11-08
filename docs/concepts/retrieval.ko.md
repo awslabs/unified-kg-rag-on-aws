@@ -26,10 +26,10 @@ RRF, 재순위화)를 쓰며, `simple`과 `naive`는 그래프를 읽지 않습�
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `simple` | 빠른 사실 조회 | 그래프 순회 없이 OpenSearch 벡터·키워드로 검색하며, 주장이 켜져 있으면 주장 인덱스도 포함합니다. 가장 빠릅니다. |
+| `simple` | 개선 중: 검색 방식을 바꾼 뒤 다시 측정합니다. 그때까지 빠른 조회에는 `naive`를 쓰세요 | 그래프 순회 없이 OpenSearch 벡터·키워드로 검색하며, 주장이 켜져 있으면 주장 인덱스도 포함합니다. |
 | `local` | 특정 엔티티에 관한 질문 | 질의 엔티티 → 그래프 순회로 이웃과 관계를 찾아 벡터·키워드 결과와 결합합니다. 켜져 있으면 주장도 넣습니다. 질의 엔티티는 이름으로 순회를 시작하고, 이름이 같은 엔티티가 없으면 최상위 결과(단어 하나만 겹치는 비슷한 이름은 제외)가 가장 좋은 결과 점수의 `search.local_search.seed_score_ratio`배 이상일 때 시작점이 됩니다([레퍼런스](../reference/configuration.md#searchlocal_search), 영문). 커뮤니티 보고서는 기본값으로 질의 엔티티와 가장 비슷한 것을 넣습니다([membership을 기본값으로 쓰지 않는 이유](./defaults-and-evidence.md#local-report-selection), 영문). 텍스트 단위는 HippoRAG 2의 PageRank로 순서를 정합니다(`search.local_search.text_unit_ranking: ppr`가 기본값이고, `support`는 각 단위를 인용하는 엔티티 수로 정합니다. [근거](./defaults-and-evidence.md#local-ppr-ranking), 영문). |
-| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 그보다 얕은 단면 중 한도 안에 드는 가장 깊은 단면으로 대신하고, 리포트 키 필터가 있으면 가장 비슷한 리포트를 고름)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. |
-| `drift` | 큰 그림과 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | 가상 답변(HyDE)과 비슷한 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복한 뒤 답변 모델이 종합합니다. LLM 호출이 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). |
+| `global` | "주요 주제는 무엇인가" 같은 넓은 주제 질문 | 계층 한 단면(`search.global_search.community_depth`, 기본값 2. 리포트가 `max_reports_per_level`보다 많은 단면은 그보다 얕은 단면 중 한도 안에 드는 가장 깊은 단면으로 대신하고, 리포트 키 필터가 있으면 가장 비슷한 리포트를 고름)의 커뮤니티 리포트를 fast 모델로 점수 매긴 핵심 내용으로 map하고(리포트 `map_context_tokens`마다 호출 1회), 순위를 매긴 핵심 내용으로 답합니다. 동적 선택은 대신 루트부터 내려갑니다. 요약형(sensemaking) 질문에서 포괄성과 다양성으로 이 전략을 이긴 전략은 없었고, `drift`, `mix`, `local`, `tree`는 활용도(empowerment)와 직접성에서 이겼습니다([근거](./defaults-and-evidence.md#sensemaking-strategies), 영문). |
+| `drift` | 큰 그림과 구체적 사실이 함께 필요한 여러 부분으로 된 질문 | 가상 답변(HyDE)과 비슷한 리포트로 중간 답변과 후속 질의를 만들고, 후속 질의마다 local search를 실행해 새 후속 질의를 얻는 과정을 `n_depth` 라운드 반복한 뒤 답변 모델이 종합합니다. LLM 호출이 가장 많습니다(약 `primer_folds + k_followups * n_depth`회). 측정한 전략 가운데 요약형 질문에 가장 잘 답했으며, 비용과 중앙값 지연 시간은 `global`의 약 두 배였습니다([근거](./defaults-and-evidence.md#sensemaking-strategies), 영문). |
 | `auto` | 일반 용도(기본값) | LLM 라우터(`models.roles.strategy_selection`)가 `search.auto_routable_strategies`(기본 local, mix, global, iterative. 질의마다 LLM 호출이 최대 27번인 drift는 추가했을 때만) 중에서 고릅니다. 질문에 이름이 나오지 않는 엔티티를 거쳐 사실을 이어야 하는 질문은 `iterative`로 보내며, 이때 중앙값 기준으로 더 오래 걸립니다([근거](./defaults-and-evidence.md#iterative-follow-up-rounds), 영문). `auto`가 `iterative`를 고르지 않게 하려면 목록에서 빼면 됩니다. 후보 전략이 읽는 추출을 라우터와 동시에 실행하므로 `auto`는 고른 전략을 직접 실행할 때와 걸리는 시간이 같고, 분기한 전략이 읽지 않는 추출도 과금됩니다(질의마다 fast 모델 호출 약 1회, [`search.auto_speculative_extraction`](../reference/configuration.md#search), 영문). |
 
 **LightRAG(이중 레벨 키워드):**
@@ -45,6 +45,10 @@ RRF, 재순위화)를 쓰며, `simple`과 `naive`는 그래프를 읽지 않습�
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
 | `ppr` | 사실이 몇 개의 엔티티를 거쳐 이어지는 다중 홉 질문, 커뮤니티 보고서 없이 `hipporag`나 `lightrag`만으로 만든 네임스페이스(방법론 `hipporag`) | 질문의 관계 검색 결과(사실, kNN)와 텍스트 단위 검색 결과(BM25 + 벡터)를 시작점으로, 사실의 엔티티 주변 그래프와 그 엔티티가 인용하는 문단에 개인화 PageRank(Personalized PageRank)를 실행합니다(HippoRAG 2, 감쇠 계수 0.5). 순위를 매긴 문단, 문단 검색 결과, 사실을 다른 전략처럼 융합하고 재순위화합니다. 질의마다 LLM 호출은 답변 1회입니다. 비용과 지연 시간이 적은 선택지입니다. 답변은 `local`, `mix`와 오차 범위 안이면서 비용과 중앙값 지연 시간은 그 일부이고, 가장 긴 연쇄에서는 약했습니다([근거](./defaults-and-evidence.md#the-ppr-strategy), 영문). 어디서 나은지 측정으로 보이기 전까지 `auto`는 이 전략으로 보내지 않으므로 직접 지정해야 합니다([`search.ppr_search`](../reference/configuration.md#searchppr_search), [설계](../design/retrieval-hipporag-raptor.md#64-hipporag-2-personalized-pagerank-ppr-local-ranking), 영문). `local`은 기본값으로 같은 PageRank로 텍스트 단위 순서를 정합니다(`search.local_search.text_unit_ranking`). |
+
+`[lightrag]` 네임스페이스는 커뮤니티와 리포트를 만들지 않습니다
+([방법론 프로필](./overview.ko.md#방법론-프로필)). 그런 네임스페이스에서도 포괄적 답변을 쓴 `mix`는
+요약형 질문에서 `global`과 대등했습니다([근거](./defaults-and-evidence.md#sensemaking-strategies), 영문).
 
 `mix`와 `hybrid`는 수집이 만드는 관계 인덱스를 읽습니다. 키워드가 나오지 않는 짧은
 질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`
@@ -70,7 +74,7 @@ RRF, 재순위화)를 쓰며, `simple`과 `naive`는 그래프를 읽지 않습�
 
 | 전략 | 사용 시점 | 동작 방식 |
 |---|---|---|
-| `tree` | 그래프 추출 없는 저렴한 인덱스(`[raptor]`)나 RAPTOR와의 비교. 멀티홉 질문에서는 `naive`보다 나았지만(`answer_contains` +8점, 1회 반복) 그래프 전략보다 크게 낮았습니다([근거](./defaults-and-evidence.md#raptor-summary-tree), 영문) | `indexing.methodologies`에 `raptor`를 넣어 만든 네임스페이스가 필요합니다. 인덱싱 뒤에 텍스트 유닛을 벡터로 군집화하고 군집마다 요약(`models.roles.summary_tree`)하는 일을 레벨마다 반복하며, 요약은 인덱스 언어로 씁니다. 질의는 텍스트 유닛의 BM25 + kNN 검색, 모든 레벨 요약의 검색(RAPTOR의 collapsed tree), 그리고 네임스페이스에 엔티티 인덱스가 있으면 원 질의로 찾은 엔티티를 인용하는 요약과 구절(모델 호출 없음)을 RRF로 융합합니다. 교차 인코더가 구절과 요약을 함께 재순위화하고, 레벨마다 요약은 최대 `max_nodes_per_level`(3)개만 남기며, 남은 요약마다 자기 계보의 구절 `expand_children`(2)개를 함께 가져와 답변이 원문을 인용하게 합니다. 요약은 계보(`text_unit_ids`, `child_ids`)와 함께 출처로 보고됩니다. 비용은 `naive` 질의에 검색 몇 번과 요약 컨텍스트가 더해지고, 더 느립니다. 명시적으로 고를 때만 실행되며, `naive`보다 나은 답을 내지 못했으므로 `auto`는 이 전략으로 분기하지 않습니다. 다만 `raptor`만 가진 네임스페이스에서는 `auto`가 이 전략으로 대체합니다([설계](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). |
+| `tree` | 그래프 추출 없는 저렴한 인덱스(`[raptor]`)나 RAPTOR와의 비교. 멀티홉 질문에서는 `naive`보다 나았지만(`answer_contains` +8점, 1회 반복. 그래프도 있는 네임스페이스에서 그래프 신호와 함께 측정했으며 `[raptor]`만 있는 네임스페이스는 측정하지 않음) 그래프 전략보다 크게 낮았습니다([근거](./defaults-and-evidence.md#raptor-summary-tree), 영문) | `indexing.methodologies`에 `raptor`를 넣어 만든 네임스페이스가 필요합니다. 인덱싱 뒤에 텍스트 유닛을 벡터로 군집화하고 군집마다 요약(`models.roles.summary_tree`)하는 일을 레벨마다 반복하며, 요약은 인덱스 언어로 씁니다. 질의는 텍스트 유닛의 BM25 + kNN 검색, 모든 레벨 요약의 검색(RAPTOR의 collapsed tree), 그리고 네임스페이스에 엔티티 인덱스가 있으면 원 질의로 찾은 엔티티를 인용하는 요약과 구절(모델 호출 없음)을 RRF로 융합합니다. 교차 인코더가 구절과 요약을 함께 재순위화하고, 레벨마다 요약은 최대 `max_nodes_per_level`(3)개만 남기며, 남은 요약마다 자기 계보의 구절 `expand_children`(2)개를 함께 가져와 답변이 원문을 인용하게 합니다. 요약은 계보(`text_unit_ids`, `child_ids`)와 함께 출처로 보고됩니다. 비용은 `naive` 질의에 검색 몇 번과 요약 컨텍스트가 더해지고, 더 느립니다. 명시적으로 고를 때만 실행되며, `auto`는 이 전략으로 분기하지 않습니다(한 말뭉치에서 1회 반복한 결과이고, 그 말뭉치에서는 그래프 전략이 더 크게 이겼습니다). 다만 `raptor`만 가진 네임스페이스에서는 `auto`가 이 전략으로 대체합니다([설계](../design/retrieval-hipporag-raptor.md#65-raptor-summary-tree-raptor-tree-opt-in), 영문). |
 
 **구조화 그래프 질의(선택 사항, 측정 전):**
 

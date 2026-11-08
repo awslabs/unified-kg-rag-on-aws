@@ -428,7 +428,8 @@ alone). Once they are done, put back `OPENSEARCH_2_19` and upgrade with the
 steps below, before rebuilding the indices.
 
 **A 2.13 domain that carries the policy (deployed from a `main` checkout
-since #457, or upgraded as above) upgrades to 2.19 on its next deploy of
+since 2026-10-31, when the stack gained in-place OpenSearch upgrades, or
+upgraded as above) upgrades to 2.19 on its next deploy of
 `GraphRagStorage`** (any `cdk deploy` that includes it, `--all` too).
 OpenSearch Service upgrades 2.13 to 2.19 in one step: it checks the domain,
 takes its own snapshot, then runs a blue/green deployment that copies every

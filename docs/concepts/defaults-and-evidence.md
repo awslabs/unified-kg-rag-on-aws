@@ -7,9 +7,26 @@ to run the same comparison on your own corpus. The pages that explain a
 setting (the [guides](../index.md#page-map), [Operator Runbook](../operations.md),
 [Design Doc](../design.md)) link here for the evidence.
 
-Every interval below is a 95% paired bootstrap interval over questions, and
-"n.s." means the interval includes zero. A difference that is not
-significant kept the existing default.
+**Intervals.** Every interval below is a paired bootstrap interval over
+questions, of one of two kinds:
+
+- **95%**: the interval of that one difference, not adjusted for the other
+  differences the run read. Every interval of the runs before 2026-11-07
+  is of this kind, and so is an unlabelled one.
+- **adjusted**: the simultaneous interval over its family of tests, as
+  `run-eval` reports it since 2026-11-07 (confidence 1 - 0.05 / m for a
+  family of m tests, so wider;
+  [evaluation output](../reference/evaluation-output.md)). The sections on
+  the runs of 2026-11-07 and later label each interval.
+
+**Significance.** A difference is significant when its Holm-adjusted p
+value (*Holm p*) is below 0.05, over the family of tests the section
+names. A run before 2026-11-07 that names no Holm correction predates the
+adjustment: there a difference is significant when its 95% interval
+excludes zero, which is weaker evidence
+([Limits of the evidence](#limits-of-the-evidence)). "n.s."
+means not significant. A difference that is not significant kept the
+existing default.
 
 ## How the measurements were run
 
@@ -58,8 +75,9 @@ measured most of the defaults below:
   and a larger one is an estimate; only the PPR ranking's retrieval time
   ([Local PPR ranking](#local-ppr-ranking)) was paired one query at a time.
   The runs of 2026-11-07 answered every comparison interleaved in one
-  `run-eval`; there the noise floor of a latency delta is about ±0.15 s,
-  and between separate invocations about 1 s
+  `run-eval`; there an empty arm moved the mean latency by -0.10 and
+  +0.14 s, but its 95% intervals reached +0.67 s, and separate invocations
+  differed by about 1 s
   ([Noise floor and baselines](#noise-floor-and-baselines)).
 - **Cost.** Each run's library-metered tokens times the list prices. The
   meter of that version counted prompt-cache reads and writes as input
@@ -101,15 +119,15 @@ ships no price table, because one would go stale.
 | `search.local_search.report_selection` | `similarity` | `membership` (MS GraphRAG local's membership, over leaf communities rather than upstream's `community_level` cut) scored EM -4.0 and token F1 -4.1 points, both significant ([Local report selection](#local-report-selection)) |
 | `search.local_search.text_unit_ranking` | `ppr` | Against `support` on 200 MuSiQue questions, two repeats: recall@5 +6.1 [+2.9, +9.4] and supporting paragraphs in the context +12 to +13 points; answers no worse (`answer_contains` +3.5 [+0.5, +6.75], borderline after a multiplicity correction; EM and token F1 n.s.); +0.10 s retrieval a query ([Local PPR ranking](#local-ppr-ranking)) |
 | `search.local_search.entity_frequency_threshold` | 20 | Without the cut, recall@5 -1.75 points [-3.12, -0.50] and supporting paragraphs in the context -2.42 [-3.96, -1.04], both significant; +3.08 s per answer, run separately (see *Latency* in [How the measurements were run](#how-the-measurements-were-run)) ([Retrieval switches](#retrieval-switches)) |
-| `search.auto_routable_strategies` | `local`, `mix`, `global`, `iterative` | `iterative` over `mix` against `mix` on multi-hop questions: `answer_contains` +12.5 points [+7.5, +18.0], token F1 +5.2 [+0.2, +10.1], last hop in the context +21.5; p95 11.1 s to 27.4 s, +$0.002 a query. `decompose` was no better than the loop, so it stays off ([Iterative follow-up rounds](#iterative-follow-up-rounds)) |
-| `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions, one repeat: `answer_contains` +8.0 points [+3.0, +14.0], EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1], recall@5 -0.6 n.s., +1.2 s and +$0.0060 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions. One repeat on one corpus, so opt-in ([RAPTOR summary tree](#raptor-summary-tree)) |
+| `search.auto_routable_strategies` | `local`, `mix`, `global`, `iterative` | `iterative` over `mix` against `mix` on multi-hop questions: `answer_contains` +12.5 points [+7.5, +18.0], token F1 +5.2 [+0.2, +10.1], last hop in the context +21.5; p95 11.1 s to 27.4 s. It cost +$0.0099 a query over `mix` (+18%) in the baselines of 2026-11-07, not the +$0.002 of that first run. `decompose` was no better than the loop, so it stays off ([Iterative follow-up rounds](#iterative-follow-up-rounds)) |
+| `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions, one repeat, on a namespace that also held the graph (so `tree` fused its graph signal too): `answer_contains` +8.0 points [+3.0, +14.0], EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1], recall@5 -0.6 n.s., +1.2 s and +$0.0060 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions. A `[raptor]`-only namespace was not measured. One repeat on one corpus, so opt-in. On sensemaking questions, with the comprehensive answer, `mix`, which needs no community reports (`[lightrag]`; the reports were 26% of that index's model cost), answered at least as well as `global` ([RAPTOR summary tree](#raptor-summary-tree), [Sensemaking strategies](#sensemaking-strategies)) |
 | `aws.bedrock.ingestion_effort` | `null` (`default_effort`, `high`) | `low` on a 109-document slice: ingestion cost -19%, answers n.s. on 30 questions ([Ingestion effort](#ingestion-effort)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
-| `search.citations.enabled`, `search.citations.strategies` | `true`; `{global: false, drift: false}` | Against off on 200 MuSiQue questions, two repeats, interleaved: `local` and `mix` answers n.s. (`answer_contains` -0.75 [-2.5, +0.75] and 0.0, after a Holm correction), citation precision 0.75 and 0.82, recall 0.88 and 0.85. On 50 sensemaking questions the answers without citations won comprehensiveness 0.68 [0.585, 0.775] (`global`) and 0.75 [0.67, 0.825] (`drift`) with the differential judge, both significant after a Holm correction; a "cite where possible" instruction for them won no comprehensiveness back and cost `global` directness ([Citations](#citations)) |
-| `search.iterative_search.max_rounds` | 2 | 3 against 2: `answer_contains` +1.5 [-0.5, +3.75] n.s., +2.7 s and +$0.0024 a query; 44% of questions still stop at the cap ([Iterative settings](#iterative-settings)) |
-| `search.token_manager.max_context_tokens` | 30000 | 12000 against 30000: `mix` -40% cost a query, `answer_contains` -2.25 [-5.75, +0.75] n.s., citation precision -3.4 [-6.0, -1.1]; `local` -13% cost, n.s. ([Iterative settings](#iterative-settings)) |
-| `aws.bedrock.default_effort` | `high` | `medium` against `high`: about 2 s faster and -4% cost a query, `answer_contains` n.s., token F1 -3.6 and -4.4 (significant on their own, n.s. after a Holm correction) ([Iterative settings](#iterative-settings)) |
-| `providers.rerank.kind` | `bedrock` | Off against on: recall@5 -7.9 (`local`), -25.4 (`mix`), -9.7 (`ppr`), all significant; answers n.s. (`mix` `answer_contains` -2.75 [-6.5, +0.5]); saves about $0.002 and 0.5 s a query ([Reranking](#reranking)) |
+| `search.citations.enabled`, `search.citations.strategies` | `true`; `{global: false, drift: false}` | Against off on 200 MuSiQue questions, two repeats, interleaved: `local` and `mix` answers n.s. (`answer_contains` -0.75 [-2.5, +0.75] adjusted, and 0.0), citation precision 0.75 and 0.82, recall 0.88 and 0.85. On 50 sensemaking questions the answers without citations won comprehensiveness 0.617 [0.540, 0.695] 95% (`global`, Holm p 0.037) and 0.642 [0.573, 0.708] 95% (`drift`, Holm p 0.002) with the differential judge, averaged over both answer orders; a "cite where possible" instruction for them won no comprehensiveness back and cost `global` directness ([Citations](#citations)) |
+| `search.iterative_search.max_rounds` | 2 | 3 against 2: `answer_contains` +1.5 [-0.5, +3.75] adjusted, n.s., +2.7 s and +$0.0024 a query; 44% of questions still stop at the cap ([Iterative settings](#iterative-settings)) |
+| `search.token_manager.max_context_tokens` | 30000 | 12000 against 30000: `mix` -40% cost a query, `answer_contains` -2.25 [-5.75, +0.75] adjusted, n.s., citation precision -3.4 [-6.0, -1.1] adjusted; `local` -13% cost, n.s. ([Iterative settings](#iterative-settings)) |
+| `aws.bedrock.default_effort` | `high` | `medium` against `high`: about 2 s faster and -4% cost a query, `answer_contains` n.s., token F1 -3.6 and -4.4 (their 95% intervals exclude zero; Holm p 0.50 and 0.41, n.s.) ([Iterative settings](#iterative-settings)) |
+| `providers.rerank.kind` | `bedrock` | Off against on: recall@5 -7.9 (`local`), -25.4 (`mix`), -9.7 (`ppr`), all significant; answers n.s. (`mix` `answer_contains` -2.75 [-6.5, +0.5] adjusted); saves about $0.002 and 0.5 s a query ([Reranking](#reranking)) |
 | `evaluation.judge_effort` | `low` | `high` against `low` on the same answers: spans identical in 84-86% (93-95% between two `low` runs), EM -1.0 to -1.75 n.s.; pairwise position consistency 0.82 to 0.86, but 10 of 100 overlap splits failed at their output limit ([Judge effort](#judge-effort)) |
 
 ## Answer style
@@ -186,6 +204,24 @@ So the unset judge on Bedrock is Opus 5.5, a model other than the default
 answer model. At the list prices above it costs twice Sonnet 5.5 per token,
 and only `run-eval`'s LLM judges call it
 ([Model selection notes](../reference/models.md#model-selection-notes)).
+
+**Answer slots.** The differential judge (`evaluation.pairwise_mode:
+differential`) splits a pair into the points both answers make and the
+points unique to each. Until 2026-11-08 it split each pair once, with the
+baseline as Answer 1, and the split favoured Answer 2. A run on 2026-11-08
+(package at commit `d6fc92ce`) judged one configuration against itself on
+the 50 sensemaking questions, two repeats: the candidate won
+comprehensiveness 0.645 as Answer 2 and 0.48 as Answer 1 (the baseline
+0.52); averaged over both slots 0.562 [0.490, 0.635] 95%, n.s. That slot effect (as
+Answer 2 minus as Answer 1) was +0.165 on comprehensiveness, and +0.125 to
++0.215 in the citation comparisons below, larger than most differences
+between strategies there (-0.12 to +0.07). So the comparisons from
+2026-11-08 on average both slot orders, as `run-eval` does
+([Evaluation](../guides/evaluate.md); results in
+[Sensemaking strategies](#sensemaking-strategies) and [Citations](#citations)).
+They used the earlier overlap prompt, which kept a shared statement in
+Answer 1's wording; `run-eval`'s split keeps the shorter wording, which
+these runs did not measure.
 
 ## Gleaning rounds
 
@@ -426,6 +462,11 @@ base context already held every one, the follow-up did not hurt (token F1
 one follow-up round on 48 and after two on 95, at 2.19 controller calls a
 question; the answers were no longer.
 
+That run's +$0.002 a query is not today's cost: in the
+[baselines of 2026-11-07](#noise-floor-and-baselines) `iterative` over
+`mix` cost $0.0653 a query against `mix`'s $0.0554, +$0.0099 (+18%), and
+read 82.7k input tokens against 25.2k. Plan with the later figure.
+
 So `auto` may route to `iterative` (`search.auto_routable_strategies`),
 whose router entry keeps it to questions that chain facts through an
 entity they do not name, but no strategy defaults to it: it adds about 10 s to
@@ -485,8 +526,13 @@ tokens), $0.22 at the list prices, in 116 s. Every summary ends a
 sentence; 421 of them (70%) were longer than `max_summary_tokens` and cut
 at a sentence end, which is why later packages ask for less (§6.5).
 
-On 100 of the 200 MuSiQue questions, one repeat, paired on the same
-questions:
+The copy held the default `[graphrag, lightrag]` index beside the tree, so
+`tree` ran with its graph signal (`search.tree_search.graph_signal: auto`
+fuses the summaries and passages citing the entities the raw query finds
+where the namespace holds the entities index). The numbers below measure
+that configuration, not a `[raptor]`-only namespace, whose `tree` has no
+graph signal. On 100 of the 200 MuSiQue questions, one repeat, paired on
+the same questions:
 
 | Arm against `naive` | Answers | Retrieval | Latency and cost |
 |---|---|---|---|
@@ -498,8 +544,8 @@ The `mix` and `local` rows are from the run of 2026-11-06 (package at
 `1d11766b`) on the same questions and index. That run measured an earlier
 tree (summaries cut mid-sentence, summary nodes ranked above the passages):
 `tree` against `naive` was `answer_contains` +4.0 [-1.0, +10.0], n.s.,
-with recall@5 -8.7 [-13.6, -3.8] and +5.5 s. The changes of #601
-(summaries kept to whole sentences, the passages ranked before the
+with recall@5 -8.7 [-13.6, -3.8] and +5.5 s. The RAPTOR changes of
+2026-11-06 (summaries kept to whole sentences, the passages ranked before the
 summaries' lineage) came between the two runs; with them the gain is
 significant and the retrieval loss is gone.
 
@@ -507,9 +553,54 @@ So on multi-hop questions over short paragraphs the tree is cheap to build
 and adds about 8 points of `answer_contains` over `naive` for $0.006 and
 1.2 s a query, still well below the graph strategies. It stays opt-in and
 `auto` does not route to `tree`: this is one repeat on one corpus, and the
-graph strategies win there by more than twice as much. Not measured:
-sensemaking questions, long documents, `scope: document` and
-`algorithm: gmm`.
+graph strategies win there by more than twice as much. Not measured: a
+`[raptor]`-only namespace (no graph signal), `graph_signal: off`, long
+documents, `scope: document` and `algorithm: gmm`; sensemaking questions
+are in [Sensemaking strategies](#sensemaking-strategies).
+
+## Sensemaking strategies
+
+A run on 2026-11-08 (package at commit `d6fc92ce`) answered the 50
+sensemaking questions with every strategy against `global`, two repeats,
+on the index of the [Citations](#citations) run with a summary tree built
+beside it ($0.20). Every strategy used the comprehensive answer
+(`search.answer_prompt_style`), citations kept their defaults (off for
+`global` and `drift`, on for the others), and the differential pairwise
+judge (`judge_effort: low`) averaged both answer slots
+([The evaluation judge](#the-evaluation-judge)). Win rates against
+`global`, with the Holm p over the 28 tests (seven comparisons, four
+criteria) where it is below 0.05; each estimate's 95% interval spans about
+0.1 either side:
+
+| Strategy | Comprehensiveness | Diversity | Empowerment | Directness | Cost a query | p50 / p95 |
+|---|---|---|---|---|---|---|
+| `drift` | 0.655, n.s. (Holm p 0.078) | 0.472 | 0.746 (Holm p 0.001) | 0.829 (0.001) | $0.132 | 53 / 63 s |
+| `tree` | 0.627 | 0.569 | 0.706 (0.002) | 0.746 (0.001) | $0.049 | 20 / 27 s |
+| `mix` | 0.576 | 0.569 | 0.674 (0.029) | 0.757 (0.001) | $0.095 | 27 / 35 s |
+| `local` | 0.542 | 0.568 | 0.675 (0.029) | 0.710 (0.002) | $0.066 | 25 / 33 s |
+| `naive` | 0.445 | 0.473 | 0.625 | 0.652 (0.0495) | $0.038 | 18 / 25 s |
+| `global` (the reference) | — | — | — | — | $0.071 | 29 / 40 s |
+
+`drift` against `local` won comprehensiveness 0.792 (Holm p 0.001),
+empowerment 0.657 (0.030) and directness 0.636 (0.030), with diversity
+0.482, n.s.
+
+- **No strategy beat `global` on comprehensiveness or diversity**, and
+  `drift`, `tree`, `mix` and `local` won empowerment and directness.
+- **`drift` answered best**, ahead of `local` on three criteria, at about
+  twice `global`'s cost and median latency.
+- **`mix` matched `global` without community reports.** A `[lightrag]`
+  namespace builds no communities or reports
+  ([methodology profiles](./overview.md#methodology-profiles)); on this
+  index the reports were $95.6 of the $371.64 build (26%).
+- **`simple`** is not in the table: its retrieval is under revision and is
+  measured again after the change.
+
+No default changed. Limits: one corpus of short Wikipedia paragraphs, one
+judge (Opus 5.5), and questions written from the level-0 report summaries
+that `global` reads. The challengers cited and `global` and `drift` did
+not, which costs comprehensiveness ([Citations](#citations)); and the
+defaults answer concisely with every strategy but `global`.
 
 ## Query deadlines and model timeouts
 
@@ -699,9 +790,10 @@ reports. EM and token F1 scored the extracted span with SQuAD's official
 normalization, as above.
 
 **Noise floor.** An empty `--arm` against the base, which reads the base's
-query extractions: `local` `answer_contains` -1.25 points [-3.0, 0.0], EM
-+0.5 and token F1 +0.9; `mix` -0.25, -0.25 and +0.5, all n.s.; latency
-within ±0.15 s. Two separate `run-eval` invocations of one configuration,
+query extractions: `local` `answer_contains` -1.25 points [-3.0, 0.0] 95%,
+EM +0.5 and token F1 +0.9; `mix` -0.25, -0.25 and +0.5, all n.s.; latency
++0.14 s (`local`) and -0.10 s (`mix`), n.s., with 95% intervals up to
++0.67 s. Two separate `run-eval` invocations of one configuration,
 each extracting its own query entities and keywords, differed by up to 1.5
 points of `answer_contains`, 3.25 of EM and 2.4 of token F1 (n.s.), and by
 0.6 to 1.0 s a query (significant: separate invocations measure what
@@ -721,13 +813,16 @@ index.
 | `iterative` | 0.878 | 0.518 | 0.600 | 0.847 | $0.0653 | 14.4 / 24.0 s |
 
 Against `naive`, `answer_contains` rose +21.0 points [+13.6, +29.1]
-(`local`), +16.25 [+9.4, +23.75] (`mix`), +14.75 [+8.5, +21.5] (`ppr`) and
-+28.0 [+20.1, +36.25] (`iterative`), each significant after a Holm
-correction, and so did EM and token F1. The closed-book answers already
-contain the gold answer for 44% of the questions: the answer model knows
-much of this Wikipedia text, so the absolute scores overstate what
-retrieval adds, and the paired differences between strategies are the
-evidence.
+adjusted (`local`), +16.25 [+9.4, +23.75] adjusted (`mix`), +14.75 [+8.5,
++21.5] adjusted (`ppr`) and +28.0 [+20.1, +36.25] adjusted (`iterative`),
+each significant (Holm p 0.002), and so did EM and token F1. `iterative`
+read 82.7k input tokens a query against `mix`'s 25.2k, +$0.0099 a query
+(+18%). The closed-book answers already contain the gold answer for 44% of
+the questions by `answer_contains`, which credits an answer that names the
+gold one anywhere, so 44% is an upper bound on what the model answers from
+memory: it knows much of this Wikipedia text, so the absolute scores
+overstate what retrieval adds, and the paired differences between
+strategies are the evidence.
 
 ## Citations
 
@@ -740,7 +835,7 @@ off as an `--arm`:
 
 | Strategy | Answers, off against on | Cost and latency |
 |---|---|---|
-| `local` (200 MuSiQue questions) | `answer_contains` -0.75 [-2.5, +0.75], EM +2.0, token F1 +2.2: n.s. | +39 output tokens, +$0.0015 a query; latency n.s. |
+| `local` (200 MuSiQue questions) | `answer_contains` -0.75 [-2.5, +0.75] adjusted, EM +2.0, token F1 +2.2: n.s. | +39 output tokens, +$0.0015 a query; latency n.s. |
 | `mix` | 0.0, 0.0 and -0.1: n.s. | +24 output tokens, -$0.0003 a query |
 
 With citations on, citation precision (file-weighted) was 0.75 (`local`)
@@ -758,20 +853,31 @@ reports it was written from (its findings' records). It regenerated the
 communities (about $96), and answered the 50 sensemaking questions twice
 with citations on and off, judged by the differential pairwise judge
 (`evaluation.pairwise_mode: differential`, `judge_effort: low`, both orders,
-every repeat). Win rates of the answers without citations, Holm-adjusted
-over the criteria:
+every repeat). A rerun of that judge on 2026-11-08 averaged both answer
+slots ([The evaluation judge](#the-evaluation-judge)). Win rates of the
+answers without citations, with 95% intervals and Holm p over the 8 tests
+(four criteria, two strategies):
 
-| Strategy | Comprehensiveness | Empowerment | Diversity, directness | Orders agreed | Unique statements (estimated tokens), on / off |
+| Strategy | Comprehensiveness | Empowerment | Diversity, directness | Orders agreed (each slot order) | Unique statements (estimated tokens), on / off |
 |---|---|---|---|---|---|
-| `global` | 0.68 [0.585, 0.775], Holm p 0.005 | 0.585, n.s. | 0.545 and 0.535, n.s. | 85% | 1,588 / 1,704 |
-| `drift` | 0.75 [0.67, 0.825], Holm p 0.0004 | 0.705 [0.625, 0.78], Holm p 0.0007 | n.s. | 78% | 796 / 819 |
+| `global` | 0.617 [0.540, 0.695] 95%, Holm p 0.037 | 0.560, n.s. | 0.547 and 0.520, n.s. | 85% and 81% | 1,588 / 1,704 |
+| `drift` | 0.642 [0.573, 0.708] 95%, Holm p 0.002 | 0.598 [0.531, 0.665] 95%, Holm p 0.058, n.s. | 0.490 and 0.578, n.s. | 78% and 76% | 796 / 819 |
 
-The cited answers were less comprehensive although their key points could
-now be cited. Their citations also attribute little: on 100 MuSiQue
-questions, two repeats, `global` declined 113 of 199 answers and cited a
-file in 45 (citation precision 0.087, recall 0.023), and a cited key
-point named about 9.5 files (`lineage_units` caps it at 10): a point
-credits every report it came from, often a whole map batch. `drift` scored citation
+Judged with the baseline in one slot only, the same answers had given
+0.68 (`global`) and 0.75 (`drift`) on comprehensiveness and 0.705 on
+`drift` empowerment, the latter significant. The cited answers were less
+comprehensive in both readings, although their key points could now be
+cited, so the default stands.
+
+On 100 MuSiQue questions, two repeats, where `global` declines most
+questions, its citations attributed little: it declined 113 of 199 answers
+and cited a file in 86 (citation precision 0.087, recall 0.023), and a
+cited key point named about 9.07 files (`lineage_units` caps it at 10): a
+point credits every report it came from, often a whole map batch. That
+lineage width also caps the file-weighted precision (a point of 9 files
+scores one ninth per reference file it names), so the figure
+says as much about the width as about the attribution; `global`'s
+citations on sensemaking questions are not measured yet. `drift` scored citation
 precision 0.571 and recall 0.903. Naming the reports' findings rather than
 their communities' members changed neither significantly (`drift`
 precision 0.571 against 0.576, `global` 0.087 against 0.071).
@@ -782,8 +888,8 @@ relevant point that has no marker. It departs from MS GraphRAG's global
 reduce prompt ("Do not include information where the supporting evidence
 for it is not provided"). Against the same configuration without it (four
 runs, ABBA order, pooled), the answers without it won comprehensiveness
-0.48 [0.375, 0.58] (`global`) and 0.49 [0.395, 0.585] (`drift`), n.s., and
-`global` directness 0.665 [0.585, 0.74], Holm p 0.003; `global` citation
+0.48 [0.375, 0.58] 95% (`global`) and 0.49 [0.395, 0.585] 95% (`drift`),
+n.s., and `global` directness 0.665 [0.585, 0.74] 95%, Holm p 0.003; `global` citation
 precision on MuSiQue was 0.1225 against 0.1222. It bought no
 comprehensiveness, so it was removed.
 
@@ -795,7 +901,10 @@ than coverage, which gives them the plain citation instruction of the other
 strategies. `auto` follows the strategy it routes to and `iterative` its
 base. One judge on one question set, and about one `global` answer in five
 of those runs lost a map batch to a reply the parser could not read (12 to
-21 of 100, fixed since by a JSON repair and one retry, not yet re-measured).
+21 of 100). A JSON repair and one retry fixed that since: in a run on
+2026-11-08, none of 500 `global` answers (300 sensemaking, 200 MuSiQue)
+lost a batch, and the repair read 17 of 1,286 map outputs in one
+instrumented pass.
 
 ## Iterative settings
 
@@ -804,11 +913,11 @@ against the default:
 
 | Change | Answers | Cost and latency |
 |---|---|---|
-| `iterative_search.max_rounds: 3` instead of 2 (`iterative`) | `answer_contains` +1.5 [-0.5, +3.75], EM +3.0, token F1 +2.7: n.s. after a Holm correction | +$0.0024 a query (+4%), +2.7 s [+1.9, +3.5]; p95 33.3 to 38.1 s |
+| `iterative_search.max_rounds: 3` instead of 2 (`iterative`) | `answer_contains` +1.5 [-0.5, +3.75] adjusted, EM +3.0, token F1 +2.7: n.s. | +$0.0024 a query (+4%), +2.7 s [+1.9, +3.5] adjusted; p95 33.3 to 38.1 s |
 | `token_manager.max_context_tokens: 12000` instead of 30000, `local` | `answer_contains` -0.25, EM -0.75, token F1 -1.4: n.s. | -$0.0046 a query (-13%); input 16.2k to 13.8k tokens |
-| the same, `mix` | `answer_contains` -2.25 [-5.75, +0.75], EM -0.75, token F1 -1.55: n.s.; citation precision -3.4 [-6.0, -1.1] | -$0.0222 a query (-40%); input 25.3k to 14.1k tokens |
-| `aws.bedrock.default_effort: medium` instead of `high`, `local` | `answer_contains` -0.5 [-3.75, +2.75] n.s.; token F1 -3.6 [-6.9, -0.25], n.s. after a Holm correction | -151 output tokens, -$0.0015 a query, -2.2 s |
-| the same, `mix` | `answer_contains` -1.0 n.s.; token F1 -4.4 [-8.2, -0.6], n.s. after a Holm correction | -155 output tokens, -$0.0017 a query, -1.8 s |
+| the same, `mix` | `answer_contains` -2.25 [-5.75, +0.75] adjusted, EM -0.75, token F1 -1.55: n.s.; citation precision -3.4 [-6.0, -1.1] adjusted, Holm p 0.007 | -$0.0222 a query (-40%); input 25.3k to 14.1k tokens |
+| `aws.bedrock.default_effort: medium` instead of `high`, `local` | `answer_contains` -0.5 [-3.75, +2.75] adjusted, n.s.; token F1 -3.6 [-6.9, -0.25] 95%, Holm p 0.50, n.s. | -151 output tokens, -$0.0015 a query, -2.2 s |
+| the same, `mix` | `answer_contains` -1.0 n.s.; token F1 -4.4 [-8.2, -0.6] 95%, Holm p 0.41, n.s. | -155 output tokens, -$0.0017 a query, -1.8 s |
 
 At that commit an arm read the base's query extractions whatever its
 effort, so the effort rows ran as separate invocations (base, medium,
@@ -816,12 +925,13 @@ medium, base; one repeat each, pooled), each extracting its own; their
 latency carries the 0.6-1.0 s between invocations noted above. (An arm now
 shares the base's extractions only when its overlay leaves the extraction
 settings alone, the default tier's effort included, so an effort arm
-extracts its own.) With 2 rounds, 52% of the questions stopped at
-`max_rounds` (192 of 400 `sufficient`); with 3, still 44%. So more rounds
+extracts its own.) In the `max_rounds` comparison, with 2 rounds 207 of
+the 400 answers (52%) stopped at `max_rounds` and 170 as `sufficient`;
+with 3, 177 (44%) and 197. So more rounds
 buy little because the controller rarely judges the context sufficient,
 not because the rounds run out. Every default stays. 12000 is a cost lever
 for `mix` with a possible small loss, and `medium` a latency lever with a
-likely small token-F1 cost.
+possible small token-F1 cost.
 
 ## Reranking
 
@@ -830,8 +940,8 @@ against on:
 
 | Strategy | Answers | Retrieval | Cost and latency |
 |---|---|---|---|
-| `local` | `answer_contains` -0.75 [-3.25, +1.5], EM -1.5, token F1 -0.8: n.s. | recall@5 -7.9 [-14.1, -1.8], MRR -10.8 | -$0.0020 a query, -0.53 s |
-| `mix` | `answer_contains` -2.75 [-6.5, +0.5], n.s.; EM and token F1 n.s. | recall@5 -25.4 [-32.2, -18.8], MRR -8.3 | -$0.0028 a query, -0.58 s |
+| `local` | `answer_contains` -0.75 [-3.25, +1.5] adjusted, EM -1.5, token F1 -0.8: n.s. | recall@5 -7.9 [-14.1, -1.8] adjusted, MRR -10.8 | -$0.0020 a query, -0.53 s |
+| `mix` | `answer_contains` -2.75 [-6.5, +0.5] adjusted, n.s.; EM and token F1 n.s. | recall@5 -25.4 [-32.2, -18.8] adjusted, MRR -8.3 | -$0.0028 a query, -0.58 s |
 | `ppr` | `answer_contains` -1.5, token F1 -4.2, both n.s. after a Holm correction | recall@5 -9.7, MRR -5.6 | -$0.0023 a query (-15%), -0.28 s |
 
 Every retrieval loss is significant after a Holm correction and every
@@ -895,7 +1005,8 @@ excludes zero.
   of it); the answers came from Claude models on Bedrock. A
   default that was n.s. here may matter on your corpus: measure it there.
 - **LLM judges.** Pairwise judges favour longer answers and, as measured
-  above, their own model's answers. Read win rates with the position
+  above, their own model's answers and, judged in one slot order, the
+  second answer. Read win rates with the position
   consistency, and prefer a judge that is not the answer model.
 - **Embedded stores.** Latencies were measured on the SQLite stores, not on
   Neptune and OpenSearch, except the 90 s and 180 s timeouts, which come
@@ -916,20 +1027,22 @@ excludes zero.
 - **Earlier answer prompts and run order.** The runs before 2026-11-07
   predate three changes to what a run with today's defaults does. Answers
   of every strategy but `global` and `drift` now cite their context with
-  `[n]` markers (`search.citations`, since #627): the measurements before
+  `[n]` markers (`search.citations`, since 2026-11-07): the measurements before
   2026-11-07 were written without them, from a context without numbered
   sections. The comparison in [Citations](#citations) found no difference
   on `local` and `mix` answers; `global` and `drift` answer without
   citations by default, as those measurements did. Community reports now follow an evidence-only prompt with data
-  references (#618), and split communities stay parents of their pieces:
+  references, and split communities stay parents of their pieces (both since
+  2026-11-07):
   the `global` and `drift` measurements read reports of the earlier prompt
   and hierarchy. And `run-eval` now answers a comparison interleaved
-  (#620): these arms ran one after another (see *Latency* above), so a
+  (since 2026-11-07): these arms ran one after another (see *Latency* above), so a
   latency delta here carries the drift between them, which an interleaved
   run spreads over every arm.
-- **Unadjusted intervals.** The intervals here are per metric, 95% each,
-  with no correction for the several metrics and arms one run reads (the
-  Holm adjustment `run-eval` reports came later, #620): a single
+- **Unadjusted intervals.** The intervals of the runs before 2026-11-07
+  are per metric, 95% each, with no correction for the several metrics and
+  arms one run reads (the Holm adjustment `run-eval` reports came on
+  2026-11-07): a single
   "significant" metric among many is weaker evidence than its interval
   alone suggests. Where a section says a Holm correction, it applied one
   by hand.
@@ -940,4 +1053,14 @@ excludes zero.
   `search.iterative_search.max_bridge_entities` keep the values they were
   written with. The type quota decides what a short-chunk corpus's context
   holds (its type budgets never bound on MuSiQue), so it is the first to
-  measure there.
+  measure there. These depart from upstream with no run behind the
+  departure:
+  - `graph.community_detection.max_cluster_size` 20 and
+    `max_report_context_tokens` 4000, against MS GraphRAG's 10 and 8000
+    (kept for the report cost:
+    [Design §4.3](../design/ingestion.md#43-communities-stages-10-11));
+  - `search.drift_search.k_followups` 10 and `n_depth` 2, against MS
+    GraphRAG's 20 and 3 (at most 27 model calls a query, against upstream's
+    67);
+  - `search.hybrid.lexical_weight` and `vector_weight`, 0.5 each, an equal
+    split no run compared with another.

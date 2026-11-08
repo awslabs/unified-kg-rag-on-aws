@@ -8,7 +8,7 @@
 
 <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS 로고" width="120" align="right">
 
-Unified Knowledge Graph RAG on AWS는 대규모 다국어 문서를 Amazon Neptune과 Amazon OpenSearch Service 위의 지식 그래프로 만들고, Amazon Bedrock으로 질문에 답하며, 답변의 근거를 문서와 페이지를 가리키는 `[n]` 표시로 인용합니다. 공개된 네 가지 방법인 Microsoft GraphRAG, LightRAG, HippoRAG 2, 그리고 선택 사항인 RAPTOR를 하나의 인덱스에서 실행합니다. 방법은 배포할 때가 아니라 질문마다 고르며, 쓰는 방법의 인덱스만 만듭니다. 원 논문에 더해 키워드·벡터·그래프 검색 결과를 합쳐 재순위화하는 하이브리드 검색, 삭제한 문서가 남긴 내용만 정확히 지우는 증분 인덱싱, 한국어를 비롯한 비영어 코퍼스 처리, 이미 가진 지식 그래프 병합, 측정 결과로 기본값을 정한 평가 CLI를 제공합니다. AWS 계정 없이 로컬에서 5분 안에 실행해 볼 수 있습니다.
+Unified Knowledge Graph RAG on AWS는 대규모 다국어 문서를 Amazon Neptune과 Amazon OpenSearch Service 위의 지식 그래프로 만들고 Amazon Bedrock으로 질문에 답하며, 답변 근거의 문서와 페이지를 `[n]` 인용으로 보여 줍니다(`global`과 `drift`는 기본값으로 인용 없이 답합니다). 공개된 네 가지 방법인 Microsoft GraphRAG, LightRAG, HippoRAG 2, 그리고 선택 사항인 RAPTOR를 하나의 인덱스에서 실행해 질문마다 고르게 하고, 쓰는 방법의 인덱스만 만듭니다. 원 논문에 더한 기능은 [이 프레임워크를 쓰는 이유](#이-프레임워크를-쓰는-이유)에 있습니다. AWS 계정 없이 로컬에서 실행해 볼 수 있으며([빠른 시작](#빠른-시작)), 약 6 GB의 모델을 내려받은 뒤 5분 정도 걸립니다.
 
 **이런 팀에 맞습니다.** 자기 AWS 계정에서 그래프 RAG(지식 그래프를 검색하는 검색 증강 생성)를 운영하면서 방법을 고르고, 성능을 측정하고, 문서가 바뀔 때마다 인덱스를 최신으로 유지해야 하는 팀.
 
@@ -16,7 +16,7 @@ Unified Knowledge Graph RAG on AWS는 대규모 다국어 문서를 Amazon Neptu
 
 ## 이 프레임워크를 쓰는 이유
 
-- **하나의 인덱스에서 네 가지 방법.** GraphRAG(커뮤니티 요약), LightRAG(이중 레벨 키워드), HippoRAG 2(엔티티와 패시지에 대한 개인화 PageRank), RAPTOR(요약 트리, 선택 사항)가 수집, 인덱싱, 캐싱, 검색을 함께 쓰고 검색 알고리즘만 다릅니다. `indexing.methodologies`는 고른 방법이 읽는 것만 만들고([방법론 프로필](./docs/concepts/overview.ko.md#방법론-프로필)), 모든 답변은 각 번호 뒤의 문서와 PDF 페이지를 가리키는 `[n]` 표시로 근거를 인용합니다([인용](./docs/guides/query.ko.md#인용)).
+- **하나의 인덱스에서 네 가지 방법.** GraphRAG(커뮤니티 요약), LightRAG(이중 레벨 키워드), HippoRAG 2(엔티티와 패시지에 대한 개인화 PageRank), RAPTOR(요약 트리, 선택 사항)가 수집, 인덱싱, 캐싱, 검색을 함께 쓰고 검색 알고리즘만 다릅니다. `indexing.methodologies`는 고른 방법이 읽는 것만 만들고([방법론 프로필](./docs/concepts/overview.ko.md#방법론-프로필)), 답변은 각 번호 뒤의 문서와 PDF 페이지를 가리키는 `[n]` 표시로 근거를 인용합니다. 기본값으로 `global`과 `drift`를 뺀 모든 전략이 인용합니다([인용](./docs/guides/query.ko.md#인용)).
 - **하이브리드 검색.** BM25, 벡터 검색, Neptune 그래프 순회 결과를 RRF(Reciprocal Rank Fusion)로 합치고 Bedrock 재순위화 모델로 다시 정렬합니다. `simple`과 `naive`는 그래프를 읽지 않고, `global`은 그 대신 커뮤니티 리포트를 map 단계로 읽습니다([검색](./docs/concepts/retrieval.ko.md)).
 - **증분 인덱싱.** 문서 상태 레지스트리를 켜면 새 문서와 바뀐 문서만 다시 인덱싱해 운영 중인 그래프에 병합하고, 문서를 지우면 다른 문서가 기술하지 않는 내용만 제거합니다([증분 인덱싱](./docs/guides/incremental.ko.md)).
 - **보유한 지식 그래프 연결(BYOKG).** 시드 그래프(JSONL, CSV, RDF 인스턴스 데이터)로 이미 가진 그래프를 가상 문서로 추출 그래프에 합칩니다. 문서가 기준으로 남고, 시드는 설명, 속성, IRI, 에지를 더합니다([Seed graphs](./docs/guides/seed-graphs.md)(영문)).
@@ -28,7 +28,7 @@ Unified Knowledge Graph RAG on AWS는 대규모 다국어 문서를 Amazon Neptu
 
 <a id="빠른-시작"></a>
 
-## 빠른 시작(5분, AWS 불필요)
+## 빠른 시작(AWS 불필요)
 
 한 대의 컴퓨터에서 내장 SQLite 저장소와 [Ollama](https://ollama.com) 모델로 모든 과정을 실행합니다. Python 3.11–3.12, [uv](https://docs.astral.sh/uv/), Ollama가 필요합니다.
 
@@ -40,7 +40,7 @@ cd unified-kg-rag-on-aws
 uv sync --no-dev --extra local
 ```
 
-**2. 기본 모델 두 개 내려받기:**
+**2. 기본 모델 두 개 내려받기**(약 6 GB):
 
 ```bash
 ollama pull qwen2.5:7b-instruct
@@ -91,7 +91,7 @@ UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-rag --backend local --search-str
 
 ## 아키텍처
 
-![아키텍처 한눈에 보기: 문서와 시드 그래프가 13단계 수집을 거쳐 Neptune, OpenSearch, DynamoDB에 저장되고, 네 가지 방법의 전략, 구조화 그래프 질의, iterative, auto 라우터가 같은 인덱스에서 Bedrock 모델로 답합니다. run-rag, Python, MCP 서버, 웹 콘솔에서 호출하며, 답변은 문서와 페이지를 인용합니다](./assets/architecture-overview.drawio.png)
+![아키텍처 한눈에 보기: 문서와 시드 그래프가 13단계 수집을 거쳐 Neptune, OpenSearch, DynamoDB에 저장되고, 네 가지 방법의 전략, 구조화 그래프 질의, iterative, auto 라우터가 같은 인덱스에서 Bedrock 모델로 답합니다. run-rag, Python, MCP 서버, 웹 콘솔에서 호출하며, 답변은 문서와 페이지를 인용합니다(global과 drift는 기본값으로 인용하지 않음)](./assets/architecture-overview.drawio.png)
 
 수집은 중단한 곳에서 다시 시작할 수 있는 13단계 파이프라인입니다. 파싱, 청킹, 엔티티·관계 추출, 중복 엔티티 병합, LLM이 리포트를 쓰는 커뮤니티 탐지, 인덱싱을 거치고, `raptor`를 고르면 요약 트리도 만듭니다. 결과는 AWS에서는 Neptune과 OpenSearch에, 로컬 모드에서는 내장 SQLite나 컨테이너에 씁니다. 모든 전략은 같은 인덱스와 토큰 예산 위의 한 체인에서 실행되며, CLI에서는 `--search-strategy`, Python에서는 `RAGInput.search_strategy`로 고릅니다.
 
@@ -110,7 +110,11 @@ UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-rag --backend local --search-str
 
 [`iac/`](./iac/README.md)(영문)의 AWS CDK 앱이 스택 전체를 만듭니다. 엔드포인트를 갖춘 VPC, Neptune, OpenSearch, DynamoDB 문서 상태 테이블, S3 캐시 버킷, ECS Fargate 데이터 플레인, Step Functions 수집 파이프라인, CloudWatch 대시보드와 경보, 선택적 Bedrock Guardrail이 포함됩니다. `cdk synth`, `cdk bootstrap`, `cdk deploy --all` 명령과 `-c key=value` 옵션 전체는 [`iac/README.md`](./iac/README.md#quick-start)(영문)에 있습니다. 저장소는 VPC 안에서만 접근할 수 있으므로 배포된 Fargate 태스크가 CLI를 실행합니다([After deploy](./iac/README.md#after-deploy), 영문).
 
-> **비용과 정리.** 코퍼스에 비례해 늘어나는 비용은 모델 호출입니다. 짧은 문단 3,318개(약 28만 단어)의 인덱스를 기본 모델로 만드는 데 Bedrock 호출 16,069번, 2026년 11월 정가 기준 $371.64가 들었고, 질의 비용은 `ppr`의 $0.016부터 `mix`·`global`의 약 $0.06까지였습니다([측정 방법](./docs/concepts/defaults-and-evidence.md#how-the-measurements-were-run)(영문), [비용 조절 수단](./docs/guides/ingest.ko.md#비용-조절-수단)). Neptune과 OpenSearch는 시간 단위로 과금되며, `public` 네트워크 모드에서는 NAT 게이트웨이 비용이 추가됩니다. 기본 `dev` 환경은 `cdk destroy --all`로 정리되지만, dev가 아닌 환경은 기본적으로 상태 저장소를 보존하고 삭제 방지를 켭니다. 프로덕션에 쓰기 전에 [`iac/README.md`](./iac/README.md)(영문)의 강화 옵션(`use_cmk`, `deletion_protection`, 다중 AZ 구성, `vpc_flow_logs`)을 검토하세요.
+> **비용과 정리.**
+>
+> - **모델 호출 비용은 코퍼스에 비례해 늘어납니다.** 짧은 문단 3,318개(약 28만 단어)의 인덱스를 기본 모델로 만드는 데 Bedrock 호출 16,069번, 2026년 11월 정가 기준 $371.64가 들었고, 질의 비용은 `ppr`의 $0.016부터 `mix`·`global`의 약 $0.06까지였습니다([측정 방법](./docs/concepts/defaults-and-evidence.md#how-the-measurements-were-run)(영문), [비용 조절 수단](./docs/guides/ingest.ko.md#비용-조절-수단)).
+> - **저장소는 시간 단위로 과금됩니다.** Neptune과 OpenSearch는 시간 단위로 과금되며, `public` 네트워크 모드에서는 NAT 게이트웨이 비용이 추가됩니다.
+> - **정리.** 기본 `dev` 환경은 `cdk destroy --all`로 정리되지만, dev가 아닌 환경은 기본적으로 상태 저장소를 보존하고 삭제 방지를 켭니다. 프로덕션에 쓰기 전에 [`iac/README.md`](./iac/README.md)(영문)의 강화 옵션(`use_cmk`, `deletion_protection`, 다중 AZ 구성, `vpc_flow_logs`)을 검토하세요.
 
 ## 문서 안내
 

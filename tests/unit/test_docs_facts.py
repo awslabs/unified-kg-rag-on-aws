@@ -326,3 +326,23 @@ def test_the_cli_count_scan(text: str, expected: list[int]) -> None:
 def test_a_page_is_read_whole() -> None:
     # A statement wrapped over two lines is still one statement.
     assert _stage_counts(re.sub(r"\s+", " ", "a 13\nstages run")) == [13]
+
+
+def _extras(line: str) -> list[str]:
+    return sorted(re.findall(r"--extra (\w+)", line))
+
+
+def test_the_contributor_setup_installs_the_extras_ci_tests_with() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "quality.yml").read_text()
+    # The quality job's sync installs the most extras (the others test less).
+    ci = max(
+        (line for line in workflow.splitlines() if "run: uv sync --locked" in line),
+        key=lambda line: len(_extras(line)),
+    )
+    guide = (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    setup = [line for line in guide.splitlines() if line.startswith("uv sync ")]
+    assert len(setup) == 1, setup
+    assert _extras(setup[0]) == _extras(ci)
+    pip = re.search(r"pip install -e '\.\[([\w,]+)\]'", guide)
+    assert pip is not None
+    assert sorted(pip.group(1).split(",")) == _extras(ci)

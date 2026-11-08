@@ -22,7 +22,7 @@
 
 | 유형 | 문서 | 내용 |
 |---|---|---|
-| 튜토리얼 | [README 빠른 시작](../README.ko.md#빠른-시작) | 실행 방법 선택, 설치, 첫 수집, 질의, 평가 |
+| 튜토리얼 | [README 빠른 시작](../README.ko.md#빠른-시작) | 실행 방법 선택, 설치, 첫 수집과 질의. 평가는 [로컬에서 시작하기](./getting-started/local.ko.md)에서 이어집니다 |
 | 튜토리얼 | [로컬에서 시작하기](./getting-started/local.ko.md), [AWS에서 시작하기](./getting-started/aws.ko.md) | 단계별 첫 실행. AWS 없이 예제 코퍼스로 GraphRAG·LightRAG 질의와 판정 모델 없는 평가, 기존 Neptune·OpenSearch를 쓸 때의 사전 요구사항, 필수 모델, 설치, 인증, IAM |
 | 설명 | [개요](./concepts/overview.ko.md) | 아키텍처, 파이프라인, 방법론과 프로필, 원 논문 대비 확장한 부분, 제한 사항 |
 | 설명 | [기본값과 근거](./concepts/defaults-and-evidence.md)(영문) | 측정으로 정한 기본값, 측정 방법, 날짜를 밝힌 가격, 재현 방법 |
