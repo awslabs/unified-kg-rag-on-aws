@@ -33,7 +33,6 @@ from ._evaluation import (
     REMOVED_EVALUATORS,
     EvaluationConfig,
     ModelPrice,
-    _without_removed_evaluators,
 )
 from ._fusion import (
     DEFAULT_ANSWER_PROMPT_STYLES,
@@ -49,11 +48,6 @@ from ._fusion import (
     QueryOutputCeilingsConfig,
     RerankingConfig,
     TokenManagerConfig,
-    _over_default_citations,
-    _over_default_styles,
-    _reject_auto_citations,
-    _reject_auto_strategy,
-    _reject_auto_style,
     _warn_renamed_bucket,
     _warn_retired_bucket,
 )
@@ -77,21 +71,16 @@ from ._indexing import (
     SummaryTreeConfig,
 )
 from ._mcp import MCP_TOOLS, McpServerConfig, McpToolName
-from ._merge import _changes, _plain, merge_over
+from ._merge import merge_over
 from ._migration import (
-    _ABSENT,
     MOVED_KEY_NOTES,
     MOVED_KEYS,
     REMOVED_KEYS,
-    _sets,
     moved_key_hint,
     moved_keys,
     removed_keys,
 )
 from ._models import (
-    _EVALUATION_ROLE_FIELD,
-    _PROFILE_PREFIX,
-    _ROLE_DESCRIPTIONS,
     DEFAULT_MODEL_ID,
     EFFORT_LEVELS,
     EFFORT_THINKING_TOKENS,
@@ -110,14 +99,9 @@ from ._models import (
     RerankModelId,
     RerankModelRef,
     RoleModelsConfig,
-    _bare_model_id,
-    _coerce_model_id,
-    _known_member,
-    _role_field,
     model_id_value,
 )
 from ._processing import (
-    _CHUNK_SIZE_FIELDS,
     INLINE_SCHEMA_SOURCE,
     ChunkingConfig,
     ClaimExtractionConfig,
@@ -129,12 +113,9 @@ from ._processing import (
     ProcessingConfig,
     SchemaSourceConfig,
     TranslationConfig,
-    _schema_message,
 )
 from ._prompts import (
-    _REQUIRED_PROMPT_VARIABLES,
     CustomPromptConfig,
-    _template_variables,
     _warn_missing_output_tags,
 )
 from ._root import Config, PipelineConfig
@@ -164,36 +145,13 @@ from ._strategies import (
     StructuredSearchConfig,
     TreeSearchConfig,
     TypeQuotaConfig,
-    _structured_fallback,
 )
 
 __all__ = [
-    "_ABSENT",
-    "_bare_model_id",
-    "_changes",
-    "_CHUNK_SIZE_FIELDS",
-    "_coerce_model_id",
-    "_EVALUATION_ROLE_FIELD",
-    "_known_member",
-    "_over_default_citations",
-    "_over_default_styles",
-    "_plain",
-    "_PROFILE_PREFIX",
-    "_reject_auto_citations",
-    "_reject_auto_strategy",
-    "_reject_auto_style",
-    "_REQUIRED_PROMPT_VARIABLES",
-    "_ROLE_DESCRIPTIONS",
-    "_role_field",
-    "_schema_message",
-    "_sets",
-    "_structured_fallback",
-    "_template_variables",
     "_warn_missing_output_tags",
     "_warn_renamed_bucket",
     "_warn_retired_bucket",
     "_warn_seed_floor_inert",
-    "_without_removed_evaluators",
     "AbstentionConfig",
     "AnswerPromptStyle",
     "AWSConfig",

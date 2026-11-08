@@ -16,10 +16,10 @@ from unified_kg_rag.shared.utils.common import (
     ensure_list,
     generate_stable_id,
     normalize_name,
-    parse_llm_json,
     safe_float_parse,
     strip_embedding_fields,
 )
+from unified_kg_rag.shared.utils.model_output import _strict_object as parse_llm_json
 
 pytestmark = pytest.mark.unit
 

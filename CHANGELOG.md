@@ -1694,7 +1694,7 @@ Ingestion and incremental indexing.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed
-  occurrence; `parse_llm_json` the last object that parses, preferring the caller's keys); a single cut-off answer
+  occurrence; the JSON reader the last object that parses, preferring the caller's keys); a single cut-off answer
   is still flagged, and nameless entities in complete sections are retried as malformed (#532, #536, #541, #560).
 - Output that parsed with the wrong shape (sections saying `None`, one wrapping element, prose, no section) goes to
   the output fixer instead of failing or being read as empty; a field holding markup is read as its text

@@ -757,7 +757,7 @@ async def test_the_callers_config_reaches_rating_and_map_calls() -> None:
 
 
 def test_parse_map_payload_handles_infinity_and_nan() -> None:
-    # parse_llm_json (json.loads) accepts Infinity/-Infinity/NaN, and "1e999"
+    # The JSON reader (json.loads) accepts Infinity/-Infinity/NaN, and "1e999"
     # overflows float() to inf; int(inf)/int(nan) would crash the whole query.
     raw_bad = (
         '{"points": [{"description": "inf", "score": Infinity}, '

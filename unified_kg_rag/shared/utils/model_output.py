@@ -18,7 +18,6 @@ from typing import Any, TypeVar, overload
 from pydantic import BaseModel, ValidationError
 
 from unified_kg_rag.shared.exceptions import ModelOutputCutOffError, ModelOutputError
-from unified_kg_rag.shared.utils.common import UNCLOSED_JSON_MESSAGE, parse_llm_json
 
 _M = TypeVar("_M", bound=BaseModel)
 
@@ -149,6 +148,93 @@ def _scan_objects(text: str) -> tuple[list[str], int | None]:
     return spans, (start if depth else None)
 
 
+# A `{` that plausibly starts a JSON object: a key's quote, or the end of a
+# response cut right after it.
+_RE_OPENS_OBJECT = re.compile(r'\{\s*(?:"|\Z)')
+# The message of the strict parse's error for a response cut inside its
+# last object (``parse_model_object`` tells it from other parse errors).
+_UNCLOSED_JSON_MESSAGE = "The last JSON object is unclosed (cut off?)"
+
+
+def _strict_object(
+    raw: str, *, strict: bool = False, answer_keys: Collection[str] = ()
+) -> dict[str, Any]:
+    """The strict reading of a JSON object in a noisy model response, the
+    first ``parse_model_object`` takes.
+
+    LLMs wrap JSON in markdown fences or surround it with prose. The span
+    from the first ``{`` to the last ``}`` is parsed. When it does not parse
+    because it holds several objects, as a model that corrects itself writes
+    (an answer, "Correction: ... final output:", the answer again), the last
+    top-level object that parses is the answer: the one the model ends on.
+    With ``answer_keys``, the last one holding any of them is, so an example
+    object the model writes before or after its answer is not taken for it.
+    Non-object JSON yields ``{}``. Unparseable text yields ``{}`` so callers
+    degrade gracefully, or raises ``json.JSONDecodeError`` when ``strict`` is
+    set, for callers that must surface a broken response. Under ``strict`` a
+    response whose last object is unclosed (cut off) raises too, even when
+    an earlier object parses: a self-correction ends on a complete object.
+    An unclosed ``{`` counts only when it starts JSON (``{"`` or a ``{`` the
+    response ends on): prose after the answer may hold a lone brace.
+    """
+    text = (raw or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        try:
+            parsed = json.loads(text[start : end + 1])
+        except ValueError:
+            pass
+        else:
+            # A `{` after the last `}` that starts JSON (a key, or the cut)
+            # opens an object left unclosed; prose may hold a lone brace.
+            if not (strict and _RE_OPENS_OBJECT.search(text, end + 1)):
+                return parsed if isinstance(parsed, dict) else {}
+        objects, cut_at = _parsed_objects(text)
+        if cut_at is not None and not _RE_OPENS_OBJECT.search(text, cut_at):
+            # Lone braces in prose after the answer, no cut-off object.
+            cut_at = None
+        if strict and cut_at is not None:
+            raise json.JSONDecodeError(_UNCLOSED_JSON_MESSAGE, text, cut_at)
+        if objects:
+            return next(
+                (o for o in reversed(objects) if any(k in o for k in answer_keys)),
+                objects[-1],
+            )
+    # Strip a leading/trailing markdown code fence if present.
+    if text.startswith("```"):
+        text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
+        if text.lstrip().lower().startswith("json"):
+            text = text.lstrip()[4:]
+    # Isolate the outermost JSON object.
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start : end + 1]
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        if strict:
+            raise
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _parsed_objects(text: str) -> tuple[list[dict[str, Any]], int | None]:
+    """The top-level ``{...}`` spans of ``text`` (``_scan_objects``) that
+    parse as JSON objects, in order, and where an unclosed last one starts.
+    An object nested in one that does not parse is not top-level, so it is
+    never taken for the answer, nor is one inside an object left unclosed."""
+    spans, cut_at = _scan_objects(text)
+    objects: list[dict[str, Any]] = []
+    for span in spans:
+        try:
+            parsed = json.loads(span)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            objects.append(parsed)
+    return objects, cut_at
+
+
 def _objects(value: Any, answer_keys: Collection[str]) -> list[dict[str, Any]]:
     """The objects ``value`` (a parsed span) offers as the answer: itself,
     or, a list, its objects; a bare list stands for the one answer key that
@@ -168,7 +254,7 @@ def _objects(value: Any, answer_keys: Collection[str]) -> list[dict[str, Any]]:
 def _candidates(raw: str, answer_keys: Collection[str]) -> list[dict[str, Any]]:
     """The objects ``raw`` holds, in order (the answer is the last).
 
-    The strict reading (``parse_llm_json``) is taken when it holds an answer
+    The strict reading (``_strict_object``) is taken when it holds an answer
     key (or none is asked for). Else the fenced blocks, the outermost
     bracketed span and the top-level ``{...}`` spans are read in that order
     (``_readings``): the first group with an object holding an answer key
@@ -178,9 +264,9 @@ def _candidates(raw: str, answer_keys: Collection[str]) -> list[dict[str, Any]]:
         ModelOutputError: The response was cut inside its last object.
     """
     try:
-        strict = parse_llm_json(raw, strict=True, answer_keys=answer_keys)
+        strict = _strict_object(raw, strict=True, answer_keys=answer_keys)
     except json.JSONDecodeError as e:
-        if e.msg == UNCLOSED_JSON_MESSAGE:
+        if e.msg == _UNCLOSED_JSON_MESSAGE:
             raise ModelOutputCutOffError(
                 "the answer's last JSON object is unclosed (cut off?)"
             ) from e
@@ -231,7 +317,7 @@ def parse_model_object(
     """The JSON object a model answered with, read however its family
     writes one.
 
-    Reads the strict JSON first (``parse_llm_json``: fences and prose
+    Reads the strict JSON first (``_strict_object``: fences and prose
     around it, a self-correction ending on the answer, a response cut off
     inside its last object raises). Else each candidate span (a fenced
     block, the outermost braces) is repaired: comments, typographic
