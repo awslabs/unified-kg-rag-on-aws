@@ -20,14 +20,20 @@ from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - a fixture
 from unified_kg_rag.application.ingestion import pipeline as pipeline_module
+from unified_kg_rag.application.ingestion import pipeline_stages as ps
 from unified_kg_rag.application.ingestion.namespace_lease import NamespaceLease
+from unified_kg_rag.application.ingestion.pipeline import DataIngestionPipeline
 from unified_kg_rag.application.storage.visualization_export import (
     export_build_time,
 )
 from unified_kg_rag.domain.ingestion.visualization_data import (
     VISUALIZATION_DATA_FILENAME,
 )
-from unified_kg_rag.domain.models import PipelineStageStatus
+from unified_kg_rag.domain.models import (
+    PipelineConfig,
+    PipelineStageStatus,
+    PipelineStageType,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("no_aws")]
 
@@ -125,3 +131,43 @@ def test_the_export_runs_once_the_lease_is_given_up(tmp_path: Path, mocker) -> N
 
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert events == ["release", "export"]
+
+
+def test_a_run_under_a_new_pipeline_id_keeps_the_current_export(
+    tmp_path: Path, mocker
+) -> None:
+    # The CLI's default pipeline id is new each run: its cache directory
+    # holds no export yet, but the one of the run before shows the stores.
+    config, providers, source = _setup(tmp_path)
+    config.graph.visualization.outputs_directory = None
+    exports = _exports(mocker)
+    cache = tmp_path / "cache"
+
+    def ingest(pipeline_id: str):  # noqa: ANN202
+        pipeline = DataIngestionPipeline(
+            config,
+            PipelineConfig(
+                stages_enabled=dict.fromkeys(PipelineStageType, True),
+                local_directory=cache,
+            ),
+            source_directory=source,
+            providers=providers,
+        )
+        for stage in pipeline.stages:
+            if isinstance(stage, ps.GraphResolutionStage):
+                stage.resolver.entity_resolver.use_process_pool = False
+                stage.resolver.relationship_resolver.use_process_pool = False
+        try:
+            return pipeline.run(source, pipeline_id=pipeline_id)
+        finally:
+            pipeline.close()
+
+    ingest("first")
+    first = cache / "first" / "visualization" / VISUALIZATION_DATA_FILENAME
+    assert exports == [first]
+
+    context = ingest("second")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert exports == [first]
+    assert context.visualization_data_path == str(first)

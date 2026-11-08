@@ -41,8 +41,10 @@ Ingestion itself renders nothing. Another renderer plugs in through
   namespace first (`"namespace"`), then the build the stores held
   (`"built_at"`, the build record's). The export runs once the run gave up
   the namespace's lease (it only reads), and a run that wrote, deleted and
-  re-annotated nothing keeps an export of the build the stores still hold
-  (an export of an earlier build is written again).
+  re-annotated nothing keeps an export of the build the stores still hold:
+  its own, else the newest of the namespace where ingestion writes them (a
+  run under a new pipeline id prints that one). An export of an earlier
+  build is written again.
 - **Which file.** `--data-path`, else the newest `visualization_data.json`
   under `graph.visualization.outputs_directory`, `outputs/visualization` and
   `--cache-directory` (default `cache`), of `--suffix`'s namespace when given

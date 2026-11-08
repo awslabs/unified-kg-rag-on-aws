@@ -82,6 +82,7 @@ from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.application.storage.visualization_export import (
     export_build_time,
     export_namespace,
+    newest_export,
     stored_build_time,
     write_visualization_data,
 )
@@ -2427,8 +2428,8 @@ class DataIngestionPipeline:
         once a run indexed (``graph.visualization.export_data``): the whole
         graph, also after an incremental run or beside another corpus's
         documents. Run after the namespace's lease is given up (it only
-        reads), and skipped when the export already shows the stores
-        (:meth:`_export_is_current`). With the S3 cache sync on, an export
+        reads), and skipped when an export already shows the stores
+        (:meth:`_current_export`). With the S3 cache sync on, an export
         in the cache directory is uploaded. Best effort: a failed export
         never fails the run."""
         if not self.config.graph.visualization.export_data:
@@ -2438,13 +2439,14 @@ class DataIngestionPipeline:
         suffix = resolve_namespace(self.config, None)
         path = self._visualization_path(context)
         try:
-            if self._export_is_current(context, suffix, path):
+            current = self._current_export(context, suffix, path)
+            if current is not None:
                 logger.info(
                     "The visualization data in '%s' shows the stores already "
                     "(this run wrote nothing)",
-                    path,
+                    current,
                 )
-                context.visualization_data_path = str(path)
+                context.visualization_data_path = str(current)
                 return
             counts = write_visualization_data(self.providers, suffix, path)
         except Exception as e:  # noqa: BLE001 - the export is optional
@@ -2462,13 +2464,15 @@ class DataIngestionPipeline:
             path,
         )
 
-    def _export_is_current(
+    def _current_export(
         self, context: PipelineContext, suffix: str, path: Path
-    ) -> bool:
-        """Whether the export at ``path`` shows what the stores of ``suffix``
-        hold: the run's indexing stage wrote, deleted and re-annotated
-        nothing, and the export names the namespace and the build its
-        record names (another run may have written it since)."""
+    ) -> Path | None:
+        """An export that shows what the stores of ``suffix`` hold, when the
+        run's indexing stage wrote, deleted and re-annotated nothing: the
+        one at ``path``, else the newest of the namespace where ingestion
+        writes them (a run under a new pipeline id has a new ``path``), if
+        it names the build the namespace's record names (another run may
+        have written it since)."""
         indexing = next(
             (
                 r
@@ -2486,13 +2490,24 @@ class DataIngestionPipeline:
                 "annotations_rewritten",
             )
         ):
-            return False
+            return None
         if not path.is_file() or export_namespace(path) != suffix:
-            return False
+            configured = self.config.graph.visualization.outputs_directory
+            local = self.pipeline_config.local_directory
+            found = newest_export(
+                [
+                    Path(configured) if configured else Path(DEFAULT_OUTPUTS_DIRECTORY),
+                    *([Path(local)] if local else []),
+                ],
+                suffix,
+            )
+            if found is None:
+                return None
+            path = found
         built_at = export_build_time(path)
-        return built_at is not None and built_at == stored_build_time(
-            self.providers, suffix
-        )
+        if built_at is None or built_at != stored_build_time(self.providers, suffix):
+            return None
+        return path
 
     def _upload_export(self, pipeline_id: str, path: Path) -> None:
         """Upload an export written into the pipeline's cache directory
