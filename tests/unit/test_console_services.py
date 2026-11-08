@@ -214,6 +214,39 @@ async def test_a_replaced_chain_closes_once_its_question_finishes(
     await service.close()
 
 
+async def test_a_reset_during_a_chain_build_rebuilds_from_the_new_config(
+    tmp_path: Path,
+) -> None:
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+    configs = iter(["old", "new"])
+    built: list[tuple[str, _Chain]] = []
+
+    def factory(config: str) -> _Chain:
+        chain = _Chain(_output())
+        built.append((config, chain))
+        if config == "old":  # a slow build the save lands during
+            started.set()
+            release.wait(5)
+        return chain
+
+    service = AskService(
+        lambda: next(configs),  # type: ignore[arg-type,return-value]
+        ConsoleStore(tmp_path / "s.sqlite3"),
+        chain_factory=factory,  # type: ignore[arg-type]
+    )
+    pending = asyncio.create_task(service.chain())
+    await asyncio.to_thread(started.wait, 5)
+    service.reset()  # the config was saved while the old one was built
+    release.set()
+    chain, config = await pending
+    assert config == "new" and chain is built[1][1]
+    await asyncio.sleep(0.05)
+    assert built[0][1].closed == 1  # the stale build is closed, not kept
+    await service.close()
+
+
 async def test_a_blocked_answer_is_recorded_as_blocked(tmp_path: Path) -> None:
     store = ConsoleStore(tmp_path / "s.sqlite3")
     chain = _Chain(_output(blocked=True, guardrail=[{"source": "INPUT"}]))
