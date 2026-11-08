@@ -723,8 +723,10 @@ def test_a_comparison_warns_on_rerank_failures_and_when_they_differ() -> None:
         for w in warnings
     )
     assert any("local@arm: 2/10 answers (20%) were degraded" in w for w in warnings)
-    differ = [w for w in warnings if w.startswith("NOT COMPARABLE AS IS")]
-    assert len(differ) == 2 and "local 0/10 (0%)" in differ[0]
+    # 0/10 against 1/10 or 2/10 is within chance: a note, not the alarm.
+    assert not [w for w in warnings if w.startswith("NOT COMPARABLE")]
+    notes = [w for w in warnings if "within chance" in w]
+    assert len(notes) == 2 and "local 0/10 (0%)" in notes[0]
     assert comparison["strategies"]["local@arm"]["rerank_status_counts"] == {
         "applied": 9,
         "failed": 1,
@@ -736,3 +738,40 @@ def test_a_comparison_warns_on_rerank_failures_and_when_they_differ() -> None:
     off = _rerank_run(["disabled"] * 10)
     mixed = paired_comparison({"local": off, "local@arm": clean}, resamples=200)
     assert not [w for w in mixed["warnings"] if "rerank" in w]
+
+
+def test_only_a_significant_rate_difference_is_not_comparable() -> None:
+    # 0/40 against 12/40 failed reranks (Fisher's exact p < 0.001): the
+    # deltas measure the failures. 0/40 against 1/40 (p = 1) does not.
+    clean = _rerank_run(["applied"] * 40)
+    throttled = _rerank_run(["applied"] * 28 + ["failed"] * 12)
+    warnings = paired_comparison(
+        {"local": clean, "local@arm": throttled}, resamples=200
+    )["warnings"]
+    differ = [w for w in warnings if w.startswith("NOT COMPARABLE AS IS")]
+    assert len(differ) == 1 and "rerank failure" in differ[0]
+    assert "p < 0.001" in differ[0]
+    one = _rerank_run(["applied"] * 39 + ["failed"])
+    warnings = paired_comparison({"local": clean, "local@arm": one}, resamples=200)[
+        "warnings"
+    ]
+    assert not [w for w in warnings if w.startswith("NOT COMPARABLE")]
+    assert any("within chance" in w and "p = 1.000" in w for w in warnings)
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "p"),
+    [
+        # scipy.stats.fisher_exact([[f0, n0 - f0], [f1, n1 - f1]]) values.
+        ((0, 10), (1, 10), 1.0),
+        ((0, 40), (12, 40), 0.000185),
+        ((3, 20), (9, 20), 0.0824),
+        ((5, 5), (0, 5), 0.00794),
+    ],
+)
+def test_fisher_exact_matches_the_reference(
+    a: tuple[int, int], b: tuple[int, int], p: float
+) -> None:
+    from unified_kg_rag.evaluation.comparison import fisher_exact_p_value
+
+    assert fisher_exact_p_value(*a, *b) == pytest.approx(p, rel=1e-2)

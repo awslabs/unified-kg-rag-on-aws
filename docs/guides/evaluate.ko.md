@@ -88,10 +88,12 @@ a,b`), LLM이 필요 없는 세 개가 기본으로 켜져 있고 데이터셋 �
   `id`는 `query_id`로 써도 됩니다.
 - `metadata.answer_type`은 `answer_match`가 구조가 있는 정답을 읽는 방식을 정합니다.
   `number`는 답변이 처음 말한 수(숫자, 수 단어, 단위 앞의 고유어·한자 수사: `세 곳`,
-  `三社`)를 정답의 수와 비교하고(목록 번호, 인용 표시, 연도, 서수, 부정된 수는 세지 않음),
-  `set`은 `metadata.answer_items`(문자열 목록)의 항목이 순서나 형식과 관계없이 모두 답변에
-  있어야 맞습니다. `metadata.answer_candidates`(답변이 고를 수 있는 이름)가 있으면 그 밖의
-  후보를 말하지 않아야 맞습니다. `metadata.decline_is_correct: true`는
+  `三社`)를 정답의 수와 비교하고(목록 번호, 인용 표시, 연도, 서수, 부정된 수, 부분을 고르는
+  전체는 세지 않음: `only one of the three`와 `세 곳 중 한 곳`은 1), `set`은 `metadata.answer_items`(문자열 목록)의
+  항목이 순서나 형식과 관계없이 모두 답변에 있어야 맞습니다.
+  `metadata.answer_candidates`(답변이 고를 수 있는 이름)가 있으면 답하는 부분(추출한 스팬,
+  없으면 첫 줄과 바로 뒤의 목록)에서 그 밖의 후보를 말하지 않아야 맞습니다. 뒤에 나오는
+  `Delta is fourth` 같은 문장은 고른 후보가 아닙니다. `metadata.decline_is_correct: true`는
   데이터에 없는 대상을 묻는 질문에서 답변 거절을 정답으로 채점합니다. `prepare-benchmark
   structural`이 이 필드를 씁니다([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match), 영문).
 - 코퍼스로 답할 수 없는 질문에는 `"metadata": {"answerable": false}`를 지정하세요. 어떤
@@ -170,11 +172,14 @@ run-eval --data-path s3://my-bucket/eval/my_eval_data.json \
 콘솔에도 같은 요약이 출력되며, 실패 허용 기준(`--max-failure-rate`)은 모든 실행에
 적용됩니다. 이 기준은 실패한 답변뿐 아니라 품질이 떨어진 채 나간 답변도 셉니다. 재순위화
 호출이 실패한 질의(재순위화 모델이 스로틀링되면 융합 순서를 그대로 씀, 재순위화를 시도한 질의
-기준)와 검색 단계의 실패를 전략이 흡수한 답변(`degraded_error_counts`)입니다. 그래서 기본값
+기준)와 검색 단계의 실패를 전략이 흡수한 답변(`degraded_error_counts`. `processing.ignore_errors`에서
+실패한 질의 번역이나 엔터티·키워드 추출도 포함)입니다. 그래서 기본값
 1.0에서는 모든 재순위화 호출이 실패한 실행이 종료 코드 1로 끝나고, `--max-failure-rate 0.05`는
 5%를 넘게 실패한 실행을 실패로 처리합니다. 비교 결과는 실행마다 재순위화 실패와 품질이 떨어진
-답변의 개수와 비율을 알리고, 비교한 실행 사이에 그 비율이 다르면 차이에 실패의 영향도 섞이므로
-더 강하게(`NOT COMPARABLE AS IS`) 경고합니다. 재순위화가 꺼져 있거나 만들 수 없는 경우
+답변의 개수와 비율을 알리고, 비교한 실행 사이에 그 비율이 우연 이상으로 다르면(가장 낮은 비율과
+가장 높은 비율의 양측 Fisher 정확 검정(Fisher's exact test) p가 0.05 미만) 차이에 실패의 영향도
+섞이므로 더 강하게(`NOT COMPARABLE AS IS`) 경고합니다. 우연 범위 안의 차이(예: 1/40과 0/40)에는
+p값과 함께 안내만 남깁니다. 재순위화가 꺼져 있거나 만들 수 없는 경우
 (`disabled`, `unavailable`)는 실패한 호출이 아닙니다.
 
 ## 전략 비교
@@ -300,8 +305,8 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   `search.citations.enabled`가 다르면 답변 프롬프트도 다르다고 경고합니다.
 - 오버레이가 질의 추출(질문마다 한 번 호출하는 엔터티와 키워드)을 바꾸지 않으면 비교군은 기본
   실행의 추출 결과로 검색합니다. 추출 모델, 기본 계층의 추론 강도(effort),
-  `search.output_ceilings.query_extraction`, LLM 제공자(kind, `base_url`, temperature, 출력
-  상한), Bedrock 리전을 바꾸거나 `search.query_extraction_cache_size: 0`을 지정한 비교군은 직접
+  `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, LLM
+  제공자(kind, `base_url`, temperature, 출력 상한, 컨텍스트 창), Bedrock 리전을 바꾸거나 `search.query_extraction_cache_size: 0`을 지정한 비교군은 직접
   추출합니다.
 - 빈 오버레이(위의 `aa.yaml`)는 A/A 비교군입니다. 그 차이가 이 데이터셋과 반복 횟수에서 지표마다의
   잡음 수준입니다. 기본 실행과 추출 결과를 공유하므로 이 잡음 수준에는 추출의 잡음이 빠집니다.
@@ -348,7 +353,10 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
      `--fail-if "assertion/assertion_recall:ci_high<-0.02"`.
    - `--pairwise-mode differential`은 빠른 계층 모델(`models.roles.pairwise_overlap`)에게 두
      답변이 함께 말하는 문장과 한쪽만 말하는 문장을 나누게 한 뒤, 한쪽만 말하는 문장만
-     판정합니다. 쌍마다 빠른 모델 호출이 한 번 더 듭니다.
+     판정합니다. 쌍마다 빠른 모델 호출이 한 번 더 듭니다. 이 호출의 출력 상한은 실행하는
+     추론 강도(`evaluation.judge_effort`, 없으면 빠른 계층의 강도)의 사고 예산에
+     `models.default_max_output_tokens`를 더한 값이므로, 추론 강도를 높여도 옮겨 적는 문장의
+     여유는 줄지 않습니다.
    - `--closed-book`은 `closed_book` 비교군을 더합니다. 답변 모델이 검색 없이 모든 질문에
      답하므로, 이를 이기지 못하는 전략은 모델이 이미 아는 것을 재고 있는 셈입니다. 비교
      결과에는 "(no retrieval)"로 표시하고 게이트에서는 제외하며, 검색·컨텍스트 지표는 빈

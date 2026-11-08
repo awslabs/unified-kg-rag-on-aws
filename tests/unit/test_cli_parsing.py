@@ -1092,6 +1092,9 @@ def test_eval_comparison_names_the_benchmark(capsys) -> None:
         "deltas_vs_baseline": {"mix": {}},
         "run_manifest": {"dataset": {"benchmarks": {"musique-full-answerable": 2}}},
     }
+    # The evaluation names it reads are bound when a runner is built (or
+    # main runs); alone, this test builds none.
+    run_evaluation._load_evaluation()
     run_evaluation.EvaluationRunner._print_comparison(comparison, 1.0)
     assert "Benchmark: musique-full-answerable (2)" in capsys.readouterr().out
 

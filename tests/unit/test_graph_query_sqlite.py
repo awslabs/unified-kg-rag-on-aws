@@ -149,7 +149,10 @@ def test_the_checker_refuses_writes_and_escapes(sql: str, params: list) -> None:
         check_sql(sql, params, LABEL)
 
 
-@settings(max_examples=200)
+# An example takes a few milliseconds (validate, compile, check), but the
+# default profile's 200 ms wall-clock deadline failed it on a loaded host
+# (229 ms, 264 ms at load 30 on 16 cores): no deadline, as in CI.
+@settings(max_examples=200, deadline=None)
 @given(plans())
 def test_every_valid_plan_compiles_to_a_checked_statement(raw: dict) -> None:
     try:

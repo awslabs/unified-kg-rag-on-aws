@@ -190,3 +190,64 @@ async def test_ignore_errors_degrades_to_original_query(config: Config) -> None:
     # Both sub-tasks failed but ignore_errors keeps the query flowing.
     assert result.final_query == "織田信長"
     assert result.entities == []
+
+
+@pytest.mark.parametrize(
+    ("translation", "entities", "degraded"),
+    [
+        ("About Oda", ["oda"], None),
+        (RuntimeError("bedrock down"), ["oda"], "RuntimeError"),
+        ("About Oda", TimeoutError("slow"), "TimeoutError"),
+        # A translation refusal is a deliberate fallback, no failure.
+        ("I notice the text is already in English.", ["oda"], None),
+    ],
+)
+async def test_an_absorbed_query_processing_failure_degrades_the_answer(
+    config: Config, translation, entities, degraded
+) -> None:
+    # Under ignore_errors a failed translation or extraction searched the
+    # untranslated question or without entities, and left no marker: the
+    # answer counted as undegraded in run-eval's failure budget.
+    config.processing.ignore_errors = True
+    config.processing.translation.source_language = "ja"
+    config.processing.translation.target_language = "en"
+    chain = _chain(config)
+    _install_fakes(chain, translation=translation, entities=entities)
+    result = await chain._process_query_step({"query": "織田信長について"})
+    assert result.degraded_error == degraded
+
+
+async def test_an_absorbed_keyword_failure_degrades_the_answer(
+    config: Config,
+) -> None:
+    config.processing.ignore_errors = True
+    chain = _chain(config)
+
+    async def keywords_fail(*_args, **_kwargs):
+        raise ValueError("no JSON")
+
+    def fake_get_chain(prompt_class, parser, **kwargs):
+        return _FakeChain(ValueError("no JSON"))
+
+    chain._get_chain_for_prompt = fake_get_chain  # type: ignore[assignment]
+    keywords = await chain._extract_dual_keywords("q", "English")
+    assert keywords == ([], [])  # the contract callers rely on
+    result = await chain._process_query_step(
+        {"query": "Who supplies Buyer A?", "search_strategy": "mix"}
+    )
+    assert result.hl_keywords == result.ll_keywords == []
+    assert result.degraded_error is not None
+
+
+async def test_a_failed_query_processing_step_degrades_the_answer(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config.processing.ignore_errors = True
+    chain = _chain(config)
+
+    async def broken(*_args, **_kwargs):
+        raise KeyError("state")
+
+    monkeypatch.setattr(query_processing, "process_query", broken)
+    result = await chain._process_query_step({"query": "q"})
+    assert result.final_query == "q" and result.degraded_error == "KeyError"

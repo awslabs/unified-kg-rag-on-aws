@@ -578,3 +578,72 @@ class TestHotpotQARule:
 def test_answer_contains_reads_through_a_possessive() -> None:
     assert answer_contains("Depot's crew stores the widgets.", "Depot") == 1.0
     assert answer_contains("Depots store the widgets.", "Depot") == 0.0
+
+
+_SET = {
+    "answer_type": "set",
+    "answer_items": ["Acme", "Beta", "Gamma"],
+    "answer_candidates": ["Acme", "Beta", "Delta", "Gamma", "Zeta"],
+}
+
+
+class TestSetAnswerBlock:
+    """With candidates, a set answer is read from the block that answers
+    (the extracted span, or the first line and the list right after it),
+    so naming another candidate further down is no wrong pick."""
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            "The top three are Acme, Beta and Gamma.\nDelta is fourth.",
+            "The top three vendors are:\n\n1. Acme\n2. Beta\n3. Gamma\n\n"
+            "Delta and Zeta follow with two buyers each.",
+            "## Top vendors\n- Acme (5)\n- Beta (4)\n- Gamma (4)\n\nDelta has 3.",
+            "상위 세 곳은 다음과 같습니다.\n\n- Acme\n- Beta\n- Gamma\n\n"
+            "Delta는 네 번째입니다.",
+            "上位三社は次のとおりです。\n・Acme\n・Beta\n・Gamma\nDeltaは四番目です。",
+            "前三家供应商：\n1、Acme\n2、Beta\n3、Gamma\nDelta排第四。",
+            "1、Acme\n2、Beta\n3、Gamma\nDelta排第四。",
+        ],
+    )
+    def test_a_later_mention_is_no_pick(self, config: Config, answer: str) -> None:
+        report = _report(config, answer, "Acme, Beta, Gamma", _SET)
+        assert _values(report)["answer_contains"] == 1.0
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            "The top three are Acme, Beta and Delta.\nGamma is fourth.",
+            "The top three vendors are:\n1. Acme\n2. Delta\n3. Beta\n4. Gamma",
+            "The vendors are Acme and Beta.\nGamma and Delta follow.",
+        ],
+    )
+    def test_the_answering_block_decides(self, config: Config, answer: str) -> None:
+        report = _report(config, answer, "Acme, Beta, Gamma", _SET)
+        assert _values(report)["answer_contains"] == 0.0
+
+    def test_without_candidates_the_whole_answer_counts(self, config) -> None:
+        metadata = {k: v for k, v in _SET.items() if k != "answer_candidates"}
+        answer = "Acme and Beta lead.\nGamma is third; Delta fourth."
+        report = _report(config, answer, "Acme, Beta, Gamma", metadata)
+        assert _values(report)["answer_contains"] == 1.0
+
+    async def test_the_extracted_span_is_the_block(self, mocker, config) -> None:
+        evaluator, _ = _extracting(mocker, config, "Acme, Beta and Gamma")
+        answer = (
+            "Based on the supply records, Acme, Beta and Gamma supply the most "
+            "buyers, ahead of Delta."
+        )
+        result = EvaluationResult(
+            query_id="q",
+            question="Which three?",
+            generated_answer=answer,
+            ground_truth="Acme, Beta, Gamma",
+            metadata=_SET,
+        )
+        report = await evaluator.aevaluate_single(
+            EvaluationQuery(query_id="q", question="Which three?"),
+            result,
+            "Acme, Beta, Gamma",
+        )
+        assert _values(report)["answer_contains"] == 1.0

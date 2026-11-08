@@ -256,11 +256,15 @@ async def process_query(
         await asyncio.gather(*tasks.values(), return_exceptions=True) if tasks else []
     )
     results_map = dict(zip(tasks.keys(), results, strict=True))
+    # The first failure ignore_errors absorbed: the answer is degraded
+    # (searched untranslated, or without entities or keywords).
+    degraded: str | None = None
     translated_query = results_map.get("translation")
     if not isinstance(translated_query, str):
         if isinstance(translated_query, Exception):
             if chain.ignore_errors:
                 logger.warning("Query translation failed: %s", translated_query)
+                degraded = type(translated_query).__name__
             else:
                 raise translated_query
         translated_query = None
@@ -280,6 +284,7 @@ async def process_query(
         if isinstance(entity_data, Exception):
             if chain.ignore_errors:
                 logger.warning("Entity extraction failed: %s", entity_data)
+                degraded = degraded or type(entity_data).__name__
             else:
                 raise entity_data
         entity_data = []
@@ -292,6 +297,8 @@ async def process_query(
             # extract_dual_keywords already degrades to ([], []) under
             # ignore_errors, so an exception here must propagate.
             raise keyword_data
+        if isinstance(keyword_data, AbsorbedKeywordFailure):
+            degraded = degraded or keyword_data.error_type
         hl_keywords, ll_keywords = keyword_data
 
     return {
@@ -300,6 +307,7 @@ async def process_query(
         "entities": entity_data,
         "hl_keywords": hl_keywords,
         "ll_keywords": ll_keywords,
+        "degraded_error": degraded,
     }
 
 
@@ -470,6 +478,19 @@ def cache_extraction(chain: GraphRAGChain, key: tuple[str, ...], value: Any) -> 
         cache.put(key, value)
 
 
+class AbsorbedKeywordFailure(tuple[list[str], list[str]]):
+    """The ``([], [])`` of a keyword extraction whose failure
+    ``ignore_errors`` absorbed, with the error's type name, so the answer
+    is marked degraded (``ProcessedQuery.degraded_error``)."""
+
+    error_type: str
+
+    def __new__(cls, error_type: str) -> AbsorbedKeywordFailure:
+        value = super().__new__(cls, ([], []))
+        value.error_type = error_type
+        return value
+
+
 async def extract_dual_keywords(
     chain: GraphRAGChain,
     query: str,
@@ -479,7 +500,8 @@ async def extract_dual_keywords(
     """Extract LightRAG high/low-level keywords as two lists.
 
     Robust to the LLM wrapping the JSON in prose or code fences. Returns
-    empty lists on failure when ``ignore_errors`` is set.
+    empty lists on failure when ``ignore_errors`` is set
+    (``AbsorbedKeywordFailure``).
     """
     try:
         key = chain._extraction_key(KeywordsExtractionPrompt, query, target_language)
@@ -512,7 +534,7 @@ async def extract_dual_keywords(
         # The error text can quote the model's answer: DEBUG only.
         logger.warning("Dual-keyword extraction failed: %s", type(e).__name__)
         logger.debug("Dual-keyword extraction error: %s", e)
-        return [], []
+        return AbsorbedKeywordFailure(type(e).__name__)
 
 
 def _keyword_json_error(chain: GraphRAGChain, error: Exception) -> LanguageModelError:

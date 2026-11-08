@@ -485,3 +485,27 @@ async def test_resolve_strategy_auto_raises_on_router_error_by_default(
     state = {"search_strategy": SearchStrategy.AUTO, "query": "q"}
     with pytest.raises(RuntimeError, match="no bedrock"):
         await chain._resolve_strategy(state)
+
+
+def test_a_degraded_query_processing_step_marks_the_output() -> None:
+    state = {
+        "search_results": _search_result(),
+        "resolved_strategy": SearchStrategy.LOCAL,
+        "start_time": 0.0,
+        "answer": "the answer",
+        "processed_query": ProcessedQuery(
+            original_query="q", final_query="q", degraded_error="RuntimeError"
+        ),
+    }
+    out = GraphRAGChain._format_output_step(state)
+    assert out.metadata["degraded_error"] == "RuntimeError"
+    # A strategy's own absorbed failure is the one reported.
+    sr = _search_result()
+    sr.metadata["degraded_error"] = "ThrottlingException"
+    out = GraphRAGChain._format_output_step({**state, "search_results": sr})
+    assert out.metadata["degraded_error"] == "ThrottlingException"
+    clean = {
+        **state,
+        "processed_query": ProcessedQuery(original_query="q", final_query="q"),
+    }
+    assert "degraded_error" not in GraphRAGChain._format_output_step(clean).metadata

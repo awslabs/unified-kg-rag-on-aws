@@ -95,11 +95,14 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
 - `metadata.answer_type` says how `answer_match` reads a structured gold:
   `number` compares the first number the answer states (digits, number
   words, Korean and Han numerals before a counter: `세 곳`, `三社`) with
-  the gold's (list enumerators, citation markers, years, ordinals and a
-  negated number count nothing), `set` needs every one of
+  the gold's (list enumerators, citation markers, years, ordinals, a
+  negated number and the whole of a partitive count nothing: `only one of
+  the three` and `세 곳 중 한 곳` are 1), `set` needs every one of
   `metadata.answer_items` (a list of strings) in the answer in any layout,
   and with `metadata.answer_candidates` (the names the answer picks from)
-  no other candidate; `metadata.decline_is_correct:
+  no other candidate in the part that answers (the extracted span, or the
+  first line and the list right after it, so a later `Delta is fourth` is
+  no pick); `metadata.decline_is_correct:
   true` scores a decline as the right answer (a question about something
   the data does not hold). `prepare-benchmark structural` writes them
   ([Evaluation output: answer_match](../reference/evaluation-output.md#answer_match)).
@@ -192,12 +195,15 @@ console prints the same summary; the failure budget
 went out degraded as well as those that failed: queries whose rerank call
 failed (a throttled rerank model keeps the fused order; counted over the
 queries reranking was attempted on) and answers whose retrieval absorbed a
-step failure (`degraded_error_counts`), so at the default 1.0 a run whose
+step failure (`degraded_error_counts`; under `processing.ignore_errors` a
+failed query translation or entity or keyword extraction too), so at the default 1.0 a run whose
 every rerank call failed exits 1, and `--max-failure-rate 0.05` fails one
 where more than 5% did. A comparison names each run's rerank failures and
 degraded answers with their rates, and warns louder (`NOT COMPARABLE AS
-IS`) when those rates differ between the compared runs, since its deltas
-then measure the failures too. Reranking that is off or could not be built
+IS`) when those rates differ between the compared runs beyond chance (the
+lowest against the highest, two-sided Fisher's exact p below 0.05), since
+its deltas then measure the failures too; a difference within chance (1/40
+against 0/40, say) gets a note with its p-value instead. Reranking that is off or could not be built
 (`disabled`, `unavailable`) is no failed call.
 
 ## Comparing strategies
@@ -352,8 +358,9 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
 - An arm retrieves on the base runs' query extractions (entities and
   keywords, one call per question) when its overlay leaves them alone; one
   that changes the extraction's model, the default tier's effort,
-  `search.output_ceilings.query_extraction`, the LLM provider (kind,
-  `base_url`, temperature, output cap), the Bedrock region or sets
+  `search.output_ceilings.query_extraction`,
+  `models.default_max_output_tokens`, the LLM provider (kind, `base_url`,
+  temperature, output cap, context window), the Bedrock region or sets
   `search.query_extraction_cache_size: 0` extracts on its own.
 - An empty overlay (`aa.yaml` above) is an A/A arm: its deltas are the
   noise floor of each metric for this dataset and repeat count. It shares
@@ -410,7 +417,10 @@ changes a default until a measured experiment decides
    - `--pairwise-mode differential` asks the fast tier
      (`models.roles.pairwise_overlap`) for the statements both answers make
      and those only one makes, then judges the unique ones only; one more
-     fast call per pair.
+     fast call per pair. That call's output limit is
+     `models.default_max_output_tokens` above the thinking budget of the
+     effort it runs at (`evaluation.judge_effort`, else the fast tier's), so
+     a higher effort leaves the copied statements as much room.
    - `--closed-book` adds the `closed_book` arm: the answer model answers
      every question with no retrieval. A strategy that does not beat it
      measures what the model already knows. The comparison marks it "(no

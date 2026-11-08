@@ -597,7 +597,8 @@ From a `main` checkout (formats and keys no release had):
   Carlo p-value is never below 1 / (1 + resamples), so with a fixed 2,000 a family of 100 or more tests (15 strategies
   x 7 metrics) could not reject at 0.05 however large the difference, and its simultaneous intervals read their tails
   from a fraction of one resample. A family's tests of one size draw their resamples once for all of them (the same
-  values; 120 tests over 300 queries adjust in 4.5 s instead of 25 s), and the console's paired-delta help names the
+  values; 120 tests over 300 queries adjust in 4.5 s instead of 25 s), holding at most 25 million resampled means
+  at once (a group of tests at a time past it, the same values again), and the console's paired-delta help names the
   families' resample counts. `--fail-if` reads the four new statistics, and the tables print `Holm p` (#620).
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
@@ -687,11 +688,15 @@ From a `main` checkout (formats and keys no release had):
   keeps each answer's `structured` record and reports `structured_statistics` (status, fallback reasons, valid-plan,
   repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)). Its items say how `answer_match` reads them:
-  `metadata.answer_type: number` compares the answer's leading number (digits, English words, Korean native and Han
-  numerals before a counter such as 곳, 군데, 가지, 개사 or 社; list enumerators, citation markers, years, ordinals such
-  as 두 번째, 三つ目 and 第三, and negated numbers such as "not one", 一つではなく and 不是一家 count nothing; "not ...
-  any", 한 곳도 and 一社も are 0), `set` needs every one of `metadata.answer_items` in any layout and, with
-  `metadata.answer_candidates` (every vendor), no other candidate, so listing them all is no match, and
+  `metadata.answer_type: number` compares the answer's leading number (digits, English words with their scale
+  words, Korean native and Han numerals, 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사 or 社; list
+  enumerators, citation markers, years, ordinals such as 두 번째, 三つ目 and 第三, negated numbers such as "not one
+  but three", 一つではなく and 不是一家, and the whole of a partitive, so "only one of the three", 三家中只有一家, 세 곳 중
+  한 곳 and 三社のうち一社 are 1, count nothing; "not ... any", "not one", "not a single", 한 곳도, 一社も, 没有 and
+  いません are 0), `set` needs every one of `metadata.answer_items` in any layout and, with
+  `metadata.answer_candidates` (every vendor), no other candidate in the part that answers (the extracted span, else
+  the first line and the list right after it), so listing them all is no match and a later "Delta is fourth" no
+  pick, and
   `metadata.decline_is_correct` scores a decline of an absent vendor as right; the localized counts carry 3곳 / 세 곳
   and 3社 / 三社 aliases. `structural-config.yaml` sets `evaluation.answer_span: extracted` (EM and F1 on the short
   span: one fast-model call per scored answer).
@@ -908,9 +913,12 @@ From a `main` checkout (formats and keys no release had):
   [guardrail](docs/guides/guardrail.md).
 - Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284). In `run-eval`, queries
   whose rerank call failed (a throttled rerank model keeps the fused order) and answers whose retrieval absorbed a step
-  failure (each result's `degraded_error`, the summary's `degraded_error_counts`) count against `--max-failure-rate`,
+  failure (each result's `degraded_error`, the summary's `degraded_error_counts`; a query translation or entity or
+  keyword extraction that `processing.ignore_errors` skipped among them, `ProcessedQuery.degraded_error` and the
+  chain's `metadata.degraded_error`) count against `--max-failure-rate`,
   so at the default 1.0 a run whose every rerank call failed exits 1; a comparison names each run's rerank failures and
-  degraded answers with their rates and warns louder when the rates differ between the compared runs.
+  degraded answers with their rates and warns louder (`NOT COMPARABLE AS IS`) when the lowest and highest rate differ
+  beyond chance (two-sided Fisher's exact p below 0.05), with a note when they differ within it.
 - Query deadline: `search.query_timeout_seconds` bounds every query and stream (which must send a first chunk within
   `search.model_timeout_seconds`) and raises `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure);
   query-time model calls get their own clients (`search.model_timeout_seconds`, `model_max_attempts`; `backend:
@@ -992,7 +1000,8 @@ From a `main` checkout (formats and keys no release had):
   pairwise judge reports win rates per answer-length bucket in estimated tokens (symmetric in the log ratio) and
   their correlation with length;
   `evaluation.pairwise_mode: differential` (`run-eval --pairwise-mode differential`, model role
-  `models.roles.pairwise_overlap`) judges only the statements unique to each answer; the `assertion` evaluator
+  `models.roles.pairwise_overlap`, its output limit `models.default_max_output_tokens` above the judge effort's
+  thinking budget) judges only the statements unique to each answer; the `assertion` evaluator
   (`assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`;
   `evaluation.assertion_trials`, a majority over trials in distinct assertion orders, every judge call within
   `processing.max_concurrency`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions
@@ -1019,7 +1028,8 @@ From a `main` checkout (formats and keys no release had):
   (`<strategy>@NAME`) are compared with the same strategy's base run and Holm-adjusted with the other deltas; the
   manifest records the overlay's path and sha256 and the comparison order, which `--from-results` keeps. An arm
   shares the base runs' query extractions only when its overlay leaves them alone (the extraction model, the default
-  tier's effort, `search.output_ceilings.query_extraction`, the LLM provider and region, and a
+  tier's effort, `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, the LLM provider with
+  its context window and region, and a
   `search.query_extraction_cache_size` above 0). An empty overlay is an A/A arm, the noise floor without the
   extraction's noise (it shares the extractions). See [evaluation](docs/guides/evaluate.md#configuration-arms).
 - The `run-eval` judge defaults to Opus 5.5 on Bedrock (a judge judging its own answers shifted directness by

@@ -336,7 +336,8 @@ class EvaluationResult(BaseModel):
             "The type name of a retrieval step failure the strategy absorbed "
             "to answer anyway (the chain's metadata.degraded_error: a global "
             "map batch, a DRIFT follow-up, an iterative round, a step "
-            "processing.ignore_errors skipped). None when every step "
+            "processing.ignore_errors skipped, such as the query translation "
+            "or a query entity or keyword extraction). None when every step "
             "succeeded."
         ),
     )

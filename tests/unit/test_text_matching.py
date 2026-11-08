@@ -331,3 +331,59 @@ class TestLeadingNumber:
     )
     def test_none(self, text: str) -> None:
         assert leading_number(text) is None
+
+    @pytest.mark.parametrize(
+        ("text", "number"),
+        [
+            # A partitive states its part; the whole it is taken from counts
+            # nothing ("of the three", "三家中", "세 곳 중", "三社のうち").
+            ("Only one of the three vendors supplies X.", 1),
+            ("One of the vendors, Acme, supplies X.", 1),
+            ("Of the three vendors, only one supplies X.", 1),
+            ("It has a total of three vendors.", 3),
+            ("三家中只有一家。", 1),
+            ("三家供应商中，只有一家供货。", 1),
+            ("三家中国供应商。", 3),
+            ("세 곳 중 한 곳만 공급합니다.", 1),
+            ("세 곳 중에서 두 곳이 국내입니다.", 2),
+            ("三社のうち一社だけです。", 1),
+            # "Not one" and "not a single" state zero, "not one but" negates.
+            ("Not one vendor supplies X.", 0),
+            ("Not a single vendor supplies X.", 0),
+            ("Not one but three vendors.", 3),
+            # 两/兩 is two.
+            ("共有两家供应商。", 2),
+            ("共有兩家供應商。", 2),
+            ("两个", 2),
+            # Zero stated by a Chinese or Japanese verb of absence.
+            ("没有供应商。", 0),
+            ("沒有供應商。", 0),
+            ("サプライヤーはいません。", 0),
+            ("供給元はありません。", 0),
+            # A space before a Han counter.
+            ("三 社", 3),
+            ("三 家供应商", 3),
+            # English scale words.
+            ("three hundred vendors", 300),
+            ("two thousand", 2000),
+            ("three hundred and twelve buyers", 312),
+            ("two thousand five hundred employees", 2500),
+            ("twenty-one hundred", 2100),
+        ],
+    )
+    def test_partitives_negated_zero_and_scales(self, text: str, number: float) -> None:
+        assert leading_number(text) == number
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Aではありません。",  # a negated copula, not absence
+            "問題ありません。",  # "no problem"
+            "没有问题。",  # "no problem"
+            "One of them, Acme, is the largest.",  # an anaphoric partitive
+            "特に問題はありません。",  # "no particular problem"
+            "Acme is not one of the suppliers.",  # a negated partitive
+        ],
+    )
+    def test_idioms_of_absence_count_nothing(self, text: str) -> None:
+        assert leading_number(text) is None
