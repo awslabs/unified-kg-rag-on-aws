@@ -127,3 +127,35 @@ def test_a_lower_max_concurrency_bounds_the_embedding_requests(indexer) -> None:
     indexer.embedding_model.embed_documents = _embed
     indexer._batch_embed([f"text {i}" for i in range(50 * 12)])
     assert 1 <= peak <= 3
+
+
+def test_the_embedding_batch_and_concurrency_are_configured(indexer) -> None:
+    # processing.embedding_batch_size / embedding_concurrency, no longer
+    # module constants: a provider with another request limit or quota sets
+    # them.
+    indexer.config.processing.embedding_batch_size = 7
+    indexer.config.processing.embedding_concurrency = 2
+    lock = threading.Lock()
+    in_flight = peak = 0
+    sizes: list[int] = []
+
+    def _embed(texts):
+        nonlocal in_flight, peak
+        with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+            sizes.append(len(texts))
+        threading.Event().wait(0.01)
+        with lock:
+            in_flight -= 1
+        return [[1.0] * 4 for _ in texts]
+
+    indexer.embedding_model.embed_documents = _embed
+    indexer._batch_embed([f"text {i}" for i in range(30)])
+    assert sorted(sizes) == [2, 7, 7, 7, 7]
+    assert peak == 2
+    # A slice is one round of requests, at most one read of stored digests.
+    assert indexer._write_slice_size == 14
+    indexer.config.processing.embedding_batch_size = 96
+    indexer.config.processing.embedding_concurrency = 64
+    assert indexer._write_slice_size == 1000

@@ -667,9 +667,8 @@ def test_upsert_embeds_and_writes_one_slice_at_a_time(indexer, mocker) -> None:
     # Embedding a whole item type before one bulk call held every vector at
     # once (gigabytes on a large corpus): each slice is embedded and written
     # before the next is embedded.
-    from unified_kg_rag.adapters.storage import opensearch_indexer as module
 
-    slice_size = module._WRITE_SLICE_SIZE
+    slice_size = indexer._write_slice_size
     indexer.opensearch_client = mocker.MagicMock()
     indexer.opensearch_client.get_index_name_by_alias.return_value = "idx"
     indexer.opensearch_client.bulk_index.return_value = {"errors": False}

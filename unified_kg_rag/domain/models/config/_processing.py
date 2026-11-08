@@ -703,7 +703,8 @@ class ProcessingConfig(BaseModel):
         description=(
             "LLM calls an ingestion stage keeps in flight: the next item "
             "starts as soon as one finishes, so this is both the peak and the "
-            "steady concurrency (embedding requests: at most 16 of them). "
+            "steady concurrency (embedding requests: at most "
+            "processing.embedding_concurrency of them). "
             "These stages are I/O-bound, so this can be "
             "well above the CPU count. Bedrock quotas differ per account, "
             "model and Region: lower it if the logs show ThrottlingException "
@@ -711,6 +712,29 @@ class ProcessingConfig(BaseModel):
             " 20, since a local model server queues the calls it cannot run at"
             " once."
         ),
+    )
+    embedding_concurrency: int = Field(
+        default=16,
+        ge=1,
+        description=(
+            "Embedding requests the indexing stage keeps in flight at once "
+            "(also capped by processing.max_concurrency). In a real-AWS run, "
+            "16 embedded 1,600 texts in half the time 8 took, without "
+            "throttling; lower it if the logs show embedding "
+            "ThrottlingException retries or a local embedding server queues."
+        ),
+        json_schema_extra={"evidence": "operational"},
+    )
+    embedding_batch_size: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "Texts per embedding request. The indexing stage embeds and writes "
+            "embedding_batch_size x embedding_concurrency items at a time (at "
+            "most 1,000, one read of their stored digests). Keep it within "
+            "what the embedding endpoint takes per request."
+        ),
+        json_schema_extra={"evidence": "operational"},
     )
     io_workers: int = Field(
         default=64,
