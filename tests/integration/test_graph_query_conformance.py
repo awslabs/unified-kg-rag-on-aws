@@ -237,6 +237,48 @@ def test_caller_filters_apply_alike(harness: StoreHarness) -> None:
     assert asyncio.run(_run_all(graphs, cases)) == []
 
 
+# Every operator on a property of each kind: (prop, operators, a value).
+_RANDOM_CONDITIONS: tuple[tuple[str, tuple[str, ...], Any], ...] = (
+    (
+        "rank",
+        ("eq", "neq", "in", "gt", "gte", "lt", "lte", "exists"),
+        lambda rng: rng.randint(1, 5),
+    ),
+    (
+        "name",
+        ("eq", "neq", "in", "contains", "gt", "lte", "exists"),
+        lambda rng: rng.choice(
+            ["Acme Supplies", "Valve", "Hooli Retail", "가나다 상사"]
+        ),
+    ),
+    (
+        "attr.role",
+        ("eq", "neq", "in", "contains", "exists"),
+        lambda rng: rng.choice(["supplier", "supp", "buyer"]),
+    ),
+    ("type", ("eq", "neq", "in"), lambda rng: rng.choice(["VENDOR", "BUYER"])),
+    (
+        "seed.employees",
+        ("eq", "neq", "gt", "gte", "lt", "lte", "exists"),
+        lambda rng: rng.choice([45, 120, 300, 200]),
+    ),
+)
+
+
+def _random_condition(rng: random.Random) -> dict[str, Any]:
+    prop, operators, draw = rng.choice(_RANDOM_CONDITIONS)
+    op = rng.choice(operators)
+    if op == "exists":
+        value: Any = rng.random() < 0.5
+    elif op == "in":
+        value = [draw(rng), draw(rng)]
+    elif op == "contains":
+        value = str(draw(rng))[: rng.randint(2, 5)]
+    else:
+        value = draw(rng)
+    return {"prop": prop, "op": op, "value": value}
+
+
 def _random_plans(seed: int, count: int) -> list[dict[str, Any]]:
     rng = random.Random(seed)
     types, edges = ["VENDOR", "BUYER", "PRODUCT"], ["SUPPLIES", "MAKES", "BUYS"]
@@ -248,13 +290,9 @@ def _random_plans(seed: int, count: int) -> list[dict[str, Any]]:
             node: dict[str, Any] = {"var": f"n{i}"}
             if rng.random() < 0.6:
                 node["types"] = [rng.choice(types)]
-            if rng.random() < 0.3:
+            if rng.random() < 0.5:
                 node["where"] = [
-                    {
-                        "prop": "rank",
-                        "op": rng.choice(["gte", "lt"]),
-                        "value": rng.randint(1, 5),
-                    }
+                    _random_condition(rng) for _ in range(rng.randint(1, 2))
                 ]
             nodes.append(node)
         hops = [
@@ -287,8 +325,25 @@ def _random_plans(seed: int, count: int) -> list[dict[str, Any]]:
 
 def test_random_plans_answer_as_the_reference(harness: StoreHarness) -> None:
     graphs = _Graphs(harness)
-    cases = [(f"random-{i}", raw, {}) for i, raw in enumerate(_random_plans(7, 40))]
+    cases = [(f"random-{i}", raw, {}) for i, raw in enumerate(_random_plans(7, 80))]
     assert asyncio.run(_run_all(graphs, cases)) == []
+
+
+def test_the_random_plans_use_every_operator_validly() -> None:
+    """The seeded plans exercise each operator on a valid plan (else a store
+    comparing differently from the reference goes unseen)."""
+    graph = property_graph(procurement_entities(), procurement_relationships())
+    used: set[str] = set()
+    valid = 0
+    for raw in _random_plans(7, 80):
+        try:
+            plan = _plan(raw, graph)
+        except InvalidGraphQueryError:
+            continue
+        valid += 1
+        used |= {c.op for node in plan.nodes for c in node.conditions}
+    assert used == {"eq", "neq", "in", "contains", "gt", "gte", "lt", "lte", "exists"}
+    assert valid >= 50
 
 
 def test_a_capped_result_is_marked_truncated(harness: StoreHarness) -> None:

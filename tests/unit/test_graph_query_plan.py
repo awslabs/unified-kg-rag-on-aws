@@ -28,18 +28,23 @@ from unified_kg_rag.domain.models.graph_query import (
     GraphQueryPlan,
     GraphQueryRequest,
     GroupRow,
+    PropertyRef,
     QueryAnswer,
+    ResolvedCondition,
 )
 from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.domain.retrieval.graph_query import (
     aggregate_bindings,
     answer_from_result,
     build_profile,
+    condition_holds,
     describe_plan,
     hydrate_keys,
+    is_queryable_key,
     merge_declared,
     plan_operation,
     reference_execute,
+    scalar_holds,
     validate_plan,
 )
 from unified_kg_rag.shared.exceptions import InvalidGraphQueryError
@@ -230,6 +235,34 @@ def test_ids_lineage_and_internals_are_never_queryable(prop: str) -> None:
                 "returns": {"kind": "count"},
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("key", "queryable"),
+    [
+        ("name", True),
+        ("rank", True),
+        ("attr_role", True),
+        # Neither a core property nor an extracted attribute.
+        ("role", False),
+        ("label", False),
+        ("attrs_role", False),
+        # An internal attribute ("_" first) and the store's bookkeeping.
+        ("attr__internal", False),
+        ("attr_", True),
+        ("build_tag", False),
+        ("attr_text_unit_weights", False),
+    ],
+)
+def test_only_core_properties_and_extracted_attributes_are_plan_keys(
+    key: str, queryable: bool
+) -> None:
+    assert is_queryable_key(key) is queryable
+    profile = build_profile(
+        [{"id": ["v"], "type": ["VENDOR"], key: ["x"]}], [], sampled=False
+    )
+    listed = {p.key for p in profile.properties}
+    assert (key in listed) is queryable
 
 
 @pytest.mark.parametrize(
@@ -654,3 +687,83 @@ def test_text_and_order_comparisons_need_one_value_kind() -> None:
         profile,
         max_hops=3,
     )
+
+
+@pytest.mark.parametrize(
+    ("stored", "op", "value", "holds"),
+    [
+        # eq: within one kind; a number never equals a boolean.
+        (5, "eq", 5, True),
+        (5, "eq", 5.0, True),
+        (5, "eq", 6, False),
+        (1, "eq", True, False),
+        (True, "eq", 1, False),
+        ("Acme", "eq", "Acme", True),
+        ("Acme", "eq", "acme", False),
+        ("5", "eq", 5, False),
+        # neq holds across kinds, as Gremlin's does.
+        (5, "neq", 5, False),
+        (5, "neq", 6, True),
+        (True, "neq", 1, True),
+        ("Acme", "neq", 5, True),
+        ("Acme", "neq", "Acme", False),
+        # in: any listed value of the same kind.
+        (5, "in", (1, 5), True),
+        (5, "in", (1, 2), False),
+        (1, "in", (True,), False),
+        ("b", "in", ("a", "b"), True),
+        # contains: case-sensitive, strings only.
+        ("Acme Supplies", "contains", "Supp", True),
+        ("Acme Supplies", "contains", "supp", False),
+        (55, "contains", "5", False),
+        # Order comparisons: within one kind, never booleans.
+        (5, "gt", 4, True),
+        (5, "gt", 5, False),
+        (5, "gte", 5, True),
+        (4, "gte", 5, False),
+        (4, "lt", 5, True),
+        (5, "lt", 5, False),
+        (5, "lte", 5, True),
+        (6, "lte", 5, False),
+        (5.5, "gt", 5, True),
+        ("b", "gt", "a", True),
+        ("a", "gte", "b", False),
+        (5, "gt", "4", False),
+        (True, "gt", False, False),
+        (True, "lte", True, False),
+        (5, "exists", True, False),
+    ],
+)
+def test_one_stored_value_against_each_operator(
+    stored: Any, op: str, value: Any, holds: bool
+) -> None:
+    """The comparison semantics the reference and SQLite share: each
+    operator pinned on its own, so a store answering alike from the same
+    wrong predicate cannot hide it (a neq read as eq, a gt as gte)."""
+    assert scalar_holds(stored, op, value) is holds
+
+
+@pytest.mark.parametrize(
+    ("values", "op", "value", "holds"),
+    [
+        ([], "exists", True, False),
+        ([], "exists", False, True),
+        ([None], "exists", True, False),
+        ([None], "exists", False, True),
+        ([0], "exists", True, True),
+        ([0], "exists", False, False),
+        ([False], "exists", True, True),
+        # Any stored value; no value fails every operator but exists: false.
+        (["a", "b"], "eq", "b", True),
+        ([1, 9], "gt", 5, True),
+        ([1, 2], "gt", 5, False),
+        ([], "neq", "a", False),
+        ([None], "eq", None, False),
+    ],
+)
+def test_a_property_holds_a_condition_by_any_of_its_values(
+    values: list[Any], op: str, value: Any, holds: bool
+) -> None:
+    prop = PropertyRef(name="p", key="p", source="vertex", kinds=(), multi=True)
+    condition = ResolvedCondition(prop=prop, op=op, value=value)
+    assert condition_holds(values, condition) is holds

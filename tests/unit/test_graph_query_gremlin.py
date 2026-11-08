@@ -261,6 +261,18 @@ def _bad(build) -> Bytecode:
         pytest.param(
             lambda s: s.V().hasLabel(LABEL).has("name", object()), id="object-arg"
         ),
+        # Neither allowed nor named as denied: the allowlist refuses it (an
+        # unbounded walk out of the step caps).
+        pytest.param(
+            lambda s: s.V().hasLabel(LABEL).repeat(__.both().hasLabel(LABEL)),
+            id="repeat",
+        ),
+        pytest.param(
+            lambda s: s.V()
+            .hasLabel(LABEL)
+            .union(__.repeat(__.both().hasLabel(LABEL)).times(2)),
+            id="nested-repeat",
+        ),
     ],
 )
 def test_the_checker_refuses_writes_and_escapes(build) -> None:
