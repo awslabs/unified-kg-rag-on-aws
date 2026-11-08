@@ -670,11 +670,12 @@ From a `main` checkout (formats and keys no release had):
   `error_class`): the console's Ask page shows a partial answer as such, MCP `kg_answer` and `kg_search` return them
   after the answer, and `run-rag` prints them (and its JSON document holds them).
 - `ModelUnreachableError`: a model server that cannot be reached is named with its provider kind, `base_url` and how
-  to start it (`ollama serve`, the models to pull). `run-ingestion` raises it at its embedding probe, before any
-  extraction (it retried for minutes and ended with "produced 0 outputs"); a query raises it (the error answer under
-  `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback. `ErrorClass` and
-  `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the MCP server's
-  caller messages and the console's error kind, also of an error answer (`metadata.error_class`).
+  to start it (`ollama serve`, the models to pull), the one server the failed connection was made to when its
+  transport says which. `run-ingestion` raises it at its embedding probe, before any extraction (it retried for
+  minutes and ended with "produced 0 outputs"); a query raises it at once, without the transient retries' backoff
+  (the error answer under `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback.
+  `ErrorClass` and `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the
+  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`).
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
   `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in advance
   (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared strategies
