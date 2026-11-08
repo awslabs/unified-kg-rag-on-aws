@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import Any, TypeVar
 
 from unified_kg_rag.domain.ingestion.base_processor import (
     BaseProcessor,
@@ -52,6 +52,8 @@ from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import compute_hash
 
 logger = get_logger(__name__)
+
+_Item = TypeVar("_Item", Entity, Relationship)
 
 # Attributes a record's items take from their text unit (the index suffix and
 # the document filters), not from what the unit says: stored records drop
@@ -162,6 +164,22 @@ def merge_relationship_contributions(
     return merged
 
 
+def _kept_copied(items: list[_Item]) -> list[_Item]:
+    """``items`` with the first of each id deep-copied: the statement a
+    merge keeps and mutates (``BaseProcessor._merge_items``). The later
+    ones are only read, and every value the merge takes from them is a new
+    object, so the merged graph shares nothing with the records. Copying
+    every statement doubled the merge's time on a corpus of hubs."""
+    seen: set[str] = set()
+    out: list[_Item] = []
+    for item in items:
+        if item.id is not None and item.id not in seen:
+            seen.add(item.id)
+            item = item.model_copy(deep=True)
+        out.append(item)
+    return out
+
+
 def merge_contributions(
     records: Iterable[TextUnitExtraction],
 ) -> tuple[list[Entity], list[Relationship]]:
@@ -176,10 +194,10 @@ def merge_contributions(
     """
     records = sorted(records, key=lambda record: record.text_unit_id)
     entities = merge_entity_contributions(
-        [e.model_copy(deep=True) for r in records for e in r.entities]
+        _kept_copied([e for r in records for e in r.entities])
     )
     relationships = merge_relationship_contributions(
-        [rel.model_copy(deep=True) for r in records for rel in r.relationships]
+        _kept_copied([rel for r in records for rel in r.relationships])
     )
     entities, _ = cite_relationship_endpoints(entities, relationships)
     return entities, relationships
