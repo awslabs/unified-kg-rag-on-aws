@@ -604,14 +604,11 @@ From a `main` checkout (formats and keys no release had):
   alpha resamples (`multiplicity.families.<f>.resamples`; `evaluation.resamples` sets the base, 2,000): the Monte
   Carlo p-value is never below 1 / (1 + resamples), so with a fixed 2,000 a family of 100 or more tests (15 strategies
   x 7 metrics) could not reject at 0.05 however large the difference, and its simultaneous intervals read their tails
-  from a fraction of one resample. A family's tests of one size draw their resamples once for all of them (the same
-  values; 120 tests over 300 queries adjust in 4.5 s instead of 25 s), holding at most 25 million resampled means
-  at once (a group of tests at a time past it, the same values again), and the console's paired-delta help names the
-  families' resample counts. `--fail-if` reads the four new statistics, and the tables print `Holm p` (#620).
-  from a fraction of one resample (#639). A family's tests of one size draw their resamples once for all of them (the
-  same values; 120 tests over 300 queries adjust in 4.5 s instead of 25 s), and the console's paired-delta help names
-  the families' resample counts (#645). `--fail-if` reads the four new statistics, and the tables print `Holm p`
-  (#620).
+  from a fraction of one resample (#639). A family's tests of one size draw their resamples once for all of them
+  (the same values; 120 tests over 300 queries adjust in 4.5 s instead of 25 s), holding at most 25 million resampled
+  means at once (a group of tests at a time past it, the same values again), and the console's paired-delta help
+  names the families' resample counts (#645, #646). `--fail-if` reads the four new statistics, and the tables print
+  `Holm p` (#620).
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
   rate's interval resamples queries. The default still judges the first repeat (#620).
