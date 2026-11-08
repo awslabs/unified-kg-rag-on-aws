@@ -327,6 +327,11 @@ def test_a_foreign_host_is_refused_on_loopback(client: Any) -> None:
     assert response.status_code == 421
 
 
+@pytest.mark.parametrize("host", ["[::1]", "[::1]:8501", "127.0.0.2:8501", "localhost"])
+def test_every_loopback_host_is_answered(client: Any, host: str) -> None:
+    assert client.get("/api/status", headers={"Host": host}).status_code == 200
+
+
 def test_responses_carry_security_headers_and_no_cors(client: Any) -> None:
     response = client.get("/api/status", headers={"Origin": "http://127.0.0.1"})
     assert "default-src 'self'" in response.headers["content-security-policy"]
@@ -406,6 +411,47 @@ def test_uploads_land_in_the_uploads_folder_and_unsafe_names_are_refused(
     assert corpora["uploads:extra"]["files"] == 1
     assert corpora["workspace:corpus"]["files"] == len(load("corpus").documents())
     assert "workspace:cache" not in corpora
+
+
+def test_a_refused_upload_leaves_the_folder_as_it_was(
+    client: Any, workspace: Path
+) -> None:
+    folder = workspace / "uploads" / "kept"
+    folder.mkdir(parents=True)
+    (folder / "original.txt").write_text("Vendor ships parts to Buyer.")
+    for later in (("../bad.txt", b"x"), ("notes.exe", b"x")):
+        response = client.post(
+            "/api/uploads",
+            data={"name": "kept"},
+            files=[
+                ("files", ("original.txt", b"a new version", "text/plain")),
+                ("files", ("new.txt", b"another file", "text/plain")),
+                ("files", (*later, "application/octet-stream")),
+            ],
+            headers=HEADERS,
+        )
+        assert response.status_code in (403, 415), response.text
+        assert (folder / "original.txt").read_text() == "Vendor ships parts to Buyer."
+        assert sorted(p.name for p in folder.iterdir()) == ["original.txt"]
+
+
+def test_an_upload_of_an_unsupported_type_is_refused_by_name(
+    client: Any, workspace: Path
+) -> None:
+    response = client.post(
+        "/api/uploads",
+        data={"name": "typed"},
+        files=[
+            ("files", ("a.txt", b"Vendor ships parts.", "text/plain")),
+            ("files", ("tool.exe", b"MZ", "application/octet-stream")),
+        ],
+        headers=HEADERS,
+    )
+    assert response.status_code == 415
+    body = response.json()
+    assert body["code"] == "unsupported" and "tool.exe" in body["error"]
+    assert ".txt" in body["error"]
+    assert not (workspace / "uploads" / "typed" / "a.txt").exists()
 
 
 def test_the_graph_is_read_with_layout_communities_and_analysis(client: Any) -> None:
@@ -766,6 +812,14 @@ def test_every_request_needs_the_access_token(client: Any) -> None:
     assert response.status_code == 401 and response.json()["code"] == "unauthorized"
     assert anonymous.get("/ask").status_code == 401
     assert anonymous.get("/ask?token=wrong-token-value").status_code == 401
+    # A non-ASCII token is a wrong token, not a server error.
+    assert anonymous.get("/ask?token=café-ключ").status_code == 401
+    assert (
+        anonymous.get(
+            "/api/status", headers={"X-Console-Token": "caf\xe9".encode("latin-1")}
+        ).status_code
+        == 401
+    )
     assert (
         anonymous.get("/api/status", headers={"X-Console-Token": "wrong"}).status_code
         == 401

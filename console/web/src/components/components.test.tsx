@@ -228,6 +228,13 @@ describe("upload batches", () => {
     expect(batches(big).map((b) => b.length)).toEqual([1, 2]);
     expect(batches([])).toEqual([]);
   });
+
+  it("leave out the types ingestion does not read", async () => {
+    const { readable } = await import("../pages/IngestPage");
+    const files = [{ name: "a.PDF" }, { name: "b.txt" }, { name: ".DS_Store" }, { name: "c.exe" }, { name: "README" }];
+    expect(readable(files, [".pdf", ".txt"]).map((f) => f.name)).toEqual(["a.PDF", "b.txt"]);
+    expect(readable(files, undefined)).toEqual(files);
+  });
 });
 
 function citation(marker: number, extra: Partial<Citation> = {}): Citation {

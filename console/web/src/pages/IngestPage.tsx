@@ -123,7 +123,8 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   }
 
   const pickFiles = (list: FileList | null) => {
-    const picked = Array.from(list ?? []) as FileWithPath[];
+    // Only the types ingestion reads: the server refuses an upload holding another.
+    const picked = readable(Array.from(list ?? []) as FileWithPath[], corpora.data?.extensions);
     setFiles(picked);
     const folder = picked[0]?.webkitRelativePath?.split("/")[0];
     if (folder && !uploadName) setUploadName(folder);
@@ -374,6 +375,16 @@ function IngestResult({ job }: { job: JobRecord }) {
       </dd>
     </dl>
   );
+}
+
+/** The ``files`` whose extension is in ``extensions`` (all of them before the list loads). */
+export function readable<T extends { name: string }>(files: T[], extensions: string[] | undefined): T[] {
+  if (!extensions?.length) return files;
+  const known = new Set(extensions.map((e) => e.toLowerCase()));
+  return files.filter((file) => {
+    const dot = file.name.lastIndexOf(".");
+    return dot > 0 && known.has(file.name.slice(dot).toLowerCase());
+  });
 }
 
 // What one upload request carries at most (under the server's limits).

@@ -178,6 +178,16 @@ def is_loopback(host: str) -> bool:
         return False
 
 
+def host_without_port(header: str) -> str:
+    """The host of an HTTP ``Host`` header, without its port: ``[::1]:8501``
+    and ``[::1]`` give ``[::1]``, ``127.0.0.2:8501`` gives ``127.0.0.2``."""
+    header = header.strip().lower()
+    if header.startswith("["):
+        end = header.find("]")
+        return header[: end + 1] if end != -1 else header
+    return header.rsplit(":", 1)[0] if header.count(":") == 1 else header
+
+
 def add_removed_flag(parser: argparse.ArgumentParser, flag: str, reason: str) -> None:
     """Make ``flag``, removed from this release, a usage error (exit 2) that
     says why and what replaces it, instead of argparse's "unrecognized
