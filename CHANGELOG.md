@@ -247,11 +247,11 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
 - The doc-status registry is a new table (partition key `namespace`, sort key `doc_id`); a table of the 0.2.3 key
   schema is rejected at first use (#327).
 - Entity resolution merges only names equal after normalization, legal-form removal and dense-script spacing (fuzzy
-  matching is opt-in). Legal forms (one table, `shared/utils/legal_forms.py`): trailing Inc, Corp, Co, Ltd, LLC,
-  LLP, LP, PLC, Pty, Pte, GmbH, AG, SA, SAS, SARL, SRL, S.p.A., Ltda, BV, NV and KK in any dotting, and the Korean,
-  Japanese and Chinese company forms leading or trailing ("(주)", "合同会社", "股份有限公司"), so "Acme GmbH" and "Acme" of one
-  type are one entity; not after "&"/"and" nor after an article alone. Entity and relationship `rank` come from node
-  degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
+  matching is opt-in). Legal forms (the language profiles, `domain/languages/legal_forms.py`): trailing Inc, Corp,
+  Co, Ltd, LLC, LLP, LP, PLC, Pty, Pte, GmbH, AG, SA, SAS, SARL, SRL, S.p.A., Ltda, BV, NV and KK in any dotting,
+  and the Korean, Japanese and Chinese company forms leading or trailing ("(주)", "合同会社", "股份有限公司"), so "Acme GmbH"
+  and "Acme" of one type are one entity; not after "&"/"and" nor after an article alone. Entity and relationship
+  `rank` come from node degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
 - Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
 

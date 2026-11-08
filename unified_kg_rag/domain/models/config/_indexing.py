@@ -13,6 +13,8 @@ from pydantic import (
     model_validator,
 )
 
+from unified_kg_rag.domain.languages import PROFILES
+
 from ..methodology import (
     DEFAULT_METHODOLOGIES,
     Methodology,
@@ -20,7 +22,6 @@ from ..methodology import (
 from ..retrieval import (
     validate_safe_name,
 )
-from ._common import LanguageCode
 
 
 class NeptuneIndexingConfig(BaseModel):
@@ -193,22 +194,14 @@ DEFAULT_VECTOR_SEARCH: dict[str, Any] = {
 # The method a vector_search map without a name builds.
 _DEFAULT_VECTOR_METHOD = "hnsw"
 
-# The text analyzer of each LanguageCode. All but nori (the analysis-nori
-# plugin) are built into OpenSearch; cjk indexes Han and Kana runs as
-# overlapping character bigrams, which needs no dictionary plugin (kuromoji,
-# smartcn). The embedded engine knows every name (adapters/local/
-# search_engine/analyzers.py).
+# The text analyzer of each LanguageCode, from its profile
+# (domain/languages/profiles). All but nori (the analysis-nori plugin) are
+# built into OpenSearch; cjk indexes Han and Kana runs as overlapping
+# character bigrams, which needs no dictionary plugin (kuromoji, smartcn).
+# The embedded engine knows every name (adapters/local/search_engine/
+# analyzers.py).
 DEFAULT_LANGUAGE_ANALYZERS: dict[str, str] = {
-    LanguageCode.DE.value: "german",
-    LanguageCode.EN.value: "english",
-    LanguageCode.ES.value: "spanish",
-    LanguageCode.FR.value: "french",
-    LanguageCode.IT.value: "italian",
-    LanguageCode.JA.value: "cjk",
-    LanguageCode.KO.value: "nori",
-    LanguageCode.PT.value: "portuguese",
-    LanguageCode.RU.value: "russian",
-    LanguageCode.ZH.value: "cjk",
+    code.value: language.analyzer for code, language in PROFILES.items()
 }
 
 

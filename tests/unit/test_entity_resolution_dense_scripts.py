@@ -19,9 +19,9 @@ from unified_kg_rag.domain.ingestion.base_resolver import (
     FuzzyMatcher,
     discriminator_tokens,
 )
+from unified_kg_rag.domain.languages.legal_forms import strip_legal_forms
 from unified_kg_rag.domain.models import ResolutionMethod
 from unified_kg_rag.shared.utils import entity_key
-from unified_kg_rag.shared.utils.legal_forms import strip_legal_forms
 
 pytestmark = pytest.mark.unit
 

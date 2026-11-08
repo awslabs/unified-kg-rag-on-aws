@@ -12,8 +12,8 @@ and SciPy).
 
 import re
 
+from unified_kg_rag.domain.languages.legal_forms import strip_legal_forms
 from unified_kg_rag.shared.utils import entity_key, normalize_name
-from unified_kg_rag.shared.utils.legal_forms import strip_legal_forms
 from unified_kg_rag.shared.utils.scripts import (
     drop_dense_script_spaces,
     is_dense_script_char,
@@ -42,7 +42,7 @@ _GENERIC_ENTITY_TYPES = frozenset({"", "unknown"})
 def compact_name_key(name: str | None) -> str:
     """Return the ``entity_key`` of ``name`` without its spelling variants.
 
-    Legal-form designators are stripped (``shared.utils.legal_forms``) and
+    Legal-form designators are stripped (``domain.languages.legal_forms``) and
     spaces next to Han, Hangul and Kana letters dropped. Names with the same
     compact key are the same entity written differently, and the fuzzy
     matcher links them with score 1.0.

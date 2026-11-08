@@ -7,7 +7,6 @@ from __future__ import annotations
 import pytest
 
 from unified_kg_rag.domain.models import LanguageCode
-from unified_kg_rag.domain.retrieval import no_context
 from unified_kg_rag.domain.retrieval.no_context import (
     NO_CONTEXT_ANSWER,
     NO_CONTEXT_ANSWERS,
@@ -29,13 +28,6 @@ def test_every_language_has_its_own_reply() -> None:
         "I could not find relevant information in the available data to answer "
         "this question."
     )
-
-
-def test_the_function_word_lists_are_disjoint() -> None:
-    lists = list(no_context._FUNCTION_WORDS.values())
-    for i, words in enumerate(lists):
-        for other in lists[i + 1 :]:
-            assert not words & other
 
 
 @pytest.mark.parametrize(

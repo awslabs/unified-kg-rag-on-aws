@@ -1,0 +1,62 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""English."""
+
+from unified_kg_rag.domain.languages.codes import LanguageCode
+from unified_kg_rag.domain.languages.profile import LanguageProfile
+
+PROFILE = LanguageProfile(
+    code=LanguageCode.EN,
+    name="English",
+    script="latin",
+    analyzer="english",
+    decline=(
+        "I could not find relevant information in the available data to answer "
+        "this question."
+    ),
+    function_words=frozenset(
+        "the what which who whom whose how why when where is are were does did "
+        "of and with from this that".split()
+    ),
+    # The claim prompt's words, MS GraphRAG's SUSPECTED, and the few words
+    # that state the same status plainly.
+    claim_statuses={
+        "true": ("true", "fact", "factual", "confirmed", "verified"),
+        "false": ("false", "untrue", "denied", "refuted"),
+        "disputed": ("disputed", "suspected", "uncertain", "unverified"),
+        "unknown": ("unknown", "none", "na"),
+    },
+    no_value_words=(
+        "none",
+        "unknown",
+        "n/a",
+        "na",
+        "null",
+        "nil",
+        "unspecified",
+        "notapplicable",
+    ),
+    open_date_words=("tbd", "ongoing", "present"),
+    # strptime reads the English month names itself.
+    legal_forms={
+        "inc": "inc",
+        "incorporated": "inc",
+        "corp": "corp",
+        "corporation": "corp",
+        "co": "co",
+        "company": "co",
+        "ltd": "ltd",
+        "limited": "ltd",
+        "llc": "llc",
+        "llp": "llp",
+        "lp": "lp",
+        "plc": "plc",
+        "pty": "pty",
+        "pte": "pte",
+        # Dutch and Belgian forms, which English text writes unchanged.
+        "bv": "bv",
+        "nv": "nv",
+    },
+    polarity_words={"yes": "yes", "no": "no", "nope": "no"},
+    quote_pairs=(('"', '"'), ("“", "”")),
+)

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Legal-form designators of organization names ("Inc", "GmbH", "株式会社", "(주)").
 
+The designators are the language profiles' (``domain.languages``).
 A designator states the form of a company, not which company it is, so
 entity resolution ignores it when it compares names ("Acme GmbH" and "Acme"
 name one company) and name grounding reads two spellings of one form as the
@@ -31,36 +32,17 @@ from __future__ import annotations
 import re
 import unicodedata
 
+from unified_kg_rag.domain.languages.registry import profiles
+
 __all__ = ["latin_legal_form", "strip_legal_forms"]
 
-# Latin designators, dot-free and casefolded, each with the canonical short
-# form its spellings share.
+# Designators written as words, dot-free and casefolded, each with the
+# canonical short form its spellings share, from every language's profile
+# (``LanguageProfile.legal_forms``).
 _LATIN_LEGAL_FORMS: dict[str, str] = {
-    "inc": "inc",
-    "incorporated": "inc",
-    "corp": "corp",
-    "corporation": "corp",
-    "co": "co",
-    "company": "co",
-    "ltd": "ltd",
-    "limited": "ltd",
-    "llc": "llc",
-    "llp": "llp",
-    "lp": "lp",
-    "plc": "plc",
-    "pty": "pty",
-    "pte": "pte",
-    "gmbh": "gmbh",
-    "ag": "ag",
-    "sa": "sa",
-    "sas": "sas",
-    "sarl": "sarl",
-    "srl": "srl",
-    "spa": "spa",
-    "ltda": "ltda",
-    "bv": "bv",
-    "nv": "nv",
-    "kk": "kk",
+    form: short
+    for language in profiles()
+    for form, short in language.legal_forms.items()
 }
 # Designators that are also words: a designator only when spelled with dots.
 _DOTTED_ONLY = frozenset({"spa"})
@@ -68,37 +50,12 @@ _DOTTED_ONLY = frozenset({"spa"})
 _ARTICLES = frozenset({"the", "a", "an"})
 _CONJUNCTIONS = frozenset({"&", "and"})
 
-# Han, Hangul and Kana designators (NFKC-casefolded), leading or trailing.
-_DENSE_LEGAL_FORMS = (
-    # Korean: stock, limited, limited liability, limited partnership and
-    # general partnership companies; incorporated associations, foundations.
-    "(주)",
-    "주식회사",
-    "(유)",
-    "유한회사",
-    "유한책임회사",
-    "합자회사",
-    "합명회사",
-    "(사)",
-    "사단법인",
-    "(재)",
-    "재단법인",
-    # Japanese (with the traditional 會): kabushiki, yugen, godo, goshi and
-    # gomei kaisha.
-    "(株)",
-    "株式会社",
-    "株式會社",
-    "(有)",
-    "有限会社",
-    "合同会社",
-    "合資会社",
-    "合名会社",
-    # Chinese (simplified and traditional): company limited by shares,
-    # limited liability company, limited company.
-    "股份有限公司",
-    "有限责任公司",
-    "有限責任公司",
-    "有限公司",
+# Han, Hangul and Kana designators (NFKC-casefolded), leading or trailing
+# (``LanguageProfile.dense_legal_forms``).
+_DENSE_LEGAL_FORMS = tuple(
+    dict.fromkeys(
+        form for language in profiles() for form in language.dense_legal_forms
+    )
 )
 
 

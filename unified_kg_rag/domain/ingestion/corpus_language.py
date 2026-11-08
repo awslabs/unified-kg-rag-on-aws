@@ -15,13 +15,20 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from unified_kg_rag.domain.languages import dense_language
+from unified_kg_rag.domain.languages import dense_language, profiles
 from unified_kg_rag.domain.models import LanguageCode, language_name
-from unified_kg_rag.shared.utils.scripts import ScriptCounts, count_letters
+from unified_kg_rag.shared.utils.scripts import (
+    ScriptCounts,
+    Spacing,
+    count_letters,
+    script_named,
+)
 
-# The languages whose script the dense-script table holds.
+# The languages written in a dense script (Hangul, Kana, Han).
 DENSE_SCRIPT_LANGUAGES: frozenset[LanguageCode] = frozenset(
-    {LanguageCode.KO, LanguageCode.JA, LanguageCode.ZH}
+    language.code
+    for language in profiles()
+    if script_named(language.script).spacing is Spacing.DENSE
 )
 
 # What is read of a sample: the first characters of its first documents.

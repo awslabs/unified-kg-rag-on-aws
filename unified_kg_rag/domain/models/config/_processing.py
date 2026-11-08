@@ -16,6 +16,8 @@ from pydantic import (
     model_validator,
 )
 
+from unified_kg_rag.domain.languages import LanguageCode
+
 from ..retrieval import (
     validate_safe_name,
 )
@@ -29,7 +31,7 @@ from ..schema import (
     relationship_pattern,
     relationship_type_spec,
 )
-from ._common import ChunkingStrategy, ChunkLengthUnit, LanguageCode, ResolutionMethod
+from ._common import ChunkingStrategy, ChunkLengthUnit, ResolutionMethod
 from ._seed import SeedGraphConfig
 
 

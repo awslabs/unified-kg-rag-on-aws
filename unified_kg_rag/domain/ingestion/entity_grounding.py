@@ -22,7 +22,7 @@ import re
 import unicodedata
 from functools import lru_cache
 
-from unified_kg_rag.shared.utils.legal_forms import latin_legal_form
+from unified_kg_rag.domain.languages.legal_forms import latin_legal_form
 from unified_kg_rag.shared.utils.scripts import (
     drop_dense_script_spaces,
     has_dense_script,
