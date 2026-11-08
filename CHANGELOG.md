@@ -764,14 +764,14 @@ From a `main` checkout (formats and keys no release had):
   parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
   form against a read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer,
   and runs it read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and
-  top rows are exact, and groups an integral float with the int it equals (5.0 with 5). The result table, the
-  entities and paths it names (with seed provenance) and their passages are
-  fused (buckets `structured_query_result`, `structured_entities`, `structured_relationships`,
-  `structured_text_units`, `structured_text_hits`), the table numbered `[n]` like any evidence section and its
-  citation naming the documents of its evidence rows (the units most of them cite first, as `local` orders its text
-  units); counts are exact unless a document filter or seed-property
-  condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a count or an aggregate cites
-  its first matches as entities. Filter keys are checked against the fallback that would run too. Without a structured
+  top rows are exact, and groups an integral float with the int it equals (5.0 with 5). The result table, the entities
+  and paths it names (with seed provenance) and their passages are fused (buckets `structured_query_result`,
+  `structured_entities`, `structured_relationships`, `structured_text_units`, `structured_text_hits`), the table
+  numbered `[n]` like any evidence section and its citation naming the documents of its evidence rows (the units most of
+  them cite first, as `local` orders its text units); counts are exact unless a document filter or seed-property
+  condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a count cites its first matches
+  as entities, a minimum or a maximum the entities holding it and groups by a property their listed groups'. Filter keys
+  are checked against the fallback that would run too. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
   `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
   `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the

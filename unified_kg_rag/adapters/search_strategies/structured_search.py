@@ -89,16 +89,18 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     FILTERS_KEY,
     aggregate_bindings,
     answer_from_result,
+    answer_holders,
     answer_vertex_ids,
     build_profile,
     describe_plan,
+    evidence_vertex_ids,
     hydrate_keys,
     matching_bindings,
     merge_declared,
     plan_operation,
     render_answer,
     validate_plan,
-    vertex_rank,
+    with_condition,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
@@ -733,41 +735,52 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     ) -> tuple[list[str], GraphQueryResult]:
         """The vertices the answer cites: those it names (rows, groups of
         vertices, paths), else, for a count, an aggregate, a yes or groups by
-        a property, the first ``rows_in_context`` matches by rank (the
-        scan's, or a second bounded store request), so the answer still has
-        entities and passages to cite."""
+        a property, the first ``rows_in_context`` matches
+        (``evidence_vertex_ids``: those holding the answer's value first, a
+        ``min``/``max``'s value or the listed groups' keys, then by rank),
+        from the scan, the store's rows or a second bounded store request
+        (of the holders, when the answer has any), so the answer still has
+        entities and passages to cite, and a maximum cites the vertex that
+        holds it."""
         cap = self.settings.rows_in_context
         named = answer_vertex_ids(plan, answer)
         if named or answer.exists is False or answer.count == 0:
             return named[:cap], result
         if kept is not None:
             rows = matching_bindings(plan, kept, result.vertices)
-            ranked = sorted(
-                rows,
-                key=lambda row: (
-                    -vertex_rank(result.vertices.get(row[plan.vars[0]])),
-                    tuple(row.values()),
-                ),
+            return (
+                evidence_vertex_ids(plan, answer, rows, result.vertices)[:cap],
+                result,
             )
-            ids = list(dict.fromkeys(v for row in ranked for v in row.values()))
-            return ids[:cap], result
         if result.rows and request.vars == plan.vars:
-            ids = list(dict.fromkeys(v for row in result.rows for v in row.values()))
+            ids = evidence_vertex_ids(plan, answer, result.rows, result.vertices)
             return ids[:cap], result
+        holders = answer_holders(plan, answer)
+        sampled = with_condition(plan, *holders) if holders is not None else plan
         sample = request.model_copy(
-            update={"operation": "tuples", "vars": plan.vars, "limit": cap}
+            update={
+                "plan": sampled,
+                "operation": "tuples",
+                "vars": plan.vars,
+                "limit": cap,
+            }
         )
         try:
             found = await self.graph_query.aexecute(sample)
+            if holders is not None and not found.rows:
+                # No vertex holds it as compared (a store's number
+                # semantics): the first matches instead.
+                found = await self.graph_query.aexecute(
+                    sample.model_copy(update={"plan": plan})
+                )
         except Exception as e:
             if is_fatal_retrieval_error(e):
                 raise
             logger.warning("Structured search: reading the evidence failed: %s", e)
             return [], result
-        ids = list(dict.fromkeys(v for row in found.rows for v in row.values()))
-        merged = result.model_copy(
-            update={"vertices": {**found.vertices, **result.vertices}}
-        )
+        vertices = {**found.vertices, **result.vertices}
+        ids = evidence_vertex_ids(plan, answer, found.rows, vertices)
+        merged = result.model_copy(update={"vertices": vertices})
         return ids[:cap], merged
 
     async def _scanned(

@@ -1266,6 +1266,89 @@ def answer_vertex_ids(plan: ValidatedPlan, answer: QueryAnswer) -> list[str]:
     return list(ids)
 
 
+def answer_holders(
+    plan: ValidatedPlan, answer: QueryAnswer
+) -> tuple[str, ResolvedCondition] | None:
+    """The node whose vertices hold an answer's value and the condition
+    that selects them, for an answer that names no vertex: a ``min`` or
+    ``max`` aggregate's value on its var, a group count by a property's
+    listed keys on the group var; ``None`` for any other answer (a count,
+    a yes, a sum or a mean rests on every match alike)."""
+    r = plan.returns
+    if (
+        r.kind == "aggregate"
+        and r.aggregate_fn in ("min", "max")
+        and r.aggregate_var is not None
+        and r.aggregate_prop is not None
+        and answer.value is not None
+    ):
+        condition = ResolvedCondition(
+            prop=r.aggregate_prop, op="eq", value=canonical_scalar(answer.value)
+        )
+        return r.aggregate_var, condition
+    if (
+        r.kind == "group_count"
+        and r.group_var is not None
+        and r.group_prop is not None
+        and answer.groups
+    ):
+        keys = tuple(dict.fromkeys(canonical_scalar(g.key) for g in answer.groups))
+        return r.group_var, ResolvedCondition(prop=r.group_prop, op="in", value=keys)
+    return None
+
+
+def with_condition(
+    plan: ValidatedPlan, var: str, condition: ResolvedCondition
+) -> ValidatedPlan:
+    """``plan`` with ``condition`` added to the node of ``var``."""
+    nodes = tuple(
+        (
+            node.model_copy(update={"conditions": (*node.conditions, condition)})
+            if node.var == var
+            else node
+        )
+        for node in plan.nodes
+    )
+    return plan.model_copy(update={"nodes": nodes})
+
+
+def evidence_vertex_ids(
+    plan: ValidatedPlan,
+    answer: QueryAnswer,
+    rows: Iterable[Mapping[str, str]],
+    vertices: Mapping[str, VertexMap],
+) -> list[str]:
+    """The vertices of matching ``rows`` that evidence an answer naming
+    none, each once: the rows whose vertex holds the answer's value first
+    (``answer_holders``; by the listed groups' order), then by the first
+    node's rank and the ids; in each row, the holding node's vertex first."""
+    holders = answer_holders(plan, answer)
+    var = holders[0] if holders else plan.vars[0]
+    order = [var, *(v for v in plan.vars if v != var)]
+    keys: dict[Any, int] = {}
+    if holders is not None and isinstance(holders[1].value, tuple):
+        keys = {key: index for index, key in enumerate(holders[1].value)}
+
+    def place(row: Mapping[str, str]) -> int:
+        if holders is None:
+            return 0
+        vertex = vertices.get(row[var]) or {}
+        values = property_values(vertex, holders[1].prop)
+        if not condition_holds(values, holders[1]):
+            return len(keys) + 1
+        return min((keys.get(canonical_scalar(v), 0) for v in values), default=0)
+
+    ranked = sorted(
+        _distinct(rows, plan.vars),
+        key=lambda row: (
+            place(row),
+            -vertex_rank(vertices.get(row[plan.vars[0]])),
+            tuple(row[v] for v in plan.vars),
+        ),
+    )
+    return list(dict.fromkeys(row[v] for row in ranked for v in order))
+
+
 def _vertex_label(vertex_id: str, vertices: Mapping[str, VertexMap]) -> str:
     vertex = vertices.get(vertex_id) or {}
     name = next(iter(vertex.get("name") or ()), vertex_id)

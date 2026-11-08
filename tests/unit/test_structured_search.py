@@ -826,6 +826,57 @@ async def test_a_count_cites_matches_as_evidence(name: str) -> None:
     assert counts == sorted(counts, reverse=True)
 
 
+@pytest.mark.parametrize(
+    ("returns", "nodes", "holder"),
+    [
+        # The least-ranked buyer a vendor supplies is Hooli Retail (2); by
+        # the vendors' rank the first match was Acme Supplies' buyers.
+        (
+            {
+                "kind": "aggregate",
+                "aggregate": {"fn": "min", "var": "b", "prop": "rank"},
+            },
+            [{"var": "v", "types": ["VENDOR"]}, {"var": "b", "types": ["BUYER"]}],
+            "b3",
+        ),
+        # Scanned (a seed property): the most employees are 가나다 상사's.
+        (
+            {
+                "kind": "aggregate",
+                "aggregate": {"fn": "max", "var": "v", "prop": "seed.employees"},
+            },
+            [{"var": "v", "types": ["VENDOR"]}],
+            "v3",
+        ),
+        # The fewest kind (BUYER, before PRODUCT by key): a buyer, not the
+        # top-ranked vendor.
+        (
+            {
+                "kind": "group_count",
+                "group_by": {"var": "x", "prop": "type"},
+                "order": "asc",
+                "limit": 1,
+            },
+            [{"var": "x"}],
+            "b1",
+        ),
+    ],
+)
+async def test_an_aggregate_cites_the_vertex_holding_its_value(
+    returns: dict, nodes: list, holder: str
+) -> None:
+    config = Config()
+    config.search.structured.rows_in_context = 1
+    edges = [{"types": ["SUPPLIES"]}] if len(nodes) == 2 else []
+    plan = _with({"nodes": nodes, "edges": edges, "returns": returns})
+    strategy, graph, *_ = _strategy(_Planner(plan), config=config)
+    result = await strategy.asearch(_query("Which one?"))
+    assert result.metadata["structured"]["status"] == "answered"
+    assert _table(result).metadata["entity_ids"] == [holder]
+    entities = [r.source for r in result.results if r.retriever_type == "entity"]
+    assert entities == [holder]
+
+
 async def test_under_filters_no_stored_value_reaches_the_planner() -> None:
     """The profile is read without the caller's filters: its sampled values
     may be an excluded document's, so a filtered query's schema shows none."""

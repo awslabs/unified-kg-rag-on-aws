@@ -157,8 +157,12 @@ the model-written plan text the output guardrail screens).
    relationship results for a path's edges (the relationships-index
    documents when built); for an answer that names no entity (a count, an
    aggregate, a yes, groups by a property) the first `rows_in_context`
-   matches by rank instead, read by a second bounded `tuples` request (or
-   from the scan), so it still cites entities and passages; and the
+   matches instead (`evidence_vertex_ids`): the vertices holding the
+   answer's value first (`answer_holders`: a `min` or `max` value, the
+   listed groups' keys, by group order; a second bounded `tuples` request
+   adds that condition), then by rank, read from the scan, the store's rows
+   or that request, so it still cites entities and passages and a maximum
+   cites the entity that has it; and the
    supporting passages, fused by RRF from
    two buckets: the text units the returned items cite, by how many cite
    each, and a hybrid text-unit search of the question restricted to them,
