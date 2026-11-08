@@ -27,6 +27,9 @@ def load(name: str) -> ModuleType:
     """``console/demo/<name>.py`` as a module (once per process)."""
     if name in sys.modules:
         return sys.modules[name]
+    # The demo's modules import each other by name, as demo.py runs them.
+    if str(DEMO) not in sys.path:
+        sys.path.insert(0, str(DEMO))
     spec = importlib.util.spec_from_file_location(name, DEMO / f"{name}.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

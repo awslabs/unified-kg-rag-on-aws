@@ -58,7 +58,27 @@ with a Korean and a Japanese note on the same deal; every name is made up),
 a matching seven-question `run-eval` dataset with one unanswerable
 question, a config with the embedded SQLite stores and incremental
 indexing on, ingests the corpus with `run-ingestion` and starts the
-console on `127.0.0.1:8501`:
+console on `127.0.0.1:8501`.
+
+The corpus mixes the formats the core install parses without an extra,
+so the citations show each kind of source:
+
+| File | Format |
+|---|---|
+| `supply-agreement.pdf` | PDF, 3 pages: parties, delivery and penalties with a table of figures, warranty and signatures |
+| `quality-report.pdf` | PDF, 2 pages: an inspection table and the corrective action |
+| `logistics-plan.md` | Markdown with headings and a list |
+| `warranty-terms.html` | HTML with a table |
+| `shipments.csv` | CSV, a row per shipment |
+| `steering-minutes.json` | JSON meeting minutes |
+| `contract-summary.ko.md` | Korean Markdown note |
+| `quality-memo.ja.txt` | Japanese text note |
+
+The demo writes the PDFs when it starts (`console/demo/pdf_writer.py`, a
+small standard-library writer: the same bytes on every run) and chunks the
+corpus about a page at a time, so a passage cited from a PDF names its
+page (with the fake models, *Who carries the lidar units to Kestrel
+Depot, and how fast?* cites `supply-agreement.pdf` page 2).
 
 ```bash
 uv sync --extra console

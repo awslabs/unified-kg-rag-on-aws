@@ -74,6 +74,9 @@ _SECTION = re.compile(r"\[([0-9]{1,4})\] ")
 _NUMBERED_LINE = re.compile(r"-\s*\[([0-9]+)\]\s*(.+)")
 # The heading of each report in a global map prompt.
 _MAP_REPORT = re.compile(r"--- Report \(id: ([0-9]+)\) ---")
+# A JSON line of one string value (``"key": "value",``), as the JSON loader
+# writes a record.
+_JSON_VALUE = re.compile(r'^"[\w-]+": "(.*)",?$')
 _STOP = frozenset(
     "a an and are as at be by did do does for from has have how in is it its "
     "of on or the to was were what when where which who whom why with".split()
@@ -122,9 +125,11 @@ def _names_in(text: str) -> list[str]:
 
 
 def _sentences(text: str) -> list[str]:
-    """``text``'s sentences, without the context's "Description:" labels."""
+    """``text``'s sentences, without the context's "Description:" labels or
+    the key and quotes of a JSON line (``"note": "..."``)."""
     parts = (
-        s.strip().removeprefix("Description:").strip() for s in _SENTENCE.split(text)
+        _JSON_VALUE.sub(r"\1", s.strip().removeprefix("Description:").strip()).strip()
+        for s in _SENTENCE.split(text)
     )
     return [s for s in parts if len(s) > 2]
 

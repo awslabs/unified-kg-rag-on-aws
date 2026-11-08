@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Prepare the console demo and start the console on 127.0.0.1.
 
-Writes a small synthetic corpus and a matching ``run-eval`` dataset
-(``corpus.py``) into a workspace, a config for the chosen models (once:
-a restart keeps it, with what Settings saved; ``--reset-config`` writes it
-again), ingests
-the corpus into the embedded SQLite stores (``run-ingestion``) and starts
-``run-console`` on the loopback interface. Needs the ``console`` extra
-(``uv run --extra console``, below), checked before anything is ingested.
+Writes a small synthetic corpus (PDFs, Markdown, HTML, CSV, JSON and text)
+and a matching ``run-eval`` dataset (``corpus.py``) into a workspace, a
+config for the chosen models (once: a restart keeps it, with what Settings
+saved; ``--reset-config`` writes it again), ingests the corpus into the
+embedded SQLite stores (``run-ingestion``) and starts ``run-console`` on the
+loopback interface. Needs the ``console`` extra (``uv run --extra
+console``, below), checked before anything is ingested.
 
 Models (``--models``):
 
@@ -72,8 +72,10 @@ def write_corpus(workspace: Path) -> tuple[Path, Path]:
     """The corpus directory and the dataset file, (re)written."""
     source = workspace / "corpus"
     source.mkdir(parents=True, exist_ok=True)
-    for name, text in corpus.DOCUMENTS.items():
-        (source / name).write_text(text, encoding="utf-8")
+    for name in corpus.RETIRED_FILES:
+        (source / name).unlink(missing_ok=True)
+    for name, data in corpus.documents().items():
+        (source / name).write_bytes(data)
     datasets = workspace / "datasets"
     datasets.mkdir(parents=True, exist_ok=True)
     dataset = datasets / "demo-eval.json"
@@ -103,7 +105,16 @@ def demo_config(
             },
         },
         "processing": {
-            "chunking": {"chunker_type": "simple"},
+            # The demo's documents are a page or two: chunks of about a
+            # page, cut at paragraphs without overlap, so a passage cited
+            # from a PDF names the one page it is on.
+            "chunking": {
+                "chunker_type": "simple",
+                "min_chunk_size": 100,
+                "fallback_chunk_size": 600,
+                "max_chunk_size": 2000,
+                "chunk_overlap": 0,
+            },
             "translation": {"enabled": False},
             "gleaning": {"enabled": False},
             "claim_extraction": {"enabled": False},

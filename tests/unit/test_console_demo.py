@@ -42,18 +42,50 @@ def test_the_demo_writes_a_corpus_its_dataset_answers(tmp_path: Path) -> None:
     corpus = load("corpus")
     source, dataset = demo.write_corpus(tmp_path)
     files = {p.name for p in source.iterdir()}
+    assert files == set(corpus.documents())
+    # Every format the core install parses without an extra, PDFs included.
+    assert {Path(name).suffix for name in files} == {
+        ".pdf",
+        ".md",
+        ".html",
+        ".csv",
+        ".json",
+        ".txt",
+    }
     items = json.loads(dataset.read_text(encoding="utf-8"))
     for item in items:
         for reference in item.get("reference_sources", []):
             assert reference in files
         if item.get("answer"):
-            text = corpus.DOCUMENTS[item["reference_sources"][0]]
+            text = corpus.text_of(item["reference_sources"][0])
             assert item["answer"].split(",")[0] in text
     assert (
         sum(1 for i in items if (i.get("metadata") or {}).get("answerable") is False)
         == 1
     )
     assert json.loads((tmp_path / "sample-questions.json").read_text(encoding="utf-8"))
+
+
+def test_a_rewrite_removes_the_retired_corpus_files(tmp_path: Path) -> None:
+    demo = load("demo")
+    corpus = load("corpus")
+    (tmp_path / "corpus").mkdir()
+    (tmp_path / "corpus" / corpus.RETIRED_FILES[0]).write_text("old copy")
+    source, _ = demo.write_corpus(tmp_path)
+    assert {p.name for p in source.iterdir()} == set(corpus.documents())
+
+
+def test_the_corpus_pdfs_parse_page_by_page_as_laid_out(tmp_path: Path) -> None:
+    from unified_kg_rag.adapters.ingestion.file_loaders import PdfFileLoader
+
+    corpus = load("corpus")
+    for name in corpus.PDF_DOCUMENTS:
+        path = tmp_path / name
+        path.write_bytes(corpus.documents()[name])
+        pages = PdfFileLoader(path).load()
+        assert [p.page_content for p in pages] == corpus.page_texts(name)
+        assert [p.metadata["page"] for p in pages] == list(range(len(pages)))
+        assert len(pages) >= 2 and path.stat().st_size < 16_000
 
 
 def test_the_fake_models_answer_every_prompt_kind() -> None:

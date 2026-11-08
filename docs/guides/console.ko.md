@@ -57,6 +57,26 @@ API는 `/api/status`에서 그대로 응답합니다. 클라이언트는 패키�
 설정으로 작업 공간을 준비하고, `run-ingestion`으로 코퍼스를 수집한 뒤
 `127.0.0.1:8501`에서 콘솔을 시작합니다.
 
+코퍼스는 추가 패키지(extra) 없이 기본 설치로 파싱되는 형식을 섞어 두어,
+출처 종류마다 인용이 어떻게 보이는지 확인할 수 있습니다.
+
+| 파일 | 형식 |
+|---|---|
+| `supply-agreement.pdf` | PDF 3쪽: 당사자, 수치 표가 있는 납품·위약금 조항, 보증과 서명 |
+| `quality-report.pdf` | PDF 2쪽: 검사 결과 표와 시정 조치 |
+| `logistics-plan.md` | 제목과 목록이 있는 Markdown |
+| `warranty-terms.html` | 표가 있는 HTML |
+| `shipments.csv` | 운송 건마다 한 행인 CSV |
+| `steering-minutes.json` | JSON 회의록 |
+| `contract-summary.ko.md` | 한국어 Markdown 메모 |
+| `quality-memo.ja.txt` | 일본어 텍스트 메모 |
+
+PDF는 데모를 시작할 때 만듭니다(`console/demo/pdf_writer.py`, 표준
+라이브러리만 쓰는 작은 생성기로 실행할 때마다 같은 바이트를 씁니다).
+코퍼스를 대략 한 쪽 단위로 청크로 나누므로 PDF에서 인용한 구절은 그 쪽
+번호를 함께 보여 줍니다(가짜 모델에서 *Who carries the lidar units to
+Kestrel Depot, and how fast?*는 `supply-agreement.pdf` 2쪽을 인용합니다).
+
 ```bash
 uv sync --extra console
 (cd console/web && npm ci && npm run build)
