@@ -49,7 +49,7 @@ from functools import cache, lru_cache
 
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.logging import warn_once
-from unified_kg_rag.shared.utils.scripts import DENSE_SCRIPT_LETTERS
+from unified_kg_rag.shared.utils.scripts import DENSE_SCRIPT_LETTERS, SCRIPTS, Spacing
 
 logger = get_logger(__name__)
 
@@ -63,20 +63,7 @@ _ANALYZERS: dict[str, Analyzer] = {}
 # (UAX #29, which OpenSearch's standard tokenizer follows), read from
 # ``unicodedata`` on first use (about 0.1 s) so they follow the running
 # Python's Unicode version.
-#
-# Scripts written without spaces between words (line break class SA): the
-# tokenizer keeps a run of their letters and marks whole, apart from adjacent
-# letters of other scripts, without a dictionary.
-_SPACELESS_BLOCKS = (
-    (0x0E00, 0x0EFF),  # Thai, Lao
-    (0x1000, 0x109F),  # Myanmar
-    (0x1780, 0x17FF),  # Khmer
-    (0x1950, 0x19DF),  # Tai Le, New Tai Lue
-    (0x1A20, 0x1AAF),  # Tai Tham
-    (0xA9E0, 0xA9FF),  # Myanmar Extended-B
-    (0xAA60, 0xAADF),  # Myanmar Extended-A, Tai Viet
-    (0x11700, 0x1174F),  # Ahom
-)
+
 # Symbols with the Alphabetic property (circled and squared Latin letters).
 _ALPHABETIC_SYMBOLS = (
     (0x24B6, 0x24E9),
@@ -109,7 +96,16 @@ def _class(ranges: list[tuple[int, int]]) -> str:
 @cache
 def _word_ranges() -> dict[str, list[tuple[int, int]]]:
     """The code point ranges of each part a character plays in a word."""
-    spaceless = {cp for lo, hi in _SPACELESS_BLOCKS for cp in range(lo, hi + 1)}
+    # Scripts written without spaces between words (line break class SA):
+    # the tokenizer keeps a run of their letters and marks whole, apart from
+    # adjacent letters of other scripts, without a dictionary.
+    spaceless = {
+        cp
+        for script in SCRIPTS
+        if script.spacing is Spacing.SPACELESS
+        for lo, hi in script.ranges
+        for cp in range(lo, hi + 1)
+    }
     ranges: dict[str, list[tuple[int, int]]] = {
         role: [] for role in ("spaceless", "letter", "digit", "extend", "connector")
     }

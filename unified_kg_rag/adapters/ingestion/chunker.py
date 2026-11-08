@@ -1,5 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import re
 import statistics
 import time
 from abc import ABC, abstractmethod
@@ -57,6 +58,7 @@ from unified_kg_rag.domain.retrieval.store_names import index_suffix, namespace_
 from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import generate_stable_id
+from unified_kg_rag.shared.utils.sentences import SPACED_STOPS, UNSPACED_STOPS
 
 logger = get_logger(__name__)
 
@@ -348,12 +350,13 @@ class LineBasedBoundaryProcessor:
 # sentences rather than at its last space that fits. The lookarounds are
 # zero-width, so the terminator stays at the end of its sentence; a "." not
 # followed by a space (3.5, e.g.) splits nothing, and a paragraph that fits
-# splits as with the defaults.
+# splits as with the defaults. The marks are shared.utils.sentences'.
+_SPACED_STOP_SEPARATOR = f"(?<=[{re.escape(SPACED_STOPS)}])(?= )"
 _SPLITTER_SEPARATORS = [
     "\n\n",
     "\n",
-    "(?<=[。．｡！？；])",
-    "(?<=[.!?…])(?= )",
+    f"(?<=[{UNSPACED_STOPS}；])",
+    _SPACED_STOP_SEPARATOR,
     " ",
     "",
 ]

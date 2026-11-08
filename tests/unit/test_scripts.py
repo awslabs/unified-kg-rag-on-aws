@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unicode script helpers for Han, Hangul and Kana text."""
+"""The script table and its helpers for Han, Hangul and Kana text."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ from unified_kg_rag.shared.utils.scripts import (
     has_dense_script,
     is_dense_script_char,
     is_hangul_syllable,
+    script_named,
+    script_of,
 )
 
 pytestmark = pytest.mark.unit
@@ -35,7 +37,8 @@ def test_has_dense_script() -> None:
 
 
 def _in_letter_ranges(ch: str) -> bool:
-    return any(lo <= ord(ch) <= hi for lo, hi in scripts._DENSE_SCRIPT_LETTER_RANGES)
+    dense = scripts._ranges_of(scripts.Spacing.DENSE)
+    return any(lo <= ord(ch) <= hi for lo, hi in dense)
 
 
 @pytest.mark.slow
@@ -77,3 +80,58 @@ def test_is_hangul_syllable() -> None:
 )
 def test_drop_dense_script_spaces(text: str, expected: str) -> None:
     assert drop_dense_script_spaces(text) == expected
+
+
+def test_script_blocks_are_disjoint_and_sorted_once() -> None:
+    spans = sorted(span for script in scripts.SCRIPTS for span in script.ranges)
+    assert all(lo <= hi for lo, hi in spans)
+    assert all(prev[1] < nxt[0] for prev, nxt in zip(spans, spans[1:], strict=False))
+
+
+@pytest.mark.parametrize(
+    ("ch", "name", "spacing"),
+    [
+        ("a", "latin", scripts.Spacing.SPACED),
+        ("ệ", "latin", scripts.Spacing.SPACED),
+        ("Ж", "cyrillic", scripts.Spacing.SPACED),
+        ("ש", "hebrew", scripts.Spacing.SPACED),
+        ("ع", "arabic", scripts.Spacing.SPACED),
+        ("ह", "devanagari", scripts.Spacing.SPACED),
+        ("ก", "thai", scripts.Spacing.SPACELESS),
+        ("ລ", "lao", scripts.Spacing.SPACELESS),
+        ("က", "myanmar", scripts.Spacing.SPACELESS),
+        ("ក", "khmer", scripts.Spacing.SPACELESS),
+        ("한", "hangul", scripts.Spacing.DENSE),
+        ("ㄱ", "hangul", scripts.Spacing.DENSE),
+        ("カ", "kana", scripts.Spacing.DENSE),
+        ("東", "han", scripts.Spacing.DENSE),
+        ("𠮷", "han", scripts.Spacing.DENSE),
+    ],
+)
+def test_script_of(ch: str, name: str, spacing: scripts.Spacing) -> None:
+    script = script_of(ch)
+    assert script is not None
+    assert (script.name, script.spacing) == (name, spacing)
+    assert script_named(name) is script
+
+
+@pytest.mark.parametrize("ch", ["1", " ", "。", "，", "$", "\u0301", "😀"])
+def test_script_of_non_letters_is_none(ch: str) -> None:
+    assert script_of(ch) is None
+
+
+def test_letter_class_matches_the_script_of_each_letter() -> None:
+    import re
+
+    hangul = re.compile(f"[{scripts.letter_class('hangul')}]")
+    assert hangul.match("한") and hangul.match("ㅎ")
+    assert not hangul.match("カ")
+
+
+def test_dense_letters_are_the_dense_scripts_letters() -> None:
+    # is_dense_script_char and script_of agree on every dense block edge.
+    for script in scripts.SCRIPTS:
+        for lo, hi in script.ranges:
+            for cp in (lo, hi):
+                dense = script.spacing is scripts.Spacing.DENSE
+                assert is_dense_script_char(chr(cp)) is dense, hex(cp)

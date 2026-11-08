@@ -16,11 +16,26 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["sentence_ends"]
+__all__ = [
+    "CLAUSE_MARKS",
+    "SPACED_STOPS",
+    "UNSPACED_STOPS",
+    "sentence_ends",
+]
+
+# The one set of sentence and clause marks the chunker, the context
+# truncation and sentence_ends cut at.
+# Stops that end a sentence wherever they stand (Chinese and Japanese write
+# no space after them).
+UNSPACED_STOPS = "。．｡！？‼⁇⁈⁉"
+# Stops that end one only before whitespace or the end of the text.
+SPACED_STOPS = ".!?…"
+# Clause marks a text without spaces may be cut at when no stop is near.
+CLAUSE_MARKS = "、，；"
 
 _CLOSERS = "\"'’”)\\]}»」』〉》】）｣"
-_DENSE_STOP = re.compile(f"[。！？．｡‼⁇-⁉][{_CLOSERS}]*")
-_LATIN_STOP = re.compile(f"[.!?…]+[{_CLOSERS}]*(?=\\s|$)")
+_DENSE_STOP = re.compile(f"[{UNSPACED_STOPS}][{_CLOSERS}]*")
+_LATIN_STOP = re.compile(f"[{re.escape(SPACED_STOPS)}]+[{_CLOSERS}]*(?=\\s|$)")
 _LINE_BREAK = re.compile(r"[^\S\n]*\n")
 
 

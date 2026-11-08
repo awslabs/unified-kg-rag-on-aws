@@ -1,71 +1,266 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unicode script tests for dense (space-optional) writing systems.
+"""The one table of Unicode scripts the text heuristics read.
 
-Han, Hangul and Kana pack a morpheme into one or two characters and do not
-need spaces between words: one character carries what a whole Latin word
-carries. Several text heuristics (edit-distance fuzziness, character
-shingles, word-token counts) are tuned for Latin words and need to know when
-they face such text. The tests below go by Unicode block, not by language.
+Each :class:`Script` names its letter blocks, how its text is spaced
+(:class:`Spacing`), the marks it writes optionally (Arabic short vowels,
+Hebrew points), and the characters a BPE token covers in it. Every helper
+below, and every caller that asks "is this Hangul?", "does this text need
+spaces?" or "how many tokens is this?", reads this table instead of a range
+list of its own.
+
+- ``dense``: Han, Hangul and Kana pack a morpheme into one or two
+  characters and do not need spaces between words: one character carries
+  what a whole Latin word carries. Edit-distance fuzziness, character
+  shingles and word-token counts tuned for Latin words need to know when they
+  face such text.
+- ``spaceless``: Thai, Lao, Myanmar, Khmer and the Tai scripts are alphabets
+  written without spaces between words (a space ends a phrase), so a run of
+  their letters is many words.
+- ``spaced``: every other script separates its words with spaces.
+
+The tests go by Unicode block, not by language: which language a text is in
+is the language registry's question (``domain.languages``).
 """
 
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
+from dataclasses import dataclass, field
+from enum import Enum
+from functools import cache
 
 __all__ = [
     "DENSE_SCRIPT_LETTERS",
     "DENSE_SCRIPT_TOKEN_RANGES",
+    "SCRIPTS",
+    "SPACELESS_SCRIPT_LETTERS",
+    "Script",
+    "Spacing",
     "drop_dense_script_spaces",
     "has_dense_script",
     "is_dense_script_char",
     "is_hangul_syllable",
+    "letter_class",
+    "script_named",
+    "script_of",
 ]
 
-# The Han, Hangul and Kana letter blocks both tables below hold.
-_CORE_LETTER_RANGES: tuple[tuple[int, int], ...] = (
+
+class Spacing(str, Enum):
+    """How a script separates its words."""
+
+    SPACED = "spaced"
+    DENSE = "dense"
+    SPACELESS = "spaceless"
+
+
+Ranges = tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True)
+class Script:
+    """A writing system: its letter blocks and how its text behaves.
+
+    ``chars_per_token`` is the local token estimate's rate for the script's
+    letters (``adapters.llm.token_estimate``). ``optional_marks`` are the
+    combining marks the script writes or leaves out at will (vowel points),
+    so text compared for identity may drop them.
+    """
+
+    name: str
+    ranges: Ranges
+    spacing: Spacing = Spacing.SPACED
+    chars_per_token: float = 4.0
+    optional_marks: Ranges = field(default=())
+
+
+# Han, Hangul and Kana blocks. The token estimate counts the "core" ones at
+# one token a character (see DENSE_SCRIPT_TOKEN_RANGES below).
+_HANGUL_CORE: Ranges = (
     (0x1100, 0x11FF),  # Hangul Jamo
-    (0x3040, 0x30FF),  # Hiragana + Katakana
-    (0x3400, 0x4DBF),  # CJK Unified Ideographs Extension A
-    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
     (0xA960, 0xA97F),  # Hangul Jamo Extended-A
     (0xAC00, 0xD7AF),  # Hangul Syllables
+)
+_HANGUL_EXTRA: Ranges = (
+    (0x3130, 0x318F),  # Hangul Compatibility Jamo
+    (0xD7B0, 0xD7FF),  # Hangul Jamo Extended-B
+)
+_KANA_CORE: Ranges = ((0x3040, 0x30FF),)  # Hiragana + Katakana
+_KANA_EXTRA: Ranges = ((0x31F0, 0x31FF),)  # Katakana Phonetic Extensions
+_HAN_CORE: Ranges = (
+    (0x3400, 0x4DBF),  # CJK Unified Ideographs Extension A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
     (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
 )
+_HAN_EXTRA: Ranges = ((0x20000, 0x323AF),)  # CJK Unified Ideographs Extensions B-H
 
-# Letter blocks only: CJK punctuation and full-width forms are excluded (NFKC
+# The script table. Letter blocks only: punctuation and symbol blocks belong
+# to no script (CJK punctuation and full-width forms are not letters; NFKC
 # folds the latter to ASCII).
-_DENSE_SCRIPT_LETTER_RANGES: tuple[tuple[int, int], ...] = tuple(
-    sorted(
+SCRIPTS: tuple[Script, ...] = (
+    Script(
+        "latin",
         (
-            *_CORE_LETTER_RANGES,
-            (0x3130, 0x318F),  # Hangul Compatibility Jamo
-            (0x31F0, 0x31FF),  # Katakana Phonetic Extensions
-            (0xD7B0, 0xD7FF),  # Hangul Jamo Extended-B
-            (0x20000, 0x323AF),  # CJK Unified Ideographs Extensions B-H
-        )
-    )
+            (0x0041, 0x005A),
+            (0x0061, 0x007A),
+            (0x00AA, 0x00AA),
+            (0x00BA, 0x00BA),
+            (0x00C0, 0x00D6),
+            (0x00D8, 0x00F6),
+            (0x00F8, 0x02AF),  # Latin-1 to IPA Extensions
+            (0x1D00, 0x1DBF),  # Phonetic Extensions
+            (0x1E00, 0x1EFF),  # Latin Extended Additional (Vietnamese)
+            (0x2C60, 0x2C7F),
+            (0xA720, 0xA7FF),
+            (0xAB30, 0xAB6F),
+            (0xFB00, 0xFB06),  # Latin ligatures
+            (0xFF21, 0xFF3A),  # Full-width Latin
+            (0xFF41, 0xFF5A),
+        ),
+    ),
+    Script("greek", ((0x0370, 0x03FF), (0x1F00, 0x1FFF))),
+    Script(
+        "cyrillic",
+        ((0x0400, 0x052F), (0x1C80, 0x1C8F), (0x2DE0, 0x2DFF), (0xA640, 0xA69F)),
+    ),
+    Script("armenian", ((0x0530, 0x058F), (0xFB13, 0xFB17))),
+    Script(
+        "hebrew",
+        ((0x0590, 0x05FF), (0xFB1D, 0xFB4F)),
+        # Cantillation and vowel points (niqqud).
+        optional_marks=(
+            (0x0591, 0x05BD),
+            (0x05BF, 0x05BF),
+            (0x05C1, 0x05C2),
+            (0x05C4, 0x05C5),
+            (0x05C7, 0x05C7),
+        ),
+    ),
+    Script(
+        "arabic",
+        (
+            (0x0600, 0x06FF),
+            (0x0750, 0x077F),
+            (0x0870, 0x08FF),
+            (0xFB50, 0xFDFF),
+            (0xFE70, 0xFEFF),
+        ),
+        # Short vowels (harakat), superscript alef, tatweel and Quranic marks.
+        optional_marks=(
+            (0x0610, 0x061A),
+            (0x0640, 0x0640),
+            (0x064B, 0x065F),
+            (0x0670, 0x0670),
+            (0x06D6, 0x06DC),
+            (0x06DF, 0x06E4),
+            (0x06E7, 0x06E8),
+            (0x06EA, 0x06ED),
+        ),
+    ),
+    Script("syriac", ((0x0700, 0x074F),)),
+    Script("thaana", ((0x0780, 0x07BF),)),
+    Script("devanagari", ((0x0900, 0x097F), (0xA8E0, 0xA8FF))),
+    Script("bengali", ((0x0980, 0x09FF),)),
+    Script("gurmukhi", ((0x0A00, 0x0A7F),)),
+    Script("gujarati", ((0x0A80, 0x0AFF),)),
+    Script("oriya", ((0x0B00, 0x0B7F),)),
+    Script("tamil", ((0x0B80, 0x0BFF),)),
+    Script("telugu", ((0x0C00, 0x0C7F),)),
+    Script("kannada", ((0x0C80, 0x0CFF),)),
+    Script("malayalam", ((0x0D00, 0x0D7F),)),
+    Script("sinhala", ((0x0D80, 0x0DFF),)),
+    Script("thai", ((0x0E00, 0x0E7F),), Spacing.SPACELESS),
+    Script("lao", ((0x0E80, 0x0EFF),), Spacing.SPACELESS),
+    Script("tibetan", ((0x0F00, 0x0FFF),)),
+    Script(
+        "myanmar",
+        ((0x1000, 0x109F), (0xA9E0, 0xA9FF), (0xAA60, 0xAA7F)),
+        Spacing.SPACELESS,
+    ),
+    Script("georgian", ((0x10A0, 0x10FF), (0x1C90, 0x1CBF), (0x2D00, 0x2D2F))),
+    Script("ethiopic", ((0x1200, 0x139F), (0x2D80, 0x2DDF))),
+    Script("khmer", ((0x1780, 0x17FF),), Spacing.SPACELESS),
+    Script(
+        "tai",
+        (
+            (0x1950, 0x19DF),  # Tai Le, New Tai Lue
+            (0x1A20, 0x1AAF),  # Tai Tham
+            (0xAA80, 0xAADF),  # Tai Viet
+            (0x11700, 0x1174F),  # Ahom
+        ),
+        Spacing.SPACELESS,
+    ),
+    Script("hangul", _HANGUL_CORE + _HANGUL_EXTRA, Spacing.DENSE, 1.0),
+    Script("kana", _KANA_CORE + _KANA_EXTRA, Spacing.DENSE, 1.0),
+    Script("han", _HAN_CORE + _HAN_EXTRA, Spacing.DENSE, 1.0),
 )
+
+_BY_NAME = {script.name: script for script in SCRIPTS}
+# The table as sorted, disjoint spans for script_of's binary search.
+_SPANS = sorted((lo, hi, script) for script in SCRIPTS for lo, hi in script.ranges)
+_STARTS = [lo for lo, _, _ in _SPANS]
+
+
+def script_named(name: str) -> Script:
+    """The script of the table named ``name`` (``"hangul"``); ``KeyError``
+    for another name."""
+    return _BY_NAME[name]
+
+
+def script_of(ch: str) -> Script | None:
+    """The script whose blocks hold ``ch``, ``None`` for a character of no
+    script's letter block (digits, punctuation, symbols, spaces)."""
+    cp = ord(ch)
+    i = bisect_right(_STARTS, cp) - 1
+    if i >= 0 and cp <= _SPANS[i][1]:
+        return _SPANS[i][2]
+    return None
+
+
+def _class_body(ranges: Ranges) -> str:
+    """``ranges`` as the body of a regex character class (``[...]``)."""
+    return "".join(
+        re.escape(chr(lo)) + ("" if lo == hi else "-" + re.escape(chr(hi)))
+        for lo, hi in sorted(ranges)
+    )
+
+
+def _ranges_of(spacing: Spacing) -> Ranges:
+    return tuple(
+        sorted(span for s in SCRIPTS if s.spacing is spacing for span in s.ranges)
+    )
+
+
+@cache
+def letter_class(*names: str) -> str:
+    """The letter blocks of the scripts ``names`` as the body of a regex
+    character class: ``f"[{letter_class('hangul')}]"``."""
+    return _class_body(tuple(span for n in names for span in _BY_NAME[n].ranges))
+
+
+# The Han, Hangul and Kana letters, and the spaceless scripts' letters, as
+# the body of a regex character class.
+DENSE_SCRIPT_LETTERS = _class_body(_ranges_of(Spacing.DENSE))
+SPACELESS_SCRIPT_LETTERS = _class_body(_ranges_of(Spacing.SPACELESS))
 
 # What the token estimate (``adapters.llm.token_estimate``) counts at about
 # one token per character under BPE tokenizers: the core letters, CJK
 # radicals, CJK symbols and punctuation, and half/full-width forms. Not the
 # letter blocks added to the table above after the estimate was set: adding
 # them changes the estimate, a separate, measured change.
-DENSE_SCRIPT_TOKEN_RANGES: tuple[tuple[int, int], ...] = tuple(
+DENSE_SCRIPT_TOKEN_RANGES: Ranges = tuple(
     sorted(
         (
-            *_CORE_LETTER_RANGES,
+            *_HANGUL_CORE,
+            *_KANA_CORE,
+            *_HAN_CORE,
             (0x2E80, 0x2FDF),  # CJK radicals / Kangxi
             (0x3000, 0x303F),  # CJK symbols and punctuation
             (0xFF00, 0xFFEF),  # Half/full-width forms
         )
     )
-)
-
-# The same letters as the body of a regex character class (``[...]``).
-DENSE_SCRIPT_LETTERS = "".join(
-    f"{chr(lo)}-{chr(hi)}" for lo, hi in _DENSE_SCRIPT_LETTER_RANGES
 )
 
 

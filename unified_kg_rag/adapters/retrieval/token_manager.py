@@ -16,6 +16,7 @@ from unified_kg_rag.ports.model_factory import (
 )
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils.concurrency import ContextThreadPoolExecutor
+from unified_kg_rag.shared.utils.sentences import CLAUSE_MARKS, UNSPACED_STOPS
 
 logger = get_logger(__name__)
 
@@ -25,7 +26,7 @@ logger = get_logger(__name__)
 EMPTY_CONTEXT_PLACEHOLDER = "No relevant information found."
 # Where a truncated section may end: whitespace, or CJK sentence/clause marks
 # for text written without spaces.
-_TRUNCATION_BREAK = re.compile(r"[\s。．！？、，；]")
+_TRUNCATION_BREAK = re.compile(f"[\\s{UNSPACED_STOPS}{CLAUSE_MARKS}]")
 # A break is only taken from this trailing share of the kept prefix; further
 # back it would throw away most of the room (one space early in Japanese text
 # used to leave a few characters), so the cut falls at the character instead.

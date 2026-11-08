@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 
 from unified_kg_rag.domain.models import LanguageCode
+from unified_kg_rag.shared.utils.scripts import letter_class
 
 __all__ = [
     "NO_CONTEXT_ANSWER",
@@ -68,10 +69,10 @@ NO_CONTEXT_ANSWERS: dict[LanguageCode, str] = {
 # The English reply, the one earlier releases always gave.
 NO_CONTEXT_ANSWER = NO_CONTEXT_ANSWERS[LanguageCode.EN]
 
-_HANGUL = re.compile(r"[ᄀ-ᇿ㄰-㆏가-힯]")
-_KANA = re.compile(r"[぀-ヿㇰ-ㇿ]")
-_HAN = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
-_CYRILLIC = re.compile(r"[Ѐ-ӿ]")
+_HANGUL = re.compile(f"[{letter_class('hangul')}]")
+_KANA = re.compile(f"[{letter_class('kana')}]")
+_HAN = re.compile(f"[{letter_class('han')}]")
+_CYRILLIC = re.compile(f"[{letter_class('cyrillic')}]")
 _LATIN_WORD = re.compile(r"[a-zà-öø-ÿ']+")
 
 # Frequent function words of each Latin-script language, none in another

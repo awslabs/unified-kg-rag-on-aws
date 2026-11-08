@@ -16,7 +16,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from unified_kg_rag.domain.models import LanguageCode, language_name
-from unified_kg_rag.shared.utils.scripts import is_dense_script_char
+from unified_kg_rag.shared.utils.scripts import Spacing, script_of
 
 # The languages whose script the dense-script table holds.
 DENSE_SCRIPT_LANGUAGES: frozenset[LanguageCode] = frozenset(
@@ -72,22 +72,6 @@ class ScriptShare:
         return LanguageCode.ZH
 
 
-# Hangul syllables, Jamo (and their compatibility and extended blocks).
-_HANGUL = (
-    ("\uac00", "\ud7af"),
-    ("\u1100", "\u11ff"),
-    ("\u3130", "\u318f"),
-    ("\ua960", "\ua97f"),
-    ("\ud7b0", "\ud7ff"),
-)
-# Hiragana, Katakana and the Katakana phonetic extensions.
-_KANA = (("\u3040", "\u30ff"), ("\u31f0", "\u31ff"))
-
-
-def _in(ch: str, ranges: tuple[tuple[str, str], ...]) -> bool:
-    return any(lo <= ch <= hi for lo, hi in ranges)
-
-
 def script_share(texts: Iterable[str]) -> ScriptShare:
     """Count the letters of the first :data:`SAMPLE_CHARS` characters of
     each of the first :data:`SAMPLE_DOCUMENTS` texts by script."""
@@ -96,10 +80,11 @@ def script_share(texts: Iterable[str]) -> ScriptShare:
         if i >= SAMPLE_DOCUMENTS:
             break
         for ch in text[:SAMPLE_CHARS]:
-            if is_dense_script_char(ch):
-                if _in(ch, _HANGUL):
+            script = script_of(ch)
+            if script is not None and script.spacing is Spacing.DENSE:
+                if script.name == "hangul":
                     hangul += 1
-                elif _in(ch, _KANA):
+                elif script.name == "kana":
                     kana += 1
                 else:
                     han += 1

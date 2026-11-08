@@ -15,6 +15,7 @@ from unified_kg_rag.shared.utils.scripts import (
     has_dense_script,
     is_dense_script_char,
     is_hangul_syllable,
+    script_of,
 )
 
 _ARTICLES = re.compile(r"\b(a|an|the)\b")
@@ -494,12 +495,7 @@ def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
 
 
 def _is_hangul(ch: str) -> bool:
-    return is_hangul_syllable(ch) or any(
-        lo <= ord(ch) <= hi for lo, hi in _HANGUL_JAMO_RANGES
-    )
-
-
-_HANGUL_JAMO_RANGES = ((0x1100, 0x11FF), (0x3130, 0x318F), (0xA960, 0xA97F))
+    return (script := script_of(ch)) is not None and script.name == "hangul"
 
 
 def _substring_beside_han_or_kana(needle: str, haystack: str) -> bool:
@@ -740,7 +736,7 @@ _NEGATED_AFTER = re.compile(
 _PARTITIVE_WHOLE_BEFORE = re.compile(
     r"(?:^|[.!?;:]\s+|\n[ \t]*)of\s+(?:the|these|those|all)\s+$", re.IGNORECASE
 )
-_DENSE_WORD = "[\u3040-\u30ff\u4e00-\u9fff가-힣]"
+_DENSE_WORD = f"[{DENSE_SCRIPT_LETTERS}]"
 _PARTITIVE_WHOLE_AFTER = re.compile(
     rf"\s?{_ANY_COUNTER}?(?:の|의)?\s?{_DENSE_WORD}{{0,5}}?\s?(?:之中|当中|當中"
     r"|中(?=[，,、\s只仅僅有的共就\d一二两兩三四五六七八九十])"
