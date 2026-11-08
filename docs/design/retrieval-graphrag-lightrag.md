@@ -52,8 +52,8 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   `max_terms_count` the exclusion keeps the vertices reached last, so edges
   back to the others can. Without the relationships index the graph walk
   runs, checked against the entities index. So is a graph walk
-  under an entity key entity vertices do not store (`name.keyword`,
-  `attributes.<path>`): the graph drops it, the entities index applies it
+  under an entity key entity vertices do not store (`name.keyword`, a
+  nested `attributes.<path>`): the graph drops it, the entities index applies it
   (`_graph_unapplied_filters`), to LightRAG's seeds too (its relationship
   endpoints were found under no entity key; `local`'s and `drift`'s seeds
   were found under the filters).
@@ -119,8 +119,10 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
   request of its own). One lookup of the joined names seeded a wrong
   neighbour beside every right seed on a synthetic multi-hop corpus. With
   `search.local_search.include_bridge_relationships` (default on), the
-  relationships incident to the expanded entities are fetched too, edges
-  between two retrieved entities first: they carry the hops of a multi-hop
+  relationships incident to the expanded entities are fetched too (one
+  request naming both endpoint fields, `SearchQuery.any_of`, of at most
+  twice `max_query_size` edges best first), edges between two retrieved
+  entities first: they carry the hops of a multi-hop
   chain the relationship vector query rarely matches. The others follow MS
   GraphRAG local's `_filter_relationships` order: by how many retrieved
   entities their outside endpoint links ("links"), then by rank (here rank,

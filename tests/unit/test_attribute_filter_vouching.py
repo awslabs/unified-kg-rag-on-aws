@@ -18,10 +18,7 @@ import pytest
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.storage.filter_schema import (
-    NEPTUNE_ENTITY_FILTER_FIELDS,
-    FilterFields,
     IndexLimits,
-    opensearch_filter_fields,
 )
 from unified_kg_rag.domain.models import (
     Config,
@@ -29,6 +26,11 @@ from unified_kg_rag.domain.models import (
     RetrieverRole,
     SearchQuery,
     SearchStrategy,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    GRAPH_ENTITY_FILTER_FIELDS,
+    ITEM_FILTER_FIELDS,
+    FilterFields,
 )
 
 pytestmark = pytest.mark.unit
@@ -156,23 +158,21 @@ async def test_the_check_searches_the_query_suffix(config: Config) -> None:
     assert [q.suffix for q in document.queries] == ["tenant-b"]
 
 
-@pytest.mark.parametrize("key", ["attributes.role", "name.keyword"])
+@pytest.mark.parametrize("key", ["attributes.address.city"])
 async def test_an_entity_key_the_graph_does_not_store_is_vouched(
     config: Config, key: str
 ) -> None:
-    # Regression: the graph drops a key its entity vertices lack (an
-    # entity's own attributes.role, name.keyword), so its walk returned
+    # Regression: the graph drops a key its entity vertices lack (a nested
+    # attribute path), so its walk returned
     # every neighbour, failing the key, as an entity result (59 of 59 under
     # attributes.role with mix). The entities index holds the key.
     prefix = config.indexing.opensearch.entities_index_prefix
-    entities = opensearch_filter_fields(
-        *config.processing.translation.translated_languages
-    )
+    entities = ITEM_FILTER_FIELDS
     document = _Store(
         prefix, [], fields=entities["entities"], passing=frozenset({"near", "one"})
     )
     graph = _graph(prefix)
-    graph.fields = NEPTUNE_ENTITY_FILTER_FIELDS
+    graph.fields = GRAPH_ENTITY_FILTER_FIELDS
     strategy = _strategy(config, document, graph)
 
     kept = await strategy._expand_via_graph(
@@ -195,22 +195,20 @@ async def test_local_seeds_found_under_the_filters_are_not_checked_again(
     # local's seeds came from the entities index under the same filters:
     # checking them again cost a request per expansion.
     prefix = config.indexing.opensearch.entities_index_prefix
-    entities = opensearch_filter_fields(
-        *config.processing.translation.translated_languages
-    )
+    entities = ITEM_FILTER_FIELDS
     document = _Store(
         prefix, [], fields=entities["entities"], passing=frozenset({"near"})
     )
     graph = _graph(prefix)
-    graph.fields = NEPTUNE_ENTITY_FILTER_FIELDS
+    graph.fields = GRAPH_ENTITY_FILTER_FIELDS
     strategy = _strategy(config, document, graph)
-    query = SearchQuery(query="q", filters={"name.keyword": "x"})
+    query = SearchQuery(query="q", filters={"attributes.address.city": "x"})
 
     kept = await strategy._expand_via_graph(query, ["seed"], seeds_pass=True)
 
     assert [r.source for r in kept] == ["seed", "near"]
     assert [q.filters for q in document.queries] == [
-        {"name.keyword": "x", "id": ["near", "one", "far"]}
+        {"attributes.address.city": "x", "id": ["near", "one", "far"]}
     ]
 
 
@@ -240,12 +238,10 @@ async def test_local_search_seeds_the_walk_as_passing(config: Config) -> None:
 
 async def test_a_key_the_graph_applies_is_not_vouched(config: Config) -> None:
     prefix = config.indexing.opensearch.entities_index_prefix
-    entities = opensearch_filter_fields(
-        *config.processing.translation.translated_languages
-    )
+    entities = ITEM_FILTER_FIELDS
     document = _Store(prefix, [], fields=entities["entities"])
     graph = _graph(prefix)
-    graph.fields = NEPTUNE_ENTITY_FILTER_FIELDS
+    graph.fields = GRAPH_ENTITY_FILTER_FIELDS
     strategy = _strategy(config, document, graph)
 
     kept = await strategy._expand_via_graph(
@@ -375,9 +371,7 @@ async def test_the_text_unit_check_asks_only_the_document_keys(
     # (name.keyword): asked those too, every unit failed and no neighbour
     # was kept.
     o = config.indexing.opensearch
-    entities = opensearch_filter_fields(
-        *config.processing.translation.translated_languages
-    )
+    entities = ITEM_FILTER_FIELDS
     document = _Store(
         o.entities_index_prefix,
         [],
@@ -388,7 +382,7 @@ async def test_the_text_unit_check_asks_only_the_document_keys(
     graph = _Store(
         o.entities_index_prefix, [_hit("seed"), _hit("near", units=["u-near"])]
     )
-    graph.fields = NEPTUNE_ENTITY_FILTER_FIELDS
+    graph.fields = GRAPH_ENTITY_FILTER_FIELDS
     strategy = _strategy(config, document, graph)
     documents = {"attr_category": "x", "attr_grp": "b"}
 

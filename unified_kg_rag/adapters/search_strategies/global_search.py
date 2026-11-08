@@ -28,9 +28,6 @@ from unified_kg_rag.adapters.retrieval.base import (
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.adapters.storage.filter_schema import (
-    document_filters,
-)
 from unified_kg_rag.adapters.store_errors import (
     is_bad_request,
     is_fatal_retrieval_error,
@@ -54,6 +51,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     REASON_NO_REPORTS,
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
+from unified_kg_rag.domain.retrieval.filters import document_filters
 from unified_kg_rag.shared import (
     ConfigurationError,
     LanguageModelError,

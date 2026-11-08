@@ -932,6 +932,45 @@ def test_sort_orders_by_each_field_in_turn_missing_last(engine) -> None:
     assert {hit["_score"] for hit in response["hits"]["hits"]} == {1.0}
 
 
+def test_search_after_pages_through_the_sorted_hits(engine) -> None:
+    engine.bulk_index(
+        INDEX,
+        [{"id": f"x{i}", "name": f"X{i}", "rank": i % 2} for i in range(5)]
+        + [{"id": "y", "name": "Y"}],
+    )
+    sort = [{"rank": {"order": "desc"}}, {"id": {"order": "asc"}}]
+    whole = _search(engine, {"match_all": {}}, size=20, body={"sort": sort})
+    expected = [hit["_id"] for hit in whole["hits"]["hits"]]
+    # A document without the field comes last.
+    assert expected[0] == "a" and expected[-1] == "y" and len(expected) == 9
+    # Each hit carries the values it sorts by: the cursor of the next page.
+    assert whole["hits"]["hits"][0]["sort"] == [3.0, "a"]
+    assert whole["hits"]["hits"][-1]["sort"] == [None, "y"]
+    pages: list[str] = []
+    after = None
+    while True:
+        body: dict[str, Any] = {"sort": sort}
+        if after is not None:
+            body["search_after"] = after
+        hits = _search(engine, {"match_all": {}}, size=4, body=body)["hits"]["hits"]
+        pages += [hit["_id"] for hit in hits]
+        if len(hits) < 4:
+            break
+        after = hits[-1]["sort"]
+    assert pages == expected
+
+
+def test_search_after_needs_a_sort(engine) -> None:
+    with pytest.raises(StoreRequestRejectedError, match="search_after"):
+        _search(engine, {"match_all": {}}, body={"search_after": [1]})
+    with pytest.raises(StoreRequestRejectedError, match="search_after"):
+        _search(
+            engine,
+            {"match_all": {}},
+            body={"sort": [{"rank": {"order": "desc"}}], "search_after": [1, 2]},
+        )
+
+
 def test_unsupported_space_type_is_rejected_at_create(engine) -> None:
     body = {"mappings": {"properties": {"v": _knn("l1")}}}
     with pytest.raises(StoreRequestRejectedError):
@@ -1806,3 +1845,71 @@ def test_messages_name_the_embedded_engine_not_opensearch(tmp_path: Path) -> Non
         "embedded SQLite search engine"
     )
     assert engine_name(object()) == "OpenSearch"
+
+
+# What OpenSearch 2.19 answers each filter with on this mapping and document
+# (checked against the container of docker/compose.local.yaml): nothing
+# inside an ``enabled: false`` object or in an unmapped field of a
+# ``dynamic: false`` object is indexed, and an ``index: false`` field
+# refuses a search.
+_UNINDEXED_MAPPING: dict[str, Any] = {
+    "mappings": {
+        "properties": {
+            "off": {"type": "object", "enabled": False},
+            "closed": {
+                "type": "object",
+                "dynamic": False,
+                "properties": {"known": {"type": "keyword"}},
+            },
+            "hidden": {"type": "keyword", "index": False, "doc_values": False},
+            "open": {"type": "object", "dynamic": True},
+        }
+    }
+}
+_UNINDEXED_DOC = {
+    "id": "1",
+    "off": {"color": "red", "n": 3},
+    "closed": {"known": "k", "other": "o"},
+    "hidden": "h",
+    "open": {"x": "y"},
+}
+
+
+@pytest.mark.parametrize(
+    ("clause", "expected"),
+    [
+        ({"term": {"off.color": "red"}}, set()),
+        ({"terms": {"off.color": ["red"]}}, set()),
+        ({"exists": {"field": "off.color"}}, set()),
+        ({"exists": {"field": "off"}}, set()),
+        ({"range": {"off.n": {"gte": 1}}}, set()),
+        ({"term": {"closed.known": "k"}}, {"1"}),
+        ({"term": {"closed.other": "o"}}, set()),
+        ({"exists": {"field": "closed.other"}}, set()),
+        ({"exists": {"field": "hidden"}}, set()),
+        ({"term": {"open.x": "y"}}, {"1"}),
+    ],
+)
+def test_unindexed_paths_match_nothing_as_on_opensearch(
+    tmp_path: Path, clause: dict, expected: set
+) -> None:
+    engine = SQLiteSearchEngine(tmp_path / "vector.sqlite3")
+    engine.create_index("u-1", _UNINDEXED_MAPPING)
+    engine.bulk_index("u-1", [_UNINDEXED_DOC])
+    response = engine.search(
+        index="u-1", body={"size": 10, "query": {"bool": {"filter": [clause]}}}
+    )
+    assert {hit["_id"] for hit in response["hits"]["hits"]} == expected
+    engine.close()
+
+
+@pytest.mark.parametrize(
+    "clause", [{"term": {"hidden": "h"}}, {"range": {"hidden": {"gte": "a"}}}]
+)
+def test_a_search_of_an_unindexed_field_is_refused(tmp_path: Path, clause) -> None:
+    engine = SQLiteSearchEngine(tmp_path / "vector.sqlite3")
+    engine.create_index("u-1", _UNINDEXED_MAPPING)
+    engine.bulk_index("u-1", [_UNINDEXED_DOC])
+    with pytest.raises(StoreRequestRejectedError, match="not indexed"):
+        engine.search(index="u-1", body={"query": {"bool": {"filter": [clause]}}})
+    engine.close()

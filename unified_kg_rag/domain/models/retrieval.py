@@ -136,6 +136,20 @@ class SearchQuery(BaseModel):
         description="Filters of the same form whose matching hits are left out "
         "(a must_not clause)",
     )
+    any_of: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Filter groups of the same form, one of which a hit must "
+        "pass beside filters (e.g. an entity's incident edges: "
+        "[{source_id: ids}, {target_id: ids}]); a store that cannot apply "
+        "one refuses the query (InvalidFilterError)",
+    )
+    page_through: bool = Field(
+        default=False,
+        description="A text-less search that returns every hit up to top_k x "
+        "retrieval_multiplier, read in pages of the index's "
+        "max_result_window (search_after) and not capped at "
+        "indexing.opensearch.max_query_size",
+    )
     source_fields: list[str] | None = Field(
         default=None,
         description="The stored fields each hit returns ([] returns the ids "

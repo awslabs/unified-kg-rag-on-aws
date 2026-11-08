@@ -25,7 +25,10 @@ a ``text`` field matches a ``term`` against its analyzed tokens; the
 resolved as a dotted path; an unmapped string is a keyword, and so is any
 value of a field a ``dynamic_templates`` entry (``path_match``) maps as one.
 A keyword holds a number or boolean as its JSON text, as OpenSearch indexes
-it (``2.0`` is "2.0", which a term ``2`` does not match).
+it (``2.0`` is "2.0", which a term ``2`` does not match). As on OpenSearch,
+nothing inside an ``enabled: false`` object, nor an unmapped field of a
+``dynamic: false`` object, is indexed (no clause matches it), and a
+``term``/``terms``/``range`` on an ``index: false`` field is refused.
 """
 
 from __future__ import annotations
@@ -68,6 +71,18 @@ class FieldSpec:
     space_type: str | None = None
     # A multi-field's parent (``name`` of ``name.keyword``).
     source_path: str | None = None
+    # ``index: false``: kept in ``_source``, not searchable.
+    indexed: bool = True
+    # An object's ``dynamic`` (whether a new field under it is indexed) and
+    # ``enabled`` (whether anything under it is).
+    dynamic: bool = True
+    enabled: bool = True
+
+
+def _dynamic(value: Any) -> bool:
+    """A mapping's ``dynamic`` setting as whether a new field is indexed
+    (``true`` and ``runtime`` index it, ``false`` and ``strict`` do not)."""
+    return str(value).lower() not in ("false", "strict")
 
 
 def field_specs(mappings: dict[str, Any]) -> dict[str, FieldSpec]:
@@ -79,7 +94,8 @@ def field_specs(mappings: dict[str, Any]) -> dict[str, FieldSpec]:
             if not isinstance(body, dict):
                 continue
             path = f"{prefix}{name}"
-            if "properties" in body:
+            enabled = body.get("enabled", True) is not False
+            if "properties" in body and enabled:
                 walk(body["properties"], f"{path}.")
             kind = body.get("type", "object")
             method = body.get("method") or {}
@@ -90,6 +106,9 @@ def field_specs(mappings: dict[str, Any]) -> dict[str, FieldSpec]:
                 space_type=(
                     method.get("space_type", "l2") if kind == "knn_vector" else None
                 ),
+                indexed=body.get("index", True) is not False,
+                dynamic=_dynamic(body.get("dynamic", True)),
+                enabled=enabled,
             )
             for sub_name, sub in (body.get("fields") or {}).items():
                 specs[f"{path}.{sub_name}"] = FieldSpec(
@@ -184,6 +203,22 @@ class LoadedIndex:
             and isinstance(template.get("path_match"), str)
             and (template.get("mapping") or {}).get("type") == "keyword"
         ]
+
+    def searchable(self, path: str) -> bool:
+        """Whether OpenSearch indexes values at ``path``: not inside an
+        ``enabled: false`` object, and mapped or under objects that map a
+        new field (``dynamic``; the root's from the mappings)."""
+        parts = path.split(".")
+        dynamic = _dynamic(self.mappings.get("dynamic", True))
+        for i in range(1, len(parts)):
+            parent = self.specs.get(".".join(parts[:i]))
+            if parent is None:
+                continue
+            if not parent.enabled:
+                return False
+            dynamic = parent.dynamic
+        spec = self.specs.get(path)
+        return spec.enabled if spec is not None else dynamic
 
     def spec(self, path: str) -> FieldSpec | None:
         """The spec of ``path``: its mapping, else a keyword when a
@@ -290,9 +325,26 @@ def _matching(
     }
 
 
+def _searched(index: LoadedIndex, path: str, clause: str) -> bool:
+    """Whether a ``clause`` on ``path`` can match: ``False`` where OpenSearch
+    indexes nothing (``LoadedIndex.searchable``). A search of an
+    ``index: false`` field is refused, as OpenSearch refuses it."""
+    if not index.searchable(path):
+        return False
+    spec = index.specs.get(path)
+    if spec is not None and not spec.indexed:
+        raise rejected(
+            f"[{clause}] failed to create query: Cannot search on field [{path}] "
+            "since it is not indexed."
+        )
+    return True
+
+
 def _term_docs(index: LoadedIndex, path: str, values: list[Any]) -> Scores:
     if path == "_id":
         return {doc_id: 1.0 for v in values if (doc_id := _keyword(v)) in index.sources}
+    if not _searched(index, path, "term"):
+        return {}
     spec = index.spec(path)
     if spec is not None and spec.type == "text":
         # A term is not analyzed: it matches a token of the field as indexed.
@@ -332,6 +384,9 @@ def _exists(index: LoadedIndex, body: Any) -> Scores:
     path = _require_keys("exists", body, {"field"}).get("field")
     if not isinstance(path, str):
         raise rejected(f"[exists] takes a field name, got {path!r}")
+    spec = index.specs.get(path)
+    if not index.searchable(path) or (spec is not None and not spec.indexed):
+        return {}
     return _matching(index, path, lambda doc_values, _spec: bool(doc_values))
 
 
@@ -355,6 +410,8 @@ _RANGE_OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
 def _range(index: LoadedIndex, body: Any) -> Scores:
     path, bounds = _single_field("range", body)
     bounds = _require_keys("range", bounds, set(_RANGE_OPERATORS))
+    if not _searched(index, path, "range"):
+        return {}
     spec = index.spec(path)
     numeric = spec is not None and spec.type in NUMERIC_TYPES
     if numeric and any(_number(v) is None for v in bounds.values()):
@@ -622,40 +679,66 @@ def top_hits(hits: list[Hit], size: int) -> list[Hit]:
     return heapq.nsmallest(size, hits, key=rank_key)
 
 
-def sort_hits(hits: list[Hit], sort: Any, size: int) -> list[Hit]:
-    """The first ``size`` of ``hits`` in a search body's ``sort`` order.
+def sort_values(hit: Hit, sort: Any) -> list[Any]:
+    """The values ``hit`` sorts by under a body's ``sort`` (a hit's
+    ``sort`` in the response, which ``search_after`` takes back): a numeric
+    field's number, any other's keyword; of a multi-valued field the
+    smallest ascending, the largest descending; ``None`` without one."""
+    index, doc_id, _score = hit
+    values: list[Any] = []
+    for path, descending in _sort_fields(sort):
+        spec = index.spec(path)
+        raw = resolve_path(index.sources[doc_id], path)
+        if spec is not None and spec.type in NUMERIC_TYPES:
+            held: list[Any] = [n for v in raw if (n := _number(v)) is not None]
+        else:
+            held = [_keyword(v) for v in raw]
+        values.append((max(held) if descending else min(held)) if held else None)
+    return values
+
+
+def _compare_values(sort: Any, x: list[Any], y: list[Any]) -> int:
+    """``x`` against ``y`` (``sort_values``) in sort order; a missing value
+    comes last either way. 0: tied on every field."""
+    for (_, descending), a, b in zip(_sort_fields(sort), x, y, strict=True):
+        if a == b:
+            continue
+        if a is None or b is None:
+            return 1 if a is None else -1
+        if isinstance(a, str) != isinstance(b, str):
+            raise rejected(f"[search_after] value {b!r} is not of the sort's type")
+        return -1 if (a > b if descending else a < b) else 1
+    return 0
+
+
+def sort_hits(
+    hits: list[Hit], sort: Any, size: int, after: list[Any] | None = None
+) -> list[Hit]:
+    """The first ``size`` of ``hits`` in a search body's ``sort`` order,
+    after ``after`` (``search_after``: the sort values of the last hit of
+    the page before) when given.
 
     As OpenSearch sorts: a numeric field by number, any other by keyword; a
     multi-valued field by its smallest value ascending and its largest
     descending; a document without the field comes last either way. Ties
     keep the score order (``rank_key``).
     """
-    fields = _sort_fields(sort)
-
-    def value(hit: Hit, path: str, descending: bool) -> Any:
-        index, doc_id, _score = hit
-        spec = index.spec(path)
-        raw = resolve_path(index.sources[doc_id], path)
-        if spec is not None and spec.type in NUMERIC_TYPES:
-            values: list[Any] = [n for v in raw if (n := _number(v)) is not None]
-        else:
-            values = [_keyword(v) for v in raw]
-        if not values:
-            return None
-        return max(values) if descending else min(values)
-
-    keyed = [
-        ([value(hit, path, descending) for path, descending in fields], hit)
-        for hit in hits
-    ]
+    keyed = [(sort_values(hit, sort), hit) for hit in hits]
+    if after is not None:
+        if not isinstance(after, list) or len(after) != len(_sort_fields(sort)):
+            raise rejected(
+                "[search_after] takes one value per sort field, got " f"{after!r}"
+            )
+        keyed = [
+            (values, hit)
+            for values, hit in keyed
+            if _compare_values(sort, values, after) > 0
+        ]
 
     def compare(a: tuple[list[Any], Hit], b: tuple[list[Any], Hit]) -> int:
-        for (_, descending), x, y in zip(fields, a[0], b[0], strict=True):
-            if x == y:
-                continue
-            if x is None or y is None:
-                return 1 if x is None else -1
-            return -1 if (x > y if descending else x < y) else 1
+        order = _compare_values(sort, a[0], b[0])
+        if order:
+            return order
         first, second = rank_key(a[1]), rank_key(b[1])
         return -1 if first < second else int(first > second)
 

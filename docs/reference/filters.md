@@ -3,8 +3,9 @@
 `--filters key:value ...` (or `RAGInput.filters`) narrows what retrieval ranks;
 a pair without a key, a `:` or a value, a key given twice and a key no index the
 strategy reads declares are usage errors (exit 2).
-Filters compile to `term`/`terms`/`range` clauses on OpenSearch and `has`
-steps on Neptune. How to use them in a query:
+Filters compile to `term`/`terms`/`range` clauses on OpenSearch and the
+embedded engine, `has` steps on Neptune and Gremlin Server, and one vertex
+predicate on the SQLite graph; every store answers a filter alike. How to use them in a query:
 [Querying: Filters](../guides/query.md#filters). Filters are not an
 access-control boundary:
 [Scopes and namespaces](../concepts/scopes-and-namespaces.md#not-an-access-control-boundary).
@@ -15,16 +16,27 @@ Each store accepts the fields its indexer writes:
 
 | Store | Filterable fields |
 |---|---|
-| Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
-| Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`, `attributes.<path>` |
-| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `source_kinds`, `attr_<key>`, `attributes.filters.<key>` |
-| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `start_date`, `end_date`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Neptune entity vertices | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>` (where present) |
+| Text units | `id`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
+| Entities | `id`, `name` (`name.keyword`), `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`, `attributes.<path>` |
+| Relationships | `id`, `source_id`, `target_id`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `source_kinds`, `attr_<key>`, `attributes.filters.<key>` |
+| Claims | `id`, `subject_id`, `object_id`, `type`, `status`, `start_date`, `end_date`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| Community reports | `id`, `community_id`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| Graph entity vertices (Neptune, SQLite) | `id`, `name` (`name.keyword`), `type`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attributes.<key>` |
 
-On OpenSearch, `attr_<key>` is entry `<key>` of a document's `filters`
-metadata (an item from several documents carries all their values); on
-Neptune entity vertices it is the entity's own attribute (`attr_role`).
+`name` matches an entity's whole name exactly, on every store (the entities
+index's `name.keyword`; `name:Acme` matches neither `acme` nor `Acme Corp`).
+A filter on analyzed text (`text`, `translated_text_<language>`,
+`description`, `source_name`, `target_name`, `subject_name`, `object_name`,
+`source_text`, `summary`, `full_content`) raises `InvalidFilterError`: a term
+matched single analyzed tokens on OpenSearch and the whole text on a graph.
+Put the words in the query instead.
+
+`attr_<key>` is entry `<key>` of a document's `filters` metadata on every
+store (an item from several documents carries all their values).
+`attributes.<key>` is an item's own attribute (an entity's extracted
+`role`): the entities index and the graph's entity vertices (which store it
+as the `attr_<key>` property) apply it alike, strictly. A graph holds no
+document metadata and no nested attribute path (`attributes.<key>.<sub>`).
 
 ## Values, case and dates
 
@@ -36,9 +48,7 @@ graph labels the edge, `RELATED_TO` when untyped) for the context line
 type and leaves relationships unfiltered. `in_schema`, `type_iri` and `predicate_iri` are the
 [extraction schema](../guides/extraction-schema.md#what-is-stored) annotations; `iri` and
 `source_kinds` (`document`, `seed_graph`) come from
-[seed graphs](../guides/seed-graphs.md#retrieval). Prefer keyword or
-numeric fields; a `term` on an analyzed field such as `description` matches
-single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
+[seed graphs](../guides/seed-graphs.md#retrieval). A range filter takes `{"gte": ..., "lte": ...}`
 through the Python API.
 
 **Dates.** `attr_<key>`, `attributes.filters.<key>` and the
@@ -93,7 +103,7 @@ A filter applies only to the stores that declare its field
 (`type:person` leaves text units unfiltered). A key no store the
 selected strategy reads declares (e.g. `category`, or `type` with `naive`
 or `global`) raises `InvalidFilterError`, listing the filterable keys
-(`unified_kg_rag/adapters/storage/filter_schema.py`). `naive` reads text
+(`unified_kg_rag/domain/retrieval/filters.py`). `naive` reads text
 units; `hybrid` and `mix` entities, relationships and text units (and
 Neptune with `search.lightrag_search.enable_graph_expansion`); `local` and
 `drift` every index the pipeline builds and Neptune; `global` community
@@ -147,28 +157,25 @@ the entities-index check alone decides.
 Under a filter on text units, local and mix also fill their chunk quota
 with the entity-linked chunks that pass, not the top-ranked ones only.
 
-Other `attributes.<path>` keys name an item's own attributes and apply to the
-entities index only; a graph walk's entities, LightRAG's seeds included
+Other `attributes.<path>` keys name an item's own attributes. The graph
+applies a top-level one (`attributes.role`) to its entity vertices, as the
+entities index does; a graph walk's entities, LightRAG's seeds included
 (`local`'s and `drift`'s were found under the filters), are checked
-against that index for them and for `name.keyword`, which entity
-vertices do not store. The check sees what the walk kept after its own
-per-hop and `top_k` cuts, so a passing neighbour ranked below them is
-not reached. On Neptune, `attr_<key>` is also an entity vertex
-property (`attr_role`), applied where present (a vertex without it passes),
-but the entities-index check above still applies: `attr_role:buyer` selects
-nothing unless documents carry a `role` filter. Every other key is strict
-on both stores.
+against the entities index for the keys entity vertices do not store (a
+nested `attributes.<key>.<sub>`, `name.keyword`). The check sees what the
+walk kept after its own per-hop and `top_k` cuts, so a passing neighbour
+ranked below them is not reached. Every key is strict on every store.
 
 ## Structured queries
 
 `structured` applies the caller's filters to every entity a plan binds:
-`type`, `source_kinds`, `rank`, the schema annotations and the other entity
-vertex keys in the graph store (`attr_<key>` where the vertex has it, as
-graph expansion does), `source_kinds` also to every edge of the walk (an
+`type`, `source_kinds`, `rank`, the schema annotations, `attributes.<key>`
+and the other entity vertex keys in the graph store, as graph expansion
+does, `source_kinds` also to every edge of the walk (an
 edge without the property is a document edge), and `id` as the entities
 allowed. A hop's intermediate entities are not filtered unless the plan
 returns its path. The keys the graph cannot apply (`attr_<key>` and
-`attributes.filters.<key>` as document filters, `name.keyword`,
+`attributes.filters.<key>` as document filters, `name.keyword`, a nested
 `attributes.<path>`) make the store return the matches (at most
 `search.structured.max_scan_rows`), which are checked as graph expansion's
 entities are: each bound entity against the entities index (under two or

@@ -100,12 +100,13 @@ def test_apply_filters_dict_range_operators(retriever) -> None:
     assert predicate.value == 5
 
 
-def test_apply_filters_dict_ignores_unknown_operator(retriever) -> None:
+def test_apply_filters_refuses_an_unknown_operator(retriever) -> None:
+    # Dropped, the bound filtered nothing: refused, as OpenSearch refuses it.
     calls: list[tuple] = []
-    retriever._apply_filters(
-        RecordingTraversal(calls, with_args=True), {"rank": {"bogus": 5}}
-    )
-    assert [c for c in calls if c[0] == "has"] == []
+    with pytest.raises(InvalidFilterError, match="range bound 'bogus'"):
+        retriever._apply_filters(
+            RecordingTraversal(calls, with_args=True), {"rank": {"bogus": 5}}
+        )
 
 
 # --------------------------------------------------------------------------- #

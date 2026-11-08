@@ -25,13 +25,8 @@ from unified_kg_rag.adapters.retrieval.base import scope_filters
 from unified_kg_rag.adapters.retrievers.neptune_retriever import NeptuneRetriever
 from unified_kg_rag.adapters.retrievers.opensearch_retriever import OpenSearchRetriever
 from unified_kg_rag.adapters.storage.filter_schema import (
-    NEPTUNE_ENTITY_FILTER_FIELDS,
-    TYPED_FILTER_FIELDS,
     UNDECLARED_MAPPED_FIELDS,
     IndexLimits,
-    check_filter_values,
-    opensearch_filter_fields,
-    typed_filter_values,
 )
 from unified_kg_rag.adapters.storage.neptune_codec import (
     NAME_KEY_PROPERTY,
@@ -48,6 +43,15 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchType,
     TextUnit,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    FIELD_KINDS,
+    GRAPH_ENTITY_FILTER_FIELDS,
+    ITEM_FILTER_FIELDS,
+    FieldKind,
+    check_filter_values,
+    field_kind,
+    typed_filter_values,
 )
 from unified_kg_rag.shared import InvalidFilterError
 
@@ -297,12 +301,10 @@ def test_opensearch_filter_fields(config: Config) -> None:
 def test_schema_annotations_are_declared_and_relationships_take_no_type(
     config: Config,
 ) -> None:
-    schema = opensearch_filter_fields(
-        config.processing.translation.target_language.value
-    )
+    schema = ITEM_FILTER_FIELDS
     for key in ("in_schema", "type_iri"):
         assert schema["entities"].declares(key), key
-        assert NEPTUNE_ENTITY_FILTER_FIELDS.declares(key), key
+        assert GRAPH_ENTITY_FILTER_FIELDS.declares(key), key
     for key in ("in_schema", "predicate_iri"):
         assert schema["relationships"].declares(key), key
     # A relationship's type is not an entity type: ``type: PERSON`` would
@@ -315,12 +317,10 @@ def test_schema_annotations_are_declared_and_relationships_take_no_type(
 
 
 def test_seed_graph_fields_are_declared_where_written(config: Config) -> None:
-    schema = opensearch_filter_fields(
-        config.processing.translation.target_language.value
-    )
+    schema = ITEM_FILTER_FIELDS
     for key in ("iri", "source_kinds"):
         assert schema["entities"].declares(key), key
-        assert NEPTUNE_ENTITY_FILTER_FIELDS.declares(key), key
+        assert GRAPH_ENTITY_FILTER_FIELDS.declares(key), key
     assert schema["relationships"].declares("source_kinds")
     # An IRI is stated of an entity; a relationship's is its predicate_iri.
     assert not schema["relationships"].declares("iri")
@@ -355,9 +355,7 @@ def test_schema_matches_indexer_mappings(config: Config) -> None:
         "community_reports": indexer._get_community_reports_mapping,
         "summary_nodes": indexer._get_summary_nodes_mapping,
     }
-    schema = opensearch_filter_fields(
-        config.processing.translation.target_language.value
-    )
+    schema = ITEM_FILTER_FIELDS
     assert set(mapping_funcs) == set(schema)
     assert set(UNDECLARED_MAPPED_FIELDS) <= set(schema)
     for kind, func in mapping_funcs.items():
@@ -369,7 +367,10 @@ def test_schema_matches_indexer_mappings(config: Config) -> None:
             mapped |= {f"{name}.{sub}" for sub in spec.get("fields", {})}
         undeclared = UNDECLARED_MAPPED_FIELDS.get(kind, frozenset())
         assert undeclared <= mapped, kind
-        assert schema[kind].fields == mapped - undeclared, kind
+        # Analyzed text is mapped, and refused as a filter key.
+        text = {f for f in mapped if field_kind(f) is FieldKind.TEXT}
+        assert schema[kind].fields == mapped - undeclared - text, kind
+        assert not any(schema[kind].declares(f) for f in text), kind
     entities = indexer._get_entities_mapping()["mappings"]["properties"]
     relationships = indexer._get_relationships_mapping()["mappings"]["properties"]
     units = indexer._get_text_units_mapping()["mappings"]["properties"]
@@ -390,9 +391,7 @@ def test_attribute_prefixes_match_documents_carrying_attributes(
     )
     doc = indexer._prepare_common_doc_properties(unit)
     assert {"attr_category", "attributes"} <= set(doc)
-    schema = opensearch_filter_fields(
-        config.processing.translation.target_language.value
-    )
+    schema = ITEM_FILTER_FIELDS
     attribute_kinds = {k for k, v in schema.items() if "attr_" in v.prefixes}
     # Documents built via _prepare_common_doc_properties, and relationships
     # and claims, which carry their document filters only.
@@ -498,21 +497,25 @@ def _kept(filters: dict[str, Any]) -> list[str]:
     return [v["id"] for v in _VERTICES if _matches(v, steps)]
 
 
-def test_neptune_entity_attribute_filters_vertices_that_have_it() -> None:
-    # attr_role is an LLM-extracted entity attribute stored on the vertex;
-    # vertices without the property are not filtered by it.
-    assert _kept({"attr_role": "buyer"}) == ["e1", "e3"]
-    assert _kept({"attr_role": ["buyer", "vendor"]}) == ["e1", "e2", "e3"]
+def test_neptune_entity_attribute_is_filtered_as_on_the_entities_index() -> None:
+    # role is an LLM-extracted entity attribute, stored on the vertex as
+    # attr_role and filtered as attributes.role (the entities index's key),
+    # strictly: a vertex without it goes, as an entity document without it.
+    assert _kept({"attributes.role": "buyer"}) == ["e1"]
+    assert _kept({"attributes.role": ["buyer", "vendor"]}) == ["e1", "e2"]
 
 
-def test_neptune_document_attribute_does_not_empty_expansion() -> None:
-    # attr_category is a document attribute: absent on every vertex.
-    assert _kept({"attr_category": "research"}) == ["e1", "e2", "e3"]
+@pytest.mark.parametrize("key", ["attr_role", "attr_category"])
+def test_neptune_leaves_a_document_attribute_to_the_entities_index(key: str) -> None:
+    # attr_<key> is a document filter on every store: a vertex holds none
+    # (attr_role is the entity's own role, not its documents'), so the
+    # graph drops it and the strategy checks the entities index.
+    assert _kept({key: "buyer"}) == ["e1", "e2", "e3"]
 
 
 def test_neptune_strict_key_stays_strict() -> None:
     assert _kept({"type": "PERSON"}) == ["e1", "e2"]
-    assert _kept({"type": "PERSON", "attr_role": "vendor"}) == ["e2"]
+    assert _kept({"type": "PERSON", "attributes.role": "vendor"}) == ["e2"]
 
 
 _SOURCED = [
@@ -562,10 +565,23 @@ def test_neptune_document_source_kinds_is_or_has_or_has_not() -> None:
 
 def test_neptune_filter_fields(config: Config) -> None:
     declared = _neptune(config).filter_fields()
-    for key in ("id", "type", "description", "attr_role"):
+    for key in ("id", "type", "name", "name.keyword", "attributes.role"):
         assert declared.declares(key), key
     # Community vertex fields: the traversal filters entity vertices only.
-    for key in ("status", "entity_type", "attributes.source", "size", "level"):
+    # Document filters, nested and internal attribute paths are no vertex's.
+    for key in (
+        "status",
+        "entity_type",
+        "size",
+        "level",
+        "attr_role",
+        "attributes.filters.category",
+        "attributes.address.city",
+        "attributes.seed_properties",
+        "attributes._internal",
+        # Analyzed text is refused on every store.
+        "description",
+    ):
         assert not declared.declares(key), key
 
 
@@ -590,7 +606,15 @@ def test_neptune_schema_covers_indexed_entity_properties(config: Config) -> None
     assert {"attr_region", "in_schema", "type_iri", "iri", "source_kinds"} <= set(props)
     # name_key is the merge's lookup key, not a filter.
     props.pop(NAME_KEY_PROPERTY)
-    assert all(NEPTUNE_ENTITY_FILTER_FIELDS.declares(k) for k in props)
+    # Analyzed text is stored, and refused as a filter key.
+    props.pop("description")
+    # An attribute is declared by its entities-index key.
+    assert all(
+        GRAPH_ENTITY_FILTER_FIELDS.declares(
+            f"attributes.{k.removeprefix('attr_')}" if k.startswith("attr_") else k
+        )
+        for k in props
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1525,18 +1549,23 @@ def test_typed_filter_fields_match_the_mappings(config: Config) -> None:
         for name, spec in func()["mappings"]["properties"].items():
             if spec.get("type") in kinds:
                 mapped.setdefault(name, set()).add(kinds[spec["type"]])
-    assert {k: {v} for k, v in TYPED_FILTER_FIELDS.items()} == mapped
+    typed = {
+        k: {v.value}
+        for k, v in FIELD_KINDS.items()
+        if v in (FieldKind.BOOLEAN, FieldKind.INTEGER, FieldKind.NUMBER)
+    }
+    assert typed == mapped
     # The graph's typed vertex properties are typed alike.
     entity = entity_properties(
         Entity(id="e", name="E", type="org", rank=2, confidence=0.5, in_schema=False),
         1000,
     )
-    for key in NEPTUNE_ENTITY_FILTER_FIELDS.fields:
+    for key in GRAPH_ENTITY_FILTER_FIELDS.fields:
         value = entity.get(key)
         if isinstance(value, bool):
-            assert TYPED_FILTER_FIELDS[key] == "boolean", key
+            assert FIELD_KINDS[key] is FieldKind.BOOLEAN, key
         elif isinstance(value, int | float):
-            assert TYPED_FILTER_FIELDS[key] == "number", key
+            assert FIELD_KINDS[key] is FieldKind.NUMBER, key
 
 
 @pytest.mark.parametrize(
@@ -1763,3 +1792,42 @@ def test_opensearch_source_kinds_clauses() -> None:
     assert build({"source_kind": "seed_graph"}) == [
         {"term": {"source_kind": "seed_graph"}}
     ]
+
+
+@pytest.mark.parametrize(
+    "key", ["description", "text", "translated_text_ko", "summary", "source_name"]
+)
+def test_a_filter_on_analyzed_text_is_refused(key: str) -> None:
+    # A term matched single analyzed tokens on OpenSearch and the whole text
+    # on a graph: no store can apply it as the other does.
+    with pytest.raises(InvalidFilterError, match="analyzed text field"):
+        check_filter_values({key: "widgets"})
+
+
+def test_a_name_filter_is_matched_exactly_on_every_store(config: Config) -> None:
+    retriever = _retriever(config, _FakeOpenSearchClient())
+    o = config.indexing.opensearch
+    # The entities index compiles it to the exact keyword sub-field.
+    assert OpenSearchRetriever._build_filter_clauses({"name": "Acme"}) == [
+        {"term": {"name.keyword": "Acme"}}
+    ]
+    # Both spellings are one field: both terms must hold.
+    assert OpenSearchRetriever._build_filter_clauses(
+        {"name": ["A", "B"], "name.keyword": "B"}
+    ) == [{"terms": {"name.keyword": ["A", "B"]}}, {"term": {"name.keyword": "B"}}]
+    # A report's name is analyzed text without an exact copy: not a key.
+    assert (
+        retriever._filters_for_index(o.community_reports_index_prefix, {"name": "A"})
+        is None
+    )
+    # A graph vertex stores the exact name under ``name``.
+    assert _kept_named({"name.keyword": "Vendor"}) == ["v1"]
+    assert _kept_named({"name": "vendor"}) == []
+
+
+def _kept_named(filters: dict[str, Any]) -> list[str]:
+    vertices = [{"id": "v1", "name": "Vendor"}, {"id": "v2", "name": "Vendor Co"}]
+    scoped = NeptuneRetriever._scope_filters_to_label("Entity-default", filters)
+    traversal = NeptuneRetriever._apply_filters(__.identity(), scoped)
+    steps = traversal.bytecode.step_instructions
+    return [v["id"] for v in vertices if _matches(v, steps)]

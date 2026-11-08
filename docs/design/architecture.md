@@ -206,6 +206,23 @@ entities before edges, the orphan-edge cascade) is domain knowledge; which
 backend fills each role is open (`providers.graph.kind` /
 `providers.vector.kind`, or an injected indexer).
 
+Caller filters are one backend-neutral form for every role and backend
+(`domain/retrieval/filters.py`): a field catalog says which keys each
+store's items hold (`ITEM_FILTER_FIELDS` per index kind,
+`GRAPH_ENTITY_FILTER_FIELDS` for entity vertices) and how a filter on each
+matches (`FieldKind`: keyword, exact name, typed, `source_kinds`, a
+document's metadata, an item's own attribute; analyzed text and unindexed
+paths are refused), and `parse_filters` turns `SearchQuery.filters` into
+clauses (`Term`, `Range`, `KindsRule`, `AnyOf`). Three compilers render
+them, each refusing a clause its store cannot apply: the OpenSearch query
+DSL (`opensearch_filter_clauses`, OpenSearch and the embedded engine),
+Gremlin steps (`gremlin_vertex_filters`, `gremlin_kinds` for vertices and
+edges) and the SQLite graph's predicate (`vertex_filter`). Each retriever
+first drops the keys its stores do not declare; the strategies check a
+graph walk against the entities index for the keys a graph does not hold
+(`_graph_unapplied_filters`). `tests/integration/test_filter_conformance.py`
+states each filter's answer once and runs it on all four store families.
+
 ### 2.4 Registries
 
 - **Search strategies**: `@register_strategy(...)`
@@ -444,7 +461,7 @@ checks that its values are the defaults and each key is in the reference).
   Indexing then stores, from the same schema, whether each merged item's
   type is declared (where the schema applies) and its type's IRI (whenever
   one is declared and the mode is not `off`; §4.2, "Schema annotations"); the
-  filter schema (`adapters/storage/filter_schema.py`) declares `in_schema`
+  filter catalog (`domain/retrieval/filters.py`) declares `in_schema`
   and `type_iri` on entities and Neptune entity vertices and `in_schema` and
   `predicate_iri` on relationships, but no `type` on relationships, which
   would empty that index under `mix` and `hybrid`. `GraphRAGChain` refuses a

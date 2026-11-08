@@ -15,12 +15,18 @@ from collections.abc import Collection
 import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401
-from tests.fixtures.fakes.retrievers import FakeRetriever, opensearch_fields_for
+from tests.fixtures.fakes.retrievers import (
+    FakeRetriever,
+    incident_ends,
+    opensearch_fields_for,
+)
 from unified_kg_rag.adapters.retrieval.strategy_registry import get_strategy_spec
 from unified_kg_rag.adapters.search_strategies.lightrag_search import (
     _pick_by_weighted_polling,
 )
-from unified_kg_rag.adapters.storage.filter_schema import FilterFields, IndexLimits
+from unified_kg_rag.adapters.storage.filter_schema import (
+    IndexLimits,
+)
 from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
@@ -28,6 +34,9 @@ from unified_kg_rag.domain.models import (
     SearchQuery,
     SearchStrategy,
     SearchType,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    FilterFields,
 )
 from unified_kg_rag.shared.exceptions import InvalidFilterError
 
@@ -427,7 +436,7 @@ class TestUpstreamTwoRetrievalWidths:
         by_prefix = {
             call.index_prefixes[0]: call
             for call in os_r.calls
-            if call.index_prefixes and not call.filters
+            if call.index_prefixes and not call.filters and not call.any_of
         }
         entities = by_prefix[config.indexing.opensearch.entities_index_prefix]
         relationships = by_prefix[config.indexing.opensearch.relationships_index_prefix]
@@ -467,7 +476,7 @@ class TestUpstreamTwoRetrievalWidths:
         assert all(
             call.top_k == 60
             for call in os_r.calls
-            if call.index_prefixes and not call.filters
+            if call.index_prefixes and not call.filters and not call.any_of
         )
 
     async def test_mix_quota_matches_the_two_widths(self, config: Config) -> None:
@@ -515,7 +524,7 @@ class TestUpstreamTwoRetrievalWidths:
         widths = {
             call.index_prefixes[0]: call.top_k
             for call in os_r.calls
-            if call.index_prefixes and not call.filters
+            if call.index_prefixes and not call.filters and not call.any_of
         }
         os_config = config.indexing.opensearch
         assert widths[os_config.entities_index_prefix] == 25
@@ -736,7 +745,7 @@ class IncidentEdgeRetriever:
             return []
         # The hl relationship vector query (no filters) returns one already-known
         # edge: the same relationships-index document the incident fetch finds.
-        if not query.filters:
+        if not query.filters and not query.any_of:
             return [
                 RetrievalResult(
                     content="hl edge",
@@ -750,12 +759,12 @@ class IncidentEdgeRetriever:
                     },
                 )
             ]
-        # The incident fetch: one query per endpoint field.
-        field, wanted = next(iter(query.filters.items()))
+        # The incident fetch: both endpoint fields in one query (any_of).
+        asked = incident_ends(query)
         hits = []
         for (src, tgt), rank in self.edges.items():
-            endpoint = src if field == "source_id" else tgt
-            if endpoint in wanted:
+            ends = {"source_id": src, "target_id": tgt}
+            if any(ends[end] in ids for end, ids in asked.items()):
                 hits.append(
                     RetrievalResult(
                         content=f"{src}->{tgt}",
@@ -805,9 +814,8 @@ class TestIncidentRelationshipExpansion:
     async def test_incident_edges_are_fetched_from_both_endpoint_sides(
         self, config: Config
     ) -> None:
-        # `_build_filter_clauses` ANDs every filter, so source_id OR target_id
-        # needs one query per side or every edge pointing INTO a matched entity is
-        # missed.
+        # source_id OR target_id: one query names both sides (any_of), or
+        # every edge pointing INTO a matched entity is missed.
         strategy, os_r = _incident_strategy(
             config, {("e1", "x"): 3.0, ("y", "e2"): 2.0}
         )
@@ -821,14 +829,17 @@ class TestIncidentRelationshipExpansion:
         await strategy.asearch(
             _query(SearchStrategy.MIX, ll_keywords=["a"], hl_keywords=["b"])
         )
-        fields = [
-            next(iter(call.filters))
+        (incident_call,) = [
+            call
             for call in os_r.calls
-            if call.filters
+            if call.any_of
             and call.index_prefixes
             == [config.indexing.opensearch.relationships_index_prefix]
         ]
-        assert sorted(fields) == ["source_id", "target_id"]
+        assert sorted(next(iter(g)) for g in incident_call.any_of or []) == [
+            "source_id",
+            "target_id",
+        ]
         incident = captured["sources"]["lightrag_incident_relationships"]
         assert {r.source for r in incident} == {"rel-e1-x", "rel-y-e2"}
 

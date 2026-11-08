@@ -1494,16 +1494,18 @@ def test_graph_expansion_filters_and_is_deterministic(
     queries = [
         SearchQuery(query="", suffix=_SUFFIX, filters={"id": ["a"]}),
         SearchQuery(query="", suffix=_SUFFIX, filters={"id": ["a"], "type": "ORG"}),
-        # attr_* filters apply where the vertex has the property.
+        # An entity's own attribute is strict, as on the entities index.
         SearchQuery(
-            query="", suffix=_SUFFIX, filters={"id": ["a"], "attr_role": "vendor"}
+            query="",
+            suffix=_SUFFIX,
+            filters={"id": ["a"], "attributes.role": "vendor"},
         ),
     ]
     first = _graph_retrieve(harness, *queries)
     assert [sorted(r.source for r in hits) for hits in first] == [
         ["a", "b", "c"],
         ["a", "b"],
-        ["a", "c"],
+        ["a"],
     ]
     second = _graph_retrieve(harness, *queries)
     assert [[(r.source, r.score) for r in hits] for hits in first] == [

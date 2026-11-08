@@ -63,6 +63,7 @@ from unified_kg_rag.adapters.local.search_engine.query import (
     field_specs,
     rejected,
     sort_hits,
+    sort_values,
     top_hits,
 )
 from unified_kg_rag.adapters.local.sqlite_util import (
@@ -1014,6 +1015,7 @@ class SQLiteSearchEngine:
             "query",
             "_source",
             "sort",
+            "search_after",
             "track_scores",
             "track_total_hits",
         }
@@ -1039,6 +1041,11 @@ class SQLiteSearchEngine:
             for name in names:
                 self._check_window(connection, name, size)
             sort = body.get("sort")
+            after = body.get("search_after")
+            if after is not None and sort is None:
+                raise rejected(
+                    "Sort must contain at least one field to use search_after"
+                )
             if sort is None and (lookup := _id_lookup(query)) is not None:
                 return self._fetch_by_ids(names, *lookup, size, excludes, track)
             loaded = [self._load(name) for name in names]
@@ -1047,7 +1054,9 @@ class SQLiteSearchEngine:
             for index in loaded
             for doc_id, score in evaluate(index, query).items()
         ]
-        top = top_hits(hits, size) if sort is None else sort_hits(hits, sort, size)
+        top = (
+            top_hits(hits, size) if sort is None else sort_hits(hits, sort, size, after)
+        )
         return self._response(
             [
                 (index.name, doc_id, score, self._source(index, doc_id, excludes))
@@ -1055,6 +1064,9 @@ class SQLiteSearchEngine:
             ],
             total=len(hits),
             track=track,
+            sorted_by=(
+                None if sort is None else [sort_values(hit, sort) for hit in top]
+            ),
         )
 
     @classmethod
@@ -1168,15 +1180,20 @@ class SQLiteSearchEngine:
         hits: list[tuple[str, str, float, dict[str, Any] | None]],
         total: int,
         track: bool | int,
+        sorted_by: list[list[Any]] | None = None,
     ) -> dict[str, Any]:
         """The response body; ``hits.total`` as OpenSearch counts it under
         ``track_total_hits`` (``True``: exact; a number: counted up to it,
-        ``relation: gte`` past it; ``False``: absent)."""
+        ``relation: gte`` past it; ``False``: absent). A sorted search's
+        hits carry their ``sort`` values (``sorted_by``), the cursor
+        ``search_after`` takes."""
         rendered = []
-        for index, doc_id, score, source in hits:
+        for i, (index, doc_id, score, source) in enumerate(hits):
             hit: dict[str, Any] = {"_index": index, "_id": doc_id, "_score": score}
             if source is not None:
                 hit["_source"] = source
+            if sorted_by is not None:
+                hit["sort"] = sorted_by[i]
             rendered.append(hit)
         counted: dict[str, Any] = {}
         if track is not False:

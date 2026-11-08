@@ -15,16 +15,18 @@ from collections.abc import Collection
 from typing import Any
 
 from unified_kg_rag.adapters.storage.filter_schema import (
-    FilterFields,
     IndexLimits,
-    opensearch_filter_fields,
-    union_filter_fields,
 )
 from unified_kg_rag.domain.models import (
     Config,
     GraphEdge,
     RetrievalResult,
     SearchQuery,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    ITEM_FILTER_FIELDS,
+    FilterFields,
+    union_filter_fields,
 )
 
 
@@ -115,9 +117,7 @@ def opensearch_fields_for(config: Config, prefixes: Collection[str]) -> FilterFi
     ``OpenSearchRetriever.filter_fields_for`` answers, for a fake standing in
     for it."""
     o = config.indexing.opensearch
-    by_kind = opensearch_filter_fields(
-        *config.processing.translation.translated_languages
-    )
+    by_kind = ITEM_FILTER_FIELDS
     by_prefix = {
         o.text_units_index_prefix: by_kind["text_units"],
         o.entities_index_prefix: by_kind["entities"],
@@ -128,3 +128,21 @@ def opensearch_fields_for(config: Config, prefixes: Collection[str]) -> FilterFi
     return union_filter_fields(
         fields for prefix, fields in by_prefix.items() if prefix in prefixes
     )
+
+
+_ENDS = ("source_id", "target_id")
+
+
+def incident_ends(query: SearchQuery) -> dict[str, set[str]]:
+    """The endpoint fields an incident-edge search names and their ids: the
+    ``any_of`` groups' (an edge passes at either end) or else the filters'
+    (one end per request), for a fake relationships index."""
+    groups = query.any_of or [query.filters or {}]
+    asked: dict[str, set[str]] = {}
+    for group in groups:
+        for end in _ENDS:
+            if end in group:
+                values = group[end]
+                listed = values if isinstance(values, list) else [values]
+                asked.setdefault(end, set()).update(str(v) for v in listed)
+    return asked

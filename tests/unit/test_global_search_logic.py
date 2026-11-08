@@ -23,7 +23,9 @@ from botocore.exceptions import ClientError
 from tests.fixtures.fakes.retrievers import opensearch_fields_for
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer
 from unified_kg_rag.adapters.search_strategies.global_search import GlobalSearchStrategy
-from unified_kg_rag.adapters.storage.filter_schema import FilterFields, IndexLimits
+from unified_kg_rag.adapters.storage.filter_schema import (
+    IndexLimits,
+)
 from unified_kg_rag.domain.ingestion.community_hierarchy import (
     attach_report_hierarchy,
     max_cut_depth,
@@ -34,6 +36,9 @@ from unified_kg_rag.domain.models import (
     Config,
     RetrievalResult,
     SearchQuery,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    FilterFields,
 )
 from unified_kg_rag.shared import ConfigurationError, InvalidFilterError
 

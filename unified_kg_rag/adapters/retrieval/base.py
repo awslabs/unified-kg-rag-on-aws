@@ -27,14 +27,7 @@ from unified_kg_rag.adapters.retrieval.token_manager import (
     SectionType,
     TokenManager,
 )
-from unified_kg_rag.adapters.storage.filter_schema import (
-    SOURCE_KINDS,
-    SOURCE_KINDS_FIELD,
-    FilterFields,
-    IndexLimits,
-    document_filters,
-    source_kinds_values,
-)
+from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
 from unified_kg_rag.domain.ingestion.report_references import (
@@ -44,6 +37,7 @@ from unified_kg_rag.domain.ingestion.report_references import (
     FINDINGS_TEXT_UNITS_FIELD,
     report_cited_records,
 )
+from unified_kg_rag.domain.ingestion.seed_graph import SOURCE_KINDS_FIELD
 from unified_kg_rag.domain.models import (
     Config,
     GraphEdge,
@@ -60,6 +54,11 @@ from unified_kg_rag.domain.models.config import language_name
 from unified_kg_rag.domain.retrieval.degradation import (
     DegradationLedger,
     DegradationStep,
+)
+from unified_kg_rag.domain.retrieval.filters import (
+    FilterFields,
+    document_filters,
+    kinds_rule,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import (
     configured_index_prefixes,
@@ -1680,21 +1679,20 @@ class BaseSearchStrategy(ABC):
         self, query: SearchQuery, ids: list[str], per_vertex: int
     ) -> list[GraphEdge] | None:
         """``_neighbourhood_edges`` from the relationships index, under the
-        caller's filters: the edges between two of ``ids`` (one request per
-        batch of source ids, the target pinned to the set when the set fits
-        one terms clause; past it the targets are kept in the set here),
-        then each vertex's first ``per_vertex`` by id
-        (``cap_edges_per_vertex``), as the graph gives them; under two or
-        more document keys an edge also needs one passing document (its
+        caller's filters: the edges between two of ``ids`` (their source in
+        ``ids``, asked in batches of ``max_terms_count``, the target pinned
+        to the set when the set fits one terms clause; past it the targets
+        are kept in the set here), then each vertex's first ``per_vertex``
+        by id (``cap_edges_per_vertex``), as the graph gives them; under two
+        or more document keys an edge also needs one passing document (its
         text units). ``None`` when the index is missing at query time.
 
-        A request returns one page (``_incident_fetch_limit``), so a batch
-        whose page came back full is asked again in halves, down to one
-        vertex: a hub's edges are all read, not the best-ranked page of the
-        whole set. The edges of a source with more than a page of them are
-        then asked from their targets' end (the source pinned), so each
-        target still keeps its own; only a vertex past a page at both ends
-        keeps the best-ranked page of them (logged at DEBUG)."""
+        Every edge within the set is read, in pages of the index's
+        ``max_result_window`` (``SearchQuery.page_through``), up to two
+        pages of ``_incident_fetch_limit`` per vertex (past that, a vertex
+        keeps the best-ranked of its edges; logged at DEBUG): one request
+        for most sets, where pages of ``max_query_size`` asked again in
+        halves took one per crowded vertex."""
         retriever = self.document_retriever
         assert retriever is not None  # the caller checks
         prefix = self.config.indexing.opensearch.relationships_index_prefix
@@ -1705,65 +1703,30 @@ class BaseSearchStrategy(ABC):
             if len(documents) > 1 or f != "text_unit_ids"
         ]
         limits = await retriever.aindex_limits(prefix, query.suffix)
-        hits: dict[str, RetrievalResult] = {}
-
-        async def read(end: str, others: list[str]) -> list[str]:
-            """Every edge with its ``end`` in ``ids`` and its other end in
-            ``others``, into ``hits``; the vertices whose page alone came
-            back full."""
-            pinned = len(others) <= limits.max_terms_count
-            other = "target_id" if end == "source_id" else "source_id"
-            within = (
-                query.model_copy(
-                    update={"filters": scope_filters(query.filters, **{other: others})}
-                )
-                if pinned
-                else query
+        within = (
+            query.model_copy(
+                update={"filters": scope_filters(query.filters, target_id=ids)}
             )
-            truncated: list[str] = []
-            pending = [ids]
-            while pending:
-                pages = await gather_bounded(
-                    self.config.search.max_concurrency,
-                    (
-                        # A full page is asked again in halves: no cut to
-                        # warn of.
-                        self._incident_relationships(
-                            within, batch, fields, ends=(end,), warn_full=False
-                        )
-                        for batch in pending
-                    ),
-                )
-                split: list[list[str]] = []
-                for batch, (found, full) in zip(pending, pages, strict=True):
-                    for hit in found:
-                        hits.setdefault(self._relationship_identity(hit), hit)
-                    if not full:
-                        continue
-                    if len(batch) == 1 or not pinned:
-                        # Unpinned, a page holds edges leaving the set too:
-                        # halving would ask about every vertex alone.
-                        truncated += batch
-                        continue
-                    half = len(batch) // 2
-                    split += [batch[:half], batch[half:]]
-                pending = split
-            return truncated
-
-        crowded = await read("source_id", ids)
-        if crowded:
-            # Their targets' end: the targets past a page of edges from them
-            # are the ones left with a cut.
-            crowded = await read("target_id", crowded)
-        if crowded:
+            if len(ids) <= limits.max_terms_count
+            else query
+        )
+        bound = 2 * self._incident_fetch_limit() * len(ids)
+        edges, full = await self._incident_relationships(
+            within,
+            ids,
+            fields,
+            size=bound,
+            ends=("source_id",),
+            warn_full=False,
+            page_through=True,
+        )
+        if full:
             logger.debug(
-                "Neighbourhood edges: %s of %s entities have more edges within "
-                "the set than a page of the relationships index at both ends; "
-                "their lowest-ranked edges are left out",
-                len(crowded),
+                "Neighbourhood edges: %s entities have more than %s edges within "
+                "the set; their lowest-ranked edges are left out",
                 len(ids),
+                bound,
             )
-        edges = list(hits.values())
         if len(documents) > 1 and edges:
             edges = await self._edges_one_document_passes(query, edges, documents)
         if not edges and (await retriever.ahas_index(prefix, query.suffix)) is False:
@@ -1869,6 +1832,7 @@ class BaseSearchStrategy(ABC):
         ends: tuple[str, ...] = _ENDPOINTS,
         away_from: list[str] | None = None,
         warn_full: bool = True,
+        page_through: bool = False,
     ) -> tuple[list[RetrievalResult], tuple[str, ...]]:
         """The relationships incident to ``entity_ids`` (only
         ``source_fields`` of each when given) at the ``ends`` named, at most
@@ -1877,10 +1841,13 @@ class BaseSearchStrategy(ABC):
         whose other endpoint is in ``away_from``, and the ends whose page came
         back full (the edges past it were dropped; a WARNING once a process
         says so unless ``warn_full`` is off, for a caller that asks again).
+        With ``page_through`` a page is ``size`` edges, read in pages of the
+        index's ``max_result_window`` (``SearchQuery.page_through``).
 
         The relationships index stores its endpoints as `source_id`/`target_id`
-        keywords, but `_build_filter_clauses` ANDs every filter, so
-        `source_id OR target_id` needs two requests. Edges are deduped by
+        keywords: both ends are one request (``SearchQuery.any_of``) of the
+        two ends' pages together, but with ``away_from``, whose exclusion
+        differs by end (one request per end). Edges are deduped by
         relationship id and ordered by `(rank, weight)` descending, as
         upstream LightRAG's `_find_most_related_edges_from_entities` does,
         then by id, so equal edges do not follow the order of the two
@@ -1915,6 +1882,7 @@ class BaseSearchStrategy(ABC):
                     size,
                     ends,
                     sorted(set(away)),
+                    page_through,
                 ],
                 sort_keys=True,
                 default=str,
@@ -1933,7 +1901,14 @@ class BaseSearchStrategy(ABC):
                 memo[key] = outcome
                 try:
                     edges, full, failed = await self._ask_incident(
-                        query, batches, source_fields, size, ends, away, warn_full
+                        query,
+                        batches,
+                        source_fields,
+                        size,
+                        ends,
+                        away,
+                        warn_full,
+                        page_through,
                     )
                 except BaseException:
                     del memo[key]
@@ -1946,7 +1921,7 @@ class BaseSearchStrategy(ABC):
                     outcome.set_result((edges, full))
                 return list(edges), full
         edges, full, _ = await self._ask_incident(
-            query, batches, source_fields, size, ends, away, warn_full
+            query, batches, source_fields, size, ends, away, warn_full, page_through
         )
         return edges, full
 
@@ -1959,10 +1934,12 @@ class BaseSearchStrategy(ABC):
         ends: tuple[str, ...] = _ENDPOINTS,
         away_from: list[str] | None = None,
         warn_full: bool = True,
+        page_through: bool = False,
     ) -> tuple[list[RetrievalResult], tuple[str, ...], bool]:
-        """``_incident_relationships``' requests (one per end and batch of
-        vertices, at most ``search.max_concurrency`` at once): the edges,
-        the ends whose page came back full and whether a request failed."""
+        """``_incident_relationships``' requests (one per batch of vertices,
+        and per end with ``away_from``, at most ``search.max_concurrency``
+        at once): the edges, the ends whose page came back full and whether
+        a request failed."""
         retriever = self.document_retriever
         assert retriever is not None
         prefix = self.config.indexing.opensearch.relationships_index_prefix
@@ -1970,37 +1947,60 @@ class BaseSearchStrategy(ABC):
         # A page is judged full against the hits a search returns: the live
         # window may be below max_query_size.
         cap = min(self._incident_fetch_limit(), limits.max_result_window)
-        page = min(size or cap, cap)
+        page = (size or cap) if page_through else min(size or cap, cap)
         failures: list[Exception] = []
+        # Every end in one request: an edge passes at either end. An
+        # exclusion of the other end differs by end, so it takes one each.
+        sides: tuple[tuple[str, ...], ...] = (
+            (ends,) if len(ends) > 1 and not away_from else tuple((e,) for e in ends)
+        )
 
-        async def by_batch(field: str, vertices: list[str]) -> list[RetrievalResult]:
+        async def by_batch(
+            side: tuple[str, ...], vertices: list[str]
+        ) -> list[RetrievalResult]:
+            only = side[0] if len(side) == 1 else None
             return await self._safe_aretrieve(
                 retriever,
                 SearchQuery(
                     query="",
                     search_type=SearchType.LEXICAL,
-                    top_k=page,
+                    top_k=page * len(side),
                     index_prefixes=[prefix],
                     suffix=query.suffix,
-                    filters=self._scoped_filters(query, **{field: vertices}),
-                    exclude=({_OTHER_END[field]: away_from} if away_from else None),
+                    filters=(
+                        self._scoped_filters(query, **{only: vertices})
+                        if only is not None
+                        else self._scoped_filters(query)
+                    ),
+                    any_of=(
+                        None if only is not None else [{end: vertices} for end in side]
+                    ),
+                    exclude=(
+                        {_OTHER_END[only]: away_from}
+                        if away_from and only is not None
+                        else None
+                    ),
                     source_fields=source_fields,
+                    # Both ends' pages in one: past max_query_size, which
+                    # sizes one end's.
+                    page_through=page_through or only is None,
                 ),
-                f"Incident relationship retrieval ({field})",
+                f"Incident relationship retrieval ({'/'.join(side)})",
                 failures,
             )
 
         pages = await gather_bounded(
             self.config.search.max_concurrency,
-            (by_batch(end, batch) for end in ends for batch in batches),
+            (by_batch(side, batch) for side in sides for batch in batches),
         )
-        sides = [
+        by_side = [
             pages[i : i + len(batches)] for i in range(0, len(pages), len(batches))
         ]
         # A store that rejected the window was asked again with the live one
         # and returned that many hits: a page that size is full too.
         window = (await retriever.aindex_limits(prefix, query.suffix)).max_result_window
-        cap, page = min(cap, window), min(page, window)
+        if not page_through:
+            cap, page = min(cap, window), min(page, window)
         # A text-less search is ordered by (rank, weight) server-side (the
         # retriever's importance sort), so a full page holds the best edges.
         # Still, the count cap bound and edges were dropped — upstream drops
@@ -2008,10 +2008,11 @@ class BaseSearchStrategy(ABC):
         # edges".
         full = tuple(
             end
-            for end, side in zip(ends, sides, strict=True)
-            if any(len(hits) >= page for hits in side)
+            for side, found in zip(sides, by_side, strict=True)
+            if any(len(hits) >= page * len(side) for hits in found)
+            for end in side
         )
-        if full and page >= cap and warn_full:  # not a sized page
+        if full and page >= cap and warn_full and not page_through:  # not sized
             # A hub entity hits it on every query that matches it: a WARNING
             # once a process, DEBUG after.
             warned = _PAGE_CAP_WARNED.is_set()
@@ -2031,8 +2032,8 @@ class BaseSearchStrategy(ABC):
         deduped = list(
             {
                 self._relationship_identity(r): r
-                for side in sides
-                for hits in side
+                for found in by_side
+                for hits in found
                 for r in hits
             }.values()
         )
@@ -2124,11 +2125,8 @@ class BaseSearchStrategy(ABC):
         filtering: local and DRIFT read no report then (``global``, which
         reads nothing else, refuses the key).
         """
-        value = (query.filters or {}).get(SOURCE_KINDS_FIELD)
-        if value is None:
-            return False
-        kinds = {str(kind).strip().lower() for kind in source_kinds_values(value)}
-        return not SOURCE_KINDS <= kinds
+        rule = kinds_rule(query.filters)
+        return rule is not None and rule.narrows
 
     @staticmethod
     def _scoped_filters(query: SearchQuery, **scope: Any) -> dict[str, Any] | None:

@@ -21,15 +21,15 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import routable_strategies
-from unified_kg_rag.adapters.storage.filter_schema import (
-    SCHEMA_ANNOTATION_FIELDS,
+from unified_kg_rag.adapters.storage.filter_schema import SCHEMA_ANNOTATION_FIELDS
+from unified_kg_rag.application.bootstrap import resolve_extraction_schema
+from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
+from unified_kg_rag.domain.models import IndexArtifact, SearchStrategy
+from unified_kg_rag.domain.retrieval.filters import (
     check_filter_values,
     typed_filter_values,
     union_filter_fields,
 )
-from unified_kg_rag.application.bootstrap import resolve_extraction_schema
-from unified_kg_rag.domain.ingestion.schema_annotation import SchemaAnnotator
-from unified_kg_rag.domain.models import IndexArtifact, SearchStrategy
 from unified_kg_rag.domain.retrieval.index_prefixes import readable_index_prefixes
 from unified_kg_rag.shared import InvalidFilterError, get_logger
 from unified_kg_rag.shared.exceptions import SchemaSourceError
