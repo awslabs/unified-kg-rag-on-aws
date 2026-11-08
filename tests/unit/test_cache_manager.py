@@ -131,19 +131,66 @@ class TestChunking:
         entry = mgr.save_stage_result([1, 2, 3], "small", STAGE, PIPELINE)
         assert entry.metadata["is_chunked"] is False
 
-    def test_size_estimate_uses_indented_serialization(self, tmp_path: Path) -> None:
-        # Regression: _should_chunk_data estimated with non-indented json.dumps
-        # while the write uses serialize_data(indent=2), undershooting the on-disk
-        # size. A list UNDER chunk_size but whose indented bytes exceed the file
-        # limit must still chunk. Each item is a dict so indent=2 inflates size.
+    def test_size_estimate_uses_the_written_serialization(self, tmp_path: Path) -> None:
+        # Regression: _should_chunk_data estimated with another serialization
+        # than the write's, undershooting the on-disk size. A list UNDER
+        # chunk_size whose written bytes exceed the file limit must still chunk.
         mgr = _manager(tmp_path, chunk_items=100_000, max_file_bytes=1024 * 1024)
-        # ~8000 dicts; indented JSON comfortably exceeds 1 MB (well above the
-        # ~946 KB a smaller set produced) so the size-based trigger fires.
+        # ~8000 dicts of ~220 bytes each: ~1.7 MB written, over the 1 MB limit.
         data = [{"id": i, "v": "x" * 200} for i in range(8000)]
         entry = mgr.save_stage_result(data, "bysize", STAGE, PIPELINE)
         assert entry.metadata["is_chunked"] is True
         # Round-trips intact despite size-triggered chunking.
         assert mgr.load_stage_result("bysize", PIPELINE) == data
+
+    def test_size_estimate_counts_utf8_bytes(self, tmp_path: Path) -> None:
+        # Non-ASCII text is written as UTF-8 (ensure_ascii=False): a Hangul
+        # or Han character is 3 bytes on disk but 1 character of the string,
+        # so a character count would under-count the file 3x.
+        mgr = _manager(tmp_path, chunk_items=100_000, max_file_bytes=1024 * 1024)
+        # 2000 x 200 Hangul syllables: ~0.4 M characters, ~1.2 MB written.
+        data = [{"id": i, "v": "가" * 200} for i in range(2000)]
+        entry = mgr.save_stage_result(data, "utf8", STAGE, PIPELINE)
+        assert entry.metadata["is_chunked"] is True
+        assert mgr.load_stage_result("utf8", PIPELINE) == data
+
+    def test_files_are_compact_utf8_json(self, tmp_path: Path) -> None:
+        # No indentation and no \uXXXX escapes: half the bytes to write and
+        # hash (a third for CJK text) of the indented, ASCII-escaped form.
+        mgr = _manager(tmp_path)
+        mgr.save_stage_result([{"name": "가나다", "n": 1}], "compact", STAGE, PIPELINE)
+        text = (tmp_path / PIPELINE / STAGE / "compact.json").read_text(
+            encoding="utf-8"
+        )
+        assert text == '[{"name": "가나다", "n": 1}]'
+
+    def test_text_utf8_cannot_encode_is_escaped(self, tmp_path: Path) -> None:
+        mgr = _manager(tmp_path)
+        data = [{"name": "bad \ud800 surrogate"}]
+        assert mgr.save_stage_result(data, "surrogate", STAGE, PIPELINE) is not None
+        assert mgr.load_stage_result("surrogate", PIPELINE) == data
+
+    @pytest.mark.parametrize("chunked", [False, True])
+    def test_entries_written_indented_and_ascii_escaped_still_load(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chunked: bool
+    ) -> None:
+        # Caches written by earlier releases (indent=2, ASCII escapes) still
+        # verify: the hash is over the file's own text, whatever its layout.
+        legacy = _manager(tmp_path, chunk_items=2 if chunked else None)
+        monkeypatch.setattr(
+            CacheManager,
+            "serialize_data",
+            lambda self, data: json.dumps(data, indent=2, default=self._json_default),
+        )
+        data = [{"name": "가나다", "n": i} for i in range(5)]
+        legacy.save_stage_result(data, "old", STAGE, PIPELINE)
+        written = "".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted((tmp_path / PIPELINE / STAGE).glob("old*.json"))
+        )
+        assert "\\uac00" in written and "\n  " in written
+        monkeypatch.undo()
+        assert _manager(tmp_path).load_stage_result("old", PIPELINE) == data
 
     def test_chunked_max_items_truncates_load(self, tmp_path: Path) -> None:
         mgr = _manager(tmp_path, chunk_items=2)
