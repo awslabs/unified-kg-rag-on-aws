@@ -1656,6 +1656,10 @@ Ingestion and incremental indexing.
 - An unreadable doc-status registry fails the loading stage (`DocStatusRegistryError`) instead of rebuilding (#186);
   incremental indexing follows the extraction settings and stops before writing after a change of the embedding
   model, languages or analyzers, or onto a suffix built with the registry off (#224, #231, #233).
+- A rejected entity, relationship, claim, community or report write (under `indexing.max_failure_rate`) no longer
+  records the documents owning it `FAILED`: the item is noted in the extraction store (`pending-writes`) and the next
+  run writes it again without extracting anything. Re-extracting the owners re-extracted every document a hub entity
+  cites, on every run its write kept failing. Only a failed text-unit write fails its document.
 - Deleting a document under a non-default suffix strips it from shared claims, a deletion-only run checks the
   configured suffix, and a run whose new documents name no entity still commits them (#248, #252, #256).
 - `indexing.reset` reusing a pipeline id rebuilds from the whole corpus, fails when the registry cannot be cleared,

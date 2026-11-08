@@ -68,6 +68,19 @@ unless noted.
    the noted entities' copies only the vector store holds, with the vector
    edges at them (the killed commit got to its vector writes only), and a
    run that only removes in the suffix reads the note all the same.
+   An item write a store rejects (an entity, relationship, claim, community
+   or report; an edge held back for a rejected endpoint) does not fail the
+   documents owning it: the commit notes the rejected items as written in
+   the suffix's extraction store (`pending-writes`,
+   `unified_kg_rag/application/storage/pending_writes.py`), and the next commit of the
+   suffix, every run's, adds them to its delta, cut to the text units still
+   stored. They merge with what is stored and are derived from their records
+   like any delta item (summarized from their lines, not by extending a
+   stored summary), and the endpoints of a noted edge are written with it, so
+   their edges' ranks follow. The note is replaced by what still fails, or
+   deleted. Recording the owners `FAILED` instead re-extracted every document
+   a hub entity cites, on every run its write kept failing. A note that cannot
+   be written falls back to that.
 5. **Deletion propagation** (`IndexingManager.remove_text_units`). The stores
    are asked what cites the removed text units (`GraphIndexer.find_ids_citing`
    for entities, `VectorIndexer.find_documents`); edges are found among the

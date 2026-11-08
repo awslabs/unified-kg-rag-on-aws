@@ -1010,7 +1010,9 @@ A document is recorded `FAILED` in five cases:
   a report, community detection fails);
 - an artifact stage (translation through community detection) crashed in a
   `--continue-on-error` run, which records every document of the run `FAILED`;
-- writing one of its artifacts to the stores failed;
+- writing one of its text units to the stores failed (another artifact's
+  failed write is noted and written by the next run instead, see *Write
+  failures* below; it fails its owners only when the note cannot be written);
 - the extraction record of one of its text units could not be written to the
   extraction store (`records_not_stored` in graph resolution and claim
   extraction).
@@ -1086,9 +1088,13 @@ classification and output parsing: [Design Doc §5.1](./design/incremental.md#51
   429, 502, 503 or 504 up to four times with backoff, every Neptune request up
   to `retry.graph_store_max_attempts` (default `4`) over a new connection. If
   more than `indexing.max_failure_rate` (default `0.2`) of one artifact type's
-  writes still fail, indexing fails and records no document; below it, only
-  the documents owning a failed artifact are `FAILED` (all of the run's when
-  the backend names no item), retried by the next run without counting
+  writes still fail, indexing fails and records no document. Below it, the
+  failed entities, relationships, claims, communities and reports are noted
+  (`pending-writes` in the extraction store) and the next run writes them
+  again without extracting their documents, which stay `PROCESSED` (a
+  WARNING names how many were noted); a document whose own text units failed
+  to write is `FAILED` (all of the run's when the backend names no item, or
+  when the note cannot be written), retried by the next run without counting
   toward the retry limit. The `IndexingFailures` and
   `ExtractionFailures` [alarms](#alarms) report both.
 

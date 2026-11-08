@@ -15,6 +15,10 @@ from unified_kg_rag.application.storage.cross_run_merge import (
     CrossRunMerge,
     CrossRunMergeResult,
 )
+from unified_kg_rag.application.storage.pending_writes import (
+    NotedWrites,
+    PendingWrites,
+)
 from unified_kg_rag.application.storage.reannotation import (
     SchemaReannotation,
     SchemaReannotator,
@@ -239,6 +243,7 @@ class IndexingManager:
         self._merge = CrossRunMerge(self)
         self._removal = TextUnitRemoval(self)
         self._reannotation = SchemaReannotator(self)
+        self._pending_writes = PendingWrites(self)
 
     @property
     def description_summarizer(self) -> DescriptionSummarizer:
@@ -865,6 +870,45 @@ class IndexingManager:
             self._write_note(_PENDING_COMMIT, suffix, {"entity_ids": sorted(ids)})
             self._commit_note_suffixes.add(suffix)
 
+    def read_pending_writes(
+        self, suffixes: Iterable[str], text_units: Sequence[TextUnit] = ()
+    ) -> NotedWrites:
+        """The items an earlier commit of ``suffixes`` failed to write, noted
+        for this one (see :mod:`.pending_writes`), cut to the text units
+        still stored or written by the delta (``text_units``). A failed read
+        raises."""
+        return self._pending_writes.read(suffixes, text_units)
+
+    def join_pending_writes(
+        self,
+        noted: NotedWrites,
+        entities: list[Entity] | None,
+        relationships: list[Relationship] | None,
+        claims: list[Claim] | None,
+        communities: list[Community] | None,
+        community_reports: list[CommunityReport] | None,
+    ) -> tuple[
+        list[Entity] | None,
+        list[Relationship] | None,
+        list[Claim] | None,
+        list[Community] | None,
+        list[CommunityReport] | None,
+    ]:
+        """The delta with the ``noted`` items, which the commit merges with
+        what is stored like its own (see :meth:`read_pending_writes`)."""
+        return self._pending_writes.join(
+            noted, entities, relationships, claims, communities, community_reports
+        )
+
+    def note_pending_writes(
+        self, results: Mapping[str, IndexingStats], written: Iterable[Any]
+    ) -> set[str]:
+        """Note the ``written`` items whose write failed (``results``) for the
+        next commit, and delete the read notes nothing is left in. Returns
+        the result keys whose failures are noted (none when a note cannot
+        be written)."""
+        return self._pending_writes.note(results, written)
+
     def clear_pending_commit(self) -> None:
         """Delete the commit notes of the suffixes this run noted or read
         (best-effort: one left only makes the next commit derive the
@@ -958,6 +1002,7 @@ class IndexingManager:
         self._stripped_ids.clear()
         self._noted_stripped_ids.clear()
         self._delta_ids.clear()
+        self._pending_writes.reset()
 
     def expect_delta(
         self, entities: Sequence[Entity], relationships: Sequence[Relationship]

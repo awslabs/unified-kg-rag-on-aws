@@ -6,9 +6,11 @@ An incremental commit records every document PROCESSED when each artifact
 type's failure rate stays within ``indexing.max_failure_rate``. A document
 whose entity or relationship write was dropped was then classified unchanged
 on every later run, so the missing artifact was never rewritten. The
-indexers now report the ids of the items that failed, and the commit records
-the documents owning them FAILED. AWS-free: in-memory registry and stub
-backends.
+indexers now report the ids of the items that failed. Given the items it
+wrote, the commit notes them for the next commit
+(``tests/integration/test_pending_writes.py``); these tests record without
+them, the fallback that records the documents owning a failed item FAILED.
+AWS-free: in-memory registry and stub backends.
 """
 
 from __future__ import annotations

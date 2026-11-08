@@ -2785,22 +2785,21 @@ class IndexingStage(_RegistryStage):
             if rebuild is not None:
                 incremental, lineages = rebuild
                 failures = run_failures(context, text_units)
+                written = [
+                    *text_units,
+                    *entities,
+                    *relationships,
+                    *communities,
+                    *community_reports,
+                    *claims,
+                ]
                 recorded = incremental.record(
                     lineages,
                     context.incremental_fingerprints,
                     indexing_results,
                     failures.failed,
-                    artifact_owners(
-                        lineages,
-                        [
-                            *text_units,
-                            *entities,
-                            *relationships,
-                            *communities,
-                            *community_reports,
-                            *claims,
-                        ],
-                    ),
+                    artifact_owners(lineages, written),
+                    written=written,
                     counted_failed_doc_ids=failures.counted,
                     claims_missing_doc_ids=failures.claims_missing,
                 )

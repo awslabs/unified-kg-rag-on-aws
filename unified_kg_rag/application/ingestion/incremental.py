@@ -625,8 +625,45 @@ class IncrementalIndexer:
         ``settings_changed`` (the delta held documents re-extracted, or seed
         shards exempted, for other extraction settings) records the run's
         settings even when no document is (:meth:`record`).
+
+        The items an earlier commit of the run's suffixes failed to write
+        (its write note) join the delta first, and the items whose write
+        fails now are noted in their place (see
+        ``IndexingManager.read_pending_writes``): a failed item write is
+        written again by the next commit, not re-extracted.
         """
         check_write_fence()
+        # The items an earlier commit's stores rejected are written again
+        # with this delta (see IndexingManager.read_pending_writes).
+        noted = self.indexing_manager.read_pending_writes(
+            {
+                self.suffix,
+                *(
+                    BaseIndexer.get_suffix(item)
+                    for group in (
+                        text_units,
+                        entities,
+                        relationships,
+                        communities,
+                        community_reports,
+                        claims,
+                    )
+                    for item in group or []
+                ),
+            },
+            text_units or (),
+        )
+        if noted:
+            entities, relationships, claims, communities, community_reports = (
+                self.indexing_manager.join_pending_writes(
+                    noted,
+                    entities,
+                    relationships,
+                    claims,
+                    communities,
+                    community_reports,
+                )
+            )
         # The merge's re-key, split and drop decisions are held in memory
         # until the old ids are deleted: whatever stops the commit (a failed
         # read or note, a stop, a lost lease) leaves them out of the next run.
@@ -679,23 +716,21 @@ class IncrementalIndexer:
         except BaseException:
             self.indexing_manager.discard_retired_ids()
             raise
-        owners = artifact_owners(
-            lineages,
-            [
-                *(text_units or []),
-                *(entities or []),
-                *(relationships or []),
-                *(communities or []),
-                *(community_reports or []),
-                *(claims or []),
-            ],
-        )
+        written = [
+            *(text_units or []),
+            *(entities or []),
+            *(relationships or []),
+            *(communities or []),
+            *(community_reports or []),
+            *(claims or []),
+        ]
         if self.record(
             lineages,
             fingerprints,
             results,
             failed_doc_ids,
-            owners,
+            artifact_owners(lineages, written),
+            written=written,
             counted_failed_doc_ids=counted_failed_doc_ids,
             claims_missing_doc_ids=claims_missing_doc_ids,
             settings_changed=settings_changed,
@@ -763,6 +798,7 @@ class IncrementalIndexer:
         failed_doc_ids: Collection[str] = (),
         owners: Mapping[str, set[str]] | None = None,
         *,
+        written: Sequence[Any] | None = None,
         counted_failed_doc_ids: Collection[str] = (),
         claims_missing_doc_ids: Collection[str] = (),
         settings_changed: bool = False,
@@ -777,16 +813,28 @@ class IncrementalIndexer:
         missing artifacts never re-indexed. Returns whether the docs were
         recorded.
 
-        Under the tolerated failure rate the docs are recorded, but a doc that
-        owns an artifact whose write failed is recorded FAILED (see
+        Under the tolerated failure rate the docs are recorded. The items of
+        ``written`` (what the run wrote) whose write failed are noted for
+        the next commit, which writes them again
+        (``IndexingManager.note_pending_writes``): their documents are
+        recorded PROCESSED. A doc owning an artifact whose failure is not
+        noted (its own text unit, or any when the note cannot be written or
+        ``written`` is not given) is recorded FAILED (see
         :meth:`_documents_with_failed_writes`), so the next run rewrites it.
         The run's extraction settings are recorded for the scope with them,
         or without a document when ``settings_changed``.
         """
         check_write_fence()
         if self._delta_writes_succeeded(results):
+            noted = (
+                self.indexing_manager.note_pending_writes(results, written)
+                if written is not None
+                else set()
+            )
             write_failed = self._documents_with_failed_writes(
-                lineages, results, owners or {}
+                lineages,
+                {key: stats for key, stats in results.items() if key not in noted},
+                owners or {},
             )
             self._record_processed(
                 lineages,

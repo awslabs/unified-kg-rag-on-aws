@@ -297,7 +297,7 @@ class CrossRunMerge:
             # entity does.
             merged_relationships = [r.model_copy() for r in merged_relationships]
             sync_relationship_endpoint_names(merged_relationships, merged_entities)
-        if existing or existing_rels:
+        if existing or existing_rels or m._pending_writes.joined(suffix):
             derived = m.derive(
                 suffix, merged_entities, merged_relationships, (), text_units
             )
