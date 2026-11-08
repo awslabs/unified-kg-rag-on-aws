@@ -18,6 +18,22 @@ PROFILE = LanguageProfile(
         "os quem qual porque onde é são foi com do uma não".split()
     ),
     no_value_words=("desconhecido", "nenhum"),
+    articles=frozenset("o a os as um uma uns umas".split()),
+    number_words={
+        "zero": 0,
+        "dois": 2,
+        "duas": 2,
+        "três": 3,
+        "quatro": 4,
+        "cinco": 5,
+        "seis": 6,
+        "sete": 7,
+        "oito": 8,
+        "nove": 9,
+        "dez": 10,
+        "onze": 11,
+        "doze": 12,
+    },
     month_words={
         "January": ("janeiro",),
         "February": ("fevereiro", "fev"),

@@ -51,6 +51,14 @@ class LanguageProfile:
     legal_forms: Mapping[str, str] = field(default_factory=dict)
     # Legal-form designators in Han, Hangul or Kana, leading or trailing.
     dense_legal_forms: tuple[str, ...] = ()
+    # Its articles, which answer normalization drops ("der Rhein" is
+    # "Rhein"), and those written elided before a vowel ("l'accord").
+    articles: frozenset[str] = frozenset()
+    elided_articles: frozenset[str] = frozenset()
+    # Its number words from zero to twelve with their values, which an
+    # answer states a count by ("drei"); a form of one that is also the
+    # indefinite article ("ein", "un") is left out, as English's "a" is.
+    number_words: Mapping[str, int] = field(default_factory=dict)
     # Yes/no answer words, each with its polarity ("yes" or "no").
     polarity_words: Mapping[str, str] = field(default_factory=dict)
     # The quote pairs its text wraps a name in (opening, closing).

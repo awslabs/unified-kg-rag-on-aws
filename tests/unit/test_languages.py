@@ -138,6 +138,8 @@ _FACETS = (
     "open_date_words",
     "month_words",
     "legal_forms",
+    "articles",
+    "number_words",
     "polarity_words",
     "quote_pairs",
 )
@@ -155,6 +157,10 @@ _GAPS: dict[str, set[str]] = {
     "legal_forms": {"ko", "ru", "zh"} | _NEW,
     "polarity_words": {"de", "es", "fr", "it", "pt", "ru"} | _NEW,
     "quote_pairs": {"de", "es", "fr", "it", "ko", "pt", "ru"} | _NEW,
+    # Articles: the languages that write them (English's number words are
+    # the evaluator's own parser; ru and the scripts without articles wait).
+    "articles": {"ja", "ko", "ru", "zh"} | _NEW,
+    "number_words": {"en", "ja", "ko", "ru", "zh"} | _NEW,
 }
 
 

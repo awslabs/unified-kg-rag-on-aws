@@ -19,6 +19,22 @@ PROFILE = LanguageProfile(
         "avec du une dans".split()
     ),
     no_value_words=("inconnu", "inconnue", "aucun", "aucune"),
+    articles=frozenset("le la les l un une des".split()),
+    elided_articles=frozenset({"l", "un"}),
+    number_words={
+        "zéro": 0,
+        "deux": 2,
+        "trois": 3,
+        "quatre": 4,
+        "cinq": 5,
+        "six": 6,
+        "sept": 7,
+        "huit": 8,
+        "neuf": 9,
+        "dix": 10,
+        "onze": 11,
+        "douze": 12,
+    },
     month_words={
         "January": ("janvier", "janv"),
         "February": ("février", "févr", "fevrier"),

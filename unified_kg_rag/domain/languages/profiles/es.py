@@ -18,6 +18,21 @@ PROFILE = LanguageProfile(
         "el los las qué quién cuál cómo cuándo dónde es fue y del".split()
     ),
     no_value_words=("desconocido", "ninguno"),
+    articles=frozenset("el la los las un una unos unas".split()),
+    number_words={
+        "cero": 0,
+        "dos": 2,
+        "tres": 3,
+        "cuatro": 4,
+        "cinco": 5,
+        "seis": 6,
+        "siete": 7,
+        "ocho": 8,
+        "nueve": 9,
+        "diez": 10,
+        "once": 11,
+        "doce": 12,
+    },
     month_words={
         "January": ("enero", "ene"),
         "February": ("febrero",),

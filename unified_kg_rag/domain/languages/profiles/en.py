@@ -36,6 +36,7 @@ PROFILE = LanguageProfile(
         "unspecified",
         "notapplicable",
     ),
+    articles=frozenset({"a", "an", "the"}),
     open_date_words=("tbd", "ongoing", "present"),
     # strptime reads the English month names itself.
     legal_forms={
