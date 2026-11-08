@@ -1665,6 +1665,9 @@ Ingestion and incremental indexing.
 - An unreadable doc-status registry fails the loading stage (`DocStatusRegistryError`) instead of rebuilding (#186);
   incremental indexing follows the extraction settings and stops before writing after a change of the embedding
   model, languages or analyzers, or onto a suffix built with the registry off (#224, #231, #233).
+- Two relationships whose endpoint names or type hold a `:` no longer share an id: `A:B -> C` and `A -> B:C` hashed
+  one string and merged into one edge. Such ids are hashed from a JSON list (`shared.utils.id_content`); others keep
+  theirs. An edge an extraction record already holds keeps its id until the unit is extracted again.
 - A rejected entity, relationship, claim, community or report write (under `indexing.max_failure_rate`) no longer
   records the documents owning it `FAILED`: the item is noted in the extraction store (`pending-writes`) and the next
   run writes it again without extracting anything. Re-extracting the owners re-extracted every document a hub entity

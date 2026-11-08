@@ -170,6 +170,17 @@ def generate_stable_id(
     return str(uuid.uuid5(namespace, content))
 
 
+def id_content(kind: str, *parts: str) -> str:
+    """The content a stable id of ``kind`` over ``parts`` hashes
+    (:func:`generate_stable_id`): ``kind:part:part...``, as ids were
+    always made, unless a part holds a ``:``, when two different part lists
+    could join into one string ("A:B" + "C" and "A" + "B:C"); those are
+    joined as a JSON list instead, which no other part list gives."""
+    if any(":" in part for part in parts):
+        return json.dumps([kind, *parts], ensure_ascii=False)
+    return ":".join((kind, *parts))
+
+
 def normalize_name(name: str | None) -> str:
     """Normalize a name for token-level fuzzy similarity (not identity).
 

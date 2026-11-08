@@ -21,6 +21,7 @@ from unified_kg_rag.shared.utils import (
     clean_display_name,
     entity_key,
     generate_stable_id,
+    id_content,
 )
 
 T = TypeVar("T")
@@ -459,11 +460,16 @@ class BaseProcessor:
     def _generate_relationship_id(
         source_name: str, target_name: str, rel_type: str
     ) -> str:
-        rel_id_content = (
-            f"relationship:{entity_key(source_name)}:{entity_key(target_name)}:"
-            f"{rel_type}".lower()
+        """Stable relationship id from its endpoints' identity keys and its
+        type (``id_content``: names holding a colon do not collide)."""
+        return generate_stable_id(
+            id_content(
+                "relationship",
+                entity_key(source_name).lower(),
+                entity_key(target_name).lower(),
+                rel_type.lower(),
+            )
         )
-        return generate_stable_id(rel_id_content)
 
     @staticmethod
     def _parse_weight(data: dict[str, Any], default: float = 1.0) -> float:
