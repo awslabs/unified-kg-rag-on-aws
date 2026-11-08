@@ -57,6 +57,10 @@ measured most of the defaults below:
   So a latency difference between arms below about 2.5 s is not evidence,
   and a larger one is an estimate; only the PPR ranking's retrieval time
   ([Local PPR ranking](#local-ppr-ranking)) was paired one query at a time.
+  The runs of 2026-11-07 answered every comparison interleaved in one
+  `run-eval`; there the noise floor of a latency delta is about ±0.15 s,
+  and between separate invocations about 1 s
+  ([Noise floor and baselines](#noise-floor-and-baselines)).
 - **Cost.** Each run's library-metered tokens times the list prices. The
   meter of that version counted prompt-cache reads and writes as input
   tokens, so every cost below is an upper bound when the cache hit.
@@ -101,6 +105,11 @@ ships no price table, because one would go stale.
 | `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions, one repeat: `answer_contains` +8.0 points [+3.0, +14.0], EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1], recall@5 -0.6 n.s., +1.2 s and +$0.0060 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions. One repeat on one corpus, so opt-in ([RAPTOR summary tree](#raptor-summary-tree)) |
 | `aws.bedrock.ingestion_effort` | `null` (`default_effort`, `high`) | `low` on a 109-document slice: ingestion cost -19%, answers n.s. on 30 questions ([Ingestion effort](#ingestion-effort)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
+| `search.iterative_search.max_rounds` | 2 | 3 against 2: `answer_contains` +1.5 [-0.5, +3.75] n.s., +2.7 s and +$0.0024 a query; 44% of questions still stop at the cap ([Iterative settings](#iterative-settings)) |
+| `search.token_manager.max_context_tokens` | 30000 | 12000 against 30000: `mix` -40% cost a query, `answer_contains` -2.25 [-5.75, +0.75] n.s., citation precision -3.4 [-6.0, -1.1]; `local` -13% cost, n.s. ([Iterative settings](#iterative-settings)) |
+| `aws.bedrock.default_effort` | `high` | `medium` against `high`: about 2 s faster and -4% cost a query, `answer_contains` n.s., token F1 -3.6 and -4.4 (significant on their own, n.s. after a Holm correction) ([Iterative settings](#iterative-settings)) |
+| `providers.rerank.kind` | `bedrock` | Off against on: recall@5 -7.9 (`local`), -25.4 (`mix`), -9.7 (`ppr`), all significant; answers n.s. (`mix` `answer_contains` -2.75 [-6.5, +0.5]); saves about $0.002 and 0.5 s a query ([Reranking](#reranking)) |
+| `evaluation.judge_effort` | `low` | `high` against `low` on the same answers: spans identical in 84-86% (93-95% between two `low` runs), EM -1.0 to -1.75 n.s.; pairwise position consistency 0.82 to 0.86, but 10 of 100 overlap splits failed at their output limit ([Judge effort](#judge-effort)) |
 
 ## Answer style
 
@@ -676,6 +685,108 @@ failed requests that spent few tokens; Haiku 5.5 agreed within 0.2%. Those
 runs predate the `request_retries` and `failed_calls` counters, so the split
 between the two was not measured. Reconciling the counters with CloudWatch:
 [Operator Runbook: Alarms](../operations.md#alarms) (model usage metrics).
+
+## Noise floor and baselines
+
+A run on 2026-11-07 (package at commit `b0ba0231`) measured the noise floor
+and the baselines on the repaired index, the 200 MuSiQue questions and the
+default models, every comparison interleaved in one `run-eval`
+(`--run-order interleaved`), two repeats each, Holm-adjusted as `run-eval`
+reports. EM and token F1 scored the extracted span with SQuAD's official
+normalization, as above.
+
+**Noise floor.** An empty `--arm` against the base, which reads the base's
+query extractions: `local` `answer_contains` -1.25 points [-3.0, 0.0], EM
++0.5 and token F1 +0.9; `mix` -0.25, -0.25 and +0.5, all n.s.; latency
+within ±0.15 s. Two separate `run-eval` invocations of one configuration,
+each extracting its own query entities and keywords, differed by up to 1.5
+points of `answer_contains`, 3.25 of EM and 2.4 of token F1 (n.s.), and by
+0.6 to 1.0 s a query (significant: separate invocations measure what
+changed between them). So a difference below about 1.5 points of
+`answer_contains` or 3 points of EM or token F1 is within the noise on this
+index.
+
+**Baselines.** On the same questions:
+
+| Strategy | `answer_contains` | EM | Token F1 | recall@5 | Cost a query | p50 / p95 |
+|---|---|---|---|---|---|---|
+| Closed book (answer model alone) | 0.443 | 0.235 | 0.333 | — | $0.0068 | 4.9 / 10.4 s |
+| `naive` | 0.598 | 0.338 | 0.402 | 0.681 | $0.0143 | 3.9 / 6.6 s |
+| `ppr` | 0.745 | 0.445 | 0.531 | 0.722 | $0.0158 | 4.0 / 7.2 s |
+| `mix` | 0.760 | 0.460 | 0.551 | 0.700 | $0.0554 | 5.8 / 10.1 s |
+| `local` | 0.808 | 0.495 | 0.576 | 0.741 | $0.0370 | 6.1 / 10.3 s |
+| `iterative` | 0.878 | 0.518 | 0.600 | 0.847 | $0.0653 | 14.4 / 24.0 s |
+
+Against `naive`, `answer_contains` rose +21.0 points [+13.6, +29.1]
+(`local`), +16.25 [+9.4, +23.75] (`mix`), +14.75 [+8.5, +21.5] (`ppr`) and
++28.0 [+20.1, +36.25] (`iterative`), each significant after a Holm
+correction, and so did EM and token F1. The closed-book answers already
+contain the gold answer for 44% of the questions: the answer model knows
+much of this Wikipedia text, so the absolute scores overstate what
+retrieval adds, and the paired differences between strategies are the
+evidence.
+
+## Iterative settings
+
+The run of 2026-11-07, `iterative` over `mix` and the answer settings, each
+against the default:
+
+| Change | Answers | Cost and latency |
+|---|---|---|
+| `iterative_search.max_rounds: 3` instead of 2 (`iterative`) | `answer_contains` +1.5 [-0.5, +3.75], EM +3.0, token F1 +2.7: n.s. after a Holm correction | +$0.0024 a query (+4%), +2.7 s [+1.9, +3.5]; p95 33.3 to 38.1 s |
+| `token_manager.max_context_tokens: 12000` instead of 30000, `local` | `answer_contains` -0.25, EM -0.75, token F1 -1.4: n.s. | -$0.0046 a query (-13%); input 16.2k to 13.8k tokens |
+| the same, `mix` | `answer_contains` -2.25 [-5.75, +0.75], EM -0.75, token F1 -1.55: n.s.; citation precision -3.4 [-6.0, -1.1] | -$0.0222 a query (-40%); input 25.3k to 14.1k tokens |
+| `aws.bedrock.default_effort: medium` instead of `high`, `local` | `answer_contains` -0.5 [-3.75, +2.75] n.s.; token F1 -3.6 [-6.9, -0.25], n.s. after a Holm correction | -151 output tokens, -$0.0015 a query, -2.2 s |
+| the same, `mix` | `answer_contains` -1.0 n.s.; token F1 -4.4 [-8.2, -0.6], n.s. after a Holm correction | -155 output tokens, -$0.0017 a query, -1.8 s |
+
+At that commit an arm read the base's query extractions whatever its
+effort, so the effort rows ran as separate invocations (base, medium,
+medium, base; one repeat each, pooled), each extracting its own; their
+latency carries the 0.6-1.0 s between invocations noted above. (An arm now
+shares the base's extractions only when its overlay leaves the extraction
+settings alone, the default tier's effort included, so an effort arm
+extracts its own.) With 2 rounds, 52% of the questions stopped at
+`max_rounds` (192 of 400 `sufficient`); with 3, still 44%. So more rounds
+buy little because the controller rarely judges the context sufficient,
+not because the rounds run out. Every default stays. 12000 is a cost lever
+for `mix` with a possible small loss, and `medium` a latency lever with a
+likely small token-F1 cost.
+
+## Reranking
+
+The run of 2026-11-07, the rerank off (`providers.rerank.kind: none`)
+against on:
+
+| Strategy | Answers | Retrieval | Cost and latency |
+|---|---|---|---|
+| `local` | `answer_contains` -0.75 [-3.25, +1.5], EM -1.5, token F1 -0.8: n.s. | recall@5 -7.9 [-14.1, -1.8], MRR -10.8 | -$0.0020 a query, -0.53 s |
+| `mix` | `answer_contains` -2.75 [-6.5, +0.5], n.s.; EM and token F1 n.s. | recall@5 -25.4 [-32.2, -18.8], MRR -8.3 | -$0.0028 a query, -0.58 s |
+| `ppr` | `answer_contains` -1.5, token F1 -4.2, both n.s. after a Holm correction | recall@5 -9.7, MRR -5.6 | -$0.0023 a query (-15%), -0.28 s |
+
+Every retrieval loss is significant after a Holm correction and every
+answer estimate is negative, for about $0.002 and half a second a query.
+The rerank stays on.
+
+## Judge effort
+
+`evaluation.judge_effort` sets the effort of the span extraction and the
+pairwise judge. The run of 2026-11-07 re-scored the same saved answers
+(`run-eval --from-results ... --rescore`, no answer call):
+
+- **Span extraction.** `high` against `low` on 1,600 answers: the spans
+  were identical in 84-86% (two `low` passes: 93-95%), and EM fell by 1.0
+  to 1.75 points in each of four runs (n.s. each), token F1 by 1.1 to 1.8.
+  It cost $0.18 against $0.10.
+- **Pairwise judge** (differential, that run's `global` and `drift`
+  citation pairs): position consistency rose from 0.82 to 0.86 (`global`)
+  and 0.78 to 0.85 (`drift`), and the verdicts grew stronger in the same
+  direction (comprehensiveness 0.82 for both). But 10 of the 100 `global`
+  pairs failed, against 2 at `low`: the fast model's overlap split ran out
+  of output tokens while it reasoned. About 1.7x the judge cost.
+
+So `low` stays the default: a higher effort does not extract better spans,
+and the pairwise judge at `high` needs a larger output limit for the
+overlap split.
 
 ## Reproducing a measurement
 
