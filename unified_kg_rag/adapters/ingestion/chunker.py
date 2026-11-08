@@ -53,7 +53,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.prompts import TextChunkingPrompt
-from unified_kg_rag.domain.retrieval.store_names import index_suffix
+from unified_kg_rag.domain.retrieval.store_names import index_suffix, namespace_suffix
 from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
 from unified_kg_rag.shared.utils import generate_stable_id
@@ -775,9 +775,7 @@ def _document_suffix(doc: Document) -> str | None:
     ``index_suffix``, over the ``index`` they copy from its metadata); ``None`` for one the
     stores refuse (its indexing fails)."""
     try:
-        return index_suffix(doc.metadata.get(Constants.INDEX.value)) or (
-            Constants.DEFAULT_SUFFIX.value
-        )
+        return namespace_suffix(index_suffix(doc.metadata.get(Constants.INDEX.value)))
     except ConfigurationError:
         return None
 

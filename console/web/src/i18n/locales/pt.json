@@ -68,6 +68,8 @@
   "ask.error.index_not_found": "Este namespace ainda não tem índice: ingira primeiro um corpus nele",
   "ask.error.timeout": "A consulta excedeu o prazo",
   "ask.error.store_unreachable": "Um armazenamento está inacessível",
+  "ask.error.model_unreachable": "Um servidor de modelos está inacessível: inicie-o ou verifique sua base_url",
+  "ask.error.invalid_argument": "A solicitação foi recusada: um argumento precisa ser alterado",
   "ask.error.configuration": "A configuração não permite atender esta consulta",
   "ask.error.failure": "A consulta falhou",
   "ask.meta.strategy": "Estratégia",

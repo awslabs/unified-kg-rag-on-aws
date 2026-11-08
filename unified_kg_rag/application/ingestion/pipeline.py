@@ -20,6 +20,10 @@ from pydantic import BaseModel
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
+from unified_kg_rag.adapters.llm.reachability import (
+    is_unreachable_error,
+    model_unreachable_error,
+)
 from unified_kg_rag.adapters.llm.response_cache import LLMResponseCache
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.storage.embedding_settings import (
@@ -137,7 +141,10 @@ from unified_kg_rag.shared import (
     get_logger,
     observability,
 )
-from unified_kg_rag.shared.exceptions import StoreConnectionError
+from unified_kg_rag.shared.exceptions import (
+    ModelUnreachableError,
+    StoreConnectionError,
+)
 from unified_kg_rag.shared.metrics import MetricsSink, NullMetricsSink
 from unified_kg_rag.shared.store_lookups import (
     install_lookup_cache,
@@ -680,6 +687,8 @@ class DataIngestionPipeline:
                 settings, both checked before any model call.
             StoreConnectionError: A store could not be reached outside a
                 stage (the preflight before any model call, say).
+            ModelUnreachableError: The embedding model's server could not be
+                reached (its probe, before any extraction).
             NamespaceLeaseError: Another run writes the namespace.
             ConfirmationDeclinedError: A question the run asked before it
                 writes (``confirm``: a reset that drops another source
@@ -1035,9 +1044,10 @@ class DataIngestionPipeline:
             # indices were built for other settings, before any model call
             # (_check_index_creation): a usage error, not a crash.
             raise
-        except StoreConnectionError:
-            # A store could not be reached: raised as the facade exports it,
-            # for a caller to tell an outage from a failed run.
+        except (StoreConnectionError, ModelUnreachableError):
+            # A store or a model server could not be reached: raised as the
+            # facade exports it, for a caller to tell an outage from a
+            # failed run.
             raise
         except ConfirmationDeclinedError:
             # A question answered no (a reset not confirmed): nothing was
@@ -1943,6 +1953,8 @@ class DataIngestionPipeline:
             ConfigurationError: The dimensions differ (named with
                 ``models.embedding.dimension``), or the configured model
                 does not support the configured dimension.
+            ModelUnreachableError: The model server could not be reached
+                (named with its provider kind and ``base_url``).
         """
         try:
             incremental = (
@@ -1961,6 +1973,10 @@ class DataIngestionPipeline:
         except ConfigurationError:
             raise
         except Exception as e:  # noqa: BLE001 - the stages report the model
+            if is_unreachable_error(e):
+                # Not running (or a wrong base_url): every model call of the
+                # run would fail after its retries.
+                raise model_unreachable_error(e, self.config) from e
             # A model that cannot answer now fails the stage that embeds.
             logger.debug("Probing the embedding model's dimension failed: %s", e)
             return

@@ -83,7 +83,6 @@ from unified_kg_rag.domain.models import (
     Community,
     CommunityReport,
     Config,
-    Constants,
     DocStatus,
     DocStatusRecord,
     Document,
@@ -97,6 +96,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     settings_changed,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports import DocStatusPort
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import (
@@ -1886,8 +1886,7 @@ def filter_to_delta(
         delta,
         fingerprints,
         scope=scope,
-        suffix=config.processing.document_parsing.index_value
-        or Constants.DEFAULT_SUFFIX.value,
+        suffix=resolve_namespace(config, None),
         file_paths={
             document_doc_id(document): document.metadata.get(RELATIVE_PATH_KEY)
             or document.file_path
@@ -2670,8 +2669,7 @@ def run_incremental_indexer(
     suffix = (
         BaseIndexer.get_suffix(text_units[0])
         if text_units
-        else indexing_manager.config.processing.document_parsing.index_value
-        or Constants.DEFAULT_SUFFIX.value
+        else resolve_namespace(indexing_manager.config, None)
     )
     return IncrementalIndexer(
         doc_status,

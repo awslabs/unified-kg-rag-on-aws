@@ -178,6 +178,23 @@ def wrapped_strategy(strategy: SearchStrategy, config: Config) -> SearchStrategy
     return strategy if wraps is None else wraps(config)
 
 
+def citations_enabled(config: Config, strategy: SearchStrategy | str | None) -> bool:
+    """Whether the answers of ``strategy`` (the one a query ran: ``auto``'s
+    route) cite under ``config``: ``search.citations.strategies``' entry for
+    it, else, for a wrapper (``iterative``), its base's, else
+    ``search.citations.enabled``. A strategy that is unknown or not given
+    (a result saved without one) reads ``enabled``."""
+    settings = config.search.citations
+    try:
+        resolved = SearchStrategy(strategy) if strategy is not None else None
+    except ValueError:
+        resolved = None
+    if resolved is None or resolved is SearchStrategy.AUTO:
+        return settings.enabled
+    base = wrapped_strategy(resolved, config)
+    return settings.enabled_for(resolved, base if base is not resolved else None)
+
+
 def query_inputs(strategy: SearchStrategy, config: Config) -> frozenset[QueryInput]:
     """The query-side extractions ``strategy`` reads under ``config``: its
     own, or those of the strategy it wraps (``wrapped_strategy``)."""

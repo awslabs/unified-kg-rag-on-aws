@@ -54,6 +54,7 @@ from unified_kg_rag import __version__
 from unified_kg_rag.application.cli.display import console
 from unified_kg_rag.application.cli.launch import wants_json
 from unified_kg_rag.shared import observability, setup_logging
+from unified_kg_rag.shared.exceptions import ErrorClass
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
@@ -62,6 +63,22 @@ EXIT_FAILURE = 1
 EXIT_USAGE = 2
 EXIT_INTERRUPTED = 128 + signal.SIGINT  # 130, Ctrl-C
 EXIT_TERMINATED = 128 + signal.SIGTERM  # 143
+
+# The exit code of a query failure of each ErrorClass (run-rag, run-eval;
+# docs/reference/exit-codes-and-json.md): a request or a setting to change
+# (a filter key, an argument, a methodology or a suffix the namespace does
+# not hold, a setting) exits 2, the rest 1.
+EXIT_CODES: dict[ErrorClass, int] = {
+    ErrorClass.INVALID_FILTER: EXIT_USAGE,
+    ErrorClass.INVALID_ARGUMENT: EXIT_USAGE,
+    ErrorClass.NOT_INDEXED: EXIT_USAGE,
+    ErrorClass.INDEX_NOT_FOUND: EXIT_USAGE,
+    ErrorClass.CONFIGURATION: EXIT_USAGE,
+    ErrorClass.TIMEOUT: EXIT_FAILURE,
+    ErrorClass.STORE_UNREACHABLE: EXIT_FAILURE,
+    ErrorClass.MODEL_UNREACHABLE: EXIT_FAILURE,
+    ErrorClass.FAILURE: EXIT_FAILURE,
+}
 
 # Whether this process prints JSON, and whether it printed its document.
 _json = {"enabled": False, "printed": False}

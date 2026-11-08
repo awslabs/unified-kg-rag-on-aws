@@ -43,12 +43,12 @@ from unified_kg_rag.domain.ingestion.relationship_endpoints import (
 from unified_kg_rag.domain.ingestion.seed_graph import is_document_backed
 from unified_kg_rag.domain.models import (
     Claim,
-    Constants,
     Entity,
     Relationship,
     TextUnit,
     TextUnitExtraction,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import BaseIndexer
 from unified_kg_rag.shared import get_logger
 
@@ -134,8 +134,7 @@ class CrossRunMerge:
             suffix
             for suffix in sorted(
                 {
-                    m.config.processing.document_parsing.index_value
-                    or Constants.DEFAULT_SUFFIX.value,
+                    resolve_namespace(m.config, None),
                     *m._removed_record_keys,
                 }
                 - delta_suffixes

@@ -67,6 +67,8 @@
   "ask.error.index_not_found": "Dieser Namespace hat noch keinen Index: Nehmen Sie zuerst ein Korpus darin auf",
   "ask.error.timeout": "Die Abfrage hat ihr Zeitlimit überschritten",
   "ask.error.store_unreachable": "Ein Speicher war nicht erreichbar",
+  "ask.error.model_unreachable": "Ein Modellserver war nicht erreichbar: Starten Sie ihn oder prüfen Sie seine base_url",
+  "ask.error.invalid_argument": "Die Anfrage wurde abgelehnt: ein Argument ist zu ändern",
   "ask.error.configuration": "Mit dieser Konfiguration lässt sich die Abfrage nicht ausführen",
   "ask.error.failure": "Die Abfrage ist fehlgeschlagen",
   "ask.meta.strategy": "Strategie",

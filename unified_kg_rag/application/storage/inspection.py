@@ -37,11 +37,11 @@ from unified_kg_rag.domain.ingestion.methodologies import (
 )
 from unified_kg_rag.domain.models import (
     Config,
-    Constants,
     SearchStrategy,
     validate_safe_name,
 )
 from unified_kg_rag.domain.models.methodology import methodologies_holding
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import StoredItemKind
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.exceptions import (
@@ -131,11 +131,7 @@ class GraphExport(BaseModel):
 
 
 def _suffix(config: Config, suffix: str | None) -> str:
-    value = (
-        suffix
-        or config.processing.document_parsing.index_value
-        or Constants.DEFAULT_SUFFIX.value
-    )
+    value = resolve_namespace(config, suffix)
     try:
         return validate_safe_name(value, "suffix")
     except ValueError as e:

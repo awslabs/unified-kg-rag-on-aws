@@ -9,11 +9,11 @@ import argparse
 from unified_kg_rag.application.cli.conventions import add_removed_flag
 from unified_kg_rag.domain.models import (
     Config,
-    Constants,
     SearchStrategy,
     SearchType,
     validate_safe_name,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -35,19 +35,18 @@ def suffix_arg(value: str) -> str:
         raise argparse.ArgumentTypeError(str(e)) from e
 
 
-def query_suffix(args: argparse.Namespace, config: Config) -> str | None:
+def query_suffix(args: argparse.Namespace, config: Config) -> str:
     """The index suffix to query: ``--suffix``, else the config's
-    ``processing.document_parsing.index_value`` (the namespace ingestion
-    wrote with the same config), else ``None`` (the chain's ``default``)."""
+    (``resolve_namespace``)."""
     given: str | None = getattr(args, "suffix", None)
-    return given or config.processing.document_parsing.index_value
+    return resolve_namespace(config, given)
 
 
 def namespace_name(suffix: str | None, config: Config) -> str:
     """The index namespace a run writes or queries, as the CLIs print it:
     the suffix (``default`` when unset) and ``indexing.additional_suffix``,
     what every index name and graph label ends in."""
-    name = suffix or Constants.DEFAULT_SUFFIX.value
+    name = resolve_namespace(config, suffix)
     if additional := config.indexing.additional_suffix:
         name = f"{name}-{additional}"
     return name

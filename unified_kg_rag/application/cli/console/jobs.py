@@ -38,12 +38,12 @@ from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.domain.ingestion.methodologies import artifacts_to_build
 from unified_kg_rag.domain.models import (
     Config,
-    Constants,
     Methodology,
     SearchStrategy,
     validate_path_segment,
 )
 from unified_kg_rag.domain.models.methodology import METHODOLOGY_PROFILES
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.gates import parse_gate
 from unified_kg_rag.shared import ConfigurationError, get_logger
 
@@ -170,11 +170,7 @@ def _cli(script: str, entry: str) -> list[str]:
 
 
 def namespace_of(config: Config, index_value: str | None = None) -> str:
-    return (
-        index_value
-        or config.processing.document_parsing.index_value
-        or Constants.DEFAULT_SUFFIX.value
-    )
+    return resolve_namespace(config, index_value)
 
 
 def ingest_config(

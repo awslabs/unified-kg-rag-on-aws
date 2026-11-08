@@ -54,6 +54,7 @@ from unified_kg_rag.adapters.llm.retry import current_deadline
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    record_degradation,
 )
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
@@ -81,6 +82,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
 )
+from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import interleave, parse_llm_json, text_digest
@@ -119,10 +121,9 @@ class _Run:
     llm_calls: int = 0
     stop_reason: str | None = None
     # Why the run stopped early, when a model call failed or could not be
-    # read (the answer then reads what the rounds before it found).
+    # read (the answer then reads what the rounds before it found); also in
+    # the query's degradation ledger.
     degraded: str | None = None
-    # The non-fatal error of a failed call, for ``degraded_error``.
-    error: str | None = None
     insufficient: bool = False
     searched: list[str] = field(default_factory=list)
     bridge_keys: set[str] = field(default_factory=set)
@@ -267,8 +268,6 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         if run.insufficient:
             metadata[CONTEXT_SUFFICIENT_KEY] = False
             metadata[INSUFFICIENCY_REASON_KEY] = run.stop_reason
-        if run.error is not None:
-            metadata["degraded_error"] = run.error
         return SearchResult(
             query=query,
             results=results,
@@ -386,6 +385,9 @@ class IterativeSearchStrategy(BaseSearchStrategy):
                 "'sufficient' verdict; answering from the earlier rounds"
             )
             run.degraded = run.stop_reason = "controller_unparsed"
+            record_degradation(
+                DegradationStep.ITERATIVE_CONTROLLER, "controller_unparsed"
+            )
             return None
         verdict = _Verdict(
             sufficient=sufficient,
@@ -598,7 +600,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
             raise error
         logger.error("Iterative search: %s: %s", reason, error)
         run.degraded = run.stop_reason = reason
-        run.error = type(error).__name__
+        record_degradation(DegradationStep.ITERATIVE_CONTROLLER, reason, error)
 
     @staticmethod
     def _added(before: list[RetrievalResult], after: list[RetrievalResult]) -> int:

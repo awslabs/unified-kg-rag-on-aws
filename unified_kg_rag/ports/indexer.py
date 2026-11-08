@@ -23,6 +23,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.retrieval.store_names import (
     graph_label,
     index_suffix,
+    namespace_suffix,
     store_name,
 )
 from unified_kg_rag.shared import get_logger
@@ -181,10 +182,10 @@ class BaseIndexer(ABC):
     @classmethod
     def get_suffix(cls, item: Any) -> str:
         if not hasattr(item, "attributes") or not isinstance(item.attributes, dict):
-            return Constants.DEFAULT_SUFFIX.value
-
-        suffix = index_suffix(item.attributes.get(Constants.INDEX.value))
-        return suffix or Constants.DEFAULT_SUFFIX.value
+            return namespace_suffix(None)
+        return namespace_suffix(
+            index_suffix(item.attributes.get(Constants.INDEX.value))
+        )
 
     def _get_name(
         self, base: str, suffix: str | None, add_timestamp: bool = False

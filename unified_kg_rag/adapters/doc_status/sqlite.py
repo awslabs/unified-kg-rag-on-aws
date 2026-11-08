@@ -43,6 +43,7 @@ from unified_kg_rag.domain.models import (
     ExtractionSettings,
     StoredDocument,
 )
+from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import DocStatusRegistryError, get_logger
 
 logger = get_logger(__name__)
@@ -367,7 +368,7 @@ class SQLiteDocStatusStore:
                 ).fetchall()
         stored = {
             doc_id: StoredDocument(
-                content_hash, stored_scope, status, extraction, suffix or "default"
+                content_hash, stored_scope, status, extraction, namespace_suffix(suffix)
             )
             for doc_id, content_hash, status, stored_scope, extraction, suffix in rows
         }

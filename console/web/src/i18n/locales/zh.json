@@ -66,6 +66,8 @@
   "ask.error.index_not_found": "此命名空间还没有索引：请先向其中导入语料库",
   "ask.error.timeout": "查询超时",
   "ask.error.store_unreachable": "无法连接存储",
+  "ask.error.model_unreachable": "无法连接模型服务器：请启动它，或检查其 base_url",
+  "ask.error.invalid_argument": "请求被拒绝：需要修改参数",
   "ask.error.configuration": "当前配置无法处理此查询",
   "ask.error.failure": "查询失败",
   "ask.meta.strategy": "策略",

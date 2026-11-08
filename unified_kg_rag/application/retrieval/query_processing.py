@@ -23,6 +23,8 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.llm.chain_factory import usage_model_id
+from unified_kg_rag.adapters.llm.reachability import is_unreachable_error
+from unified_kg_rag.adapters.retrieval.base import record_degradation
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
 )
@@ -42,6 +44,7 @@ from unified_kg_rag.domain.prompts import (
     KeywordsExtractionPrompt,
     TranslationPrompt,
 )
+from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.domain.retrieval.query_entities import split_entity_list
 from unified_kg_rag.shared import LanguageModelError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
@@ -262,9 +265,14 @@ async def process_query(
     translated_query = results_map.get("translation")
     if not isinstance(translated_query, str):
         if isinstance(translated_query, Exception):
-            if chain.ignore_errors:
+            if chain.ignore_errors and not is_unreachable_error(translated_query):
                 logger.warning("Query translation failed: %s", translated_query)
                 degraded = type(translated_query).__name__
+                record_degradation(
+                    DegradationStep.TRANSLATION,
+                    "searched untranslated",
+                    translated_query,
+                )
             else:
                 raise translated_query
         translated_query = None
@@ -282,9 +290,14 @@ async def process_query(
     entity_data = results_map.get("entities", [])
     if not isinstance(entity_data, list):
         if isinstance(entity_data, Exception):
-            if chain.ignore_errors:
+            if chain.ignore_errors and not is_unreachable_error(entity_data):
                 logger.warning("Entity extraction failed: %s", entity_data)
                 degraded = degraded or type(entity_data).__name__
+                record_degradation(
+                    DegradationStep.ENTITY_EXTRACTION,
+                    "searched without query entities",
+                    entity_data,
+                )
             else:
                 raise entity_data
         entity_data = []
@@ -299,6 +312,11 @@ async def process_query(
             raise keyword_data
         if isinstance(keyword_data, AbsorbedKeywordFailure):
             degraded = degraded or keyword_data.error_type
+            record_degradation(
+                DegradationStep.KEYWORD_EXTRACTION,
+                "searched without keywords",
+                keyword_data.error_type,
+            )
         hl_keywords, ll_keywords = keyword_data
 
     return {
@@ -529,7 +547,8 @@ async def extract_dual_keywords(
         high, low = await shared_extraction(chain, key, extract)
         return list(high), list(low)
     except Exception as e:
-        if not chain.ignore_errors:
+        # A model server that cannot be reached fails every later call too.
+        if not chain.ignore_errors or is_unreachable_error(e):
             raise
         # The error text can quote the model's answer: DEBUG only.
         logger.warning("Dual-keyword extraction failed: %s", type(e).__name__)

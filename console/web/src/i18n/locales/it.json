@@ -68,6 +68,8 @@
   "ask.error.index_not_found": "Questo namespace non ha ancora un indice: acquisisci prima un corpus",
   "ask.error.timeout": "La query ha superato il tempo limite",
   "ask.error.store_unreachable": "Un archivio non è raggiungibile",
+  "ask.error.model_unreachable": "Un server di modelli non è raggiungibile: avvialo o controlla la sua base_url",
+  "ask.error.invalid_argument": "La richiesta è stata rifiutata: un argomento va cambiato",
   "ask.error.configuration": "La configurazione non consente di eseguire questa query",
   "ask.error.failure": "La query non è riuscita",
   "ask.meta.strategy": "Strategia",

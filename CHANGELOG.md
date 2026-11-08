@@ -632,6 +632,19 @@ From a `main` checkout (formats and keys no release had):
   `--pool-runs`.
 
 ### Added
+- A query reports every step it answered without in `metadata["degraded"]` (each `step`, `reason`, `error_type`;
+  `degraded_error` stays the first error type): a store read a strategy absorbed (simple and naive reported a clean
+  empty search), global's rating and map calls, DRIFT's and iterative's model calls, and the chain's
+  `processing.ignore_errors` fallbacks (auto's router, the follow-up rewrite, query processing, the context budget),
+  from one per-query ledger (`DegradationLedger`). A failed findings-lineage read of a strategy whose answers do not
+  cite (global and DRIFT by default) is `metadata.citations_unresolved` instead. `run-eval` records `degraded_steps`
+  per answer, `degraded_step_counts` and `degraded_queries`, which `--max-failure-rate` counts.
+- `ModelUnreachableError`: a model server that cannot be reached is named with its provider kind, `base_url` and how
+  to start it (`ollama serve`, the models to pull). `run-ingestion` raises it at its embedding probe, before any
+  extraction (it retried for minutes and ended with "produced 0 outputs"); a query raises it (the error answer under
+  `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback. `ErrorClass` and
+  `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the MCP server's
+  caller messages and the console's error kind, also of an error answer (`metadata.error_class`).
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
   `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in advance
   (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared strategies
@@ -1220,6 +1233,14 @@ From a `main` checkout (formats and keys no release had):
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).
 
 ### Changed
+- A query without a suffix (`RAGInput(suffix=None)`) reads the chain config's
+  `processing.document_parsing.index_value`, as ingestion writes and the CLIs query (`resolve_namespace`, the one
+  rule of every entry point); it read `default`, so the console's Ask page failed with `IndexNotFoundError` after a
+  successful ingest under an `index_value`. A query checks its namespace's text-units index before its first model
+  call (once per namespace), and refuses an empty or blank question (the query is stripped).
+- `run-eval` exits 2 for a filter key no index declares, as `run-rag` does, and `run-rag` exits by the class of a
+  failure `processing.ignore_errors` absorbed (2 for a `--suffix` nothing was ingested under; it exited 1).
+- Global search on a namespace without community reports declines with `abstention_reason: no_reports`.
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).

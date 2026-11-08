@@ -732,6 +732,7 @@ def _strategy_chain(config: Config) -> GraphRAGChain:
     # record, through the document retriever; none here: the config's).
     chain._cache_lock = threading.RLock()
     chain._held_artifacts = {}
+    chain._present_namespaces = set()
     chain._get_retriever = lambda role: both[role.value]  # type: ignore[method-assign]
     return chain
 

@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import functools
 import json
 import math
 import threading
@@ -21,6 +22,7 @@ from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer, RerankTrace
+from unified_kg_rag.adapters.retrieval.strategy_registry import citations_enabled
 from unified_kg_rag.adapters.retrieval.token_manager import (
     SectionType,
     TokenManager,
@@ -55,6 +57,10 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.models.config import language_name
+from unified_kg_rag.domain.retrieval.degradation import (
+    DegradationLedger,
+    DegradationStep,
+)
 from unified_kg_rag.domain.retrieval.index_prefixes import (
     configured_index_prefixes,
     held_artifacts_of,
@@ -101,21 +107,31 @@ _PAGE_CAP_WARNED = threading.Event()
 _QUERY_SCOPE: ContextVar[dict[str, Any] | None] = ContextVar(
     "kg_rag_query_scope", default=None
 )
+# The degraded steps of the query, or the search, in progress
+# (``degradation_scope``).
+_LEDGER: ContextVar[DegradationLedger | None] = ContextVar(
+    "kg_rag_degradation_ledger", default=None
+)
 
 
 @contextmanager
 def query_scope() -> Iterator[dict[str, Any]]:
-    """A store-lookup memo for the sub-searches of one query.
+    """The per-query scope: a store-lookup memo and a degradation ledger
+    (``degradation_scope``) for the sub-searches of one query.
 
     ``GraphRAGChain`` opens one per query; a retriever may keep what it
     learned there (``OpenSearchRetriever``'s attribute probes) and must not
     keep it past the query, so an ingestion or reset in the same process is
-    seen by the next one. The memo is shared by every task the query spawns.
+    seen by the next one. The memo is shared by every task the query spawns;
+    a scope opened within one keeps its memo.
     """
-    memo: dict[str, Any] = {}
+    memo = _QUERY_SCOPE.get()
+    if memo is None:
+        memo = {}
     token = _QUERY_SCOPE.set(memo)
     try:
-        yield memo
+        with degradation_scope():
+            yield memo
     finally:
         _QUERY_SCOPE.reset(token)
 
@@ -123,6 +139,60 @@ def query_scope() -> Iterator[dict[str, Any]]:
 def current_query_scope() -> dict[str, Any] | None:
     """The memo of the query in progress (``query_scope``), if any."""
     return _QUERY_SCOPE.get()
+
+
+@contextmanager
+def degradation_scope() -> Iterator[DegradationLedger]:
+    """A degradation ledger for what runs within: its entries, also passed
+    on to the ledger of the scope it opened in (the query's)."""
+    ledger = DegradationLedger(parent=_LEDGER.get())
+    token = _LEDGER.set(ledger)
+    try:
+        yield ledger
+    finally:
+        _LEDGER.reset(token)
+
+
+def current_ledger() -> DegradationLedger | None:
+    """The ledger of the query or search in progress, if any."""
+    return _LEDGER.get()
+
+
+def record_degradation(
+    step: str,
+    reason: str,
+    error: BaseException | str | None = None,
+    *,
+    unresolved: bool = False,
+) -> None:
+    """Record a failed step the query answers without in the current
+    ledger (``DegradationLedger.record``; ``unresolved``: a lineage read
+    the answer does not cite with, ``record_unresolved``). Nothing to record
+    into outside a query or a strategy search."""
+    ledger = _LEDGER.get()
+    if ledger is None:
+        return
+    if unresolved:
+        ledger.record_unresolved(step, reason, error)
+    else:
+        ledger.record(step, reason, error)
+
+
+def _reporting_degradation(asearch: Any) -> Any:
+    """``asearch`` run in its own ``degradation_scope``, its entries set on
+    the result's metadata (``DegradationLedger.metadata``)."""
+
+    @functools.wraps(asearch)
+    async def run(
+        self: Any, query: SearchQuery, config: RunnableConfig | None = None
+    ) -> SearchResult:
+        with degradation_scope() as ledger:
+            result: SearchResult = await asearch(self, query, config)
+        result.metadata.update(ledger.metadata())
+        return result
+
+    run.__reports_degradation__ = True  # type: ignore[attr-defined]
+    return run
 
 
 def _retrieval_attributes(results: list[RetrievalResult]) -> dict[str, Any]:
@@ -416,6 +486,13 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         default) when the backend cannot tell."""
         return None
 
+    async def arequire_namespace(self, suffix: str | None) -> None:
+        """Raise ``IndexNotFoundError`` when nothing was ingested under
+        ``suffix`` (its text-units index does not exist), checked before a
+        query's first model call. By default nothing: a backend that cannot
+        tell meets the missing index at search."""
+        return None
+
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """The build record ingestion wrote on ``suffix``'s index
         (``VectorIndexer.record_build``), read by ``run-eval`` into its run
@@ -500,6 +577,19 @@ class BaseSearchStrategy(ABC):
     # Section types that take the context budget other types leave unused
     # before the rest share it (``TokenManager.optimize_context``).
     spare_context_budget_first: ClassVar[tuple[SectionType, ...]] = ()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        # Every strategy's search reports what it answered without
+        # (``metadata["degraded"]``, ``degraded_error``) from one ledger,
+        # whichever of its steps (a store read, a model call) failed.
+        super().__init_subclass__(**kwargs)
+        own = cls.__dict__.get("asearch")
+        if (
+            own is not None
+            and not getattr(own, "__isabstractmethod__", False)
+            and not getattr(own, "__reports_degradation__", False)
+        ):
+            cls.asearch = _reporting_degradation(own)  # type: ignore[method-assign]
 
     def __init__(
         self,
@@ -599,6 +689,9 @@ class BaseSearchStrategy(ABC):
         query: SearchQuery,
         label: str,
         failures: list[Exception] | None = None,
+        *,
+        step: str = DegradationStep.RETRIEVAL,
+        unresolved: bool = False,
     ) -> list[RetrievalResult]:
         """Run one sub-retrieval, re-raising fatal errors and degrading the rest.
 
@@ -608,8 +701,11 @@ class BaseSearchStrategy(ABC):
         see `is_fatal_retrieval_error`) propagate so a broken deployment is not
         reported as "no results"; anything else (one request the store failed)
         is logged under ``label`` and degrades to an empty list so one failing
-        section does not sink the whole search. ``failures`` collects what was
-        absorbed, for a caller that must not keep a degraded result.
+        section does not sink the whole search. An absorbed failure is
+        recorded as ``step`` in the query's degradation ledger
+        (``record_degradation``; ``unresolved``: as a lineage read the answer
+        does not cite with); ``failures`` also collects it, for a caller that
+        must not keep a degraded result.
         """
         with observability.span(
             "kg_rag.retrieve",
@@ -631,6 +727,7 @@ class BaseSearchStrategy(ABC):
                 )
                 span.record_exception(e)
                 span.set_attributes({"kg_rag.degraded": True, "kg_rag.hits": 0})
+                record_degradation(step, label, e, unresolved=unresolved)
                 if failures is not None:
                     failures.append(e)
                 return []
@@ -647,6 +744,8 @@ class BaseSearchStrategy(ABC):
         *,
         key: str = "id",
         failures: list[Exception] | None = None,
+        step: str = DegradationStep.RETRIEVAL,
+        unresolved: bool = False,
     ) -> list[RetrievalResult]:
         """``query``, a fetch by id (no text, ``filters[key]`` listing the
         ids; ``key`` a field each hit holds one value of, ``id`` by default),
@@ -657,13 +756,14 @@ class BaseSearchStrategy(ABC):
         window came back as the window's worth in the store's order, not the
         best-ranked ones. The hits come back batch after batch, each id once
         (a repeated id would be asked, and returned, by two batches).
-        ``failures`` collects the errors of the batches that failed."""
+        ``failures`` collects the errors of the batches that failed; each is
+        recorded as ``step`` (``_safe_aretrieve``)."""
         ids = list(dict.fromkeys((query.filters or {}).get(key) or ()))
         prefixes = query.index_prefixes or []
         if isinstance(prefixes, str):
             prefixes = [prefixes]
         limits = [await retriever.aindex_limits(p, query.suffix) for p in prefixes]
-        step = max(1, min((lim.id_batch_size for lim in limits), default=len(ids)))
+        size = max(1, min((lim.id_batch_size for lim in limits), default=len(ids)))
         parts = await gather_bounded(
             self.config.search.max_concurrency,
             (
@@ -678,8 +778,10 @@ class BaseSearchStrategy(ABC):
                     ),
                     label,
                     failures,
+                    step=step,
+                    unresolved=unresolved,
                 )
-                for batch in (ids[i : i + step] for i in range(0, len(ids), step))
+                for batch in (ids[i : i + size] for i in range(0, len(ids), size))
             ),
         )
         return [hit for part in parts for hit in part]
@@ -709,7 +811,10 @@ class BaseSearchStrategy(ABC):
         was missing, and the report fell back to its membership: the
         caller's documents, which its findings may not cite. ``failures``
         collects the errors of the reads that failed (those reports keep
-        their membership).
+        their membership); each is recorded as ``findings_lineage``, apart
+        from the degraded steps (``citations_unresolved``) when the query's
+        answers do not cite (``search.citations``): only its reported
+        sources rest on the lineage then.
 
         A relationship is read from the relationships index, so only where
         the namespace holds it: in a namespace without it (GraphRAG alone,
@@ -739,6 +844,9 @@ class BaseSearchStrategy(ABC):
                 if dataset in wanted:
                     wanted[dataset].append(record_id)
         datasets = [d for d, ids in wanted.items() if ids]
+        unresolved = not citations_enabled(
+            self.config, query.metadata.get("search_strategy")
+        )
         fetched = await gather_or_cancel(
             self._fetch_by_ids(
                 retriever,
@@ -754,6 +862,8 @@ class BaseSearchStrategy(ABC):
                 ),
                 "Report findings records",
                 failures=failures,
+                step=DegradationStep.FINDINGS_LINEAGE,
+                unresolved=unresolved,
             )
             for dataset in datasets
         )
@@ -889,6 +999,9 @@ class BaseSearchStrategy(ABC):
                 )
                 span.record_exception(e)
                 span.set_attributes({"kg_rag.degraded": True})
+                record_degradation(
+                    DegradationStep.RETRIEVAL, f"Attribute filter check ({prefix})", e
+                )
                 return False
             outcomes = {i: i in found for i in chunk}
             known.update(outcomes)
@@ -1550,6 +1663,9 @@ class BaseSearchStrategy(ABC):
                     )
                     span.record_exception(e)
                     span.set_attributes({"kg_rag.degraded": True})
+                    record_degradation(
+                        DegradationStep.RETRIEVAL, "Neighbourhood edges", e
+                    )
                     return []
                 if found is not None:
                     span.set_attributes({"kg_rag.hits": len(found)})

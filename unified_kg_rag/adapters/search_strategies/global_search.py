@@ -23,6 +23,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
     evidence_lineage,
+    record_degradation,
 )
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import RerankTrace
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
@@ -48,6 +49,11 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.methodology import REPORT_READER_ARTIFACTS
 from unified_kg_rag.domain.prompts import CommunityRelevancePrompt, GlobalMapPrompt
+from unified_kg_rag.domain.retrieval.abstention import (
+    NO_CONTEXT_REASON_KEY,
+    REASON_NO_REPORTS,
+)
+from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.shared import (
     ConfigurationError,
     LanguageModelError,
@@ -185,11 +191,6 @@ def _unparsed_shape(raw: str) -> str:
     return f"{len(text)} characters, a {type(parsed).__name__} without 'points'"
 
 
-def _record(degraded: list[str] | None, error: Exception) -> None:
-    if degraded is not None:
-        degraded.append(type(error).__name__)
-
-
 @register_strategy(
     SearchStrategy.GLOBAL,
     required_roles=(RetrieverRole.DOCUMENT,),
@@ -271,26 +272,25 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             ),
             "global_level_capped": False,
         }
-        # Type names of the failures ignore_errors degraded.
-        degraded: list[str] = []
-
         if self.global_search_config.use_dynamic_selection:
-            reports = await self._select_dynamically(
-                query, stats, config=config, degraded=degraded
-            )
+            reports = await self._select_dynamically(query, stats, config=config)
         else:
             reports = await self._cut_reports(query, stats)
         stats["global_selected_report_count"] = len(reports)
         if not reports:
-            if not stats.get("global_rated_report_count"):
-                await self._require_report_hierarchy(query)
+            if not stats.get(
+                "global_rated_report_count"
+            ) and not await self._require_report_hierarchy(query):
+                # Nothing to select from: a corpus too small for communities,
+                # or one ingested without reports.
+                stats[NO_CONTEXT_REASON_KEY] = REASON_NO_REPORTS
             logger.warning("No results found for query: %s", text_digest(query.query))
 
         results = reports
         no_relevant_points = False
         if reports and self.global_search_config.enable_map_reduce:
             results = await self._apply_map_reduce(
-                reports, query, config=config, degraded=degraded, stats=stats
+                reports, query, config=config, stats=stats
             )
             # Only an all-below-threshold map phase empties a non-empty input.
             no_relevant_points = not results
@@ -299,11 +299,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             # The reports as they are (no map, or the map left them unrated):
             # each cites what its findings cite (the key points' reports
             # carry it from the map-reduce already).
-            failures: list[Exception] = []
-            results = await self._cite_report_findings(
-                query, results, failures=failures
-            )
-            degraded.extend(type(e).__name__ for e in failures)
+            results = await self._cite_report_findings(query, results)
 
         if results and self.global_search_config.text_unit_slots:
             results = results + await self._text_units(results, query, rerank)
@@ -325,8 +321,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 "map_reduce_applied": self._was_map_reduce_applied(results),
                 "map_reduce_no_relevant_points": no_relevant_points,
                 "rerank": rerank.summary(),
-                # The chain sets error.type on the strategy span from it.
-                **({"degraded_error": degraded[0]} if degraded else {}),
             },
         )
 
@@ -561,7 +555,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         stats: dict[str, Any],
         *,
         config: RunnableConfig | None = None,
-        degraded: list[str] | None = None,
     ) -> list[RetrievalResult]:
         """MS GraphRAG dynamic community selection, root down.
 
@@ -610,7 +603,11 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                     score = threshold  # MS GraphRAG keeps a report it could not rate
                     if isinstance(outcome, Exception):
                         logger.warning("Community rating failed: %s", outcome)
-                        _record(degraded, outcome)
+                        record_degradation(
+                            DegradationStep.COMMUNITY_RATING,
+                            "community rating failed",
+                            outcome,
+                        )
                         unrated += 1
                     elif outcome is None:
                         logger.warning(
@@ -618,9 +615,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                             "unrated",
                             report.source,
                         )
-                        _record(
-                            degraded,
-                            LanguageModelError("community rating not a number"),
+                        record_degradation(
+                            DegradationStep.COMMUNITY_RATING,
+                            "community rating not a number",
+                            LanguageModelError.__name__,
                         )
                         unrated += 1
                     elif not isinstance(outcome, BaseException):
@@ -690,8 +688,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     def _community_id(report: RetrievalResult) -> str:
         return str((report.metadata or {}).get("community_id") or report.source)
 
-    async def _require_report_hierarchy(self, query: SearchQuery) -> None:
-        """Raise when the stored reports predate the hierarchy fields.
+    async def _require_report_hierarchy(self, query: SearchQuery) -> bool:
+        """Whether the namespace holds a community report (``True`` when it
+        cannot tell); raise when the stored reports predate the hierarchy
+        fields.
 
         Such reports match no cut, so global search would answer from nothing
         on every query rather than on this one.
@@ -701,7 +701,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         """
         retriever = self.document_retriever
         if retriever is None:
-            return
+            return True
         probe = SearchQuery(
             query="",
             search_type=SearchType.LEXICAL,
@@ -711,13 +711,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             ],
             suffix=query.suffix,
         )
-        found = await self._safe_aretrieve(retriever, probe, "Community report probe")
+        failures: list[Exception] = []
+        found = await self._safe_aretrieve(
+            retriever, probe, "Community report probe", failures
+        )
         if found and (found[0].metadata or {}).get("depth") is None:
             raise ConfigurationError(
                 "The community reports were indexed without their place in the "
                 "community hierarchy, which global search selects them by. "
                 "Re-run ingestion with indexing.reset: true to re-index them."
             )
+        return bool(found or failures)
 
     async def _text_units(
         self,
@@ -774,7 +778,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         query: SearchQuery,
         *,
         config: RunnableConfig | None = None,
-        degraded: list[str] | None = None,
         stats: dict[str, Any] | None = None,
     ) -> list[RetrievalResult]:
         """MS GraphRAG global-search map-reduce over every selected report.
@@ -804,8 +807,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         reports were never judged, so it returns just those unrated reports
         instead.
 
-        The type name of each failure ``ignore_errors`` degraded is appended
-        to ``degraded``; the map counts go to ``stats``.
+        Each failure ``ignore_errors`` absorbed is recorded in the query's
+        degradation ledger; the map counts go to ``stats``.
         """
         reports = [
             r for r in results if r.retriever_type == SectionType.COMMUNITY.value
@@ -834,7 +837,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 report_tokens=report_tokens,
             ):
                 map_points, unrated = await self._run_map_phase(
-                    batches, query, config=config, degraded=degraded
+                    batches, query, config=config
                 )
         except Exception as e:
             # A fatal error (no model access) fails the query even under
@@ -842,7 +845,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             if not self.ignore_errors or is_fatal_retrieval_error(e):
                 raise
             logger.error("Map phase failed: %s", e)
-            _record(degraded, e)
+            record_degradation(DegradationStep.GLOBAL_MAP, "map phase failed", e)
             map_points, unrated = [], list(reports)
 
         ranked_points = self._filter_and_rank_points(map_points)
@@ -871,10 +874,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         evidence = self._evidence(packed_points, batches)
         # Read before the evidence cap: a point names its reports' sources
         # even when the cap leaves the reports out of the context.
-        failures: list[Exception] = []
-        lineages = await self._findings_lineages(query, evidence, failures=failures)
-        for failure in failures:
-            _record(degraded, failure)
+        lineages = await self._findings_lineages(query, evidence)
         if self.global_search_config.evidence_tokens is not None:
             evidence = await asyncio.to_thread(self._cap_evidence, evidence)
             stats["global_evidence_reports"] = len(evidence)
@@ -968,7 +968,6 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         query: SearchQuery,
         *,
         config: RunnableConfig | None = None,
-        degraded: list[str] | None = None,
     ) -> tuple[list[_MapPoint], list[RetrievalResult]]:
         """Fan one map call per batch of reports and parse the scored points.
 
@@ -978,8 +977,8 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         Returns the scored points (each tagged with its batch) and the reports
         of every batch that was NOT rated (the call failed, or its output was
         not parseable map JSON), so the caller can tell "rated irrelevant"
-        apart from "never rated". An unrated batch is recorded in
-        ``degraded``; when every map call failed (other than on a prompt
+        apart from "never rated". An unrated batch is recorded in the
+        degradation ledger; when every map call failed (other than on a prompt
         longer than the model's context) and ``ignore_errors`` is off, the
         first error is raised (as DRIFT does when a step fails entirely), not
         answered from the unjudged reports.
@@ -1062,9 +1061,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
                 len(unrated),
                 report_count,
             )
-            _record(
-                degraded,
-                errors[0] if errors else LanguageModelError("map output not JSON"),
+            record_degradation(
+                DegradationStep.GLOBAL_MAP,
+                f"{len(unrated)}/{report_count} reports unrated",
+                errors[0] if errors else LanguageModelError.__name__,
             )
         return points, unrated
 

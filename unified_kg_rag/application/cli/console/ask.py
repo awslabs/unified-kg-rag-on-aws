@@ -54,12 +54,9 @@ from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
 from unified_kg_rag.evaluation.comparison import answer_cost_usd
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
-    ConfigurationError,
-    IndexNotFoundError,
-    InvalidFilterError,
     MethodologyNotIndexedError,
-    QueryTimeoutError,
-    StoreConnectionError,
+    classify,
+    error_class_of,
 )
 
 logger = get_logger(__name__)
@@ -534,6 +531,11 @@ class AskService:
             "blocked": bool(metadata.get("blocked")),
             "guardrail": metadata.get("guardrail"),
             "error": error,
+            # The class of a failure the chain absorbed (ignore_errors), as
+            # an error event names a raised one (_error_kind).
+            "error_kind": (
+                error_class_of(metadata.get("error_class")).value if error else None
+            ),
             "error_message": (
                 str(detail.get("error")) if error and detail.get("error") else None
             ),
@@ -554,16 +556,5 @@ class AskService:
 
 
 def _error_kind(error: Exception) -> str:
-    if isinstance(error, InvalidFilterError):
-        return "invalid_filter"
-    if isinstance(error, MethodologyNotIndexedError):
-        return "not_indexed"
-    if isinstance(error, IndexNotFoundError):
-        return "index_not_found"
-    if isinstance(error, QueryTimeoutError):
-        return "timeout"
-    if isinstance(error, StoreConnectionError):
-        return "store_unreachable"
-    if isinstance(error, ConfigurationError):
-        return "configuration"
-    return "failure"
+    """The page's error kind of ``error``: its ``ErrorClass`` value."""
+    return classify(error).value

@@ -50,6 +50,10 @@ class FakeRetriever:
         """Cannot tell (the ``BaseGraphRAGRetriever`` default)."""
         return None
 
+    async def arequire_namespace(self, suffix: str | None) -> None:
+        """Cannot tell (the ``BaseGraphRAGRetriever`` default)."""
+        return None
+
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """No index metadata (the ``BaseGraphRAGRetriever`` default)."""
         return None

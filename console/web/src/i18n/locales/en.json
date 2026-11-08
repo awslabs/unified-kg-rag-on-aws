@@ -67,6 +67,8 @@
   "ask.error.index_not_found": "This namespace has no index yet: ingest a corpus into it first",
   "ask.error.timeout": "The query ran past its deadline",
   "ask.error.store_unreachable": "A store could not be reached",
+  "ask.error.model_unreachable": "A model server could not be reached: start it, or check its base_url",
+  "ask.error.invalid_argument": "The request was refused: an argument to change",
   "ask.error.configuration": "The configuration cannot serve this query",
   "ask.error.failure": "The query failed",
   "ask.meta.strategy": "Strategy",

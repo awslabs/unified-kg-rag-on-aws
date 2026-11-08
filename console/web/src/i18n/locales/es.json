@@ -68,6 +68,8 @@
   "ask.error.index_not_found": "Este espacio de nombres aún no tiene índice: ingiere primero un corpus en él",
   "ask.error.timeout": "La consulta superó su plazo",
   "ask.error.store_unreachable": "No se pudo acceder a un almacén",
+  "ask.error.model_unreachable": "No se pudo acceder a un servidor de modelos: inícielo o revise su base_url",
+  "ask.error.invalid_argument": "Se rechazó la solicitud: hay que cambiar un argumento",
   "ask.error.configuration": "La configuración no permite atender esta consulta",
   "ask.error.failure": "La consulta falló",
   "ask.meta.strategy": "Estrategia",

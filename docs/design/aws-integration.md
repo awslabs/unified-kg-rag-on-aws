@@ -34,10 +34,34 @@ fatal error.
 | HTTP 400 (a filter value of another type, a vector of another dimension) | `StoreRequestRejectedError` with the server's reason | fatal |
 | Bedrock error that is not transient (bad model id, no access, no credentials) | botocore error | fatal |
 | Query embedding failed, whatever the cause | `EmbeddingModelError` | fatal (every vector section needs it) |
-| Local model server 4xx other than 408/429, or unreachable after retries | `openai` / `httpx` error | fatal |
+| Local model server 4xx other than 408/429 | `openai` / `httpx` error | fatal |
+| A model server that cannot be reached (refused, no route, an unresolved name, no connection in time), after its retries | `ModelUnreachableError` naming the provider kind, `base_url` and how to start it (`adapters/llm/reachability.py`; ingestion's embedding probe, the query) | fatal, also under `processing.ignore_errors` (never absorbed by the router, rewrite or query processing fallbacks; the error answer) |
 | A prompt longer than the model's context | `ContextOverflowError` (or a plain 400 from vLLM / llama.cpp) | not fatal: that global-search map batch is left unrated, unless every batch fails |
 | One failed request (an HTTP 500 for one search) | any other exception | degrades that section |
 | The whole query past `search.query_timeout_seconds`, or a stream's first chunk past `search.model_timeout_seconds` | `QueryTimeoutError`, raised by `GraphRAGChain` once its tasks (and, through `gather_or_cancel`, every section's) are cancelled | fatal (the error answer under `processing.ignore_errors`) |
+
+A failure that degrades a section is recorded in the query's
+`DegradationLedger` (`domain/retrieval/degradation.py`; the per-query scope,
+`adapters/retrieval/base.py` `query_scope`): `_safe_aretrieve` and
+`_fetch_by_ids` record each absorbed read (`step: retrieval`, or
+`findings_lineage`), the strategies their failed model calls (global's
+rating and map, DRIFT's expansion, primer and actions, iterative's
+controller) and the chain its `ignore_errors` fallbacks (`routing`,
+`follow_up_rewrite`, `query_processing` and its translation, entity and
+keyword calls, `context_optimization`). Each search reports its own entries
+(`SearchResult.metadata["degraded"]`, set by `BaseSearchStrategy` for every
+strategy), the answer every entry of the query (`RAGOutput.metadata["degraded"]`,
+each `step`, `reason`, `error_type`), and `degraded_error` stays the error
+type of the first. A findings-lineage read of a strategy whose answers do not
+cite (`search.citations`; global and DRIFT by default) only makes its reported
+sources less precise: it is recorded apart (`metadata.citations_unresolved`).
+`run-eval` counts the answers with any entry (`degraded_queries`).
+
+A query is checked before its first model call: its namespace is resolved
+once (`domain/retrieval/store_names.py` `resolve_namespace`: the suffix, else
+the config's `index_value`, else `default`, the rule of every entry point)
+and must hold a text-units index (`BaseGraphRAGRetriever.arequire_namespace`,
+once per namespace and chain), else `IndexNotFoundError`.
 
 Neptune specifics: a lost connection is dropped so the next query or retry
 opens a new one; a query traversal runs on retriever-owned threads, bounded by

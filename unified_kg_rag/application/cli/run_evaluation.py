@@ -41,6 +41,7 @@ from unified_kg_rag.application.cli.config_args import (
     load_cli_config,
 )
 from unified_kg_rag.application.cli.conventions import (
+    EXIT_CODES,
     EXIT_FAILURE,
     EXIT_INTERRUPTED,
     EXIT_USAGE,
@@ -98,11 +99,11 @@ from unified_kg_rag.shared import (
     ConfigurationError,
     DataProcessingError,
     EvaluationException,
-    IndexNotFoundError,
     MethodologyNotIndexedError,
     get_logger,
     observability,
 )
+from unified_kg_rag.shared.exceptions import ErrorClass, classify
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
@@ -427,9 +428,9 @@ def failure_budget_breaches(
             f"rerank: {failed_reranks}/{attempted} queries' reranking failed "
             "(the fused order was kept)"
         )
-    degraded = sum(summary.degraded_error_counts.values())
+    degraded = summary.degraded_queries or sum(summary.degraded_error_counts.values())
     if degraded and _over(degraded, summary.total_queries, max_failure_rate):
-        kinds = ", ".join(summary.degraded_error_counts)
+        kinds = ", ".join(summary.degraded_step_counts or summary.degraded_error_counts)
         breaches.append(
             f"{degraded}/{summary.total_queries} answers degraded by a retrieval "
             f"step failure ({kinds})"
@@ -2543,6 +2544,8 @@ _SUMMARY_FIELDS = {
     "answer_span_statistics",
     "rerank_status_counts",
     "degraded_error_counts",
+    "degraded_step_counts",
+    "degraded_queries",
     "guardrail_blocked_counts",
     "structured_statistics",
     "iterative_statistics",
@@ -2649,20 +2652,22 @@ def main() -> None:
         logger.error("Invalid evaluation dataset: %s", e)
         sys.exit(EXIT_USAGE)
 
-    except (ConfigurationError, IndexNotFoundError) as e:
-        # A setting or a namespace no query of the run can be answered
-        # with (the warm-up raises it): a usage error, before the dataset.
-        console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
-        logger.error("Evaluation configuration error: %s", e)
-        sys.exit(EXIT_USAGE)
-
-    except AWSServiceError as e:
-        # e.g. an s3:// dataset that cannot be downloaded.
-        console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
-        logger.error("Evaluation failed: %s", e)
-        sys.exit(EXIT_FAILURE)
-
     except Exception as e:
+        error_class = classify(e)
+        if EXIT_CODES[error_class] == EXIT_USAGE:
+            # A setting, a filter or a namespace no query of the run can be
+            # answered with (the warm-up raises it): a usage error, before
+            # the dataset.
+            console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
+            logger.error("Evaluation configuration error: %s", e)
+            sys.exit(EXIT_USAGE)
+        if error_class is not ErrorClass.FAILURE or isinstance(e, AWSServiceError):
+            # An expected outcome with its own message: a store or model
+            # server down, the deadline, an s3:// dataset that cannot be
+            # downloaded.
+            console.print(f"\n[red]Error: {markup_safe(e)}[/red]")
+            logger.error("Evaluation failed: %s", e)
+            sys.exit(EXIT_FAILURE)
         console.print(f"\n[red]An unexpected error occurred: {markup_safe(e)}[/red]")
         logger.exception("Unexpected error during evaluation")
         sys.exit(EXIT_FAILURE)

@@ -232,7 +232,9 @@ When retrieval returns nothing, the chain answers "I could not find relevant
 information..." without calling the model, in the question's language (one
 fixed sentence per supported language, told by the question's script and
 function words; the index language's, or English, when they do not tell),
-and sets `metadata.abstained` and `metadata.abstention_reason: no_context`.
+and sets `metadata.abstained` and `metadata.abstention_reason: no_context`
+(`no_reports` for `global` on a namespace that holds no community report: a
+corpus too small for communities, or one ingested without them).
 Tell a decline by `metadata.abstained`, not by the text. A model that declines in its own
 words is otherwise an ordinary answer. `search.abstention` (opt-in, off by
 default) makes declines explicit:

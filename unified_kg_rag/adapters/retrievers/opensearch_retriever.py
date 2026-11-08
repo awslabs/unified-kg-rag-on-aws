@@ -46,7 +46,6 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
 )
 from unified_kg_rag.domain.models import (
     Config,
-    Constants,
     ModelPurpose,
     RetrievalResult,
     SearchQuery,
@@ -54,6 +53,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
+from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -1473,8 +1473,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 raise
             return None  # cannot tell
 
+    async def arequire_namespace(self, suffix: str | None) -> None:
+        """Raise ``IndexNotFoundError`` when ``suffix``'s text-units index
+        does not exist (``_require_ingested_suffix``); nothing when the
+        store cannot tell."""
+        await self._require_ingested_suffix(suffix)
+
     async def _require_ingested_suffix(
-        self, suffix: str | None, cause: Exception
+        self, suffix: str | None, cause: Exception | None = None
     ) -> None:
         """Raise when nothing was ingested under ``suffix``.
 
@@ -1491,7 +1497,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
             if is_fatal_retrieval_error(e):
                 raise
             return  # Cannot tell: keep skipping just the missing index.
-        shown = suffix or Constants.DEFAULT_SUFFIX.value
+        shown = namespace_suffix(suffix)
         ingested = await self._ingested_suffixes()
         held = (
             f" Suffixes ingested on this store: {', '.join(ingested)}."

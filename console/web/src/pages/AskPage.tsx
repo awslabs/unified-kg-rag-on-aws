@@ -367,7 +367,7 @@ function TurnView({
         ) : null}
         {result?.error ? (
           <div style={{ marginTop: 12 }}>
-            <Notice tone="bad" title={t("ask.degraded")}>
+            <Notice tone="bad" title={result.error_kind ? t(`ask.error.${result.error_kind}`) : t("ask.degraded")}>
               {result.error_message}
             </Notice>
           </div>

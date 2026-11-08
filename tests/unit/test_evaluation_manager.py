@@ -1437,6 +1437,7 @@ class TestComparability:
 
         chain = GraphRAGChain.__new__(GraphRAGChain)
         object.__setattr__(chain, "_get_retriever", lambda role: _Retriever())
+        object.__setattr__(chain, "config", config)
         config.evaluation.enabled_evaluators = []
         manager = EvaluationManager(config, rag_chain=chain)
         queries = [

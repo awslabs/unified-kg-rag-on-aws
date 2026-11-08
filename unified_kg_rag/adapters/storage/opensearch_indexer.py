@@ -59,6 +59,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.config import DEFAULT_INDEX_SETTINGS
 from unified_kg_rag.domain.models.provider_config import BEDROCK
 from unified_kg_rag.domain.retrieval.index_prefixes import index_artifacts
+from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.ports.indexer import (
     STORED_ITEM_KINDS,
     AnnotatedKind,
@@ -1715,7 +1716,7 @@ class OpenSearchIndexer(VectorIndexer):
         return self.delete_by_id(
             keys,
             self.opensearch_config.extraction_records_index_prefix,
-            suffix or Constants.DEFAULT_SUFFIX.value,
+            namespace_suffix(suffix),
         )
 
     def retain_extraction_records(
@@ -1733,9 +1734,7 @@ class OpenSearchIndexer(VectorIndexer):
         stats = IndexingStats()
         if not self._live_index(alias_name):
             return stats
-        index_name = self._new_index_name(
-            alias_name, prefix, suffix or Constants.DEFAULT_SUFFIX.value
-        )
+        index_name = self._new_index_name(alias_name, prefix, namespace_suffix(suffix))
         wanted = sorted(set(keys))
         try:
             self.opensearch_client.create_index(
@@ -1868,7 +1867,7 @@ class OpenSearchIndexer(VectorIndexer):
         index_name = self._live_index(alias_name)
         if not index_name:
             index_name = self._new_index_name(
-                alias_name, prefix, suffix or Constants.DEFAULT_SUFFIX.value
+                alias_name, prefix, namespace_suffix(suffix)
             )
             self.opensearch_client.create_index(
                 index_name, self._get_extraction_records_mapping()
@@ -3024,7 +3023,7 @@ class OpenSearchIndexer(VectorIndexer):
         then swap the alias onto it and delete the old one (see the port).
         Any failed write keeps the old tree and drops the new index."""
         spec = self._spec("summary nodes")
-        suffix_name = suffix or Constants.DEFAULT_SUFFIX.value
+        suffix_name = namespace_suffix(suffix)
         alias_name = self._get_name(spec.alias_prefix, suffix_name)
         stats = IndexingStats()
         index_name = ""

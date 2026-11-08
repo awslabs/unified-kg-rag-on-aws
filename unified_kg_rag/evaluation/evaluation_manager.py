@@ -44,7 +44,6 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 from unified_kg_rag.domain.ingestion.cache_keys import answer_settings
 from unified_kg_rag.domain.models import (
     Config,
-    Constants,
     EvaluationGroundTruth,
     EvaluationQuery,
     EvaluationReport,
@@ -62,6 +61,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.guardrail import GuardAction
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -858,6 +858,7 @@ class EvaluationManager:
                         **self._decline_details(rag_metadata),
                         rerank_status=(rag_metadata.get("rerank") or {}).get("status"),
                         degraded_error=self._degraded_error(rag_metadata),
+                        degraded_steps=self._degraded_steps(rag_metadata),
                         guardrail_blocked=self._guardrail_block(rag_metadata),
                         category=query.category,
                         usage=_answer_usage(rag_metadata.get("usage"), record),
@@ -948,6 +949,18 @@ class EvaluationManager:
             return None
         degraded = rag_metadata.get("degraded_error")
         return str(degraded) if degraded else None
+
+    @staticmethod
+    def _degraded_steps(rag_metadata: Any) -> list[str]:
+        """The steps of the chain's degradation ledger (``degraded``)."""
+        entries = (
+            rag_metadata.get("degraded") if isinstance(rag_metadata, dict) else None
+        )
+        if not isinstance(entries, list):
+            return []
+        return [
+            str(e["step"]) for e in entries if isinstance(e, dict) and e.get("step")
+        ]
 
     @staticmethod
     def _guardrail_block(rag_metadata: Any) -> Literal["input", "output"] | None:
@@ -1342,6 +1355,16 @@ class EvaluationManager:
                     ).items()
                 )
             ),
+            degraded_step_counts=dict(
+                sorted(
+                    Counter(
+                        step for r in results for step in set(r.degraded_steps)
+                    ).items()
+                )
+            ),
+            degraded_queries=sum(
+                1 for r in results if r.degraded_error or r.degraded_steps
+            ),
             guardrail_blocked_counts=dict(
                 sorted(
                     Counter(
@@ -1622,10 +1645,7 @@ class EvaluationManager:
         if not isinstance(self.rag_chain, GraphRAGChain):
             return {}
         suffixes = sorted(
-            {
-                q.metadata.get("suffix") or Constants.DEFAULT_SUFFIX.value
-                for q in queries
-            }
+            {resolve_namespace(self.config, q.metadata.get("suffix")) for q in queries}
         )
         builds: dict[str, dict[str, Any] | None] = {}
         for suffix in suffixes:

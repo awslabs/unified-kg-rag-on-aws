@@ -335,6 +335,8 @@ async def test_callers_callbacks_reach_the_query_llms_and_the_strategy(
     handler = BaseCallbackHandler()
     factory = _FakeFactory(route="mix", translation="translated")
     chain = GraphRAGChain(config=config)
+    # No store here: the namespace counts as found (_arequire_namespace).
+    chain._present_namespaces.add("default")
     chain._get_chain_for_prompt = factory.get_chain  # type: ignore[assignment]
     strategy_configs: list[Any] = []
 

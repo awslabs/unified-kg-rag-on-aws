@@ -147,9 +147,14 @@ INFO logs carry a digest of the query (`text_digest`), never its text. A
 caller-correctable error (an invalid argument or filter, a strategy the
 namespace does not hold, the deadline) is returned as a tool error with its
 message, also under `processing.ignore_errors`, whose error answer names
-the error's type (`metadata.error_type`); any other failure returns a
-generic message and is logged with its traceback on the server, so a store
-endpoint or a stack trace never reaches the caller.
+the error's type and class (`metadata.error_type`, `metadata.error_class`);
+any other failure returns a generic message and is logged with its
+traceback on the server, so a store or model endpoint or a stack trace
+never reaches the caller. Every surface reads one classification of a
+failure (`shared/exceptions.py` `classify` → `ErrorClass`) and maps the
+class itself: the CLIs to an exit code (`cli/conventions.py` `EXIT_CODES`),
+the MCP server to the caller-correctable classes above, the console to the
+error kind its Ask page names.
 
 **Untrusted text.** Chunk text, descriptions and answers are corpus or model
 text, and the server instructions and every tool description say to treat

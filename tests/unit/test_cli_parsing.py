@@ -246,7 +246,7 @@ async def test_rag_runner_leaves_the_target_language_to_the_chain(
     [
         ([], "corpus-a", "corpus-a"),
         (["--suffix", "other"], "corpus-a", "other"),
-        ([], None, None),
+        ([], None, "default"),
     ],
     ids=["config-index-value", "flag-wins", "neither"],
 )
@@ -586,7 +586,7 @@ async def test_rag_a_strategy_the_namespace_cannot_serve_is_a_usage_error(
     assert exit_info.value.code == 2
     asked.assert_not_called()
     runner.rag_chain.acheck_methodology.assert_awaited_once_with(
-        run_rag_chain.SearchStrategy.GLOBAL, None
+        run_rag_chain.SearchStrategy.GLOBAL, "default"
     )
 
 

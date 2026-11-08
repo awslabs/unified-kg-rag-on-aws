@@ -25,7 +25,6 @@ from unified_kg_rag.adapters.retrieval.base import BaseGraphRAGRetriever
 from unified_kg_rag.application.bootstrap import resolve_extraction_schema
 from unified_kg_rag.application.retrieval import methodology_check
 from unified_kg_rag.domain.models import (
-    Constants,
     GraphEdge,
     IndexArtifact,
     Methodology,
@@ -37,6 +36,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.domain.models.schema import ExtractionSchema
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
 from unified_kg_rag.shared.utils import safe_float_parse
@@ -56,11 +56,7 @@ GRAPH_ARTIFACTS = frozenset({IndexArtifact.ENTITIES, IndexArtifact.GRAPH})
 
 def namespace_name(chain: GraphRAGChain, suffix: str | None) -> str:
     """The namespace ``suffix`` names, as messages name it."""
-    return (
-        suffix
-        or chain.config.processing.document_parsing.index_value
-        or Constants.DEFAULT_SUFFIX.value
-    )
+    return resolve_namespace(chain.config, suffix)
 
 
 async def require_graph(chain: GraphRAGChain, suffix: str | None) -> None:
@@ -121,6 +117,7 @@ async def find_entities(
     searched in NFKC, so a full-width ``Ｄｅｐｏｔ`` or a compatibility
     character finds the name it stands for.
     """
+    suffix = namespace_name(chain, suffix)
     entity_id, iri, name = (
         unicodedata.normalize("NFC", v) if v else v for v in (entity_id, iri, name)
     )
@@ -234,6 +231,7 @@ async def neighbourhood(
     holds it (``relationship_vectors``: their descriptions, text units and
     IRIs), else from the graph store (``aneighbourhood_edges``).
     """
+    suffix = namespace_name(chain, suffix)
     await require_graph(chain, suffix)
     graph = chain._get_retriever(RetrieverRole.GRAPH)
     walked = await graph.aretrieve(
@@ -285,6 +283,7 @@ async def text_unit_file_names(
 ) -> dict[str, str]:
     """``{text_unit_id: file name}`` of ``unit_ids``' text units (the name,
     never the path), in fetches by id of at most ``id_batch_size`` ids."""
+    suffix = namespace_name(chain, suffix)
     wanted = list(dict.fromkeys(str(i) for i in unit_ids if i))
     if not wanted:
         return {}
@@ -375,6 +374,7 @@ async def describe_namespace(
     configured methodologies), the strategies that serves, its last build
     and the extraction schema the configuration resolves to (``schema``,
     :func:`resolve_schema`'s result, when the caller holds it)."""
+    suffix = namespace_name(chain, suffix)
     artifacts = await methodology_check.namespace_artifacts(chain, suffix)
     retriever = _document_retriever(chain)
     record: dict[str, Any] | None = None

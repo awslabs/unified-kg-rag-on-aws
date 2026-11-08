@@ -202,7 +202,9 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 
 검색 결과가 없으면 체인은 모델을 호출하지 않고 질문의 언어로 정해진 문장("사용 가능한 데이터에서
 이 질문에 답할 관련 정보를 찾지 못했습니다." 등 지원 언어마다 하나)으로 답하며
-`metadata.abstained`와 `metadata.abstention_reason: no_context`를 남깁니다. 언어는 질문의 문자 체계와
+`metadata.abstained`와 `metadata.abstention_reason: no_context`를 남깁니다(커뮤니티 리포트가 없는
+네임스페이스에 대한 `global`은 `no_reports`. 커뮤니티가 생기기에는 너무 작은 코퍼스이거나 리포트 없이
+수집한 경우). 언어는 질문의 문자 체계와
 기능어로 정하고, 이것으로 알 수 없으면 색인 언어(문자 체계가 맞지 않으면 영어)를 씁니다. 거절인지는
 문장이 아니라 `metadata.abstained`로 판단합니다. 그 밖에 모델이 자기 말로 답변을 거절하면 일반 답변과 구별되지 않습니다.
 `search.abstention`(선택 기능, 기본값은 꺼짐)을 켜면 거절을 명시적으로 표시합니다.

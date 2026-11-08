@@ -42,13 +42,19 @@ from unified_kg_rag.adapters.llm.chain_factory import (
     STRICT_STREAM_TRUNCATION,
     setup_chain,
 )
+from unified_kg_rag.adapters.llm.reachability import (
+    is_unreachable_error,
+    model_unreachable_error,
+)
 from unified_kg_rag.adapters.llm.retry import retry_deadline
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    current_ledger,
     query_scope,
+    record_degradation,
     scope_filters,
 )
 from unified_kg_rag.adapters.retrieval.memory_manager import (
@@ -138,17 +144,26 @@ from unified_kg_rag.domain.prompts.retrieval import (
 from unified_kg_rag.domain.retrieval.abstention import (
     ABSTENTION_REASON_KEY,
     CONTEXT_SUFFICIENT_KEY,
+    NO_CONTEXT_REASON_KEY,
     REASON_INSUFFICIENT_CONTEXT,
     REASON_MARKER,
     REASON_NO_CONTEXT,
     MarkerStreamFilter,
     split_marker,
 )
+from unified_kg_rag.domain.retrieval.degradation import (
+    DEGRADED_ERROR_KEY,
+    DegradationStep,
+)
 from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
 from unified_kg_rag.domain.retrieval.no_context import (
     NO_CONTEXT_ANSWERS,
     is_no_context_answer,
     no_context_answer,
+)
+from unified_kg_rag.domain.retrieval.store_names import (
+    namespace_suffix,
+    resolve_namespace,
 )
 from unified_kg_rag.ports.guardrail import (
     ContentGuardPort,
@@ -168,6 +183,7 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import (
     MethodologyNotIndexedError,
     ToolArgumentError,
+    classify,
 )
 from unified_kg_rag.shared.genai import ERROR_TYPE, GEN_AI_CONVERSATION_ID
 from unified_kg_rag.shared.usage import usage_scope
@@ -434,16 +450,23 @@ class RAGInput(BaseModel):
     """One query to :class:`GraphRAGChain` (a dict with these keys also works).
 
     ``suffix`` selects the index namespace to search: it must match the
-    ``processing.document_parsing.index_value`` the corpus was ingested with
-    (both default to ``default``). Set ``conversation_id`` and ``use_memory``
-    to continue a conversation; with ``use_memory`` and no id, a new id is
-    generated and returned on :class:`RAGOutput`. A stateless caller passes
+    ``processing.document_parsing.index_value`` the corpus was ingested with.
+    ``None`` reads the chain config's ``index_value``, else ``default``
+    (``resolve_namespace``), the namespace ingestion with that config wrote.
+    Set ``conversation_id`` and ``use_memory`` to continue a conversation;
+    with ``use_memory`` and no id, a new id is generated and returned on
+    :class:`RAGOutput`. A stateless caller passes
     the conversation itself as ``history`` instead (docs/design.md §7.2).
     """
 
-    query: str = Field(description="The user's search query")
+    query: str = Field(
+        description="The user's search query (leading and trailing whitespace "
+        "removed; an empty one is refused)"
+    )
     suffix: str | None = Field(
-        default=None, description="Suffix for multi-tenant or versioned indices"
+        default=None,
+        description="Suffix for multi-tenant or versioned indices; None reads "
+        "the config's processing.document_parsing.index_value, else 'default'",
     )
     enable_thinking: bool = Field(
         default=False,
@@ -517,7 +540,12 @@ class RAGInput(BaseModel):
     def _compose_query(cls, query: str) -> str:
         # Indexed text is NFC (see convert_langchain_to_document); a query typed
         # or pasted as decomposed Hangul (NFD) must compose to match it.
-        return unicodedata.normalize("NFC", query)
+        query = unicodedata.normalize("NFC", query).strip()
+        if not query:
+            # Refused before any model call: an empty question was routed,
+            # extracted from and searched for.
+            raise ValueError("The query is empty.")
+        return query
 
     @model_validator(mode="after")
     def _one_conversation_source(self) -> "RAGInput":
@@ -548,9 +576,10 @@ class RAGOutput(BaseModel):
     keeps its sources as retrieved (masking covers the answer only).
     ``metadata["abstained"]`` is ``True`` on a declined answer, with
     ``metadata["abstention_reason"]``: ``no_context`` (the fixed reply to an
-    empty context), ``marker`` (the answer started with ``[NO_ANSWER]``,
-    ``search.abstention.mode: mark``) or ``insufficient_context`` (the
-    strategy flagged its context insufficient under
+    empty context; ``no_reports`` when it is global search's on a namespace
+    that holds no community report), ``marker`` (the answer started with
+    ``[NO_ANSWER]``, ``search.abstention.mode: mark``) or
+    ``insufficient_context`` (the strategy flagged its context insufficient under
     ``search.abstention.on_insufficient: abstain``); a declined answer keeps
     the sources the model was given.
     ``citations`` (``search.citations``) lists each numbered section of the
@@ -730,6 +759,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # What each queried suffix's index namespace holds, with when it was
         # read (methodology_check; guarded by the cache lock).
         self._held_artifacts: dict[str, tuple[float, frozenset[IndexArtifact]]] = {}
+        # The namespaces a query found ingested (_arequire_namespace).
+        self._present_namespaces: set[str] = set()
         # The schema annotation fields the configured extraction schema
         # writes (filter_validation._schema_annotation_fields), loaded on the
         # first filter on one of them; None until then, and for good once a
@@ -943,10 +974,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 else "fallback"
             )
         except Exception as e:
-            if not self.ignore_errors:
+            if not self.ignore_errors or is_unreachable_error(e):
                 raise
             strategy = self._fallback_strategy(routable)
             decided_by = "fallback"
+            record_degradation(
+                DegradationStep.ROUTING, f"routed to '{strategy.value}'", e
+            )
             logger.warning(
                 "Strategy auto-selection failed, using '%s' as fallback: %s",
                 strategy.value,
@@ -982,11 +1016,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         kept = tuple(s for s in routable if s in allowed)
         if kept:
             return kept
-        namespace = (
-            suffix
-            or self.config.processing.document_parsing.index_value
-            or Constants.DEFAULT_SUFFIX.value
-        )
+        namespace = resolve_namespace(self.config, suffix)
         raise MethodologyNotIndexedError(
             f"auto may run only {_names(allowed)}, and none of them serves "
             f"the index namespace '{namespace}' (with these filters auto "
@@ -1122,10 +1152,13 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 ),
             )
         except Exception as e:
-            if not self.ignore_errors:
+            if not self.ignore_errors or is_unreachable_error(e):
                 raise
             logger.warning("Query processing failed: %s", error_digest(e))
             logger.debug("Query processing error: %s", e)
+            record_degradation(
+                DegradationStep.QUERY_PROCESSING, "searched the question as is", e
+            )
             return ProcessedQuery(
                 original_query=original_query,
                 standalone_query=standalone_query,
@@ -1218,12 +1251,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 {"query": state["query"], "conversation_history": history}, config
             )
         except Exception as e:
-            if not self.ignore_errors:
+            if not self.ignore_errors or is_unreachable_error(e):
                 raise
             logger.warning(
                 "Follow-up rewrite failed; using the query as is: %s", error_digest(e)
             )
             logger.debug("Follow-up rewrite error: %s", e)
+            record_degradation(
+                DegradationStep.FOLLOW_UP_REWRITE, "searched the follow-up as is", e
+            )
             return None
         return self._usable_rewrite(str(rewritten))
 
@@ -1297,11 +1333,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             filtered=bool(search_query.filters),
         ) as span:
             # One memo of store lookups per query (attribute probes), never
-            # kept past it.
+            # kept past it (the query's, when the query opened one).
             with query_scope():
+                ledger = current_ledger()
                 result = await strategy_instance.asearch(search_query, config=config)
+                degraded = result.metadata.get(DEGRADED_ERROR_KEY)
+                if degraded and ledger is not None and not ledger.entries:
+                    # A strategy that reports its own (not through the ledger).
+                    ledger.record(DegradationStep.RETRIEVAL, "strategy", degraded)
             # A failure ignore_errors absorbed still degraded the answer.
-            if degraded := result.metadata.get("degraded_error"):
+            if degraded:
                 span.set_attribute(ERROR_TYPE, degraded)
             if observability.is_enabled():
                 span.set_attributes(
@@ -1349,12 +1390,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """The build record ingestion wrote on the index namespace of
-        ``suffix`` (``VectorIndexer.record_build``: what it built, under which
-        settings), read through the document retriever the answers come
-        from. ``None`` when it records none (built before build records, or a
+        ``suffix`` (``resolve_namespace``; ``VectorIndexer.record_build``:
+        what it built, under which settings), read through the document
+        retriever the answers come from. ``None`` when it records none (built before build records, or a
         backend without index metadata); a store error raises."""
         return await self._get_retriever(RetrieverRole.DOCUMENT).aread_build_record(
-            suffix
+            resolve_namespace(self.config, suffix)
         )
 
     def document_retriever(self) -> BaseGraphRAGRetriever:
@@ -1591,6 +1632,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 raise
             logger.warning("Context optimization failed: %s", error_digest(e))
             logger.debug("Context optimization error: %s", e, exc_info=True)
+            record_degradation(
+                DegradationStep.CONTEXT_OPTIMIZATION, "answered without context", e
+            )
             return OptimizedContext(
                 sections=[],
                 total_tokens=0,
@@ -1698,6 +1742,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         context = str(state.get("context") or "").strip()
         return not context or context == EMPTY_CONTEXT_PLACEHOLDER
 
+    @staticmethod
+    def _no_context_reason(state: dict[str, Any]) -> str:
+        """Why the context is empty: the strategy's reason
+        (``NO_CONTEXT_REASON_KEY``, ``no_reports``), else ``no_context``."""
+        results = state.get("search_results")
+        metadata = results.metadata if isinstance(results, SearchResult) else {}
+        reason = metadata.get(NO_CONTEXT_REASON_KEY)
+        return reason if isinstance(reason, str) and reason else REASON_NO_CONTEXT
+
     def _no_context_answer(self, state: dict[str, Any]) -> str:
         """The fixed decline, in the language of the question (the index
         language when the question does not tell), as the answer prompt
@@ -1708,7 +1761,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """Set ``state["abstention_reason"]`` (``None`` for an answer) and
         strip the [NO_ANSWER] token per ``search.abstention.strip_marker``."""
         if self._context_is_empty(state):
-            state["abstention_reason"] = REASON_NO_CONTEXT
+            state["abstention_reason"] = self._no_context_reason(state)
             return state
         marked = False
         if self._reads_marker(state):
@@ -1901,13 +1954,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             **sr.metadata,
             **({ROUTING_KEY: state[ROUTING_KEY]} if ROUTING_KEY in state else {}),
         }
-        # A query processing failure ignore_errors absorbed degrades it too.
-        if degraded := state["processed_query"].degraded_error:
-            metadata.setdefault("degraded_error", degraded)
+        GraphRAGChain._report_degradation(state, metadata)
         reason = state.get("abstention_reason")
         if reason is None and GraphRAGChain._context_is_empty(state):
             # The answer step returned the fixed no-context reply.
-            reason = REASON_NO_CONTEXT
+            reason = GraphRAGChain._no_context_reason(state)
         if reason is not None:
             # A declined answer keeps its sources: the model saw them.
             metadata["abstained"] = True
@@ -1935,6 +1986,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             processed_query=state["processed_query"],
             metadata=metadata,
         )
+
+    @staticmethod
+    def _report_degradation(state: dict[str, Any], metadata: dict[str, Any]) -> None:
+        """Set the query's degraded steps on ``metadata`` (its ledger's
+        ``degraded``, ``degraded_error`` and ``citations_unresolved``,
+        ``DegradationLedger.metadata``), over the strategy's own. Without a
+        query scope (a caller driving the composed runnable), a query
+        processing failure ignore_errors absorbed degrades it too."""
+        if (ledger := current_ledger()) is not None:
+            metadata.update(ledger.metadata())
+        if degraded := state["processed_query"].degraded_error:
+            metadata.setdefault(DEGRADED_ERROR_KEY, degraded)
 
     @staticmethod
     def _is_synthesized(metadata: dict[str, Any] | None) -> bool:
@@ -2063,9 +2126,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             **sr.metadata,
             **({ROUTING_KEY: state[ROUTING_KEY]} if ROUTING_KEY in state else {}),
         }
-        # A query processing failure ignore_errors absorbed degrades it too.
-        if degraded := state["processed_query"].degraded_error:
-            metadata.setdefault("degraded_error", degraded)
+        GraphRAGChain._report_degradation(state, metadata)
 
         return SearchOutput(
             search_results=sr,
@@ -2159,18 +2220,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         *,
         search: bool,
     ) -> RAGOutput | SearchOutput:
-        rag_input, input_dict = self._prepare_invoke(input)
-        await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
-        # What auto routes among (cached since the check).
-        input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
-            self, rag_input.suffix
-        )
-        # Filter keys after the methodology check, against the indexes the
-        # namespace holds: a key only an index it lacks declares would be
-        # dropped everywhere.
-        filter_validation.check_requested_filter_keys(
-            self, rag_input, input_dict["held_artifacts"]
-        )
+        rag_input, input_dict = await self._admit_query(input)
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
         with (
@@ -2179,6 +2229,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 "kg_rag.query", self._query_span_attributes(rag_input, search)
             ) as span,
             usage_scope() as meter,
+            # The query's store-lookup memo and degradation ledger.
+            query_scope(),
         ):
             started = time.monotonic()
             leftovers: list[asyncio.Future[Any]] = []
@@ -2280,6 +2332,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         try:
             async with _QueryDeadline(self.config.search.query_timeout_seconds):
+                # Before the first model call (the input guardrail's).
+                await self._arequire_namespace(rag_input.suffix)
                 blocking = await self._screen_input(
                     rag_input, input_dict, guard_records
                 )
@@ -2330,9 +2384,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 if isinstance(output, RAGOutput):
                     await self._save_memory(output, rag_input)
                 return output
-        except Exception as e:
+        except Exception as raised:
+            # A model server that cannot be reached, named (provider kind,
+            # base_url) rather than as its transport's error.
+            e = (
+                model_unreachable_error(raised, self.config)
+                if is_unreachable_error(raised)
+                else raised
+            )
             if not self.ignore_errors:
-                raise
+                if e is raised:
+                    raise
+                raise e from raised
 
             logger.error(
                 "RAG chain execution failed for query %s: %s",
@@ -2350,9 +2413,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 search=search,
                 answer=DEFAULT_ERROR_MESSAGE,
                 strategy="error",
-                # The error's type, for a caller that tells a refused query
-                # (a strategy or filter to change, the deadline) apart.
-                metadata={"error": True, "error_type": type(e).__name__},
+                # The error's type and class (ErrorClass), for a caller that
+                # tells a refused query (a strategy or filter to change, the
+                # deadline, a server to start) apart.
+                metadata={
+                    "error": True,
+                    "error_type": type(e).__name__,
+                    "error_class": classify(e).value,
+                },
                 search_metadata={"error": str(e)},
             )
         finally:
@@ -2761,6 +2829,46 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             }
         )
 
+    async def _admit_query(
+        self, inputs: RAGInput | dict[str, Any]
+    ) -> tuple[RAGInput, dict[str, Any]]:
+        """``inputs`` checked before any model call (``_prepare_invoke``),
+        with its namespace resolved once (``resolve_namespace``: a query
+        without a suffix reads the config's ``index_value``), the methodology
+        and the filter keys checked against what the namespace holds."""
+        rag_input, input_dict = self._prepare_invoke(inputs)
+        rag_input.suffix = input_dict["suffix"] = resolve_namespace(
+            self.config, rag_input.suffix
+        )
+        await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
+        # What auto routes among (cached since the check).
+        input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
+            self, rag_input.suffix
+        )
+        # Filter keys after the methodology check, against the indexes the
+        # namespace holds: a key only an index it lacks declares would be
+        # dropped everywhere.
+        filter_validation.check_requested_filter_keys(
+            self, rag_input, input_dict["held_artifacts"]
+        )
+        return rag_input, input_dict
+
+    async def _arequire_namespace(self, suffix: str | None) -> None:
+        """Raise ``IndexNotFoundError`` when nothing was ingested under
+        ``suffix`` (``arequire_namespace`` of the document retriever), before
+        the query's first model call (under ``ignore_errors`` its error
+        answer); a namespace found once is not checked again by this
+        chain."""
+        suffix = resolve_namespace(self.config, suffix)
+        if suffix in self._present_namespaces:
+            return
+        retriever = self._get_retriever(RetrieverRole.DOCUMENT)
+        # A retriever built outside the base class may not tell.
+        if (require := getattr(retriever, "arequire_namespace", None)) is not None:
+            await require(suffix)
+        with self._cache_lock:
+            self._present_namespaces.add(suffix)
+
     @staticmethod
     def _prepare_invoke(
         inputs: RAGInput | dict[str, Any],
@@ -2872,18 +2980,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> AsyncGenerator[str, None]:
         """The answer chunks of :meth:`astream`; the speculative extractions
         the route did not read go to ``leftovers``."""
-        rag_input, input_dict = self._prepare_invoke(input)
-        await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
-        # What auto routes among (cached since the check).
-        input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
-            self, rag_input.suffix
-        )
-        # Filter keys after the methodology check, against the indexes the
-        # namespace holds: a key only an index it lacks declares would be
-        # dropped everywhere.
-        filter_validation.check_requested_filter_keys(
-            self, rag_input, input_dict["held_artifacts"]
-        )
+        rag_input, input_dict = await self._admit_query(input)
         search_config = self.config.search
         deadline = _QueryDeadline(
             search_config.query_timeout_seconds,
@@ -2913,6 +3010,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     ) as span,
                 ):
                     async with deadline.scope():
+                        await self._arequire_namespace(rag_input.suffix)
                         blocking = await self._screen_input(
                             rag_input, input_dict, guard_records
                         )
@@ -3011,6 +3109,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     text_digest(rag_input.query),
                     error_digest(e),
                 )
+                if is_unreachable_error(e):
+                    raise model_unreachable_error(e, self.config) from e
                 raise
             logger.error(
                 "RAG stream failed for query %s after %s chunk(s): %s",
@@ -3255,9 +3355,7 @@ def _conversation_key(
 ) -> ConversationKey:
     """The memory key of a query's conversation: one tenant's (index suffix)
     or user's conversation id never reaches another's history."""
-    return ConversationKey(
-        suffix or Constants.DEFAULT_SUFFIX.value, user_id, conversation_id
-    )
+    return ConversationKey(namespace_suffix(suffix), user_id, conversation_id)
 
 
 def _screened_query(rag_input: RAGInput, metadata: dict[str, Any]) -> str | None:
