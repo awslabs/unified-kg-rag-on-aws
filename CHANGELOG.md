@@ -1236,9 +1236,11 @@ From a `main` checkout (formats and keys no release had):
 - A query without a suffix (`RAGInput(suffix=None)`) reads the chain config's
   `processing.document_parsing.index_value`, as ingestion writes and the CLIs query (`resolve_namespace`, the one
   rule of every entry point); it read `default`, so the console's Ask page failed with `IndexNotFoundError` after a
-  successful ingest under an `index_value`.
+  successful ingest under an `index_value`. A query checks its namespace's text-units index before its first model
+  call (once per namespace), and refuses an empty or blank question (the query is stripped).
 - `run-eval` exits 2 for a filter key no index declares, as `run-rag` does, and `run-rag` exits by the class of a
   failure `processing.ignore_errors` absorbed (2 for a `--suffix` nothing was ingested under; it exited 1).
+- Global search on a namespace without community reports declines with `abstention_reason: no_reports`.
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).

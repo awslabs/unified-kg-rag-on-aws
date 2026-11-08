@@ -1473,8 +1473,14 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 raise
             return None  # cannot tell
 
+    async def arequire_namespace(self, suffix: str | None) -> None:
+        """Raise ``IndexNotFoundError`` when ``suffix``'s text-units index
+        does not exist (``_require_ingested_suffix``); nothing when the
+        store cannot tell."""
+        await self._require_ingested_suffix(suffix)
+
     async def _require_ingested_suffix(
-        self, suffix: str | None, cause: Exception
+        self, suffix: str | None, cause: Exception | None = None
     ) -> None:
         """Raise when nothing was ingested under ``suffix``.
 

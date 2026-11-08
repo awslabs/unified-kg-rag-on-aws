@@ -49,6 +49,10 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.methodology import REPORT_READER_ARTIFACTS
 from unified_kg_rag.domain.prompts import CommunityRelevancePrompt, GlobalMapPrompt
+from unified_kg_rag.domain.retrieval.abstention import (
+    NO_CONTEXT_REASON_KEY,
+    REASON_NO_REPORTS,
+)
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -274,8 +278,12 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             reports = await self._cut_reports(query, stats)
         stats["global_selected_report_count"] = len(reports)
         if not reports:
-            if not stats.get("global_rated_report_count"):
-                await self._require_report_hierarchy(query)
+            if not stats.get(
+                "global_rated_report_count"
+            ) and not await self._require_report_hierarchy(query):
+                # Nothing to select from: a corpus too small for communities,
+                # or one ingested without reports.
+                stats[NO_CONTEXT_REASON_KEY] = REASON_NO_REPORTS
             logger.warning("No results found for query: %s", text_digest(query.query))
 
         results = reports
@@ -680,8 +688,10 @@ class GlobalSearchStrategy(BaseSearchStrategy):
     def _community_id(report: RetrievalResult) -> str:
         return str((report.metadata or {}).get("community_id") or report.source)
 
-    async def _require_report_hierarchy(self, query: SearchQuery) -> None:
-        """Raise when the stored reports predate the hierarchy fields.
+    async def _require_report_hierarchy(self, query: SearchQuery) -> bool:
+        """Whether the namespace holds a community report (``True`` when it
+        cannot tell); raise when the stored reports predate the hierarchy
+        fields.
 
         Such reports match no cut, so global search would answer from nothing
         on every query rather than on this one.
@@ -691,7 +701,7 @@ class GlobalSearchStrategy(BaseSearchStrategy):
         """
         retriever = self.document_retriever
         if retriever is None:
-            return
+            return True
         probe = SearchQuery(
             query="",
             search_type=SearchType.LEXICAL,
@@ -701,13 +711,17 @@ class GlobalSearchStrategy(BaseSearchStrategy):
             ],
             suffix=query.suffix,
         )
-        found = await self._safe_aretrieve(retriever, probe, "Community report probe")
+        failures: list[Exception] = []
+        found = await self._safe_aretrieve(
+            retriever, probe, "Community report probe", failures
+        )
         if found and (found[0].metadata or {}).get("depth") is None:
             raise ConfigurationError(
                 "The community reports were indexed without their place in the "
                 "community hierarchy, which global search selects them by. "
                 "Re-run ingestion with indexing.reset: true to re-index them."
             )
+        return bool(found or failures)
 
     async def _text_units(
         self,

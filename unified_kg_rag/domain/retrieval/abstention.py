@@ -29,9 +29,11 @@ __all__ = [
     "CONTEXT_SUFFICIENT_KEY",
     "INSUFFICIENCY_REASON_KEY",
     "MARKER_LOOKAHEAD",
+    "NO_CONTEXT_REASON_KEY",
     "REASON_INSUFFICIENT_CONTEXT",
     "REASON_MARKER",
     "REASON_NO_CONTEXT",
+    "REASON_NO_REPORTS",
     "MarkerStreamFilter",
     "split_marker",
 ]
@@ -39,11 +41,16 @@ __all__ = [
 # SearchResult.metadata keys a strategy sets to flag its context.
 CONTEXT_SUFFICIENT_KEY = "context_sufficient"
 INSUFFICIENCY_REASON_KEY = "insufficiency_reason"
+# Why a strategy found nothing, the abstention reason of the fixed reply to
+# its empty context instead of REASON_NO_CONTEXT: REASON_NO_REPORTS, global
+# search on a namespace that holds no community report.
+NO_CONTEXT_REASON_KEY = "no_context_reason"
 # RAGOutput.metadata key naming why an answer is abstained, and its values.
 ABSTENTION_REASON_KEY = "abstention_reason"
 REASON_NO_CONTEXT = "no_context"
 REASON_MARKER = "marker"
 REASON_INSUFFICIENT_CONTEXT = "insufficient_context"
+REASON_NO_REPORTS = "no_reports"
 
 # Characters a streamed answer holds back, at most, before the marker is
 # ruled in or out (leading decoration plus the token), and the characters

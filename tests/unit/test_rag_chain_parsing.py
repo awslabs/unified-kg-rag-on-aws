@@ -382,6 +382,8 @@ async def test_follow_up_is_searched_and_answered_as_the_standalone_question(
     config: Config, mocker
 ) -> None:
     chain = GraphRAGChain(config=config)
+    # No store here: the namespace counts as found (_arequire_namespace).
+    chain._present_namespaces.add("default")
     rewriter = _FakeRewriter()
     answers: list[dict] = []
 

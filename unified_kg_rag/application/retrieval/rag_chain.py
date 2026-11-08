@@ -144,6 +144,7 @@ from unified_kg_rag.domain.prompts.retrieval import (
 from unified_kg_rag.domain.retrieval.abstention import (
     ABSTENTION_REASON_KEY,
     CONTEXT_SUFFICIENT_KEY,
+    NO_CONTEXT_REASON_KEY,
     REASON_INSUFFICIENT_CONTEXT,
     REASON_MARKER,
     REASON_NO_CONTEXT,
@@ -458,7 +459,10 @@ class RAGInput(BaseModel):
     the conversation itself as ``history`` instead (docs/design.md §7.2).
     """
 
-    query: str = Field(description="The user's search query")
+    query: str = Field(
+        description="The user's search query (leading and trailing whitespace "
+        "removed; an empty one is refused)"
+    )
     suffix: str | None = Field(
         default=None,
         description="Suffix for multi-tenant or versioned indices; None reads "
@@ -536,7 +540,12 @@ class RAGInput(BaseModel):
     def _compose_query(cls, query: str) -> str:
         # Indexed text is NFC (see convert_langchain_to_document); a query typed
         # or pasted as decomposed Hangul (NFD) must compose to match it.
-        return unicodedata.normalize("NFC", query)
+        query = unicodedata.normalize("NFC", query).strip()
+        if not query:
+            # Refused before any model call: an empty question was routed,
+            # extracted from and searched for.
+            raise ValueError("The query is empty.")
+        return query
 
     @model_validator(mode="after")
     def _one_conversation_source(self) -> "RAGInput":
@@ -567,9 +576,10 @@ class RAGOutput(BaseModel):
     keeps its sources as retrieved (masking covers the answer only).
     ``metadata["abstained"]`` is ``True`` on a declined answer, with
     ``metadata["abstention_reason"]``: ``no_context`` (the fixed reply to an
-    empty context), ``marker`` (the answer started with ``[NO_ANSWER]``,
-    ``search.abstention.mode: mark``) or ``insufficient_context`` (the
-    strategy flagged its context insufficient under
+    empty context; ``no_reports`` when it is global search's on a namespace
+    that holds no community report), ``marker`` (the answer started with
+    ``[NO_ANSWER]``, ``search.abstention.mode: mark``) or
+    ``insufficient_context`` (the strategy flagged its context insufficient under
     ``search.abstention.on_insufficient: abstain``); a declined answer keeps
     the sources the model was given.
     ``citations`` (``search.citations``) lists each numbered section of the
@@ -749,6 +759,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # What each queried suffix's index namespace holds, with when it was
         # read (methodology_check; guarded by the cache lock).
         self._held_artifacts: dict[str, tuple[float, frozenset[IndexArtifact]]] = {}
+        # The namespaces a query found ingested (_arequire_namespace).
+        self._present_namespaces: set[str] = set()
         # The schema annotation fields the configured extraction schema
         # writes (filter_validation._schema_annotation_fields), loaded on the
         # first filter on one of them; None until then, and for good once a
@@ -1730,6 +1742,15 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         context = str(state.get("context") or "").strip()
         return not context or context == EMPTY_CONTEXT_PLACEHOLDER
 
+    @staticmethod
+    def _no_context_reason(state: dict[str, Any]) -> str:
+        """Why the context is empty: the strategy's reason
+        (``NO_CONTEXT_REASON_KEY``, ``no_reports``), else ``no_context``."""
+        results = state.get("search_results")
+        metadata = results.metadata if isinstance(results, SearchResult) else {}
+        reason = metadata.get(NO_CONTEXT_REASON_KEY)
+        return reason if isinstance(reason, str) and reason else REASON_NO_CONTEXT
+
     def _no_context_answer(self, state: dict[str, Any]) -> str:
         """The fixed decline, in the language of the question (the index
         language when the question does not tell), as the answer prompt
@@ -1740,7 +1761,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """Set ``state["abstention_reason"]`` (``None`` for an answer) and
         strip the [NO_ANSWER] token per ``search.abstention.strip_marker``."""
         if self._context_is_empty(state):
-            state["abstention_reason"] = REASON_NO_CONTEXT
+            state["abstention_reason"] = self._no_context_reason(state)
             return state
         marked = False
         if self._reads_marker(state):
@@ -1937,7 +1958,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         reason = state.get("abstention_reason")
         if reason is None and GraphRAGChain._context_is_empty(state):
             # The answer step returned the fixed no-context reply.
-            reason = REASON_NO_CONTEXT
+            reason = GraphRAGChain._no_context_reason(state)
         if reason is not None:
             # A declined answer keeps its sources: the model saw them.
             metadata["abstained"] = True
@@ -2311,6 +2332,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         try:
             async with _QueryDeadline(self.config.search.query_timeout_seconds):
+                # Before the first model call (the input guardrail's).
+                await self._arequire_namespace(rag_input.suffix)
                 blocking = await self._screen_input(
                     rag_input, input_dict, guard_records
                 )
@@ -2830,6 +2853,22 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         )
         return rag_input, input_dict
 
+    async def _arequire_namespace(self, suffix: str | None) -> None:
+        """Raise ``IndexNotFoundError`` when nothing was ingested under
+        ``suffix`` (``arequire_namespace`` of the document retriever), before
+        the query's first model call (under ``ignore_errors`` its error
+        answer); a namespace found once is not checked again by this
+        chain."""
+        suffix = resolve_namespace(self.config, suffix)
+        if suffix in self._present_namespaces:
+            return
+        retriever = self._get_retriever(RetrieverRole.DOCUMENT)
+        # A retriever built outside the base class may not tell.
+        if (require := getattr(retriever, "arequire_namespace", None)) is not None:
+            await require(suffix)
+        with self._cache_lock:
+            self._present_namespaces.add(suffix)
+
     @staticmethod
     def _prepare_invoke(
         inputs: RAGInput | dict[str, Any],
@@ -2971,6 +3010,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                     ) as span,
                 ):
                     async with deadline.scope():
+                        await self._arequire_namespace(rag_input.suffix)
                         blocking = await self._screen_input(
                             rag_input, input_dict, guard_records
                         )

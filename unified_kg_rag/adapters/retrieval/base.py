@@ -486,6 +486,13 @@ class BaseGraphRAGRetriever(BaseRetriever, ABC):
         default) when the backend cannot tell."""
         return None
 
+    async def arequire_namespace(self, suffix: str | None) -> None:
+        """Raise ``IndexNotFoundError`` when nothing was ingested under
+        ``suffix`` (its text-units index does not exist), checked before a
+        query's first model call. By default nothing: a backend that cannot
+        tell meets the missing index at search."""
+        return None
+
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """The build record ingestion wrote on ``suffix``'s index
         (``VectorIndexer.record_build``), read by ``run-eval`` into its run
