@@ -42,6 +42,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseSearchStrategy,
     _listed,
     entity_content,
+    record_degradation,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
@@ -84,6 +85,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
 )
+from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.domain.retrieval.filters import document_filters
 from unified_kg_rag.domain.retrieval.graph_query import (
     FILTERS_KEY,
@@ -133,6 +135,19 @@ FALLBACK_BUCKET = "structured_fallback"
 
 # metadata.structured.status
 ANSWERED, FALLBACK, FAILED = "answered", "fallback", "failed"
+# The fallback reasons the query's degradation ledger records: a failed
+# planner or store call, a compiler refusal, a name or value the graph
+# query could not use (metadata.structured.reason keeps every reason).
+_DEGRADING = frozenset(
+    {
+        "planner_error",
+        "execution_error",
+        "timeout",
+        "compile_error",
+        "unlinked_mention",
+        "unknown_value",
+    }
+)
 # What a fallback gives way to when the namespace does not serve it.
 _FALLBACK_ORDER = (SearchStrategy.LOCAL, SearchStrategy.MIX)
 # The JSON keys of a plan, to tell it from an example the model echoes.
@@ -166,8 +181,12 @@ class _Run:
     schema_cut: bool = False
     elapsed_ms: dict[str, float] = field(default_factory=dict)
 
-    def fall_back(self, reason: str) -> None:
+    def fall_back(self, reason: str, error: BaseException | None = None) -> None:
+        """Give way to the fallback for ``reason``; one the query answers
+        without (``_DEGRADING``) is also a degradation of the query."""
         self.status, self.reason = FALLBACK, reason
+        if reason in _DEGRADING:
+            record_degradation(DegradationStep.STRUCTURED_QUERY, reason, error)
 
     def record(self) -> dict[str, Any]:
         return {
@@ -501,7 +520,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 if is_fatal_retrieval_error(e):
                     raise
                 logger.warning("Structured search: the planner call failed: %s", e)
-                run.fall_back("planner_error")
+                run.fall_back("planner_error", e)
                 return None
             error = self._parsed(str(raw), profile, run)
             if isinstance(error, ValidatedPlan):
@@ -677,16 +696,16 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             result = await self.graph_query.aexecute(request)
         except GraphQueryExecutionError as e:
             logger.warning("Structured search: the graph query failed: %s", e)
-            run.fall_back("timeout" if e.timed_out else "execution_error")
+            run.fall_back("timeout" if e.timed_out else "execution_error", e)
             return None
-        except GraphQueryCompileError:
-            run.fall_back("compile_error")
+        except GraphQueryCompileError as e:
+            run.fall_back("compile_error", e)
             return None
         except Exception as e:
             if is_fatal_retrieval_error(e):
                 raise
             logger.warning("Structured search: the graph query failed: %s", e)
-            run.fall_back("execution_error")
+            run.fall_back("execution_error", e)
             return None
         run.backend, run.compiled_digest = result.backend, result.compiled_digest
         kept: list[dict[str, str]] | None = None

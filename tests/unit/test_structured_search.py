@@ -476,6 +476,44 @@ async def test_no_structured_answer_runs_the_fallback(reply: Any, reason: str) -
     assert len(fallback.queries) == 1
     if reason == "unanswerable":
         assert fallback.queries[0].entity_focus == ["Acme"]
+    # A failed call or an unusable name is a degradation of the query (the
+    # ledger); a question the plan judged unanswerable or an empty result
+    # is not.
+    degraded = result.metadata.get("degraded") or []
+    if reason in ("planner_error", "unlinked_mention"):
+        assert degraded == [
+            {
+                "step": "structured_query",
+                "reason": reason,
+                "error_type": "RuntimeError" if reason == "planner_error" else None,
+            }
+        ]
+    else:
+        assert degraded == []
+
+
+async def test_store_failures_and_unknown_values_are_degradations() -> None:
+    class _Failing(FakeGraphQueryRetriever):
+        async def aexecute(self, request: Any) -> Any:
+            raise GraphQueryExecutionError("too slow", timed_out=True)
+
+    plan = _with(CONFORMANCE_PLANS["count_supply_pairs"])
+    strategy, *_ = _strategy(_Planner(plan), graph=_Failing(procurement_graph()))
+    result = await strategy.asearch(_query())
+    assert result.metadata["structured"]["reason"] == "timeout"
+    assert result.metadata["degraded"] == [
+        {
+            "step": "structured_query",
+            "reason": "timeout",
+            "error_type": "GraphQueryExecutionError",
+        }
+    ]
+    assert result.metadata["degraded_error"] == "GraphQueryExecutionError"
+    strategy, *_ = _strategy(_Planner(_role_count("Supplier")))
+    result = await strategy.asearch(_query("How many suppliers are there?"))
+    assert [(d["reason"], d["error_type"]) for d in result.metadata["degraded"]] == [
+        ("unknown_value", None)
+    ]
 
 
 async def test_a_zero_count_and_a_no_are_answers() -> None:

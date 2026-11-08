@@ -320,6 +320,13 @@ the plan compares by equality is held by no vertex the caller may read,
 execution error (a malformed query, this query's server timeout), the
 query runs `fallback_strategy` (`local`; `null` answers from no context)
 and records `metadata.structured = {status: fallback, reason, ...}`. A
+failed planner or store call (`planner_error`, `execution_error`,
+`timeout`, `compile_error`) and a name or value the graph query could not
+use (`unlinked_mention`, `unknown_value`) are also degradations of the
+query (`metadata.degraded`, step `structured_query`, the reason and the
+error type), so the answer and `run-eval`'s `degraded_step_counts` show
+them; `unanswerable`, `invalid_plan`, `no_schema` and `empty_result` are
+not. A
 fallback the namespace does not serve gives way to `local`, then `mix`.
 The fallback reads the plan's `entities` as its entity focus (`local`,
 `drift`) or low-level keywords (with the `keywords` as high-level ones:

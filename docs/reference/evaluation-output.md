@@ -101,7 +101,7 @@ from the text, and under
   `degraded_error`.
 - `degraded_step_counts`: the same answers per degraded step (the chain's
   `metadata.degraded`: `retrieval`, `global_map`, `drift_action`,
-  `translation`, `routing`, ...; an answer counted once per step); each
+  `translation`, `routing`, `structured_query`, ...; an answer counted once per step); each
   result carries `degraded_steps`. `degraded_queries` counts the answers
   with any, an unreadable model answer (`iterative_controller`) included:
   they count against `--max-failure-rate` over every query.

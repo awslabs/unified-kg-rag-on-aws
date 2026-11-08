@@ -65,6 +65,10 @@ class DegradationStep:
     ITERATIVE_CONTROLLER = "iterative_controller"
     # The findings lineage of community reports (cited answers only).
     FINDINGS_LINEAGE = "findings_lineage"
+    # The structured strategy's graph query, answered by its fallback (the
+    # reason: planner_error, execution_error, timeout, compile_error,
+    # unlinked_mention, unknown_value).
+    STRUCTURED_QUERY = "structured_query"
 
 
 class Degradation(BaseModel):
