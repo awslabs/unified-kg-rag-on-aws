@@ -30,6 +30,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
     evidence_lineage,
+    record_degradation,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import register_strategy
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
@@ -55,6 +56,7 @@ from unified_kg_rag.domain.prompts import (
     DriftHydePrompt,
     DriftPrimerPrompt,
 )
+from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.utils import (
     parse_llm_json,
@@ -163,14 +165,11 @@ class DriftSearchStrategy(BaseSearchStrategy):
         # report_selection: how many follow-up local searches read their
         # reports by each selection (local's metadata of the same name).
         stats: dict[str, Any] = {"drift_llm_calls": 0, "report_selection": {}}
-        degraded: list[str] = []
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
         with observability.span("kg_rag.drift.primer") as span:
-            reports = await self._primer_reports(query, stats, config, degraded)
-            answers = await self._prime(
-                query, reports, semaphore, stats, config, degraded
-            )
+            reports = await self._primer_reports(query, stats, config)
+            answers = await self._prime(query, reports, semaphore, stats, config)
             span.set_attributes(
                 {"kg_rag.reports": len(reports), "kg_rag.answers": len(answers)}
             )
@@ -207,8 +206,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 "kg_rag.drift.actions", depth=depth, actions=len(batch)
             ):
                 done = await gather_or_cancel(
-                    self._act(sub, query, semaphore, stats, config, degraded)
-                    for sub in batch
+                    self._act(sub, query, semaphore, stats, config) for sub in batch
                 )
             actions += len(batch)
             depth += 1
@@ -247,13 +245,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
         )
         # A report cites what its findings cite, as an answer read from it
         # does: one read for both (the follow-ups' reports carry it already).
-        failures: list[Exception] = []
         lineages = await self._findings_lineages(
-            query,
-            [*fused, *(r for answer in answers for r in answer.read)],
-            failures=failures,
+            query, [*fused, *(r for answer in answers for r in answer.read)]
         )
-        degraded.extend(type(e).__name__ for e in failures)
         fused = self._with_findings_lineages(fused, lineages)
         results = await self._answers_items(answers, lineages) + fused
 
@@ -282,7 +276,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
                 "drift_answers": sum(1 for a in answers if a.text),
                 "drift_open_follow_ups": len(queue),
                 "rerank": rerank.summary(),
-                **({"degraded_error": degraded[0]} if degraded else {}),
             },
         )
 
@@ -313,7 +306,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
         query: SearchQuery,
         stats: dict[str, Any],
         config: RunnableConfig | None,
-        degraded: list[str],
     ) -> list[RetrievalResult]:
         """The ``k_followups`` reports most similar to the expanded query."""
         retriever = self.document_retriever
@@ -356,7 +348,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
         except Exception as e:
             if not self.ignore_errors:
                 raise
-            self._degrade("DRIFT query expansion", e, degraded)
+            self._degrade(DegradationStep.DRIFT_EXPANSION, "DRIFT query expansion", e)
         return await self._safe_aretrieve(
             retriever,
             self._reports_query(
@@ -372,7 +364,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
         semaphore: asyncio.Semaphore,
         stats: dict[str, Any],
         config: RunnableConfig | None,
-        degraded: list[str],
     ) -> list[_Answer]:
         """One intermediate answer per fold of the primer reports, at most
         ``search.max_concurrency`` folds at a time (as the actions), each
@@ -393,7 +384,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                         config,
                     )
             except Exception as e:  # noqa: BLE001 - classified by _degrade
-                self._degrade("DRIFT primer", e, degraded)
+                self._degrade(DegradationStep.DRIFT_PRIMER, "DRIFT primer", e)
                 return e
             payload = parse_llm_json(str(raw))
             if not payload:
@@ -442,7 +433,6 @@ class DriftSearchStrategy(BaseSearchStrategy):
         semaphore: asyncio.Semaphore,
         stats: dict[str, Any],
         config: RunnableConfig | None,
-        degraded: list[str],
     ) -> _Answer:
         """A local search for ``follow_up`` and its answer from that context.
 
@@ -457,7 +447,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
             try:
                 local = await self.local_search.asearch(sub_query, config)
             except Exception as e:  # noqa: BLE001 - classified by _degrade
-                self._degrade("DRIFT action search", e, degraded)
+                self._degrade(DegradationStep.DRIFT_ACTION, "DRIFT action search", e)
                 return _Answer(query=follow_up, text="", score=0, error=e)
             selection = (local.metadata or {}).get("report_selection")
             if isinstance(selection, str):
@@ -498,7 +488,7 @@ class DriftSearchStrategy(BaseSearchStrategy):
                     config,
                 )
             except Exception as e:  # noqa: BLE001 - classified by _degrade
-                self._degrade("DRIFT action", e, degraded)
+                self._degrade(DegradationStep.DRIFT_ACTION, "DRIFT action", e)
                 answer.error = e
                 return answer
         payload = parse_llm_json(str(raw))
@@ -512,8 +502,9 @@ class DriftSearchStrategy(BaseSearchStrategy):
         answer.follow_ups = _follow_ups(payload)
         return answer
 
-    def _degrade(self, step: str, error: Exception, degraded: list[str]) -> None:
-        """Record ``step``'s failure, or raise ``error`` when it is fatal.
+    def _degrade(self, step: str, label: str, error: Exception) -> None:
+        """Record ``step``'s failure (``label``) in the query's degradation
+        ledger, or raise ``error`` when it is fatal.
 
         A fatal error (no model access, an unusable store) fails the query.
         Any other leaves its own answer out: the caller raises it only when
@@ -521,8 +512,8 @@ class DriftSearchStrategy(BaseSearchStrategy):
         """
         if is_fatal_retrieval_error(error):
             raise error
-        logger.error("%s failed: %s", step, error)
-        degraded.append(type(error).__name__)
+        logger.error("%s failed: %s", label, error)
+        record_degradation(step, label, error)
 
     # ------------------------------------------------------------------ #
     # Reduce

@@ -23,6 +23,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableConfig
 
 from unified_kg_rag.adapters.llm.chain_factory import usage_model_id
+from unified_kg_rag.adapters.retrieval.base import record_degradation
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
     QueryInput,
 )
@@ -42,6 +43,7 @@ from unified_kg_rag.domain.prompts import (
     KeywordsExtractionPrompt,
     TranslationPrompt,
 )
+from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 from unified_kg_rag.domain.retrieval.query_entities import split_entity_list
 from unified_kg_rag.shared import LanguageModelError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
@@ -265,6 +267,11 @@ async def process_query(
             if chain.ignore_errors:
                 logger.warning("Query translation failed: %s", translated_query)
                 degraded = type(translated_query).__name__
+                record_degradation(
+                    DegradationStep.TRANSLATION,
+                    "searched untranslated",
+                    translated_query,
+                )
             else:
                 raise translated_query
         translated_query = None
@@ -285,6 +292,11 @@ async def process_query(
             if chain.ignore_errors:
                 logger.warning("Entity extraction failed: %s", entity_data)
                 degraded = degraded or type(entity_data).__name__
+                record_degradation(
+                    DegradationStep.ENTITY_EXTRACTION,
+                    "searched without query entities",
+                    entity_data,
+                )
             else:
                 raise entity_data
         entity_data = []
@@ -299,6 +311,11 @@ async def process_query(
             raise keyword_data
         if isinstance(keyword_data, AbsorbedKeywordFailure):
             degraded = degraded or keyword_data.error_type
+            record_degradation(
+                DegradationStep.KEYWORD_EXTRACTION,
+                "searched without keywords",
+                keyword_data.error_type,
+            )
         hl_keywords, ll_keywords = keyword_data
 
     return {

@@ -23,13 +23,20 @@ from unittest.mock import AsyncMock
 import pytest
 from botocore.exceptions import ClientError
 
+from unified_kg_rag.adapters.retrieval.base import degradation_scope
 from unified_kg_rag.adapters.search_strategies.global_search import (
     GlobalSearchStrategy,
     _MapPoint,
 )
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
+from unified_kg_rag.domain.retrieval.degradation import DegradationLedger
 
 pytestmark = pytest.mark.unit
+
+
+def _types(ledger: DegradationLedger) -> list[tuple[str, str | None]]:
+    """The ``(step, error_type)`` of each entry of ``ledger``."""
+    return [(e.step, e.error_type) for e in ledger.entries]
 
 
 def _community(i: int, *, content: str | None = None) -> RetrievalResult:
@@ -451,14 +458,14 @@ async def test_an_unparseable_map_output_is_asked_once_more(caplog) -> None:
             "still not json",
         ],
     )
-    degraded: list[str] = []
-    points, unrated = await strat._run_map_phase(
-        _batches(strat, _communities(2)), SearchQuery(query="q"), degraded=degraded
-    )
+    with degradation_scope() as ledger:
+        points, unrated = await strat._run_map_phase(
+            _batches(strat, _communities(2)), SearchQuery(query="q")
+        )
     assert [(p.description, p.batch) for p in points] == [("retried", 0)]
     assert [r.source for r in unrated] == ["c1"]
     assert len(strat.map_rater.batch_inputs) == 4
-    assert degraded == ["LanguageModelError"]
+    assert _types(ledger) == [("global_map", "LanguageModelError")]
     # The log names the shape, never the text.
     messages = [r.getMessage() for r in caplog.records if "not map JSON" in r.message]
     assert len(messages) == 3
@@ -917,12 +924,10 @@ async def test_map_phase_failing_on_every_batch_raises_when_not_ignored() -> Non
 async def test_map_phase_failing_on_every_batch_degrades_when_ignored() -> None:
     strat = _strategy(ignore_errors=True, map_batch_size=1)
     strat.map_rater = _DeniedMapChain(TimeoutError("read timed out"))
-    degraded: list[str] = []
-    out = await strat._apply_map_reduce(
-        _communities(2), SearchQuery(query="q"), degraded=degraded
-    )
+    with degradation_scope() as ledger:
+        out = await strat._apply_map_reduce(_communities(2), SearchQuery(query="q"))
     assert out
-    assert degraded == ["TimeoutError"]
+    assert _types(ledger) == [("global_map", "TimeoutError")]
 
 
 class _HangingMapChain:
@@ -971,19 +976,19 @@ async def test_map_phase_unrated_batches_are_recorded_as_degraded() -> None:
     # search metadata (degraded_error) or the strategy span.
     strat = _strategy(ignore_errors=False, map_batch_size=1)
     strat.map_rater = _TimingOutFirstReport([_map_payload(("point", 50))])
-    degraded: list[str] = []
-    points, unrated = await strat._run_map_phase(
-        _batches(strat, _communities(2)), SearchQuery(query="q"), degraded=degraded
-    )
+    with degradation_scope() as ledger:
+        points, unrated = await strat._run_map_phase(
+            _batches(strat, _communities(2)), SearchQuery(query="q")
+        )
     assert ([r.source for r in unrated], len(points)) == (["c0"], 1)
-    assert degraded == ["TimeoutError"]
+    assert _types(ledger) == [("global_map", "TimeoutError")]
 
     strat.map_rater = _SyncMapChain(["not json", _map_payload(("point", 50))])
-    degraded = []
-    await strat._run_map_phase(
-        _batches(strat, _communities(2)), SearchQuery(query="q"), degraded=degraded
-    )
-    assert degraded == ["LanguageModelError"]
+    with degradation_scope() as ledger:
+        await strat._run_map_phase(
+            _batches(strat, _communities(2)), SearchQuery(query="q")
+        )
+    assert _types(ledger) == [("global_map", "LanguageModelError")]
 
 
 class _SlowMapChain:
@@ -1248,14 +1253,23 @@ async def test_a_failed_findings_read_keeps_the_membership_lineage() -> None:
     strat.retrievers = {"document": _Failing({})}
     report = _cited_community(0)
     report.metadata["findings"] = _findings((["e-ja"], []))
-    degraded: list[str] = []
-    out = await strat._apply_map_reduce(
-        [report], SearchQuery(query="q"), degraded=degraded
-    )
+    with degradation_scope() as ledger:
+        out = await strat._apply_map_reduce([report], SearchQuery(query="q"))
     assert out[0].metadata["text_unit_ids"] == ["tu-0a", "tu-0b", "tu-shared"]
     # Regression (rv6): the failure was only logged, so the answer read as
     # a clean one; it is reported as the search's degraded error.
-    assert degraded == ["RuntimeError"]
+    assert _types(ledger) == [("findings_lineage", "RuntimeError")]
+    # Regression (rv7 algo-ret L9): under the default citations (global's
+    # off), only the reported sources rest on the lineage: recorded apart.
+    strat = _strategy(
+        map_batch_size=1, map_outputs=[_map_payload(("p", 70))], evidence_tokens=0
+    )
+    strat.retrievers = {"document": _Failing({})}
+    query = SearchQuery(query="q", metadata={"search_strategy": "global"})
+    with degradation_scope() as ledger:
+        await strat._apply_map_reduce([report], query)
+    assert not ledger.entries
+    assert ledger.metadata() == {"citations_unresolved": True}
 
 
 class _FilteringRecordStore(_RecordStore):

@@ -631,10 +631,24 @@ async def test_evaluation_results_and_summary_carry_the_rerank_status() -> None:
 async def test_evaluation_results_and_summary_carry_degraded_answers() -> None:
     config = Config()
     config.evaluation.enabled_evaluators = [EvaluatorType.ANSWER_MATCH]
+    retrieval = {"step": "retrieval", "reason": "Entity search", "error_type": "X"}
+    unparsed = {
+        "step": "iterative_controller",
+        "reason": "controller_unparsed",
+        "error_type": None,
+    }
     chain = _FakeChain(
         {
-            "q1": _rag_output({"degraded_error": "ThrottlingException"}),
+            "q1": _rag_output(
+                {
+                    "degraded_error": "ThrottlingException",
+                    "degraded": [retrieval, retrieval],
+                }
+            ),
             "q2": _rag_output({}),
+            # A degraded step without an error type (an unreadable model
+            # answer) still degrades the answer.
+            "q3": _rag_output({"degraded": [unparsed]}),
         }
     )
     manager = EvaluationManager(config, rag_chain=chain)
@@ -647,8 +661,16 @@ async def test_evaluation_results_and_summary_carry_degraded_answers() -> None:
         ],
         show_progress=False,
     )
-    assert [r.degraded_error for r in results] == ["ThrottlingException", None]
+    assert [r.degraded_error for r in results] == ["ThrottlingException", None, None]
+    assert [r.degraded_steps for r in results] == [
+        ["retrieval", "retrieval"],
+        [],
+        ["iterative_controller"],
+    ]
     assert summary.degraded_error_counts == {"ThrottlingException": 1}
+    # Answers per step, each answer once.
+    assert summary.degraded_step_counts == {"iterative_controller": 1, "retrieval": 1}
+    assert summary.degraded_queries == 2
 
 
 def _summary(**fields: Any) -> EvaluationSummary:
@@ -675,6 +697,13 @@ def _summary(**fields: Any) -> EvaluationSummary:
         ({"rerank_status_counts": {"disabled": 50, "unavailable": 50}}, 0.0, False),
         ({"degraded_error_counts": {"ThrottlingException": 3}}, 0.02, True),
         ({"degraded_error_counts": {"ThrottlingException": 3}}, 0.05, False),
+        # The ledger's degraded answers, an unreadable model answer included.
+        ({"degraded_queries": 3, "degraded_step_counts": {"retrieval": 3}}, 0.02, True),
+        (
+            {"degraded_queries": 3, "degraded_step_counts": {"retrieval": 3}},
+            0.05,
+            False,
+        ),
     ],
 )
 def test_degraded_answers_count_against_the_failure_budget(

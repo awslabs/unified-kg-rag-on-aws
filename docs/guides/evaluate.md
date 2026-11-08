@@ -195,8 +195,9 @@ console prints the same summary; the failure budget
 went out degraded as well as those that failed: queries whose rerank call
 failed (a throttled rerank model keeps the fused order; counted over the
 queries reranking was attempted on) and answers whose retrieval absorbed a
-step failure (`degraded_error_counts`; under `processing.ignore_errors` a
-failed query translation or entity or keyword extraction too), so at the default 1.0 a run whose
+step failure (`degraded_queries`, per step in `degraded_step_counts`; under
+`processing.ignore_errors` a failed query translation or entity or keyword
+extraction, auto's router and the follow-up rewrite too), so at the default 1.0 a run whose
 every rerank call failed exits 1, and `--max-failure-rate 0.05` fails one
 where more than 5% did. A comparison names each run's rerank failures and
 degraded answers with their rates, and warns louder (`NOT COMPARABLE AS

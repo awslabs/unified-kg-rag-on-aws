@@ -427,9 +427,9 @@ def failure_budget_breaches(
             f"rerank: {failed_reranks}/{attempted} queries' reranking failed "
             "(the fused order was kept)"
         )
-    degraded = sum(summary.degraded_error_counts.values())
+    degraded = summary.degraded_queries or sum(summary.degraded_error_counts.values())
     if degraded and _over(degraded, summary.total_queries, max_failure_rate):
-        kinds = ", ".join(summary.degraded_error_counts)
+        kinds = ", ".join(summary.degraded_step_counts or summary.degraded_error_counts)
         breaches.append(
             f"{degraded}/{summary.total_queries} answers degraded by a retrieval "
             f"step failure ({kinds})"
@@ -2543,6 +2543,8 @@ _SUMMARY_FIELDS = {
     "answer_span_statistics",
     "rerank_status_counts",
     "degraded_error_counts",
+    "degraded_step_counts",
+    "degraded_queries",
     "guardrail_blocked_counts",
     "structured_statistics",
     "iterative_statistics",

@@ -96,8 +96,9 @@ citations):
   fetch each), not its community's membership, which a corpus-spanning
   community shares with every point drawn from it; a report stored without
   findings, whose findings cite nothing, or none of whose cited records is
-  stored any more (or whose read failed: the search's `degraded_error`)
-  keeps the membership. The records are read in the query's namespace
+  stored any more (or whose read failed: a `findings_lineage` degraded
+  step of an answer that cites, `metadata.citations_unresolved` of one
+  whose strategy's citations are off) keeps the membership. The records are read in the query's namespace
   (index prefix and suffix) without the caller's filters: they say what
   the report rests on, and the citation applies the filters to their units
   (Resolution below); read under the filters, a record of another document

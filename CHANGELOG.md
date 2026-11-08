@@ -632,6 +632,13 @@ From a `main` checkout (formats and keys no release had):
   `--pool-runs`.
 
 ### Added
+- A query reports every step it answered without in `metadata["degraded"]` (each `step`, `reason`, `error_type`;
+  `degraded_error` stays the first error type): a store read a strategy absorbed (simple and naive reported a clean
+  empty search), global's rating and map calls, DRIFT's and iterative's model calls, and the chain's
+  `processing.ignore_errors` fallbacks (auto's router, the follow-up rewrite, query processing, the context budget),
+  from one per-query ledger (`DegradationLedger`). A failed findings-lineage read of a strategy whose answers do not
+  cite (global and DRIFT by default) is `metadata.citations_unresolved` instead. `run-eval` records `degraded_steps`
+  per answer, `degraded_step_counts` and `degraded_queries`, which `--max-failure-rate` counts.
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
   `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in advance
   (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared strategies

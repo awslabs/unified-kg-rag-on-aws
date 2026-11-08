@@ -27,7 +27,7 @@ A comparison adds `evaluation_comparison_<timestamp>.json`, `.csv` and `.md`
 Each row of `evaluation_results_*` is one answer: the question, answer,
 ground truth, retrieved contexts and source provenance, `response_time`,
 `usage`, `error` / `error_message`, `rerank_status`, `degraded_error`,
-`guardrail_blocked`,
+`degraded_steps`, `guardrail_blocked`,
 `category`, the query's `metadata`, and the chain's decline and
 sufficiency fields:
 
@@ -97,8 +97,13 @@ from the text, and under
   (a global map batch, a DRIFT follow-up, an iterative round, a step
   `processing.ignore_errors` skipped: the query translation and the query
   entity and keyword extractions among them), per error type; each result carries
-  `degraded_error`. They count against `--max-failure-rate` over every
-  query.
+  `degraded_error`.
+- `degraded_step_counts`: the same answers per degraded step (the chain's
+  `metadata.degraded`: `retrieval`, `global_map`, `drift_action`,
+  `translation`, `routing`, ...; an answer counted once per step); each
+  result carries `degraded_steps`. `degraded_queries` counts the answers
+  with any, an unreadable model answer (`iterative_controller`) included:
+  they count against `--max-failure-rate` over every query.
 - `guardrail_blocked_counts`: blocked queries per `input` / `output` (a
   blocked item is scored on the blocked message; a blocked answer drops its
   sources, so its retrieval metrics and the RAGAS context metrics

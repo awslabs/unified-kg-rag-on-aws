@@ -352,6 +352,15 @@ class EvaluationResult(BaseModel):
             "succeeded."
         ),
     )
+    degraded_steps: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The steps the answer went out without, in the order they failed "
+            "(the chain's metadata.degraded: retrieval, global_map, "
+            "drift_action, translation, routing, ...), one per failure; "
+            "empty when every step succeeded."
+        ),
+    )
     guardrail_blocked: Literal["input", "output"] | None = Field(
         default=None,
         description=(
@@ -515,6 +524,21 @@ class EvaluationSummary(BaseModel):
             "Answers whose retrieval absorbed a step failure, per error type "
             "(EvaluationResult.degraded_error), e.g. {'ThrottlingException': "
             "3}; empty when none was degraded."
+        ),
+    )
+    degraded_step_counts: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Answers that went out without a failed step, per step "
+            "(EvaluationResult.degraded_steps), e.g. {'retrieval': 2, "
+            "'global_map': 1}; empty when none was degraded."
+        ),
+    )
+    degraded_queries: int = Field(
+        default=0,
+        description=(
+            "Answers that went out degraded: a degraded step or a "
+            "degraded_error (what --max-failure-rate counts)."
         ),
     )
     guardrail_blocked_counts: dict[str, int] = Field(

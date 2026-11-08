@@ -48,7 +48,9 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    current_ledger,
     query_scope,
+    record_degradation,
     scope_filters,
 )
 from unified_kg_rag.adapters.retrieval.memory_manager import (
@@ -143,6 +145,10 @@ from unified_kg_rag.domain.retrieval.abstention import (
     REASON_NO_CONTEXT,
     MarkerStreamFilter,
     split_marker,
+)
+from unified_kg_rag.domain.retrieval.degradation import (
+    DEGRADED_ERROR_KEY,
+    DegradationStep,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import HELD_ARTIFACTS_KEY
 from unified_kg_rag.domain.retrieval.no_context import (
@@ -955,6 +961,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 raise
             strategy = self._fallback_strategy(routable)
             decided_by = "fallback"
+            record_degradation(
+                DegradationStep.ROUTING, f"routed to '{strategy.value}'", e
+            )
             logger.warning(
                 "Strategy auto-selection failed, using '%s' as fallback: %s",
                 strategy.value,
@@ -1130,6 +1139,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 raise
             logger.warning("Query processing failed: %s", error_digest(e))
             logger.debug("Query processing error: %s", e)
+            record_degradation(
+                DegradationStep.QUERY_PROCESSING, "searched the question as is", e
+            )
             return ProcessedQuery(
                 original_query=original_query,
                 standalone_query=standalone_query,
@@ -1228,6 +1240,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 "Follow-up rewrite failed; using the query as is: %s", error_digest(e)
             )
             logger.debug("Follow-up rewrite error: %s", e)
+            record_degradation(
+                DegradationStep.FOLLOW_UP_REWRITE, "searched the follow-up as is", e
+            )
             return None
         return self._usable_rewrite(str(rewritten))
 
@@ -1301,11 +1316,16 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             filtered=bool(search_query.filters),
         ) as span:
             # One memo of store lookups per query (attribute probes), never
-            # kept past it.
+            # kept past it (the query's, when the query opened one).
             with query_scope():
+                ledger = current_ledger()
                 result = await strategy_instance.asearch(search_query, config=config)
+                degraded = result.metadata.get(DEGRADED_ERROR_KEY)
+                if degraded and ledger is not None and not ledger.entries:
+                    # A strategy that reports its own (not through the ledger).
+                    ledger.record(DegradationStep.RETRIEVAL, "strategy", degraded)
             # A failure ignore_errors absorbed still degraded the answer.
-            if degraded := result.metadata.get("degraded_error"):
+            if degraded:
                 span.set_attribute(ERROR_TYPE, degraded)
             if observability.is_enabled():
                 span.set_attributes(
@@ -1595,6 +1615,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 raise
             logger.warning("Context optimization failed: %s", error_digest(e))
             logger.debug("Context optimization error: %s", e, exc_info=True)
+            record_degradation(
+                DegradationStep.CONTEXT_OPTIMIZATION, "answered without context", e
+            )
             return OptimizedContext(
                 sections=[],
                 total_tokens=0,
@@ -1905,9 +1928,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             **sr.metadata,
             **({ROUTING_KEY: state[ROUTING_KEY]} if ROUTING_KEY in state else {}),
         }
-        # A query processing failure ignore_errors absorbed degrades it too.
-        if degraded := state["processed_query"].degraded_error:
-            metadata.setdefault("degraded_error", degraded)
+        GraphRAGChain._report_degradation(state, metadata)
         reason = state.get("abstention_reason")
         if reason is None and GraphRAGChain._context_is_empty(state):
             # The answer step returned the fixed no-context reply.
@@ -1939,6 +1960,18 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             processed_query=state["processed_query"],
             metadata=metadata,
         )
+
+    @staticmethod
+    def _report_degradation(state: dict[str, Any], metadata: dict[str, Any]) -> None:
+        """Set the query's degraded steps on ``metadata`` (its ledger's
+        ``degraded``, ``degraded_error`` and ``citations_unresolved``,
+        ``DegradationLedger.metadata``), over the strategy's own. Without a
+        query scope (a caller driving the composed runnable), a query
+        processing failure ignore_errors absorbed degrades it too."""
+        if (ledger := current_ledger()) is not None:
+            metadata.update(ledger.metadata())
+        if degraded := state["processed_query"].degraded_error:
+            metadata.setdefault(DEGRADED_ERROR_KEY, degraded)
 
     @staticmethod
     def _is_synthesized(metadata: dict[str, Any] | None) -> bool:
@@ -2067,9 +2100,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             **sr.metadata,
             **({ROUTING_KEY: state[ROUTING_KEY]} if ROUTING_KEY in state else {}),
         }
-        # A query processing failure ignore_errors absorbed degrades it too.
-        if degraded := state["processed_query"].degraded_error:
-            metadata.setdefault("degraded_error", degraded)
+        GraphRAGChain._report_degradation(state, metadata)
 
         return SearchOutput(
             search_results=sr,
@@ -2172,6 +2203,8 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 "kg_rag.query", self._query_span_attributes(rag_input, search)
             ) as span,
             usage_scope() as meter,
+            # The query's store-lookup memo and degradation ledger.
+            query_scope(),
         ):
             started = time.monotonic()
             leftovers: list[asyncio.Future[Any]] = []

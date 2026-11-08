@@ -39,6 +39,23 @@ fatal error.
 | One failed request (an HTTP 500 for one search) | any other exception | degrades that section |
 | The whole query past `search.query_timeout_seconds`, or a stream's first chunk past `search.model_timeout_seconds` | `QueryTimeoutError`, raised by `GraphRAGChain` once its tasks (and, through `gather_or_cancel`, every section's) are cancelled | fatal (the error answer under `processing.ignore_errors`) |
 
+A failure that degrades a section is recorded in the query's
+`DegradationLedger` (`domain/retrieval/degradation.py`; the per-query scope,
+`adapters/retrieval/base.py` `query_scope`): `_safe_aretrieve` and
+`_fetch_by_ids` record each absorbed read (`step: retrieval`, or
+`findings_lineage`), the strategies their failed model calls (global's
+rating and map, DRIFT's expansion, primer and actions, iterative's
+controller) and the chain its `ignore_errors` fallbacks (`routing`,
+`follow_up_rewrite`, `query_processing` and its translation, entity and
+keyword calls, `context_optimization`). Each search reports its own entries
+(`SearchResult.metadata["degraded"]`, set by `BaseSearchStrategy` for every
+strategy), the answer every entry of the query (`RAGOutput.metadata["degraded"]`,
+each `step`, `reason`, `error_type`), and `degraded_error` stays the error
+type of the first. A findings-lineage read of a strategy whose answers do not
+cite (`search.citations`; global and DRIFT by default) only makes its reported
+sources less precise: it is recorded apart (`metadata.citations_unresolved`).
+`run-eval` counts the answers with any entry (`degraded_queries`).
+
 Neptune specifics: a lost connection is dropped so the next query or retry
 opens a new one; a query traversal runs on retriever-owned threads, bounded by
 twice `search.store_timeout_seconds`; closing the client fails requests still

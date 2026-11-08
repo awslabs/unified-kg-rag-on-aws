@@ -25,12 +25,12 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from unified_kg_rag.adapters.retrieval.strategy_registry import wrapped_strategy
+from unified_kg_rag.adapters.retrieval.strategy_registry import citations_enabled
 from unified_kg_rag.domain.ingestion.report_references import (
     FINDINGS_TEXT_UNITS_FIELD,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import SEED_UNIT_PREFIX
-from unified_kg_rag.domain.models import Citation, CitedDocument, Config, SearchStrategy
+from unified_kg_rag.domain.models import Citation, CitedDocument
 from unified_kg_rag.domain.retrieval.citations import cited_markers
 
 __all__ = [
@@ -50,23 +50,6 @@ _TEXT = "text"
 # default 10). Uncapped, a filter excluding most of a hub's units read its
 # whole lineage.
 MAX_LINEAGE_PAGES = 4
-
-
-def citations_enabled(config: Config, strategy: SearchStrategy | str | None) -> bool:
-    """Whether the answers of ``strategy`` (the one a query ran: ``auto``'s
-    route) cite under ``config``: ``search.citations.strategies``' entry for
-    it, else, for a wrapper (``iterative``), its base's, else
-    ``search.citations.enabled``. A strategy that is unknown or not given
-    (a result saved without one) reads ``enabled``."""
-    settings = config.search.citations
-    try:
-        resolved = SearchStrategy(strategy) if strategy is not None else None
-    except ValueError:
-        resolved = None
-    if resolved is None or resolved is SearchStrategy.AUTO:
-        return settings.enabled
-    base = wrapped_strategy(resolved, config)
-    return settings.enabled_for(resolved, base if base is not resolved else None)
 
 
 @dataclass(frozen=True)
