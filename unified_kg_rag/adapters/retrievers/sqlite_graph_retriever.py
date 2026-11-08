@@ -30,47 +30,12 @@ from unified_kg_rag.domain.models.graph_query import (
     GraphQueryRequest,
     GraphQueryResult,
 )
-from unified_kg_rag.domain.retrieval.filters import (
-    KindsRule,
-    Range,
-    Scalar,
-)
+from unified_kg_rag.domain.retrieval.filters import KindsRule
 from unified_kg_rag.domain.retrieval.graph_query import build_profile
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import safe_float_parse
 
 logger = get_logger(__name__)
-
-_COMPARISONS = {
-    "gte": lambda stored, value: stored >= value,
-    "lte": lambda stored, value: stored <= value,
-    "gt": lambda stored, value: stored > value,
-    "lt": lambda stored, value: stored < value,
-}
-
-
-def _same(stored: Any, value: Scalar) -> bool:
-    """Gremlin's equality: of one type (``True`` is not ``1``), a number
-    equal to a number of either kind (``2`` is ``2.0``)."""
-    if isinstance(stored, bool) or isinstance(value, bool):
-        return isinstance(stored, bool) and isinstance(value, bool) and stored == value
-    if isinstance(stored, int | float) and isinstance(value, int | float):
-        return stored == value
-    return type(stored) is type(value) and stored == value
-
-
-def _in_range(stored: Any, bounds: tuple[tuple[str, Scalar], ...]) -> bool:
-    """Gremlin's comparison of one stored value: across types it fails."""
-    for op, bound in bounds:
-        number = isinstance(bound, int | float) and not isinstance(bound, bool)
-        if number != (isinstance(stored, int | float) and not isinstance(stored, bool)):
-            return False
-        try:
-            if not _COMPARISONS[op](stored, bound):
-                return False
-        except TypeError:
-            return False
-    return True
 
 
 def _passes(clause: VertexClause, value_map: dict[str, Any]) -> bool:
@@ -82,9 +47,7 @@ def _passes(clause: VertexClause, value_map: dict[str, Any]) -> bool:
     stored = value_map.get(clause.field) or []
     if isinstance(clause, KindsRule):
         return clause.passes(stored)
-    if isinstance(clause, Range):
-        return any(_in_range(v, clause.bounds) for v in stored)
-    return any(_same(v, value) for v in stored for value in clause.values)
+    return clause.holds(stored)
 
 
 def vertex_filter(filters: dict[str, Any] | None) -> VertexFilter | None:

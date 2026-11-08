@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import time
+from collections.abc import Iterable
+from dataclasses import replace
 from typing import Any, ClassVar
 
 from langchain_core.runnables import RunnableConfig
@@ -30,6 +32,13 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval import source_fields
+from unified_kg_rag.domain.retrieval.filters import (
+    KindsRule,
+    Range,
+    Term,
+    parse_any_of,
+    parse_filters,
+)
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.linking import choose_links
@@ -637,7 +646,9 @@ class LocalSearchStrategy(PPRRankingMixin):
         ):
             return None
         matches = self.community_matches(entity_nodes)
-        if not matches or self.filters_exclude_members(query.filters, matches):
+        if not matches or self.filters_exclude_members(
+            query.filters, matches, query.any_of
+        ):
             return None
         reports = await self._fetch_by_ids(
             self.document_retriever,
@@ -659,33 +670,36 @@ class LocalSearchStrategy(PPRRankingMixin):
 
     @staticmethod
     def filters_exclude_members(
-        filters: dict[str, Any] | None, matches: dict[str, int]
+        filters: dict[str, Any] | None,
+        matches: dict[str, int],
+        any_of: list[dict[str, Any]] | None = None,
     ) -> bool:
-        """Whether caller ``filters`` admit no report of the level-0
-        ``matches``: a range on ``community_id`` (it cannot narrow them), a
-        ``community_id`` naming none of them, or a ``level`` without 0."""
-        given = (filters or {}).get("community_id")
-        if isinstance(given, dict):  # a range: no member is named
-            given = []
-        if given is not None:
-            allowed = given if isinstance(given, list) else [given]
-            if not {str(value) for value in allowed} & matches.keys():
-                return True
-        level = (filters or {}).get("level")
-        if level is None:
-            return False
-        if isinstance(level, dict):
-            bounds = {
-                "gt": lambda bound: 0 > bound,
-                "gte": lambda bound: 0 >= bound,
-                "lt": lambda bound: 0 < bound,
-                "lte": lambda bound: 0 <= bound,
-            }
-            return not all(
-                bounds[op](bound) for op, bound in level.items() if op in bounds
-            )
-        levels = level if isinstance(level, list) else [level]
-        return 0 not in levels
+        """Whether caller ``filters`` (and ``any_of`` groups) admit no report
+        of the level-0 ``matches``: a range on ``community_id`` (it cannot
+        narrow them), a ``community_id`` naming none of them, or a ``level``
+        without 0, read by the filter clauses' own rule (``Term.holds``,
+        ``Range.holds``)."""
+
+        def admits(clauses: Iterable[Term | Range | KindsRule], member: str) -> bool:
+            for clause in clauses:
+                if clause.field == "community_id":
+                    if not isinstance(clause, Term):
+                        return False
+                    named = tuple(str(value) for value in clause.values)
+                    if not replace(clause, values=named).holds([member]):
+                        return False
+                elif clause.field == "level" and not isinstance(clause, KindsRule):
+                    if not clause.holds([0]):
+                        return False
+            return True
+
+        clauses = parse_filters(filters, allow_empty_lists=True)
+        groups = parse_any_of(any_of)
+        return not any(
+            admits(clauses, member)
+            and (groups is None or any(admits(g, member) for g in groups.groups))
+            for member in matches
+        )
 
     @staticmethod
     def community_matches(entity_nodes: list[RetrievalResult]) -> dict[str, int]:

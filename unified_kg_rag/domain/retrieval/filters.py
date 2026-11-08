@@ -666,6 +666,11 @@ class Term:
     kind: FieldKind = FieldKind.KEYWORD
     listed: bool = False
 
+    def holds(self, stored: Iterable[Any]) -> bool:
+        """Whether one of the ``stored`` values is one of ``values``, as a
+        graph store compares them (:func:`same_value`)."""
+        return any(same_value(v, value) for v in stored for value in self.values)
+
 
 @dataclass(frozen=True)
 class Range:
@@ -674,6 +679,45 @@ class Range:
     field: str
     bounds: tuple[tuple[str, Scalar], ...]
     kind: FieldKind = FieldKind.KEYWORD
+
+    def holds(self, stored: Iterable[Any]) -> bool:
+        """Whether one of the ``stored`` values satisfies every bound, as a
+        graph store compares them: across types (a number and text) a
+        comparison fails."""
+        return any(self._within(value) for value in stored)
+
+    def _within(self, stored: Any) -> bool:
+        for op, bound in self.bounds:
+            if _is_number(bound) != _is_number(stored):
+                return False
+            try:
+                if not _COMPARISONS[op](stored, bound):
+                    return False
+            except TypeError:
+                return False
+        return True
+
+
+_COMPARISONS = {
+    "gte": lambda stored, bound: stored >= bound,
+    "lte": lambda stored, bound: stored <= bound,
+    "gt": lambda stored, bound: stored > bound,
+    "lt": lambda stored, bound: stored < bound,
+}
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def same_value(stored: Any, value: Scalar) -> bool:
+    """A graph store's equality (Gremlin's): of one type (``True`` is not
+    ``1``), a number equal to a number of either kind (``2`` is ``2.0``)."""
+    if isinstance(stored, bool) or isinstance(value, bool):
+        return isinstance(stored, bool) and isinstance(value, bool) and stored == value
+    if _is_number(stored) and _is_number(value):
+        return bool(stored == value)
+    return type(stored) is type(value) and stored == value
 
 
 @dataclass(frozen=True)
