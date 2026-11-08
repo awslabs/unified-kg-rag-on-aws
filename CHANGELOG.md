@@ -380,9 +380,10 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    `GraphRagSecurity` stack (CDK metadata only) with `aws cloudformation delete-stack`; dry-run the TLS policy
    change (`aws opensearch update-domain-config ... --dry-run`) to see whether it runs blue/green; in a
    `removal_destroy` environment copy the `CacheAccessLogs` logs you need, as the bucket is deleted (#566, #583).
-   With `opensearch_count` above 1, also pass `-c opensearch_master_instance=r6g.large.search` (and keep it on later
-   deploys): 0.2.3's dedicated masters ran the data node type, the default is now `m6g.large.search`, and changing
-   them is a blue/green deployment (every shard copied, slower for hours on a large domain).
+   With `opensearch_count` above 1, also pass `-c opensearch_master_instance=` the domain's `opensearch_instance`
+   (`r6g.large.search` unless you set one; keep it on later deploys): 0.2.3's dedicated masters ran the data node
+   type, the default is now `m6g.large.search`, and changing them is a blue/green deployment (every shard copied,
+   slower for hours on a large domain).
 9. OpenSearch 2.19: put back `OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_19` and upgrade the domain
    as the runbook's [Upgrading OpenSearch](docs/operations.md#upgrading-opensearch) says: stop ingestion, take a
    manual snapshot (the only way back to 2.13), run the eligibility check, and deploy `GraphRagStorage` once `cdk
