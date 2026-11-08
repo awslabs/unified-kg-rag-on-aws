@@ -153,11 +153,45 @@ def test_the_message_names_each_server_and_how_to_start_it() -> None:
     assert "providers.embedding (openai_compatible at http://10.0.0.5:8000/v1)" in (
         message
     )
-    assert "ollama serve" in message and "chat-m" in message and "emb-m" in message
+    assert "ollama serve" in message and "chat-m" in message
+    # The embedder is no Ollama server's model to pull.
+    assert "emb-m" not in message
     assert model_unreachable_error(error, config) is error
     bedrock = model_unreachable_error(httpx.ConnectError("x"), Config())
     assert "providers.llm and providers.embedding (bedrock)" in str(bedrock)
     assert "ollama" not in str(bedrock)
+
+
+def test_the_message_names_the_server_the_connection_failed_to_reach() -> None:
+    # Regression (rv8 retrieval low): with only the language model server
+    # down, the message named the embedding server too.
+    config = Config(
+        backend="local",
+        models={
+            "default": "chat-m",
+            "embedding": {"model_id": "emb-m", "dimension": 8},
+        },
+    )
+    config.providers.embedding.kind = "openai_compatible"
+    config.providers.embedding.base_url = "http://10.0.0.5:8000/v1"
+
+    def refused(url: str) -> httpx.ConnectError:
+        return httpx.ConnectError("refused", request=httpx.Request("POST", url))
+
+    llm = str(
+        model_unreachable_error(refused("http://localhost:11434/api/chat"), config)
+    )
+    assert "providers.llm (ollama at http://localhost:11434)" in llm
+    assert "providers.embedding" not in llm
+    assert "chat-m" in llm and "emb-m" not in llm
+    embedding = str(
+        model_unreachable_error(refused("http://10.0.0.5:8000/v1/embeddings"), config)
+    )
+    assert "providers.embedding (openai_compatible" in embedding
+    assert "providers.llm" not in embedding and "ollama serve" not in embedding
+    # A URL no configured server has: every one is named.
+    other = str(model_unreachable_error(refused("http://elsewhere:1/x"), config))
+    assert "providers.llm" in other and "providers.embedding" in other
 
 
 @pytest.mark.parametrize(

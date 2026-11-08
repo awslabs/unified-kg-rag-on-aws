@@ -36,6 +36,7 @@ from unified_kg_rag.adapters.llm.langchain import (
     RobustXMLOutputParser,
     TextOnlySectionError,
 )
+from unified_kg_rag.adapters.llm.reachability import is_unreachable_error
 from unified_kg_rag.adapters.llm.retry import (
     TransientErrorPredicate,
     acall_with_transient_retry,
@@ -590,6 +591,14 @@ class TransientRetryRunnable(Runnable[Any, Any]):
                 attempt += 1
 
 
+def _reachable_and(is_transient: TransientErrorPredicate) -> TransientErrorPredicate:
+    """``is_transient`` but for a model server that could not be reached
+    (``is_unreachable_error``): a query fails at once naming it
+    (``ModelUnreachableError``), not after the retries' backoff, since every
+    later call of the query meets the same server."""
+    return lambda exc: is_transient(exc) and not is_unreachable_error(exc)
+
+
 def with_transient_retry(
     runnable: Runnable[Any, Any],
     *,
@@ -825,7 +834,8 @@ def setup_chain(
     ``QUERY`` (the default) gets, when the factory classifies transient
     errors and has a chain retry policy (``is_transient_error`` and
     ``transient_retry``, the Bedrock and Ollama factories), a transient-error
-    retry around the whole chain. Ingestion and evaluation call sites pass
+    retry around the whole chain (a model server that could not be reached is
+    not retried: the query fails naming it). Ingestion and evaluation call sites pass
     their purpose explicitly: they get no chain-level retry, because ``BatchProcessor`` already retries them and a
     second layer would multiply the attempts. A factory without a
     ``transient_retry`` policy (the OpenAI-compatible one) leaves query
@@ -876,7 +886,7 @@ def setup_chain(
             chain,
             operation=prompt_class.__name__,
             retry=getattr(factory, "transient_retry", None),
-            is_transient=is_transient,
+            is_transient=_reachable_and(is_transient),
         )
     except Exception as e:
         logger.error("Failed to setup LLM chain with model '%s': %s", model_id, e)

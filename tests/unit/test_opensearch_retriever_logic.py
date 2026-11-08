@@ -189,12 +189,12 @@ def test_build_filter_clauses_none(retriever) -> None:
 def test_build_filter_clauses_term_terms_range(retriever) -> None:
     clauses = retriever._build_filter_clauses(
         {
-            "type": "PERSON",  # scalar -> term
+            "type": "person",  # scalar -> term
             "id": ["a", "b"],  # list -> terms
             "rank": {"gte": 5},  # dict -> range
         }
     )
-    assert {"term": {"type": "PERSON"}} in clauses
+    assert {"term": {"type": "person"}} in clauses
     assert {"terms": {"id": ["a", "b"]}} in clauses
     assert {"range": {"rank": {"gte": 5}}} in clauses
 
@@ -462,18 +462,18 @@ def test_vector_search_is_one_knn_search(retriever) -> None:
 
 def test_lexical_search_wraps_filters(retriever) -> None:
     q = SearchQuery(
-        query="alice", search_type=SearchType.LEXICAL, filters={"type": "PERSON"}
+        query="alice", search_type=SearchType.LEXICAL, filters={"type": "person"}
     )
     (body,) = _bodies(retriever, q)
-    assert body["query"]["bool"]["filter"] == [{"term": {"type": "PERSON"}}]
+    assert body["query"]["bool"]["filter"] == [{"term": {"type": "person"}}]
     assert body["query"]["bool"]["must"][0]["multi_match"]["query"] == "alice"
 
 
 @pytest.mark.parametrize("search_type", [SearchType.HYBRID, SearchType.VECTOR])
 def test_text_less_search_is_a_filter_browse(retriever, search_type) -> None:
-    q = SearchQuery(query="", search_type=search_type, filters={"type": "PERSON"})
+    q = SearchQuery(query="", search_type=search_type, filters={"type": "person"})
     assert [b["query"] for b in _bodies(retriever, q)] == [
-        {"bool": {"filter": [{"term": {"type": "PERSON"}}]}}
+        {"bool": {"filter": [{"term": {"type": "person"}}]}}
     ]
     q = SearchQuery(query="", search_type=search_type)
     assert [b["query"] for b in _bodies(retriever, q)] == [{"match_all": {}}]

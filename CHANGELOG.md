@@ -670,11 +670,12 @@ From a `main` checkout (formats and keys no release had):
   `error_class`): the console's Ask page shows a partial answer as such, MCP `kg_answer` and `kg_search` return them
   after the answer, and `run-rag` prints them (and its JSON document holds them).
 - `ModelUnreachableError`: a model server that cannot be reached is named with its provider kind, `base_url` and how
-  to start it (`ollama serve`, the models to pull). `run-ingestion` raises it at its embedding probe, before any
-  extraction (it retried for minutes and ended with "produced 0 outputs"); a query raises it (the error answer under
-  `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback. `ErrorClass` and
-  `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the MCP server's
-  caller messages and the console's error kind, also of an error answer (`metadata.error_class`).
+  to start it (`ollama serve`, the models to pull), the one server the failed connection was made to when its
+  transport says which. `run-ingestion` raises it at its embedding probe, before any extraction (it retried for
+  minutes and ended with "produced 0 outputs"); a query raises it at once, without the transient retries' backoff
+  (the error answer under `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback.
+  `ErrorClass` and `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the
+  MCP server's caller messages and the console's error kind, also of an error answer (`metadata.error_class`).
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
   `p_value` (exact on few pairs), and `multiplicity` Holm-adjusts them in families: a primary metric declared in advance
   (`--primary-metric`, `evaluation.primary_metric`, default `answer_match/answer_contains`) over the compared strategies
@@ -786,8 +787,9 @@ From a `main` checkout (formats and keys no release had):
   condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a count cites its first matches
   as entities, a minimum or a maximum the entities holding it and groups by a property their listed groups'. Filter keys
   are checked against the fallback that would run too. A count of 0 or a "no" over a string
-  value no vertex holds (misspelled or translated) is no answer (`unknown_value`); a failed planner or store call is
-  also a degradation of the query (`metadata.degraded`, step `structured_query`), a designed fallback is not. A
+  value no vertex holds (misspelled or translated) is no answer (`unknown_value`); a failed planner or store call and a
+  plan still no JSON after the repair (`unreadable_plan`) are a degradation of the query (`metadata.degraded`, step
+  `structured_query`), a designed fallback (`refused_plan`: a plan the checks still refuse) is not. A
   stored name or a value starting with `~` (a Gremlin hidden token) is refused at validation with a WARNING, not as a
   compiler bug; a type the sampled profile missed is refused saying so, and a count over a symmetric `both` pattern says
   it counts each pair twice. Without a structured
@@ -1128,8 +1130,9 @@ From a `main` checkout (formats and keys no release had):
   falling back to the first line), `evaluation.answer_normalization` (`official_squad`, `hotpotqa`), recorded in the
   manifest's `answer_scoring` with the token-F1 tokenization; under `default`, token F1 counts a Han, Hangul or Kana
   letter as a token and drops a run of Korean particles (their closed class) on a gold word, so Chinese, Japanese and
-  Korean answers get partial credit, and a German, Spanish, French, Italian or Portuguese answer (the question's
-  language, `answer_language` in each report) drops that language's articles and reads its number words up to twelve
+  Korean answers get partial credit, and a German, Spanish, French, Italian, Portuguese or Russian answer (the
+  question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
+  elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its number words up to twelve
   (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
@@ -1214,14 +1217,16 @@ From a `main` checkout (formats and keys no release had):
   printed a header alone, and an answer is followed by one line naming its source files and counting its graph
   elements; `--verbose` lists every source with its score and text, in `--interactive` mode too (which printed
   the details on every answer) (#629).
-- A LightRAG keyword extraction whose answer is no usable JSON fails naming the model role and model that answered
-  and the three ways out (`models.roles.entity_extraction`, `processing.ignore_errors`, `--disable-query-processing`)
-  instead of the parser's `Expecting value: line 1 column 1` (a `LanguageModelError` now, not a
-  `json.JSONDecodeError`) (#629).
+- A LightRAG keyword extraction whose answer is no usable JSON even after the repair is a degraded step
+  (`metadata.degraded`, step `keyword_extraction`), under `processing.ignore_errors: false` too: the query searches
+  the raw question as its keyword, as upstream LightRAG does, and a WARNING names the model role and model that
+  answered. It failed the whole `mix`, `hybrid` or `iterative` query with the parser's `Expecting value` (#629).
 - The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
-  naming `processing.translation.source_language`, when its script disagrees with the setting: a Korean, Japanese
-  or Chinese corpus under the default `en` was extracted with prompts asking for English and analyzed as English
-  without a word. `run-prompt-tuning` writes the `source_language` the sample reads as into its output (#629).
+  naming `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese,
+  Chinese, Russian, Thai, Arabic or German corpus under the default `en` was extracted with prompts asking for
+  English and analyzed as English without a word. The sample's language is read by the rule a query's is (its
+  script, and a Latin-script one's function words). `run-prompt-tuning` writes the `source_language` the sample
+  reads as into its output (#629).
 - `backend: local`: the refusals and retrieval logs of the embedded vector store name it ("The embedded SQLite search
   engine index ...") instead of OpenSearch, and a query where nothing was ingested reads an empty store with a
   WARNING naming `providers.vector.sqlite_path` instead of creating an empty `vector.sqlite3` (in the working
@@ -1542,18 +1547,25 @@ From a `main` checkout (formats and keys no release had):
 Bugs present in 0.2.3.
 
 Queries and retrieval.
+- A `type` or `status` filter value matches its lowercase form too, as ingestion stores entity and claim types and
+  claim statuses: `type:PERSON` matched nothing on every store.
 - `@register_strategy` on a registered class with other arguments raises instead of replacing its record, which
   changed what that strategy reads for every caller in the process; the same arguments keep the record.
 - The no-context reply is written in the language of the script most of the question's letters are in, weighed
   by what a letter carries, not in the first non-Latin script found: "What does 계약 mean?" gets the English reply,
-  a Japanese question quoting a Korean word the Japanese one.
+  a Japanese question quoting a Korean word the Japanese one. Among Latin-script languages, elisions ("dell'") count
+  with the function words, and a tie the index language is not in goes to the language whose own articles occur
+  ("Qual è il prezzo?" is Italian, not English).
 - A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
   went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
   top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal
   hybrid weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530). A top
   hit sharing one word with the name and covering neither way (an absent "Zorblax Supplies" for "Acme Supplies")
-  seeds nothing; semantic and alias hits ("NYC" for "New York City") seed as before.
+  seeds nothing; semantic and alias hits ("NYC" for "New York City") seed as before. Local seeds and the structured
+  strategy's mentions compare names folded at query time (stored keys unchanged): a middle dot between kana, Han or
+  Hangul letters ("オリオン・ラボ" for "オリオンラボ"), Arabic short vowels, tatweel, alef with or without hamza, alef
+  maksura and a leading "شركة" no longer keep a name from linking.
 - Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
   structured query result's lineage): the units most expanded entities cite, then the best-scored citing entity's,
   then first seen; an entity citing a unit twice counts once, and a lineage a graph store returns as its JSON text
@@ -1683,7 +1695,7 @@ Ingestion and incremental indexing.
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed
-  occurrence; `parse_llm_json` the last object that parses, preferring the caller's keys); a single cut-off answer
+  occurrence; the JSON reader the last object that parses, preferring the caller's keys); a single cut-off answer
   is still flagged, and nameless entities in complete sections are retried as malformed (#532, #536, #541, #560).
 - Output that parsed with the wrong shape (sections saying `None`, one wrapping element, prose, no section) goes to
   the output fixer instead of failing or being read as empty; a field holding markup is read as its text

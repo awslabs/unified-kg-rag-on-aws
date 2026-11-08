@@ -263,3 +263,36 @@ async def test_a_caller_filter_without_the_member_communities_reads_similar_ones
         assert similar.filters == filters
     else:
         assert all(q.query == "" for q in calls)
+
+
+@pytest.mark.parametrize(
+    ("any_of", "selection"),
+    [
+        ([{"level": 1}, {"community_id": "c-other"}], "similarity"),
+        ([{"level": 1}, {"level": 0}], "membership"),
+        ([{"community_id": ["c-small"]}], "membership"),
+    ],
+)
+async def test_any_of_groups_judge_the_members_too(
+    config: Config, any_of: list[dict[str, Any]], selection: str
+) -> None:
+    # Regression (rv8 design L10): any_of was ignored, so groups that admit
+    # no level-0 community read the member reports and found none.
+    strategy, _ = _strategy(config, _MEMBERS)
+    result = await strategy.asearch(
+        SearchQuery(query="q", entity_focus=["Acme"], any_of=any_of)
+    )
+    assert result.metadata["report_selection"] == selection
+
+
+def test_the_member_filter_compares_as_the_clauses_do() -> None:
+    from unified_kg_rag.adapters.search_strategies.local_search import (
+        LocalSearchStrategy,
+    )
+
+    excluded = LocalSearchStrategy.filters_exclude_members
+    matches = {"c1": 2}
+    assert not excluded({"level": 0.0}, matches)
+    assert excluded({"level": {"gt": 0}}, matches)
+    assert not excluded({"community_id": ["c1", "c9"]}, matches)
+    assert excluded({"community_id": {"gte": "c0"}}, matches)

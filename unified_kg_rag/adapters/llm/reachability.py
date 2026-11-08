@@ -16,6 +16,7 @@ for a query.
 from __future__ import annotations
 
 import socket
+from urllib.parse import urlsplit
 
 from unified_kg_rag.domain.models import Config, ModelRole
 from unified_kg_rag.domain.models.provider_config import BEDROCK, OLLAMA
@@ -77,14 +78,47 @@ def _servers(config: Config) -> list[tuple[str, str, str | None]]:
     return [(" and ".join(names), kind, url) for (kind, url), names in found.items()]
 
 
+def _failed_endpoint(exc: BaseException) -> tuple[str, int | None] | None:
+    """The host and port the failed connection of ``exc`` was made to, when
+    its transport says (httpx's and the OpenAI client's request, botocore's
+    ``endpoint_url``); ``None`` when none does (the Ollama client's own)."""
+    for error in causes(exc):
+        url: object = None
+        try:
+            url = getattr(getattr(error, "request", None), "url", None)
+        except RuntimeError:  # httpx: a request error raised without one
+            url = None
+        url = url or (getattr(error, "kwargs", None) or {}).get("endpoint_url")
+        if url:
+            return _endpoint(str(url))
+    return None
+
+
+def _endpoint(url: str) -> tuple[str, int | None]:
+    parts = urlsplit(url)
+    default = {"http": 80, "https": 443}.get(parts.scheme)
+    return (parts.hostname or "").lower(), parts.port or default
+
+
 def _hint(config: Config, servers: list[tuple[str, str, str | None]]) -> str:
     if any(kind == OLLAMA for _, kind, _ in servers):
-        # Every role's model but the evaluation judge's, and the embedder.
-        roles = (r for r in ModelRole if r is not ModelRole.EVALUATION)
+        # The models of the servers named: every role's but the evaluation
+        # judge's for the language model server, the embedder for its own.
+        settings = " and ".join(
+            setting for setting, kind, _ in servers if kind == OLLAMA
+        )
+        roles = (
+            [r for r in ModelRole if r is not ModelRole.EVALUATION]
+            if "providers.llm" in settings
+            else []
+        )
+        embedding = (
+            [str(config.embedding_model_id)]
+            if "providers.embedding" in settings
+            else []
+        )
         models = ", ".join(
-            dict.fromkeys(
-                [*(config.model_id(r) for r in roles), str(config.embedding_model_id)]
-            )
+            dict.fromkeys([*(config.model_id(r) for r in roles), *embedding])
         )
         return (
             "Start it (ollama serve) and pull the models "
@@ -100,10 +134,17 @@ def model_unreachable_error(
 ) -> ModelUnreachableError:
     """``exc``, a model server that could not be reached
     (:func:`is_unreachable_error`), as a :class:`ModelUnreachableError` that
-    names the configured servers and how to start them."""
+    names the configured server it failed to reach (every one when its
+    transport does not say which) and how to start it."""
     if isinstance(exc, ModelUnreachableError):
         return exc
     servers = _servers(config)
+    if (failed := _failed_endpoint(exc)) is not None:
+        servers = [
+            server
+            for server in servers
+            if server[2] is not None and _endpoint(server[2]) == failed
+        ] or servers
     named = ", ".join(
         f"{setting} ({kind}{f' at {url}' if url else ''})"
         for setting, kind, url in servers

@@ -49,16 +49,35 @@ class LanguageProfile:
     # Legal-form designators written as words, dot-free, each with the
     # canonical short form its spellings share ("corporation" -> "corp").
     legal_forms: Mapping[str, str] = field(default_factory=dict)
+    # Those written as words before the name ("شركة"), which linking a
+    # query's name reads (``domain.retrieval.linking``).
+    leading_legal_forms: Mapping[str, str] = field(default_factory=dict)
     # Legal-form designators in Han, Hangul or Kana, leading or trailing.
     dense_legal_forms: tuple[str, ...] = ()
     # Its articles, which answer normalization drops ("der Rhein" is
-    # "Rhein"), and those written elided before a vowel ("l'accord").
+    # "Rhein").
     articles: frozenset[str] = frozenset()
-    elided_articles: frozenset[str] = frozenset()
-    # Its number words from zero to twelve with their values, which an
-    # answer states a count by ("drei"); a form of one that is also the
-    # indefinite article ("ein", "un") is left out, as English's "a" is.
+    # The words it writes elided before a vowel, apostrophe dropped
+    # ("l'accord", "d'Avignon", "dell'accordo"): split from the next word
+    # (an article among them is then dropped), and a sign of the language.
+    elided_prefixes: frozenset[str] = frozenset()
+    # Its number words with their values, which an answer states a count by
+    # ("drei"): from zero to twelve, or with ``number_tens`` the words below
+    # twenty a tens word composes with ("twenty-one"); a form of one that is
+    # also the indefinite article ("ein", "un") is left out, as English's
+    # "a" is.
     number_words: Mapping[str, int] = field(default_factory=dict)
+    # Its tens words ("twenty", Korean "열") and scale words ("hundred"),
+    # by value, and the words that state no item at all ("none").
+    number_tens: Mapping[str, int] = field(default_factory=dict)
+    number_scales: Mapping[str, int] = field(default_factory=dict)
+    zero_words: tuple[str, ...] = ()
+    # Numerals that state a count only before one of its ``counters``
+    # (Korean "세 곳", Han "三社"), by value, and the Han multipliers
+    # ("十" in "十二").
+    counter_numerals: Mapping[str, int] = field(default_factory=dict)
+    numeral_multipliers: Mapping[str, int] = field(default_factory=dict)
+    counters: tuple[str, ...] = ()
     # Yes/no answer words, each with its polarity ("yes" or "no").
     polarity_words: Mapping[str, str] = field(default_factory=dict)
     # The quote pairs its text wraps a name in (opening, closing).

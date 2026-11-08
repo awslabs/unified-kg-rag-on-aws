@@ -8,7 +8,8 @@ words text in it is matched by (function words, claim status words,
 placeholders, month names, legal forms, yes/no words, quote pairs). A
 consumer reads the profiles instead of a word list of its own, so adding a
 language is one module. Which language a text is in, as far as its script
-tells, is :mod:`.detection`'s.
+and function words tell, is :mod:`.detection`'s; a corpus sample's, against
+the configured source language, :mod:`.corpus`'s (by the same rule).
 
 Pure: imports only ``shared`` (``shared.utils.scripts`` holds the script
 table the profiles name).

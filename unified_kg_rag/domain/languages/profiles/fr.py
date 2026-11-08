@@ -20,7 +20,10 @@ PROFILE = LanguageProfile(
     ),
     no_value_words=("inconnu", "inconnue", "aucun", "aucune"),
     articles=frozenset("le la les l un une des".split()),
-    elided_articles=frozenset({"l", "un"}),
+    # Le, la, de, je, me, ne, se, te, ce, que and its compounds.
+    elided_prefixes=frozenset(
+        "l d j m n s t c qu jusqu lorsqu puisqu quoiqu presqu".split()
+    ),
     number_words={
         "zéro": 0,
         "deux": 2,

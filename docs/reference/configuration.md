@@ -298,7 +298,7 @@ Document parsing configuration
 |---|---|---|---|
 | `source_directory` | string \| path | `"source"` | Directory to load documents from, for library callers (null = the default). run-ingestion requires --source-directory (or UKR_SOURCE_DIRECTORY) instead. |
 | `target_directory` | string \| path \| null | `null` | Directory to export each parsed document to as <stem>.json for inspection (run-ingestion --output-directory). null = no export. Must not be the source directory. |
-| `index_value` | string \| null | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named <prefix>-<index_value>. null = 'default'. run-rag and run-eval query it too unless --suffix names another (RAGInput.suffix in Python, which does not read it). run-ingestion --suffix sets it for one run. Lowercase letters, digits, '-' and '_'. |
+| `index_value` | string \| null | `null` | Index suffix the run writes: every OpenSearch index and Neptune label is named <prefix>-<index_value>. null = 'default'. run-rag, run-eval and a RAGInput without a suffix query it too unless --suffix (RAGInput.suffix in Python) names another. run-ingestion --suffix sets it for one run. Lowercase letters, digits, '-' and '_'. |
 | `source_scope` | string \| null | `null` | Identity of the corpus source for incremental indexing: a run only treats registry documents of its own index suffix AND source scope as deleted. None = the resolved source directory. Set it when the local directory is a staging copy, e.g. the S3 URI a container syncs from (env UKR__PROCESSING__DOCUMENT_PARSING__SOURCE_SCOPE). Document and text-unit ids derive from it, so set it for ids that are reproducible across paths and machines. |
 
 ### `processing.chunking`

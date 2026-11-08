@@ -397,6 +397,29 @@ async def test_rows_bring_their_entities_provenance_and_passages() -> None:
     assert {p.source for p in passages} == {"tu-v1", "tu-v3"}
 
 
+async def test_the_passage_search_lists_at_most_max_terms_count_ids() -> None:
+    # Regression (rv8 retrieval L7): the id list of the passage search went
+    # past the index's max_terms_count, which OpenSearch refuses (an
+    # InvalidFilterError, exit 2) where fetches by id were batched.
+    class _Small(_Documents):
+        async def aindex_limits(self, prefix: str, suffix: str | None) -> IndexLimits:
+            return IndexLimits(max_terms_count=1)
+
+    plan = {
+        "nodes": [{"var": "v", "types": ["VENDOR"]}],
+        "returns": {"kind": "rows"},
+        "entities": [],
+    }
+    documents = _Small()
+    strategy, *_ = _strategy(_Planner(plan), documents=documents)
+    result = await strategy.asearch(_query("Which vendors are there?"))
+    assert result.metadata["structured"]["status"] == "answered"
+    searches = [
+        q for q in documents.calls if q.query and q.index_prefixes == [TEXT_UNITS]
+    ]
+    assert searches and all(len(q.filters["id"]) <= 1 for q in searches)
+
+
 async def test_a_refused_plan_is_repaired_once_with_the_refusal() -> None:
     bad = _with(
         {"nodes": [{"var": "v", "types": ["SUPPLIER"]}], "returns": {"kind": "count"}}
@@ -422,7 +445,7 @@ async def test_a_plan_still_refused_falls_back_with_its_entities() -> None:
     strategy, graph, _, fallback = _strategy(planner)
     result = await strategy.asearch(_query("Who is Acme?"))
     structured = result.metadata["structured"]
-    assert (structured["status"], structured["reason"]) == ("fallback", "invalid_plan")
+    assert (structured["status"], structured["reason"]) == ("fallback", "refused_plan")
     assert structured["fallback_strategy"] == "local"
     assert len(planner.calls) == 2 and not graph.requests
     assert fallback.queries[0].entity_focus == ["Acme"]
@@ -437,7 +460,7 @@ async def test_a_plan_still_refused_falls_back_with_its_entities() -> None:
             {"unanswerable": True, "entities": ["Acme"], "keywords": ["prices"]},
             "unanswerable",
         ),
-        ("I cannot write JSON today.", "invalid_plan"),
+        ("I cannot write JSON today.", "unreadable_plan"),
         (RuntimeError("model overloaded"), "planner_error"),
         (
             _with(
@@ -476,9 +499,9 @@ async def test_no_structured_answer_runs_the_fallback(reply: Any, reason: str) -
     assert len(fallback.queries) == 1
     if reason == "unanswerable":
         assert fallback.queries[0].entity_focus == ["Acme"]
-    # A failed call is a degradation of the query (the ledger); a designed
-    # fallback (an unanswerable question, an absent name, an empty result)
-    # is not.
+    # A failed call or an answer no repair made JSON is a degradation of
+    # the query (the ledger); a designed fallback (an unanswerable
+    # question, an absent name, an empty result) is not.
     degraded = result.metadata.get("degraded") or []
     if reason == "planner_error":
         assert degraded == [
@@ -487,6 +510,11 @@ async def test_no_structured_answer_runs_the_fallback(reply: Any, reason: str) -
                 "reason": reason,
                 "error_type": "RuntimeError",
             }
+        ]
+    elif reason == "unreadable_plan":
+        # Regression (rv8 retrieval M3): unrecorded as invalid_plan.
+        assert degraded == [
+            {"step": "structured_query", "reason": reason, "error_type": None}
         ]
     else:
         assert degraded == []
@@ -1018,3 +1046,35 @@ async def test_values_are_asked_in_the_data_language() -> None:
     assert "Korean" not in system
     assert "Write mentions, entities, keywords and the string values" in system
     assert "(English), whatever language" in system
+
+
+def test_provenance_reads_each_entitys_seed_provenance() -> None:
+    # Regression (rv8 design L7): a copy of source_fields.seed_provenance
+    # without its fallback to a graph vertex's attr_seed_graph property.
+    def entity(**metadata: Any) -> RetrievalResult:
+        return RetrievalResult(
+            content="",
+            score=1.0,
+            source="e",
+            retriever_type="entity",
+            metadata=metadata,
+        )
+
+    provenance = StructuredSearchStrategy._provenance(
+        [
+            entity(source_kinds=["seed_graph"], attr_seed_graph=["procure"]),
+            entity(
+                source_kinds=["document", "seed_graph"],
+                attributes={"filters": {"seed_graph": "catalog"}},
+            ),
+            entity(source_kinds=["document"]),
+        ]
+    )
+    assert provenance == {
+        "kind": "document+seed_graph",
+        "seed_graphs": ["catalog", "procure"],
+    }
+    assert (
+        StructuredSearchStrategy._provenance([entity(source_kinds=["document"])])
+        is None
+    )

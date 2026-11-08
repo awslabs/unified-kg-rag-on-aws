@@ -364,7 +364,8 @@ def respond(system: str, human: str) -> tuple[str, bool]:
         )
     if "claim extraction specialist" in system:
         return "<claims></claims>", False
-    if "deciding whether the provided information is useful" in system:
+    # The prompt wraps after "information": match within one line.
+    if "deciding whether the provided information" in system:
         return json.dumps({"reason": "It names the parties.", "rating": 4}), False
     if "community analysis" in system:
         return community_report(human), False

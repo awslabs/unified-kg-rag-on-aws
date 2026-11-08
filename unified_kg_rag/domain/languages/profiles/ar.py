@@ -17,4 +17,6 @@ PROFILE = LanguageProfile(
     # "unknown", "none", "not specified" (without spaces, as placeholders
     # are compared).
     no_value_words=("غيرمعروف", "لايوجد", "غيرمحدد"),
+    # "Company", written before the name ("شركة النور").
+    leading_legal_forms={"شركة": "شركة"},
 )

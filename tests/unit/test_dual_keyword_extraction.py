@@ -144,8 +144,9 @@ class TestExtractDualKeywords:
                 ["Alice"],
             )
         else:
-            with pytest.raises(LanguageModelError, match="unclosed"):
-                await chain._extract_dual_keywords("q", "English")
+            keywords = await chain._extract_dual_keywords("q", "English")
+            assert isinstance(keywords, query_processing.AbsorbedKeywordFailure)
+            assert keywords == ([], [])
 
     async def test_ignore_errors_returns_empty(
         self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
@@ -158,26 +159,27 @@ class TestExtractDualKeywords:
         )
         assert await chain._extract_dual_keywords("q", "English") == ([], [])
 
-    async def test_raises_when_not_ignoring(
-        self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
+    async def test_an_unreadable_answer_degrades_when_not_ignoring(
+        self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch, mocker
     ) -> None:
-
+        # Regression (rv8 retrieval M3): an answer unreadable after the one
+        # repair failed the whole mix/hybrid/iterative query; upstream
+        # LightRAG (_parse_keywords_payload) returns empty lists and goes
+        # on. It is a recorded degradation, under ignore_errors=False too.
         chain.ignore_errors = False
         monkeypatch.setattr(
             chain,
             "_get_chain_for_prompt",
             lambda *a, **k: _StubChain("not json"),
         )
-        with pytest.raises(LanguageModelError) as raised:
-            await chain._extract_dual_keywords("q", "English")
-        # The parser's error alone ('Expecting value') named neither the
-        # model that answered nor what to do.
-        assert isinstance(raised.value.__cause__, ValueError)
-        message = str(raised.value)
-        assert "model role entity_extraction" in message
-        assert "models.roles.entity_extraction" in message
-        assert "processing.ignore_errors: true" in message
-        assert "--disable-query-processing" in message
+        logger = mocker.patch.object(query_processing, "logger")
+        keywords = await chain._extract_dual_keywords("q", "English")
+        assert isinstance(keywords, query_processing.AbsorbedKeywordFailure)
+        assert keywords == ([], []) and keywords.error_type == "OutputParserException"
+        assert "unreadable" in keywords.reason
+        # The warning names the model role that answered.
+        args = logger.warning.call_args.args
+        assert "entity_extraction" in args and "raw query" in args[0]
 
     @pytest.mark.parametrize(
         "raw",
@@ -189,15 +191,16 @@ class TestExtractDualKeywords:
             "{}",
         ],
     )
-    async def test_wrong_shape_raises_when_not_ignoring(
+    async def test_wrong_shape_degrades_when_not_ignoring(
         self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch, raw: str
     ) -> None:
         chain.ignore_errors = False
         monkeypatch.setattr(
             chain, "_get_chain_for_prompt", lambda *a, **k: _StubChain(raw)
         )
-        with pytest.raises(LanguageModelError, match="keyword"):
-            await chain._extract_dual_keywords("q", "English")
+        keywords = await chain._extract_dual_keywords("q", "English")
+        assert isinstance(keywords, query_processing.AbsorbedKeywordFailure)
+        assert keywords.error_type in {"LanguageModelError", "OutputParserException"}
 
     async def test_wrong_shape_degrades_to_empty_when_ignoring(
         self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch
@@ -233,7 +236,7 @@ class TestExtractDualKeywords:
         )
 
     @pytest.mark.parametrize("item", ["null", "true", '["x"]', '{"k": 1}'])
-    async def test_non_scalar_keyword_raises(
+    async def test_non_scalar_keyword_degrades(
         self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch, item: str
     ) -> None:
         chain.ignore_errors = False
@@ -244,8 +247,8 @@ class TestExtractDualKeywords:
                 f'{{"high_level_keywords": ["Acme", {item}], "low_level_keywords": []}}'
             ),
         )
-        with pytest.raises(LanguageModelError, match="keyword"):
-            await chain._extract_dual_keywords("q", "English")
+        keywords = await chain._extract_dual_keywords("q", "English")
+        assert isinstance(keywords, query_processing.AbsorbedKeywordFailure)
 
     async def test_missing_level_is_empty(
         self, chain: GraphRAGChain, monkeypatch: pytest.MonkeyPatch

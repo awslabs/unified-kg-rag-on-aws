@@ -25,7 +25,6 @@ with Gremlin::
 The seeds themselves come back as rows with a path of length 1.
 """
 
-import json
 import time
 from abc import abstractmethod
 from collections.abc import Callable, Mapping
@@ -38,6 +37,7 @@ from unified_kg_rag.adapters.retrieval.base import (
     rank_expanded,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
+from unified_kg_rag.adapters.storage.neptune_codec import decode_edge_list
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.seed_graph import SOURCE_KINDS_FIELD
 from unified_kg_rag.domain.models import (
@@ -125,15 +125,7 @@ def vertex_clauses(filters: dict[str, Any] | None) -> tuple[VertexClause, ...]:
 def edge_source_kinds(stored: Any) -> list[str] | None:
     """An edge's stored ``source_kinds`` (one JSON list string, the graph
     codec's encoding) as a list; ``None`` when absent or unreadable."""
-    if isinstance(stored, list):
-        stored = stored[0] if len(stored) == 1 else None
-    if not isinstance(stored, str) or not stored:
-        return None
-    try:
-        decoded = json.loads(stored)
-    except ValueError:
-        return None
-    return [str(k) for k in decoded] if isinstance(decoded, list) else None
+    return decode_edge_list(stored)
 
 
 def edge_predicate(

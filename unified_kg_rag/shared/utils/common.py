@@ -7,7 +7,7 @@ import os
 import re
 import unicodedata
 import uuid
-from collections.abc import Collection, Iterable
+from collections.abc import Iterable
 from itertools import zip_longest
 from multiprocessing import cpu_count
 from pathlib import Path
@@ -267,123 +267,12 @@ def safe_float_parse(value: Any, default_value: float | None = None) -> float | 
 
 def parse_llm_score(value: Any) -> int:
     """A 0-100 integer score from untrusted LLM output: clamped, and 0 for
-    what is not a finite number (``parse_llm_json`` accepts ``Infinity`` and
+    what is not a finite number (the JSON reader accepts ``Infinity`` and
     ``NaN``, and ``"1e999"`` overflows to infinity, which ``int`` rejects)."""
     number = safe_float_parse(str(value), default_value=0.0)
     if number is None or not math.isfinite(number):
         return 0
     return max(0, min(100, int(number)))
-
-
-# A `{` that plausibly starts a JSON object: a key's quote, or the end of a
-# response cut right after it.
-_RE_OPENS_OBJECT = re.compile(r'\{\s*(?:"|\Z)')
-# The message of the strict parse's error for a response cut inside its
-# last object (``parse_model_object`` tells it from other parse errors).
-UNCLOSED_JSON_MESSAGE = "The last JSON object is unclosed (cut off?)"
-
-
-def parse_llm_json(
-    raw: str, *, strict: bool = False, answer_keys: Collection[str] = ()
-) -> dict[str, Any]:
-    """Parse a JSON object from a noisy LLM response.
-
-    LLMs wrap JSON in markdown fences or surround it with prose; every call
-    site that reads LLM JSON uses this one forgiving extraction. The span
-    from the first ``{`` to the last ``}`` is parsed. When it does not parse
-    because it holds several objects, as a model that corrects itself writes
-    (an answer, "Correction: ... final output:", the answer again), the last
-    top-level object that parses is the answer: the one the model ends on.
-    With ``answer_keys``, the last one holding any of them is, so an example
-    object the model writes before or after its answer is not taken for it.
-    Non-object JSON yields ``{}``. Unparseable text yields ``{}`` so callers
-    degrade gracefully, or raises ``json.JSONDecodeError`` when ``strict`` is
-    set, for callers that must surface a broken response. Under ``strict`` a
-    response whose last object is unclosed (cut off) raises too, even when
-    an earlier object parses: a self-correction ends on a complete object.
-    An unclosed ``{`` counts only when it starts JSON (``{"`` or a ``{`` the
-    response ends on): prose after the answer may hold a lone brace.
-    """
-    text = (raw or "").strip()
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        try:
-            parsed = json.loads(text[start : end + 1])
-        except ValueError:
-            pass
-        else:
-            # A `{` after the last `}` that starts JSON (a key, or the cut)
-            # opens an object left unclosed; prose may hold a lone brace.
-            if not (strict and _RE_OPENS_OBJECT.search(text, end + 1)):
-                return parsed if isinstance(parsed, dict) else {}
-        objects, cut_at = _top_level_json_objects(text)
-        if cut_at is not None and not _RE_OPENS_OBJECT.search(text, cut_at):
-            # Lone braces in prose after the answer, no cut-off object.
-            cut_at = None
-        if strict and cut_at is not None:
-            raise json.JSONDecodeError(UNCLOSED_JSON_MESSAGE, text, cut_at)
-        if objects:
-            return next(
-                (o for o in reversed(objects) if any(k in o for k in answer_keys)),
-                objects[-1],
-            )
-    # Strip a leading/trailing markdown code fence if present.
-    if text.startswith("```"):
-        text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
-        if text.lstrip().lower().startswith("json"):
-            text = text.lstrip()[4:]
-    # Isolate the outermost JSON object.
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        text = text[start : end + 1]
-    try:
-        parsed = json.loads(text)
-    except ValueError:
-        if strict:
-            raise
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _top_level_json_objects(text: str) -> tuple[list[dict[str, Any]], int | None]:
-    """The top-level ``{...}`` spans of ``text`` that parse as JSON objects,
-    in order, and where an unclosed one starts (``None`` when every one is
-    closed). Braces inside JSON strings do not count; an object nested in
-    one that does not parse is not top-level, so it is never taken for the
-    answer, nor is one inside an object left unclosed."""
-    objects: list[dict[str, Any]] = []
-    position = 0
-    while (start := text.find("{", position)) != -1:
-        depth, in_string, escaped, end = 0, False, False, -1
-        for index in range(start, len(text)):
-            char = text[index]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == '"':
-                    in_string = False
-            elif char == '"':
-                in_string = True
-            elif char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    end = index
-                    break
-        if end == -1:
-            # Unclosed (cut off): what follows is inside it, not top-level.
-            return objects, start
-        try:
-            parsed = json.loads(text[start : end + 1])
-        except ValueError:
-            parsed = None
-        if isinstance(parsed, dict):
-            objects.append(parsed)
-        position = end + 1
-    return objects, None
 
 
 # Every vector field the indexers write ends in this suffix (``text_embedding``,

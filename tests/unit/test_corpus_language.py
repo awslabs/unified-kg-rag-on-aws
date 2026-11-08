@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The corpus script check against processing.translation.source_language
-(``domain.ingestion.corpus_language``), the loading stage's WARNING and the
+(``domain.languages.corpus``), the loading stage's WARNING and the
 setting prompt tuning writes."""
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ import pytest
 from langchain_core.documents import Document
 
 from unified_kg_rag.application.cli import run_prompt_tuning
-from unified_kg_rag.domain.ingestion.corpus_language import (
+from unified_kg_rag.domain.languages.corpus import (
+    corpus_language,
+    corpus_sample,
     corpus_source_language,
-    detected_dense_language,
-    script_share,
     source_language_mismatch,
 )
 from unified_kg_rag.domain.models import Config, LanguageCode
@@ -27,6 +27,14 @@ KOREAN = "벤더는 구매자에게 부품을 공급하고 납기와 가격을 �
 JAPANESE = "ベンダーは購入者に部品を供給し、納期と価格を契約書で定める。" * 8
 CHINESE = "供应商向买方供应零件，并在合同中约定交货期和价格。" * 10
 ENGLISH = "The vendor supplies parts to the buyer under a fixed price contract. " * 5
+# Synthetic contract sentences in scripts and languages beyond the dense ones.
+RUSSIAN = "Поставщик обязуется поставить товар покупателю в течение тридцати дней. " * 4
+THAI = "ผู้ขายตกลงส่งมอบสินค้าให้แก่ผู้ซื้อภายในสามสิบวันหลังจากลงนามในสัญญา " * 4
+ARABIC = "يلتزم البائع بتسليم البضاعة إلى المشتري خلال ثلاثين يوما من توقيع العقد " * 4
+GERMAN = (
+    "Der Lieferant liefert die Ware an den Käufer und die Rechnung wird mit "
+    "der Ware gesendet. "
+) * 4
 # Korean prose with the Latin terms technical text carries.
 KOREAN_TECHNICAL = (
     "벤더는 API 게이트웨이와 Lambda 함수로 주문을 처리하고 S3 버킷에 저장한다. " * 6
@@ -46,14 +54,22 @@ KOREAN_HANJA = (
         (KOREAN_HANJA, LanguageCode.KO),
         (JAPANESE, LanguageCode.JA),
         (CHINESE, LanguageCode.ZH),
-        (ENGLISH, None),
+        (ENGLISH, LanguageCode.EN),
+        (RUSSIAN, LanguageCode.RU),
+        (THAI, LanguageCode.TH),
+        (ARABIC, LanguageCode.AR),
+        (GERMAN, LanguageCode.DE),
+        # Too few letters, or no script holding most of them.
+        ("벤더 Vendor 123", None),
+        ("벤더는 공급한다 " * 3 + "The vendor supplies the buyer " * 3, None),
     ],
-    ids=["ko", "ko-technical", "ko-hanja", "ja", "zh", "en"],
+    ids=["ko", "ko-technical", "ko-hanja", "ja", "zh", "en", "ru", "th", "ar", "de"]
+    + ["few", "mixed"],
 )
-def test_the_sample_reads_as_its_dense_script_language(
+def test_the_sample_reads_as_its_language(
     text: str, language: LanguageCode | None
 ) -> None:
-    assert detected_dense_language(script_share([text])) is language
+    assert corpus_language(corpus_sample([text])) is language
 
 
 @pytest.mark.parametrize(
@@ -64,13 +80,23 @@ def test_the_sample_reads_as_its_dense_script_language(
         (CHINESE, LanguageCode.DE, "set it to 'zh'"),
         (ENGLISH, LanguageCode.KO, "only 0% of the sampled letters"),
         (KOREAN, LanguageCode.JA, "reads as Korean"),
+        # Regression (rv8 design M3): only a dense-script corpus was judged.
+        (RUSSIAN, LanguageCode.EN, "set it to 'ru'"),
+        (THAI, LanguageCode.EN, "set it to 'th'"),
+        (ARABIC, LanguageCode.EN, "set it to 'ar'"),
+        (GERMAN, LanguageCode.EN, "reads as German"),
+        (ENGLISH, LanguageCode.DE, "set it to 'en'"),
+        (RUSSIAN, LanguageCode.KO, "only 0% of the sampled letters are Hangul"),
+        (KOREAN, LanguageCode.RU, "only 0% of the sampled letters are Cyrillic"),
     ],
-    ids=["ko-as-en", "ja-as-en", "zh-as-de", "en-as-ko", "ko-as-ja"],
+    ids=["ko-as-en", "ja-as-en", "zh-as-de", "en-as-ko", "ko-as-ja"]
+    + ["ru-as-en", "th-as-en", "ar-as-en", "de-as-en", "en-as-de"]
+    + ["ru-as-ko", "ko-as-ru"],
 )
 def test_a_script_the_setting_does_not_name_is_reported(
     text: str, source: LanguageCode, expected: str
 ) -> None:
-    reason = source_language_mismatch(script_share([text]), source)
+    reason = source_language_mismatch(corpus_sample([text]), source)
     assert reason is not None and expected in reason
     assert "processing.translation.source_language" in reason
 
@@ -83,9 +109,11 @@ def test_a_script_the_setting_does_not_name_is_reported(
         (KOREAN_HANJA, LanguageCode.KO),
         (JAPANESE, LanguageCode.JA),
         (CHINESE, LanguageCode.ZH),
-        # One Latin script: English and German are not told apart.
         (ENGLISH, LanguageCode.EN),
-        (ENGLISH, LanguageCode.DE),
+        (RUSSIAN, LanguageCode.RU),
+        (THAI, LanguageCode.TH),
+        (ARABIC, LanguageCode.AR),
+        (GERMAN, LanguageCode.DE),
         # Too few letters decide nothing.
         ("벤더 Vendor 123", LanguageCode.EN),
     ],
@@ -93,7 +121,7 @@ def test_a_script_the_setting_does_not_name_is_reported(
 def test_an_agreeing_or_undecidable_sample_is_not_reported(
     text: str, source: LanguageCode
 ) -> None:
-    assert source_language_mismatch(script_share([text]), source) is None
+    assert source_language_mismatch(corpus_sample([text]), source) is None
 
 
 def test_a_two_sentence_corpus_still_decides() -> None:
@@ -102,32 +130,36 @@ def test_a_two_sentence_corpus_still_decides() -> None:
         "벤더는 서울에 있는 구매자에게 전자 부품을 공급한다.",
         "구매자는 계약서에 정한 날까지 대금을 지급한다.",
     ]
-    reason = source_language_mismatch(script_share(tiny), LanguageCode.EN)
+    reason = source_language_mismatch(corpus_sample(tiny), LanguageCode.EN)
     assert reason is not None and "set it to 'ko'" in reason
 
 
 def test_the_sample_is_bounded() -> None:
     # The first documents' first characters only: a corpus is not read whole.
-    share = script_share([ENGLISH * 100] * 30 + [KOREAN * 100])
-    assert share.dense == 0
-    assert share.letters <= 20 * 2000
+    sample = corpus_sample([ENGLISH * 100] * 30 + [KOREAN * 100])
+    assert sample.counts.dense == 0
+    assert sample.counts.letters <= 20 * 2000
 
 
 def test_korean_with_hanja_is_not_told_to_be_chinese() -> None:
-    share = script_share([KOREAN_HANJA])
-    assert share["han"] > share["hangul"]
-    assert source_language_mismatch(share, LanguageCode.KO) is None
-    reason = source_language_mismatch(share, LanguageCode.ZH)
+    sample = corpus_sample([KOREAN_HANJA])
+    assert sample.counts["han"] > sample.counts["hangul"]
+    assert source_language_mismatch(sample, LanguageCode.KO) is None
+    reason = source_language_mismatch(sample, LanguageCode.ZH)
     assert reason is not None and "set it to 'ko'" in reason
     # Prompt tuning writes Korean for it, not Chinese.
     assert corpus_source_language([KOREAN_HANJA], "Chinese") is LanguageCode.KO
 
 
-def test_the_tuned_language_is_the_scripts_else_the_profiles() -> None:
+def test_the_tuned_language_is_the_samples_else_the_profiles() -> None:
     assert corpus_source_language([KOREAN], "English") is LanguageCode.KO
-    assert corpus_source_language([ENGLISH], "German") is LanguageCode.DE
-    assert corpus_source_language([ENGLISH], "fr") is LanguageCode.FR
-    assert corpus_source_language([ENGLISH], "Klingon") is None
+    assert corpus_source_language([GERMAN], "English") is LanguageCode.DE
+    assert corpus_source_language([RUSSIAN], "English") is LanguageCode.RU
+    # A sample the rule cannot read: the profile's language.
+    undecided = "Vendor Buyer Acme Robotics Orion Labs " * 5
+    assert corpus_source_language([undecided], "German") is LanguageCode.DE
+    assert corpus_source_language([undecided], "fr") is LanguageCode.FR
+    assert corpus_source_language([undecided], "Klingon") is None
 
 
 def test_prompt_tuning_writes_the_source_language(caplog) -> None:
@@ -139,7 +171,8 @@ def test_prompt_tuning_writes_the_source_language(caplog) -> None:
     # The default 'en' disagrees: said at tuning time too.
     assert "processing.translation.source_language is 'en'" in caplog.text
     unknown = {"profile": {"language": "Klingon"}, "custom_prompts": {}}
-    assert run_prompt_tuning._with_source_language(unknown, [ENGLISH], Config()) == (
+    undecided = ["Vendor Buyer Acme Robotics Orion Labs " * 5]
+    assert run_prompt_tuning._with_source_language(unknown, undecided, Config()) == (
         unknown
     )
 

@@ -71,8 +71,8 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - `attr_<key>`는 문서 `filters` 메타데이터의 `<key>` 항목과 비교합니다. OpenSearch는 이를
   엄격하게(fail-closed) 적용하므로 속성이 없는 항목은 제외됩니다. 여러 문서에서 나온
   엔티티, 관계, 주장, 커뮤니티 리포트는 그 문서 중 하나가 일치하면 일치합니다.
-- 엔티티와 주장의 `type`은 소문자로 저장되므로 `type:PERSON`이 아니라 `type:person`으로
-  필터링하세요. 불리언·숫자 필드는 그 유형의 값을 받습니다(`in_schema:false`, `rank:2`).
+- 엔티티와 주장의 `type`, 주장의 `status`는 소문자로 저장되고 필터 값은 소문자 형태로도
+  비교하므로 `type:PERSON`도 `person`과 일치합니다. 불리언·숫자 필드는 그 유형의 값을 받습니다(`in_schema:false`, `rank:2`).
 
 저장소별로 필터할 수 있는 모든 필드, 값의 유형, 날짜, 전략별로 적용되는 키, 그래프
 확장의 필터 처리는 [필터 레퍼런스](../reference/filters.md)(영문)에 있습니다. 필터는 접근

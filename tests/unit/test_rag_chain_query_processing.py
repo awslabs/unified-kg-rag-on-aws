@@ -23,7 +23,7 @@ from unified_kg_rag.application.retrieval import query_processing
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
 )
-from unified_kg_rag.domain.models import Config
+from unified_kg_rag.domain.models import Config, SearchStrategy
 from unified_kg_rag.domain.prompts import (
     EntityExtractionPrompt,
     TranslationPrompt,
@@ -337,6 +337,43 @@ async def test_unreadable_answers_are_recorded_in_the_query_ledger(
         ("translation", "OutputParserException"),
         ("follow_up_rewrite", "OutputParserException"),
     ]
+
+
+async def test_an_unreadable_keyword_answer_is_a_recorded_degradation(
+    config: Config,
+) -> None:
+    # Regression (rv8 retrieval M3): under ignore_errors=False the whole
+    # mix query failed; now the step is in the ledger and mix searches the
+    # raw query (LightRAGSearchStrategy._apply_keyword_fallback).
+    from unified_kg_rag.adapters.retrieval.base import degradation_scope
+
+    config.processing.ignore_errors = False
+    chain = _chain(config)
+    chain.factory = ScriptedLLMFactory(lambda _system, _human: "still not JSON")
+    chain._get_chain_for_prompt = (  # type: ignore[assignment]
+        lambda *a, **k: _FakeChain("Sorry, no keywords today.")
+    )
+    with degradation_scope() as ledger:
+        result = await chain._process_query_step(
+            {"query": "Who supplies Buyer A?", "resolved_strategy": SearchStrategy.MIX}
+        )
+    assert result.hl_keywords == result.ll_keywords == []
+    assert [(e.step, e.error_type) for e in ledger.entries] == [
+        ("keyword_extraction", "OutputParserException")
+    ]
+
+
+async def test_a_failed_keyword_call_still_fails_without_ignore_errors(
+    config: Config,
+) -> None:
+    # Only an unreadable answer degrades; a failed call obeys ignore_errors.
+    config.processing.ignore_errors = False
+    chain = _chain(config)
+    chain._get_chain_for_prompt = (  # type: ignore[assignment]
+        lambda *a, **k: _FakeChain(RuntimeError("model overloaded"))
+    )
+    with pytest.raises(RuntimeError, match="overloaded"):
+        await chain._extract_dual_keywords("q", "English")
 
 
 async def test_an_unreachable_fixer_is_never_absorbed(config: Config) -> None:

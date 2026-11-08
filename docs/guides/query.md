@@ -78,8 +78,10 @@ strategy reads declares are usage errors (exit 2).
   OpenSearch applies it strictly (fail-closed): an item without the
   attribute is excluded. An entity, relationship, claim or community report
   from several documents matches when one of its documents does.
-- Entity and claim `type` is stored lowercase: filter `type:person`, not
-  `type:PERSON`. Boolean and numeric fields take their type's values
+- Entity and claim `type` and claim `status` are stored lowercase, and a
+  filter value of theirs matches its lowercase form too: `type:PERSON`
+  matches `person`.
+  Boolean and numeric fields take their type's values
   (`in_schema:false`, `rank:2`).
 
 Every filterable field per store, value typing, dates, which strategy

@@ -332,6 +332,14 @@ class TestLanguageNormalization:
             ("fr", "l\u2019usine", "usine"),
             ("it", "Gli Stati e l'Europa", "stati e europa"),
             ("it", "un'altra fabbrica", "altra fabbrica"),
+            # Regression (rv8 surfaces M2): every elision is split, only the
+            # articles are dropped ("près d'Avignon" read "davignon").
+            ("fr", "près d'Avignon", "près d avignon"),
+            ("fr", "jusqu'à Lyon", "jusqu à lyon"),
+            ("it", "dell'accordo", "dell accordo"),
+            ("it", "nell'Italia", "nell italia"),
+            # French elides no "un".
+            ("fr", "un'usine", "unusine"),
             ("pt", "Os Estados e a Vendedora", "estados e vendedora"),
             # English articles go in every language; only articles stay.
             ("de", "The Beatles", "beatles"),
@@ -367,6 +375,8 @@ class TestLanguageNormalization:
             ("it", "Quattro fornitori.", 4),
             ("pt", "Três fornecedores e duas fábricas.", 3),
             ("pt", "Duas fábricas.", 2),
+            ("ru", "Три поставщика.", 3),
+            ("ru", "Двенадцать заводов.", 12),
             # The article forms of one are no count: the digits count.
             ("fr", "Un fournisseur sur 4.", 4),
             ("de", "Eine Fabrik mit 7 Hallen.", 7),

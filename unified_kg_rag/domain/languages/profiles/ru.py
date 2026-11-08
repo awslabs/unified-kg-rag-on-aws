@@ -15,6 +15,26 @@ PROFILE = LanguageProfile(
         "на этот вопрос."
     ),
     no_value_words=("неизвестно", "нет"),
+    # Zero to twelve, with the feminine and neuter forms of one and two.
+    number_words={
+        "ноль": 0,
+        "нуль": 0,
+        "один": 1,
+        "одна": 1,
+        "одно": 1,
+        "два": 2,
+        "две": 2,
+        "три": 3,
+        "четыре": 4,
+        "пять": 5,
+        "шесть": 6,
+        "семь": 7,
+        "восемь": 8,
+        "девять": 9,
+        "десять": 10,
+        "одиннадцать": 11,
+        "двенадцать": 12,
+    },
     # Nominative and genitive, and the usual abbreviations.
     month_words={
         "January": ("январь", "января", "янв"),

@@ -35,6 +35,28 @@ PROFILE = LanguageProfile(
         "(재)",
         "재단법인",
     ),
+    # Native numerals, in the form they take before a counter ("세 곳",
+    # "두 군데", "스무 개사") or alone ("셋"), ones and tens apart: 열세 is
+    # 13. A native numeral counts only before a counter, since "네" alone is
+    # also "yes" and "세" a word of its own.
+    counter_numerals={
+        "한": 1,
+        "하나": 1,
+        "두": 2,
+        "둘": 2,
+        "세": 3,
+        "셋": 3,
+        "석": 3,
+        "네": 4,
+        "넷": 4,
+        "다섯": 5,
+        "여섯": 6,
+        "일곱": 7,
+        "여덟": 8,
+        "아홉": 9,
+    },
+    number_tens={"열": 10, "스물": 20, "스무": 20, "서른": 30, "마흔": 40},
+    counters=("개사", "군데", "가지", "곳", "개", "명", "건", "회", "번"),
     polarity_words={
         "예": "yes",
         "네": "yes",

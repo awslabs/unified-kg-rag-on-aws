@@ -34,7 +34,8 @@ from unified_kg_rag.adapters.llm.langchain import (
 )
 from unified_kg_rag.domain.models import Config, TextUnit
 from unified_kg_rag.shared.exceptions import LLMOutputTruncatedError
-from unified_kg_rag.shared.utils import ensure_list, parse_llm_json
+from unified_kg_rag.shared.utils import ensure_list
+from unified_kg_rag.shared.utils.model_output import _strict_object as parse_llm_json
 
 pytestmark = pytest.mark.unit
 

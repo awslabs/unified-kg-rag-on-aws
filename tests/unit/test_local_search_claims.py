@@ -91,3 +91,32 @@ async def test_claims_fall_back_to_query_text_without_entity_focus(
     claims_prefix = config.indexing.opensearch.claims_index_prefix
     claim_calls = [q for q in os_r.calls if q.index_prefixes == [claims_prefix]]
     assert claim_calls and claim_calls[0].query == "raw claim text"
+
+
+async def test_a_namespace_without_a_claims_index_is_not_searched(
+    config: Config,
+) -> None:
+    # Regression (rv8 retrieval low): a namespace whose claim extraction
+    # found no claim has no claims index, and every local query searched it
+    # and WARNed "Index not found".
+    config.processing.claim_extraction.enabled = True
+    strategy, os_r, _ = _make_strategy(config)
+    asked: list[tuple[str, str | None]] = []
+    held = {"exists": False}
+
+    async def has_index(prefix: str, suffix: str | None) -> bool | None:
+        asked.append((prefix, suffix))
+        return held["exists"]
+
+    os_r.ahas_index = has_index  # type: ignore[method-assign]
+    claims_prefix = config.indexing.opensearch.claims_index_prefix
+
+    await strategy.asearch(_query())
+    assert claims_prefix not in _doc_index_prefixes(os_r)
+    # Once it exists it is searched, and asked for no more.
+    held["exists"] = True
+    await strategy.asearch(_query())
+    await strategy.asearch(_query())
+    claim_calls = [q for q in os_r.calls if q.index_prefixes == [claims_prefix]]
+    assert len(claim_calls) == 2
+    assert [p for p, _ in asked].count(claims_prefix) == 2

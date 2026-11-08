@@ -53,7 +53,11 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
-from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    DOCUMENT_SOURCE_KIND,
+    SEED_SOURCE_KIND,
+    is_seed_unit,
+)
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -109,7 +113,7 @@ from unified_kg_rag.domain.retrieval.graph_query import (
 from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.linking import choose_links, hit_name
-from unified_kg_rag.domain.retrieval.source_fields import LIST_FIELDS
+from unified_kg_rag.domain.retrieval.source_fields import LIST_FIELDS, seed_provenance
 from unified_kg_rag.ports.graph_query import GraphQueryPort
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
@@ -136,10 +140,15 @@ FALLBACK_BUCKET = "structured_fallback"
 # metadata.structured.status
 ANSWERED, FALLBACK, FAILED = "answered", "fallback", "failed"
 # The fallback reasons the query's degradation ledger records: a failed
-# planner or store call and a compiler refusal. A designed fallback (an
-# absent name, an unknown value, an unanswerable question) is no failure:
-# metadata.structured.reason alone keeps it.
-_DEGRADING = frozenset({"planner_error", "execution_error", "timeout", "compile_error"})
+# planner or store call, a planner answer no repair made readable JSON, and
+# a compiler refusal. A designed fallback (a plan the checks still refuse
+# after the repair, an absent name, an unknown value, an unanswerable
+# question) is no failure: metadata.structured.reason alone keeps it.
+_DEGRADING = frozenset(
+    {"planner_error", "unreadable_plan", "execution_error", "timeout", "compile_error"}
+)
+# What _parsed says of an answer that holds no JSON object.
+_UNREADABLE = "plan: the answer is not one JSON object"
 # What a fallback gives way to when the namespace does not serve it.
 _FALLBACK_ORDER = (SearchStrategy.LOCAL, SearchStrategy.MIX)
 # The JSON keys of a plan, to tell it from an example the model echoes.
@@ -493,6 +502,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         if run.schema_cut:
             logger.debug("Structured search: the schema was cut to its budget")
         feedback = ""
+        error: ValidatedPlan | str | None = None
         for attempt in range(settings.repair_attempts + 1):
             if attempt:
                 run.repairs += 1
@@ -520,7 +530,9 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 return None
             logger.info("Structured search: plan refused (%s)", error.splitlines()[0])
             feedback = REPAIR_FEEDBACK.format(error=error[:1500])
-        run.fall_back("invalid_plan")
+        # The last answer decides: still no JSON is a degraded step, a plan
+        # the checks refuse a designed fallback.
+        run.fall_back("unreadable_plan" if error == _UNREADABLE else "refused_plan")
         return None
 
     def _parsed(
@@ -534,7 +546,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         except ModelOutputError:
             parsed = {}
         if not parsed:
-            return "plan: the answer is not one JSON object"
+            return _UNREADABLE
         try:
             plan = GraphQueryPlan.model_validate(parsed)
         except ValidationError as e:
@@ -559,7 +571,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
     ) -> dict[str, tuple[str, ...]]:
         """Each mention node's entity ids (``domain.retrieval.linking``): the
         hits of a hybrid entity search (under the caller's filters and the
-        node's types) whose name has the mention's ``compact_name_key``;
+        node's types) whose name has the mention's ``linking.link_key``;
         else the best ``link_candidates`` hits of a lexical (BM25) search
         above ``link_min_score`` whose names cover every term of the
         mention (or one ``processing.similarity_threshold`` alike), so an
@@ -1043,26 +1055,23 @@ class StructuredSearchStrategy(BaseSearchStrategy):
 
     @staticmethod
     def _provenance(entities: list[RetrievalResult]) -> dict[str, Any] | None:
-        """The seed graphs the returned entities come from, when any does."""
-        kinds: set[str] = set()
-        graphs: set[str] = set()
-        for entity in entities:
-            stated = entity.metadata.get("source_kinds") or []
-            if "seed_graph" not in stated:
-                continue
-            kinds.update(str(k) for k in stated)
-            filters = (entity.metadata.get("attributes") or {}).get(
-                Constants.FILTERS.value
-            ) or {}
-            names = filters.get("seed_graph") or []
-            graphs.update(
-                str(n) for n in (names if isinstance(names, list) else [names])
-            )
-        if not kinds:
+        """The seed graphs the returned entities come from, when any does:
+        the union of their ``seed_provenance``."""
+        stated = [
+            found
+            for entity in entities
+            if (found := seed_provenance(entity.metadata or {})) is not None
+        ]
+        if not stated:
             return None
+        both = any(p["kind"] != SEED_SOURCE_KIND for p in stated)
         return {
-            "kind": "document+seed_graph" if "document" in kinds else "seed_graph",
-            "seed_graphs": sorted(graphs),
+            "kind": (
+                f"{DOCUMENT_SOURCE_KIND}+{SEED_SOURCE_KIND}"
+                if both
+                else SEED_SOURCE_KIND
+            ),
+            "seed_graphs": sorted({g for p in stated for g in p["seed_graphs"]}),
         }
 
     async def _path_relationships(
@@ -1159,6 +1168,11 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         async def searched() -> list[RetrievalResult]:
             if not query.query:
                 return []
+            # The best-cited units one terms clause takes: a text search is
+            # not split in batches (each would rank, and normalize, its own
+            # hits), so the list is cut as tree and global search cut theirs.
+            limits = await documents.aindex_limits(prefix, query.suffix)
+            among = ranked[: min(count * 10, limits.max_terms_count)]
             return await self._safe_aretrieve(
                 documents,
                 SearchQuery(
@@ -1168,7 +1182,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                     retrieval_multiplier=1,
                     index_prefixes=[prefix],
                     suffix=query.suffix,
-                    filters=self._scoped_filters(query, id=ranked[: count * 10]),
+                    filters=self._scoped_filters(query, id=among),
                 ),
                 "Structured query passage search",
             )

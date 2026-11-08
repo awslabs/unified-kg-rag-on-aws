@@ -14,6 +14,7 @@ from unified_kg_rag.domain.languages import (
     dense_language,
     language_name,
     profile,
+    text_language,
 )
 from unified_kg_rag.shared.utils.scripts import (
     ScriptCounts,
@@ -157,10 +158,12 @@ _GAPS: dict[str, set[str]] = {
     "legal_forms": {"ko", "ru", "zh"} | _NEW,
     "polarity_words": {"de", "es", "fr", "it", "pt", "ru"} | _NEW,
     "quote_pairs": {"de", "es", "fr", "it", "ko", "pt", "ru"} | _NEW,
-    # Articles: the languages that write them (English's number words are
-    # the evaluator's own parser; ru and the scripts without articles wait).
+    # Articles: the languages that write them (ru and the scripts without
+    # articles wait).
     "articles": {"ja", "ko", "ru", "zh"} | _NEW,
-    "number_words": {"en", "ja", "ko", "ru", "zh"} | _NEW,
+    # Korean, Japanese and Chinese count with numerals before a counter
+    # (counter_numerals).
+    "number_words": {"ja", "ko", "zh"} | _NEW,
 }
 
 
@@ -178,3 +181,40 @@ def test_a_profile_is_frozen() -> None:
     with pytest.raises(AttributeError):
         PROFILES[KO].name = "x"  # type: ignore[misc]
     assert isinstance(PROFILES[KO], LanguageProfile)
+
+
+@pytest.mark.parametrize(
+    ("question", "language"),
+    [
+        # Regression (rv8 surfaces): a tie of function words read as English
+        # under an English or Korean index; the elision and the article tell.
+        ("Qual è la città dell'accordo?", LanguageCode.IT),
+        ("Qual è il prezzo?", LanguageCode.IT),
+        ("Qual é o preço?", LanguageCode.PT),
+        ("Quel est le prix près d\u2019Avignon ?", LanguageCode.FR),
+    ],
+)
+@pytest.mark.parametrize("fallback", [LanguageCode.EN, LanguageCode.KO])
+def test_a_latin_tie_is_broken_by_the_registry(
+    question: str, language: LanguageCode, fallback: LanguageCode
+) -> None:
+    assert text_language(question, fallback) is language
+
+
+def test_the_count_numerals_are_the_profiles() -> None:
+    # The answer matcher reads the English, Korean and Han number words from
+    # the profiles (tables moved unchanged).
+    from unified_kg_rag.evaluation import text_matching
+
+    assert text_matching._ENGLISH_UNITS[19] == "nineteen"
+    assert text_matching._ENGLISH_TENS["ninety"] == 90
+    assert text_matching._KOREAN_NATIVE_TENS["스무"] == 20
+    assert text_matching._HAN_DIGITS["兩"] == 2
+    assert set(text_matching._HAN_COUNTERS) >= {"社", "家", "ヶ所"}
+    for answer, value in [
+        ("twenty-one vendors", 21),
+        ("열두 곳", 12),
+        ("十二社", 12),
+        ("两家", 2),
+    ]:
+        assert text_matching.leading_number(answer) == value

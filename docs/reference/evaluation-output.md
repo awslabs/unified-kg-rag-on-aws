@@ -741,8 +741,9 @@ list, top level or under `metadata`, which wins), taking the maximum.
   Each report records `answer_span` and the `scored_span`. The normalization
   is SQuAD v1.1's (NFKC, lowercase, punctuation and English articles
   removed, whitespace collapsed; for an answer in German, Spanish, French,
-  Italian or Portuguese that language's articles too, French and Italian
-  elided ones split off first, and its number words from zero to twelve
+  Italian or Portuguese that language's articles too, every French and
+  Italian elided word split off first (`d'Avignon` is `d avignon`), and in
+  those languages and Russian its number words from zero to twelve
   read as counts; the answer's language is the question's, recorded as
   `answer_language`), keeping punctuation that changes meaning
   (`-5`, `1.5`, `C++`); `evaluation.answer_normalization: official_squad` is

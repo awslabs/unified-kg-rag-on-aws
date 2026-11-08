@@ -19,7 +19,11 @@ PROFILE = LanguageProfile(
     ),
     no_value_words=("sconosciuto", "nessuno"),
     articles=frozenset("il lo la i gli le l un uno una".split()),
-    elided_articles=frozenset({"l", "un"}),
+    # The articles and the prepositions joined to them, di, ci, quello,
+    # bello, santo, come, anche.
+    elided_prefixes=frozenset(
+        "l un d c dell all dall nell sull coll quell bell sant com anch".split()
+    ),
     number_words={
         "zero": 0,
         "due": 2,

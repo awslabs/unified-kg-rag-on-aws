@@ -233,3 +233,13 @@ def test_any_of_is_one_should_of_the_groups() -> None:
     assert parse_any_of(None) is None
     with pytest.raises(InvalidFilterError, match="empty"):
         parse_any_of([{}])
+
+
+def test_a_clause_holds_as_a_graph_store_compares() -> None:
+    # The one rule the SQLite graph and local search's member check read.
+    term = Term("level", (0, "x"))
+    assert term.holds([0.0]) and term.holds(["y", "x"])
+    assert not term.holds([False]) and not term.holds(["0"]) and not term.holds([])
+    bounded = Range("rank", (("gte", 1), ("lt", 3)))
+    assert bounded.holds([0, 2]) and not bounded.holds([3]) and not bounded.holds(["2"])
+    assert Range("name", (("gte", "b"),)).holds(["c"])

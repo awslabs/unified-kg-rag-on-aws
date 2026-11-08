@@ -390,6 +390,24 @@ def test_ollama_query_chain_retries_a_transient_error_sync() -> None:
 
 
 @pytest.mark.usefixtures("no_backoff")
+async def test_ollama_query_chain_does_not_retry_an_unreachable_server() -> None:
+    # Regression (rv8 retrieval low): a refused connection was retried
+    # with backoff before the query named the server it could not reach.
+    calls: list[httpx.Request] = []
+
+    def refused(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        raise httpx.ConnectError("refused", request=request)
+
+    factory = OllamaLanguageModelFactory(
+        _config("ollama"), transport=httpx.MockTransport(refused)
+    )
+    with pytest.raises(httpx.ConnectError):
+        await _query_chain(factory).ainvoke(_ANSWER_INPUT)
+    assert [r.url.path for r in calls].count("/api/chat") == 1
+
+
+@pytest.mark.usefixtures("no_backoff")
 async def test_ollama_query_chain_does_not_retry_a_client_error() -> None:
     server = FailingServer(400)
     factory = OllamaLanguageModelFactory(

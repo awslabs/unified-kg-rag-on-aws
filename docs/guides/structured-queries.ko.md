@@ -78,7 +78,7 @@ search:
 
 `fallback`(기본값)에서는 계획으로 답하지 못한 질문에 `fallback_strategy`를
 실행합니다. 계획 작성 호출이 실패했거나 재작성 뒤에도 계획이 유효하지 않은 경우
-(`planner_error`, `invalid_plan`), 질문을 `unanswerable`로 판단한 경우, 이름이
+(`planner_error`, JSON이 아니면 `unreadable_plan`, 검사가 거부한 계획이면 `refused_plan`), 질문을 `unanswerable`로 판단한 경우, 이름이
 아무것에도 연결되지 않은 경우(`unlinked_mention`), 결과가 빈 경우
 (`empty_result`, 개수 0과 "아니오"는 답입니다), 0이나 "아니오"가 어떤 엔티티에도
 없는 값에 근거한 경우(데이터는 "supplier"로 쓰는데 계획이 "Supplier"로 쓴 경우처럼,

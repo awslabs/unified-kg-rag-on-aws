@@ -293,13 +293,13 @@ async def process_query(
     if "keywords" in results_map:
         keyword_data = results_map["keywords"]
         if isinstance(keyword_data, BaseException):
-            # extract_dual_keywords already degrades to ([], []) under
-            # ignore_errors, so an exception here must propagate.
+            # extract_dual_keywords already degrades to ([], []) what does
+            # not fail the query, so an exception here must propagate.
             raise keyword_data
         if isinstance(keyword_data, AbsorbedKeywordFailure):
             record_degradation(
                 DegradationStep.KEYWORD_EXTRACTION,
-                "searched without keywords",
+                keyword_data.reason,
                 keyword_data.error_type,
             )
         hl_keywords, ll_keywords = keyword_data
@@ -455,16 +455,26 @@ def cache_extraction(chain: GraphRAGChain, key: tuple[str, ...], value: Any) -> 
 
 
 class AbsorbedKeywordFailure(tuple[list[str], list[str]]):
-    """The ``([], [])`` of a keyword extraction whose failure
-    ``ignore_errors`` absorbed, with the error's type name, so the answer
-    is marked degraded (the query's ledger, ``keyword_extraction``)."""
+    """The ``([], [])`` of a keyword extraction that failed without failing
+    the query (an answer unreadable after the repair, or an error
+    ``ignore_errors`` absorbed), with the error's type name and how the
+    query went on, so the answer is marked degraded (the query's ledger,
+    ``keyword_extraction``)."""
 
     error_type: str
+    reason: str
 
-    def __new__(cls, error_type: str) -> AbsorbedKeywordFailure:
+    def __new__(
+        cls, error_type: str, reason: str = "searched without keywords"
+    ) -> AbsorbedKeywordFailure:
         value = super().__new__(cls, ([], []))
         value.error_type = error_type
+        value.reason = reason
         return value
+
+
+class _UnreadableKeywords(Exception):
+    """A keyword answer no reading or repair made usable (its cause)."""
 
 
 async def extract_dual_keywords(
@@ -475,9 +485,12 @@ async def extract_dual_keywords(
 ) -> tuple[list[str], list[str]]:
     """Extract LightRAG high/low-level keywords as two lists.
 
-    Robust to the LLM wrapping the JSON in prose or code fences. Returns
-    empty lists on failure when ``ignore_errors`` is set
-    (``AbsorbedKeywordFailure``).
+    Robust to the LLM wrapping the JSON in prose or code fences. An answer
+    still unreadable after the one repair is a degraded step, never a
+    failed query: empty lists (``AbsorbedKeywordFailure``), so ``mix`` and
+    ``hybrid`` search the raw query as their keyword, as upstream LightRAG
+    (``_parse_keywords_payload`` returns empty lists). A failed call
+    returns them under ``ignore_errors`` only.
     """
     try:
         key = chain._extraction_key(KeywordsExtractionPrompt, query, target_language)
@@ -491,9 +504,7 @@ async def extract_dual_keywords(
             raw = await extractor.ainvoke(
                 {"query": query, "target_language": target_language}, config
             )
-            # The one JSON reading (and one repair); what still fails it
-            # surfaces under ignore_errors=False instead of silently
-            # yielding empty keyword lists.
+            # The one JSON reading (and one repair).
             reader = chain._json_parser(
                 KeywordsExtractionPrompt, answer_keys=_KEYWORD_LEVELS
             )
@@ -501,13 +512,29 @@ async def extract_dual_keywords(
                 payload = await reader.aparse(str(raw))
                 hl_keywords, ll_keywords = _keyword_lists(payload)
             except (ValueError, LanguageModelError) as e:
-                raise _keyword_json_error(chain, e) from e
+                if is_unreachable_error(e):
+                    raise
+                raise _UnreadableKeywords() from e
             value = (tuple(hl_keywords), tuple(ll_keywords))
             chain._cache_extraction(key, value)
             return value
 
         high, low = await shared_extraction(chain, key, extract)
         return list(high), list(low)
+    except _UnreadableKeywords as e:
+        cause = e.__cause__ or e
+        # The error text can quote the model's answer: DEBUG only.
+        logger.warning(
+            "Query keyword extraction (model role %s, '%s') returned no usable "
+            "keyword JSON (%s); searching the raw query as its keyword",
+            ModelRole.ENTITY_EXTRACTION.value,
+            chain.config.model_id(ModelRole.ENTITY_EXTRACTION),
+            type(cause).__name__,
+        )
+        logger.debug("Dual-keyword answer error: %s", cause)
+        return AbsorbedKeywordFailure(
+            type(cause).__name__, "keyword answer unreadable, searched without keywords"
+        )
     except Exception as e:
         # A model server that cannot be reached fails every later call too.
         if not chain.ignore_errors or is_unreachable_error(e):
@@ -516,22 +543,6 @@ async def extract_dual_keywords(
         logger.warning("Dual-keyword extraction failed: %s", type(e).__name__)
         logger.debug("Dual-keyword extraction error: %s", e)
         return AbsorbedKeywordFailure(type(e).__name__)
-
-
-def _keyword_json_error(chain: GraphRAGChain, error: Exception) -> LanguageModelError:
-    """The error of a keyword extraction whose answer is no usable JSON:
-    which model role answered and what to do, not only the parser's
-    'Expecting value: line 1 column 1'."""
-    model = chain.config.model_id(ModelRole.ENTITY_EXTRACTION)
-    return LanguageModelError(
-        "Query keyword extraction (model role "
-        f"{ModelRole.ENTITY_EXTRACTION.value}, '{model}') returned no usable "
-        f"keyword JSON: {error}. Set models.roles.{ModelRole.ENTITY_EXTRACTION.value} "
-        "to a model that follows the JSON instructions, set "
-        "processing.ignore_errors: true to search without keywords, or query "
-        "with --disable-query-processing (RAGInput.enable_query_processing: "
-        "false), which searches a short question as its own keyword."
-    )
 
 
 def _keyword_lists(payload: dict[str, Any]) -> tuple[list[str], list[str]]:
