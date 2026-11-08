@@ -16,9 +16,12 @@ ERROR and raised as ``GraphQueryCompileError``, and nothing is sent.
 - :func:`check_sql`: one ``SELECT`` or ``WITH`` statement without a quote,
   comment, statement separator, named parameter or write/administration
   keyword, reading only the ``vertices`` and ``edges`` tables and its own
-  CTEs, calling only the allowlisted functions, with every ``vertices`` and
-  ``edges`` alias restricted by ``<alias>.label = ?`` where that parameter
-  is the label.
+  CTEs, calling only the allowlisted functions, without ``NOT``, ``IS``
+  (but ``IS NOT NULL``), ``CASE``, ``BETWEEN`` or an outer, cross or
+  natural join, with every ``vertices``
+  and ``edges`` alias restricted by ``<alias>.label = ?`` as a top-level
+  conjunct of its ``WHERE`` or ``ON`` clause where that parameter is the
+  label.
 """
 
 from __future__ import annotations
@@ -221,6 +224,23 @@ _SQL_DENIED = re.compile(
 )
 # A numbered placeholder (?1) binds a parameter out of its position.
 _NUMBERED = re.compile(r"\?\d")
+# Operators that could negate or bypass a label restriction (NOT v.label = ?,
+# (v.label = ?) IS 0, CASE WHEN, BETWEEN ... AND v.label = ?); the one IS
+# the compiler writes, IS NOT NULL, is allowed.
+_SQL_NEGATING = re.compile(r"\b(not|is|case|between)\b", re.IGNORECASE)
+# An outer, cross or natural join keeps the rows its ON clause does not
+# match (or has none): the compiler joins with an inner JOIN ... ON only.
+_SQL_JOIN_KINDS = re.compile(
+    r"\b(left|right|full|outer|cross|natural|using)\b", re.IGNORECASE
+)
+_IS_NOT_NULL = re.compile(r"\bis\s+not\s+null\b", re.IGNORECASE)
+# What may stand before and after a top-level conjunct of a WHERE or ON
+# clause.
+_CONJUNCT_BEFORE = frozenset({"where", "on", "and"})
+_CONJUNCT_AFTER = frozenset(
+    {"and", "join", "where", "group", "order", "limit", "union"}
+)
+_CLAUSE_START = frozenset({"where", "on"})
 _SQL_FORBIDDEN_CHARS = frozenset(";'\"`:@$[]\\")
 _TABLE_REF = re.compile(r"\b(?:from|join)\s+([a-z_][a-z0-9_]*|\()", re.IGNORECASE)
 _STORE_TABLE = re.compile(
@@ -246,6 +266,10 @@ def check_sql(sql: str, params: Sequence[Any], label: str) -> None:
         raise _refuse("SQL", f"keyword '{match.group(1)}' is not allowed")
     if _NUMBERED.search(text):
         raise _refuse("SQL", "numbered placeholders are not allowed")
+    if match := _SQL_NEGATING.search(_IS_NOT_NULL.sub(" ", text)):
+        raise _refuse("SQL", f"keyword '{match.group(1)}' is not allowed")
+    if match := _SQL_JOIN_KINDS.search(text):
+        raise _refuse("SQL", f"keyword '{match.group(1)}' is not allowed")
     if text.count("?") != len(params):
         raise _refuse("SQL", "the parameters do not match the placeholders")
     _check_from_clauses(text)
@@ -318,13 +342,45 @@ def _check_label_bound(
     text: str, params: Sequence[Any], alias: str, label: str, marks: list[int]
 ) -> None:
     pattern = re.compile(rf"\b{re.escape(alias)}\.label\s*=\s*\?")
-    positions = [m.end() - 1 for m in pattern.finditer(text)]
-    if not positions:
+    matches = list(pattern.finditer(text))
+    if not matches:
         raise _refuse("SQL", f"alias '{alias}' has no label = ? restriction")
-    for position in positions:
-        index = bisect.bisect_left(marks, position)
+    for match in matches:
+        if not _is_top_level_conjunct(text, match.start(), match.end()):
+            raise _refuse(
+                "SQL",
+                f"alias '{alias}' label = ? is not a top-level conjunct of its "
+                "WHERE or ON clause",
+            )
+        index = bisect.bisect_left(marks, match.end() - 1)
         if params[index] != label:
             raise _refuse("SQL", f"alias '{alias}' is bound to another label")
+
+
+def _is_top_level_conjunct(text: str, start: int, end: int) -> bool:
+    """Whether ``text[start:end]`` is one of the AND-joined terms of a
+    WHERE or ON clause at that clause's own nesting level (OR, NOT, IS and
+    CASE are refused before), so no other operator can negate it: the word
+    before it is WHERE, ON or AND, the token after it ends the term, and
+    walking back to the clause keyword crosses no unclosed parenthesis."""
+    before = re.search(r"([a-z_]+|\S)\s*$", text[:start], re.IGNORECASE)
+    if before is None or before.group(1).lower() not in _CONJUNCT_BEFORE:
+        return False
+    after = re.match(r"\s*([a-z_]+|\S|$)", text[end:], re.IGNORECASE)
+    token = after.group(1).lower() if after else ""
+    if token not in _CONJUNCT_AFTER and token not in ("", ")"):
+        return False
+    depth = 0
+    for word in reversed(re.findall(r"[a-z_]+|[()]", text[:start], re.IGNORECASE)):
+        if word == ")":
+            depth += 1
+        elif word == "(":
+            if depth == 0:
+                return False
+            depth -= 1
+        elif depth == 0 and word.lower() in _CLAUSE_START:
+            return True
+    return False
 
 
 def placeholders(values: Iterable[Any]) -> str:

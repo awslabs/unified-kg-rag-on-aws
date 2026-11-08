@@ -142,11 +142,53 @@ def test_values_are_bound_parameters() -> None:
             "SELECT n + 1 FROM r) SELECT count(*) FROM r",
             [LABEL],
         ),
+        # The label restriction negated or bypassed: it must be a top-level
+        # conjunct of its WHERE or ON clause.
+        ("SELECT a.id FROM vertices AS a WHERE NOT a.label = ?", [LABEL]),
+        ("SELECT a.id FROM vertices AS a WHERE (a.label = ?) IS 0", [LABEL]),
+        ("SELECT a.id FROM vertices AS a WHERE (a.label = ?) = 0", [LABEL]),
+        ("SELECT a.id FROM vertices AS a WHERE a.label = ? = 0", [LABEL]),
+        ("SELECT a.id FROM vertices AS a WHERE 0 = a.label = ?", [LABEL]),
+        (
+            "SELECT a.id FROM vertices AS a WHERE CASE WHEN a.label = ? THEN 0 "
+            "ELSE 1 END",
+            [LABEL],
+        ),
+        ("SELECT a.id FROM vertices AS a WHERE 1 BETWEEN 0 AND a.label = ?", [LABEL]),
+        (
+            "SELECT a.id FROM vertices AS a WHERE kg_node(a.label = ?, a.id, a.props)",
+            [LABEL],
+        ),
+        ("SELECT a.id FROM vertices AS a WHERE 1 AND (a.label = ? AND 1) = 0", [LABEL]),
+        (
+            "SELECT a.id FROM vertices AS a WHERE a.label = ? UNION ALL SELECT b.id "
+            "FROM vertices AS b WHERE b.label = ? IS NULL",
+            [LABEL, LABEL],
+        ),
+        (
+            "SELECT a.id FROM vertices AS a LEFT JOIN vertices AS b ON a.label = ? "
+            "AND b.label = ?",
+            [LABEL, LABEL],
+        ),
     ],
 )
 def test_the_checker_refuses_writes_and_escapes(sql: str, params: list) -> None:
     with pytest.raises(GraphQueryCompileError):
         check_sql(sql, params, LABEL)
+
+
+def test_the_checker_takes_the_compilers_conjuncts() -> None:
+    """Restrictions joined by AND, in WHERE and ON, nested in a CTE or a
+    subquery, and the one IS the compiler writes, IS NOT NULL."""
+    check_sql(
+        "WITH w(n0) AS (SELECT b0.id FROM vertices AS b0 JOIN edges AS e0 ON "
+        "e0.label = ? AND e0.source_id = b0.id WHERE kg_node(?, b0.id, b0.props) = 1 "
+        "AND b0.label = ?) SELECT q.g, count(*) FROM (SELECT DISTINCT w.n0 AS g FROM "
+        "w JOIN vertices AS v ON v.label = ? AND v.id = w.n0) AS q WHERE q.g IS NOT "
+        "NULL GROUP BY q.g",
+        [LABEL, 0, LABEL, LABEL],
+        LABEL,
+    )
 
 
 # An example takes a few milliseconds (validate, compile, check), but the

@@ -270,10 +270,13 @@ internals. Layers, each independent of the next:
    predicates, the ordering tokens, nested traversals: no lambda, no `T`
    token, no `~` key), and its only source instruction is
    `OptionsStrategy` with `evaluationTimeout`. SQL starts with `SELECT` or
-   `WITH`, holds no `;`, quote, comment, numbered placeholder, `OR`, comma
-   join, recursive CTE or write/administration keyword, references only
-   `vertices`, `edges` and its own CTEs, calls only the registered
-   functions and `count`, and binds `L` at every alias's `label = ?`.
+   `WITH`, holds no `;`, quote, comment, numbered placeholder, `OR`,
+   `NOT`, `IS` (but the compiler's `IS NOT NULL`), `CASE`, `BETWEEN`, comma,
+   outer, cross or natural join, recursive CTE or write/administration
+   keyword, references only `vertices`, `edges` and its own CTEs, calls
+   only the registered functions and `count`, and binds `L` at every
+   alias's `label = ?`, each a top-level conjunct of its `WHERE` or `ON`
+   clause (`NOT v.label = ?` or `(v.label = ?) = 0` is refused).
    Behind it the read-only connection installs a SQLite authorizer for the
    statement: `SELECT`, reads of `vertices` and `edges`, the registered
    functions; everything else (a schema table, recursion, another

@@ -762,7 +762,8 @@ From a `main` checkout (formats and keys no release had):
   Gremlin Server; each branch of a hop range ends in its own `simplePath()`, since Neptune ignores one after a
   `union`, and a fixed length walks one chain without a `union`, whose one-branch form Neptune rejects) or
   parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
-  form against a read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer,
+  form against a read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer
+  (each alias's label restriction a top-level conjunct, no `NOT`, `IS`, `CASE` or outer join),
   and runs it read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and
   top rows are exact, and groups an integral float with the int it equals (5.0 with 5). The result table, the entities
   and paths it names (with seed provenance) and their passages are fused (buckets `structured_query_result`,
