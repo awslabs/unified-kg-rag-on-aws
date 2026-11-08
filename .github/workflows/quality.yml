@@ -564,12 +564,16 @@ jobs:
 
       - name: Check the runtime image layout
         # No uv and no AWS CLI (the corpus sync is docker/s3_sync.py); the
-        # app user cannot write the venv, only its own directories.
+        # app user cannot write the venv, only its own directories. Run with
+        # a read-only root filesystem, as the ECS task is: the image's
+        # VOLUMEs are the writable paths, /tmp still world-writable.
         run: >-
-          docker run --rm unified-kg-rag:ci sh -c
+          docker run --rm --read-only unified-kg-rag:ci sh -c
           '! command -v uv && ! command -v aws
           && ! touch /app/.venv/probe 2>/dev/null
-          && touch /app/cache/probe /app/outputs/probe /app/logs/probe
+          && ! touch /home/appuser/probe 2>/dev/null
+          && touch /tmp/probe /app/cache/probe /app/outputs/probe /app/logs/probe
+          && test -k /tmp
           && python /usr/local/lib/unified-kg-rag/s3_sync.py --help > /dev/null'
 
       - name: Scan the image for fixable vulnerabilities

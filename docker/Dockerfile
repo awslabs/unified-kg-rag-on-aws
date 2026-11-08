@@ -122,6 +122,11 @@ ENV PATH="/app/.venv/bin:${PATH}"
 # the libraries resolve a cache/config dir.
 RUN useradd --create-home --uid 10001 appuser \
     && install -d -o appuser -g appuser /app/cache /app/outputs /app/logs
+# The only paths a task writes: the ECS task runs with a read-only root
+# filesystem and mounts a volume at each (iac/stacks/compute_stack.py
+# WRITABLE_VOLUMES), which starts with the content, owner and mode declared
+# here. Keep the two lists the same.
+VOLUME ["/tmp", "/app/cache", "/app/outputs", "/app/logs"]
 ENV HOME=/home/appuser
 USER appuser
 

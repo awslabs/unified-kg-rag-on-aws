@@ -67,6 +67,20 @@ COLLECTOR_DIGEST = (
 # (awsvpc tasks share one network namespace).
 COLLECTOR_OTLP_HTTP = "127.0.0.1:4318"
 
+# The app container's root filesystem is read-only (Security Hub ECS.5); it
+# writes only to these task volumes (bind mounts on the task's ephemeral
+# storage): the entrypoint's corpus sync and the libraries' scratch under
+# /tmp, and the CLIs' stage cache, outputs and log files under /app by their
+# config defaults. The image declares each as a VOLUME, so the task volume
+# starts with the image's content, owner and mode (/tmp world-writable, the
+# /app ones owned by the app user); otherwise Fargate creates it root-owned.
+WRITABLE_VOLUMES = {
+    "tmp": "/tmp",  # nosec B108 - a task volume, the container's own /tmp
+    "app-cache": "/app/cache",
+    "app-outputs": "/app/outputs",
+    "app-logs": "/app/logs",
+}
+
 
 class _TaskImports(NamedTuple):
     repository: ecr.IRepository
@@ -607,6 +621,9 @@ class ComputeStack(Stack):
             # The Environment dimension of the EMF metrics (--metrics-sink
             # cloudwatch): this deployment's alarms watch only its own runs.
             "UKR_METRICS_ENVIRONMENT": self.config.env_name,
+            # The root filesystem is read-only, the home directory with it: a
+            # library's user cache (~/.cache) goes to the /tmp task volume.
+            "XDG_CACHE_HOME": "/tmp/.cache",  # nosec B108 - the /tmp task volume
             # "structured" => JSON-structured logs (CloudWatch-friendly); the
             # config model only accepts "structured" | "plain".
             "UKR__LOGGING__LOG_FORMAT": "structured",
@@ -683,7 +700,13 @@ class ComputeStack(Stack):
             linux_parameters=ecs.LinuxParameters(
                 task_def, "AppLinuxParameters", init_process_enabled=True
             ),
+            readonly_root_filesystem=True,
         )
+        for name, path in WRITABLE_VOLUMES.items():
+            task_def.add_volume(name=name)
+            app.add_mount_points(
+                ecs.MountPoint(source_volume=name, container_path=path, read_only=False)
+            )
         if self.config.enable_cloudwatch_tracing:
             collector = self._add_trace_collector(scope, task_def, imports.log_group)
             # Started first so the app's first spans find it; START, not
