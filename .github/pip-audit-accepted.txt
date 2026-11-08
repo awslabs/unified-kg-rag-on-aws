@@ -1,6 +1,8 @@
 # Advisories the pip-audit job (.github/workflows/security.yml) accepts: one
-# per line, the advisory id first, then the package and why it does not
-# apply. Remove a line when a fixed release is locked, or when the reason
-# stops holding (re-read it on every bump of the package).
-PYSEC-2026-2447 diskcache 5.6.3 (CVE-2025-69872, unsafe pickle in the cache directory): only ragas depends on it, in the eval extra, and ragas uses it only for its opt-in cacher, which the evaluator never configures; no fixed release exists
-PYSEC-2026-3046 ragas 0.4.3 (CVE-2026-6587, SSRF in the multi-modal faithfulness collection): eval extra only; the evaluator runs the five text metrics (answer correctness and relevancy, context precision and recall, faithfulness), never that module; no fixed release exists
+# per line, the advisory id first, then the date it is accepted until
+# (YYYY-MM-DD, as .trivyignore.yaml's expired_at: past it the advisory gates
+# again), the package and its version, and why it does not apply. Remove a
+# line when a fixed release is locked, or when the reason stops holding
+# (re-read it on every bump of the package, and before extending the date).
+PYSEC-2026-2447 2027-02-09 diskcache 5.6.3 (CVE-2025-69872, unsafe pickle in the cache directory): only ragas depends on it, in the eval extra, and ragas uses it only for its opt-in cacher, which the evaluator never configures; no fixed release exists
+PYSEC-2026-3046 2027-02-09 ragas 0.4.3 (CVE-2026-6587, SSRF in the multi-modal faithfulness collection): eval extra only; the evaluator runs the five text metrics (answer correctness and relevancy, context precision and recall, faithfulness), never that module; no fixed release exists

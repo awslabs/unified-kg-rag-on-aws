@@ -1296,7 +1296,9 @@ From a `main` checkout (formats and keys no release had):
   or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617); it also checks the Trivy image
   and the Dockerfile's apt pins, and builds and scans the image with the opt-in extras, so a fix released after the
   last pull request lands in the same issue (#636, #641), and a build that broke in an issue of its own; a week that
-  finds them current closes them. Dependabot also moves the console's npm lock (#636).
+  finds them current closes them. A pin held on a release series (`HELD`: uv on 0.12) lists the newer series as held
+  and a newer patch of its own series as behind. Dependabot also moves the console's npm lock (#636). The workflows
+  are linted by actionlint, a pinned pre-commit hook the quality job runs.
 - Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
   (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).
@@ -1893,7 +1895,8 @@ Deployment (CDK).
   `_search/pipeline`, `_scripts`) (#636, #641); the logger-credential semgrep finding is suppressed on each
   matched line, not the whole package (#617).
 - CI audits every locked runtime dependency with pip-audit (`.github/pip-audit-accepted.txt` lists the two accepted
-  advisories, diskcache PYSEC-2026-2447 and ragas PYSEC-2026-3046, in the `eval` extra on paths it never runs) and
+  advisories, diskcache PYSEC-2026-2447 and ragas PYSEC-2026-3046, in the `eval` extra on paths it never runs, each
+  until a date past which it gates again) and
   checks the licenses of the npm packages the console bundles; the secret scan suppresses in tests only the three
   detectors synthetic credentials trip, so a real-format key there fails it.
 - A failed query step (routing, query processing, follow-up rewrite, context optimization, the answer and its

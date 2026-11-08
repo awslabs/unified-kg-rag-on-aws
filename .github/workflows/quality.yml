@@ -104,7 +104,9 @@ jobs:
 
       - name: File hygiene hooks
         # The pre-commit hooks not covered by the steps above: end-of-file,
-        # trailing whitespace, YAML syntax and merge-conflict markers.
+        # trailing whitespace, YAML syntax, merge-conflict markers and
+        # actionlint on the workflows (pinned in .pre-commit-config.yaml;
+        # the runner's Go builds it, its shellcheck checks run: scripts).
         env:
           SKIP: ruff,isort,black,mypy
         run: uv run pre-commit run --all-files --show-diff-on-failure

@@ -41,3 +41,11 @@ repos:
       - id: trailing-whitespace
       - id: check-yaml
       - id: check-merge-conflict
+
+  # Workflow syntax, expressions, action inputs and the run: scripts
+  # (shellcheck where installed). CI runs it in the quality job's file
+  # hygiene step.
+  - repo: https://github.com/rhysd/actionlint
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # v1.7.12
+    hooks:
+      - id: actionlint

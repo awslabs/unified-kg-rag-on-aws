@@ -139,7 +139,8 @@ The [`security`](./.github/workflows/security.yml) workflow runs the Automated S
 detect-secrets, checkov, cdk-nag, npm-audit) and fails on an unsuppressed finding at MEDIUM or above. Its `pip-audit`
 job checks every locked runtime dependency (all extras, no dev group) for known vulnerabilities and fails on one
 that [`.github/pip-audit-accepted.txt`](./.github/pip-audit-accepted.txt) does not list with the reason it does not
-apply; remove a line once a fixed release is locked. To run ASH locally
+apply and the date it is accepted until (past it, the advisory gates again: re-read the reason before extending it);
+remove a line once a fixed release is locked. To run ASH locally
 (the same pinned version and dependency date, as CI does; reports land in the gitignored `.ash/ash_output/`):
 
 ```bash
@@ -163,7 +164,7 @@ hand, together where they must match:
 - The uv version, `version: "0.12.23"` under every `astral-sh/setup-uv` step in `.github/workflows/` (Dependabot moves
   the action's SHA, not this input), and the `ghcr.io/astral-sh/uv` image `docker/Dockerfile` copies uv from
   (`COPY --from`, tag and digest). Held at 0.12 for now (`HELD` in `scripts/check_pins.py`: the weekly report lists
-  uv 0.13 as held, which opens no issue; delete the entry to lift the hold): 0.13.0 has breaking changes (Python 3.15 as the default, the tar codec, constraint-file parsing) to check against
+  uv 0.13 as held, which opens no issue, and a newer 0.12 patch as behind; delete the entry to lift the hold): 0.13.0 has breaking changes (Python 3.15 as the default, the tar codec, constraint-file parsing) to check against
   the locks, the workflows and the image, and its image digest needs a Docker build to verify.
 - The container base image, the `BASE_IMAGE` ARG default in `docker/Dockerfile` (tag and digest; Dependabot does not
   resolve an ARG in `FROM`).

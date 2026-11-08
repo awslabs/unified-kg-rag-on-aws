@@ -77,10 +77,12 @@ jobs:
 
   pip-audit:
     # Every locked runtime dependency, of every extra (the dev group is not
-    # shipped), against PyPI's advisory database and OSV. A known
+    # shipped), against the PyPI vulnerability service (pip-audit's default;
+    # PyPI serves the PyPA advisory database, which OSV mirrors). A known
     # vulnerability fails the job unless .github/pip-audit-accepted.txt lists
-    # its id with the reason it does not apply. Nothing is installed: the
-    # exported lock is hashed, so pip-audit resolves nothing itself.
+    # its id, until a date, with the reason it does not apply; past the date
+    # it gates again. Nothing is installed: the exported lock is hashed, so
+    # pip-audit resolves nothing itself.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -101,9 +103,17 @@ jobs:
           uv export --frozen --all-extras --no-dev --no-emit-project \
             --format requirements-txt --output-file "$RUNNER_TEMP/requirements.txt"
           ignores=()
-          while read -r id; do
-            ignores+=(--ignore-vuln "$id")
-          done < <(grep -oE '^[A-Z]+-[0-9A-Za-z-]+' .github/pip-audit-accepted.txt)
+          today=$(date -u +%F)
+          while read -r id until _; do
+            if [[ ! "$until" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+              echo "::error::$id: no YYYY-MM-DD date after the id"
+              exit 1
+            elif [[ "$until" < "$today" ]]; then
+              echo "::warning::$id was accepted until $until: it gates again"
+            else
+              ignores+=(--ignore-vuln "$id")
+            fi
+          done < <(grep -E '^[A-Z]+-[0-9A-Za-z-]+ ' .github/pip-audit-accepted.txt)
           uvx --exclude-newer 2026-11-01T00:00:00Z pip-audit==2.10.1 \
             --requirement "$RUNNER_TEMP/requirements.txt" --disable-pip \
             --progress-spinner off "${ignores[@]}"

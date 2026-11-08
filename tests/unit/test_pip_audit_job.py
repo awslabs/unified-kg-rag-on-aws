@@ -9,6 +9,7 @@ package and the reason it does not apply.
 
 from __future__ import annotations
 
+import datetime
 import re
 from pathlib import Path
 
@@ -42,6 +43,8 @@ def test_the_job_audits_the_lock_with_the_accepted_advisories() -> None:
     assert "uv export --frozen --all-extras --no-dev" in run
     assert "--disable-pip" in run and "--no-deps" not in run
     assert ".github/pip-audit-accepted.txt" in run
+    # An entry past its date is not ignored: the advisory gates again.
+    assert '"$until" < "$today"' in run
     assert re.search(r"pip-audit==\d+\.\d+\.\d+", run)
     assert "--exclude-newer" in run
 
@@ -51,8 +54,12 @@ def test_each_accepted_advisory_names_its_package_and_reason() -> None:
     assert entries
     ids = []
     for line in entries:
-        advisory, package, version, reason = line.split(" ", 3)
+        advisory, until, package, version, reason = line.split(" ", 4)
         assert re.fullmatch(r"(PYSEC|GHSA|CVE)-[0-9A-Za-z-]+", advisory), line
+        # Accepted until a date (past it the advisory gates again), at most
+        # a year out, so the reason is re-read.
+        expiry = datetime.date.fromisoformat(until)
+        assert expiry <= datetime.date.today() + datetime.timedelta(days=366), line
         assert re.fullmatch(r"\d+(\.\d+)*", version), line
         assert package and len(reason) > 40, line
         ids.append(advisory)
