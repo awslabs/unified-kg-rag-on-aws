@@ -114,18 +114,17 @@ def register_strategy(
         required_artifacts: The index artifacts it reads, when other than
             its methodology requires (``StrategySpec.required_artifacts``).
 
+    Re-registering the same class with the same arguments keeps the record
+    it has; with other arguments it raises, because replacing the record
+    would change, for every caller in the process, what the strategy reads.
+
     Raises:
-        ValueError: If ``strategy`` is already registered to another class.
+        ValueError: If ``strategy`` is already registered to another class,
+            or to this class with other arguments.
     """
 
     def decorator(cls: StrategyT) -> StrategyT:
-        if strategy in _REGISTRY and _REGISTRY[strategy].strategy_class is not cls:
-            raise ValueError(
-                f"Search strategy '{strategy.value}' is already registered to "
-                f"'{_REGISTRY[strategy].strategy_class.__name__}'; cannot re-register "
-                f"to '{cls.__name__}'."
-            )
-        _REGISTRY[strategy] = StrategySpec(
+        spec = StrategySpec(
             strategy_class=cls,
             required_roles=tuple(required_roles),
             query_inputs=frozenset(query_inputs),
@@ -134,6 +133,21 @@ def register_strategy(
                 None if required_artifacts is None else frozenset(required_artifacts)
             ),
         )
+        registered = _REGISTRY.get(strategy)
+        if registered is not None:
+            if registered.strategy_class is not cls:
+                raise ValueError(
+                    f"Search strategy '{strategy.value}' is already registered to "
+                    f"'{registered.strategy_class.__name__}'; cannot re-register "
+                    f"to '{cls.__name__}'."
+                )
+            if registered != spec:
+                raise ValueError(
+                    f"Search strategy '{strategy.value}' is already registered to "
+                    f"'{cls.__name__}' with other arguments; cannot change them."
+                )
+            return cls
+        _REGISTRY[strategy] = spec
         logger.debug(
             "Registered search strategy '%s' -> %s", strategy.value, cls.__name__
         )
