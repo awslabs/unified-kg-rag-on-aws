@@ -345,6 +345,31 @@ def test_stage_progress_marks_running_restored_and_failed(tmp_path: Path) -> Non
     assert steps[2]["error"] == "boom"
     ended = stages.stage_progress(plan, None, running=False)
     assert [s["status"] for s in ended] == ["stopped", "not_run", "not_run", "not_run"]
+    # Regression (rv7): a run stopped in graph_extraction (saved "running"
+    # as it started) blamed the next planned stage, gleaning.
+    plan = ["text_chunking", "graph_extraction", "gleaning", "graph_resolution"]
+    stopped = {
+        "stage_results": [
+            {"stage_name": "text_chunking", "status": "completed"},
+            {"stage_name": "graph_extraction", "status": "running"},
+        ]
+    }
+    assert [
+        s["status"] for s in stages.stage_progress(plan, stopped, running=False)
+    ] == [
+        "completed",
+        "stopped",
+        "not_run",
+        "not_run",
+    ]
+    assert [
+        s["status"] for s in stages.stage_progress(plan, stopped, running=True)
+    ] == [
+        "completed",
+        "running",
+        "pending",
+        "pending",
+    ]
     (tmp_path / "p").mkdir()
     (tmp_path / "p" / stages.METADATA_FILENAME).write_text("{half")
     assert stages.read_metadata(tmp_path, "p") is None

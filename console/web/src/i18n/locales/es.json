@@ -52,6 +52,8 @@
   "ask.evidenceFor": "para «{{question}}»",
   "ask.evidenceEmptyTitle": "Aún no hay respuesta",
   "ask.evidenceWaiting": "Esperando la respuesta",
+  "ask.evidenceNone": "Sin fuentes",
+  "ask.evidenceNoneBody": "La pregunta terminó sin respuesta, así que no se leyó ninguna fuente.",
   "ask.evidenceEmpty": "Cuando llegue una respuesta, sus fuentes aparecerán aquí en el orden en que las leyó el modelo de respuesta. Abre una para seguir su rastro.",
   "ask.routing.router": "auto eligió {{strategy}}: el enrutador la seleccionó entre {{candidates}}.",
   "ask.routing.only_candidate": "auto usó {{strategy}}: es la única estrategia que aplica estos filtros a este índice.",

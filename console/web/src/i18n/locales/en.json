@@ -51,6 +51,8 @@
   "ask.evidenceFor": "for “{{question}}”",
   "ask.evidenceEmptyTitle": "No answer yet",
   "ask.evidenceWaiting": "Waiting for the answer",
+  "ask.evidenceNone": "No sources",
+  "ask.evidenceNoneBody": "The question ended without an answer, so no source was read.",
   "ask.evidenceEmpty": "When an answer arrives, its sources appear here in the order the answer model read them. Open one to follow its trail.",
   "ask.routing.router": "Auto chose {{strategy}}: the router picked it from {{candidates}}.",
   "ask.routing.only_candidate": "Auto used {{strategy}}: it is the only strategy that applies these filters to this index.",

@@ -295,8 +295,18 @@ export function AskPage({ status }: { status: Status | null }) {
             </div>
           ) : (
             <div className="empty">
-              <div className="empty-title">{current ? t("ask.evidenceWaiting") : t("ask.evidenceEmptyTitle")}</div>
-              <div>{t("ask.evidenceEmpty")}</div>
+              {current && current.status !== "streaming" ? (
+                // Failed or stopped: no answer is coming to wait for.
+                <>
+                  <div className="empty-title">{t("ask.evidenceNone")}</div>
+                  <div>{t("ask.evidenceNoneBody")}</div>
+                </>
+              ) : (
+                <>
+                  <div className="empty-title">{current ? t("ask.evidenceWaiting") : t("ask.evidenceEmptyTitle")}</div>
+                  <div>{t("ask.evidenceEmpty")}</div>
+                </>
+              )}
             </div>
           )}
         </Sheet>

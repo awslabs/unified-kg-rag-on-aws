@@ -50,6 +50,8 @@
   "ask.evidenceFor": "‘{{question}}’에 대한 출처",
   "ask.evidenceEmptyTitle": "아직 답변이 없습니다",
   "ask.evidenceWaiting": "답변을 기다리는 중",
+  "ask.evidenceNone": "출처 없음",
+  "ask.evidenceNoneBody": "질문이 답변 없이 끝나서 읽은 출처가 없습니다.",
   "ask.evidenceEmpty": "답변이 도착하면 답변 모델이 읽은 순서대로 출처가 여기에 표시됩니다. 출처를 열어 근거 경로를 따라가 보세요.",
   "ask.routing.router": "auto가 {{strategy}} 전략을 선택했습니다. 라우터가 {{candidates}} 중에서 골랐습니다.",
   "ask.routing.only_candidate": "auto가 {{strategy}} 전략을 사용했습니다. 이 인덱스에서 이 필터를 적용할 수 있는 유일한 전략입니다.",
