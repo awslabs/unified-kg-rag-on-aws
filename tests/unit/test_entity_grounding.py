@@ -9,16 +9,32 @@ domain priors) is rejected, while genuinely-present spans are kept.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
+from unified_kg_rag.domain.ingestion import entity_grounding
 from unified_kg_rag.domain.ingestion.entity_grounding import (
-    is_grounded,
     is_name_grounded,
     normalize_for_grounding,
     token_overlap_ratio,
 )
+from unified_kg_rag.domain.models.config import EntityGroundingConfig
 
 pytestmark = pytest.mark.unit
+_GROUNDING = EntityGroundingConfig()
+
+
+def is_grounded(source_text: str | None, chunk_text: str, **bounds: Any) -> bool:
+    """``is_grounded`` at the configured bounds, with ``bounds`` over them."""
+    defaults = {
+        "min_span_tokens": _GROUNDING.min_span_tokens,
+        "min_overlap_ratio": _GROUNDING.min_overlap_ratio,
+    }
+    return entity_grounding.is_grounded(
+        source_text, chunk_text, **{**defaults, **bounds}
+    )
+
 
 # A neutral synthetic contract fragment (the model "read" this chunk).
 CHUNK = (

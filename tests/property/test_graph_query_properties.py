@@ -18,7 +18,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
-from tests.fixtures.graph_query import profile_of, property_graph
+from tests.fixtures.graph_query import profile_of, property_graph, reference_operation
 from unified_kg_rag.domain.models import Entity, Relationship
 from unified_kg_rag.domain.models.graph_query import (
     GraphQueryPlan,
@@ -32,7 +32,6 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     hydrate_keys,
     plan_operation,
     reference_execute,
-    reference_operation,
     validate_plan,
 )
 from unified_kg_rag.shared.exceptions import InvalidGraphQueryError

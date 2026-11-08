@@ -28,7 +28,9 @@ cannot be loaded, a :class:`SeedGraphError` a seed graph that cannot be
 imported, a :class:`MethodologyNotIndexedError` a query whose strategy
 reads a methodology its index namespace does not hold) and an
 :class:`InvalidFilterError` a search filter to fix, not failures to retry; a :class:`StoreConnectionError` is an unreachable
-store, a :class:`QueryTimeoutError` a query past its deadline, an
+store, a :class:`QueryTimeoutError` a query past its deadline, a
+:class:`ModelError` a model call that failed (a :class:`LanguageModelError`,
+an :class:`EmbeddingModelError` or a :class:`RerankModelError`), an
 :class:`IndexNotFoundError` a suffix with no index (not ingested,
 or a typo), and a :class:`ConfirmationDeclinedError` (a
 :class:`PipelineExecutionError`) an ingestion run that stopped before it
@@ -105,6 +107,10 @@ _EXPORTS: dict[str, str] = {
     "DocumentNotFoundError": "unified_kg_rag.shared.exceptions",
     "StoreConnectionError": "unified_kg_rag.shared.exceptions",
     "QueryTimeoutError": "unified_kg_rag.shared.exceptions",
+    "ModelError": "unified_kg_rag.shared.exceptions",
+    "LanguageModelError": "unified_kg_rag.shared.exceptions",
+    "EmbeddingModelError": "unified_kg_rag.shared.exceptions",
+    "RerankModelError": "unified_kg_rag.shared.exceptions",
     "PipelineInterrupted": "unified_kg_rag.shared.exceptions",
     # Extension: provider injection and the provider registry
     "Providers": "unified_kg_rag.adapters.providers",
@@ -240,14 +246,18 @@ if TYPE_CHECKING:
         ConfigurationError,
         ConfirmationDeclinedError,
         DocumentNotFoundError,
+        EmbeddingModelError,
         GraphRAGException,
         IndexNotFoundError,
         InvalidFilterError,
+        LanguageModelError,
         MethodologyNotIndexedError,
+        ModelError,
         NamespaceLeaseError,
         PipelineExecutionError,
         PipelineInterrupted,
         QueryTimeoutError,
+        RerankModelError,
         SchemaSourceError,
         SeedGraphError,
         StoreConnectionError,

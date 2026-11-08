@@ -2,19 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """The ``graph`` section: centrality, reports, community detection, visualization."""
 
-import functools
-import logging
 from pathlib import Path
 
 from pydantic import (
     BaseModel,
     Field,
-    PositiveFloat,
     model_validator,
 )
-
-# Stdlib logger: shared.logging imports this module, so get_logger would cycle.
-_logger = logging.getLogger("unified_kg_rag.domain.models.config")
 
 
 class CentralityConfig(BaseModel):
@@ -113,28 +107,6 @@ class ReportGenerationConfig(BaseModel):
     )
 
 
-# The modularity sweep's settings, deprecated: maximizing modularity on the
-# coarse upper levels merges unrelated communities (accuracy loss in testing).
-_AUTO_RESOLUTION_KEYS = (
-    "auto_resolution",
-    "auto_resolution_candidates",
-    "auto_resolution_max_nodes",
-)
-
-
-@functools.cache
-def _warn_auto_resolution(keys: tuple[str, ...]) -> None:
-    """Warn once per set of keys: a config is validated several times per
-    load."""
-    _logger.warning(
-        "graph.community_detection.%s %s deprecated and will be removed: the "
-        "modularity sweep merges unrelated communities on the upper levels. "
-        "It still applies; set graph.community_detection.resolution instead.",
-        " / ".join(keys),
-        "is" if len(keys) == 1 else "are",
-    )
-
-
 class CommunityDetectionConfig(BaseModel):
     enabled: bool = Field(
         default=True,
@@ -204,44 +176,6 @@ class CommunityDetectionConfig(BaseModel):
             "no community or report. 1 = cluster every component."
         ),
     )
-    auto_resolution: bool = Field(
-        default=False,
-        description=(
-            "Deprecated, to be removed. Sweep auto_resolution_candidates at "
-            "every hierarchy level and keep the most modular resolution; "
-            "otherwise resolution is used. "
-            "Off by default: maximizing modularity on the coarse upper-level "
-            "graphs picks low resolutions that merge unrelated communities, "
-            "which cost global search accuracy in testing."
-        ),
-    )
-    auto_resolution_candidates: list[PositiveFloat] = Field(
-        default_factory=lambda: [0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0],
-        description="Deprecated, to be removed. Resolution values swept when "
-        "auto_resolution is enabled; the one maximizing modularity is chosen. "
-        "Each must be above 0.",
-    )
-    auto_resolution_max_nodes: int = Field(
-        default=10000,
-        ge=1,
-        description="Deprecated, to be removed. Skip the auto_resolution sweep "
-        "(which runs one full Leiden "
-        "partition + modularity computation per candidate, ~10x the base cost, "
-        "at every hierarchy level) when the graph exceeds this many nodes, and "
-        "use the fixed `resolution` instead. Prevents the sweep from dominating "
-        "the analysis phase on large graphs. Raise to force the sweep on bigger "
-        "graphs.",
-    )
-
-    @model_validator(mode="after")
-    def _warn_auto_resolution_deprecated(self) -> "CommunityDetectionConfig":
-        given = tuple(
-            name for name in _AUTO_RESOLUTION_KEYS if name in self.model_fields_set
-        )
-        if given:
-            _warn_auto_resolution(given)
-        return self
-
     report_generation: ReportGenerationConfig = Field(
         default_factory=ReportGenerationConfig,
         description="Community report generation configuration",

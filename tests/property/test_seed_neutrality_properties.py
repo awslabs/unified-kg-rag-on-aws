@@ -34,6 +34,7 @@ from hypothesis import strategies as st
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
+from tests.fixtures.seed_graphs import render_unit
 from tests.property import test_incremental_rebuild_properties as rebuild
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
 from unified_kg_rag.application.storage.indexing_manager import IndexingManager
@@ -50,7 +51,6 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     SeedNodeStatement,
     is_seed_unit,
     parse_seed_unit,
-    render_unit,
     seed_only,
     seed_unit_id,
 )

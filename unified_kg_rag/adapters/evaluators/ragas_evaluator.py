@@ -237,9 +237,7 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
         ]
 
     def metric_types(self) -> list[EvaluationMetricType]:
-        return [
-            m for m in self.config.evaluation.ragas_metrics if m in self.RAGAS_METRICS
-        ]
+        return list(self.config.evaluation.ragas_metrics)
 
     def _parse_ragas_reports(
         self,
@@ -535,12 +533,3 @@ class RagasEvaluator(BaseGraphRAGEvaluator):
             [query], [result], [ground_truth], **kwargs
         )
         return reports[0] if reports else self._create_empty_report(query.query_id)
-
-    def validate_config(self) -> bool:
-        unsupported_metrics = set(self.config.evaluation.ragas_metrics) - set(
-            self.RAGAS_METRICS
-        )
-        if unsupported_metrics:
-            logger.error("Unsupported Ragas metrics: '%s'", unsupported_metrics)
-            return False
-        return True

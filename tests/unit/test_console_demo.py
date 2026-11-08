@@ -57,7 +57,12 @@ def test_the_demo_writes_a_corpus_its_dataset_answers(tmp_path: Path) -> None:
         for reference in item.get("reference_sources", []):
             assert reference in files
         if item.get("answer"):
-            text = corpus.text_of(item["reference_sources"][0])
+            name = item["reference_sources"][0]
+            text = (
+                "\n".join(corpus.page_texts(name))
+                if name in corpus.PDF_DOCUMENTS
+                else corpus.TEXT_DOCUMENTS[name]
+            )
             assert item["answer"].split(",")[0] in text
     assert (
         sum(1 for i in items if (i.get("metadata") or {}).get("answerable") is False)

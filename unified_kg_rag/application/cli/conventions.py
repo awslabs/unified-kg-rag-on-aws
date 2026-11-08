@@ -37,6 +37,7 @@ import asyncio
 import atexit
 import contextlib
 import functools
+import ipaddress
 import json
 import logging
 import multiprocessing
@@ -147,6 +148,17 @@ class ArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
         self.print_usage(sys.stderr)
         usage_error(message)
+
+
+def is_loopback(host: str) -> bool:
+    """Whether ``host`` names a loopback address (``127.0.0.0/8``, ``::1``,
+    ``localhost``): reachable from this machine only."""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
 
 
 def add_removed_flag(parser: argparse.ArgumentParser, flag: str, reason: str) -> None:

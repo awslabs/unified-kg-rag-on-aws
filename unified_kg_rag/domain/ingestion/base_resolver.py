@@ -146,8 +146,9 @@ class FuzzyMatcher:
     def __init__(
         self,
         candidates: list[str],
-        resolution_method: str = ResolutionMethod.SEQUENCE_MATCHER,
-        similarity_threshold: float = 0.5,
+        *,
+        resolution_method: str,
+        similarity_threshold: float,
         minhash_permutations: int = 128,
         fuzzy: bool = True,
     ):

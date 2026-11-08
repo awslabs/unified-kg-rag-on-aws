@@ -179,8 +179,9 @@ def node_id(level: int, partition: str | None, child_ids: Sequence[str]) -> str:
 def leaf_entry(
     leaf_id: str, text: str, filters: Mapping[str, Any]
 ) -> tuple[str, str, str]:
-    """What :func:`leaf_digest` keeps of one leaf: its id, its text's hash
-    and its filters, so a caller streaming the text units holds no text."""
+    """What :func:`leaf_entries_digest` keeps of one leaf: its id, its
+    text's hash and its filters, so a caller streaming the text units holds
+    no text."""
     return (
         leaf_id,
         compute_hash(text),
@@ -189,15 +190,9 @@ def leaf_entry(
 
 
 def leaf_entries_digest(entries: Iterable[tuple[str, str, str]]) -> str:
-    """:func:`leaf_digest` of the leaves of ``entries`` (:func:`leaf_entry`),
-    in any order."""
-    payload = json.dumps(sorted(list(entry) for entry in entries), ensure_ascii=False)
-    return compute_hash(payload, length=32)
-
-
-def leaf_digest(leaves: Iterable[tuple[str, str, Mapping[str, Any]]]) -> str:
-    """Digest of a tree's leaves: each text unit's id, the text the tree
-    reads (its translation, when it holds one) and its document filters.
+    """Digest of a tree's leaves (:func:`leaf_entry` of each, in any order):
+    each text unit's id, the text the tree reads (its translation, when it
+    holds one) and its document filters.
 
     A leaf whose text or filters changed under the same id (a reset after
     a re-translation, or after a document's filters changed) changes the
@@ -206,7 +201,8 @@ def leaf_digest(leaves: Iterable[tuple[str, str, Mapping[str, Any]]]) -> str:
     are a function of the text and the embedding model, which the tree's
     fingerprint holds.
     """
-    return leaf_entries_digest(leaf_entry(*leaf) for leaf in leaves)
+    payload = json.dumps(sorted(list(entry) for entry in entries), ensure_ascii=False)
+    return compute_hash(payload, length=32)
 
 
 def summary_input_key(

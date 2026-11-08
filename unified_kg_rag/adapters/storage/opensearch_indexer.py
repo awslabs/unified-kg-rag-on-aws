@@ -3289,8 +3289,8 @@ class OpenSearchIndexer(VectorIndexer):
             "settings": {
                 **settings,
                 "knn": True,
-                "knn.algo_param.ef_search": self.opensearch_config.vector_search.get(
-                    "ef_search", 100
+                "knn.algo_param.ef_search": (
+                    self.opensearch_config.vector_search_value("ef_search")
                 ),
             },
             "mappings": {
@@ -3312,7 +3312,7 @@ class OpenSearchIndexer(VectorIndexer):
         return meta
 
     def _get_knn_vector_mapping(self) -> dict[str, Any]:
-        vs_config = self.opensearch_config.vector_search
+        value = self.opensearch_config.vector_search_value
         return {
             "type": "knn_vector",
             "dimension": self._embedding_dimension,
@@ -3320,15 +3320,12 @@ class OpenSearchIndexer(VectorIndexer):
             # 2.17 refuses the keys.
             **self._resolve_vector_storage(),
             "method": {
-                "name": vs_config.get("name", "hnsw"),
-                "space_type": vs_config.get("space_type", "cosinesimil"),
-                # lucene HNSW supports cosinesimil on all versions; faiss HNSW
-                # only supports it from OpenSearch 2.19. Default engine kept in
-                # sync with OpenSearchIndexingConfig.vector_search.
-                "engine": vs_config.get("engine", "lucene"),
+                "name": value("name"),
+                "space_type": value("space_type"),
+                "engine": value("engine"),
                 "parameters": {
-                    "ef_construction": vs_config.get("ef_construction", 128),
-                    "m": vs_config.get("m", 24),
+                    "ef_construction": value("ef_construction"),
+                    "m": value("m"),
                 },
             },
         }

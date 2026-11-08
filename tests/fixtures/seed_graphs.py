@@ -8,11 +8,12 @@ them (for the incremental properties)."""
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, NamedTuple
 
 from hypothesis import strategies as st
 
+from unified_kg_rag.adapters.seed_sources.registry import SeedSourceOptions
 from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     record_key,
@@ -21,8 +22,11 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     SEED_RECORD_FINGERPRINT,
     SeedConversion,
     SeedConversionSettings,
+    SeedEdgeStatement,
+    SeedNodeStatement,
     convert_seed,
     parse_seed_unit,
+    render_statement,
     seed_text_units,
 )
 from unified_kg_rag.domain.models import (
@@ -31,7 +35,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
-from unified_kg_rag.domain.models.config import SeedNameCollision
+from unified_kg_rag.domain.models.config import SeedGraphConfig, SeedNameCollision
 from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedGraph, SeedNode
 
 EX = "https://example.org/procure#"
@@ -115,7 +119,7 @@ def seed_shards(
     """
     conversion = convert_seed(
         SeedGraph(nodes=tuple(nodes), edges=tuple(edges)),
-        SeedConversionSettings(
+        seed_settings(
             name=name,
             shards=shards,
             max_items_per_unit=max_items_per_unit,
@@ -263,3 +267,23 @@ def seed_statements(conversion: SeedConversion) -> list[str]:
         for line in unit.text.split("\n")
         if line
     ]
+
+
+def render_unit(statements: Iterable[SeedNodeStatement | SeedEdgeStatement]) -> str:
+    """The text of a seed unit holding ``statements``: one line each."""
+    return "\n".join(render_statement(statement) for statement in statements)
+
+
+def seed_settings(**overrides: Any) -> SeedConversionSettings:
+    """A seed's conversion settings at the configuration's defaults
+    (``SeedGraphConfig``, ``SeedSourceOptions``), with ``overrides``."""
+    fields = SeedConversionSettings.__dataclass_fields__
+    defaults = {
+        name: info.get_default(call_default_factory=True)
+        for model in (SeedGraphConfig, SeedSourceOptions)
+        for name, info in model.model_fields.items()
+        if name in fields and not info.is_required()
+    }
+    values: dict[str, Any] = {**defaults, "name": "procure", **overrides}
+    values["description_properties"] = tuple(values["description_properties"])
+    return SeedConversionSettings(**values)

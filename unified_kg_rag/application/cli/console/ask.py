@@ -64,6 +64,9 @@ from unified_kg_rag.shared.exceptions import (
 
 logger = get_logger(__name__)
 
+# Builds the chain the Ask page answers with (a test injects a fake).
+ChainFactory = Callable[[Config], GraphRAGChain]
+
 EXCERPT_CHARACTERS = 600
 # A graph query result is its table: shown whole up to this.
 TABLE_CHARACTERS = 6000
@@ -227,7 +230,7 @@ class AskService:
         store: ConsoleStore,
         *,
         trace_url_template: str | None = None,
-        chain_factory: Callable[[Config], GraphRAGChain] | None = None,
+        chain_factory: ChainFactory | None = None,
     ) -> None:
         self.load_config = load_config
         self.store = store

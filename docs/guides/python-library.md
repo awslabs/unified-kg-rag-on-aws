@@ -125,7 +125,8 @@ the stores only. `run-describe` prints them
   `ConfigurationError` (a setting to fix; `StoreRequestRejectedError` among
   them), `InvalidFilterError`, `IndexNotFoundError`, `StoreConnectionError`,
   `QueryTimeoutError`, `NamespaceLeaseError`, `DocumentNotFoundError`,
-  `PipelineExecutionError` and
+  `ModelError` (a model call that failed: `LanguageModelError`,
+  `EmbeddingModelError` or `RerankModelError`), `PipelineExecutionError` and
   `PipelineInterrupted` (a `KeyboardInterrupt`); all but the last are
   `GraphRAGException`s. `DataIngestionPipeline(...)` raises `SeedGraphError`
   (a `ConfigurationError`) for a seed graph it cannot import.

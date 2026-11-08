@@ -23,7 +23,7 @@ from hypothesis import event, given, settings
 from hypothesis import strategies as st
 
 from tests.fixtures.extras import requires_ontology
-from tests.fixtures.seed_graphs import seed_statements
+from tests.fixtures.seed_graphs import seed_settings, seed_statements
 from unified_kg_rag.adapters.seed_sources import SeedSourceContext, get_seed_source
 from unified_kg_rag.application.bootstrap import (
     load_seed_graphs,
@@ -58,13 +58,11 @@ def _schema(mode: str) -> ExtractionSchema:
 
 def _settings(**overrides: Any) -> SeedConversionSettings:
     values: dict[str, Any] = {
-        "name": "procure",
         "shards": 4,
         "max_items_per_unit": 3,
         "on_name_collision": "merge",
     }
-    values.update(overrides)
-    return SeedConversionSettings(**values)
+    return seed_settings(**{**values, **overrides})
 
 
 @st.composite

@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
-import logging
 import shutil
 import sys
 import tempfile
@@ -47,6 +46,7 @@ from unified_kg_rag.application.cli.conventions import (
     EXIT_USAGE,
     ArgumentParser,
     add_output_format_argument,
+    add_removed_flag,
     exits_on_sigterm,
     failure_fields,
     json_output,
@@ -764,14 +764,13 @@ class CommandLineInterface:
                 "queries, all attempts of a metric, or all of those, failed."
             ),
         )
-        parser.add_argument(
-            "--verbose",
-            "-v",
-            action="store_true",
-            help="(deprecated: use --log-level DEBUG, which it sets) Log at "
-            "DEBUG. --verbose means more of a result's detail in run-rag; the "
-            "log level of every CLI is --log-level",
-        )
+        for flag in ("--verbose", "-v"):
+            add_removed_flag(
+                parser,
+                flag,
+                "use --log-level DEBUG (every CLI's log level flag; --verbose "
+                "means more of a result's detail in run-rag)",
+            )
         add_config_arguments(parser)
         add_output_format_argument(parser)
         add_provider_arguments(parser)
@@ -2599,12 +2598,6 @@ def main() -> None:
             )
         json_output(args)
         setup_cli_logging(config, args)
-        if args.verbose:
-            logging.getLogger("unified_kg_rag").setLevel(logging.DEBUG)
-            logger.warning(
-                "run-eval --verbose is deprecated and will be removed: use "
-                "--log-level DEBUG (every CLI's log level flag)."
-            )
 
         if args.from_results is not None:
             # Rebuilt from saved answers: no chain, no store, no answer call.

@@ -1150,10 +1150,10 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         ``vector_search.ef_search`` at least. faiss and nmslib read the index
         setting, and ``size`` hits are kept either way.
         """
-        vector_search = self._opensearch_config.vector_search
-        if vector_search.get("engine", "lucene") != "lucene":
+        value = self._opensearch_config.vector_search_value
+        if value("engine") != "lucene":
             return size
-        return max(size, int(vector_search.get("ef_search", 100)))
+        return max(size, int(value("ef_search")))
 
     @staticmethod
     def _search_body(

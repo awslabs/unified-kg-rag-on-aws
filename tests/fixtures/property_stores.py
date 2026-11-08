@@ -26,8 +26,6 @@ from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.domain.models import Config, Entity, Relationship
 
-STORE_KINDS = ("fake", "sqlite")
-
 
 class Stores:
     """A graph and a vector indexer of one namespace, and its ``config``."""

@@ -215,6 +215,10 @@ _REMOVED_SETTINGS = [
     ("graph.analysis.statistics.calculate_diameter", None, True),
     ("fixing", "enabled", False),
     ("evaluation.warm_up_query", None, False),
+    ("graph.community_detection.auto_resolution", None, True),
+    ("graph.community_detection.auto_resolution_candidates", None, [0.5, 1.0]),
+    ("graph.community_detection.auto_resolution_max_nodes", None, 10),
+    ("aws.dynamodb.billing_mode", None, "PROVISIONED"),
 ]
 
 

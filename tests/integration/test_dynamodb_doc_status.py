@@ -29,6 +29,7 @@ from unified_kg_rag.shared import (
     DataProcessingError,
     DocStatusRegistryError,
 )
+from unified_kg_rag.shared.exceptions import DocStatusFormatError
 
 pytestmark = pytest.mark.integration
 
@@ -48,8 +49,10 @@ def ddb_store() -> DynamoDBDocStatusStore:
 
 
 def test_table_auto_created(ddb_store: DynamoDBDocStatusStore) -> None:
-    # describe_table should now succeed without raising.
-    ddb_store.client.describe_table(TableName="test-doc-status")
+    # On-demand: the creation passes no provisioned throughput, which any
+    # other billing mode needs.
+    table = ddb_store.client.describe_table(TableName="test-doc-status")["Table"]
+    assert table["BillingModeSummary"]["BillingMode"] == "PAY_PER_REQUEST"
 
 
 def test_roundtrip_all_empty_lists_and_none_scalars(
@@ -322,8 +325,11 @@ def test_a_table_of_the_earlier_key_schema_is_rejected(
         config.aws.dynamodb.create_table_if_missing = create_table_if_missing
         store = DynamoDBDocStatusStore(config, boto_session=session)
 
-        with pytest.raises(ConfigurationError, match="indexing.reset") as exc:
+        # A ConfigurationError (run-ingestion exits 2) of its own type, which
+        # run-describe reports as a registry problem.
+        with pytest.raises(DocStatusFormatError, match="indexing.reset") as exc:
             store.get("d")
+        assert isinstance(exc.value, ConfigurationError)
         # A reader (run-describe) reports the reason without the run's step.
         assert "new table" in exc.value.reason  # type: ignore[attr-defined]
         assert "indexing.reset" not in exc.value.reason  # type: ignore[attr-defined]

@@ -190,34 +190,24 @@ class CacheManager:
             )
 
     def get_cache_stats(self, pipeline_id: str | None = None) -> CacheStats:
-        """This manager's hits and misses, with the pipeline's entry counts.
+        """This manager's hits and misses, with the pipeline's cache size.
 
         Without ``pipeline_id`` the live counters are returned as they are.
-        With one, the entry counts and sizes come from that pipeline's cache
-        index, and the hit and miss counts are the ones this manager recorded
-        (one manager serves one run).
+        With one, the size comes from that pipeline's cache index, and the
+        hit and miss counts are the ones this manager recorded (one manager
+        serves one run).
         """
         if not pipeline_id:
             return self.stats
 
-        stats = CacheStats(
+        index = self.load_cache_index(pipeline_id)
+        return CacheStats(
             hit_count=self.stats.hit_count,
             miss_count=self.stats.miss_count,
-            stage_stats={k: dict(v) for k, v in self.stats.stage_stats.items()},
+            total_size_bytes=sum(
+                e.file_size for e in index.entries.values() if e.file_size
+            ),
         )
-        index = self.load_cache_index(pipeline_id)
-        stats.total_entries = len(index.entries)
-        stats.total_size_bytes = sum(
-            e.file_size for e in index.entries.values() if e.file_size
-        )
-        pipeline_dir = self.get_pipeline_cache_dir(pipeline_id)
-        stats.local_entries = sum(
-            1
-            for e in index.entries.values()
-            if (path := e.resolve_local_path(pipeline_dir)) is not None
-            and path.exists()
-        )
-        return stats
 
     def get_pipeline_cache_dir(self, pipeline_id: str) -> Path:
         return self.cache_directory / pipeline_id
@@ -235,7 +225,7 @@ class CacheManager:
             entry = index.get_entry(cache_key)
 
             if entry is None:
-                self.stats.record_miss(cache_key)
+                self.stats.record_miss()
                 return None
 
             if self.strategy == CacheStrategy.FORCE_REFRESH or self._expired(entry):
@@ -245,7 +235,7 @@ class CacheManager:
                     else "entry expired"
                 )
                 logger.debug("Cache miss for key '%s' due to %s", cache_key, log_msg)
-                self.stats.record_miss(cache_key)
+                self.stats.record_miss()
                 return None
 
             try:
@@ -261,15 +251,15 @@ class CacheManager:
                     cache_key,
                     e,
                 )
-                self.stats.record_miss(cache_key)
+                self.stats.record_miss()
                 return None
 
-            self.stats.record_hit(cache_key)
+            self.stats.record_hit()
             logger.debug("Cache hit for key '%s'", cache_key)
             return data
         except (OSError, json.JSONDecodeError) as e:
             logger.error("Failed to load cache entry '%s': %s", cache_key, e)
-            self.stats.record_miss(cache_key)
+            self.stats.record_miss()
             return None
 
     def _load_single_file_data(
@@ -540,7 +530,6 @@ class CacheManager:
         index = self.load_cache_index(entry.pipeline_id)
         index.add_entry(entry)
         self._save_cache_index(index)
-        self.stats.total_entries += 1
         self.stats.total_size_bytes += entry.file_size or 0
 
     def serialize_data(self, data: Any, indent: int | None = 2) -> str:

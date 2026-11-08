@@ -61,8 +61,9 @@ class GraphRAGChatMessageHistory(BaseChatMessageHistory):
     def __init__(
         self,
         conversation_id: str,
-        max_messages: int = 20,
-        ttl_hours: int = 24,
+        *,
+        max_messages: int,
+        ttl_hours: int,
     ):
         self.conversation_id = conversation_id
         self.max_messages = max_messages

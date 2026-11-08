@@ -65,6 +65,17 @@ class EvaluationMetricType(str, Enum):
     NEGATIVE_ASSERTION_VIOLATION_RATE = "negative_assertion_violation_rate"
 
 
+# The metrics the ragas evaluator scores (evaluation.ragas_metrics): a list
+# naming any other metric fails the load instead of the evaluator.
+RagasMetricType = Literal[
+    EvaluationMetricType.ANSWER_CORRECTNESS,
+    EvaluationMetricType.ANSWER_RELEVANCY,
+    EvaluationMetricType.CONTEXT_PRECISION,
+    EvaluationMetricType.CONTEXT_RECALL,
+    EvaluationMetricType.FAITHFULNESS,
+]
+
+
 class EvaluatorType(str, Enum):
     # Removed (config.REMOVED_EVALUATORS: enabled_evaluators drops it with a
     # warning); kept so saved runs that hold its reports still load.

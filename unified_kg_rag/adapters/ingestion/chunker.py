@@ -157,8 +157,8 @@ class ChunkingStats(BaseModel):
 class ChunkQualityValidator:
     def __init__(
         self,
-        min_chunk_size: int = 50,
-        max_chunk_size: int = 5000,
+        min_chunk_size: int,
+        max_chunk_size: int,
         length_function: Callable[[str], int] = len,
     ) -> None:
         self.min_chunk_size = min_chunk_size

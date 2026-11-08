@@ -170,6 +170,8 @@ def test_rag_runner_accepts_query(config, mocker) -> None:
         ("run-rag", "--enable-thinking", "default_effort"),
         ("run-eval", "--enable-thinking", "default_effort"),
         ("run-rag", "--use-memory", "--interactive"),
+        ("run-eval", "--verbose", "--log-level DEBUG"),
+        ("run-eval", "-v", "--log-level DEBUG"),
     ],
 )
 def test_a_removed_flag_is_a_usage_error_saying_why(
@@ -185,7 +187,7 @@ def test_a_removed_flag_is_a_usage_error_saying_why(
     assert stopped.value.code == 2
     err = capsys.readouterr().err
     assert f"{flag} was removed" in err and says in err
-    assert flag not in build().format_help()
+    assert not re.search(rf"(?<![\w-]){flag}(?![\w-])", build().format_help())
 
 
 def test_rag_runner_json_mode_routes_decorations_and_logs_to_stderr(

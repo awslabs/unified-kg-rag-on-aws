@@ -24,7 +24,7 @@ import pytest
 
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
-from tests.fixtures.seed_graphs import EDGES, NODES, PROCURE, lines
+from tests.fixtures.seed_graphs import EDGES, NODES, PROCURE, lines, seed_settings
 from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractionStats
 from unified_kg_rag.adapters.ingestion.description_summarizer import (
     SUMMARIZED_FROM_ATTRIBUTE,
@@ -64,7 +64,6 @@ from unified_kg_rag.domain.ingestion.document_identity import (
 from unified_kg_rag.domain.ingestion.seed_graph import (
     SEED_RECORD_FINGERPRINT,
     SeedConversion,
-    SeedConversionSettings,
     convert_seed,
     is_seed_path,
     parse_seed_unit,
@@ -102,7 +101,7 @@ SEED_PATH = "seed_graphs/procure/0000-of-0001.jsonl"
 def _conversion(shards: int = 1, items: int = 50) -> SeedConversion:
     return convert_seed(
         PROCURE,
-        SeedConversionSettings(name="procure", shards=shards, max_items_per_unit=items),
+        seed_settings(shards=shards, max_items_per_unit=items),
         Config().processing.graph_extraction.extraction_schema(),
     )
 

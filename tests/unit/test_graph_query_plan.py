@@ -18,6 +18,7 @@ from tests.fixtures.graph_query import (
     procurement_relationships,
     profile_of,
     property_graph,
+    reference_operation,
     validated,
 )
 from unified_kg_rag.adapters.retrievers.graph_expansion import edge_predicate
@@ -39,7 +40,6 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     merge_declared,
     plan_operation,
     reference_execute,
-    reference_operation,
     validate_plan,
 )
 from unified_kg_rag.shared.exceptions import InvalidGraphQueryError

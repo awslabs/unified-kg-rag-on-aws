@@ -123,7 +123,15 @@ stored is read again: follow *Upgrading* in order.
   `search.fusion.method: weighted` fuses by RRF (weighted fusion is gone); `fixing.enabled: false` no longer stops
   output fixing; `cache.chunking` (an entry over 1,000 items or 50 MB is always chunked);
   `indexing.opensearch.persist_embedding_cache` (the S3 embedding cache is gone: an incremental run embeds only its
-  delta) (#344, #468, #577).
+  delta) (#344, #468, #577); `graph.community_detection.auto_resolution` (on by default in 0.2.3),
+  `auto_resolution_candidates` and `auto_resolution_max_nodes` no longer sweep resolutions for the most modular one,
+  which merged unrelated communities on the upper levels and lost global search accuracy in testing (set
+  `graph.community_detection.resolution`); `aws.dynamodb.billing_mode` (a table the library creates is on-demand,
+  the only mode that worked; provision another yourself with `aws.dynamodb.create_table_if_missing: false`).
+- `aws.opensearch.sigv4_service_name` takes only `es`: `aoss` (OpenSearch Serverless) fails the load, as its vector
+  collections assign their own document ids and have no refresh API, which the indexes need.
+  `evaluation.ragas_metrics` takes only the five metrics ragas scores (`answer_correctness`, `answer_relevancy`,
+  `context_precision`, `context_recall`, `faithfulness`); another fails the load instead of the evaluator.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
   `true`); `run-visualization` renders it with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA)
   are gone. `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown
@@ -172,7 +180,7 @@ stored is read again: follow *Upgrading* in order.
 | `indexing.cross_run_merge` | `false`: an incremental run overwrote the stored entities and relationships with its delta's | removed (loads with a WARNING): an incremental run always merges its delta into the stored graph (#344) |
 | `indexing.max_deletion_share` | no guard | 0.5: an incremental run deleting more of its scope asks first (#518) |
 | `indexing.opensearch.language_analyzers` | `en: english`, `ko: nori`, others `standard` | also `de`, `es`, `fr`, `it`, `pt`, `ru` stemmers and `ja`/`zh: cjk` bigrams (#574) |
-| `graph.community_detection.auto_resolution` | `true` | `false` (#141) |
+| `graph.community_detection.auto_resolution` | `true` | removed (loads with a WARNING): `resolution` applies (#141) |
 | `graph.visualization.outputs_directory` | `outputs/visualization` | `null`: `<cache directory>/<pipeline_id>/visualization` |
 | `search.token_manager.max_context_tokens` | 200000 | 30000; 22000 under `backend: local` with a non-Bedrock LLM (#125, #224, #226) |
 | `search.fusion.fusion_weights` | 10 entries of 1.0 | `{}`, every bucket 1.0 (#258) |
@@ -199,6 +207,8 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   `--source-directory`. An abbreviated flag is rejected (exit 2) (#333).
 - `run-ingestion --repair-metadata` is removed (it repaired nothing): use `--verify-metadata` and `--force-rebuild`
   or a new `--pipeline-id` (#248).
+- `run-eval --verbose` (`-v`) is removed: use `--log-level DEBUG`, which every CLI takes (`run-rag --verbose`
+  prints more of each result). Either spelling fails with exit 2 saying so.
 - `run-rag --use-memory` is removed (an `--interactive` session always keeps its memory and a single `--query` has
   none), and `run-rag` / `run-eval --enable-thinking` (the default Claude 5.x models always reason: tune their depth
   with `aws.bedrock.default_effort` / `fast_effort`; from Python, `RAGInput.enable_thinking` still turns thinking on
@@ -224,6 +234,8 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
   the timestamp with a random suffix); the JSON output's
   `output_directory` names the run directory, and `evaluation.run_subdirectories: false` keeps the flat layout
   (#121, #620). See [evaluation output](docs/reference/evaluation-output.md).
+- `pipeline_metadata.json`: the `document_parsing` stage's `success_rate` is a fraction (0.5), as every other rate
+  there, not a percentage (50).
 - The `indexing_results` stage metrics in `pipeline_metadata.json` (and the index types an `Indexing failed` error
   names) start `vector_` / `graph_` instead of `opensearch_` / `neptune_` (`vector_text_units`, `graph_entities`,
   ...); the EMF metrics are unchanged (#584).
@@ -582,18 +594,18 @@ From a `main` checkout (formats and keys no release had):
 - #612 report generation off: a namespace built with `graph.community_detection.report_generation.enabled: false`
   holds `graphrag` again, so `local` answers on it (refused since #603); `global` and `drift`, which read the
   reports, are refused naming the switch. Nothing re-runs.
-- #617 image and IaC hardening: the data-plane image has no AWS CLI and no uv, and its venv and `/app` are
-  read-only to the app user, who writes only `/app/cache`, `/app/outputs`, `/app/logs`, `/tmp` and its home: a
-  derived image that runs `aws` or `uv`, or a command that writes elsewhere under `/app` (`run-prompt-tuning`'s
-  default `./tuned_prompts.yaml`), installs its own or writes under one of those. `aws.opensearch.use_iam: true`
-  with a username or password, a negative `fusion_weights` value and a resolution of 0 or less in
-  `auto_resolution_candidates` are refused at load (they were ignored or failed later): drop the setting the load
-  names. CDK: the next deploy turns on the cache bucket's S3 Bucket Key with `use_cmk` (new objects only, no
-  re-encryption; fewer KMS requests), tags the ingestion tasks and grants the state machine `ecs:TagResource` on
-  them; an `env_name` too long for the bucket or guardrail name now fails the synth. Nothing re-runs. With
-  `neptune_audit_log` on, the stack's audit log group is `/aws/neptune/<cluster id>/audit`, where Neptune writes (it
-  was `/aws/neptune/cluster/<cluster id>/audit`): if Neptune already created that group itself, copy what you keep and
-  delete it (`aws logs delete-log-group`) before the next deploy, which fails on an existing group otherwise.
+- #617 image and IaC hardening: the data-plane image has no AWS CLI and no uv, and its venv and `/app` are read-only
+  to the app user, who writes only `/app/cache`, `/app/outputs`, `/app/logs`, `/tmp` and its home: a derived image
+  that runs `aws` or `uv`, or a command that writes elsewhere under `/app` (`run-prompt-tuning`'s default
+  `./tuned_prompts.yaml`), installs its own or writes under one of those. `aws.opensearch.use_iam: true` with a
+  username or password and a negative `fusion_weights` value are refused at load (they were ignored or failed later):
+  drop the setting the load names. CDK: the next deploy turns on the cache bucket's S3 Bucket Key with `use_cmk` (new
+  objects only, no re-encryption; fewer KMS requests), tags the ingestion tasks and grants the state machine
+  `ecs:TagResource` on them; an `env_name` too long for the bucket or guardrail name now fails the synth. Nothing
+  re-runs. With `neptune_audit_log` on, the stack's audit log group is `/aws/neptune/<cluster id>/audit`, where
+  Neptune writes (it was `/aws/neptune/cluster/<cluster id>/audit`): if Neptune already created that group itself,
+  copy what you keep and delete it (`aws logs delete-log-group`) before the next deploy, which fails on an existing
+  group otherwise.
 - #618 community hierarchy and report references: stored communities and reports stay as they are until the namespace
   is clustered again. Its next full build (`indexing.reset: true`) keeps the level-0 communities and changes the
   levels above them where a community was split (it is now the parent of its pieces, so the hierarchy can be a level
@@ -614,6 +626,10 @@ From a `main` checkout (formats and keys no release had):
 - #628 `run-visualization` no longer takes the provider flags (`--backend`, `--llm-provider`, `--llm-model`,
   `--embedding-provider`, `--embedding-model`, `--embedding-dimension`): it renders exported data and calls no model,
   so a script passing one exits 2 until it drops it.
+- The removed `auto_resolution` keys keyed the community detection stage and the `run-eval` manifest's
+  `retrieval_config_sha256`: a resumed `--pipeline-id` runs Leiden, indexing and the summary tree again (the reports
+  come from the extraction store without a model call), and runs saved before pool with new ones only under
+  `--pool-runs`.
 
 ### Added
 - `run-eval` comparisons adjust for the many deltas they read: every paired delta has a sign-flip randomization
@@ -1366,14 +1382,6 @@ From a `main` checkout (formats and keys no release had):
   with a summary and a link, the sections are in `docs/design/`, and the extension guide (§15) is
   [`docs/guides/extend.md`](docs/guides/extend.md); section numbers and heading ids are unchanged.
 
-### Deprecated
-- `graph.community_detection.auto_resolution`, `auto_resolution_candidates` and `auto_resolution_max_nodes` log a
-  deprecation WARNING when set and will be removed: maximizing modularity on the coarse upper levels merges unrelated
-  communities (it lost global search accuracy in testing, which is why it has been off by default since #141). They
-  still apply; set `graph.community_detection.resolution` instead (#628).
-- `run-eval --verbose` logs a deprecation WARNING and will be removed: use `--log-level DEBUG`, which every CLI
-  takes (`--verbose` means more of each result in `run-rag`) (#629).
-
 ### Fixed
 Bugs present in 0.2.3.
 
@@ -1609,11 +1617,10 @@ Deployment (CDK).
   for the cache bucket or guardrail name fails the synth (not the deploy); an odd `opensearch_count` synthesized
   without an account says why only 2 AZs are seen; the endpoint count in `iac/README.md` is six (#617).
 - Configuration: `aws.opensearch.password` with `allow_anonymous` (the password was dropped) and `use_iam` with a
-  username or password (ignored) are refused, and the local preset no longer adds anonymous access beside a
-  password; a negative `search.fusion.fusion_weights` value and a non-positive `auto_resolution_candidates` value
-  are refused. A source directory that is a file raises `ConfigurationError`, an S3 ontology without a reader
-  `SchemaSourceError`, and creating an OpenSearch index that exists raises `AWSServiceError` without being logged
-  as an unexpected error (#617).
+  username or password (ignored) are refused, and the local preset no longer adds anonymous access beside a password;
+  a negative `search.fusion.fusion_weights` value is refused. A source directory that is a file raises
+  `ConfigurationError`, an S3 ontology without a reader `SchemaSourceError`, and creating an OpenSearch index that
+  exists raises `AWSServiceError` without being logged as an unexpected error (#617).
 
 ### Security
 - The image upgrades `zlib1g` to the Debian security release fixing CVE-2026-76844 and CVE-2026-85091 (HIGH),

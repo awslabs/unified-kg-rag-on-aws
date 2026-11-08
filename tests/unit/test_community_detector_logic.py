@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import random
+from collections.abc import Iterator
 from typing import Any
 from unittest import mock
 
@@ -26,17 +27,17 @@ from pydantic import ValidationError
 from unified_kg_rag.adapters.ingestion.community_detector import CommunityDetector
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
 from unified_kg_rag.domain.ingestion.community_clustering import (
-    base_partition,
     build_cluster_graph,
     build_hierarchy,
     canonical_graph,
     community_content_id,
+    community_sort_key,
     entity_subgraph,
-    find_optimal_resolution,
     leiden,
     leiden_communities,
     merge_small_communities,
     partition_dict_to_communities,
+    partition_tree,
 )
 from unified_kg_rag.domain.ingestion.graph_builder import GraphBuilder
 from unified_kg_rag.domain.models import (
@@ -54,10 +55,26 @@ from unified_kg_rag.shared import GraphError
 pytestmark = pytest.mark.unit
 
 
+def base_partition(
+    graph: nx.Graph, config: CommunityDetectionConfig, *, entity_level: bool = True
+) -> list[set[Any]]:
+    """The finest communities of ``graph`` (the leaves of ``partition_tree``),
+    in canonical order."""
+
+    def leaves(nodes: list[Any]) -> Iterator[set[Any]]:
+        for node in nodes:
+            if node.children:
+                yield from leaves(node.children)
+            else:
+                yield node.members
+
+    roots = partition_tree(graph, config, entity_level=entity_level)
+    return sorted(leaves(roots), key=community_sort_key)
+
+
 def _detector(
     *,
     report: bool = False,
-    auto_resolution: bool = True,
     min_community_size: int = 3,
     max_levels: int = 5,
 ) -> CommunityDetector:
@@ -65,7 +82,6 @@ def _detector(
     config = Config()
     cd_config = config.graph.community_detection
     cd_config.report_generation.enabled = report
-    cd_config.auto_resolution = auto_resolution
     cd_config.min_community_size = min_community_size
     cd_config.max_levels = max_levels
     return CommunityDetector(config, show_progress=False)
@@ -235,7 +251,7 @@ class TestMaxClusterSize:
 
     @staticmethod
     def _run(graph: nx.Graph, max_cluster_size: int) -> CommunityDetector:
-        cd = _detector(auto_resolution=False, min_community_size=3)
+        cd = _detector(min_community_size=3)
         cd.community_detection_config.max_cluster_size = max_cluster_size
         return cd(graph)
 
@@ -312,7 +328,7 @@ class TestBasePartition:
         assert sorted(partition, key=lambda s: sorted(s)) == [{"a"}, {"b"}, {"c"}]
 
     def test_finds_two_communities_in_two_triangles(self) -> None:
-        cd = _detector(auto_resolution=True, min_community_size=1)
+        cd = _detector(min_community_size=1)
         g = _two_triangle_graph()
         partition = base_partition(g, cd.community_detection_config, entity_level=False)
         assert partition is not None
@@ -346,7 +362,7 @@ class TestSmallComponents:
     def test_isolates_and_pairs_get_no_community(self) -> None:
         # Regression: each isolated entity or pair became a root community
         # of its own: one report LLM call each, and a report in every cut.
-        cd = _detector(auto_resolution=False)(self._graph())
+        cd = _detector()(self._graph())
         clustered = {
             n for c in cd.generate_community_objects() for n in c.entity_ids or []
         }
@@ -362,20 +378,20 @@ class TestSmallComponents:
         graph = nx.relabel_nodes(nx.ring_of_cliques(6, 4), lambda n: f"e{n:02d}")
         for i in range(30):
             graph.add_edge(f"p{i}a", f"p{i}b", weight=5.0)
-        skipped = _detector(auto_resolution=False)(graph)
+        skipped = _detector()(graph)
         assert len(skipped.unclustered) == 60
         from unified_kg_rag.adapters.ingestion import community_detector
 
         monkeypatch.setattr(
             community_detector, "small_component_nodes", lambda g, size, a: set()
         )
-        every = _detector(auto_resolution=False)(graph).generate_community_objects()
+        every = _detector()(graph).generate_community_objects()
         assert {c.id for c in skipped.generate_community_objects()} == {
             c.id for c in every if not str(c.entity_ids[0]).startswith("p")
         }
 
     def test_min_community_size_one_clusters_every_component(self) -> None:
-        cd = _detector(auto_resolution=False, min_community_size=1)(self._graph())
+        cd = _detector(min_community_size=1)(self._graph())
         clustered = {
             n for c in cd.generate_community_objects() for n in c.entity_ids or []
         }
@@ -436,7 +452,7 @@ class TestCanonicalOrder:
     def test_partition_order_ignores_leiden_label_order(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        cd = _detector(auto_resolution=False)
+        cd = _detector()
         expected = base_partition(
             self._graph(), cd.community_detection_config, entity_level=False
         )
@@ -452,7 +468,7 @@ class TestCanonicalOrder:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def snapshot() -> dict[str, tuple[int, str | None, str]]:
-            cd = _detector(auto_resolution=False, min_community_size=1)
+            cd = _detector(min_community_size=1)
             cd(self._graph())
             return {
                 cid: (c.level, c.parent_id, c.label)
@@ -486,39 +502,9 @@ class TestCanonicalOrder:
             return leiden(graph, **kwargs)
 
         monkeypatch.setattr(module, "leiden", failing_above_level_0)
-        cd = _detector(auto_resolution=False, min_community_size=1)
+        cd = _detector(min_community_size=1)
         with pytest.raises(GraphError, match="Leiden partitioning failed.*native"):
             cd(self._graph())
-
-
-class TestOptimalResolution:
-    def test_selects_resolution_from_candidates(self) -> None:
-        cd = _detector(auto_resolution=True)
-        cd.community_detection_config.auto_resolution_candidates = [0.1, 1.0, 3.0]
-        g = _two_triangle_graph()
-        chosen = find_optimal_resolution(g, cd.community_detection_config)
-        assert chosen in {0.1, 1.0, 3.0}
-
-    def test_isolated_node_does_not_void_the_sweep(self) -> None:
-        # Leiden omits isolated nodes and modularity rejects a partition that
-        # misses any, so every candidate used to fail and the configured value
-        # came back regardless of the graph.
-        cd = _detector(auto_resolution=True)
-        cd.community_detection_config.resolution = 5.0
-        cd.community_detection_config.auto_resolution_candidates = [0.01, 1.0]
-        g = _two_triangle_graph()
-        g.add_node("lonely", name="Lonely")
-        assert find_optimal_resolution(g, cd.community_detection_config) == 1.0
-
-    def test_falls_back_to_configured_resolution_when_no_split(self) -> None:
-        # A single clique cannot be split into >=2 communities at any
-        # resolution candidate; selection keeps the configured default.
-        cd = _detector(auto_resolution=True)
-        cd.community_detection_config.resolution = 1.0
-        cd.community_detection_config.auto_resolution_candidates = [0.1, 0.2]
-        g = nx.complete_graph(["a", "b", "c", "d"])
-        chosen = find_optimal_resolution(g, cd.community_detection_config)
-        assert chosen == 1.0
 
 
 class TestClusterGraph:
@@ -582,7 +568,7 @@ class TestHierarchyKeepsCoarserLevels:
         # Level 1 has two communities of two cliques each. The small-community
         # merge used to run on the cluster graph too, where every community has
         # only 2 nodes (< min_community_size 3), folding level 1 into nothing.
-        cd = _detector(auto_resolution=False, min_community_size=3)
+        cd = _detector(min_community_size=3)
         cd(self._four_cliques())
         levels: dict[int, list[set[str]]] = {}
         for community in cd.all_communities.values():
@@ -746,7 +732,7 @@ class TestHierarchyProcessing:
 
 class TestEndToEndDetection:
     def test_detect_communities_on_two_triangles(self) -> None:
-        cd = _detector(auto_resolution=True, min_community_size=1)
+        cd = _detector(min_community_size=1)
         g = _two_triangle_graph()
         result = cd(g)
         assert result is cd
@@ -788,16 +774,13 @@ class TestEndToEndDetection:
         )
         assert members == [[f"n{i}"] for i in range(nodes)]
 
-    @pytest.mark.parametrize("auto_resolution", [True, False])
-    def test_a_graph_whose_edges_all_weigh_zero_yields_singletons(
-        self, auto_resolution: bool
-    ) -> None:
+    def test_a_graph_whose_edges_all_weigh_zero_yields_singletons(self) -> None:
         # Strength-0 relationships (edge_weight clamps negative ones to 0):
         # graspologic_native panics (a BaseException) on zero total weight.
         g = nx.Graph()
         g.add_edge("a", "b", weight=0.0)
         g.add_edge("b", "c", weight=0.0)
-        cd = _detector(auto_resolution=auto_resolution, min_community_size=1)
+        cd = _detector(min_community_size=1)
 
         cd(g)
 
@@ -2082,46 +2065,3 @@ def test_isolated_entities_do_not_decide_the_hierarchy(isolated: int) -> None:
         graph.add_node(f"x{i}", name=f"X{i}")
     partitions, _ = build_hierarchy(graph, Config().graph.community_detection)
     assert len(partitions) == 1
-
-
-@pytest.mark.parametrize("candidate", [0.0, -0.5])
-def test_auto_resolution_candidates_must_be_positive(candidate: float) -> None:
-    # Leiden takes a resolution above 0; the sweep would fail on each level.
-    with pytest.raises(ValidationError, match="greater than 0"):
-        CommunityDetectionConfig(auto_resolution_candidates=[1.0, candidate])
-
-
-@pytest.mark.parametrize(
-    ("settings", "named"),
-    [
-        ({"auto_resolution": True}, "auto_resolution is deprecated"),
-        (
-            {"auto_resolution_candidates": [0.5], "auto_resolution_max_nodes": 10},
-            "auto_resolution_candidates / auto_resolution_max_nodes are deprecated",
-        ),
-    ],
-    ids=["switch", "tuning"],
-)
-def test_the_auto_resolution_keys_warn_that_they_are_deprecated(
-    settings: dict[str, Any], named: str, caplog: pytest.LogCaptureFixture
-) -> None:
-    from unified_kg_rag.domain.models import config as config_module
-
-    config_module._warn_auto_resolution.cache_clear()
-    with caplog.at_level(logging.WARNING):
-        loaded = CommunityDetectionConfig(**settings)
-        CommunityDetectionConfig(**settings)  # validated again: one warning
-    warned = [r.getMessage() for r in caplog.records if "deprecated" in r.getMessage()]
-    assert len(warned) == 1 and named in warned[0]
-    # It still applies.
-    for name, value in settings.items():
-        assert getattr(loaded, name) == value
-
-
-def test_the_auto_resolution_defaults_do_not_warn(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    with caplog.at_level(logging.WARNING):
-        CommunityDetectionConfig()
-        Config()
-    assert not [r for r in caplog.records if "auto_resolution" in r.getMessage()]

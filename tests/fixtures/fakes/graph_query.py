@@ -4,7 +4,7 @@
 
 ``FakeGraphQueryRetriever`` is a graph retriever (``FakeRetriever``'s
 shapes) that answers structured queries over one ``PropertyGraph`` per
-suffix with ``domain.retrieval.graph_query.reference_operation``, the
+suffix with ``tests.fixtures.graph_query.reference_operation``, the
 caller's filters applied as the stores apply them (the graph expansion's
 own predicates). :func:`graph_of` reads a ``FakeGraphStore``'s suffix as
 such a graph, so a test can index through the fake and query it.
@@ -16,6 +16,7 @@ from collections.abc import Mapping
 
 from tests.fixtures.fakes.retrievers import FakeRetriever
 from tests.fixtures.fakes.stores import FakeGraphStore
+from tests.fixtures.graph_query import reference_operation
 from unified_kg_rag.adapters.retrievers.graph_expansion import (
     GraphExpansionRetriever,
     edge_predicate,
@@ -31,7 +32,6 @@ from unified_kg_rag.domain.models.graph_query import (
 )
 from unified_kg_rag.domain.retrieval.graph_query import (
     build_profile,
-    reference_operation,
 )
 
 

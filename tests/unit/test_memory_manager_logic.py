@@ -23,7 +23,14 @@ def patched_history():
     """A factory for histories of one conversation."""
 
     def make(**kwargs):
-        return mm.GraphRAGChatMessageHistory(conversation_id="conv-1", **kwargs)
+        memory = Config().memory
+        bounds = {
+            "max_messages": memory.max_messages_per_conversation,
+            "ttl_hours": memory.max_conversation_age_hours,
+        }
+        return mm.GraphRAGChatMessageHistory(
+            conversation_id="conv-1", **{**bounds, **kwargs}
+        )
 
     return make
 

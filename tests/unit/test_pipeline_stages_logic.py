@@ -261,6 +261,26 @@ def test_indexing_stage_records_each_entitys_level0_community(mocker) -> None:
     assert [e.community_ids for e in written] == [["c0"], None]
 
 
+def test_the_parsing_success_rate_is_a_fraction(tmp_path, mocker) -> None:
+    # As the indexing stage's and the cache hit rate: 0.5, not 50.
+    from unified_kg_rag.application.ingestion import pipeline_stages as ps
+
+    (tmp_path / "a.txt").write_text("Vendor ships.", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("Buyer pays.", encoding="utf-8")
+    real = ps.ParserFactory.create_parser
+
+    def b_fails(path: Any, config: Config) -> Any:
+        if path.name == "b.txt":
+            raise ValueError("unreadable")
+        return real(path, config)
+
+    mocker.patch.object(ps.ParserFactory, "create_parser", side_effect=b_fails)
+    stage = ps.DocumentParsingStage(Config(), source_directory=tmp_path)
+    _in, parsed, metrics = stage._execute_core(_context())
+    assert parsed == 1
+    assert metrics["success_rate"] == 0.5
+
+
 def test_indexing_stage_success_rate_zero_when_nothing(mocker) -> None:
     stage, _mgr = _indexing_stage(mocker, {})
     _in, total, metrics = stage._execute_core(_context())
