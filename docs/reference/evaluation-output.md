@@ -223,20 +223,26 @@ strategies, or `--repeats`) saves every run's files and adds
   Holm-adjusted over its tests: `primary` (`primary_metric`:
   `evaluation.primary_metric` / `--primary-metric`, default
   `answer_match/answer_contains` when scored; its tests are the compared
-  strategies), `secondary` (every other metric with per-query deltas) and
-  `cost` (`cost.deltas_vs_baseline`). Each family reads at least
+  strategies), `secondary` (every other metric with per-query deltas),
+  `cost` (`cost.deltas_vs_baseline`) and `pairwise` (each pairwise-judge
+  criterion of `pairwise_vs_baseline`, its per-query scores tested against
+  a 0.5 win rate; its adjusted interval is of the win rate). The `--arm`
+  runs, each against its own strategy's base run, have families of their
+  own, the same four prefixed `arm_` (`arm_primary`, ...), apart from the
+  strategies against the first. Each family reads at least
   20 x tests / alpha resamples (`multiplicity.families.<f>.resamples`;
   `evaluation.resamples`, 2,000, is the base): a `p_value` under alpha is
   drawn again from that many sign patterns (`p_value_resamples`), since
   the Monte Carlo p-value is never below 1 / (1 + resamples) and Holm
   multiplies the smallest by the family's size, and the simultaneous
-  interval's tails hold enough resampled means; closed-book arms are in none
-  (`unadjusted`). Each member delta has `family`, `adjusted_p_value` and
+  interval's tails hold enough resampled means; closed-book and A/A arms
+  (`closed_book_arms`, `aa_arms`) are in none (`unadjusted`). Each member delta has `family`, `adjusted_p_value` and
   `adjusted_ci_low` / `adjusted_ci_high`, the bootstrap interval at
   confidence 1 - 0.05 / m for a family of m tests (simultaneous over it, so
   a little wider than Holm's decision: a delta can have `adjusted_p_value`
   under 0.05 with an adjusted interval touching 0). `abstention/precision`
-  (a ratio) and `deltas_by_category` have no adjusted values. A query whose answer generation failed
+  (a ratio), `deltas_by_category` and `deltas_by_closed_book` have no
+  adjusted values. A query whose answer generation failed
   scores 0 on every metric the other run scored (`answer_length` and the
   lower-is-better `assertion_contradiction_rate` and
   `negative_assertion_violation_rate`, where 0 is the best score, excepted:
@@ -279,6 +285,15 @@ strategies, or `--repeats`) saves every run's files and adds
   dataset `category` (MuSiQue's hop count, say). Each interval is per
   category and not corrected for the number of categories and metrics read,
   so treat a lone excluded 0 among many as exploratory.
+- `deltas_by_closed_book.<s>.<known|unknown>.<metric>` (with a closed-book
+  arm): the same deltas over the questions the closed-book arm answered
+  right in at least half of its repeats on the primary metric (`known`) and
+  the rest it scored (`unknown`); the run's own `closed_book` arm, else an
+  earlier run's. Exploratory and unadjusted like `deltas_by_category`.
+- `aa_arms` (with an A/A `--arm`): the arm runs whose manifest records
+  `arm.aa: true` (an empty overlay, or one holding only the ignored
+  `evaluation` section, on the run's own index). Their deltas are the
+  noise floor and stay out of every Holm family.
 - `pairwise_vs_baseline.<s>` (with `--pairwise-judge`): the GraphRAG /
   LightRAG head-to-head LLM judge on comprehensiveness, diversity,
   empowerment and directness (plus LightRAG's `overall` with
@@ -295,8 +310,10 @@ strategies, or `--repeats`) saves every run's files and adds
   value under 0.5 is warned about: such a judge decides by position, and its
   ties say nothing about the answers. `candidate_win_rate` scores each
   decided pair 1, a tie 0.5 and a loss 0, with a bootstrap interval
-  (`ci_low`/`ci_high`) over those per-query scores; it is `null` when the
-  judge decided no pair. A pair where one answer failed is not judged: the
+  (`ci_low`/`ci_high`) over those per-query scores (`per_query` under each
+  criterion) and a sign-flip `p_value` of those scores against 0.5
+  (unadjusted; `adjusted_p_value` is its Holm value in the `pairwise`
+  family); all are `null` when the judge decided no pair. A pair where one answer failed is not judged: the
   other side wins (`candidate_errors`, `baseline_errors`; both failed:
   `both_errors`). `answerable: false` items are not judged
   (`unanswerable_skipped`). `failed` counts pairs the judge could not decide
@@ -321,15 +338,25 @@ strategies, or `--repeats`) saves every run's files and adds
   - Differential mode: per pair, the `models.roles.pairwise_overlap` model
     (fast tier; prompt `custom_prompts.pairwise_overlap_*`) lists the
     statements both answers make (`shared`) and those only the `baseline`
-    or the `candidate` makes, copied in the answers' language
-    (`differential.per_query`); the judge (prompt
-    `custom_prompts.pairwise_differential_*`) decides each criterion on the
-    unique statements, both orders, with the shared ones as common ground.
-    `length.per_query` adds `shared_tokens`, `baseline_unique_tokens` and
-    `candidate_unique_tokens`. A pair with no unique statement is a tie for
-    every criterion without a judge call (`identical_pairs`; it counts in
-    `judged` but not in `position_consistency`). A failed or malformed split
-    (a missing key, a value that is not a list of strings) fails the pair.
+    or the `candidate` makes, copied in the answers' language; the judge
+    (prompt `custom_prompts.pairwise_differential_*`) decides each
+    criterion on the unique statements, both orders, with the shared ones as
+    common ground. The split runs in both slot orders, the baseline as
+    Answer 1 (`baseline_first`) and the candidate as Answer 1
+    (`candidate_first`), each judged in both orders: a pair's score per
+    criterion is the mean of the two slots' scores, and its outcome (in
+    `per_query` and the counts) the side that mean favours.
+    `differential.per_query.<pair>.<slot>` holds each split and its
+    `outcome`; `slots.criteria.<criterion>` the candidate's win rate per
+    slot (`baseline_first_win_rate`, `candidate_first_win_rate`) and
+    `slot_effect`, the first minus the second: the split model's preference
+    for the second slot, near 0 for an unbiased one. `length.per_query`
+    adds `shared_tokens`, `baseline_unique_tokens` and
+    `candidate_unique_tokens` (means over the two splits). A split with no
+    unique statement is a tie for every criterion without a judge call; a
+    pair with none in either split counts in `identical_pairs` (in `judged`,
+    not in `position_consistency`). A failed or malformed split (a missing
+    key, a value that is not a list of strings) fails the pair.
 - `closed_book_arms` (with `--closed-book`): the arms answered by the
   answer model alone, without retrieval (`closed_book`; an earlier run's
   `baseline:closed_book`). They compare like a strategy (their results carry
@@ -707,7 +734,11 @@ list, top level or under `metadata`, which wins), taking the maximum.
 
   Each report records `answer_span` and the `scored_span`. The normalization
   is SQuAD v1.1's (NFKC, lowercase, punctuation and English articles
-  removed, whitespace collapsed), keeping punctuation that changes meaning
+  removed, whitespace collapsed; for an answer in German, Spanish, French,
+  Italian or Portuguese that language's articles too, French and Italian
+  elided ones split off first, and its number words from zero to twelve
+  read as counts; the answer's language is the question's, recorded as
+  `answer_language`), keeping punctuation that changes meaning
   (`-5`, `1.5`, `C++`); `evaluation.answer_normalization: official_squad` is
   the official script (MuSiQue's evaluation uses it too) and `hotpotqa` adds
   HotpotQA's rule that a `yes`/`no`/`noanswer` span or gold earns token F1

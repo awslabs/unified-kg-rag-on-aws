@@ -213,12 +213,18 @@ p값과 함께 안내만 남깁니다. 재순위화가 꺼져 있거나 만들 �
   찾아지고, 30%에서 갈릴 때는 28%와 73%에서 찾아집니다. 수백 개 질의로 비교하고, 같은 설정을
   두 번 실행해 잡음 수준을 확인하세요. `deltas_by_category`는 차이를 데이터셋 `category`별로 나누며, 범주와
   지표 수에 따른 다중 비교 보정을 하지 않으므로 여러 개 가운데 하나만 0을 벗어난 결과는
-  탐색적으로 읽으세요.
+  탐색적으로 읽으세요. `--closed-book`을 쓰면 `deltas_by_closed_book`이 같은 방식으로 차이를
+  답변 모델이 검색 없이 비교군 반복의 절반 이상에서 맞힌 질문(`known`, 주 지표 기준)과 나머지
+  질문(`unknown`)으로 나눕니다. `unknown` 쪽이 검색이 더하는 부분을 보여 주며, 전체 차이에서는
+  이 부분이 가려질 수 있습니다. 이것도 보정하지 않는 탐색적 결과입니다.
 - **맞비교 판정.** `--pairwise-judge`는 GraphRAG / LightRAG 논문의 맞비교 LLM 판정(포괄성,
   다양성, 이해 도움, 직접성)을 더하며, 쌍마다 순서를 바꿔 두 번 판정합니다.
   `candidate_win_rate`는 `position_consistency`, 그리고 답변 길이 구간별 승률(`length`)과 함께
   읽으세요. LLM 판정 모델은 긴 답변을 선호하므로, 길이 비율이 커질수록 승률이 오르면 품질이
-  아니라 길이의 효과입니다. `--pairwise-mode differential`은 두 답변이 다른 부분만 판정합니다(아래).
+  아니라 길이의 효과입니다. 기준마다 승률 0.5에 대한 부호 뒤집기 `p_value`가 있고, 비교한
+  모든 전략의 기준이 Holm 묶음 하나(`pairwise`)를 이루므로 승리가 유효한지는
+  `adjusted_p_value`(보고서의 `Holm p`)로 판단하세요.
+  `--pairwise-mode differential`은 두 답변이 다른 부분만 판정합니다(아래).
   첫 번째 반복의 답변을 판정하며, `--pairwise-repeats all`은 모든 반복을 판정합니다(호출 수는
   `--repeats`배). 이때 질의마다 반복의 점수를 먼저 평균한 뒤 질의끼리 평균합니다.
 - **비용과 지연 시간.** `cost.strategies.<s>`와 `cost.deltas_vs_baseline`은 답변의 질의당
@@ -290,7 +296,9 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
 
 - 비교군의 실행은 파일과 비교 결과에서 `<strategy>@NAME`(`local@norerank`)으로 표시되며, 같은
   전략의 기본 실행과 짝지어 비교하므로 그 차이는 오버레이의 효과입니다. 기본 전략들은 평소처럼
-  첫 번째 전략과 비교합니다. Holm 보정은 비교군의 차이를 전략의 차이와 함께 보정합니다.
+  첫 번째 전략과 비교합니다. 비교군의 차이는 첫 번째 전략과 비교한 전략의 차이와 묻는 질문이
+  다르므로 따로 Holm 묶음(`arm_primary`, `arm_secondary`, `arm_cost`, `arm_pairwise`)으로
+  보정합니다.
 - 오버레이는 구성 파일처럼 검증합니다(`--allow-unknown-keys`가 없으면 알 수 없는 키에서
   종료 코드 2로 멈춤). 모든 비교군은 기본 실행과 같은 방식으로 채점하므로 오버레이의
   `evaluation` 섹션과 `models.roles.evaluation` / `answer_span`은 경고와 함께 무시합니다.
@@ -310,8 +318,10 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, LLM
   제공자(kind, `base_url`, temperature, 출력 상한, 컨텍스트 창), Bedrock 리전을 바꾸거나 `search.query_extraction_cache_size: 0`을 지정한 비교군은 직접
   추출합니다.
-- 빈 오버레이(위의 `aa.yaml`)는 A/A 비교군입니다. 그 차이가 이 데이터셋과 반복 횟수에서 지표마다의
-  잡음 수준입니다. 기본 실행과 추출 결과를 공유하므로 이 잡음 수준에는 추출의 잡음이 빠집니다.
+- 실행 자체의 인덱스를 쓰는 빈 오버레이(위의 `aa.yaml`, 무시되는 `evaluation` 섹션만 있는
+  오버레이도 포함)는 A/A 비교군입니다. 그 차이가 이 데이터셋과 반복 횟수에서 지표마다의
+  잡음 수준입니다. 매니페스트에 `arm.aa`로 기록되고 비교 결과의 `aa_arms`에 나열되며,
+  폐쇄형 비교군처럼 모든 Holm 묶음에서 빠지므로 다른 검정의 보정을 넓히지 않습니다. 기본 실행과 추출 결과를 공유하므로 이 잡음 수준에는 추출의 잡음이 빠집니다.
   `search: {query_extraction_cache_size: 0}` 오버레이로 만든 A/A 비교군은 직접 추출해 그 잡음을
   포함하며, 질문과 반복마다 추출 호출이 한 번 더 듭니다.
 - 비교군 하나는 전략 하나만큼(답변과 워밍업) 들며, 나열한 전략 수만큼 곱해집니다.
@@ -355,7 +365,11 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
      `--fail-if "assertion/assertion_recall:ci_high<-0.02"`.
    - `--pairwise-mode differential`은 빠른 계층 모델(`models.roles.pairwise_overlap`)에게 두
      답변이 함께 말하는 문장과 한쪽만 말하는 문장을 나누게 한 뒤, 한쪽만 말하는 문장만
-     판정합니다. 쌍마다 빠른 모델 호출이 한 번 더 듭니다. 이 호출의 출력 상한은 실행하는
+     판정합니다. 이 분할은 답변을 정해진 자리 순서로 읽고, 분할 모델은 한쪽 자리를 선호합니다
+     (A/A 쌍에서 후보가 늘 두 번째일 때 0.645, 바꾸면 0.52). 그래서 쌍마다 두 자리 순서로 모두
+     나누고, 각 분할을 두 순서로 판정해 두 자리의 승률을 평균합니다. `slots`는 자리별 승률과
+     그 차이(`slot_effect`, 보고서의 "Split slot effect" 표)를 보여 주며, 이 값은 0에 가까워야
+     합니다. 쌍마다 빠른 모델 호출 두 번과 판정 호출 네 번이 듭니다. 이 호출의 출력 상한은 실행하는
      추론 강도(`evaluation.judge_effort`, 없으면 빠른 계층의 강도)의 사고 예산에
      `models.default_max_output_tokens`를 더한 값이므로, 추론 강도를 높여도 옮겨 적는 문장의
      여유는 줄지 않습니다.
