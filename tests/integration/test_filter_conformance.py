@@ -47,7 +47,6 @@ _D2 = (
     "D2: a name filter is a term on analyzed text on OpenSearch, exact on "
     "a graph; a description filter matches tokens or exact text"
 )
-_D3 = "D3: the embedded engine matches inside an unindexed object"
 _IR = "the store matches nothing on an unindexed path instead of refusing it"
 _GRAPHS = ("sqlite-graph", "gremlin")
 _INDEXES = ("embedded", "opensearch")
@@ -61,7 +60,7 @@ _KNOWN: dict[tuple[str, str], str] = {
         for family in _GRAPHS
     },
     **{("text-field", family): _D2 for family in _INDEXES},
-    ("unindexed-path", "embedded"): _D3,
+    ("unindexed-path", "embedded"): _IR,
     ("unindexed-path", "opensearch"): _IR,
 }
 

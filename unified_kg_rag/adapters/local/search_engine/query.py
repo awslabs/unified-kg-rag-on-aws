@@ -25,7 +25,10 @@ a ``text`` field matches a ``term`` against its analyzed tokens; the
 resolved as a dotted path; an unmapped string is a keyword, and so is any
 value of a field a ``dynamic_templates`` entry (``path_match``) maps as one.
 A keyword holds a number or boolean as its JSON text, as OpenSearch indexes
-it (``2.0`` is "2.0", which a term ``2`` does not match).
+it (``2.0`` is "2.0", which a term ``2`` does not match). As on OpenSearch,
+nothing inside an ``enabled: false`` object, nor an unmapped field of a
+``dynamic: false`` object, is indexed (no clause matches it), and a
+``term``/``terms``/``range`` on an ``index: false`` field is refused.
 """
 
 from __future__ import annotations
@@ -68,6 +71,18 @@ class FieldSpec:
     space_type: str | None = None
     # A multi-field's parent (``name`` of ``name.keyword``).
     source_path: str | None = None
+    # ``index: false``: kept in ``_source``, not searchable.
+    indexed: bool = True
+    # An object's ``dynamic`` (whether a new field under it is indexed) and
+    # ``enabled`` (whether anything under it is).
+    dynamic: bool = True
+    enabled: bool = True
+
+
+def _dynamic(value: Any) -> bool:
+    """A mapping's ``dynamic`` setting as whether a new field is indexed
+    (``true`` and ``runtime`` index it, ``false`` and ``strict`` do not)."""
+    return str(value).lower() not in ("false", "strict")
 
 
 def field_specs(mappings: dict[str, Any]) -> dict[str, FieldSpec]:
@@ -79,7 +94,8 @@ def field_specs(mappings: dict[str, Any]) -> dict[str, FieldSpec]:
             if not isinstance(body, dict):
                 continue
             path = f"{prefix}{name}"
-            if "properties" in body:
+            enabled = body.get("enabled", True) is not False
+            if "properties" in body and enabled:
                 walk(body["properties"], f"{path}.")
             kind = body.get("type", "object")
             method = body.get("method") or {}
@@ -90,6 +106,9 @@ def field_specs(mappings: dict[str, Any]) -> dict[str, FieldSpec]:
                 space_type=(
                     method.get("space_type", "l2") if kind == "knn_vector" else None
                 ),
+                indexed=body.get("index", True) is not False,
+                dynamic=_dynamic(body.get("dynamic", True)),
+                enabled=enabled,
             )
             for sub_name, sub in (body.get("fields") or {}).items():
                 specs[f"{path}.{sub_name}"] = FieldSpec(
@@ -184,6 +203,22 @@ class LoadedIndex:
             and isinstance(template.get("path_match"), str)
             and (template.get("mapping") or {}).get("type") == "keyword"
         ]
+
+    def searchable(self, path: str) -> bool:
+        """Whether OpenSearch indexes values at ``path``: not inside an
+        ``enabled: false`` object, and mapped or under objects that map a
+        new field (``dynamic``; the root's from the mappings)."""
+        parts = path.split(".")
+        dynamic = _dynamic(self.mappings.get("dynamic", True))
+        for i in range(1, len(parts)):
+            parent = self.specs.get(".".join(parts[:i]))
+            if parent is None:
+                continue
+            if not parent.enabled:
+                return False
+            dynamic = parent.dynamic
+        spec = self.specs.get(path)
+        return spec.enabled if spec is not None else dynamic
 
     def spec(self, path: str) -> FieldSpec | None:
         """The spec of ``path``: its mapping, else a keyword when a
@@ -290,9 +325,26 @@ def _matching(
     }
 
 
+def _searched(index: LoadedIndex, path: str, clause: str) -> bool:
+    """Whether a ``clause`` on ``path`` can match: ``False`` where OpenSearch
+    indexes nothing (``LoadedIndex.searchable``). A search of an
+    ``index: false`` field is refused, as OpenSearch refuses it."""
+    if not index.searchable(path):
+        return False
+    spec = index.specs.get(path)
+    if spec is not None and not spec.indexed:
+        raise rejected(
+            f"[{clause}] failed to create query: Cannot search on field [{path}] "
+            "since it is not indexed."
+        )
+    return True
+
+
 def _term_docs(index: LoadedIndex, path: str, values: list[Any]) -> Scores:
     if path == "_id":
         return {doc_id: 1.0 for v in values if (doc_id := _keyword(v)) in index.sources}
+    if not _searched(index, path, "term"):
+        return {}
     spec = index.spec(path)
     if spec is not None and spec.type == "text":
         # A term is not analyzed: it matches a token of the field as indexed.
@@ -332,6 +384,9 @@ def _exists(index: LoadedIndex, body: Any) -> Scores:
     path = _require_keys("exists", body, {"field"}).get("field")
     if not isinstance(path, str):
         raise rejected(f"[exists] takes a field name, got {path!r}")
+    spec = index.specs.get(path)
+    if not index.searchable(path) or (spec is not None and not spec.indexed):
+        return {}
     return _matching(index, path, lambda doc_values, _spec: bool(doc_values))
 
 
@@ -355,6 +410,8 @@ _RANGE_OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
 def _range(index: LoadedIndex, body: Any) -> Scores:
     path, bounds = _single_field("range", body)
     bounds = _require_keys("range", bounds, set(_RANGE_OPERATORS))
+    if not _searched(index, path, "range"):
+        return {}
     spec = index.spec(path)
     numeric = spec is not None and spec.type in NUMERIC_TYPES
     if numeric and any(_number(v) is None for v in bounds.values()):

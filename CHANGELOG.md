@@ -908,8 +908,9 @@ From a `main` checkout (formats and keys no release had):
   models, a sentence-transformers cross-encoder reranker, embedded SQLite graph and vector stores and registry, the
   `local` extra and an Ollama service in `docker/compose.local.yaml` (#154, #209, #271-#273). The cross-encoder is
   its own `cross-encoder` extra, since it pulls in PyTorch (the CUDA build on Linux, several GB): `local` alone runs
-  with reranking off, logged once; `local` declares `httpx`, which its adapters import (#628). See [local
-  mode](docs/guides/local-mode.md).
+  with reranking off, logged once; `local` declares `httpx`, which its adapters import (#628). As on OpenSearch, the
+  embedded vector store matches nothing inside an `enabled: false` object or an unmapped field of a `dynamic: false`
+  one, and refuses a search of an `index: false` field. See [local mode](docs/guides/local-mode.md).
 - Documents from memory: `DataIngestionPipeline.insert_documents([InputDocument(id=..., text=..., filters=...)])`
   adds or updates documents, `delete_documents(ids)` deletes them, through the incremental path of `run` (one run
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
