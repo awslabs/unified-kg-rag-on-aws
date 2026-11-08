@@ -91,13 +91,13 @@ jobs:
         run: uv run --frozen python -c "import datasets, docx, langchain_openai, mcp, pandas, pyvis, ragas, rdflib, fastapi, uvicorn, multipart"
 
       - name: Ruff (lint)
-        run: uv run ruff check unified_kg_rag tests iac scripts
+        run: uv run ruff check unified_kg_rag tests iac scripts console/demo docker/s3_sync.py .github/scripts
 
       - name: Black (format check)
-        run: uv run black --check unified_kg_rag tests iac scripts
+        run: uv run black --check unified_kg_rag tests iac scripts console/demo docker/s3_sync.py .github/scripts
 
       - name: isort (import order)
-        run: uv run isort --check-only unified_kg_rag tests iac scripts
+        run: uv run isort --check-only unified_kg_rag tests iac scripts console/demo docker/s3_sync.py .github/scripts
 
       - name: mypy (type check)
         run: uv run mypy unified_kg_rag
