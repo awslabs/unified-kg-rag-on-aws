@@ -72,7 +72,11 @@ class Script:
     """A writing system: its letter blocks and how its text behaves.
 
     ``chars_per_token`` is the local token estimate's rate for the script's
-    letters (``adapters.llm.token_estimate``). ``optional_marks`` are the
+    characters (``adapters.llm.token_estimate``): 4 for Latin and every
+    script not measured, 1 for Han, Hangul and Kana, and for the others
+    the geometric mean of what the cl100k and o200k BPE vocabularies count
+    over a sample sentence (``tests/fixtures/language_matrix.py``), rounded
+    to a twelfth of a token per character. ``optional_marks`` are the
     combining marks the script writes or leaves out at will (vowel points),
     so text compared for identity may drop them.
     """
@@ -84,25 +88,24 @@ class Script:
     optional_marks: Ranges = field(default=())
 
 
-# Han, Hangul and Kana blocks. The token estimate counts the "core" ones at
-# one token a character (see DENSE_SCRIPT_TOKEN_RANGES below).
-_HANGUL_CORE: Ranges = (
+# Han, Hangul and Kana blocks.
+_HANGUL: Ranges = (
     (0x1100, 0x11FF),  # Hangul Jamo
+    (0x3130, 0x318F),  # Hangul Compatibility Jamo
     (0xA960, 0xA97F),  # Hangul Jamo Extended-A
     (0xAC00, 0xD7AF),  # Hangul Syllables
-)
-_HANGUL_EXTRA: Ranges = (
-    (0x3130, 0x318F),  # Hangul Compatibility Jamo
     (0xD7B0, 0xD7FF),  # Hangul Jamo Extended-B
 )
-_KANA_CORE: Ranges = ((0x3040, 0x30FF),)  # Hiragana + Katakana
-_KANA_EXTRA: Ranges = ((0x31F0, 0x31FF),)  # Katakana Phonetic Extensions
-_HAN_CORE: Ranges = (
+_KANA: Ranges = (
+    (0x3040, 0x30FF),  # Hiragana + Katakana
+    (0x31F0, 0x31FF),  # Katakana Phonetic Extensions
+)
+_HAN: Ranges = (
     (0x3400, 0x4DBF),  # CJK Unified Ideographs Extension A
     (0x4E00, 0x9FFF),  # CJK Unified Ideographs
     (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
+    (0x20000, 0x323AF),  # CJK Unified Ideographs Extensions B-H
 )
-_HAN_EXTRA: Ranges = ((0x20000, 0x323AF),)  # CJK Unified Ideographs Extensions B-H
 
 # The script table. Letter blocks only: punctuation and symbol blocks belong
 # to no script (CJK punctuation and full-width forms are not letters; NFKC
@@ -128,15 +131,17 @@ SCRIPTS: tuple[Script, ...] = (
             (0xFF41, 0xFF5A),
         ),
     ),
-    Script("greek", ((0x0370, 0x03FF), (0x1F00, 0x1FFF))),
+    Script("greek", ((0x0370, 0x03FF), (0x1F00, 0x1FFF)), chars_per_token=1.5),
     Script(
         "cyrillic",
         ((0x0400, 0x052F), (0x1C80, 0x1C8F), (0x2DE0, 0x2DFF), (0xA640, 0xA69F)),
+        chars_per_token=2.4,
     ),
     Script("armenian", ((0x0530, 0x058F), (0xFB13, 0xFB17))),
     Script(
         "hebrew",
         ((0x0590, 0x05FF), (0xFB1D, 0xFB4F)),
+        chars_per_token=1.5,
         # Cantillation and vowel points (niqqud).
         optional_marks=(
             (0x0591, 0x05BD),
@@ -155,6 +160,7 @@ SCRIPTS: tuple[Script, ...] = (
             (0xFB50, 0xFDFF),
             (0xFE70, 0xFEFF),
         ),
+        chars_per_token=2.0,
         # Short vowels (harakat), superscript alef, tatweel and Quranic marks.
         optional_marks=(
             (0x0610, 0x061A),
@@ -169,7 +175,7 @@ SCRIPTS: tuple[Script, ...] = (
     ),
     Script("syriac", ((0x0700, 0x074F),)),
     Script("thaana", ((0x0780, 0x07BF),)),
-    Script("devanagari", ((0x0900, 0x097F), (0xA8E0, 0xA8FF))),
+    Script("devanagari", ((0x0900, 0x097F), (0xA8E0, 0xA8FF)), chars_per_token=1.5),
     Script("bengali", ((0x0980, 0x09FF),)),
     Script("gurmukhi", ((0x0A00, 0x0A7F),)),
     Script("gujarati", ((0x0A80, 0x0AFF),)),
@@ -179,7 +185,7 @@ SCRIPTS: tuple[Script, ...] = (
     Script("kannada", ((0x0C80, 0x0CFF),)),
     Script("malayalam", ((0x0D00, 0x0D7F),)),
     Script("sinhala", ((0x0D80, 0x0DFF),)),
-    Script("thai", ((0x0E00, 0x0E7F),), Spacing.SPACELESS),
+    Script("thai", ((0x0E00, 0x0E7F),), Spacing.SPACELESS, 1.5),
     Script("lao", ((0x0E80, 0x0EFF),), Spacing.SPACELESS),
     Script("tibetan", ((0x0F00, 0x0FFF),)),
     Script(
@@ -200,9 +206,9 @@ SCRIPTS: tuple[Script, ...] = (
         ),
         Spacing.SPACELESS,
     ),
-    Script("hangul", _HANGUL_CORE + _HANGUL_EXTRA, Spacing.DENSE, 1.0),
-    Script("kana", _KANA_CORE + _KANA_EXTRA, Spacing.DENSE, 1.0),
-    Script("han", _HAN_CORE + _HAN_EXTRA, Spacing.DENSE, 1.0),
+    Script("hangul", _HANGUL, Spacing.DENSE, 1.0),
+    Script("kana", _KANA, Spacing.DENSE, 1.0),
+    Script("han", _HAN, Spacing.DENSE, 1.0),
 )
 
 _BY_NAME = {script.name: script for script in SCRIPTS}
@@ -327,16 +333,12 @@ DENSE_SCRIPT_LETTERS = _class_body(_ranges_of(Spacing.DENSE))
 SPACELESS_SCRIPT_LETTERS = _class_body(_ranges_of(Spacing.SPACELESS))
 
 # What the token estimate (``adapters.llm.token_estimate``) counts at about
-# one token per character under BPE tokenizers: the core letters, CJK
-# radicals, CJK symbols and punctuation, and half/full-width forms. Not the
-# letter blocks added to the table above after the estimate was set: adding
-# them changes the estimate, a separate, measured change.
+# one token per character beside the dense letters: CJK radicals, CJK
+# symbols and punctuation, and half/full-width forms.
 DENSE_SCRIPT_TOKEN_RANGES: Ranges = tuple(
     sorted(
         (
-            *_HANGUL_CORE,
-            *_KANA_CORE,
-            *_HAN_CORE,
+            *_ranges_of(Spacing.DENSE),
             (0x2E80, 0x2FDF),  # CJK radicals / Kangxi
             (0x3000, 0x303F),  # CJK symbols and punctuation
             (0xFF00, 0xFFEF),  # Half/full-width forms

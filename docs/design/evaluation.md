@@ -269,8 +269,9 @@ measurement shows it should be a default.
 **Length buckets (always on with `--pairwise-judge`).** `PairwiseJudge`
 records each judged pair's answer lengths in estimated tokens
 (`adapters.llm.token_estimate.estimate_token_count`: about one token per
-Hangul, kana or Han character, about four characters per token elsewhere,
-so a Korean or Japanese answer is not measured in whitespace words) and
+Hangul, kana or Han character, about four characters per token in Latin
+text, each other script at its own rate, so a Korean or Japanese answer is
+not measured in whitespace words) and
 reports, under `length`, the candidate's win rate per bucket of the length
 ratio (candidate over baseline: at most 0.67, 0.67-0.91, 0.91-1.1, 1.1-1.5,
 at least 1.5; symmetric in the log ratio, so 1.5 and 1/1.5 sit in mirror

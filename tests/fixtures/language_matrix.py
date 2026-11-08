@@ -6,8 +6,10 @@ CJK and Latin fixtures do not exercise), German and Russian, and Korean,
 Japanese and Chinese.
 
 Each sample is two sentences of one made-up delivery (a vendor, a
-warehouse, an invoice), a question about it, and a name that occurs in the
-text as written.
+warehouse, an invoice), a question about it, a name that occurs in the
+text as written, and the tokens two BPE vocabularies count in the text
+(tiktoken's ``cl100k_base`` and ``o200k_base``; ``test_token_counter``
+recounts them when tiktoken has both cached).
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ class LanguageSample:
     text: str
     question: str
     name: str
+    # The text's tokens under cl100k_base and o200k_base.
+    bpe_tokens: tuple[int, int]
 
 
 MATRIX: tuple[LanguageSample, ...] = (
@@ -32,6 +36,7 @@ MATRIX: tuple[LanguageSample, ...] = (
         "وافق المشتري على الفاتورة بعد الفحص.",
         "من هو المورد الذي سلّم الوحدات؟",
         "المستودع",
+        (57, 29),
     ),
     LanguageSample(
         LanguageCode.HE,
@@ -39,6 +44,7 @@ MATRIX: tuple[LanguageSample, ...] = (
         "הקונה אישר את החשבונית לאחר הבדיקה.",
         "מי הספק שמסר את היחידות?",
         "החשבונית",
+        (74, 31),
     ),
     LanguageSample(
         LanguageCode.TH,
@@ -46,6 +52,7 @@ MATRIX: tuple[LanguageSample, ...] = (
         "ผู้ซื้ออนุมัติใบแจ้งหนี้หลังการตรวจสอบ",
         "ใครเป็นผู้จัดหาที่ส่งมอบหน่วยลิดาร์",
         "คลังสินค้า",
+        (92, 37),
     ),
     LanguageSample(
         LanguageCode.HI,
@@ -53,6 +60,7 @@ MATRIX: tuple[LanguageSample, ...] = (
         "निरीक्षण के बाद खरीदार ने चालान को मंज़ूरी दी।",
         "इकाइयाँ किस आपूर्तिकर्ता ने पहुँचाईं?",
         "गोदाम",
+        (114, 38),
     ),
     LanguageSample(
         LanguageCode.VI,
@@ -60,6 +68,7 @@ MATRIX: tuple[LanguageSample, ...] = (
         "Người mua đã phê duyệt hóa đơn sau khi kiểm tra.",
         "Nhà cung cấp nào đã giao các thiết bị này?",
         "hóa đơn",
+        (52, 33),
     ),
     LanguageSample(
         LanguageCode.DE,
@@ -67,6 +76,7 @@ MATRIX: tuple[LanguageSample, ...] = (
         "geliefert. Der Käufer genehmigte die Rechnung nach der Prüfung.",
         "Welcher Lieferant hat die Einheiten geliefert?",
         "Lager",
+        (40, 29),
     ),
     LanguageSample(
         LanguageCode.RU,
@@ -74,6 +84,7 @@ MATRIX: tuple[LanguageSample, ...] = (
         "Покупатель утвердил счёт после проверки.",
         "Какой поставщик доставил блоки?",
         "склад",
+        (43, 26),
     ),
     LanguageSample(
         LanguageCode.KO,
@@ -81,6 +92,7 @@ MATRIX: tuple[LanguageSample, ...] = (
         "구매자는 검사 후 송장을 승인했다.",
         "어느 공급업체가 장치를 납품했습니까?",
         "창고",
+        (54, 32),
     ),
     LanguageSample(
         LanguageCode.JA,
@@ -88,12 +100,14 @@ MATRIX: tuple[LanguageSample, ...] = (
         "買い手は検査後に請求書を承認した。",
         "どの供給業者が装置を納品しましたか？",
         "倉庫",
+        (55, 38),
     ),
     LanguageSample(
         LanguageCode.ZH,
         "供应商于6月2日将激光雷达设备交付到仓库。买方在检查后批准了发票。",
         "哪个供应商交付了设备？",
         "仓库",
+        (40, 29),
     ),
 )
 

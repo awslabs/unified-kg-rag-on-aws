@@ -39,7 +39,16 @@ from unified_kg_rag.adapters.observability.langchain_callback import (
     response_retry_attempts,
     response_token_usage,
 )
-from unified_kg_rag.shared import usage
+from unified_kg_rag.shared import get_logger, usage
+from unified_kg_rag.shared.logging import warn_once
+
+logger = get_logger(__name__)
+
+# The local token estimate's drift from what a model reports: past this
+# many calls, a reported-to-estimated input ratio this far from 1 (either
+# way) logs one WARNING per model.
+ESTIMATE_DRIFT_MIN_CALLS = 20
+ESTIMATE_DRIFT_RATIO = 2.0
 
 
 def _served_from_cache(response: LLMResult) -> bool:
@@ -88,6 +97,47 @@ class UsageCallbackHandler(BaseCallbackHandler):
         # go when that task ends (removed when the call settles).
         self._tasks: dict[UUID, tuple[asyncio.Future[Any], Callable[..., None]]] = {}
         self._lock = threading.Lock()
+        # The calls with reported usage and their estimated and reported
+        # input tokens, for the estimate drift check.
+        self._drift_calls = 0
+        self._drift_estimated = 0
+        self._drift_reported = 0
+
+    def _check_estimate(self, estimated: int, reported: int) -> None:
+        """Compare the input tokens the model reports with the local
+        estimate of its prompts, over the handler's calls so far; WARN once
+        per model when they differ by :data:`ESTIMATE_DRIFT_RATIO` or more
+        after :data:`ESTIMATE_DRIFT_MIN_CALLS` calls."""
+        if estimated <= 0 or reported <= 0:
+            return
+        with self._lock:
+            self._drift_calls += 1
+            self._drift_estimated += estimated
+            self._drift_reported += reported
+            calls = self._drift_calls
+            ratio = self._drift_reported / self._drift_estimated
+        if calls < ESTIMATE_DRIFT_MIN_CALLS:
+            return
+        if 1 / ESTIMATE_DRIFT_RATIO < ratio < ESTIMATE_DRIFT_RATIO:
+            return
+        effect = (
+            "may overflow its context or input limit"
+            if ratio > 1
+            else "leave part of its context unused"
+        )
+        warn_once(
+            logger,
+            f"estimate-drift:{self.model_id}",
+            "Model '%s' reported %.2f times the input tokens the local token "
+            "estimate counted for its prompts (%d calls). The budgets of a model "
+            "without a token-count API (context packing, truncation) are taken "
+            "from that estimate and %s; the estimate's characters per token by "
+            "script are unified_kg_rag.shared.utils.scripts.SCRIPTS",
+            self.model_id,
+            ratio,
+            calls,
+            effect,
+        )
 
     def _start(self, run_id: UUID, texts: list[str]) -> None:
         if usage.current_meter() is None:
@@ -161,6 +211,8 @@ class UsageCallbackHandler(BaseCallbackHandler):
                     output_tokens=output_tokens, request_retries=retries
                 )
             return
+        if call is not None:
+            self._check_estimate(call.estimated_input_tokens, tokens.input_tokens)
         counts: dict[str, Any] = {
             "input_tokens": tokens.input_tokens,
             "output_tokens": tokens.output_tokens,

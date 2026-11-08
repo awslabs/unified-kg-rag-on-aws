@@ -646,6 +646,10 @@ From a `main` checkout (formats and keys no release had):
 - Languages: a Hindi, Arabic or Urdu document with a paragraph longer than a chunk is cut after `।`, `؟` or `۔`
   now, so a reset re-chunks it and extracts its text units again (an incremental run only its changed documents);
   names with Devanagari or Thai vowel signs may resolve otherwise on that reset.
+- Token estimate: a Russian, Greek, Arabic, Hebrew, Hindi or Thai corpus is estimated at 1.7-2.7 times the
+  tokens; with `length_unit: tokens` a reset re-chunks it and extracts it again, and the next run asks again the
+  description and tree summaries whose input now reads over or under their budgets (the default `chars` re-chunks
+  nothing).
 
 ### Added
 - A query reports every step it answered without in `metadata["degraded"]` (each `step`, `reason`, `error_type`;
@@ -1305,6 +1309,12 @@ From a `main` checkout (formats and keys no release had):
   `[CANNOT_TRANSLATE]` or `[CANNOT_REWRITE]`, which replace the refusal phrase lists of four languages; the
   router no longer routes prose naming several strategies ("not global ... local") to the first one named, and a
   rating's reason in any language no longer reads as the rating ("Auf einer Skala von 1 bis 10: 8" was 1).
+- The local token estimate (models without CountTokens, embedding truncation, `length_unit: tokens`) counts each
+  script at its rate: Cyrillic 2.4 characters a token, Arabic 2, Greek, Hebrew, Devanagari and Thai 1.5 (the
+  geometric mean of the cl100k and o200k counts over a sample), where it counted 4, a quarter to a half of the Hindi,
+  Thai and Hebrew tokens; Latin stays at 4 and Han, Hangul and Kana at one a character, now also the rarer blocks
+  (Hanja extensions, compatibility Jamo). A model whose reported input tokens are twice the estimate or more, or half
+  or less, over 20 calls logs one WARNING.
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).

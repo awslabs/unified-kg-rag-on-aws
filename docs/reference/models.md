@@ -103,10 +103,14 @@ Four things differ for Claude 4.7-and-later models:
   and are omitted from requests automatically; steer behaviour by prompting.
 - **Token estimates are scaled.** Their tokenizer counts roughly 1x-1.35x the
   tokens of older Claude models for the same text and CountTokens rejects
-  them, so the local estimate (~4 characters per token for Latin text) is
+  them, so the local estimate (~4 characters per token for Latin text, one
+  per Han, Hangul or Kana character, each other script at its rate in
+  `shared/utils/scripts.py`) is
   multiplied by the record's `token_estimate_multiplier` (1.3) when sizing
   context budgets. Override it per model with
-  `aws.bedrock.model_overrides`.
+  `aws.bedrock.model_overrides`. A model whose reported input tokens are
+  twice the estimate or more (or half or less) over 20 calls logs one
+  WARNING naming it.
 
 OpenAI GPT models differ from Claude in these ways:
 

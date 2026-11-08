@@ -209,6 +209,11 @@ class LLMCall:
         self._settled = False
         _add_to(meter, role, model, self._pending())
 
+    @property
+    def estimated_input_tokens(self) -> int:
+        """The input tokens estimated at the call's start."""
+        return self._estimate
+
     def _pending(self) -> _Counts:
         return _Counts(llm_calls=1, input_tokens=self._estimate, estimated_calls=1)
 
