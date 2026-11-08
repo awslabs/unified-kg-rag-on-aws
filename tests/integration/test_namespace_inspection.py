@@ -315,3 +315,43 @@ def test_describe_reports_an_earlier_registry_table_without_the_run_step(
     assert "earlier release" in description.registry_unavailable
     assert "indexing.reset" not in description.registry_unavailable
     assert {"local", "mix"} <= set(description.strategies)
+
+
+def test_an_export_names_no_absolute_host_path() -> None:
+    # Regression (rv8): a text unit's documents (and every item citing it)
+    # were its stored file_path, the indexing host's absolute path.
+    import io
+
+    out = io.StringIO()
+    writer = inspection._JsonLines(out, include_text=False)
+    units: dict[str, str] = {}
+    corpus_unit = {
+        "id": "tu-1",
+        "attributes": {
+            "file_path": "/srv/host/corpus/legal/계약서.pdf",
+            "file_name": "계약서.pdf",
+            "relative_path": "legal/계약서.pdf",
+        },
+    }
+    # Without a relative path (an older index): the file name.
+    older_unit = {
+        "id": "tu-2",
+        "attributes": {"file_path": "C:\\corpus\\memo.txt", "file_name": "memo.txt"},
+    }
+    inspection._write_kind(
+        writer, "text_units", iter([[corpus_unit, older_unit]]), units, None
+    )
+    inspection._write_kind(
+        writer,
+        "entities",
+        iter([[{"id": "e1", "text_unit_ids": ["tu-1", "tu-2"]}]]),
+        units,
+        None,
+    )
+    text = out.getvalue()
+    assert "/srv/host" not in text and "C:" not in text
+    first, second, entity = (json.loads(line) for line in text.splitlines())
+    assert first["documents"] == ["legal/계약서.pdf"]
+    assert first["attributes"]["file_path"] == "legal/계약서.pdf"
+    assert second["documents"] == ["memo.txt"]
+    assert entity["documents"] == ["legal/계약서.pdf", "memo.txt"]

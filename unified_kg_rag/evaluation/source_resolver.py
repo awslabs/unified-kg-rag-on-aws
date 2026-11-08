@@ -17,7 +17,7 @@ search uses to fetch chunks), caching each id once per index suffix.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import Any, Protocol
+from typing import Protocol
 
 from unified_kg_rag.domain.models import (
     Config,
@@ -50,12 +50,6 @@ class _DocumentRetriever(Protocol):
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]: ...
 
     async def aindex_limits(self, prefix: str, suffix: str | None) -> _IndexLimits: ...
-
-
-def file_name_of(payload: dict[str, Any]) -> str | None:
-    """File name from a source/hit payload (``source_fields.file_name``:
-    under ``attributes`` first, then top-level; the last path segment)."""
-    return source_fields.file_name(payload)
 
 
 class TextUnitFileResolver:
@@ -125,6 +119,6 @@ class TextUnitFileResolver:
         for hit in hits:
             metadata = hit.metadata or {}
             unit_id = str(metadata.get("id") or hit.source)
-            if name := file_name_of(metadata):
+            if name := source_fields.file_name(metadata):
                 found[unit_id] = name
         return found, bool(hits)

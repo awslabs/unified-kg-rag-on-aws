@@ -964,7 +964,8 @@ From a `main` checkout (formats and keys no release had):
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
-  (`--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#628). A
+  (a document by its path relative to the corpus root, else its file name, never the indexing host's path;
+  `--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#628). A
   registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported unavailable, with
   the reason in `registry_unavailable` and a warning, and the rest is still described (#636). A missing extra and a
   namespace that holds no index exit 2 with the error on stderr, and describing creates no store file where nothing

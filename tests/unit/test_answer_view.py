@@ -26,7 +26,6 @@ from unified_kg_rag.domain.models import (
     Source,
 )
 from unified_kg_rag.domain.retrieval import source_fields
-from unified_kg_rag.evaluation.source_resolver import file_name_of
 
 pytestmark = pytest.mark.unit
 
@@ -89,7 +88,7 @@ def test_every_surface_names_the_same_file(
     assert _record(view, 2000).document_name == name
     assert run_rag_chain._hit_file(dict(source)) == name
     assert unit_from_metadata(source["metadata"], "tu-1").file_name == name
-    assert file_name_of(source["metadata"]) == name
+    assert source_fields.file_name(source["metadata"]) == name
 
 
 def _output(**metadata: Any) -> RAGOutput:

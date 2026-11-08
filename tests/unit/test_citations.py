@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import retrieval as retrieval_prompts
 from unified_kg_rag.domain.prompts.retrieval import CITATION_INSTRUCTIONS
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.citations import (
     CitationMarkerScanner,
     cited_markers,
@@ -355,12 +356,12 @@ def test_a_passage_cites_its_unit_document_file_and_pages() -> None:
     ["/srv/corpus/a.pdf", "../a.pdf", "a/../../b.pdf", "C:\\corpus\\a.pdf", "s3://b/a"],
 )
 def test_a_citation_never_names_an_absolute_or_climbing_path(path: str) -> None:
-    assert citations.safe_relative_path(path) is None
+    assert source_fields.safe_relative_path(path) is None
 
 
 def test_a_citation_names_a_relative_path_with_forward_slashes() -> None:
-    assert citations.safe_relative_path("legal\\2024\\a.pdf") == "legal/2024/a.pdf"
-    assert citations.safe_relative_path("./a.pdf") == "a.pdf"
+    assert source_fields.safe_relative_path("legal\\2024\\a.pdf") == "legal/2024/a.pdf"
+    assert source_fields.safe_relative_path("./a.pdf") == "a.pdf"
 
 
 def test_a_seed_only_fact_cites_its_seed_graph_and_iri() -> None:

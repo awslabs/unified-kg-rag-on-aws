@@ -297,15 +297,9 @@ async def text_unit_file_names(
         query = _fetch(prefix, suffix, {"id": batch}, len(batch))
         for hit in await retriever.aretrieve(query):
             metadata = hit.metadata or {}
-            if name := file_name(metadata):
+            if name := source_fields.file_name(metadata):
                 names[str(metadata.get("id") or hit.source)] = name
     return names
-
-
-def file_name(metadata: dict[str, Any]) -> str | None:
-    """The file name a text unit's stored ``attributes`` name
-    (``source_fields.file_name``)."""
-    return source_fields.file_name(metadata)
 
 
 class NamespaceDescription(BaseModel):
