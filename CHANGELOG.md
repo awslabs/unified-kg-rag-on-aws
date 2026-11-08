@@ -574,7 +574,10 @@ From a `main` checkout (formats and keys no release had):
   `auto_resolution_candidates` are refused at load (they were ignored or failed later): drop the setting the load
   names. CDK: the next deploy turns on the cache bucket's S3 Bucket Key with `use_cmk` (new objects only, no
   re-encryption; fewer KMS requests), tags the ingestion tasks and grants the state machine `ecs:TagResource` on
-  them; an `env_name` too long for the bucket or guardrail name now fails the synth. Nothing re-runs.
+  them; an `env_name` too long for the bucket or guardrail name now fails the synth. Nothing re-runs. With
+  `neptune_audit_log` on, the stack's audit log group is `/aws/neptune/<cluster id>/audit`, where Neptune writes (it
+  was `/aws/neptune/cluster/<cluster id>/audit`): if Neptune already created that group itself, copy what you keep and
+  delete it (`aws logs delete-log-group`) before the next deploy, which fails on an existing group otherwise.
 - #618 community hierarchy and report references: stored communities and reports stay as they are until the namespace
   is clustered again. Its next full build (`indexing.reset: true`) keeps the level-0 communities and changes the
   levels above them where a community was split (it is now the parent of its pieces, so the hierarchy can be a level
