@@ -608,17 +608,14 @@ _BARE_AMPERSAND = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+
 # `<` not followed by what can start a tag, end tag, comment or declaration.
 _TEXT_LESS_THAN = re.compile(r"<(?![A-Za-z_/!?])")
 _TAG = re.compile(r"<(/?)([A-Za-z_][\w.\-:]*)([^<>]*)>")
-# The tag-free text of a section a model writes for "nothing here"
-# (``<relationships>None</relationships>``), casefolded, a final "." dropped.
-_NO_CONTENT = frozenset({"none", "n/a", "null", "nil", "-"})
 
 
-def _is_no_content(value: Any) -> bool:
-    """Whether a parsed section is the text a model writes for "nothing
-    here" ("None", "N/A", ...): an empty answer, not prose."""
-    return isinstance(value, str) and value.strip().rstrip(".").casefold() in (
-        _NO_CONTENT
-    )
+def _holds_text_only(value: Any) -> bool:
+    """Whether a parsed section is text without any element: what a model
+    writes in a section meant to list elements when it has none to list
+    ("None", "없음", "なし", "Keine", "No relationships found."), in any
+    language."""
+    return isinstance(value, str) and _TAG.search(value) is None
 
 
 def _escape_markup(tag: str) -> str:
@@ -694,7 +691,13 @@ class RobustXMLOutputParser(XMLOutputParser):
     (``{"claims": [{"claim": [{"subject": ...}, ...]}]}``) that the
     extractors cannot read, so a well-formed single-root response would parse
     into a different shape than a recovered one.
+
+    ``container_tags`` are the expected sections that hold child elements
+    (``<entities>`` holds ``<entity>`` elements; a ``<summary>`` holds
+    text): one of them holding text only reads as empty.
     """
+
+    container_tags: frozenset[str] = frozenset()
 
     def get_format_instructions(self) -> str:
         """Instructions for the output fixer, naming the expected sections.
@@ -713,8 +716,10 @@ class RobustXMLOutputParser(XMLOutputParser):
 
         With expected sections (``tags``), one element wrapping them (an
         ``<output>`` around ``<entities>`` and ``<relationships>``) is
-        unwrapped, and a section holding only "None" (or "N/A", "null",
-        "-") reads as empty. Subclasses check the rest of the shape
+        unwrapped, and a section of ``container_tags`` holding text without
+        any element reads as empty: a model says "nothing here" in the
+        language it writes, so no word list can recognise it, while a list
+        of elements always holds tags. Subclasses check the rest of the shape
         (``_check_shape``) and raise ``OutputParserException`` for output
         that parses but is not what the prompt asked for, as for output
         that does not parse, so the output fixer repairs it.
@@ -727,8 +732,12 @@ class RobustXMLOutputParser(XMLOutputParser):
         result = self._parse_elements(text)
         if self.tags and isinstance(result, dict):
             result = self._unwrapped(result)
-            for tag in set(self.tags) & result.keys():
-                if _is_no_content(result[tag]):
+            for tag in self.container_tags & result.keys():
+                if _holds_text_only(result[tag]):
+                    logger.debug(
+                        "XML section <%s> holds text and no element: read as empty",
+                        tag,
+                    )
                     result[tag] = {}
         self._check_shape(result, text)
         return result

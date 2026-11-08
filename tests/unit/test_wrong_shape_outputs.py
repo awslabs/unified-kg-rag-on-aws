@@ -8,8 +8,9 @@ said "None" or that one ``<output>`` element wrapped failed the unit after
 every retry without a repair, a gleaning answer without its
 ``<refinement_plan>`` root was read as "nothing to add" and the unit marked
 gleaned for good, and a claims answer in prose was counted as cut off (never
-retried). The parsers now unwrap one wrapper, read a "None" section as
-empty, and raise ``OutputParserException`` for any other wrong shape, which
+retried). The parsers now unwrap one wrapper, read a section that should
+list elements but holds text only as empty (in any language: "None",
+"없음", "Keine"), and raise ``OutputParserException`` for any other wrong shape, which
 the fixer repairs. The chains run for real on a scripted model.
 """
 
@@ -85,14 +86,22 @@ def _extract(config: Config, answer: str) -> tuple[list[str], list[str], list[st
     [
         "<entities>None</entities>\n<relationships>None</relationships>",
         "<entities>N/A</entities>",
+        # Text in the model's language: no word list recognised these.
+        "<entities>없음</entities>\n<relationships>없음</relationships>",
+        "<entities>なし</entities>\n<relationships>无</relationships>",
+        "<entities>Keine</entities>\n<relationships>Нет</relationships>",
+        "<entities>No entities in this text.</entities>\n<relationships/>",
     ],
 )
 def test_an_extraction_saying_none_is_empty(config: Config, answer: str) -> None:
     assert _extract(config, answer) == (["model"], [], [])
 
 
-def test_a_none_relationships_section_keeps_the_entities(config: Config) -> None:
-    answer = f"<entities>{_ENTITY}</entities>\n<relationships>None</relationships>"
+@pytest.mark.parametrize("none", ["None", "없음", "Aucune", "No relationships found."])
+def test_a_none_relationships_section_keeps_the_entities(
+    config: Config, none: str
+) -> None:
+    answer = f"<entities>{_ENTITY}</entities>\n<relationships>{none}</relationships>"
     assert _extract(config, answer) == (["model"], ["Acme"], [])
 
 
@@ -104,8 +113,7 @@ def test_a_wrapped_extraction_is_unwrapped(config: Config) -> None:
 @pytest.mark.parametrize(
     "answer",
     [
-        # Prose in a section, bullets, entities named by an attribute.
-        "<entities>No entities in this text.</entities>\n<relationships/>",
+        # Bullets, entities named by an attribute.
         "Nothing to extract:\n- a list of numbers\n- no entities",
         '<entities><entity name="Acme" type="ORG"/></entities>\n<relationships/>',
     ],
@@ -133,7 +141,8 @@ def _claims(config: Config, answer: str) -> tuple[list[str], list[str], list[str
         (f"<output><claims>{_CLAIM}</claims></output>", (["model"], ["Vendor"], [])),
         # It raised LLMOutputTruncatedError: counted as cut off, never repaired.
         ("No claims:\n- nothing factual", (["model", "fixer"], ["Vendor"], [])),
-        ("<claims>There are none here.</claims>", (["model", "fixer"], ["Vendor"], [])),
+        ("<claims>There are none here.</claims>", (["model"], [], [])),
+        ("<claims>없음</claims>", (["model"], [], [])),
     ],
 )
 def test_a_wrong_claims_shape_is_unwrapped_or_repaired(
@@ -171,6 +180,7 @@ def _glean(config: Config, answer: str) -> tuple[list[str], list[str], bool]:
             (["model"], ["Vendor", "Depot"], True),
         ),
         ("<refinement_plan>None</refinement_plan>", (["model"], ["Vendor"], True)),
+        ("<refinement_plan>なし</refinement_plan>", (["model"], ["Vendor"], True)),
         (
             "The extraction looks complete to me.",
             (["model", "fixer"], ["Vendor", "Depot"], True),

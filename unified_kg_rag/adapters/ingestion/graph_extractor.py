@@ -772,11 +772,14 @@ class GraphExtractionOutputParser(RobustXMLOutputParser):
     for :func:`_checked` to tell output cut off from malformed output and
     to log what failed.
 
-    Output that parses but is not an extraction (no ``<entities>``
-    section, a section holding prose, or, its sections closed, entities
-    none of which has a name) raises ``OutputParserException`` here, so the
+    A section holding text and no element ("None", "없음") is empty
+    (``container_tags``). Output that parses but is not an extraction (no ``<entities>``
+    section, a section holding text around tags it could not parse, or, its
+    sections closed, entities none of which has a name) raises ``OutputParserException`` here, so the
     output fixer repairs it as it repairs output that does not parse.
     """
+
+    container_tags: frozenset[str] = frozenset({"entities", "relationships"})
 
     def parse(self, text: str) -> dict[str, Any]:
         result = super().parse(text)

@@ -14,7 +14,7 @@ import asyncio
 import contextvars
 import dataclasses
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Collection, Iterator
 from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_classic.output_parsers import OutputFixingParser
@@ -483,6 +483,7 @@ def create_robust_xml_output_parser(
     model_purpose: ModelPurpose = ModelPurpose.QUERY,
     min_output_tokens: int = 0,
     parser_class: type[RobustXMLOutputParser] = RobustXMLOutputParser,
+    container_tags: Collection[str] = (),
 ) -> BaseOutputParser[Any]:
     """Build the XML parser (a ``parser_class``), optionally wrapped in an
     LLM output fixer.
@@ -492,8 +493,14 @@ def create_robust_xml_output_parser(
     is forwarded to the fixing LLM so it gets the same per-path policy (the
     response cache, the ingestion effort) as the chain it repairs, and ``min_output_tokens`` (the
     repaired prompt's output floor) so a long output can be re-emitted in full.
+    ``container_tags`` adds to the parser class's sections that list
+    elements (``RobustXMLOutputParser.container_tags``).
     """
     base_parser = parser_class(tags=output_tags)
+    if container_tags:
+        base_parser.container_tags = base_parser.container_tags | frozenset(
+            container_tags
+        )
     if not enable_output_fixing:
         return base_parser
 

@@ -443,9 +443,12 @@ class ClaimsOutputParser(RobustXMLOutputParser):
     stored with the fields before the cut: a description or source text cut
     short, or none at all.
 
-    Output that parses but has no ``<claims>`` section (prose, a list) or
-    one holding text raises ``OutputParserException``, so the output fixer
+    A ``<claims>`` section holding text and no element is empty
+    (``container_tags``). Output that parses but has no ``<claims>``
+    section (prose, a list) or one holding text around unparsed tags raises ``OutputParserException``, so the output fixer
     repairs it as it repairs output that does not parse."""
+
+    container_tags: frozenset[str] = frozenset({"claims"})
 
     def _check_shape(self, result: dict[str, Any], text: str) -> None:
         section = result.get("claims")

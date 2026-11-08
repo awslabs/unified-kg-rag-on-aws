@@ -1520,6 +1520,10 @@ Queries and retrieval.
   once no longer fails its item for good (#369, #378).
 
 Ingestion and incremental indexing.
+- An extraction, claims, gleaning, report-findings or chunk-boundary section that lists elements reads as empty when
+  it holds text and no element, in any language (`<relationships>없음</relationships>`, `なし`, `Keine`, "No
+  relationships found."): only `None`, `N/A`, `null`, `nil` and `-` did, so another answer failed its text unit,
+  which was retried on every run. A section holding prose is no longer sent to the output fixer.
 - A run into a namespace that holds other source scopes' documents no longer exports `visualization_data.json`
   from its own corpus's graph (or fails to, `Communities must be detected before exporting`): it logs an INFO line
   pointing at `run-describe --output-path` and leaves the earlier file in place (#640).
