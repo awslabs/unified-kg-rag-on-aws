@@ -470,7 +470,6 @@ From a `main` checkout (formats and keys no release had):
   also asks again the community reports whose input held such a status (their input changed). Claim records stored
   since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again
   (#644).
-  since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again.
 - Claims and report switches: with claim extraction on and the registry on, a namespace whose build record does not
   name claims (claims turned on after its build, or an incremental claims-off run since) is rebuilt once by its next
   run from its stored extractions, asking claims only of the units without a stored claim record (every unit after
@@ -1490,10 +1489,9 @@ Ingestion and incremental indexing.
   description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
   where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full
   build's (#640). Nor when the moved and the kept lines share a text unit (a delta that resolved `(주)벤더` into
-  `벤더`): an edge with an endpoint the derivation split off is summarized from its lines (#644).
-  `벤더`): an edge with an endpoint the derivation split off is summarized from its lines. Nor when the derivation
-  folded another stored spelling into the item (a delta `Depot -> Vendor` edge that folds the stored `Depot -> Vendor
-  Inc` into it): the extended summary lost the folded edge's line.
+  `벤더`): an edge with an endpoint the derivation split off is summarized from its lines (#644). Nor when the
+  derivation folded another stored spelling into the item (a delta `Depot -> Vendor` edge that folds the stored
+  `Depot -> Vendor Inc` into it): the extended summary lost the folded edge's line (#648).
 - A document's doc-status registry namespace and its artifacts' index suffix follow one rule
   (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
   fails the loading stage naming it instead of keying the document's record under a namespace no index has (#628).
