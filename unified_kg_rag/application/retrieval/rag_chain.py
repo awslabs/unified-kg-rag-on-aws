@@ -408,6 +408,13 @@ class ProcessedQuery(BaseModel):
         default_factory=list,
         description="Low-level keywords (LightRAG modes only)",
     )
+    degraded_error: str | None = Field(
+        default=None,
+        description="The type name of a query processing failure "
+        "processing.ignore_errors absorbed (the translation, the entity or "
+        "keyword extraction, or the whole step): the query was searched "
+        "without it. None when every step succeeded",
+    )
 
 
 class ConversationTurn(BaseModel):
@@ -1115,6 +1122,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 original_query=original_query,
                 standalone_query=standalone_query,
                 final_query=question,
+                degraded_error=type(e).__name__,
             )
 
     @staticmethod
@@ -1887,6 +1895,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             **sr.metadata,
             **({ROUTING_KEY: state[ROUTING_KEY]} if ROUTING_KEY in state else {}),
         }
+        # A query processing failure ignore_errors absorbed degrades it too.
+        if degraded := state["processed_query"].degraded_error:
+            metadata.setdefault("degraded_error", degraded)
         reason = state.get("abstention_reason")
         if reason is None and GraphRAGChain._context_is_empty(state):
             # The answer step returned the fixed no-context reply.
@@ -2046,6 +2057,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             **sr.metadata,
             **({ROUTING_KEY: state[ROUTING_KEY]} if ROUTING_KEY in state else {}),
         }
+        # A query processing failure ignore_errors absorbed degrades it too.
+        if degraded := state["processed_query"].degraded_error:
+            metadata.setdefault("degraded_error", degraded)
 
         return SearchOutput(
             search_results=sr,

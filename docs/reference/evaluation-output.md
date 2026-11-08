@@ -95,7 +95,8 @@ from the text, and under
   `applied` + `failed`.
 - `degraded_error_counts`: answers whose retrieval absorbed a step failure
   (a global map batch, a DRIFT follow-up, an iterative round, a step
-  `processing.ignore_errors` skipped), per error type; each result carries
+  `processing.ignore_errors` skipped: the query translation and the query
+  entity and keyword extractions among them), per error type; each result carries
   `degraded_error`. They count against `--max-failure-rate` over every
   query.
 - `guardrail_blocked_counts`: blocked queries per `input` / `output` (a
