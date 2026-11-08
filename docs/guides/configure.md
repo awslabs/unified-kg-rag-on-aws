@@ -20,7 +20,7 @@ and answer screening in [Guardrail](./guardrail.md), and tracing in
 
 Each layer overrides the one before:
 
-1. **Built-in defaults** (`unified_kg_rag/domain/models/config.py`). Without
+1. **Built-in defaults** (`unified_kg_rag/domain/models/config/`). Without
    `--config-path`, a CLI runs on these plus the environment.
 2. **The `backend` preset**: `backend: local` (or `--backend local`) fills in
    the local providers and stores for every key the file and the environment

@@ -4573,8 +4573,9 @@ the source and the fallback.
 
 ## 12. Configuration System
 
-The configuration is one nested Pydantic tree (`domain/models/config.py`,
-root `Config`) loaded by `application/config.py` (`get_config`).
+The configuration is one nested Pydantic tree (`domain/models/config/`, one
+module per section, root `Config`) loaded by `application/config.py`
+(`get_config`).
 [docs/reference/configuration.md](./reference/configuration.md) is generated from it by
 `scripts/gen_config_reference.py`, and `tests/unit/test_config_reference.py`
 fails when it is stale; `config-template.yaml` is a short starting file with
