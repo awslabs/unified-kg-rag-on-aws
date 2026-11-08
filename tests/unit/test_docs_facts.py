@@ -220,7 +220,7 @@ def test_the_stage_list_names_every_stage_in_order(page: str, heading_id: str) -
 
 
 def test_the_design_stage_table_has_a_row_per_stage() -> None:
-    text = (REPO_ROOT / "docs/design.md").read_text(encoding="utf-8")
+    text = (REPO_ROOT / "docs/design/ingestion.md").read_text(encoding="utf-8")
     rows = re.findall(r"^\| (\d+)(?:-(\d+))? \| ", text.split("### 4.1", 1)[0], re.M)
     numbers = sorted({n for a, b in rows for n in range(int(a), int(b or a) + 1)})
     assert numbers == list(range(1, len(STAGES) + 1))
