@@ -78,10 +78,12 @@ PDF는 데모를 시작할 때 만듭니다(`console/demo/pdf_writer.py`, 표준
 Kestrel Depot, and how fast?*는 `supply-agreement.pdf` 2쪽을 인용합니다).
 
 ```bash
-uv sync --extra console
 (cd console/web && npm ci && npm run build)
-uv run python console/demo/demo.py --models fake
+uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake
 ```
+
+가짜 모델과 Ollama는 로컬 모드로 실행되므로 `local` extra도 필요합니다(`bedrock`은
+필요 없음). 데모는 무엇을 쓰거나 수집하기 전에 두 extra를 확인합니다.
 
 | `--models` | 답하는 쪽 | 필요한 것 |
 |---|---|---|

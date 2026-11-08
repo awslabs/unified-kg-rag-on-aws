@@ -81,10 +81,13 @@ page (with the fake models, *Who carries the lidar units to Kestrel
 Depot, and how fast?* cites `supply-agreement.pdf` page 2).
 
 ```bash
-uv sync --extra console
 (cd console/web && npm ci && npm run build)
-uv run python console/demo/demo.py --models fake
+uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake
 ```
+
+The fake and Ollama models run in local mode and need the `local` extra
+as well (`bedrock` does not); the demo checks both extras before it writes
+or ingests anything.
 
 | `--models` | What answers | Needs |
 |---|---|---|

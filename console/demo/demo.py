@@ -7,8 +7,9 @@ and a matching ``run-eval`` dataset (``corpus.py``) into a workspace, a
 config for the chosen models (once: a restart keeps it, with what Settings
 saved; ``--reset-config`` writes it again), ingests the corpus into the
 embedded SQLite stores (``run-ingestion``) and starts ``run-console`` on the
-loopback interface. Needs the ``console`` extra (``uv run --extra
-console``, below), checked before anything is ingested.
+loopback interface. Needs the ``console`` extra, and the ``local`` extra for
+the fake and Ollama models (``uv run --extra console --extra local``, below),
+both checked before anything is ingested.
 
 Models (``--models``):
 
@@ -23,7 +24,8 @@ Models (``--models``):
 
 Usage::
 
-    uv run --no-dev --extra console python console/demo/demo.py --models fake
+    uv run --no-dev --extra console --extra local python console/demo/demo.py \
+        --models fake
     uv run --no-dev --extra console python console/demo/demo.py \
         --models bedrock --region us-west-2
 
@@ -53,7 +55,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import corpus  # noqa: E402
 import fake_models  # noqa: E402
 
+from unified_kg_rag.application.cli.preflight import (  # noqa: E402
+    missing_extras_error,
+)
 from unified_kg_rag.application.cli.run_console import missing_extra  # noqa: E402
+from unified_kg_rag.domain.models import Config  # noqa: E402
 
 # Illustrative prices of the fake models, so the dashboard and the
 # comparison show a cost column in the fake mode. Real runs take the current
@@ -87,6 +93,15 @@ def write_corpus(workspace: Path) -> tuple[Path, Path]:
         encoding="utf-8",
     )
     return source, dataset
+
+
+def missing_local_extra(models: str) -> str | None:
+    """What the providers of ``models``' config need that is not installed
+    (the run's own preflight message), or None."""
+    config = Config.model_validate(
+        demo_config(models, model_base_url=None, region=None)
+    )
+    return missing_extras_error(config, seeds=False)
 
 
 def demo_config(
@@ -284,6 +299,18 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(
             f"The console demo needs the console extra (missing: "
             f"{', '.join(missing)}): uv run --no-dev --extra console python "
+            "console/demo/demo.py ..."
+        )
+
+    # The fake and Ollama models run in local mode, whose providers come
+    # with the local extra: checked before the corpus is written, as the
+    # ingestion would fail on it.
+    if args.models in ("fake", "ollama") and (
+        missing_local := missing_local_extra(args.models)
+    ):
+        raise SystemExit(
+            f"The {args.models} demo needs the local extra ({missing_local}): "
+            "uv run --no-dev --extra console --extra local python "
             "console/demo/demo.py ..."
         )
 

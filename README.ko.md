@@ -104,7 +104,7 @@ UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-rag --backend local --search-str
 
 `structured`(선택 사항, 논문의 방법이 아님)는 검증을 거친 읽기 전용 그래프 질의로 개수, 순위, 목록, 경로에 답하며, 그래프가 있는 모든 네임스페이스에서 쓸 수 있고 답을 못 만들면 `local`로 넘어갑니다([구조화 질의](./docs/guides/structured-queries.ko.md)). `iterative`는 `mix`나 `local`을 감싸, 멀티홉 질문의 연결 엔티티에 대해 정해진 횟수만큼 후속 검색을 더 합니다. 기본값인 `auto`에서는 LLM 라우터가 질의마다 `search.auto_routable_strategies`(기본값 `local`, `mix`, `global`, `iterative`) 중 하나를 고릅니다. 어떤 전략을 언제 쓰는지는 [검색](./docs/concepts/retrieval.ko.md#검색-전략-선택), 계층 구조·알고리즘·데이터 모델은 [설계 문서](./docs/design.md)(영문)에 있습니다.
 
-이 모든 작업을 내 컴퓨터의 브라우저에서 하려면 로컬 [콘솔](./docs/guides/console.ko.md)(`run-console`)을 시작하세요(`uv run --no-dev --extra console python console/demo/demo.py --models fake`로 합성 코퍼스에서 바로 써 볼 수 있습니다).
+이 모든 작업을 내 컴퓨터의 브라우저에서 하려면 로컬 [콘솔](./docs/guides/console.ko.md)(`run-console`)을 시작하세요(`uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake`로 합성 코퍼스에서 바로 써 볼 수 있습니다).
 
 ## AWS에 배포(선택)
 

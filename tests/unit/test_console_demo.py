@@ -186,3 +186,21 @@ def test_without_the_console_extra_the_demo_stops_before_ingesting(
     assert (
         demo.main(["--workspace", str(workspace), "--prepare-only", "--no-ingest"]) == 0
     )
+
+
+@pytest.mark.parametrize("models", ["fake", "ollama"])
+def test_the_local_model_demos_name_the_local_extra_before_any_work(
+    models: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    demo = load("demo")
+    from unified_kg_rag.application.cli import preflight
+
+    monkeypatch.setattr(preflight, "_installed", lambda module: False)
+    with pytest.raises(SystemExit) as raised:
+        demo.main(["--models", models, "--workspace", str(tmp_path), "--prepare-only"])
+    assert "--extra local" in str(raised.value)
+    assert not (tmp_path / "corpus").exists()
+
+
+def test_the_bedrock_demo_needs_no_local_extra() -> None:
+    assert load("demo").missing_local_extra("bedrock") is None
