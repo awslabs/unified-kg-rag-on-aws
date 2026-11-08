@@ -254,6 +254,19 @@ CONFORMANCE_PLANS: dict[str, dict[str, Any]] = {
         "edges": [{"direction": "both", "hops": [1, 3]}],
         "returns": {"kind": "rows", "vars": ["z"]},
     },
+    # A fixed length of two hops: one chain, no union (Neptune rejects a
+    # one-branch union followed by simplePath()).
+    "two_hop_exact": {
+        "nodes": [
+            {
+                "var": "a",
+                "where": [{"prop": "name", "op": "eq", "value": "Hooli Retail"}],
+            },
+            {"var": "z", "types": ["PRODUCT"]},
+        ],
+        "edges": [{"direction": "both", "hops": [2, 2]}],
+        "returns": {"kind": "rows", "vars": ["z"]},
+    },
     "exists_supply": {
         "nodes": [
             {
