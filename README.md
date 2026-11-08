@@ -8,7 +8,7 @@
 
 <img src="./assets/profile.png" alt="Unified Knowledge Graph RAG on AWS logo" width="120" align="right">
 
-Unified Knowledge Graph RAG on AWS turns a large, multilingual document collection into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, citing each answer's evidence with `[n]` markers that name its documents and pages. It runs four published methods on one index: Microsoft GraphRAG, LightRAG, HippoRAG 2 and, opt-in, RAPTOR. You choose the method per question, not per deployment, and build only the methods you use. Beyond the papers it adds hybrid search (keyword, vector and graph, fused and reranked), incremental indexing that removes exactly what a deleted document stated, Korean and other non-English corpora, merging a knowledge graph you already have, and an evaluation CLI whose defaults are backed by published measurements. Try it locally in five minutes without an AWS account.
+Unified Knowledge Graph RAG on AWS turns a large, multilingual document collection into a knowledge graph on Amazon Neptune and Amazon OpenSearch Service and answers questions over it with Amazon Bedrock, with `[n]` citations that name the documents and pages behind an answer (`global` and `drift` answer without them by default). It runs four published methods on one index, Microsoft GraphRAG, LightRAG, HippoRAG 2 and, opt-in, RAPTOR, chosen per question, and builds only the ones you use; [Why this framework](#why-this-framework) lists what it adds beyond the papers. You can try it locally without an AWS account ([Quickstart](#quickstart)): about five minutes, after a download of about 6 GB of models.
 
 **For** teams who want graph RAG (retrieval-augmented generation over a knowledge graph) in their own AWS account and need to pick a method, measure it and keep the index current as documents change.
 
@@ -16,7 +16,7 @@ Unified Knowledge Graph RAG on AWS turns a large, multilingual document collecti
 
 ## Why this framework
 
-- **Four methods on one index.** GraphRAG (community summaries), LightRAG (dual-level keywords), HippoRAG 2 (Personalized PageRank over entities and passages) and RAPTOR (a summary tree, opt-in) share ingestion, indexing, caching and search; only the retrieval algorithm differs. `indexing.methodologies` builds only what the selected ones read ([Methodology profiles](./docs/concepts/overview.md#methodology-profiles)), and every answer cites its evidence with `[n]` markers that name the documents and PDF pages behind each number ([Citations](./docs/guides/query.md#citations)).
+- **Four methods on one index.** GraphRAG (community summaries), LightRAG (dual-level keywords), HippoRAG 2 (Personalized PageRank over entities and passages) and RAPTOR (a summary tree, opt-in) share ingestion, indexing, caching and search; only the retrieval algorithm differs. `indexing.methodologies` builds only what the selected ones read ([Methodology profiles](./docs/concepts/overview.md#methodology-profiles)), and answers cite their evidence with `[n]` markers that name the documents and PDF pages behind each number, every strategy's but `global`'s and `drift`'s by default ([Citations](./docs/guides/query.md#citations)).
 - **Hybrid search.** BM25, vector search and Neptune graph traversal, fused with Reciprocal Rank Fusion and reranked with a Bedrock rerank model. `simple` and `naive` read no graph, and `global` maps community reports instead ([Retrieval](./docs/concepts/retrieval.md)).
 - **Incremental indexing.** With the document-status registry on, only new and changed documents are re-indexed and merged into the live graph, and deleting a document removes only what no other document states ([Incremental indexing](./docs/guides/incremental.md)).
 - **Bring your own knowledge graph.** Seed graphs (JSONL, CSV or RDF instance data) merge a graph you already have into the extracted one as virtual documents: the documents stay canonical, and the seed adds descriptions, properties, IRIs and edges ([Seed graphs](./docs/guides/seed-graphs.md)).
@@ -28,7 +28,7 @@ How this compares with the papers and with Amazon Bedrock Knowledge Bases GraphR
 
 <a id="quickstart"></a>
 
-## Quickstart (five minutes, no AWS)
+## Quickstart (no AWS)
 
 This runs everything on one machine: embedded SQLite stores and [Ollama](https://ollama.com) models. You need Python 3.11–3.12, [uv](https://docs.astral.sh/uv/) and Ollama.
 
@@ -40,7 +40,7 @@ cd unified-kg-rag-on-aws
 uv sync --no-dev --extra local
 ```
 
-**2. Pull the two default models:**
+**2. Pull the two default models** (about 6 GB):
 
 ```bash
 ollama pull qwen2.5:7b-instruct
@@ -91,7 +91,7 @@ Local mode is for development and evaluation only: the embedded stores serve one
 
 ## Architecture
 
-![Architecture at a glance: documents and seed graphs go through the 13-stage ingestion into Neptune, OpenSearch and DynamoDB; the strategies of four methods, structured graph queries, iterative and the auto router answer from the same indexes with Bedrock models, called from run-rag, Python, the MCP server or the web console, and each answer cites its documents and pages](./assets/architecture-overview.drawio.png)
+![Architecture at a glance: documents and seed graphs go through the 13-stage ingestion into Neptune, OpenSearch and DynamoDB; the strategies of four methods, structured graph queries, iterative and the auto router answer from the same indexes with Bedrock models, called from run-rag, Python, the MCP server or the web console, and answers cite their documents and pages (global and drift without citations by default)](./assets/architecture-overview.drawio.png)
 
 Ingestion is a resumable 13-stage pipeline: parse, chunk, extract entities and relationships, merge duplicate entities, detect communities with LLM-written reports, index, and for `raptor` build a summary tree. It writes to Neptune and OpenSearch on AWS, or to embedded SQLite or containers in local mode. Every strategy then runs in one chain over the same indexes and token budget; pick one with `--search-strategy` (CLI) or `RAGInput.search_strategy` (Python):
 
@@ -110,7 +110,11 @@ To do all of this in a browser on your machine, start the local [console](./docs
 
 The [`iac/`](./iac/README.md) AWS CDK app provisions the whole stack: a VPC with endpoints, Neptune, OpenSearch, the DynamoDB document-status table, an S3 cache bucket, an ECS Fargate data plane, a Step Functions ingestion pipeline, CloudWatch dashboards and alarms, and an optional Bedrock Guardrail. [`iac/README.md`](./iac/README.md#quick-start) has the `cdk synth`, `cdk bootstrap` and `cdk deploy --all` commands and every `-c key=value` option; the stores are reachable only from inside the VPC, so the deployed Fargate tasks run the CLIs ([After deploy](./iac/README.md#after-deploy)).
 
-> **Cost and teardown.** Model calls are the cost that grows with the corpus: building an index of 3,318 short paragraphs (about 280,000 words) with the default models took 16,069 Bedrock calls, $371.64 at November 2026 list prices, and a query cost from $0.016 (`ppr`) to about $0.06 (`mix`, `global`) ([how it was measured](./docs/concepts/defaults-and-evidence.md#how-the-measurements-were-run); [cost levers](./docs/guides/ingest.md#cost-levers)). Neptune and OpenSearch bill hourly, and `public` network mode adds NAT gateways. The default `dev` environment tears down with `cdk destroy --all`; non-dev environments default to retaining stateful stores with deletion protection on. Review the hardening options (`use_cmk`, `deletion_protection`, Multi-AZ sizing, `vpc_flow_logs`) in [`iac/README.md`](./iac/README.md) before production use.
+> **Cost and teardown.**
+>
+> - **Model calls grow with the corpus.** Building an index of 3,318 short paragraphs (about 280,000 words) with the default models took 16,069 Bedrock calls, $371.64 at November 2026 list prices, and a query cost from $0.016 (`ppr`) to about $0.06 (`mix`, `global`) ([how it was measured](./docs/concepts/defaults-and-evidence.md#how-the-measurements-were-run); [cost levers](./docs/guides/ingest.md#cost-levers)).
+> - **The stores bill hourly.** Neptune and OpenSearch bill by the hour, and `public` network mode adds NAT gateways.
+> - **Teardown.** The default `dev` environment tears down with `cdk destroy --all`; non-dev environments default to retaining stateful stores with deletion protection on. Review the hardening options (`use_cmk`, `deletion_protection`, Multi-AZ sizing, `vpc_flow_logs`) in [`iac/README.md`](./iac/README.md) before production use.
 
 ## Documentation
 

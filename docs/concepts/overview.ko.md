@@ -112,14 +112,14 @@ Analytics에 그래프를 만들고 유지하며, 직접 운영할 그래프 인
 
 | | Amazon Bedrock Knowledge Bases GraphRAG | 이 프레임워크 |
 |---|---|---|
-| 운영 | 완전 관리형. 지식 기반이 엔티티, 사실, 관계를 추출해 그래프를 만들고 갱신합니다([Neptune Analytics 그래프로 지식 기반 만들기](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs-build.html), 영문) | 자기 Neptune 클러스터와 OpenSearch 도메인, 또는 번들 CDK 스택 위에서 CLI나 Python 라이브러리를 직접 실행합니다. 서빙 계층은 들어 있지 않습니다([제한 사항](#제한-사항)) |
+| 운영 | 완전 관리형. 지식 기반이 엔티티, 사실, 관계를 추출해 그래프를 만들고 갱신합니다([Neptune Analytics 그래프로 지식 기반 만들기](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs-build.html), 영문) | 자기 Neptune 클러스터와 OpenSearch 도메인, 또는 번들 CDK 스택 위에서 CLI나 Python 라이브러리를 직접 실행합니다. MCP 서버의 HTTP 전송과 로컬 콘솔은 호출자를 인증하지 않으므로, 인증을 갖춘 서빙 계층은 들어 있지 않습니다([제한 사항](#제한-사항)) |
 | 저장소 | 그래프와 벡터 모두 Neptune Analytics. Neptune Analytics 그래프의 자동 확장은 지원하지 않습니다([고려 사항과 제한](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs.html), 영문) | 그래프는 Neptune, BM25와 벡터는 OpenSearch, 문서 상태 레지스트리는 DynamoDB. 로컬 모드에서는 내장 SQLite 저장소 |
-| 검색 | 한 가지 방법. 벡터 검색 후 찾은 청크에 연결된 그래프 노드를 가져와 그래프 순회로 넓힙니다([GraphRAG 동작 방식](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs.html), 영문) | 네 가지 방법(GraphRAG, LightRAG, HippoRAG 2, RAPTOR)과 `iterative`를 질의마다 고르거나 `auto` 라우터에 맡깁니다([검색](./retrieval.ko.md)) |
+| 검색 | 한 가지 방법. 벡터 검색 후 찾은 청크에 연결된 그래프 노드를 가져와 그래프 순회로 넓힙니다([GraphRAG 동작 방식](https://docs.aws.amazon.com/bedrock/latest/userguide/knowledge-base-build-graphs.html), 영문) | 네 가지 방법(GraphRAG, LightRAG, HippoRAG 2, RAPTOR), `iterative`, 선택 사항인 `structured` 그래프 질의를 질의마다 고르거나 `auto` 라우터에 맡깁니다([검색](./retrieval.ko.md)) |
 | 키워드 검색 | 벡터와 원문을 함께 검색하는 하이브리드 검색은 필터링 가능한 텍스트 필드가 있는 Amazon RDS, OpenSearch Serverless, MongoDB 벡터 저장소에서만 지원하며, 다른 저장소는 의미 검색을 씁니다([검색 유형](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-test-config.html), 영문) | `global`을 뺀 모든 전략에서 BM25, 벡터 검색, 그래프 신호를 RRF로 합치고 재순위화합니다 |
 | 그래프 구축 제어 | 그래프 구축을 바꾸는 설정은 지원하지 않으며, 그래프 구축 모델만 고릅니다 | 추출 스키마나 OWL/RDFS 온톨로지, 도메인에 맞춘 프롬프트, 이미 가진 그래프의 시드 그래프, 만들 방법론을 정합니다([Extraction schema](../guides/extraction-schema.md), [Seed graphs](../guides/seed-graphs.md), 영문) |
-| 데이터 소스 | Amazon S3만 지원하며, 데이터 소스당 파일 1,000개까지(한도 상향 요청 시 10,000개) | 디렉터리의 파일(CDK 수집 파이프라인은 코퍼스를 S3에서 복사). PDF, TXT, CSV, JSON, 그리고 `unstructured` extra로 Markdown과 HTML |
+| 데이터 소스 | Amazon S3만 지원하며, 데이터 소스당 파일 1,000개까지(한도 상향 요청 시 10,000개) | 디렉터리의 파일(CDK 수집 파이프라인은 코퍼스를 S3에서 복사). 기본 설치로 PDF, TXT, CSV, JSON, Markdown, HTML(`unstructured` extra는 Markdown과 HTML을 더 풍부하게 파싱), `docx` extra로 Word(`.docx`) |
 | 갱신 | 동기화는 증분 방식이어서 추가, 수정, 삭제된 문서만 다시 수집하거나 지웁니다([데이터 동기화](https://docs.aws.amazon.com/bedrock/latest/userguide/kb-data-source-sync-ingest.html), 영문) | 내용 해시로 증분 인덱싱하며, 삭제한 문서는 남은 텍스트 단위가 기술하지 않는 내용만 지웁니다([증분 인덱싱](../guides/incremental.ko.md)) |
-| 답변의 근거 | `RetrieveAndGenerate`가 응답 구간과 그 근거 문서를 묶은 인용(citation)을 돌려줍니다([Citation](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_Citation.html), 영문) | 모든 답변이 모델 컨텍스트에 들어간 근거 문단을 함께 돌려줍니다 |
+| 답변의 근거 | `RetrieveAndGenerate`가 응답 구간과 그 근거 문서를 묶은 인용(citation)을 돌려줍니다([Citation](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_Citation.html), 영문) | 모든 답변이 모델 컨텍스트에 들어간 출처를 함께 돌려주고, 문서와 페이지를 가리키는 `[n]` 표시로 인용합니다. 기본값으로 `global`과 `drift` 답변은 인용하지 않습니다([인용](../guides/query.ko.md#인용)) |
 | 측정 | — | LLM 없는 지표, LLM 심사, 짝 비교를 갖춘 `run-eval`. 기본값은 공개한 측정 결과로 정했습니다([기본값과 근거](./defaults-and-evidence.md), 영문) |
 | 리전 | 7개 리전(미국 동부(버지니아 북부), 미국 서부(오레곤), 유럽(프랑크푸르트, 런던, 아일랜드), 아시아 태평양(도쿄, 싱가포르)) | 설정한 Bedrock 모델과 Neptune, OpenSearch가 있는 모든 리전. 저장소와 다른 리전의 Bedrock도 쓸 수 있습니다([필수 모델](../getting-started/aws.ko.md#필수-모델)) |
 
@@ -131,21 +131,24 @@ S3에 있는 코퍼스, 한 가지 검색 방법, 운영할 인프라가 없는 
 
 이 프레임워크는 각 방법론의 검색 알고리즘을 유지하고, AWS에서 실제 코퍼스를 운영하는 데
 필요한 부분을 그 주변에 더했습니다. upstream 열은 참조 라이브러리인
-[microsoft/graphrag](https://github.com/microsoft/graphrag) 3.1.0과
-[HKUDS/LightRAG](https://github.com/HKUDS/LightRAG) 1.5.4의 소스 코드를 읽고 정리한
-내용입니다. 칸에 적은 파일이 확인할 위치이며, 저장소 루트에서 시작하는 경로(`docs/`,
-`reproduce/`)가 아니면 라이브러리의 Python 패키지(`graphrag/`, `lightrag/`) 기준입니다.
+[microsoft/graphrag](https://github.com/microsoft/graphrag) 3.1.0,
+[HKUDS/LightRAG](https://github.com/HKUDS/LightRAG) 1.5.4,
+[OSU-NLP-Group/HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG) 2.0.0a5,
+[parthsarthi03/raptor](https://github.com/parthsarthi03/raptor)(main 브랜치, 2026-11-08 기준)의
+소스 코드를 읽고 정리한 내용입니다. 칸에 적은 파일이 확인할 위치이며, 저장소 루트에서
+시작하는 경로(`docs/`, `reproduce/`)가 아니면 라이브러리의 Python 패키지(`graphrag/`,
+`lightrag/`, `src/hipporag/`, `raptor/`) 기준입니다.
 
-| 영역 | GraphRAG | LightRAG | 이 프레임워크 | 문서 |
-|---|---|---|---|---|
-| 3중 하이브리드 검색 | 엔티티 설명, 텍스트 단위, 리포트 내용에 대한 벡터 검색(`config/embeddings.py`)과 인덱싱된 테이블에서 읽는 그래프 컨텍스트. 질의 코드에 어휘(lexical) 검색이나 재순위화 모델은 없음 | 엔티티, 관계, 청크 인덱스에 대한 벡터 검색과 그래프 저장소를 라운드 로빈으로 합치고, 재순위화 모델은 선택(`operate.py`, `rerank.py`) | BM25(OpenSearch), 벡터 검색(Bedrock 임베딩), Neptune 그래프 순회를 RRF로 합치고, Bedrock rerank 모델로 재순위화하고, MMR로 다양성을 맞춤. 커뮤니티 리포트를 map하는 `global`을 뺀 모든 전략이 점수 계산기 하나를 씀(`simple`과 `naive`는 그래프 제외) | [설계 문서 §7](../design/scoring-and-citations.md#7-hybrid-scoring-and-token-management)(영문) |
-| 한 인덱스에서 여러 방법론 | 커뮤니티 리포트. 관계 벡터 인덱스(`config/embeddings.py`)와 키워드 수준 검색은 없음 | 엔티티와 관계 인덱스에 대한 이중 레벨 키워드. 커뮤니티 탐지와 리포트는 없음 | 한 번의 수집이 고른 방법론(기본값은 GraphRAG와 LightRAG이며, 이것으로 HippoRAG 2의 `ppr`도 씀)에 필요한 것을 모두 만들고, 방법론은 질의마다 직접 고르거나 `auto` 라우터가 고르며, 네임스페이스에 없는 방법론은 거절함 | [방법론 프로필](#방법론-프로필), [설계 문서 §6](../design/retrieval-graphrag-lightrag.md#6-retrieval-methodologies)(영문) |
-| 삭제 계보(lineage)를 갖춘 증분 인덱싱 | `graphrag update`는 제목이 새로운 문서를 인덱싱함. 계산한 차이에 삭제된 문서도 들어 있지만 갱신 워크플로에는 새 문서만 전달됨(`index/update/incremental_index.py`, `index/workflows/load_update_documents.py`) | 문서 상태 저장소는 파일 이름이나 내용 해시가 이미 등록된 문서의 삽입을 건너뜀(`pipeline.py`). `adelete_by_doc_id`는 문서를 지우고, 다른 문서가 여전히 뒷받침하는 엔티티와 관계는 캐시된 추출 결과로 다시 만듦(`lightrag.py`) | 레지스트리(DynamoDB, 로컬에서는 SQLite)가 내용 해시로 코퍼스를 비교해 새 문서와 바뀐 문서를 다시 인덱싱하고, 지운 문서는 각 항목이 인용한 텍스트 단위를 따라 제거해 남은 텍스트 단위가 기술하지 않는 것만 지움. 선기록(write-ahead) 장애 복구, 네임스페이스마다 쓰기 실행 하나. 속성 기반 테스트로 증분 실행이 전체 구축과 같은 결과에 수렴하는지 확인 | [증분 인덱싱](../guides/incremental.ko.md), [설계 문서 §5](../design/incremental.md#5-incremental-indexing)(영문) |
-| 다국어 | `graphrag prompt-tune --language`가 튜닝한 프롬프트의 언어를 정함(`cli/main.py`) | `SUMMARY_LANGUAGE`가 추출과 요약의 출력 언어를 정함(`addon_params.py`) | 인덱싱과 질의 시점의 선택적 번역 단계(추가 대상 언어 포함), 언어별 OpenSearch 분석기(한국어는 `nori`), 다국어 키워드 추출, 한국어·CJK를 고려한 답변 일치 채점을 모든 방법론에 적용 | [다국어 코퍼스](../guides/multilingual.ko.md), [설계 문서 §8.3](../design/aws-integration.md#83-multilingual-processing)(영문) |
-| 온톨로지와 시드 그래프 가져오기 | Bring Your Own Graph: 추출 대신 엔티티와 관계 테이블을 넣고 커뮤니티 워크플로를 실행(`docs/index/byog.md`) | `insert_custom_kg`가 주어진 청크, 엔티티, 관계를 삽입(`lightrag.py`) | 직접 선언하거나 OWL/RDFS 온톨로지에서 읽은 추출 스키마(유형, 패턴, IRI). 시드 그래프(JSONL, CSV, RDF)를 코퍼스의 가상 문서로 추출 그래프에 병합하므로 증분 실행과 삭제가 파일처럼 다루고, 문서가 기준(canonical)으로 남음 | [Extraction schema](../guides/extraction-schema.md), [Ontology](../guides/ontology.md), [Seed graphs](../guides/seed-graphs.md)(영문) |
-| 측정으로 정한 기본값과 평가 도구 | 논문은 답변을 맞비교로 판정함(포괄성, 다양성, 역량 강화, 직접성). 라이브러리 패키지에는 평가 명령이 없음 | RAGAS 평가 스크립트(`evaluation/eval_rag_quality.py`)와 논문의 맞비교 판정 프롬프트(`reproduce/batch_eval.py`) | LangChain·RAGAS 판정 모델과 함께 쓰는 LLM 없는 평가기, 반복 실행과 부트스트랩 신뢰 구간을 갖춘 짝지은 비교, 순서를 바꿔 판정하고 위치 일관성을 보고하는 맞비교 판정, 측정한 비용과 지연 시간, CI 게이트, MuSiQue 벤치마크. 기본값의 근거가 되는 측정 결과를 공개함 | [평가](../guides/evaluate.ko.md), [기본값과 근거](./defaults-and-evidence.md)(영문) |
+| 영역 | GraphRAG | LightRAG | HippoRAG 2 | RAPTOR | 이 프레임워크 | 문서 |
+|---|---|---|---|---|---|---|
+| 3중 하이브리드 검색 | 엔티티 설명, 텍스트 단위, 리포트 내용에 대한 벡터 검색(`config/embeddings.py`)과 인덱싱된 테이블에서 읽는 그래프 컨텍스트. 질의 코드에 어휘(lexical) 검색이나 재순위화 모델은 없음 | 엔티티, 관계, 청크 인덱스에 대한 벡터 검색과 그래프 저장소를 라운드 로빈으로 합치고, 재순위화 모델은 선택(`operate.py`, `rerank.py`) | 패시지, 엔티티, 사실 임베딩에 대한 밀집 검색, LLM의 사실 필터, 이어서 그래프에 대한 개인화 PageRank(`HippoRAG.py`, `rerank.py`). 어휘 검색은 없음 | 트리 노드에 대한 임베딩 거리. 모든 레벨을 한 번에(collapsed tree) 또는 레벨마다(`tree_retriever.py`). 어휘 검색이나 재순위화 모델은 없음 | BM25(OpenSearch), 벡터 검색(Bedrock 임베딩), Neptune 그래프 순회를 RRF로 합치고, Bedrock rerank 모델로 재순위화하고, MMR로 다양성을 맞춤. 커뮤니티 리포트를 map하는 `global`을 뺀 모든 전략이 점수 계산기 하나를 씀(`simple`과 `naive`는 그래프 제외) | [설계 문서 §7](../design/scoring-and-citations.md#7-hybrid-scoring-and-token-management)(영문) |
+| 한 인덱스에서 여러 방법론 | 커뮤니티 리포트. 관계 벡터 인덱스(`config/embeddings.py`)와 키워드 수준 검색은 없음 | 엔티티와 관계 인덱스에 대한 이중 레벨 키워드. 커뮤니티 탐지와 리포트는 없음 | 패시지, 엔티티, 사실과 동의어 에지로 된 Open IE 그래프. 커뮤니티와 키워드 수준은 없음 | 청크 위의 요약 트리. 그래프는 없음 | 한 번의 수집이 고른 방법론(기본값은 GraphRAG와 LightRAG이며, 이것으로 HippoRAG 2의 `ppr`도 씀)에 필요한 것을 모두 만들고, 방법론은 질의마다 직접 고르거나 `auto` 라우터가 고르며, 네임스페이스에 없는 방법론은 거절함 | [방법론 프로필](#방법론-프로필), [설계 문서 §6](../design/retrieval-graphrag-lightrag.md#6-retrieval-methodologies)(영문) |
+| 삭제 계보(lineage)를 갖춘 증분 인덱싱 | `graphrag update`는 제목이 새로운 문서를 인덱싱함. 계산한 차이에 삭제된 문서도 들어 있지만 갱신 워크플로에는 새 문서만 전달됨(`index/update/incremental_index.py`, `index/workflows/load_update_documents.py`) | 문서 상태 저장소는 파일 이름이나 내용 해시가 이미 등록된 문서의 삽입을 건너뜀(`pipeline.py`). `adelete_by_doc_id`는 문서를 지우고, 다른 문서가 여전히 뒷받침하는 엔티티와 관계는 캐시된 추출 결과로 다시 만듦(`lightrag.py`) | `index`는 새 패시지를 내용 해시로 가려 임베딩하고 그것만 추출함. `delete`는 패시지를 지우되 다른 패시지에서 나온 트리플과 엔티티는 남김(`HippoRAG.py`) | `add_documents`는 기존 트리 대신 새 트리를 만듦(`RetrievalAugmentation.py`) | 레지스트리(DynamoDB, 로컬에서는 SQLite)가 내용 해시로 코퍼스를 비교해 새 문서와 바뀐 문서를 다시 인덱싱하고, 지운 문서는 각 항목이 인용한 텍스트 단위를 따라 제거해 남은 텍스트 단위가 기술하지 않는 것만 지움. 선기록(write-ahead) 장애 복구, 네임스페이스마다 쓰기 실행 하나. 속성 기반 테스트로 증분 실행이 전체 구축과 같은 결과에 수렴하는지 확인 | [증분 인덱싱](../guides/incremental.ko.md), [설계 문서 §5](../design/incremental.md#5-incremental-indexing)(영문) |
+| 다국어 | `graphrag prompt-tune --language`가 튜닝한 프롬프트의 언어를 정함(`cli/main.py`) | `SUMMARY_LANGUAGE`가 추출과 요약의 출력 언어를 정함(`addon_params.py`) | 영어 퓨샷 추출 프롬프트(`ner.py`, `triple_extraction.py`) | 영어 요약 프롬프트(`SummarizationModels.py`) | 인덱싱과 질의 시점의 선택적 번역 단계(추가 대상 언어 포함), 언어별 OpenSearch 분석기(한국어는 `nori`), 다국어 키워드 추출, 한국어·CJK를 고려한 답변 일치 채점을 모든 방법론에 적용 | [다국어 코퍼스](../guides/multilingual.ko.md), [설계 문서 §8.3](../design/aws-integration.md#83-multilingual-processing)(영문) |
+| 온톨로지와 시드 그래프 가져오기 | Bring Your Own Graph: 추출 대신 엔티티와 관계 테이블을 넣고 커뮤니티 워크플로를 실행(`docs/index/byog.md`) | `insert_custom_kg`가 주어진 청크, 엔티티, 관계를 삽입(`lightrag.py`) | 저장해 둔 자체 Open IE 결과를 다시 씀(`load_existing_openie`). 다른 그래프를 가져오는 기능은 없음 | 텍스트로만 만듦 | 직접 선언하거나 OWL/RDFS 온톨로지에서 읽은 추출 스키마(유형, 패턴, IRI). 시드 그래프(JSONL, CSV, RDF)를 코퍼스의 가상 문서로 추출 그래프에 병합하므로 증분 실행과 삭제가 파일처럼 다루고, 문서가 기준(canonical)으로 남음 | [Extraction schema](../guides/extraction-schema.md), [Ontology](../guides/ontology.md), [Seed graphs](../guides/seed-graphs.md)(영문) |
+| 측정으로 정한 기본값과 평가 도구 | 논문은 답변을 맞비교로 판정함(포괄성, 다양성, 역량 강화, 직접성). 라이브러리 패키지에는 평가 명령이 없음 | RAGAS 평가 스크립트(`evaluation/eval_rag_quality.py`)와 논문의 맞비교 판정 프롬프트(`reproduce/batch_eval.py`) | 논문 벤치마크용 정확 일치, 토큰 F1, 검색 재현율 지표(`qa_eval.py`, `retrieval_eval.py`) | 패키지에 평가 코드가 없음 | LangChain·RAGAS 판정 모델과 함께 쓰는 LLM 없는 평가기, 반복 실행과 부트스트랩 신뢰 구간을 갖춘 짝지은 비교, 순서를 바꿔 판정하고 위치 일관성을 보고하는 맞비교 판정, 측정한 비용과 지연 시간, CI 게이트, MuSiQue 벤치마크. 기본값의 근거가 되는 측정 결과를 공개함 | [평가](../guides/evaluate.ko.md), [기본값과 근거](./defaults-and-evidence.md)(영문) |
 
-소스 코드로 확인한 범위에서는 두 라이브러리 모두 OWL이나 RDF를 읽지 않고, 인덱싱
+소스 코드로 확인한 범위에서는 네 라이브러리 모두 OWL이나 RDF를 읽지 않고, 인덱싱
 파이프라인에 문서 번역 단계가 없습니다.
 
 ### 의도적으로 다르게 한 부분
@@ -199,7 +202,9 @@ upstream의 기본값이나 알고리즘과 일부러 다르게 한 부분입니
   디렉터리의 절대 경로이므로 같은 코퍼스도 다른 디렉터리에서 수집하면 ID가 달라집니다.
   코퍼스 위치와 관계없는 ID가 필요하면 `processing.document_parsing.source_scope`를
   설정하세요.
-- **서빙 계층이 없습니다.** HTTP API, 최종 사용자 인증, 요청 속도 제한은 없습니다.
+- **인증을 갖춘 서빙 계층이 없습니다.** MCP 서버의 HTTP 전송과 로컬 콘솔은 호출자를
+  인증하지 않고 요청 속도도 제한하지 않습니다. 원격으로 배포하면 앞에 인증 프록시나
+  게이트웨이를 두세요([MCP: HTTP와 원격 배포](../guides/mcp.ko.md#http와-원격-배포)).
 - **필터는 접근 제어가 아닙니다**
   ([범위와 네임스페이스](./scopes-and-namespaces.ko.md#접근-제어-경계가-아님)).
   테넌트는 인덱스 접미사로 분리하세요.

@@ -39,7 +39,8 @@ stored is read again: follow *Upgrading* in order.
   (#475-#496).
 - Seed graphs: an existing knowledge graph (JSONL, CSV, RDF) merged into the extracted one as virtual documents
   (#497-#515).
-- Answers cite their evidence with `[n]` markers that name the documents and PDF pages behind each number (#627).
+- Answers cite their evidence with `[n]` markers that name the documents and PDF pages behind each number, by default
+  every strategy's but `global`'s and `drift`'s (#627).
 - Structured graph queries: counts, rankings, lists and paths compiled from a checked JSON plan and run read-only
   by the graph store, opt-in (#630).
 - A read-only MCP server for agents and a local web console, both opt-in (#616, #631).
