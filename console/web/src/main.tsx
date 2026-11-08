@@ -1,14 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-// Self-hosted fonts (OFL-1.1), bundled by the build: no request leaves the host.
-import "@fontsource-variable/bricolage-grotesque/standard.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-400.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-ext-400.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-500.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-ext-500.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-700.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-ext-700.css";
-import "@fontsource/atkinson-hyperlegible-mono/latin-400.css";
+// Self-hosted fonts (IBM Plex, OFL-1.1), bundled by the build: no request
+// leaves the host. scripts/gen-fonts.mjs writes fonts.css (npm run fonts).
+import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/app.css";
 import { StrictMode } from "react";

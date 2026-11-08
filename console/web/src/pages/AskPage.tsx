@@ -183,37 +183,45 @@ export function AskPage({ status }: { status: Status | null }) {
                 }}
                 rows={3}
               />
-              {strategies.data ? (
-                <StrategyPicker strategies={strategies.data.strategies} value={[strategy]} onChange={(v) => setStrategy(v[0] ?? "auto")} />
-              ) : strategies.error ? (
+              <div className="composer-options">
+                <details>
+                  <summary>
+                    {t("strategy.label")}: <strong>{strategy}</strong>
+                  </summary>
+                  {strategies.data ? (
+                    <StrategyPicker strategies={strategies.data.strategies} value={[strategy]} onChange={(v) => setStrategy(v[0] ?? "auto")} />
+                  ) : null}
+                </details>
+                <details>
+                  <summary>{t("ask.options")}</summary>
+                  <div className="grid-cols" style={{ gap: 12 }}>
+                    <label className="field">
+                      <span className="field-label">{t("ask.topK")}</span>
+                      <input className="input" type="number" min={1} max={100} value={topK} onChange={(e) => setTopK(Math.max(1, Math.min(100, Number(e.target.value) || 10)))} />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">{t("ask.searchType")}</span>
+                      <select className="select" value={searchType} onChange={(e) => setSearchType(e.target.value)}>
+                        {["hybrid", "lexical", "vector"].map((v) => (
+                          <option key={v} value={v}>
+                            {t(`ask.searchType.${v}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span className="field-label">{t("ask.filters")}</span>
+                      <textarea className="textarea mono" rows={2} value={filterText} placeholder="file_name: report.pdf" onChange={(e) => setFilterText(e.target.value)} />
+                      <span className="field-help">{t("ask.filtersHelp")}</span>
+                    </label>
+                  </div>
+                </details>
+              </div>
+              {strategies.error ? (
                 <Notice tone="bad" title={t("ask.strategiesFailed")}>
                   {errorMessage(t, strategies.error)}
                 </Notice>
               ) : null}
-              <details>
-                <summary className="field-help">{t("ask.options")}</summary>
-                <div className="grid-cols" style={{ marginTop: 12, gap: 12 }}>
-                  <label className="field">
-                    <span className="field-label">{t("ask.topK")}</span>
-                    <input className="input" type="number" min={1} max={100} value={topK} onChange={(e) => setTopK(Math.max(1, Math.min(100, Number(e.target.value) || 10)))} />
-                  </label>
-                  <label className="field">
-                    <span className="field-label">{t("ask.searchType")}</span>
-                    <select className="select" value={searchType} onChange={(e) => setSearchType(e.target.value)}>
-                      {["hybrid", "lexical", "vector"].map((v) => (
-                        <option key={v} value={v}>
-                          {t(`ask.searchType.${v}`)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span className="field-label">{t("ask.filters")}</span>
-                    <textarea className="textarea mono" rows={2} value={filterText} placeholder="file_name: report.pdf" onChange={(e) => setFilterText(e.target.value)} />
-                    <span className="field-help">{t("ask.filtersHelp")}</span>
-                  </label>
-                </div>
-              </details>
               <div className="composer-actions">
                 <label className="check">
                   <input type="checkbox" checked={followUp} onChange={(e) => setFollowUp(e.target.checked)} />

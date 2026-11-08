@@ -258,9 +258,10 @@ The next question and job use the saved file.
   send, and one from another origin is refused; on loopback a request for
   another host name is refused (DNS rebinding). No response carries a CORS
   header.
-- The page loads nothing from another host: its fonts (Bricolage Grotesque,
-  Atkinson Hyperlegible Next and Mono, SIL Open Font License) are bundled by
-  the build, so it works offline and in a private VPC.
+- The page loads nothing from another host: its fonts (IBM Plex Sans, Mono,
+  Serif, Sans KR and Sans JP, SIL Open Font License; the texts are in
+  `console/web/public/licenses/`) are bundled by the build, so it works
+  offline and in a private VPC.
 - One ingestion or evaluation job per index namespace at a time, also for
   requests made at the same moment; the pipeline's namespace lease still
   guards against a `run-ingestion` started elsewhere. Stopping the console
@@ -293,13 +294,18 @@ npm run typecheck && npm run lint && npm test
 npm run build
 ```
 
+- The design brief (palette, type scale, references, what to avoid) is
+  [`console/web/DESIGN.md`](../../console/web/DESIGN.md); change it first
+  when the direction changes. `npm run fonts` (run by `dev`, `build` and
+  `typecheck`) writes `src/styles/fonts.css` from the `@fontsource`
+  packages: WOFF2 only, the weights and subsets the styles use.
 - `npm run test:smoke` runs the Playwright smoke test against a running
   console (`CONSOLE_URL`, the printed address with its token); it skips when
   no browser is installed (`npx playwright install chromium`).
 - `node scripts/screenshots.mjs --base-url <url> --out <dir>` screenshots
   every page (`--locales en,ko --widths 1440,390`).
 - `node scripts/record-tour.mjs --base-url <printed address> --out <dir>`
-  records a scripted tour of at most 25 seconds (a question, its sources, the trail into the
+  records a scripted tour of at most 25 seconds (a question, its cited file and page, its sources, the trail into the
   graph, an evaluation comparison, the dashboard): each step waits for what
   it shows and fails with a screenshot rather than record a broken state;
   waits on models are cut. With `ffmpeg` on the path it writes the edit as

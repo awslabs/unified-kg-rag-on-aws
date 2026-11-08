@@ -342,7 +342,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
                 </table>
               </div>
             ) : (
-              <p className="muted">{t("ingest.noHistory")}</p>
+              <Empty title={t("ingest.noHistory")}>{t("ingest.noHistoryHelp")}</Empty>
             )}
           </Sheet>
         </div>

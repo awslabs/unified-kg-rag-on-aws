@@ -1,36 +1,47 @@
 /* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
- * The console's tokens (docs/design.md#101-the-console-run-console-opt-in).
- * Six named colours carry the identity; status and chart colours are
- * functional and kept apart from them.
+ * The console's tokens: the brief is console/web/DESIGN.md ("the evidence
+ * ledger"). One dominant ink (prussian), one sharp accent (highlighter) and
+ * the trace colour (cobalt); status and chart colours are functional and
+ * kept apart from them. Contrast ratios are against --sheet unless named.
  */
 :root {
   /* Identity */
-  --film: #eef2f3; /* drafting-film background */
-  --ink: #17212b; /* blue-black text */
-  --graphite: #5a6773; /* secondary text, 5.2:1 on film */
-  --hairline: #c9d2d8; /* rules and borders */
-  --trace: #2747d6; /* the provenance trace, focus, primary actions */
-  --highlighter: #ffd84d; /* matched terms only */
+  --prussian: #0e2341; /* the rail, primary actions, selected tags */
+  --prussian-hover: #1a3a63;
+  --prussian-line: #2a4670; /* rules on the rail */
+  --rail-ink: #c9d3e0; /* text on the rail, 10.4:1 */
+  --rail-muted: #8a97a6; /* secondary text on the rail, 5.3:1 */
+  --cobalt: #2453c7; /* the trace, links, focus, 6.7:1 */
+  --highlighter: #ffd43b; /* matched evidence, "you are here", 12.3:1 with ink */
 
-  /* Surfaces derived from them */
+  /* Ground and surfaces (Carbon-style layers: no shadow on a panel) */
+  --paper: #f1f3f0; /* page ground, a ledger grey-green */
   --sheet: #ffffff;
-  --sheet-sunk: #f6f8f9;
-  --trace-wash: #e7ebfb;
-  --trace-ink: #1b34a6;
-  --hairline-strong: #9aa7b1; /* decorative rules, chip outlines */
-  --control-edge: #7d8a95; /* field edges: 3.1:1 on film, 3.5:1 on sheet */
-  --placeholder: #6b7782; /* 4.6:1 on sheet */
-  --disabled-ink: #5f6b77; /* 5.0:1 on sheet-sunk */
+  --sheet-sunk: #f6f7f5; /* a well inside a sheet: code, diffs, wells */
+  --sheet-hover: #eef1ec;
+  --ink: #111a24; /* text, 15.7:1 on paper */
+  --graphite: #56606b; /* secondary text, 5.7:1 on paper, 6.4:1 on sheet */
+  --rule: #d5dad6; /* hairlines */
+  --rule-strong: #b3bab5; /* table header rules, dashed outlines */
+  --control-edge: #7c8681; /* field and button edges, 3.4:1 on paper, 3.8:1 */
+  --placeholder: #6b7480; /* 4.7:1 */
+  --disabled-ink: #646d78; /* 4.9:1 on sheet-sunk */
+
+  /* The trace colour's companions */
+  --trace: var(--cobalt);
+  --trace-ink: #1c3f99; /* trace-coloured text on a wash, 8.1:1 */
+  --trace-wash: #e8edf8;
+  --highlighter-wash: #fff3c4; /* the cited source's ground */
 
   /* Status (never used for identity or series) */
-  --good: #18794e;
-  --good-wash: #e3f3ea;
+  --good: #17734a;
+  --good-wash: #e2f2e8;
   --warn: #8a5300;
-  --warn-wash: #fdf1d8;
+  --warn-wash: #fcf0d6;
   --bad: #b42318;
-  --bad-wash: #fde8e6;
+  --bad-wash: #fce8e6;
 
   /* Chart series: the validated categorical order (dataviz reference),
    * first eight slots; a ninth folds into "other". */
@@ -44,28 +55,34 @@
   --series-8: #e34948;
   --series-other: #9aa7b1;
 
-  /* Type */
-  --font-display: "Bricolage Grotesque Variable", "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
-  --font-body: "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans",
-    "Helvetica Neue", Arial, sans-serif;
-  --font-data: "Atkinson Hyperlegible Mono", ui-monospace, "SFMono-Regular", "Cascadia Mono", Menlo, Consolas,
-    "Noto Sans Mono", monospace;
-  --cjk-ko: "Apple SD Gothic Neo", "Noto Sans KR", "Noto Sans CJK KR", "Malgun Gothic", "Source Han Sans K";
-  --cjk-ja: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Noto Sans CJK JP", "Yu Gothic UI",
-    "Yu Gothic", "Meiryo", "Source Han Sans";
-  --cjk-zh: "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "Source Han Sans SC";
-  --cyrillic: "Noto Sans", "Segoe UI", "Roboto", "Helvetica Neue", Arial;
+  /* Type: IBM Plex throughout (src/styles/fonts.css, generated). The CJK
+   * faces follow the Latin one in each stack, so Latin text keeps Plex Sans
+   * and Hangul or kana take the matching Plex design. Chinese has no Plex
+   * web font: the system faces carry it. */
+  --cjk-ko: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR";
+  --cjk-ja: "IBM Plex Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "Meiryo",
+    "Noto Sans JP", "Noto Sans CJK JP";
+  --cjk-zh: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC";
+  --font-display: "IBM Plex Serif", Georgia, serif;
+  /* Documents and questions can be in any language whatever the page's:
+   * the default stacks carry Korean and Japanese faces too (a locale's
+   * own stack, in app.css, puts its script first for the Han glyphs). */
+  --font-body: "IBM Plex Sans", "IBM Plex Sans KR", "IBM Plex Sans JP", "Helvetica Neue", Arial, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "IBM Plex Sans KR", "IBM Plex Sans JP",
+    monospace;
 
-  --leading-body: 1.55;
-  --leading-cjk: 1.72; /* Hangul, kana and Han need more air than Latin */
-
-  --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-md: 0.9375rem;
-  --text-lg: 1.0625rem;
-  --text-xl: 1.375rem;
-  --text-2xl: 1.875rem;
-  --text-3xl: 2.5rem;
+  /* Scale (DESIGN.md): size / line height */
+  --text-xs: 0.75rem; /* 12/16 labels, captions, data in dense cells */
+  --text-sm: 0.8125rem; /* 13/20 */
+  --text-md: 0.875rem; /* 14/20 body compact: tables, forms, the rail */
+  --text-base: 1rem; /* 16/24 body: answers, ledes */
+  --text-lg: 1.25rem; /* 20/28 sheet headings */
+  --text-xl: 1.75rem; /* 28/36 sections */
+  --text-2xl: 2.5rem; /* 40/48 page titles */
+  --leading-body: 1.5;
+  --leading-cjk: 1.75;
+  --weight-regular: 400;
+  --weight-strong: 600;
 
   /* Space and shape */
   --space-1: 4px;
@@ -75,13 +92,11 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
-  --radius: 8px;
-  --radius-sm: 5px;
+  --radius: 2px;
   --rail: 2px;
   --station: 11px;
-  --shadow: 0 1px 0 rgb(23 33 43 / 4%), 0 2px 8px rgb(23 33 43 / 6%);
-  --shadow-raised: 0 1px 0 rgb(23 33 43 / 5%), 0 6px 20px rgb(23 33 43 / 10%);
-  --nav-width: 236px;
+  --shadow-raised: 0 1px 2px rgb(17 26 36 / 8%), 0 8px 24px rgb(17 26 36 / 12%);
+  --nav-width: 248px;
   --duration: 420ms;
 }
 

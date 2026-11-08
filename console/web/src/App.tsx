@@ -51,7 +51,15 @@ export function App() {
       </a>
       <nav className="nav" aria-label={t("nav.label")}>
         <div className="brand">
-          <span className="brand-name display">{t("app.name")}</span>
+          <svg className="brand-mark" viewBox="0 0 28 28" aria-hidden="true">
+            <line x1="6" y1="21" x2="14" y2="7" />
+            <line x1="14" y1="7" x2="22" y2="19" />
+            <line x1="6" y1="21" x2="22" y2="19" />
+            <circle cx="6" cy="21" r="3.5" />
+            <circle cx="22" cy="19" r="3.5" />
+            <circle className="lit" cx="14" cy="7" r="3.5" />
+          </svg>
+          <span className="brand-name">{t("app.name")}</span>
           <span className="brand-sub">{t("app.tagline")}</span>
         </div>
         <ul className="nav-list">

@@ -236,9 +236,10 @@ diff, 오류, 경고를 보여 줍니다. 저장하면 파일을 쓰며, 그사�
 - 무언가를 바꾸는 요청에는 다른 사이트의 폼이 보낼 수 없는 헤더가 있어야
   하고, 다른 출처의 요청은 거부합니다. 루프백에서는 다른 호스트 이름으로 온
   요청을 거부합니다(DNS 리바인딩). 어떤 응답에도 CORS 헤더가 없습니다.
-- 페이지는 다른 호스트에서 아무것도 불러오지 않습니다. 글꼴(Bricolage
-  Grotesque, Atkinson Hyperlegible Next와 Mono, SIL Open Font License)은
-  빌드에 포함되므로 오프라인과 프라이빗 VPC에서도 동작합니다.
+- 페이지는 다른 호스트에서 아무것도 불러오지 않습니다. 글꼴(IBM Plex Sans,
+  Mono, Serif, Sans KR, Sans JP, SIL Open Font License, 라이선스 전문은
+  `console/web/public/licenses/`)은 빌드에 포함되므로 오프라인과 프라이빗
+  VPC에서도 동작합니다.
 - 인덱스 네임스페이스마다 수집이나 평가 작업은 동시에 들어온 요청까지
   포함해 한 번에 하나입니다. 다른 곳에서 시작한 `run-ingestion`은
   파이프라인의 네임스페이스 리스가 계속 막아 줍니다. 콘솔을 멈추면 그
@@ -269,13 +270,19 @@ npm run typecheck && npm run lint && npm test
 npm run build
 ```
 
+- 디자인 개요(팔레트, 글자 크기 체계, 참고 사례, 피할 것)는
+  [`console/web/DESIGN.md`](../../console/web/DESIGN.md)(영문)에 있습니다.
+  방향을 바꿀 때는 이 문서부터 고칩니다. `npm run fonts`(`dev`, `build`,
+  `typecheck`가 먼저 실행)는 `@fontsource` 패키지에서
+  `src/styles/fonts.css`를 만듭니다. 스타일이 쓰는 굵기와 문자 범위만, WOFF2로만
+  담습니다.
 - `npm run test:smoke`는 실행 중인 콘솔(`CONSOLE_URL`, 토큰이 붙은 출력
   주소)에 대해 Playwright 스모크 테스트를 실행합니다.
   브라우저가 없으면 건너뜁니다(`npx playwright install chromium`).
 - `node scripts/screenshots.mjs --base-url <url> --out <dir>`은 모든 페이지의
   스크린샷을 찍습니다(`--locales en,ko --widths 1440,390`).
 - `node scripts/record-tour.mjs --base-url <출력된 주소> --out <dir>`은 25초
-  이내의 정해진 둘러보기(질문, 출처, 그래프로 이어지는 경로, 평가 비교,
+  이내의 정해진 둘러보기(질문, 인용한 파일과 쪽, 출처, 그래프로 이어지는 경로, 평가 비교,
   대시보드)를 녹화합니다. 단계마다 보여 줄 상태를 기다리고, 깨진 상태를
   녹화하는 대신 스크린샷과 함께 실패하며, 모델 대기 시간은 잘라 냅니다.
   경로에 `ffmpeg`가 있으면 같은 구도의 MP4와 GIF로 씁니다.

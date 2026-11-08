@@ -4492,17 +4492,19 @@ output-token limit fails as the unstreamed one does
 chunk).
 
 **Identity.** The client is a knowledge-graph workbench where every claim
-has a trail. One signature element: the *provenance trace*, a cobalt rail
-from an answer through each source it read (ranked), the passage and file
-it came from, to the entity or relationship in the graph, continued on the
-Graph page around that node. Everything else is quiet: drafting-film
-background (`#EEF2F3`), blue-black ink (`#17212B`), graphite secondary text
-(`#5A6773`), hairlines (`#C9D2D8`), trace cobalt (`#2747D6`, also focus and
-primary actions) and a highlighter (`#FFD84D`, matched terms only).
-Bricolage Grotesque for page titles and large figures, Atkinson
-Hyperlegible Next for text and Atkinson Hyperlegible Mono for ids and
-numbers (unambiguous glyphs for the ids a trail is made of), with per-locale
-CJK and Cyrillic system fallbacks set through `:lang()`. UI copy is English
+has a trail; its brief, tokens and references are in
+[`console/web/DESIGN.md`](../console/web/DESIGN.md) ("the evidence
+ledger"). One signature element: the *provenance trace*, a cobalt rail
+(`#2453C7`) from an answer through each source it read (ranked), the
+passage and file it came from, to the entity or relationship in the graph,
+continued on the Graph page around that node, with matched words in a
+highlighter (`#FFD43B`) that also marks the current page. One dominant ink,
+prussian (`#0E2341`: the navigation rail and the primary action), on ruled
+white sheets over a grey-green ground (`#F1F3F0`). Type is one
+superfamily, IBM Plex (OFL), self-hosted as WOFF2 subsets: Plex Serif for
+page titles, Plex Sans for text, Plex Mono for ids and numbers, Plex Sans KR
+and JP for Korean and Japanese (Chinese takes the system faces), set per
+locale through `:lang()`. UI copy is English
 with nine more locales (the languages `LanguageCode` lists), English being
 the source and the fallback.
 

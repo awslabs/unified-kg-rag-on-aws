@@ -119,28 +119,33 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
                 <span className="field-label">{t("evaluate.repeats")}</span>
                 <input className="input" type="number" min={1} max={20} value={repeats} onChange={(e) => setRepeats(Math.max(1, Math.min(20, Number(e.target.value) || 1)))} />
               </label>
-              <label className="field" style={{ width: 180 }}>
-                <span className="field-label">{t("evaluate.budget")}</span>
-                <input className="input" inputMode="decimal" placeholder="1.0" value={budget} onChange={(e) => setBudget(e.target.value)} />
-              </label>
             </div>
-            <label className="check">
-              <input type="checkbox" checked={closedBook} onChange={(e) => setClosedBook(e.target.checked)} />
-              <span>
-                {t("evaluate.closedBook")} <span className="field-help">{t("evaluate.closedBookHelp")}</span>
-              </span>
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={pairwise} onChange={(e) => setPairwise(e.target.checked)} />
-              <span>
-                {t("evaluate.pairwise")} <span className="field-help">{t("evaluate.pairwiseHelp")}</span>
-              </span>
-            </label>
-            <label className="field">
-              <span className="field-label">{t("evaluate.gates")}</span>
-              <textarea className="textarea mono" rows={2} value={gates} placeholder="answer_match/token_f1:ci_high<-0.02" onChange={(e) => setGates(e.target.value)} />
-              <span className="field-help">{t("evaluate.gatesHelp")}</span>
-            </label>
+            <details>
+              <summary className="field-help">{t("evaluate.advanced")}</summary>
+              <div className="stack" style={{ marginTop: 12 }}>
+                <label className="field" style={{ width: 180 }}>
+                  <span className="field-label">{t("evaluate.budget")}</span>
+                  <input className="input" inputMode="decimal" placeholder="1.0" value={budget} onChange={(e) => setBudget(e.target.value)} />
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={closedBook} onChange={(e) => setClosedBook(e.target.checked)} />
+                  <span>
+                    {t("evaluate.closedBook")} <span className="field-help">{t("evaluate.closedBookHelp")}</span>
+                  </span>
+                </label>
+                <label className="check">
+                  <input type="checkbox" checked={pairwise} onChange={(e) => setPairwise(e.target.checked)} />
+                  <span>
+                    {t("evaluate.pairwise")} <span className="field-help">{t("evaluate.pairwiseHelp")}</span>
+                  </span>
+                </label>
+                <label className="field">
+                  <span className="field-label">{t("evaluate.gates")}</span>
+                  <textarea className="textarea mono" rows={2} value={gates} placeholder="answer_match/token_f1:ci_high<-0.02" onChange={(e) => setGates(e.target.value)} />
+                  <span className="field-help">{t("evaluate.gatesHelp")}</span>
+                </label>
+              </div>
+            </details>
             {error ? <Notice tone="bad">{error}</Notice> : null}
             <div className="row">
               <button className="button button-primary" disabled={!datasetRef || !chosen.length || !!active} onClick={() => void start()}>
@@ -202,7 +207,7 @@ export function EvaluatePage({ status, onJobsChanged }: { status: Status | null;
                 </table>
               </div>
             ) : (
-              <p className="muted">{t("evaluate.noSaved")}</p>
+              <Empty title={t("evaluate.noSaved")}>{t("evaluate.noSavedHelp")}</Empty>
             )}
           </Sheet>
         </div>

@@ -174,70 +174,72 @@ function GraphExplorer({ data, params }: { data: GraphData; params: URLSearchPar
       ) : null}
       <div className="graph-layout">
         <div className="stack" style={{ gap: 10 }}>
-          <div className="row">
-            <div style={{ position: "relative", flex: "1 1 260px" }}>
-              <label className="visually-hidden" htmlFor="graph-search">
-                {t("graph.search")}
-              </label>
-              <input
-                id="graph-search"
-                className="input"
-                role="combobox"
-                aria-expanded={matches.length > 0}
-                aria-controls="graph-search-results"
-                aria-activedescendant={matches[active] ? `match-${matches[active].id}` : undefined}
-                placeholder={t("graph.searchPlaceholder")}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowDown") setActive((a) => Math.min(matches.length - 1, a + 1));
-                  else if (e.key === "ArrowUp") setActive((a) => Math.max(0, a - 1));
-                  else if (e.key === "Enter" && matches[active]) pick(matches[active].id);
-                  else if (e.key === "Escape") setSearch("");
-                  else return;
-                  e.preventDefault();
-                }}
-              />
-              {matches.length ? (
-                <div className="search-results" id="graph-search-results" role="listbox">
-                  {matches.map((m, i) => (
-                    <div key={m.id} id={`match-${m.id}`} role="option" aria-selected={i === active} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(m.id)}>
-                      <span>{m.name}</span>
-                      <span className="id">
-                        {m.type} · {m.degree}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : search.trim() ? (
-                <p className="field-help" role="status">
-                  {t("graph.noMatch")}
-                </p>
-              ) : null}
+          <div className="graph-scene">
+            <div className="graph-scene-bar">
+              <div style={{ position: "relative", flex: "1 1 240px", maxWidth: 420 }}>
+                <label className="visually-hidden" htmlFor="graph-search">
+                  {t("graph.search")}
+                </label>
+                <input
+                  id="graph-search"
+                  className="input"
+                  role="combobox"
+                  aria-expanded={matches.length > 0}
+                  aria-controls="graph-search-results"
+                  aria-activedescendant={matches[active] ? `match-${matches[active].id}` : undefined}
+                  placeholder={t("graph.searchPlaceholder")}
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowDown") setActive((a) => Math.min(matches.length - 1, a + 1));
+                    else if (e.key === "ArrowUp") setActive((a) => Math.max(0, a - 1));
+                    else if (e.key === "Enter" && matches[active]) pick(matches[active].id);
+                    else if (e.key === "Escape") setSearch("");
+                    else return;
+                    e.preventDefault();
+                  }}
+                />
+                {matches.length ? (
+                  <div className="search-results" id="graph-search-results" role="listbox">
+                    {matches.map((m, i) => (
+                      <div key={m.id} id={`match-${m.id}`} role="option" aria-selected={i === active} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(m.id)}>
+                        <span>{m.name}</span>
+                        <span className="id">
+                          {m.type} · {m.degree}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : search.trim() ? (
+                  <p className="field-help" role="status">
+                    {t("graph.noMatch")}
+                  </p>
+                ) : null}
+              </div>
+              <div className="chips" role="group" aria-label={t("graph.colorBy")}>
+                <button className="chip" aria-pressed={colorBy === "community"} onClick={() => setColorBy("community")}>
+                  {t("graph.byCommunity")}
+                </button>
+                <button className="chip" aria-pressed={colorBy === "type"} onClick={() => setColorBy("type")}>
+                  {t("graph.byType")}
+                </button>
+              </div>
             </div>
-            <div className="chips" role="group" aria-label={t("graph.colorBy")}>
-              <button className="chip" aria-pressed={colorBy === "community"} onClick={() => setColorBy("community")}>
-                {t("graph.byCommunity")}
-              </button>
-              <button className="chip" aria-pressed={colorBy === "type"} onClick={() => setColorBy("type")}>
-                {t("graph.byType")}
-              </button>
-            </div>
+            <GraphCanvas
+              data={data}
+              colorOf={colorOf}
+              selected={selected}
+              highlighted={highlighted}
+              traced={traced}
+              tracedEdge={params.get("focus") && edgeTarget ? [params.get("focus")!, edgeTarget] : null}
+              onSelect={(id) => {
+                setSelected(id);
+                setCommunity(null);
+                if (id) setPanel("entity");
+              }}
+              legend={legend}
+            />
           </div>
-          <GraphCanvas
-            data={data}
-            colorOf={colorOf}
-            selected={selected}
-            highlighted={highlighted}
-            traced={traced}
-            tracedEdge={params.get("focus") && edgeTarget ? [params.get("focus")!, edgeTarget] : null}
-            onSelect={(id) => {
-              setSelected(id);
-              setCommunity(null);
-              if (id) setPanel("entity");
-            }}
-            legend={legend}
-          />
           {Object.keys(data.layout).length < data.nodes.length ? (
             <p className="field-help">{t("graph.drawnOnly", { drawn: Object.keys(data.layout).length, total: data.nodes.length })}</p>
           ) : null}

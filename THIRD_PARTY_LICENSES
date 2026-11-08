@@ -14,3 +14,16 @@ HKUDS/LightRAG
 https://github.com/HKUDS/LightRAG
 MIT License — Copyright (c) 2025 LightRAG Team
 --------------------------------------------------------------------------------
+
+================================================================================
+Bundled with the console's web client (console/web)
+
+The console's build (console/web/dist) redistributes these fonts as WOFF2
+files, installed from the @fontsource npm packages. The licence texts are in
+console/web/public/licenses/ and are copied into the build.
+
+--------------------------------------------------------------------------------
+IBM Plex Sans, IBM Plex Mono, IBM Plex Serif, IBM Plex Sans KR, IBM Plex Sans JP
+https://github.com/IBM/plex
+SIL Open Font License, Version 1.1 — Copyright 2017-2020 IBM Corp.
+--------------------------------------------------------------------------------
