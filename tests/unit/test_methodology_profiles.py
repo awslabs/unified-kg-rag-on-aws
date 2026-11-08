@@ -7,6 +7,7 @@ declarations."""
 
 from __future__ import annotations
 
+import itertools
 import logging
 from datetime import UTC, datetime
 
@@ -754,6 +755,44 @@ def test_adding_a_corpus_wide_artifact_is_missing_from_the_record() -> None:
     # No record, or one from before profiles: nothing to add.
     assert mp.missing_artifacts(None, Config()) == frozenset()
     assert mp.missing_artifacts({"pipeline_id": "p"}, Config()) == frozenset()
+
+
+def _profile_configs() -> list[Config]:
+    """A config per selection of methodologies and artifact switch values
+    (those with no effective methodology left out)."""
+    configs = []
+    for count in range(1, len(Methodology) + 1):
+        for selected in itertools.combinations(list(Methodology), count):
+            for values in itertools.product([True, False], repeat=4):
+                config = _config(*selected)
+                (
+                    config.graph.community_detection.enabled,
+                    config.graph.community_detection.report_generation.enabled,
+                    config.indexing.opensearch.build_relationship_vector_index,
+                    config.processing.claim_extraction.enabled,
+                ) = values
+                if config.effective_methodologies:
+                    configs.append(config)
+    return configs
+
+
+def test_every_artifact_an_incremental_run_adds_rebuilds_the_namespace() -> None:
+    # CORPUS_WIDE_ARTIFACTS is kept by hand: an incremental run builds what
+    # it adds for its delta alone, and its record keeps only what the stored
+    # one names, so a run that adds an artifact outside the set (other than
+    # the summary tree, whose stage reads every stored text unit) without
+    # adding one inside it would never build it for the stored documents.
+    # Each pair of configs (one per set of artifacts built): what the second
+    # adds to what the first built.
+    configs = {mp.artifacts_to_build(c): c for c in _profile_configs()}
+    silent = []
+    for built, after in itertools.product(configs, configs.values()):
+        record = _record(*built).model_dump(mode="json")
+        added = mp.artifacts_to_build(after) - built - {A.SUMMARY_TREE}
+        if added and not mp.missing_artifacts(record, after):
+            silent.append((sorted(built), sorted(added)))
+    assert len(configs) > 10
+    assert silent == []
 
 
 # --- strategies --------------------------------------------------------------

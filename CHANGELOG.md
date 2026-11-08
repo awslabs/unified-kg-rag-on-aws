@@ -916,7 +916,9 @@ From a `main` checkout (formats and keys no release had):
   default sweep and the optional indexes a strategy reads (claims, relationship vectors, reports) follow the same
   artifacts (#613). `hipporag` holds what `lightrag` builds, so `ppr` is served wherever `lightrag` is, and `raptor`
   reads a summary tree (#599). Without a build record (a namespace ingested before them), a query takes the namespace
-  to hold what a run of the config builds, `hipporag` included (#602). With
+  to hold what a run of the config builds, `hipporag` included (#602); a run writes the record before the registry
+  records its documents, so a first build or reset killed between the two leaves it (the next run found nothing to
+  index and wrote none, and queries took the namespace to hold what the config builds). With
   `graph.community_detection.report_generation.enabled: false` a run builds no reports, so an incremental run no
   longer takes them for missing and rebuilds the namespace, and the namespace holds `graphrag` for `local` while
   `global` and `drift`, which declare the reports among their artifacts, are refused naming the switch (a WARNING at

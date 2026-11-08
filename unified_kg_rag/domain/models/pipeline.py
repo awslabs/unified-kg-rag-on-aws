@@ -16,7 +16,12 @@ from .covariate import Claim
 from .document import Document, DocumentDelta, ExtractionSettings
 from .entity import Entity
 from .extraction import TextUnitExtraction
-from .methodology import IndexArtifact, Methodology, methodologies_holding
+from .methodology import (
+    IndexArtifact,
+    Methodology,
+    methodologies_holding,
+    recorded_artifacts,
+)
 from .relationship import Relationship
 from .text_unit import TextUnit
 
@@ -228,7 +233,9 @@ class IndexBuildRecord(BaseModel):
         Nothing to change when either names none."""
         if self.artifacts is None or stored is None:
             return {}
-        kept = self.with_artifacts(set(self.artifacts) & set(stored))
+        kept = self.with_artifacts(
+            recorded_artifacts(self.artifacts, stored, incremental=True)
+        )
         return {"artifacts": kept.artifacts, "methodologies": kept.methodologies}
 
     def _counted(self, counters: CommunityCounters | None) -> CommunityCounters | None:

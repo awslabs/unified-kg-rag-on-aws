@@ -110,6 +110,24 @@ def methodologies_holding(
     return tuple(m for m in Methodology if METHODOLOGY_PROFILES[m].required <= held)
 
 
+def recorded_artifacts(
+    built: Iterable[IndexArtifact],
+    stored: Iterable[IndexArtifact] | None,
+    *,
+    incremental: bool,
+) -> frozenset[IndexArtifact]:
+    """The artifacts a run's build record names, from those it ``built``
+    and those the ``stored`` record names (``None``: it names none): a full
+    build's are those it built; an incremental run's those both name, as it
+    maintains for its delta only what it builds, and builds for its delta
+    only what the namespace does not hold (adding a corpus-wide artifact
+    rebuilds the namespace instead, ``methodologies.missing_artifacts``).
+    The one rule of every writer of the record."""
+    if not incremental or stored is None:
+        return frozenset(built)
+    return frozenset(built) & frozenset(stored)
+
+
 def parse_artifacts(values: Iterable[object]) -> frozenset[IndexArtifact]:
     """The known artifacts among ``values`` (a stored record's names): one a
     later version added is skipped, not an error."""

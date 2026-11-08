@@ -147,8 +147,9 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
+from unified_kg_rag.domain.models.methodology import recorded_artifacts
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
-from unified_kg_rag.ports.indexer import BaseIndexer, GraphIndexer
+from unified_kg_rag.ports.indexer import BaseIndexer, GraphIndexer, IndexingStats
 from unified_kg_rag.shared import (
     ConfigurationError,
     ConfirmationDeclinedError,
@@ -187,6 +188,16 @@ def _completed_stages(context: PipelineContext) -> set[PipelineStageType]:
         for result in context.stage_results
         if result.status == PipelineStageStatus.COMPLETED and result.stage_name in known
     }
+
+
+def _tree_pruned(results: Mapping[str, IndexingStats]) -> bool:
+    """Whether the run's deletion of the summaries citing removed text
+    succeeded (every ``vector_summary_nodes_*`` result written)."""
+    return not any(
+        stats.failed_items
+        for key, stats in results.items()
+        if key.startswith("vector_summary_nodes_")
+    )
 
 
 def _build_knowledge_graph(context: PipelineContext) -> Any:
@@ -2715,6 +2726,28 @@ class IndexingStage(_RegistryStage):
 
         drift = None
         documents_deleted = 0
+        # The build record, written before the registry records the run's
+        # documents when the registry is on (see IncrementalIndexer.record):
+        # a run killed after the registry write leaves it.
+        counters: dict[str, CommunityCounters] | None = None
+
+        def record_build(results: Mapping[str, IndexingStats]) -> None:
+            nonlocal counters
+            if not self._writes_build_record(context, results):
+                return
+            try:
+                counters = self._record_build(
+                    context, text_units, communities, tree_pruned=_tree_pruned(results)
+                )
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - written again after the registry
+                logger.warning(
+                    "Writing the build record failed (%s); it is written again "
+                    "once the documents are recorded",
+                    e,
+                )
+
         if context.incremental_delta is not None and not self.config.indexing.reset:
             warn_about_unapplied_retired_scopes(self.config, context)
             # Applied once the stage completes: a failed removal fails it.
@@ -2727,6 +2760,7 @@ class IndexingStage(_RegistryStage):
                 communities,
                 community_reports,
                 claims,
+                record_build,
             )
         else:
             rebuild = None
@@ -2802,6 +2836,7 @@ class IndexingStage(_RegistryStage):
                     written=written,
                     counted_failed_doc_ids=failures.counted,
                     claims_missing_doc_ids=failures.claims_missing,
+                    before_registry=record_build,
                 )
                 context.record_failed_documents(incremental.recorded_failed_doc_ids)
                 context.record_retrying_documents(incremental.retrying_doc_ids)
@@ -2844,27 +2879,16 @@ class IndexingStage(_RegistryStage):
         # Validate that no backend has completely failed
         self._validate_backend_success(indexing_results)
         delta = context.incremental_delta
-        counters: dict[str, CommunityCounters] = {}
-        if (
-            delta is None
-            or self.config.indexing.reset
-            or not delta.is_empty
-            or any(s.total_items or s.failed_items for s in indexing_results.values())
-        ):
-            # An incremental run that found nothing to index wrote no item:
-            # the indices keep the record of the run that did.
-            counters = self._record_build(
-                context,
-                text_units,
-                communities,
-                tree_pruned=not any(
-                    stats.failed_items
-                    for key, stats in indexing_results.items()
-                    if key.startswith("vector_summary_nodes_")
-                ),
-            )
-        else:
-            self._record_removed_artifacts(text_units, delta)
+        if counters is None:
+            if self._writes_build_record(context, indexing_results):
+                counters = self._record_build(
+                    context,
+                    text_units,
+                    communities,
+                    tree_pruned=_tree_pruned(indexing_results),
+                )
+            else:
+                self._record_removed_artifacts(text_units, delta)
 
         metrics = {
             "indexing_results": {k: v.to_dict() for k, v in indexing_results.items()},
@@ -2927,6 +2951,20 @@ class IndexingStage(_RegistryStage):
                 (c.runs_since for c in counters.values()), default=0
             ),
         }
+
+    def _writes_build_record(
+        self, context: PipelineContext, results: Mapping[str, IndexingStats]
+    ) -> bool:
+        """Whether the run writes the build record: not an incremental run
+        that found nothing to index and wrote no item (the indices keep the
+        record of the run that did)."""
+        delta = context.incremental_delta
+        return (
+            delta is None
+            or self.config.indexing.reset
+            or not delta.is_empty
+            or any(s.total_items or s.failed_items for s in results.values())
+        )
 
     def _record_build(
         self,
@@ -3079,7 +3117,9 @@ class IndexingStage(_RegistryStage):
                 record = IndexBuildRecord.model_validate(stored)
             except ValidationError:
                 continue
-            kept = record.with_artifacts(held & building)
+            kept = record.with_artifacts(
+                recorded_artifacts(building, held, incremental=True)
+            )
             logger.info(
                 "Methodologies of '%s' no longer built: %s; recorded as gone "
                 "(their stored items stay until a reset)",
@@ -3102,6 +3142,7 @@ class IndexingStage(_RegistryStage):
         communities: list[Community],
         community_reports: list[CommunityReport],
         claims: list[Claim],
+        before_registry: Callable[[Mapping[str, IndexingStats]], None] | None = None,
     ) -> tuple[dict[str, Any], CommunityDrift | None]:
         """Index the run's delta and its community drift (``index_delta``)."""
         return index_delta(
@@ -3114,6 +3155,7 @@ class IndexingStage(_RegistryStage):
             communities,
             community_reports,
             claims,
+            before_registry,
         )
 
     def _validate_backend_success(self, indexing_results: dict[str, Any]) -> None:

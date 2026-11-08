@@ -599,6 +599,7 @@ class IncrementalIndexer:
         claims: list[Claim] | None = None,
         unclustered_entities: int = 0,
         settings_changed: bool = False,
+        before_registry: Callable[[Mapping[str, IndexingStats]], None] | None = None,
     ) -> dict[str, IndexingStats]:
         """Upsert delta artifacts and update the registry for processed docs.
 
@@ -734,6 +735,7 @@ class IncrementalIndexer:
             counted_failed_doc_ids=counted_failed_doc_ids,
             claims_missing_doc_ids=claims_missing_doc_ids,
             settings_changed=settings_changed,
+            before_registry=before_registry,
         ):
             # After the delta's writes: a changed document's new text units
             # name the records its removed ones did.
@@ -802,6 +804,7 @@ class IncrementalIndexer:
         counted_failed_doc_ids: Collection[str] = (),
         claims_missing_doc_ids: Collection[str] = (),
         settings_changed: bool = False,
+        before_registry: Callable[[Mapping[str, IndexingStats]], None] | None = None,
     ) -> bool:
         """Record the processed docs in the registry if their writes landed.
 
@@ -823,9 +826,17 @@ class IncrementalIndexer:
         :meth:`_documents_with_failed_writes`), so the next run rewrites it.
         The run's extraction settings are recorded for the scope with them,
         or without a document when ``settings_changed``.
+
+        ``before_registry(results)`` runs once the docs are to be recorded,
+        before the registry is written: the indexing stage writes the
+        suffix's build record there, so a run killed after the registry
+        write leaves the record of what it built (the next run, finding
+        nothing to index, writes none).
         """
         check_write_fence()
         if self._delta_writes_succeeded(results):
+            if before_registry is not None:
+                before_registry(results)
             noted = (
                 self.indexing_manager.note_pending_writes(results, written)
                 if written is not None
@@ -2968,6 +2979,7 @@ def index_delta(
     communities: list[Community],
     community_reports: list[CommunityReport],
     claims: list[Claim],
+    before_registry: Callable[[Mapping[str, IndexingStats]], None] | None = None,
 ) -> tuple[dict[str, IndexingStats], CommunityDrift | None]:
     """Idempotent delta indexing + stale-artifact pruning + registry write-back.
 
@@ -2975,7 +2987,8 @@ def index_delta(
     and changed documents are first recorded PENDING (write-ahead), then
     the stale artifacts of changed/deleted documents are removed, the
     freshly extracted delta is upserted and the PENDING records replaced
-    with per-document lineage so subsequent runs diff correctly.
+    with per-document lineage so subsequent runs diff correctly
+    (``before_registry``: see :meth:`IncrementalIndexer.record`).
     """
     delta = context.incremental_delta
     if delta is None:
@@ -3051,6 +3064,7 @@ def index_delta(
                 ),
                 0,
             ),
+            before_registry=before_registry,
         )
     finally:
         vectors.set_replaced_vector_keeping(True)
