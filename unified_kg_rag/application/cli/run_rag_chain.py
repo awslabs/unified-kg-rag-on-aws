@@ -64,6 +64,7 @@ from unified_kg_rag.application.cli.query_args import (
 )
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.domain.models import SearchStrategy
+from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
     ConfigurationError,
@@ -473,7 +474,7 @@ class RAGChainRunner:
         the namespace it writes)."""
         chosen = query_suffix(self.args, self.config)
         name = namespace_name(chosen, self.config)
-        color = "orange3" if chosen else "gray"
+        color = "gray" if chosen == namespace_suffix(None) else "orange3"
         return f"[dim]Index Namespace:[/dim] [{color}]{markup_safe(name)}[/{color}]"
 
     async def run(self) -> None:

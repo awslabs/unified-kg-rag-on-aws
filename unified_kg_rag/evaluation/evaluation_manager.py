@@ -44,7 +44,6 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 from unified_kg_rag.domain.ingestion.cache_keys import answer_settings
 from unified_kg_rag.domain.models import (
     Config,
-    Constants,
     EvaluationGroundTruth,
     EvaluationQuery,
     EvaluationReport,
@@ -62,6 +61,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.guardrail import GuardAction
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -1622,10 +1622,7 @@ class EvaluationManager:
         if not isinstance(self.rag_chain, GraphRAGChain):
             return {}
         suffixes = sorted(
-            {
-                q.metadata.get("suffix") or Constants.DEFAULT_SUFFIX.value
-                for q in queries
-            }
+            {resolve_namespace(self.config, q.metadata.get("suffix")) for q in queries}
         )
         builds: dict[str, dict[str, Any] | None] = {}
         for suffix in suffixes:

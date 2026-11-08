@@ -141,6 +141,7 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     TextUnitExtraction,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import BaseIndexer, GraphIndexer
 from unified_kg_rag.shared import (
     ConfigurationError,
@@ -695,7 +696,7 @@ class DocumentLoadingStage(_RegistryStage):
             ConfirmationDeclinedError: The build is not confirmed.
         """
         index_value = self.config.processing.document_parsing.index_value
-        suffix = index_value or Constants.DEFAULT_SUFFIX.value
+        suffix = resolve_namespace(self.config, None)
         if self._stores_hold_items(suffix) is False:
             logger.info(
                 "No source document reached this run and the index holds no "
@@ -2895,8 +2896,7 @@ class IndexingStage(_RegistryStage):
             )
         )
         suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units} or {
-            self.config.processing.document_parsing.index_value
-            or Constants.DEFAULT_SUFFIX.value
+            resolve_namespace(self.config, None)
         }
         try:
             package_version: str | None = version("unified-kg-rag-on-aws")
@@ -2983,8 +2983,7 @@ class IndexingStage(_RegistryStage):
         building = artifacts_to_build(self.config)
         vector_indexer = self.indexing_manager.vector_indexer
         suffixes = {BaseIndexer.get_suffix(unit) for unit in text_units} or {
-            self.config.processing.document_parsing.index_value
-            or Constants.DEFAULT_SUFFIX.value
+            resolve_namespace(self.config, None)
         }
         if delta is not None and delta.unchanged_suffixes is not None:
             suffixes |= set(delta.unchanged_suffixes)

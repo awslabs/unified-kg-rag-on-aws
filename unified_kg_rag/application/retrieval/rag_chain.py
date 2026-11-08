@@ -150,6 +150,10 @@ from unified_kg_rag.domain.retrieval.no_context import (
     is_no_context_answer,
     no_context_answer,
 )
+from unified_kg_rag.domain.retrieval.store_names import (
+    namespace_suffix,
+    resolve_namespace,
+)
 from unified_kg_rag.ports.guardrail import (
     ContentGuardPort,
     GroundingContext,
@@ -434,16 +438,20 @@ class RAGInput(BaseModel):
     """One query to :class:`GraphRAGChain` (a dict with these keys also works).
 
     ``suffix`` selects the index namespace to search: it must match the
-    ``processing.document_parsing.index_value`` the corpus was ingested with
-    (both default to ``default``). Set ``conversation_id`` and ``use_memory``
-    to continue a conversation; with ``use_memory`` and no id, a new id is
-    generated and returned on :class:`RAGOutput`. A stateless caller passes
+    ``processing.document_parsing.index_value`` the corpus was ingested with.
+    ``None`` reads the chain config's ``index_value``, else ``default``
+    (``resolve_namespace``), the namespace ingestion with that config wrote.
+    Set ``conversation_id`` and ``use_memory`` to continue a conversation;
+    with ``use_memory`` and no id, a new id is generated and returned on
+    :class:`RAGOutput`. A stateless caller passes
     the conversation itself as ``history`` instead (docs/design.md §7.2).
     """
 
     query: str = Field(description="The user's search query")
     suffix: str | None = Field(
-        default=None, description="Suffix for multi-tenant or versioned indices"
+        default=None,
+        description="Suffix for multi-tenant or versioned indices; None reads "
+        "the config's processing.document_parsing.index_value, else 'default'",
     )
     enable_thinking: bool = Field(
         default=False,
@@ -982,11 +990,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         kept = tuple(s for s in routable if s in allowed)
         if kept:
             return kept
-        namespace = (
-            suffix
-            or self.config.processing.document_parsing.index_value
-            or Constants.DEFAULT_SUFFIX.value
-        )
+        namespace = resolve_namespace(self.config, suffix)
         raise MethodologyNotIndexedError(
             f"auto may run only {_names(allowed)}, and none of them serves "
             f"the index namespace '{namespace}' (with these filters auto "
@@ -1349,12 +1353,12 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
     async def aread_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """The build record ingestion wrote on the index namespace of
-        ``suffix`` (``VectorIndexer.record_build``: what it built, under which
-        settings), read through the document retriever the answers come
-        from. ``None`` when it records none (built before build records, or a
+        ``suffix`` (``resolve_namespace``; ``VectorIndexer.record_build``:
+        what it built, under which settings), read through the document
+        retriever the answers come from. ``None`` when it records none (built before build records, or a
         backend without index metadata); a store error raises."""
         return await self._get_retriever(RetrieverRole.DOCUMENT).aread_build_record(
-            suffix
+            resolve_namespace(self.config, suffix)
         )
 
     def document_retriever(self) -> BaseGraphRAGRetriever:
@@ -2159,18 +2163,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         *,
         search: bool,
     ) -> RAGOutput | SearchOutput:
-        rag_input, input_dict = self._prepare_invoke(input)
-        await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
-        # What auto routes among (cached since the check).
-        input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
-            self, rag_input.suffix
-        )
-        # Filter keys after the methodology check, against the indexes the
-        # namespace holds: a key only an index it lacks declares would be
-        # dropped everywhere.
-        filter_validation.check_requested_filter_keys(
-            self, rag_input, input_dict["held_artifacts"]
-        )
+        rag_input, input_dict = await self._admit_query(input)
         # The root span of a query trace: the strategy, retrieval, fusion,
         # rerank, context build and model calls nest under it.
         with (
@@ -2761,6 +2754,30 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             }
         )
 
+    async def _admit_query(
+        self, inputs: RAGInput | dict[str, Any]
+    ) -> tuple[RAGInput, dict[str, Any]]:
+        """``inputs`` checked before any model call (``_prepare_invoke``),
+        with its namespace resolved once (``resolve_namespace``: a query
+        without a suffix reads the config's ``index_value``), the methodology
+        and the filter keys checked against what the namespace holds."""
+        rag_input, input_dict = self._prepare_invoke(inputs)
+        rag_input.suffix = input_dict["suffix"] = resolve_namespace(
+            self.config, rag_input.suffix
+        )
+        await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
+        # What auto routes among (cached since the check).
+        input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
+            self, rag_input.suffix
+        )
+        # Filter keys after the methodology check, against the indexes the
+        # namespace holds: a key only an index it lacks declares would be
+        # dropped everywhere.
+        filter_validation.check_requested_filter_keys(
+            self, rag_input, input_dict["held_artifacts"]
+        )
+        return rag_input, input_dict
+
     @staticmethod
     def _prepare_invoke(
         inputs: RAGInput | dict[str, Any],
@@ -2872,18 +2889,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
     ) -> AsyncGenerator[str, None]:
         """The answer chunks of :meth:`astream`; the speculative extractions
         the route did not read go to ``leftovers``."""
-        rag_input, input_dict = self._prepare_invoke(input)
-        await self.acheck_methodology(rag_input.search_strategy, rag_input.suffix)
-        # What auto routes among (cached since the check).
-        input_dict["held_artifacts"] = await methodology_check.namespace_artifacts(
-            self, rag_input.suffix
-        )
-        # Filter keys after the methodology check, against the indexes the
-        # namespace holds: a key only an index it lacks declares would be
-        # dropped everywhere.
-        filter_validation.check_requested_filter_keys(
-            self, rag_input, input_dict["held_artifacts"]
-        )
+        rag_input, input_dict = await self._admit_query(input)
         search_config = self.config.search
         deadline = _QueryDeadline(
             search_config.query_timeout_seconds,
@@ -3255,9 +3261,7 @@ def _conversation_key(
 ) -> ConversationKey:
     """The memory key of a query's conversation: one tenant's (index suffix)
     or user's conversation id never reaches another's history."""
-    return ConversationKey(
-        suffix or Constants.DEFAULT_SUFFIX.value, user_id, conversation_id
-    )
+    return ConversationKey(namespace_suffix(suffix), user_id, conversation_id)
 
 
 def _screened_query(rag_input: RAGInput, metadata: dict[str, Any]) -> str | None:

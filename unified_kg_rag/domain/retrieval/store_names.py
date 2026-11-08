@@ -9,8 +9,27 @@ vertex labels, so both sides derive the names here.
 from datetime import datetime
 from typing import Any
 
-from unified_kg_rag.domain.models import Constants, validate_safe_name
+from unified_kg_rag.domain.models import Config, Constants, validate_safe_name
 from unified_kg_rag.shared import ConfigurationError
+
+
+def namespace_suffix(suffix: str | None) -> str:
+    """The suffix a store name ends in for ``suffix``: itself, else
+    ``Constants.DEFAULT_SUFFIX``. For an item or a store request, which name
+    their suffix themselves (an item without one was written by a run
+    without ``index_value``); a query or a run resolves its own
+    with :func:`resolve_namespace`."""
+    return suffix or Constants.DEFAULT_SUFFIX.value
+
+
+def resolve_namespace(config: Config, suffix: str | None) -> str:
+    """The index suffix a query or a run under ``config`` addresses:
+    ``suffix``, else ``processing.document_parsing.index_value`` (the
+    namespace ingestion with the same config writes), else
+    ``Constants.DEFAULT_SUFFIX``. The one rule of every entry point (the
+    chain, the CLIs, the MCP server, the console, ingestion), so a query
+    without a suffix reads what ingestion with its config wrote."""
+    return namespace_suffix(suffix or config.processing.document_parsing.index_value)
 
 
 def index_suffix(value: Any) -> str | None:
@@ -51,7 +70,7 @@ def store_name(
     (``YYYYmmddHHMMSSfff``); the indexer moves a name that is already
     taken (``OpenSearchIndexer._new_index_name``).
     """
-    name = f"{base}-{suffix or Constants.DEFAULT_SUFFIX.value}"
+    name = f"{base}-{namespace_suffix(suffix)}"
     if additional_suffix:
         name = f"{name}-{additional_suffix}"
     if timestamp:

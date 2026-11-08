@@ -1220,6 +1220,10 @@ From a `main` checkout (formats and keys no release had):
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).
 
 ### Changed
+- A query without a suffix (`RAGInput(suffix=None)`) reads the chain config's
+  `processing.document_parsing.index_value`, as ingestion writes and the CLIs query (`resolve_namespace`, the one
+  rule of every entry point); it read `default`, so the console's Ask page failed with `IndexNotFoundError` after a
+  successful ingest under an `index_value`.
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).

@@ -43,6 +43,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
 from unified_kg_rag.domain.models.config import Constants
+from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared.utils.common import compute_hash, generate_stable_id
 
 if TYPE_CHECKING:
@@ -138,7 +139,7 @@ def registry_namespace(
     label prefixes are not the defaults. An item suffix never contains ``@``,
     so a tagged namespace cannot equal an untagged one.
     """
-    namespace = suffix or DEFAULT_NAMESPACE
+    namespace = namespace_suffix(suffix)
     if additional_suffix:
         namespace = f"{namespace}-{additional_suffix}"
     return f"{namespace}@{store_tag}" if store_tag else namespace

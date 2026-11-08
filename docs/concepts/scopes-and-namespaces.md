@@ -16,7 +16,7 @@ the **index suffix**, and the CLIs print the result as the run's **Index
 Namespace**. Ingestion takes it from `processing.document_parsing.index_value`
 unless `run-ingestion --suffix` names another; `run-rag` and `run-eval`
 query the same `index_value` of their config unless `--suffix` names another,
-and in Python `RAGInput.suffix` selects it (the chain does not read
+and in Python `RAGInput.suffix` selects it (`None`: the chain config's
 `index_value`). All default to `default`. Use one index suffix per
 tenant or corpus version (the same `--suffix`, or the same config file, for
 ingestion and queries), with the same `indexing.additional_suffix` on both

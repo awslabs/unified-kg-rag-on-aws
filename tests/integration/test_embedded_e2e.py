@@ -952,3 +952,30 @@ def test_a_key_point_names_only_the_documents_its_findings_cite(
         (cited,) = {r for m in credited for _, r in report_cited_records(m)}
         assert point["text_unit_ids"] == relationships[cited]
         assert set(point["text_unit_ids"]) < membership
+
+
+def test_a_query_without_a_suffix_reads_the_configs_index_value(
+    tmp_path: Path, no_aws
+) -> None:
+    # Ingestion wrote the namespace of processing.document_parsing.index_value;
+    # a query without a suffix (the console's Ask page sends none) read
+    # 'default' and failed with IndexNotFoundError after a successful ingest.
+    config = _config(tmp_path / "stores", tmp_path / "viz-data")
+    config.processing.document_parsing.index_value = "tenant"
+    server = FakeOllama(_respond, ANSWER, DIM)
+    providers = _providers(config, server, FakeCrossEncoder("synthetic-reranker"))
+    source = tmp_path / "corpus"
+    source.mkdir()
+    (source / "logistics.txt").write_text("Depot stores gadgets for Vendor.")
+    context = _ingest(config, providers, source, tmp_path / "run-1")
+    assert context.status is PipelineStageStatus.COMPLETED, _errors(context)
+
+    chain = GraphRAGChain(config, providers=providers)
+    try:
+        record = asyncio.run(chain.aread_build_record(None))
+        out = _ask(chain, SearchStrategy.LOCAL)
+    finally:
+        chain.close()
+    assert record is not None
+    assert out.answer == ANSWER and out.sources, out.metadata
+    assert not out.metadata.get("error"), out.metadata

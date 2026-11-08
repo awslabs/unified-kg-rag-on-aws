@@ -26,7 +26,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
 from unified_kg_rag.domain.ingestion.methodologies import held_artifacts
 from unified_kg_rag.domain.models import (
     Config,
-    Constants,
     IndexArtifact,
     Methodology,
     SearchStrategy,
@@ -36,6 +35,7 @@ from unified_kg_rag.domain.models.methodology import (
     artifact_switches,
     methodologies_holding,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
 
@@ -50,11 +50,7 @@ HELD_TTL_SECONDS = 300.0
 
 
 def _namespace(chain: GraphRAGChain, suffix: str | None) -> str:
-    return (
-        suffix
-        or chain.config.processing.document_parsing.index_value
-        or Constants.DEFAULT_SUFFIX.value
-    )
+    return resolve_namespace(chain.config, suffix)
 
 
 async def namespace_artifacts(
@@ -73,14 +69,14 @@ async def _namespace_holding(
     """``namespace_artifacts`` and the source scopes the build record names
     (``IndexBuildRecord.source_scopes``; None when it names none, is not
     read again here or cannot be read)."""
-    key = suffix or ""
+    key = _namespace(chain, suffix)
     now = time.monotonic()
     with chain._cache_lock:
         cached = chain._held_artifacts.get(key)
     if cached is not None and not refresh and now - cached[0] < HELD_TTL_SECONDS:
         return cached[1], None
     try:
-        record = await chain.aread_build_record(suffix)
+        record = await chain.aread_build_record(key)
     except Exception as e:  # noqa: BLE001 - the record is optional
         # The query meets a store error itself; the config stands in here,
         # for this query only: a cached fallback would refuse (or serve)

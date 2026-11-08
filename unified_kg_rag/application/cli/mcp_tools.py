@@ -35,7 +35,6 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     seed_provenance,
 )
 from unified_kg_rag.domain.models import (
-    Constants,
     GraphEdge,
     RetrievalResult,
     SearchStrategy,
@@ -44,6 +43,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.domain.models.schema import ExtractionSchema
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
@@ -489,11 +489,7 @@ class KnowledgeGraphTools:
         self.chain = chain
         self.settings = settings or chain.config.mcp
         config = chain.config
-        self.namespace = (
-            namespace
-            or config.processing.document_parsing.index_value
-            or Constants.DEFAULT_SUFFIX.value
-        )
+        self.namespace = resolve_namespace(config, namespace)
         validate_safe_name(self.namespace, "namespace")
         self.namespaces = list(
             dict.fromkeys([self.namespace, *self.settings.allowed_namespaces])

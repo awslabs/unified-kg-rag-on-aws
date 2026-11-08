@@ -50,6 +50,7 @@ from unified_kg_rag.domain.models import (
     SummaryNode,
     SummaryTreeRecord,
 )
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import BaseIndexer, VectorIndexer
 from unified_kg_rag.shared import (
     NamespaceLeaseError,
@@ -104,10 +105,7 @@ class SummaryTreeStage(_RegistryStage):
         """The suffixes the run writes: its text units', and the configured
         one (a run with nothing to index still checks its tree)."""
         units = context.translated_units or context.text_units or []
-        configured = (
-            self.config.processing.document_parsing.index_value
-            or Constants.DEFAULT_SUFFIX.value
-        )
+        configured = resolve_namespace(self.config, None)
         return sorted({*(BaseIndexer.get_suffix(unit) for unit in units), configured})
 
     def _execute_core(

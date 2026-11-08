@@ -15,8 +15,8 @@ scope)**는 실행이 비교하는 코퍼스 소스를 정하고, **네임스페
 출력합니다. 수집은 `run-ingestion --suffix`로 다른 값을 지정하지 않으면
 `processing.document_parsing.index_value`에서 가져오고, `run-rag`와
 `run-eval`은 `--suffix`로 다른 값을 지정하지 않으면 설정 파일의 같은 `index_value`를
-질의합니다. Python에서는 `RAGInput.suffix`로 고릅니다(체인은 `index_value`를 읽지
-않음). 모두 기본값은 `default`입니다.
+질의합니다. Python에서는 `RAGInput.suffix`로 고릅니다(`None`이면 체인 설정의
+`index_value`). 모두 기본값은 `default`입니다.
 테넌트나 코퍼스 버전마다 인덱스 접미사를 하나씩 두고(수집과 질의에 같은 `--suffix`나 같은
 설정 파일),
 `indexing.additional_suffix`는 양쪽에서 같게 하세요. 증분 인덱싱과 삭제는 인덱스 접미사

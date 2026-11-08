@@ -31,6 +31,7 @@ from unified_kg_rag.domain.models import (
     ExtractionSettings,
     StoredDocument,
 )
+from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import (
     DataProcessingError,
     DocStatusRegistryError,
@@ -601,7 +602,7 @@ class DynamoDBDocStatusStore:
                     item.get("status", {}).get("S"),
                     item.get("extraction_fingerprint", {}).get("S"),
                     # As ``_deserialize`` reads it.
-                    item.get("suffix", {}).get("S") or "default",
+                    namespace_suffix(item.get("suffix", {}).get("S")),
                 )
         return states
 
@@ -681,7 +682,7 @@ class DynamoDBDocStatusStore:
             doc_id=item[_SORT_KEY]["S"],
             content_hash=item["content_hash"]["S"],
             status=item["status"]["S"],
-            suffix=_str("suffix") or "default",
+            suffix=namespace_suffix(_str("suffix")),
             scope=_str(_SCOPE_ATTRIBUTE),
             file_path=_str("file_path"),
             text_unit_ids=_str_set("text_unit_ids"),
