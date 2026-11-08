@@ -309,12 +309,22 @@ def test_neptune_audit_log_is_off_by_default_and_exported_when_on() -> None:
     assert cluster["Properties"]["EnableCloudwatchLogsExports"] == ["audit"]
     assert "DBClusterParameterGroupName" in cluster["Properties"]
     # The export's log group, with the stack's retention.
-    (group,) = [
-        g
-        for g in template.find_resources("AWS::Logs::LogGroup").values()
+    ((group_id, group),) = [
+        (k, g)
+        for k, g in template.find_resources("AWS::Logs::LogGroup").items()
         if "/audit" in str(g["Properties"].get("LogGroupName"))
     ]
     assert group["Properties"]["RetentionInDays"] == 30
+    # Neptune writes to /aws/neptune/<cluster id>/audit (no "cluster/").
+    (cluster_id,) = template.find_resources("AWS::Neptune::DBCluster")
+    assert group["Properties"]["LogGroupName"] == {
+        "Fn::Join": ["", ["/aws/neptune/", {"Ref": cluster_id}, "/audit"]]
+    }
+    # The id is known once the cluster exists: the exporting instances
+    # wait for the group, so Neptune never creates it first.
+    instances = template.find_resources("AWS::Neptune::DBInstance").values()
+    assert instances
+    assert all(group_id in i.get("DependsOn", []) for i in instances)
 
 
 def test_neptune_parameter_group_family_is_checked() -> None:

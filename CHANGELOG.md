@@ -1116,8 +1116,9 @@ From a `main` checkout (formats and keys no release had):
   (Neptune, Gremlin Server, SQLite; the relationships index under a document filter and on Neptune, which reads every
   edge within the set, not one 100-edge page of them, before the per-vertex cap), and `SearchQuery.max_hops`
   overrides the expansion depth (#597).
-- CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs with the CMK and
-  `log_retention_days` (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot
+- CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
+  (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
+  (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot
   the instances after the deploy (#617). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue
   when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617); it also
   checks the Trivy image and the Dockerfile's apt pins, and builds and scans the image with the opt-in extras, so a
