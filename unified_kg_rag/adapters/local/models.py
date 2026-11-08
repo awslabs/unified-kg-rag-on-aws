@@ -80,10 +80,33 @@ def _no_keepalive_limits() -> Any:
     return httpx.Limits(max_connections=_MAX_CONNECTIONS, max_keepalive_connections=0)
 
 
+@functools.cache
+def tls_context() -> Any:
+    """The one TLS context of every model-server client in the process.
+
+    httpx builds a context per client otherwise, loading the CA bundle
+    (about 28 ms), and a query builds clients per model and per event loop.
+    Built as httpx builds its default (``SSL_CERT_FILE`` or
+    ``SSL_CERT_DIR`` when set, else certifi's bundle), when first needed.
+    """
+    httpx = importlib.import_module("httpx")
+    return httpx.create_ssl_context()
+
+
+def ollama_client_kwargs(timeout: float) -> dict[str, Any]:
+    """``client_kwargs`` for an Ollama model: the request ``timeout`` and
+    the shared TLS context (:func:`tls_context`)."""
+    return {"timeout": timeout, "verify": tls_context()}
+
+
 def ollama_async_client_kwargs(timeout: float | None = None) -> dict[str, Any]:
     """``async_client_kwargs`` for an Ollama model: no keep-alive connections,
-    and the request ``timeout`` when one is given (a query call's)."""
-    kwargs: dict[str, Any] = {"limits": _no_keepalive_limits()}
+    the shared TLS context, and the request ``timeout`` when one is given (a
+    query call's)."""
+    kwargs: dict[str, Any] = {
+        "limits": _no_keepalive_limits(),
+        "verify": tls_context(),
+    }
     if timeout is not None:
         kwargs["timeout"] = timeout
     return kwargs
@@ -187,11 +210,17 @@ def openai_http_async_client(timeout: float, transport: Any = None) -> Any:
     def build() -> Any:
         # The OpenAI client's own defaults, but for keep-alive.
         return httpx.AsyncClient(
-            timeout=timeout, limits=_no_keepalive_limits(), follow_redirects=True
+            timeout=timeout,
+            limits=_no_keepalive_limits(),
+            follow_redirects=True,
+            verify=tls_context(),
         )
 
     return _per_loop_httpx_client_class()(
-        PerLoopAsyncClient(build), timeout=timeout, follow_redirects=True
+        PerLoopAsyncClient(build),
+        timeout=timeout,
+        follow_redirects=True,
+        verify=tls_context(),
     )
 
 
@@ -419,7 +448,7 @@ class OllamaLanguageModelFactory(_LocalLanguageModelFactory):
     ) -> BaseChatModel:
         module = import_optional("langchain_ollama", self.kind)
         timeout = request_timeout(self.config, self.settings.timeout_seconds, purpose)
-        client_kwargs: dict[str, Any] = {"timeout": timeout}
+        client_kwargs = ollama_client_kwargs(timeout)
         # A query call's async client gets the timeout too (the async one
         # otherwise has none); the other purposes keep theirs as they were.
         async_timeout = timeout if purpose is ModelPurpose.QUERY else None
