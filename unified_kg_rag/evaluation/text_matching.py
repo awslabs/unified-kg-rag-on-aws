@@ -18,6 +18,25 @@ from unified_kg_rag.shared.utils.scripts import (
 )
 
 _ARTICLES = re.compile(r"\b(a|an|the)\b")
+# The articles of the other languages whose answers carry them, dropped with
+# the English ones from an answer in that language (as MLQA's evaluation
+# script does for de and es). TODO: read them from the language registry
+# once it lands, with the other per-language word lists.
+_LANGUAGE_ARTICLES: dict[str, re.Pattern[str]] = {
+    language: re.compile(r"\b(" + "|".join(words.split()) + r")\b")
+    for language, words in {
+        "de": "der die das den dem des ein eine einen einem einer eines",
+        "es": "el la los las un una unos unas",
+        "fr": "le la les l un une des",
+        "it": "il lo la i gli le l un uno una",
+        "pt": "o a os as um uma uns umas",
+    }.items()
+}
+# An elided article before a vowel ("l'accord", "un'altra"): split from its
+# word before punctuation is deleted, so it is dropped as a word of its own
+# instead of gluing to the next one ("laccord").
+_ELIDED_ARTICLE = re.compile(r"(?<!\w)(l|un)['\u2019](?=\w)")
+_ELIDING_LANGUAGES = frozenset({"fr", "it"})
 _ASCII_PUNCTUATION = frozenset(string.punctuation)
 # A comma followed by exactly three digits inside a number ("1,000,000").
 _THOUSANDS_SEPARATOR = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
@@ -78,7 +97,7 @@ def _split_or_join_dash(match: re.Match[str]) -> str:
     return " "
 
 
-def normalize_answer(text: str) -> str:
+def normalize_answer(text: str, language: str | None = None) -> str:
     """SQuAD-style answer normalization, preceded by Unicode NFKC.
 
     NFKC folds compatibility forms (fullwidth digits/letters, ligatures, the
@@ -100,8 +119,15 @@ def normalize_answer(text: str) -> str:
 
     A text consisting only of articles ("A", "The") keeps them rather than
     normalizing to an empty string.
+
+    ``language`` (the answer's ``LanguageCode`` value) also drops that
+    language's articles for German, Spanish, French, Italian and Portuguese
+    ("der Rhein" equals "Rhein", "l'accord" "accord"); other languages,
+    and ``None``, drop the English ones only.
     """
     text = unicodedata.normalize("NFKC", text).lower()
+    if language in _ELIDING_LANGUAGES:
+        text = _ELIDED_ARTICLE.sub(r"\1 ", text)
     text = _THOUSANDS_SEPARATOR.sub("", text)
     text = _JOINING_DASH.sub(_split_or_join_dash, text)
     text = _LEADING_MINUS.sub("-", text)
@@ -110,8 +136,11 @@ def normalize_answer(text: str) -> str:
     text = "".join(
         ch for i, ch in enumerate(text) if i in kept or not _is_punctuation(ch)
     )
-    without_articles = " ".join(_ARTICLES.sub(" ", text).split())
-    return without_articles or " ".join(text.split())
+    without_articles = _ARTICLES.sub(" ", text)
+    articles = _LANGUAGE_ARTICLES.get(language or "")
+    if articles is not None:
+        without_articles = articles.sub(" ", without_articles)
+    return " ".join(without_articles.split()) or " ".join(text.split())
 
 
 _SQUAD_ARTICLES = re.compile(r"\b(a|an|the)\b")
@@ -138,9 +167,9 @@ def strip_possessives(text: str) -> str:
     return _POSSESSIVE.sub("", unicodedata.normalize("NFKC", text))
 
 
-def tokenize(text: str) -> list[str]:
+def tokenize(text: str, language: str | None = None) -> list[str]:
     """Whitespace tokens of the normalized text (``normalize_answer``)."""
-    return normalize_answer(text).split()
+    return normalize_answer(text, language).split()
 
 
 def is_spaceless_script(text: str) -> bool:
@@ -403,8 +432,9 @@ def _compact_window_matches(expected: str, actual: list[str]) -> bool:
     return False
 
 
-def phrase_in_text(phrase: str, text: str) -> bool:
-    """True if ``phrase`` appears in ``text`` after normalization.
+def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
+    """True if ``phrase`` appears in ``text`` after normalization
+    (``normalize_answer`` in ``language``).
 
     Space-delimited phrases match a contiguous run of whole word tokens, so
     "AI" does not match inside "airport". Any token except a bare number also
@@ -435,15 +465,15 @@ def phrase_in_text(phrase: str, text: str) -> bool:
     """
     phrase, text = strip_possessives(phrase), strip_possessives(text)
     if is_spaceless_script(phrase):
-        cleaned = normalize_answer(phrase)
+        cleaned = normalize_answer(phrase, language)
         return bool(cleaned) and _substring_at_boundary(
-            cleaned, drop_dense_script_spaces(normalize_answer(text))
+            cleaned, drop_dense_script_spaces(normalize_answer(text, language))
         )
 
-    expected = tokenize(phrase)
+    expected = tokenize(phrase, language)
     if not expected:
         return False
-    actual = tokenize(text)
+    actual = tokenize(text, language)
     window = len(expected)
     if any(
         all(
@@ -569,6 +599,35 @@ _HAN_COUNTERS = (
     "家",
     "个",
 )
+
+# Number words of the other languages with English-like counts, from zero
+# to twelve, read in an answer in that language. The forms of one that are
+# also the indefinite article ("ein", "un", "uno", "um") are left out, as
+# English's "a" is. TODO: read them from the language registry once it
+# lands, with scale words and compounds.
+_LANGUAGE_NUMBER_WORDS: dict[str, dict[str, int]] = {
+    language: {
+        word: value
+        for value, forms in enumerate(table.split(","))
+        for word in forms.split()
+    }
+    for language, table in {
+        "de": "null,eins,zwei,drei,vier,fünf,sechs,sieben,acht,neun,zehn,elf,zwölf",
+        "es": "cero,,dos,tres,cuatro,cinco,seis,siete,ocho,nueve,diez,once,doce",
+        "fr": "zéro,,deux,trois,quatre,cinq,six,sept,huit,neuf,dix,onze,douze",
+        "it": "zero,,due,tre,quattro,cinque,sei,sette,otto,nove,dieci,undici,dodici",
+        "pt": "zero,,dois duas,três,quatro,cinco,seis,sete,oito,nove,dez,onze,doze",
+    }.items()
+}
+_LANGUAGE_NUMBER: dict[str, re.Pattern[str]] = {
+    language: re.compile(
+        r"(?<!\w)("
+        + "|".join(sorted(map(re.escape, words), key=len, reverse=True))
+        + r")(?!\w)",
+        re.IGNORECASE,
+    )
+    for language, words in _LANGUAGE_NUMBER_WORDS.items()
+}
 
 _DIGITS = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?")
 # A number word below a hundred ("twenty-one", "seven"), then any scale
@@ -809,7 +868,7 @@ def _english_value(match: re.Match[str]) -> int | None:
     return _english_count(count)
 
 
-def leading_number(text: str) -> float | None:
+def leading_number(text: str, language: str | None = None) -> float | None:
     """The first number ``text`` states as a count, or ``None``: digits
     ("4,486", "3곳", "3社"), English number words ("Three", "twenty-one",
     "three hundred and twelve"; "none", "no", "not one" and "not a single"
@@ -826,7 +885,9 @@ def leading_number(text: str) -> float | None:
     ("No single vendor"), and "one of them". A count answer states its
     number first ("Three vendors ... Two of them ..." is 3), so a numeric
     gold is compared with this number, not with every number the answer
-    happens to name."""
+    happens to name. With ``language`` German, Spanish, French, Italian or
+    Portuguese, that language's number words from zero to twelve count too
+    ("drei", "trois", "três")."""
     lines = [
         line
         for line in unicodedata.normalize("NFKC", text).splitlines()
@@ -867,6 +928,9 @@ def leading_number(text: str) -> float | None:
         ),
     )
     first(_HAN_NUMBER.finditer(body), lambda m: _han_value(m.group()))
+    if (words := _LANGUAGE_NUMBER.get(language or "")) is not None:
+        table = _LANGUAGE_NUMBER_WORDS[language or ""]
+        first(words.finditer(body), lambda m: table[m.group().lower()])
     for zero in (
         _KOREAN_NONE.search(body),
         _CJK_NONE.search(body),
@@ -878,7 +942,7 @@ def leading_number(text: str) -> float | None:
     return min(found)[1] if found else None
 
 
-def number_value(text: str) -> float | None:
+def number_value(text: str, language: str | None = None) -> float | None:
     """The number a gold answer is ("3", "4,486", "three"), else ``None``."""
-    value = leading_number(text)
+    value = leading_number(text, language)
     return value if value is not None and normalize_answer(text) else None
