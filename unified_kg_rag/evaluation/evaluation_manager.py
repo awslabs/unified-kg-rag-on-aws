@@ -62,6 +62,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     CONTEXT_SUFFICIENT_KEY,
     INSUFFICIENCY_REASON_KEY,
 )
+from unified_kg_rag.domain.retrieval.degradation import DegradationReport
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.guardrail import GuardAction
 from unified_kg_rag.shared import (
@@ -158,6 +159,11 @@ _WARM_UP_KEYS = (
     "top_k",
     "retrieval_multiplier",
 )
+
+
+def _mapping(value: Any) -> dict[str, Any] | None:
+    """``value`` when it is a mapping (a chain's metadata), else None."""
+    return value if isinstance(value, dict) else None
 
 
 class _AnswerSpend:
@@ -946,22 +952,13 @@ class EvaluationManager:
     @staticmethod
     def _degraded_error(rag_metadata: Any) -> str | None:
         """The type name of a step failure the strategy absorbed, if any."""
-        if not isinstance(rag_metadata, dict):
-            return None
-        degraded = rag_metadata.get("degraded_error")
-        return str(degraded) if degraded else None
+        return DegradationReport.of(_mapping(rag_metadata)).degraded_error
 
     @staticmethod
     def _degraded_steps(rag_metadata: Any) -> list[str]:
         """The steps of the chain's degradation ledger (``degraded``)."""
-        entries = (
-            rag_metadata.get("degraded") if isinstance(rag_metadata, dict) else None
-        )
-        if not isinstance(entries, list):
-            return []
-        return [
-            str(e["step"]) for e in entries if isinstance(e, dict) and e.get("step")
-        ]
+        report = DegradationReport.of(_mapping(rag_metadata))
+        return [entry.step for entry in report.degraded if entry.step]
 
     @staticmethod
     def _guardrail_block(rag_metadata: Any) -> Literal["input", "output"] | None:

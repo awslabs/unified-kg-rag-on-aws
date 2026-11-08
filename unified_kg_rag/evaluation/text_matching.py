@@ -16,8 +16,12 @@ from unified_kg_rag.shared.utils.scripts import (
     has_dense_script,
     is_dense_script_char,
     is_hangul_syllable,
+    letter_class,
     script_of,
 )
+
+# A Hangul letter (the script table's blocks): a Korean word goes on.
+_HANGUL = f"[{letter_class('hangul')}]"
 
 
 def _words(words: frozenset[str] | set[str]) -> re.Pattern[str]:
@@ -609,7 +613,7 @@ _ENGLISH_NUMBER = re.compile(
     re.IGNORECASE,
 )
 _KOREAN_NUMBER = re.compile(
-    r"(?<![가-힣])(?P<tens>"
+    rf"(?<!{_HANGUL})(?P<tens>"
     + "|".join(sorted(_KOREAN_NATIVE_TENS, key=len, reverse=True))
     + r")?(?P<ones>"
     + "|".join(sorted(_KOREAN_NATIVE_ONES, key=len, reverse=True))
@@ -619,7 +623,7 @@ _KOREAN_NUMBER = re.compile(
 )
 # "없습니다" on its own word ("벤더가 없습니다"), not closing a compound
 # adjective ("문제없습니다", no problem).
-_KOREAN_NONE = re.compile(r"(?<![가-힣])없(?:습니다|어요|다|음)")
+_KOREAN_NONE = re.compile(rf"(?<!{_HANGUL})없(?:습니다|어요|다|음)")
 # Zero stated by a Chinese or Japanese verb of absence: "没有供应商",
 # "サプライヤーはいません", not "no problem" ("没有问题", "問題ありません")
 # nor a negated copula ("Aではありません").
@@ -703,7 +707,7 @@ _DENSE_WORD = f"[{DENSE_SCRIPT_LETTERS}]"
 _PARTITIVE_WHOLE_AFTER = re.compile(
     rf"\s?{_ANY_COUNTER}?(?:の|의)?\s?{_DENSE_WORD}{{0,5}}?\s?(?:之中|当中|當中"
     r"|中(?=[，,、\s只仅僅有的共就\d一二两兩三四五六七八九十])"
-    r"|のうち|の中で|중(?:에서|에)?(?![가-힣])|가운데)"
+    rf"|のうち|の中で|중(?:에서|에)?(?!{_HANGUL})|가운데)"
 )
 # "Not one vendor" and "not even one" state zero, unless "but" corrects
 # them ("not one but three") or a partitive follows ("is not one of them").

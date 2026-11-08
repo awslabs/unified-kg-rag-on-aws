@@ -886,20 +886,16 @@ class BaseSearchStrategy(ABC):
                 if found_id is not None:
                     stored[(dataset, str(found_id))] = metadata
         for report, records in cited.items():
-            units: dict[str, None] = {}
-            documents: dict[str, None] = {}
-            for record in records:
-                metadata = stored.get(record) or {}
-                units.update(
-                    dict.fromkeys(source_fields.listed(metadata, "text_unit_ids"))
-                )
-                documents.update(
-                    dict.fromkeys(source_fields.listed(metadata, "document_ids"))
-                )
+            items = [stored.get(record) or {} for record in records]
+            units = merge_lineages(
+                source_fields.listed(item, "text_unit_ids") for item in items
+            )
             if units:
                 lineages[report] = {
-                    "text_unit_ids": list(units),
-                    "document_ids": list(documents),
+                    "text_unit_ids": units,
+                    "document_ids": merge_lineages(
+                        source_fields.listed(item, "document_ids") for item in items
+                    ),
                 }
         return lineages
 
@@ -2123,9 +2119,7 @@ class BaseSearchStrategy(ABC):
             value = result.metadata.get(key)
             if not value and key == "id" and result.source:
                 value = result.source
-            if value:
-                values = value if isinstance(value, list) else [value]
-                ids.update(dict.fromkeys(str(v) for v in values))
+            ids.update(dict.fromkeys(source_fields.id_list(value)))
         return list(ids)
 
     @staticmethod
