@@ -13,6 +13,8 @@ from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any, TypeVar
 
+from .scripts import drop_optional_marks
+
 _T = TypeVar("_T")
 
 # Fraction of CPUs to use for the default process/thread-pool worker count.
@@ -81,13 +83,32 @@ def default_max_workers() -> int:
     return max(1, int(_available_cpu_count() * _DEFAULT_WORKER_CPU_FRACTION))
 
 
-# Strip punctuation/symbols but KEEP letters, marks and digits of ANY script
-# (\w is Unicode-aware in Python 3). The previous [^a-z0-9\s] deleted all
-# non-ASCII text, which collapsed every CJK/Cyrillic/accented entity name to ""
-# — and since entity ids are hashes of the normalized name, that zeroed out the
-# graph for non-English corpora (a core multilingual-support bug). Underscore is
-# treated as a separator (handled before this runs).
+# Strip punctuation/symbols but KEEP letters, marks and digits of ANY script.
+# The previous [^a-z0-9\s] deleted all non-ASCII text, which collapsed every
+# CJK/Cyrillic/accented entity name to "" — and since entity ids are hashes of
+# the normalized name, that zeroed out the graph for non-English corpora (a
+# core multilingual-support bug). \w alone is not enough: it holds no
+# combining mark, so a Devanagari or Thai vowel sign split its word
+# ("राहुल" -> "र ह ल"). Underscore is treated as a separator (handled before
+# this runs).
 RE_INVALID_CHARS = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def _drop_symbols(text: str) -> str:
+    """``text`` with every character but a letter, digit, mark or space
+    replaced by a space."""
+    if not RE_INVALID_CHARS.search(text):
+        return text
+    return "".join(
+        (
+            ch
+            if ch.isalnum() or ch.isspace() or unicodedata.category(ch)[0] == "M"
+            else " "
+        )
+        for ch in text
+    )
+
+
 RE_EXTRA_SPACES = re.compile(r"\s+")
 
 
@@ -157,7 +178,9 @@ def normalize_name(name: str | None) -> str:
     overlap ignores it.
 
     Unicode-aware: casefold + NFKC normalization, treat _/- as separators, drop
-    punctuation/symbols but keep letters/marks/digits of any script. If the
+    punctuation/symbols but keep letters/marks/digits of any script, except
+    the marks a script writes at will (Arabic short vowels, Hebrew points:
+    ``drop_optional_marks``). If the
     cleaned result is empty (e.g. a name made only of punctuation/emoji) fall
     back to the casefolded original so a non-empty input never collapses to ""
     (which would merge unrelated entities under the same id).
@@ -169,7 +192,7 @@ def normalize_name(name: str | None) -> str:
     # Unicode-correct lowercasing (handles ß, Turkish İ, Greek, etc.).
     normalized = unicodedata.normalize("NFKC", name).casefold()
     normalized = normalized.replace("_", " ").replace("-", " ")
-    normalized = RE_INVALID_CHARS.sub(" ", normalized)
+    normalized = drop_optional_marks(_drop_symbols(normalized))
     normalized = RE_EXTRA_SPACES.sub(" ", normalized).strip()
 
     return normalized or unicodedata.normalize("NFKC", name).casefold().strip()

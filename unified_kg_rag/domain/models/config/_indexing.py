@@ -297,11 +297,12 @@ class OpenSearchIndexingConfig(BaseModel):
     language_analyzers: dict[str, str] = Field(
         default_factory=lambda: dict(DEFAULT_LANGUAGE_ANALYZERS),
         description=(
-            "Text analyzer per language code: by default every "
-            "processing.translation language has one (de: german, en: "
-            "english, es: spanish, fr: french, it: italian, ja: cjk, ko: "
-            "nori, pt: portuguese, ru: russian, zh: cjk); a language without "
-            "an entry uses default_analyzer. All are built into OpenSearch "
+            "Text analyzer per language code: by default every language with "
+            "a profile has one (ar: arabic, de: german, en: english, es: "
+            "spanish, fr: french, he: standard, hi: hindi, it: italian, ja: "
+            "cjk, ko: nori, pt: portuguese, ru: russian, th: thai, vi: "
+            "standard, zh: cjk); a language without an entry (another BCP-47 "
+            "code) uses default_analyzer. All are built into OpenSearch "
             "but nori, which needs the analysis-nori plugin: an Amazon "
             "OpenSearch Service domain has it only once its optional package "
             "is associated (the CDK stack maps ko to cjk). An index keeps the "

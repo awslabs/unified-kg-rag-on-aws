@@ -5,8 +5,9 @@
 Script-aware, not language-specific: a full-width or ideographic stop
 (``。！？．｡``) ends a sentence wherever it stands, since Chinese and Japanese
 write no space after it; a Latin stop (``.!?…``, used by the Latin and
-Cyrillic languages and by Korean) ends one only before whitespace or the end
-of the text, and a ``.`` not before a lowercase letter, so neither ``3.5``
+Cyrillic languages and by Korean), the Devanagari danda (``।``) or the
+Arabic question mark (``؟``) ends one only before whitespace or the end of
+the text, and a ``.`` not before a lowercase letter, so neither ``3.5``
 nor ``e.g. the`` is a boundary. Closing quotes and brackets after a stop
 stay with its sentence, and a line break ends one too (a list item or a
 heading has no stop).
@@ -25,11 +26,13 @@ __all__ = [
 
 # The one set of sentence and clause marks the chunker, the context
 # truncation and sentence_ends cut at.
-# Stops that end a sentence wherever they stand (Chinese and Japanese write
-# no space after them).
-UNSPACED_STOPS = "。．｡！？‼⁇⁈⁉"
-# Stops that end one only before whitespace or the end of the text.
-SPACED_STOPS = ".!?…"
+# Stops that end a sentence wherever they stand (Chinese, Japanese, Myanmar
+# and Khmer write no space after them).
+UNSPACED_STOPS = "。．｡！？‼⁇⁈⁉။។"
+# Stops that end one only before whitespace or the end of the text: the
+# Latin ones (also Cyrillic's and Korean's), the Devanagari danda and double
+# danda, the Arabic question mark and the Urdu full stop.
+SPACED_STOPS = ".!?…।॥؟۔"
 # Clause marks a text without spaces may be cut at when no stop is near.
 CLAUSE_MARKS = "、，；"
 

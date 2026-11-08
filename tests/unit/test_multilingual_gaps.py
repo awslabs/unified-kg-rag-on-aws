@@ -236,11 +236,15 @@ def test_the_index_language_is_the_source_language_without_translation(
     assert index_language(config) == language
 
 
-def test_an_unknown_language_code_is_refused_on_assignment() -> None:
+def test_what_is_no_language_code_is_refused_on_assignment() -> None:
     from pydantic import ValidationError
 
+    translation = Config().processing.translation
+    # Another BCP-47 code is a language without a profile (domain.languages).
+    translation.source_language = "xx"  # type: ignore[assignment]
+    assert translation.source_language.value == "xx"
     with pytest.raises(ValidationError):
-        Config().processing.translation.source_language = "xx"  # type: ignore[assignment]
+        translation.source_language = "not a code"  # type: ignore[assignment]
 
 
 def test_every_prompt_that_writes_corpus_text_names_its_language() -> None:

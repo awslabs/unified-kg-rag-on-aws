@@ -99,6 +99,12 @@ class TestNormalizeName:
             ("Müller", "müller"),
             # NFKC normalization unifies full-width forms.
             ("Ａ１２３", "a123"),
+            # A vowel sign is part of its word, not a separator.
+            ("राहुल गांधी", "राहुल गांधी"),
+            ("คลังสินค้า", "คลังสินค้า"),
+            # The marks a script writes at will are dropped.
+            ("مُحَمَّد", "محمد"),
+            ("שָׁלוֹם", "שלום"),
         ],
     )
     def test_normalization_preserves_non_latin(self, value: str, expected: str) -> None:

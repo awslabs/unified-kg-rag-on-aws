@@ -43,10 +43,13 @@ __all__ = [
     "ScriptCounts",
     "Spacing",
     "count_letters",
+    "drop_optional_marks",
     "drop_dense_script_spaces",
     "has_dense_script",
+    "has_unspaced_script",
     "is_dense_script_char",
     "is_hangul_syllable",
+    "is_unspaced_char",
     "letter_class",
     "script_named",
     "script_of",
@@ -342,6 +345,19 @@ DENSE_SCRIPT_TOKEN_RANGES: Ranges = tuple(
 )
 
 
+_OPTIONAL_MARK = re.compile(
+    f"[{_class_body(tuple(span for s in SCRIPTS for span in s.optional_marks))}]"
+)
+
+
+def drop_optional_marks(text: str) -> str:
+    """``text`` without the marks its scripts write at will (Arabic short
+    vowels and tatweel, Hebrew points): "مُحَمَّد" is "محمد", "שָׁלוֹם"
+    "שלום". Precomposed presentation forms are left as they are: normalize
+    the text (NFC or NFKC) first."""
+    return _OPTIONAL_MARK.sub("", text)
+
+
 # One compiled class: the per-character range scan these tests replaced held
 # the GIL for about a third of a local search's CPU (MMR's redundancy terms
 # test every word of every candidate), which concurrent queries in one
@@ -368,20 +384,36 @@ def is_hangul_syllable(ch: str) -> bool:
 _WHITESPACE = re.compile(r"\s+")
 
 
-def drop_dense_script_spaces(text: str) -> str:
-    """Remove whitespace next to a Han, Hangul or Kana letter.
+_UNSPACED_LETTER = re.compile(f"[{DENSE_SCRIPT_LETTERS}{SPACELESS_SCRIPT_LETTERS}]")
+
+
+def is_unspaced_char(ch: str) -> bool:
+    """True if ``ch`` is a letter of a script that needs no spaces between
+    words: a dense one (Han, Hangul, Kana) or a spaceless one (Thai, Lao,
+    Myanmar, Khmer, Tai)."""
+    ord(ch)  # one character: TypeError otherwise
+    return _UNSPACED_LETTER.match(ch) is not None
+
+
+def has_unspaced_script(text: str) -> bool:
+    """True if ``text`` contains a letter of a dense or spaceless script."""
+    return _UNSPACED_LETTER.search(text) is not None
+
+
+def drop_dense_script_spaces(text: str, *, spaceless: bool = False) -> str:
+    """Remove whitespace next to a Han, Hangul or Kana letter (and with
+    ``spaceless`` next to a Thai, Lao, Myanmar, Khmer or Tai one).
 
     Word spacing is optional in these scripts ("가나다 상사" / "가나다상사",
     "3억 원" / "3억원"), so two spellings that differ only there compare
     equal afterwards. Other whitespace runs collapse to one space.
     """
+    letter = is_unspaced_char if spaceless else is_dense_script_char
 
     def replace(match: re.Match[str]) -> str:
         before = text[match.start() - 1] if match.start() else ""
         after = text[match.end()] if match.end() < len(text) else ""
-        dense = (bool(before) and is_dense_script_char(before)) or (
-            bool(after) and is_dense_script_char(after)
-        )
-        return "" if dense else " "
+        joined = (bool(before) and letter(before)) or (bool(after) and letter(after))
+        return "" if joined else " "
 
     return _WHITESPACE.sub(replace, text)

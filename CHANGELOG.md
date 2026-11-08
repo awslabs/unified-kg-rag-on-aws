@@ -643,6 +643,9 @@ From a `main` checkout (formats and keys no release had):
   `retrieval_config_sha256`: a resumed `--pipeline-id` runs Leiden, indexing and the summary tree again (the reports
   come from the extraction store without a model call), and runs saved before pool with new ones only under
   `--pool-runs`.
+- Languages: a Hindi, Arabic or Urdu document with a paragraph longer than a chunk is cut after `।`, `؟` or `۔`
+  now, so a reset re-chunks it and extracts its text units again (an incremental run only its changed documents);
+  names with Devanagari or Thai vowel signs may resolve otherwise on that reset.
 
 ### Added
 - A query reports every step it answered without in `metadata["degraded"]` (each `step`, `reason`, `error_type`;
@@ -1251,6 +1254,16 @@ From a `main` checkout (formats and keys no release had):
 - Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
   (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).
+- Languages (`domain/languages/`): one `LanguageProfile` per code holds the language's name, script, OpenSearch
+  analyzer, decline and the words answers in it are read by; every consumer reads the profiles. Arabic, Hebrew,
+  Hindi, Thai and Vietnamese have one (`ar: arabic`, `hi: hindi`, `th: thai`, `he` and `vi`: `standard`), and
+  `source_language`/`target_language` take any other BCP-47 code with one WARNING and the defaults (a region is
+  dropped: `pt-BR` is `pt`). The embedded engine stems German, French, Spanish, Italian, Portuguese, Russian, Arabic
+  and Hindi with Snowball, normalizes Arabic as Lucene does and splits Thai runs into character pairs. A
+  Devanagari or Thai name keeps its vowel signs in fuzzy matching (`राहुल` was `र ह ल`), Arabic short vowels and
+  Hebrew points are dropped there, a Thai span or name is grounded by character pairs (a Thai sentence was one
+  token, too short to judge), the chunker and sentence ends cut after `।`, `॥`, `؟`, `۔`, `။` and `។`, the query
+  entity list splits at `،` and `؛`, and a Thai summary's length hint counts characters.
 
 ### Changed
 - A query without a suffix (`RAGInput(suffix=None)`) reads the chain config's

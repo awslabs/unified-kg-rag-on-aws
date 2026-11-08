@@ -244,7 +244,11 @@ class TranslationConfig(BaseModel):
     )
     source_language: LanguageCode = Field(
         default=LanguageCode.EN,
-        description="Predominant source language of the corpus. Selects the "
+        description="Predominant source language of the corpus: a code with a "
+        "language profile (ar, de, en, es, fr, he, hi, it, ja, ko, pt, ru, th, "
+        "vi, zh) or another BCP-47 language code, which gets the defaults of a "
+        "language without one (the default_analyzer, English declines; one "
+        "WARNING). Selects the "
         "OpenSearch analyzer of the original chunk text and drives the "
         "same-language no-op skip; translation itself is content-driven. With "
         "translation disabled the corpus is indexed in it: extraction, "

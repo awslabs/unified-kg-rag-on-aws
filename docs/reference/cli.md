@@ -214,7 +214,7 @@ Guide: [Benchmarks](../guides/benchmarks.md). Also takes the [provider flags](#p
 | `--unit-tokens` | `600` | assertions: estimated tokens per text unit (default 600). |
 | `--max-units` | `3000` | assertions: text units sampled (with --seed) and embedded (default 3000). |
 | `--max-assertions` | `10` | assertions: assertions kept per question (default 10). |
-| `--language` | — | assertions: language of the questions and assertions (default: processing.translation.source_language). One of `de`, `en`, `es`, `fr`, `it`, `ja`, `ko`, `pt`, `ru`, `zh`. |
+| `--language` | — | assertions: language of the questions and assertions (default: processing.translation.source_language). One of `ar`, `de`, `en`, `es`, `fr`, `he`, `hi`, `it`, `ja`, `ko`, `pt`, `ru`, `th`, `vi`, `zh`. |
 | `--config-path` | — | Configuration YAML file (without one: the built-in defaults and the UKR__ environment variables); a missing file is a usage error. |
 | `--allow-unknown-keys` | off | Ignore config keys (and UKR__ environment variables) the configuration does not define, with a warning each, instead of failing. A misspelled key otherwise leaves its setting at the default without a word. |
 

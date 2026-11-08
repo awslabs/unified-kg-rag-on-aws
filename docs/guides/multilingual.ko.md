@@ -47,12 +47,16 @@ processing:
 
 ## 분석기
 
-- **분석기**는 `indexing.opensearch.language_analyzers`에서 정합니다. 지원하는 언어는
-  모두 기본값이 있습니다. `de: german`, `en: english`, `es: spanish`, `fr: french`,
-  `it: italian`, `pt: portuguese`, `ru: russian`은 OpenSearch 언어 분석기(불용어 제거와
-  어간 추출), `ja: cjk`와 `zh: cjk`는 겹치는 두 글자 단위(플러그인 불필요, "首都"가
-  "日本の首都は" 안에서 맞음), `ko: nori`입니다. 항목이 없는 언어는 `default_analyzer`를
-  씁니다. 청크 `text`는 `source_language`로, 그래프 인덱스는 색인 언어로
+- **분석기**는 `indexing.opensearch.language_analyzers`에서 정합니다. 언어 프로필이 있는
+  언어는 모두 기본값이 있습니다. `ar: arabic`, `de: german`, `en: english`,
+  `es: spanish`, `fr: french`, `hi: hindi`, `it: italian`, `pt: portuguese`,
+  `ru: russian`, `th: thai`는 OpenSearch 언어 분석기(불용어 제거와 어간 추출, 태국어는
+  사전 기반 단어 분할), `ja: cjk`와 `zh: cjk`는 겹치는 두 글자 단위(플러그인 불필요,
+  "首都"가 "日本の首都は" 안에서 맞음), `ko: nori`이며, `he: standard`와
+  `vi: standard`는 OpenSearch에 히브리어·베트남어 기본 분석기가 없어서입니다(플러그인
+  분석기를 대신 지정할 수 있음). 항목이 없는 언어는 `default_analyzer`를 씁니다.
+  `backend: local`의 내장 엔진은 어간 추출 언어를 Snowball(`[local]` extra)로 처리하고
+  태국어 연속 문자열을 두 글자 단위로 나누며, 불용어는 두지 않습니다. 청크 `text`는 `source_language`로, 그래프 인덱스는 색인 언어로
   분석하므로 번역하지 않더라도 코퍼스 언어로 지정하세요. `source_language: en`이면 한국어
   코퍼스가 조사가 붙은 단어("홍길동으로부터")를 토큰 하나로 둡니다. 바꾸면 매핑이
   바뀌므로 `indexing.reset: true`로 한 번 실행할 때까지 증분 실행이
@@ -63,6 +67,13 @@ processing:
   `ko`, `ja`, `zh`로 설정했는데 그런 문자가 적으면 경고합니다. 같은 문자 체계의 두
   언어(영어와 독일어)는 구별하지 못하며, 실행은 계속됩니다.
 - **유니코드.** 텍스트와 질의는 NFC로 정규화하므로 분해형 한글(NFD)도 조합형과 맞습니다.
+- **다른 언어.** `source_language`와 `target_language`에는 언어 프로필이 있는 코드(`ar`,
+  `de`, `en`, `es`, `fr`, `he`, `hi`, `it`, `ja`, `ko`, `pt`, `ru`, `th`, `vi`, `zh`)나
+  다른 BCP-47 언어 코드(`sw`, `fa`, 지역은 버림: `pt-BR`은 `pt`)를 쓸 수 있습니다.
+  프로필이 없는 코드는 WARNING을 한 번 남기고 기본값을 씁니다. `language_analyzers`에
+  없으면 `default_analyzer`, 거절 응답은 영어, 프롬프트는 언어를 코드로 부릅니다. 프로필
+  (`unified_kg_rag/domain/languages/profiles/`)은 모듈 하나로, 언어 이름, 문자 체계,
+  분석기, 거절 응답, 답변을 읽는 데 쓰는 단어를 담습니다.
 - **분석기는 클러스터에 있어야** 하며, 없으면 인덱싱 단계가
   `the cluster has no analyzer '<name>'`로 실패합니다. `nori`는 `analysis-nori`
   플러그인에서 오는데, [로컬 OpenSearch 컨테이너](./local-mode.md#local-stores-in-containers)(영문)에는 있고

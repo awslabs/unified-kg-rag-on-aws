@@ -52,13 +52,13 @@ from unified_kg_rag.shared.utils.sentences import sentence_ends
 
 logger = get_logger(__name__)
 
-# Languages whose length hint counts characters: those of a dense script
-# (Japanese and Chinese write no spaces between words, a Korean word is
-# several tokens); the others' counts words.
+# Languages whose length hint counts characters: those of a script that
+# needs no spaces (Japanese, Chinese and Thai write none between words, a
+# Korean word is several tokens); the others' counts words.
 _CHARACTER_LANGUAGES = frozenset(
     language.code
     for language in profiles()
-    if script_named(language.script).spacing is Spacing.DENSE
+    if script_named(language.script).spacing is not Spacing.SPACED
 )
 
 # The share of max_summary_tokens the length hint asks for: a model's length

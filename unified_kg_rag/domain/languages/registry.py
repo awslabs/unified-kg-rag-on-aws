@@ -10,20 +10,26 @@ lists what each profile holds and which gaps are known.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
+from functools import cache
 from types import MappingProxyType
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
 from unified_kg_rag.domain.languages.profile import LanguageProfile
 from unified_kg_rag.domain.languages.profiles import (
+    ar,
     de,
     en,
     es,
     fr,
+    he,
+    hi,
     it,
     ja,
     ko,
     pt,
     ru,
+    th,
+    vi,
     zh,
 )
 
@@ -32,7 +38,7 @@ __all__ = ["PROFILES", "language_name", "profile", "profiles"]
 PROFILES: Mapping[LanguageCode, LanguageProfile] = MappingProxyType(
     {
         module.PROFILE.code: module.PROFILE
-        for module in (de, en, es, fr, it, ja, ko, pt, ru, zh)
+        for module in (ar, de, en, es, fr, he, hi, it, ja, ko, pt, ru, th, vi, zh)
     }
 )
 
@@ -43,11 +49,26 @@ def profiles() -> Iterator[LanguageProfile]:
 
 
 def profile(code: LanguageCode | str) -> LanguageProfile:
-    """The profile of ``code``; English's for a code without one."""
+    """The profile of ``code``: for a code without one (another BCP-47 tag,
+    ``LanguageCode``), the defaults, named by the code; English's for text
+    that is no code."""
     try:
-        return PROFILES[LanguageCode(code)]
+        language = LanguageCode(code)
     except ValueError:
         return PROFILES[LanguageCode.EN]
+    return PROFILES.get(language) or _default_profile(language)
+
+
+@cache
+def _default_profile(code: LanguageCode) -> LanguageProfile:
+    english = PROFILES[LanguageCode.EN]
+    return LanguageProfile(
+        code=code,
+        name=code.value,
+        script="latin",
+        analyzer="standard",
+        decline=english.decline,
+    )
 
 
 def language_name(language: str) -> str:
@@ -59,8 +80,10 @@ def language_name(language: str) -> str:
     returned as given.
     """
     if isinstance(language, LanguageCode):
-        return PROFILES[language].name
+        return profile(language).name
     try:
-        return PROFILES[LanguageCode(language.strip().lower())].name
+        code = LanguageCode(language.strip().lower())
     except ValueError:
         return language
+    # Another BCP-47 tag is named as given.
+    return PROFILES[code].name if code in PROFILES else language

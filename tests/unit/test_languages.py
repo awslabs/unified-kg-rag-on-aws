@@ -74,7 +74,32 @@ def test_every_code_has_its_profile() -> None:
 def test_names_and_unknown_codes() -> None:
     assert language_name("ko") == language_name(KO) == "Korean"
     assert language_name("Brazilian Portuguese") == "Brazilian Portuguese"
-    assert profile("xx") is PROFILES[LanguageCode.EN]
+    # Text that is no language code reads as English.
+    assert profile("Klingon") is PROFILES[LanguageCode.EN]
+
+
+def test_another_bcp47_code_is_accepted_with_defaults_and_one_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unified_kg_rag.domain.models.config import TranslationConfig
+
+    with caplog.at_level("WARNING"):
+        config = TranslationConfig(source_language="sw-KE", target_language="sw")
+        LanguageCode("sw")
+    swahili = config.source_language
+    assert swahili is config.target_language is LanguageCode("sw")
+    assert swahili.value == "sw" and swahili not in list(LanguageCode)
+    warnings = [r for r in caplog.records if "'sw' has no profile" in r.getMessage()]
+    assert len(warnings) <= 1  # once per process (another test may have warned)
+    language = profile(swahili)
+    assert (language.name, language.analyzer) == ("sw", "standard")
+    assert language.decline == PROFILES[LanguageCode.EN].decline
+    assert language_name("sw") == language_name(swahili) == "sw"
+    # A region reads as its language; what is no tag is refused.
+    assert LanguageCode("pt-BR") is LanguageCode.PT
+    assert LanguageCode("zh_Hant") is LanguageCode.ZH
+    with pytest.raises(ValueError):
+        TranslationConfig(source_language="Portuguese (Brazil)")
 
 
 def test_the_function_word_lists_of_one_script_are_disjoint() -> None:
@@ -117,17 +142,19 @@ _FACETS = (
     "quote_pairs",
 )
 _DIGIT_DATES = {"ja", "ko", "zh"}
+# Languages added with their analyzer, decline and placeholders only.
+_NEW = {"ar", "he", "hi", "th", "vi"}
 _GAPS: dict[str, set[str]] = {
     # Function words tell apart languages that share a script only.
-    "function_words": {"ja", "ko", "ru", "zh"},
-    "claim_statuses": {"de", "es", "fr", "it", "pt", "ru"},
-    "open_date_words": {"de", "es", "fr", "it", "pt", "ru"},
+    "function_words": {"ar", "he", "hi", "ja", "ko", "ru", "th", "zh"},
+    "claim_statuses": {"de", "es", "fr", "it", "pt", "ru"} | _NEW,
+    "open_date_words": {"de", "es", "fr", "it", "pt", "ru"} | _NEW,
     # English month names are strptime's own; CJK dates are in digits.
-    "month_words": {"en"} | _DIGIT_DATES,
+    "month_words": {"en"} | _DIGIT_DATES | _NEW,
     # Dense-script legal forms are in dense_legal_forms.
-    "legal_forms": {"ko", "ru", "zh"},
-    "polarity_words": {"de", "es", "fr", "it", "pt", "ru"},
-    "quote_pairs": {"de", "es", "fr", "it", "ko", "pt", "ru"},
+    "legal_forms": {"ko", "ru", "zh"} | _NEW,
+    "polarity_words": {"de", "es", "fr", "it", "pt", "ru"} | _NEW,
+    "quote_pairs": {"de", "es", "fr", "it", "ko", "pt", "ru"} | _NEW,
 }
 
 
