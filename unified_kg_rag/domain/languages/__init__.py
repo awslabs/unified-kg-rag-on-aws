@@ -19,6 +19,7 @@ from unified_kg_rag.domain.languages.codes import LanguageCode
 from unified_kg_rag.domain.languages.detection import dense_language, text_language
 from unified_kg_rag.domain.languages.profile import LanguageProfile
 from unified_kg_rag.domain.languages.registry import (
+    BUILT_IN_ANALYZERS,
     PROFILES,
     language_name,
     profile,
@@ -26,6 +27,7 @@ from unified_kg_rag.domain.languages.registry import (
 )
 
 __all__ = [
+    "BUILT_IN_ANALYZERS",
     "PROFILES",
     "LanguageCode",
     "LanguageProfile",

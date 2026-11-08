@@ -20,12 +20,16 @@ with it. Approximations of the OpenSearch analyzers of the same names:
   characters in the run are left out of them.
   (OpenSearch's ``standard`` keeps a Hangul run as one token; the bigrams are
   deliberate.)
-- ``cjk``, ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``.
+- ``cjk``, ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``,
+  as are ``bengali``, ``bulgarian``, ``galician``, ``latvian`` and ``sorani``
+  (no Snowball stemmer: OpenSearch's stem, these do not).
   The bigrams stand in for their morphological analysis: recall on a
   word-in-compound query is comparable, ranking is not identical.
 - ``german``, ``french``, ``spanish``, ``italian``, ``portuguese``,
   ``russian``, ``arabic`` and ``hindi`` (the default ``language_analyzers``
-  of those languages): ``standard`` with each word of three letters or more
+  of those languages), and the other OpenSearch built-in language analyzers
+  Snowball has a stemmer for (``dutch``, ``swedish``, ``turkish``, ...: the
+  default of codes without a profile): ``standard`` with each word of three letters or more
   stemmed by Snowball's stemmer of the language (``snowballstemmer``, from
   the ``[local]`` extra; without it no stemming, with one warning), where
   OpenSearch stems with Lucene's light stemmers: an inflected query word
@@ -281,7 +285,19 @@ def _tokens(
     return tokens
 
 
-@register_analyzer(STANDARD, "cjk", "nori", "kuromoji", "smartcn")
+@register_analyzer(
+    STANDARD,
+    "cjk",
+    "nori",
+    "kuromoji",
+    "smartcn",
+    # Built-in analyzers Snowball has no stemmer for: not stemmed here.
+    "bengali",
+    "bulgarian",
+    "galician",
+    "latvian",
+    "sorani",
+)
 def standard_analyzer(text: str) -> list[str]:
     return _tokens(text, lambda word: word)
 
@@ -391,7 +407,17 @@ def _snowball_stem(algorithm: str) -> Callable[[str], str] | None:
             algorithm,
         )
         return None
-    stemmer = snowballstemmer.stemmer(algorithm)
+    try:
+        stemmer = snowballstemmer.stemmer(algorithm)
+    except KeyError:
+        warn_once(
+            logger,
+            f"stemmer:{algorithm}",
+            "The installed snowballstemmer has no '%s' stemmer, so the embedded "
+            "search engine's analyzer of that name does not stem",
+            algorithm,
+        )
+        return None
     lock = threading.Lock()  # a stemmer object is not thread-safe
 
     @lru_cache(maxsize=1 << 16)
@@ -433,7 +459,34 @@ def _normalize_arabic(text: str) -> str:
     )
 
 
-for _language in ("german", "french", "spanish", "italian", "portuguese", "russian"):
+for _language in (
+    "german",
+    "french",
+    "spanish",
+    "italian",
+    "portuguese",
+    "russian",
+    # The built-in analyzers of codes without a profile
+    # (``domain.languages.BUILT_IN_ANALYZERS``) Snowball has a stemmer for.
+    "armenian",
+    "basque",
+    "catalan",
+    "czech",
+    "danish",
+    "dutch",
+    "estonian",
+    "finnish",
+    "greek",
+    "hungarian",
+    "indonesian",
+    "irish",
+    "lithuanian",
+    "norwegian",
+    "persian",
+    "romanian",
+    "swedish",
+    "turkish",
+):
     register_analyzer(_language)(_stemming_analyzer(_language))
 register_analyzer("arabic")(_stemming_analyzer("arabic", _normalize_arabic))
 register_analyzer("hindi")(_stemming_analyzer("hindi"))

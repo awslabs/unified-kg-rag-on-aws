@@ -324,7 +324,7 @@ Text translation configuration
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | boolean | `true` | Run the translation stage. It is skipped at no cost when source_language equals target_language and there are no additional_target_languages. |
-| `source_language` | `"ar"` \| `"de"` \| `"en"` \| `"es"` \| `"fr"` \| `"he"` \| `"hi"` \| `"it"` \| `"ja"` \| `"ko"` \| `"pt"` \| `"ru"` \| `"th"` \| `"vi"` \| `"zh"` | `"en"` | Predominant source language of the corpus: a code with a language profile (ar, de, en, es, fr, he, hi, it, ja, ko, pt, ru, th, vi, zh) or another BCP-47 language code, which gets the defaults of a language without one (the default_analyzer, English declines; one WARNING). Selects the OpenSearch analyzer of the original chunk text and drives the same-language no-op skip; translation itself is content-driven. With translation disabled the corpus is indexed in it: extraction, descriptions, claims, community reports and the summary tree are written in it, the graph indexes are analyzed for it, and a query without a requested language is processed into it. |
+| `source_language` | `"ar"` \| `"de"` \| `"en"` \| `"es"` \| `"fr"` \| `"he"` \| `"hi"` \| `"it"` \| `"ja"` \| `"ko"` \| `"pt"` \| `"ru"` \| `"th"` \| `"vi"` \| `"zh"` | `"en"` | Predominant source language of the corpus: a code with a language profile (ar, de, en, es, fr, he, hi, it, ja, ko, pt, ru, th, vi, zh) or another BCP-47 language code, which gets the defaults of a language without one (OpenSearch's built-in analyzer of it, else the default_analyzer; English declines; one WARNING). Selects the OpenSearch analyzer of the original chunk text and drives the same-language no-op skip; translation itself is content-driven. With translation disabled the corpus is indexed in it: extraction, descriptions, claims, community reports and the summary tree are written in it, the graph indexes are analyzed for it, and a query without a requested language is processed into it. |
 | `target_language` | `"ar"` \| `"de"` \| `"en"` \| `"es"` \| `"fr"` \| `"he"` \| `"hi"` \| `"it"` \| `"ja"` \| `"ko"` \| `"pt"` \| `"ru"` \| `"th"` \| `"vi"` \| `"zh"` | `"en"` | Language the corpus is translated into. When translation runs, the corpus is indexed in it: extraction, embeddings and the answer context use it, and descriptions, claims, community reports and the summary tree are written in it (with translation disabled, source_language takes this role). |
 | `additional_target_languages` | list[`"ar"` \| `"de"` \| `"en"` \| `"es"` \| `"fr"` \| `"he"` \| `"hi"` \| `"it"` \| `"ja"` \| `"ko"` \| `"pt"` \| `"ru"` \| `"th"` \| `"vi"` \| `"zh"`] \| null | `null` | Extra languages to translate into. Each is indexed in its own translated_text_<language> field with that language's analyzer and searched lexically (useful with a per-query RAGInput.target_language); extraction, embeddings and the answer context use target_language only. Each language is one more LLM call per chunk. |
 
@@ -560,7 +560,7 @@ Configuration settings for OpenSearch vector and text indexing
 | `summary_nodes_index_prefix` | string (min length 1) | `"graphrag-summary-nodes"` | Index name prefix for the summary tree's nodes (built only for the raptor methodology, indexing.summary_tree) (lowercase letters, digits, '-' and '_', not starting with '-' or '_') |
 | `extraction_records_index_prefix` | string (min length 1) | `"graphrag-extraction-records"` | Index name prefix for the extraction store: each text unit's extracted entities, relationships and claims, keyed by its text and the extraction settings, so an unchanged chunk is not extracted again (no embeddings). A full build or reset keeps only the records its text units name. It also holds the notes a removal (pending-strip, stripped-summaries) or a commit (pending-commit) keeps until it finished, which a resumed run needs: delete the index only after a run that succeeded, or run indexing.reset next. Lowercase letters, digits, '-' and '_', not starting with '-' or '_' |
 | `default_analyzer` | string (min length 1) | `"standard"` | OpenSearch text analyzer used when the language has no specific mapping |
-| `language_analyzers` | dict[string, string] | see [Long defaults](#long-defaults) | Text analyzer per language code: by default every language with a profile has one (ar: arabic, de: german, en: english, es: spanish, fr: french, he: standard, hi: hindi, it: italian, ja: cjk, ko: nori, pt: portuguese, ru: russian, th: thai, vi: standard, zh: cjk); a language without an entry (another BCP-47 code) uses default_analyzer. All are built into OpenSearch but nori, which needs the analysis-nori plugin: an Amazon OpenSearch Service domain has it only once its optional package is associated (the CDK stack maps ko to cjk). An index keeps the analyzers it was created with, so a change needs indexing.reset. Setting the key replaces the whole map. |
+| `language_analyzers` | dict[string, string] | see [Long defaults](#long-defaults) | Text analyzer per language code: by default every language with a profile has one (ar: arabic, de: german, en: english, es: spanish, fr: french, he: standard, hi: hindi, it: italian, ja: cjk, ko: nori, pt: portuguese, ru: russian, th: thai, vi: standard, zh: cjk), and so has every other BCP-47 code OpenSearch has a built-in language analyzer for (nl: dutch, sv: swedish, tr: turkish, ...: see Long defaults); a language without an entry uses default_analyzer. All are built into OpenSearch but nori, which needs the analysis-nori plugin: an Amazon OpenSearch Service domain has it only once its optional package is associated (the CDK stack maps ko to cjk). An index keeps the analyzers it was created with, so a change needs indexing.reset. Setting the key replaces the whole map. |
 | `refresh_after_batch` | boolean | `true` | Whether to refresh OpenSearch indices after each batch operation for immediate visibility |
 | `max_query_size` | integer (≥ 1) | `100` | Maximum number of hits returned per OpenSearch query |
 | `index_settings` | dict[string, Any] | see [Long defaults](#long-defaults) | OpenSearch index settings of the indices this package creates (number_of_shards, number_of_replicas, refresh_interval, max_result_window, max_terms_count, ...; with or without the index. prefix or under an index: map, but not the knn keys, which follow vector_search; the two limits are whole numbers >= 1); every key is passed to index creation (OpenSearch rejects one it does not know: before its first model call, each run that extracts creates and deletes, together, a probe index per index it will create (all of them on a full build or reset, the missing ones on an incremental run) with them and that index's fields, so a refused key, vector_search method, analyzer or a shard limit fails it before any model call; the embedded engine applies only max_result_window) and applies to indices created afterwards, so reindex after changing it. Reads and searches are sized by the smaller of max_result_window / max_terms_count here and on the live index (read again when a search is refused for them): a fetch by id of more ids goes in batches that fit. Raise refresh_interval (or set "-1") for faster bulk loads, then reset it for live querying. Setting the key replaces the whole map; a left-out shard, replica or refresh setting is 1, 0 or 1s. |
@@ -1047,6 +1047,31 @@ entity_types:
 
 ```yaml
 language_analyzers:
+  bg: bulgarian
+  bn: bengali
+  ca: catalan
+  ckb: sorani
+  cs: czech
+  da: danish
+  el: greek
+  et: estonian
+  eu: basque
+  fa: persian
+  fi: finnish
+  ga: irish
+  gl: galician
+  hu: hungarian
+  hy: armenian
+  id: indonesian
+  lt: lithuanian
+  lv: latvian
+  nb: norwegian
+  nl: dutch
+  nn: norwegian
+  'no': norwegian
+  ro: romanian
+  sv: swedish
+  tr: turkish
   ar: arabic
   de: german
   en: english

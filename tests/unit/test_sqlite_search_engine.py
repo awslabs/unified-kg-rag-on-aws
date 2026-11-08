@@ -1938,3 +1938,20 @@ def test_a_search_of_an_unindexed_field_is_refused(tmp_path: Path, clause) -> No
     with pytest.raises(StoreRequestRejectedError, match="not indexed"):
         engine.search(index="u-1", body={"query": {"bool": {"filter": [clause]}}})
     engine.close()
+
+
+@pytest.mark.parametrize(
+    ("analyzer", "word", "inflected"),
+    [("dutch", "boeken", "boek"), ("swedish", "bilarna", "bil")],
+)
+def test_a_built_in_language_analyzer_stems(
+    analyzer: str, word: str, inflected: str
+) -> None:
+    # The default of a code without a profile (nl, sv): it fell back to
+    # standard with a warning.
+    pytest.importorskip("snowballstemmer")
+    from unified_kg_rag.adapters.local.search_engine.analyzers import get_analyzer
+
+    analyze = get_analyzer(analyzer)
+    assert analyze is not get_analyzer("standard")
+    assert analyze(word) == analyze(inflected)
