@@ -43,23 +43,10 @@ _SUFFIX = "default"
 _ALL = ("e1", "e2", "e3", "e4")
 
 # Known divergences, by (case, family): the test fails strictly once fixed.
-_D2 = (
-    "D2: a name filter is a term on analyzed text on OpenSearch, exact on "
-    "a graph; a description filter matches tokens or exact text"
-)
 _IR = "the store matches nothing on an unindexed path instead of refusing it"
 _GRAPHS = ("sqlite-graph", "gremlin")
 _INDEXES = ("embedded", "opensearch")
 _KNOWN: dict[tuple[str, str], str] = {
-    **{(case, family): _D2 for case in ("name", "name-korean") for family in _INDEXES},
-    ("name-japanese", "embedded"): _D2,
-    ("name-is-exact", "opensearch"): _D2,
-    **{
-        (case, family): _D2
-        for case in ("name-keyword", "text-field")
-        for family in _GRAPHS
-    },
-    **{("text-field", family): _D2 for family in _INDEXES},
     ("unindexed-path", "embedded"): _IR,
     ("unindexed-path", "opensearch"): _IR,
 }

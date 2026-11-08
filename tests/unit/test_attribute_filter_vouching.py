@@ -156,12 +156,12 @@ async def test_the_check_searches_the_query_suffix(config: Config) -> None:
     assert [q.suffix for q in document.queries] == ["tenant-b"]
 
 
-@pytest.mark.parametrize("key", ["attributes.address.city", "name.keyword"])
+@pytest.mark.parametrize("key", ["attributes.address.city"])
 async def test_an_entity_key_the_graph_does_not_store_is_vouched(
     config: Config, key: str
 ) -> None:
     # Regression: the graph drops a key its entity vertices lack (a nested
-    # attribute path, name.keyword), so its walk returned
+    # attribute path), so its walk returned
     # every neighbour, failing the key, as an entity result (59 of 59 under
     # attributes.role with mix). The entities index holds the key.
     prefix = config.indexing.opensearch.entities_index_prefix
@@ -204,13 +204,13 @@ async def test_local_seeds_found_under_the_filters_are_not_checked_again(
     graph = _graph(prefix)
     graph.fields = NEPTUNE_ENTITY_FILTER_FIELDS
     strategy = _strategy(config, document, graph)
-    query = SearchQuery(query="q", filters={"name.keyword": "x"})
+    query = SearchQuery(query="q", filters={"attributes.address.city": "x"})
 
     kept = await strategy._expand_via_graph(query, ["seed"], seeds_pass=True)
 
     assert [r.source for r in kept] == ["seed", "near"]
     assert [q.filters for q in document.queries] == [
-        {"name.keyword": "x", "id": ["near", "one", "far"]}
+        {"attributes.address.city": "x", "id": ["near", "one", "far"]}
     ]
 
 

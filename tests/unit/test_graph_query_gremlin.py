@@ -63,10 +63,12 @@ def _query(plan_name_or_raw: str | dict, **request: Any) -> GremlinQuery:
         **request,
     }
     filters = fields.pop("filters", None)
+    # As NeptuneRetriever.aexecute scopes them.
+    scoped = NeptuneRetriever._scope_filters_to_label(LABEL, filters)
     return GremlinQuery(
         GraphQueryRequest(plan=plan, filters=filters, **fields),
         LABEL,
-        apply_filters=lambda t: NeptuneRetriever._apply_filters(t, filters),
+        apply_filters=lambda t: NeptuneRetriever._apply_filters(t, scoped),
         edge_rule=None,
         timeout_ms=5000,
     )
@@ -195,11 +197,13 @@ def test_values_travel_as_arguments() -> None:
 
 def test_the_caller_filters_apply_to_every_bound_vertex() -> None:
     query = _query(
-        "count_supply_pairs", filters={"attr_category": "a", "type": "VENDOR"}
+        "count_supply_pairs", filters={"attributes.category": "a", "type": "VENDOR"}
     )
     steps = query.build(g).bytecode.step_instructions
-    # One attr_* where() and one strict has() per node.
-    assert sum(1 for s in steps if s[0] == "where") == 2
+    # A strict has() per filter and node: an entity's own attribute is its
+    # attr_<key> property.
+    assert sum(1 for s in steps if s[0] == "where") == 0
+    assert sum(1 for s in steps if s[:2] == ["has", "attr_category"]) == 2
     assert sum(1 for s in steps if s[:2] == ["has", "type"]) == 4
 
 

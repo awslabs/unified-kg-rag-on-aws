@@ -23,12 +23,14 @@ from unified_kg_rag.adapters.storage.embedding_settings import (
     stored_embedding_settings,
 )
 from unified_kg_rag.adapters.storage.filter_schema import (
+    EXACT_SUBFIELD,
     LATE_MAPPED_FIELDS,
     SOURCE_KINDS_FIELD,
     TEXT_UNIT_KIND_FIELD,
     FilterFields,
     IndexLimits,
     check_filter_values,
+    exact_filters,
     opensearch_filter_fields,
     source_kinds_values,
     union_filter_fields,
@@ -311,7 +313,9 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
     def _filters_for_index(
         self, prefix: str, filters: dict[str, Any] | None, *, seedless: bool = False
     ) -> dict[str, Any] | None:
-        """``filters`` restricted to the keys the ``prefix`` index declares.
+        """``filters`` restricted to the keys the ``prefix`` index declares,
+        each on the field that matches it exactly (``name`` on
+        ``name.keyword``).
 
         A ``term``/``terms``/``range`` clause on a field an index does not map
         matches no document, so one caller filter shared across sub-queries
@@ -334,7 +338,19 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
                 prefix,
                 ", ".join(sorted(set(filters) - set(kept))),
             )
-        return kept or None
+        # A name is matched exactly, by its keyword sub-field: a term on the
+        # analyzed name matched one lowercase token of it.
+        return (
+            exact_filters(
+                kept,
+                lambda key: (
+                    f"{key}{EXACT_SUBFIELD}"
+                    if f"{key}{EXACT_SUBFIELD}" in declared.fields
+                    else None
+                ),
+            )
+            or None
+        )
 
     @property
     def _engine(self) -> str:

@@ -41,11 +41,13 @@ from unified_kg_rag.adapters.retrieval.base import (
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import (
+    EXACT_SUBFIELD,
     NEPTUNE_ENTITY_FILTER_FIELDS,
     SOURCE_KINDS,
     SOURCE_KINDS_FIELD,
     FilterFields,
     check_filter_values,
+    exact_filters,
     graph_attribute_key,
     source_kinds_values,
     typed_filter_values,
@@ -357,7 +359,19 @@ class GraphExpansionRetriever(BaseGraphRAGRetriever):
                 kept[stored] = _attribute_values(value)
                 continue
             kept[key] = value
-        return kept or None
+        # The exact name (``name.keyword`` on the entities index) is the
+        # stored name.
+        return (
+            exact_filters(
+                kept,
+                lambda key: (
+                    key.removesuffix(EXACT_SUBFIELD)
+                    if key.endswith(EXACT_SUBFIELD)
+                    else None
+                ),
+            )
+            or None
+        )
 
     @staticmethod
     def _clean_property_map(prop_map: dict[str, Any]) -> dict[str, Any]:

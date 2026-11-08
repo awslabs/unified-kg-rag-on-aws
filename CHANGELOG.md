@@ -1255,6 +1255,10 @@ From a `main` checkout (formats and keys no release had):
   where the vertex held one, so `attr_category:finance` dropped an entity of a finance document whose extracted
   `category` was `hardware`, and `attributes.<key>` was left to the entities index. Write `attributes.role`, not
   `attr_role`, for an extracted attribute.
+- A `name` filter matches an entity's whole name exactly on every store (`name.keyword` on the entities index):
+  OpenSearch matched it against one analyzed token (`name:Acme` matched nothing, `name:가나다` matched
+  `가나다 상사`), a graph the whole name. A filter on analyzed text (`description`, `text`, `summary`, the
+  relationship and claim names, ...) raises `InvalidFilterError`, and community reports no longer take `name`.
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).

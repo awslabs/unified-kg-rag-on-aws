@@ -36,7 +36,7 @@ entities index. Every key is strict on every store.
 
 import json
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -123,6 +123,30 @@ class IndexLimits:
 _SCALARS = (str, int, float, bool)
 _RANGE_BOUNDS = frozenset({"gt", "gte", "lt", "lte"})
 
+# The analyzed text fields: a term on one matches single analyzed tokens on
+# OpenSearch (lowercased, stemmed or split by the language's analyzer) and
+# the whole stored text on a graph, so no filter on one means the same on
+# every store, and none is applied. ``name`` is exact (``name.keyword``).
+TEXT_FIELDS = frozenset(
+    {
+        "text",
+        "description",
+        "source_name",
+        "target_name",
+        "subject_name",
+        "object_name",
+        "source_text",
+        "summary",
+        "full_content",
+    }
+)
+TRANSLATED_TEXT_PREFIX = "translated_text_"
+
+
+def is_text_field(key: str) -> bool:
+    """Whether ``key`` names an analyzed text field (``TEXT_FIELDS``)."""
+    return key in TEXT_FIELDS or key.startswith(TRANSLATED_TEXT_PREFIX)
+
 
 def check_filter_values(
     filters: dict[str, Any] | None, *, allow_empty_lists: bool = False
@@ -141,8 +165,11 @@ def check_filter_values(
     strategy's own scope may be one (``scope_filters``: nothing the caller
     allows), which only a text-less fetch by id carries.
 
+    A key that names an analyzed text field (``is_text_field``) is refused
+    as well.
+
     Raises:
-        InvalidFilterError: A value is malformed.
+        InvalidFilterError: A value is malformed, or a key names text.
     """
 
     def bad(value: Any) -> str | None:
@@ -154,6 +181,13 @@ def check_filter_values(
             return "is not a scalar (a string, number or boolean)"
         return None
 
+    for key in filters or {}:
+        if is_text_field(key):
+            raise InvalidFilterError(
+                f"Filter '{key}' names an analyzed text field, which no store "
+                "matches exactly; put the words in the query, or filter an "
+                "exact field (id, name, type, an attribute)."
+            )
     for key, value in (filters or {}).items():
         reason: str | None
         if value is None:
@@ -348,6 +382,37 @@ def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None
     return typed
 
 
+EXACT_SUBFIELD = ".keyword"
+
+
+def exact_filters(
+    filters: dict[str, Any] | None, field_of: Callable[[str], str | None]
+) -> dict[str, Any] | None:
+    """``filters`` with each key renamed to the field ``field_of`` names for
+    it (``None``: as given), e.g. ``name`` to its exact ``name.keyword``.
+    Two keys that name one field keep the values both allow (a list; an
+    empty one matches nothing)."""
+    if not filters:
+        return filters
+    renamed: dict[str, Any] = {}
+    for key, value in filters.items():
+        field = field_of(key) or key
+        if field not in renamed:
+            renamed[field] = value
+            continue
+        given = renamed[field]
+        if isinstance(given, dict) or isinstance(value, dict):
+            raise InvalidFilterError(
+                f"Filter '{key}' and another key name one field; give values, "
+                "not a range, to both."
+            )
+        allowed = set(given) if isinstance(given, list) else {given}
+        renamed[field] = [
+            v for v in (value if isinstance(value, list) else [value]) if v in allowed
+        ]
+    return renamed
+
+
 def document_filters(filters: dict[str, Any] | None) -> dict[str, Any]:
     """The document attribute keys of ``filters``: ``attr_<key>`` and
     ``attributes.filters.<key>``, an entry of the documents' ``filters``
@@ -383,6 +448,9 @@ UNDECLARED_MAPPED_FIELDS: dict[str, frozenset[str]] = {
     "relationships": frozenset({"type"}),
     # The digest a summary is reused by.
     "summary_nodes": frozenset({"input_key"}),
+    # Analyzed text without an exact copy: ``name`` is an entity's exact
+    # name, which leaves the reports unfiltered as ``type`` does.
+    "community_reports": frozenset({"name"}),
 }
 
 
@@ -506,7 +574,6 @@ def opensearch_filter_fields(
                 {
                     "id",
                     "community_id",
-                    "name",
                     "summary",
                     "full_content",
                     "rank",
@@ -566,6 +633,8 @@ NEPTUNE_ENTITY_FILTER_FIELDS: FilterFields = _GraphEntityFields(
         {
             "id",
             "name",
+            # The exact name, as the entities index names it: the property.
+            "name.keyword",
             "type",
             "description",
             "rank",

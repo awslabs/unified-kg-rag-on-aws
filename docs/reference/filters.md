@@ -15,12 +15,20 @@ Each store accepts the fields its indexer writes:
 
 | Store | Filterable fields |
 |---|---|
-| Text units | `id`, `text`, `translated_text_<language>`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
-| Entities | `id`, `name`, `name.keyword`, `description`, `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`, `attributes.<path>` |
-| Relationships | `id`, `source_id`, `target_id`, `source_name`, `target_name`, `description`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `source_kinds`, `attr_<key>`, `attributes.filters.<key>` |
-| Claims | `id`, `subject_id`, `object_id`, `subject_name`, `object_name`, `type`, `status`, `start_date`, `end_date`, `description`, `source_text`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Community reports | `id`, `community_id`, `name`, `summary`, `full_content`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
-| Graph entity vertices (Neptune, SQLite) | `id`, `name`, `type`, `description`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attributes.<key>` |
+| Text units | `id`, `community_ids`, `n_tokens`, `attr_<key>`, `attributes.filters.<key>` |
+| Entities | `id`, `name` (`name.keyword`), `type`, `rank`, `confidence`, `text_unit_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attr_<key>`, `attributes.<path>` |
+| Relationships | `id`, `source_id`, `target_id`, `weight`, `rank`, `text_unit_ids`, `in_schema`, `predicate_iri`, `source_kinds`, `attr_<key>`, `attributes.filters.<key>` |
+| Claims | `id`, `subject_id`, `object_id`, `type`, `status`, `start_date`, `end_date`, `text_unit_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| Community reports | `id`, `community_id`, `rank`, `rating`, `text_unit_ids`, `document_ids`, `level`, `depth`, `max_cut_depth`, `parent_community_id`, `child_community_ids`, `attr_<key>`, `attributes.filters.<key>` |
+| Graph entity vertices (Neptune, SQLite) | `id`, `name` (`name.keyword`), `type`, `rank`, `confidence`, `text_unit_ids`, `community_ids`, `in_schema`, `type_iri`, `iri`, `source_kinds`, `attributes.<key>` |
+
+`name` matches an entity's whole name exactly, on every store (the entities
+index's `name.keyword`; `name:Acme` matches neither `acme` nor `Acme Corp`).
+A filter on analyzed text (`text`, `translated_text_<language>`,
+`description`, `source_name`, `target_name`, `subject_name`, `object_name`,
+`source_text`, `summary`, `full_content`) raises `InvalidFilterError`: a term
+matched single analyzed tokens on OpenSearch and the whole text on a graph.
+Put the words in the query instead.
 
 `attr_<key>` is entry `<key>` of a document's `filters` metadata on every
 store (an item from several documents carries all their values).
@@ -39,9 +47,7 @@ graph labels the edge, `RELATED_TO` when untyped) for the context line
 type and leaves relationships unfiltered. `in_schema`, `type_iri` and `predicate_iri` are the
 [extraction schema](../guides/extraction-schema.md#what-is-stored) annotations; `iri` and
 `source_kinds` (`document`, `seed_graph`) come from
-[seed graphs](../guides/seed-graphs.md#retrieval). Prefer keyword or
-numeric fields; a `term` on an analyzed field such as `description` matches
-single lowercase tokens. A range filter takes `{"gte": ..., "lte": ...}`
+[seed graphs](../guides/seed-graphs.md#retrieval). A range filter takes `{"gte": ..., "lte": ...}`
 through the Python API.
 
 **Dates.** `attr_<key>`, `attributes.filters.<key>` and the

@@ -1784,3 +1784,35 @@ def test_opensearch_source_kinds_clauses() -> None:
     assert build({"source_kind": "seed_graph"}) == [
         {"term": {"source_kind": "seed_graph"}}
     ]
+
+
+@pytest.mark.parametrize(
+    "key", ["description", "text", "translated_text_ko", "summary", "source_name"]
+)
+def test_a_filter_on_analyzed_text_is_refused(key: str) -> None:
+    # A term matched single analyzed tokens on OpenSearch and the whole text
+    # on a graph: no store can apply it as the other does.
+    with pytest.raises(InvalidFilterError, match="analyzed text field"):
+        check_filter_values({key: "widgets"})
+
+
+def test_a_name_filter_is_matched_exactly_on_the_entities_index(
+    config: Config,
+) -> None:
+    retriever = _retriever(config, _FakeOpenSearchClient())
+    o = config.indexing.opensearch
+    assert retriever._filters_for_index(o.entities_index_prefix, {"name": "Acme"}) == {
+        "name.keyword": "Acme"
+    }
+    # Both spellings keep what both allow.
+    assert retriever._filters_for_index(
+        o.entities_index_prefix, {"name": ["A", "B"], "name.keyword": "B"}
+    ) == {"name.keyword": ["B"]}
+    # A report's name is analyzed text without an exact copy: not a key.
+    assert (
+        retriever._filters_for_index(o.community_reports_index_prefix, {"name": "A"})
+        is None
+    )
+    assert NeptuneRetriever._scope_filters_to_label(
+        "Entity-default", {"name.keyword": "Acme"}
+    ) == {"name": "Acme"}
