@@ -2054,6 +2054,10 @@ class ClaimExtractionConfig(BaseModel):
             "When on, local search injects the matching claims into its "
             "context and simple search includes the claims index in its sweep."
             " Claim subjects and objects are not linked into the entity graph."
+            " Turned on for an incremental namespace built without claims, the "
+            "next run rebuilds it once from its stored extractions; that run, "
+            "and one turning it off for a namespace that holds claims, is "
+            "refused while the namespace holds other source scopes' documents."
         ),
     )
     max_entities_per_prompt: int = Field(
@@ -2467,7 +2471,9 @@ class ReportGenerationConfig(BaseModel):
         description=(
             "Enable automatic community report generation. Off: global and "
             "drift search, which answer from the reports, are refused (local "
-            "reads graphrag without them; a WARNING at load says so)."
+            "reads graphrag without them; a WARNING at load says so). A run "
+            "turning it off for a namespace that holds reports is refused "
+            "while the namespace holds other source scopes' documents."
         ),
     )
     max_entities_per_report: int = Field(

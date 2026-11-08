@@ -123,12 +123,16 @@ current ids of their entities ([Cross-run merge](#cross-run-merge)).
 
 A run that adds a methodology the namespace does not hold (`graphrag` to a
 `[lightrag]` namespace: communities and reports; `lightrag` where the
-relationship vector index was off) is a reset by itself, for that run only:
+relationship vector index was off), or turns claim extraction on for a
+namespace without claims, is a reset by itself, for that run only:
 a delta would build them for its own documents only. It logs a WARNING and
 reuses what a reset reuses, so its new model calls are the added
 methodology's. When the namespace also holds another source scope's
 documents, which the rebuild would delete, the run is refused before any
 model call instead ([Methodology profiles](./ingest.md#methodology-profiles)).
+An incremental run with claim extraction off keeps the claim records of the
+units it extracts again, as a reset does, so turning claims back on asks
+the model for none of them.
 
 ## Rebuild signals
 

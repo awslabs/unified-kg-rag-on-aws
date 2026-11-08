@@ -736,9 +736,12 @@ def test_adding_a_corpus_wide_artifact_is_missing_from_the_record() -> None:
     assert mp.missing_artifacts(no_vectors.model_dump(mode="json"), Config()) == {
         A.RELATIONSHIP_VECTORS
     }
-    # Claims are per-document: an incremental run adds them itself.
+    # Claims too: an incremental run would extract them for its delta alone,
+    # and its record, which keeps what both name, would never name them.
     claims = Config(processing={"claim_extraction": {"enabled": True}})
-    assert mp.missing_artifacts(graph_only, claims) == frozenset()
+    assert mp.missing_artifacts(graph_only, claims) == {A.CLAIMS}
+    with_claims = _record(*FULL, A.CLAIMS).model_dump(mode="json")
+    assert mp.missing_artifacts(with_claims, claims) == frozenset()
     # Report generation off: a run builds no reports, so none are missing.
     no_reports = Config(
         graph={"community_detection": {"report_generation": {"enabled": False}}}
@@ -1120,6 +1123,43 @@ def test_dropped_methodologies_are_those_a_run_stops_maintaining() -> None:
         indexing={"opensearch": {"build_relationship_vector_index": False}}
     )
     assert mp.dropped_methodologies(light, no_vectors) == (L, H)
+
+
+def test_dropped_artifacts_are_the_corpus_wide_ones_a_run_stops_building() -> None:
+    full = _record(*FULL, A.CLAIMS).model_dump(mode="json")
+    assert mp.dropped_artifacts(full, Config(processing=_CLAIMS_ON)) == frozenset()
+    # Report generation off keeps graphrag (local reads it without them),
+    # but the record stops naming the reports.
+    no_reports = Config(
+        graph={"community_detection": {"report_generation": {"enabled": False}}},
+        processing=_CLAIMS_ON,
+    )
+    assert mp.dropped_methodologies(full, no_reports) == ()
+    assert mp.dropped_artifacts(full, no_reports) == {A.COMMUNITY_REPORTS}
+    assert mp.switches_set_off(no_reports, {A.COMMUNITY_REPORTS}) == [
+        "graph.community_detection.report_generation.enabled"
+    ]
+    assert mp.dropped_artifacts(full, Config()) == {A.CLAIMS}
+    assert mp.switches_set_off(Config(), {A.CLAIMS}) == [
+        "processing.claim_extraction.enabled"
+    ]
+    # A methodology left out drops its corpus-wide artifacts; raptor's tree
+    # is not one (its stage builds it from the stored text units).
+    lightrag = Config(indexing={"methodologies": ["lightrag"]}, processing=_CLAIMS_ON)
+    assert mp.dropped_artifacts(full, lightrag) == {
+        A.COMMUNITIES,
+        A.COMMUNITY_REPORTS,
+    }
+    assert mp.switches_set_off(lightrag, {A.COMMUNITIES}) == []
+    with_tree = _record(*FULL, A.SUMMARY_TREE).model_dump(mode="json")
+    assert mp.dropped_methodologies(with_tree, Config()) == (R,)
+    assert mp.dropped_artifacts(with_tree, Config()) == frozenset()
+    # Nothing to tell without a record that names its artifacts.
+    assert mp.dropped_artifacts(None, Config()) == frozenset()
+    assert mp.dropped_artifacts({"pipeline_id": "p"}, Config()) == frozenset()
+
+
+_CLAIMS_ON = {"claim_extraction": {"enabled": True}}
 
 
 async def test_iterative_is_refused_where_its_base_is_not_held() -> None:

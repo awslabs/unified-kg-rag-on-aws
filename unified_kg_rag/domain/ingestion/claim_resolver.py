@@ -446,9 +446,12 @@ CLAIM_STATUSES = (TRUE_STATUS, FALSE_STATUS, DISPUTED_STATUS, UNKNOWN_STATUS)
 # SUSPECTED, and the few words that state the same status plainly, each with
 # its Korean, Japanese and Chinese rendering (a model answering in the index
 # language may translate the status), casefolded and stripped of punctuation
-# and spaces. "Uncertain" and "unverified" state that the truth is not known,
-# not that statements disagree: unknown, in every language. Any other word is
-# read as unknown and counted (``claim_status_recognised``).
+# and spaces. MS GraphRAG's prompt defines TRUE as "the claim is confirmed"
+# and SUSPECTED as "the claim is not verified", and ours DISPUTED as
+# "conflicting information or uncertainty indicated": "confirmed" and
+# "verified" are true, "denied" and "refuted" false, "uncertain" and
+# "unverified" disputed, in every language. Any other word is read as
+# unknown and counted (``claim_status_recognised``).
 _STATUS_WORDS = {
     TRUE_STATUS: (
         # true
@@ -466,6 +469,17 @@ _STATUS_WORDS = {
         "事実",
         "事实",
         "事實",
+        # confirmed, verified
+        "confirmed",
+        "verified",
+        "확인됨",
+        "검증됨",
+        "確認済み",
+        "検証済み",
+        "已确认",
+        "已確認",
+        "已证实",
+        "已證實",
     ),
     FALSE_STATUS: (
         # false
@@ -478,6 +492,18 @@ _STATUS_WORDS = {
         "假",
         "虚假",
         "虛假",
+        # denied, refuted
+        "denied",
+        "refuted",
+        "부인됨",
+        "반박됨",
+        "否定",
+        "否認",
+        "反駁",
+        "已否认",
+        "已否認",
+        "已驳斥",
+        "已駁斥",
     ),
     DISPUTED_STATUS: (
         # disputed
@@ -496,14 +522,6 @@ _STATUS_WORDS = {
         "疑い",
         "可疑",
         "涉嫌",
-    ),
-    UNKNOWN_STATUS: (
-        # unknown
-        "unknown",
-        "알수없음",
-        "불명",
-        "不明",
-        "未知",
         # uncertain, unverified
         "uncertain",
         "unverified",
@@ -517,6 +535,14 @@ _STATUS_WORDS = {
         "未证实",
         "未證實",
         "未确认",
+    ),
+    UNKNOWN_STATUS: (
+        # unknown
+        "unknown",
+        "알수없음",
+        "불명",
+        "不明",
+        "未知",
         # none
         "none",
         "na",

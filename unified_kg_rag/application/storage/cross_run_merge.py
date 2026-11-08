@@ -82,12 +82,17 @@ def _single_additions(
     """``{final id: added description}`` of the ``added`` items (paired with
     the id each ends under) whose final id one delta item and at most one
     ``stored`` copy end under, which is not ``excluded``, and whose
-    ``derived`` item still cites every text unit the delta item cites (a
+    ``derived`` item cites every text unit the delta item cites (a
     derivation that moved a unit's statement to another item, an edge of a
-    split entity, say, leaves the delta description stating it): the items
-    :func:`extend_summaries` may extend."""
+    split entity, say, leaves the delta description stating it) and no
+    other than those and its stored copy's (a derivation that folded another
+    stored spelling into it adds that spelling's lines, which neither
+    description states): the items :func:`extend_summaries` may extend."""
     reached = Counter(final for final, _ in added)
     held = Counter(item.id for item in stored)
+    stored_units: dict[str, set[str]] = {}
+    for item in stored:
+        stored_units.setdefault(item.id, set()).update(item.text_unit_ids or [])
     cited = {item.id: set(item.text_unit_ids or []) for item in derived}
     return {
         final: item.description
@@ -96,6 +101,8 @@ def _single_additions(
         and reached[final] == 1
         and held[final] <= 1
         and set(item.text_unit_ids or []) <= cited.get(final, set())
+        and cited.get(final, set())
+        <= set(item.text_unit_ids or []) | stored_units.get(final, set())
     }
 
 
@@ -610,8 +617,11 @@ class CrossRunMerge:
         # whole's summary holds the part's lines, the part's is the whole's),
         # nor for an id more than one delta item or stored copy ends under
         # (folded spellings: one summary would be extended, the others'
-        # lines lost). Nor for an edge with an endpoint a split parted (the
-        # delta edge's lines can belong to the edge the split moved them to).
+        # lines lost), nor for one whose derived item cites a unit neither
+        # its stored copy nor the delta item does (a stored spelling the
+        # derivation folded into it: its lines are in neither). Nor for an
+        # edge with an endpoint a split parted (the delta edge's lines can
+        # belong to the edge the split moved them to).
         # Those are summarized from their derived lines, as a full build does.
         parted = {i for pair in derived.split_from.items() for i in pair}
         stored_entities = [

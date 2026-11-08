@@ -450,9 +450,12 @@ gets its models and stores from the run's `Providers` bundle.
   model's status is read into the prompt's four (`claim_status`: `true`,
   `false`, `disputed`, `unknown`, as stored) at extraction and in each merge:
   the prompt's words, MS GraphRAG's `SUSPECTED` (`disputed`) and a few plain
-  synonyms, each in English, Korean, Japanese and Chinese (`uncertain`,
-  `불확실`, `未確認` are `unknown` alike); any other word is `unknown`, counted
-  in `total_unrecognised_claim_statuses`. Each unit's statement is resolved
+  synonyms, each in English, Korean, Japanese and Chinese: `confirmed` and
+  `verified` are `true` and `denied` and `refuted` `false` (MS GraphRAG's
+  TRUE is "the claim is confirmed"), `uncertain` and `unverified` (`불확실`,
+  `未確認`) `disputed` (the prompt's DISPUTED is "conflicting information or
+  uncertainty indicated", MS GraphRAG's SUSPECTED "not verified"); any other
+  word is `unknown`, counted in `total_unrecognised_claim_statuses`. Each unit's statement is resolved
   on its own, and resolution merges the statements that resolve to one
   claim id.
 - **The extraction store** keeps each record, keyed by
@@ -1070,7 +1073,10 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   what it left out is still current.
 - **Adding a methodology** that needs an artifact the namespace does not
   hold (communities and reports for `graphrag`, relationship vectors for
-  `lightrag`) needs the whole corpus, not a delta (the summary tree is the
+  `lightrag`), and claim extraction turned on for a namespace without
+  claims (`CORPUS_WIDE_ARTIFACTS`: a delta extracts claims from its own
+  units only, and its record, which keeps what both name, would never name
+  them, so `local` would not read them), needs the whole corpus, not a delta (the summary tree is the
   exception: it is built from the stored text units, §6.5): a run with the registry
   on that finds one (the stored record against the effective
   methodologies, `missing_artifacts`) rebuilds the namespace for that run
@@ -1095,7 +1101,19 @@ LightRAG-only corpus never pays for GraphRAG's communities and reports.
   (`other_source_scopes`, less those the run retires) is refused before any
   model call (`ConfigurationError`, exit 2), for corpus runs and
   `insert_documents`/`delete_documents` alike, since adding it back needs
-  the rebuild that is refused there. The record names the source scopes it
+  the rebuild that is refused there; so is one whose switches stop building
+  a corpus-wide artifact the record holds beside the methodologies it keeps
+  (`dropped_artifacts`: reports with `report_generation.enabled: false`,
+  which leaves `graphrag` for `local`, and claims with claim extraction
+  off), naming the switch. For `raptor` alone (its summary tree is not
+  corpus-wide) the refusal stays, since the record would stop naming the
+  tree for every scope, but says adding it back needs no rebuild: the next
+  run that selects it builds the tree from every stored text unit of the
+  namespace. An incremental run keeps the stored records of the kinds it
+  does not produce, as a reset does (`collect_extraction_records` skips the
+  keys under `unbuilt_record_prefixes`): the claim records of the units a
+  claims-off run extracts again stay for the rebuild that turns claims back
+  on. The record names the source scopes it
   holds (`source_scopes`: the run's and the others its diff read, a
   reset's alone; None without the registry or in an earlier version's
   record), so a query's refusal advises a re-run over the one scope's

@@ -391,7 +391,7 @@ Claim extraction configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | boolean | `false` | Extract claims (covariates): one more LLM call per text unit. When on, local search injects the matching claims into its context and simple search includes the claims index in its sweep. Claim subjects and objects are not linked into the entity graph. |
+| `enabled` | boolean | `false` | Extract claims (covariates): one more LLM call per text unit. When on, local search injects the matching claims into its context and simple search includes the claims index in its sweep. Claim subjects and objects are not linked into the entity graph. Turned on for an incremental namespace built without claims, the next run rebuilds it once from its stored extractions; that run, and one turning it off for a namespace that holds claims, is refused while the namespace holds other source scopes' documents. |
 | `max_entities_per_prompt` | integer (≥ 0) | `100` | Maximum entities per claim extraction prompt |
 
 ### `processing.seed_graphs[]`
@@ -445,7 +445,7 @@ Community report generation configuration
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | boolean | `true` | Enable automatic community report generation. Off: global and drift search, which answer from the reports, are refused (local reads graphrag without them; a WARNING at load says so). |
+| `enabled` | boolean | `true` | Enable automatic community report generation. Off: global and drift search, which answer from the reports, are refused (local reads graphrag without them; a WARNING at load says so). A run turning it off for a namespace that holds reports is refused while the namespace holds other source scopes' documents. |
 | `max_entities_per_report` | integer (≥ 1) | `50` | Maximum entities per community report |
 | `max_report_context_tokens` | integer (≥ 1) | `4000` | Token budget for the entity/relationship (and, with claim extraction on, claim) context packed into a community report prompt. As MS GraphRAG's sort_context, relationships are packed by combined endpoint degree (most connected first), each with its two entities and their claims, then the entities with no relationship in the community, up to this budget. max_entities_per_report remains an additional upper bound on entity count. MS GraphRAG's default is 8000 with max_cluster_size 10: raise this (more report input tokens per call) when reports of large communities keep few relationships. |
 | `content_length` | string | `"medium"` | Report length, as the number of findings the report asks for: short (5-7), medium (7-10), long (10-15) |
