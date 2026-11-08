@@ -1198,6 +1198,7 @@ class EvaluationRunner:
     def _print_comparison(comparison: dict[str, Any], total_time: float) -> None:
         """Mean per strategy and the paired delta (95% CI) against each
         strategy's baseline."""
+        _load_evaluation()  # a static method: no __init__ bound the names
         baseline = comparison["baseline"]
         strategies = comparison["strategies"]
         pairs = compared_pairs(comparison)
