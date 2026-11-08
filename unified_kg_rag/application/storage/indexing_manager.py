@@ -859,7 +859,9 @@ class IndexingManager:
 
         Run after their items are written under the new ids: the re-pointed
         edges then hold the new endpoints, and deleting the old entity vertex
-        drops no edge still in use.
+        drops no edge still in use. A suffix whose stored reports could not
+        be pointed at the new ids keeps its old ids (the failure is in the
+        results, so the caller keeps its note and a later run retries both).
         """
         retired = self._retired_ids()
         vector_only = dict(self._vector_only)
@@ -868,6 +870,10 @@ class IndexingManager:
         # The stored community reports citing an old id cite the new one
         # first: deleted, nothing would point them at it.
         repointed = self._repoint_reports(rekeyed)
+        for suffix in sorted(retired):
+            stats = repointed.get(f"vector_report_findings_{suffix}")
+            if stats is not None and stats.failed_items:
+                del retired[suffix]
         if retired:
             logger.info(
                 "Deleting %d items re-keyed to follow their current name",
@@ -892,7 +898,7 @@ class IndexingManager:
         """Point the findings of the stored reports at the ids ``rekeyed``
         (by suffix: old id -> new id) gives
         (``VectorIndexer.repoint_report_findings``). A failure keeps the old
-        ids in them (a query reading the records skips an id not stored)."""
+        ids in them, and the suffix's old ids stored (delete_retired_ids)."""
         results: dict[str, IndexingStats] = {}
         for suffix, rekey in sorted(rekeyed.items()):
             moved = {old: new for old, new in rekey.items() if old != new}
@@ -908,7 +914,8 @@ class IndexingManager:
             if stats.failed_items:
                 logger.warning(
                     "Pointing the stored community reports of '%s' at re-keyed "
-                    "ids failed; they keep citing the old ids: %s",
+                    "ids failed; they keep citing the old ids, which stay "
+                    "stored until a later run retries: %s",
                     suffix,
                     stats.errors[:1],
                 )

@@ -391,3 +391,58 @@ def test_the_pipeline_writes_a_rejected_entity_next_run_without_extraction(
     names = {hit["_source"]["name"] for hit in e2e._stored(config, providers, prefix)}
     assert _V in names
     assert set(e2e._registry(providers).values()) == {DocStatus.PROCESSED}
+
+
+def test_a_failed_report_repoint_keeps_the_old_ids_for_a_retry(monkeypatch) -> None:
+    # Deleting the old ids while the stored reports still cite them leaves
+    # the reports' findings pointing at nothing: they stay, and the commit
+    # note, kept, has the next run point the reports and delete them.
+    harness = _harness()
+    before, after = _SPELLINGS
+    harness.run(before)
+    repoint = type(harness.vector).repoint_report_findings
+    rekeyed: list[dict[str, str]] = []
+
+    def failing(self, id_remap, suffix=None):  # noqa: ANN001, ANN202
+        rekeyed.append(dict(id_remap))
+        stats = IndexingStats(total_items=len(id_remap))
+        stats.add_error("mapping update denied", count=len(id_remap))
+        return stats
+
+    monkeypatch.setattr(type(harness.vector), "repoint_report_findings", failing)
+    harness.run(after)
+    (old,) = {old for remap in rekeyed for old in remap}
+    assert old in harness.state()["graph_edges"]
+    assert harness.vector.read_extraction_records(["pending-commit"]) != {}
+    monkeypatch.setattr(type(harness.vector), "repoint_report_findings", repoint)
+
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, harness.config)
+    assert harness.vector.read_extraction_records(["pending-commit"]) == {}
+
+
+def test_a_large_note_is_split_into_parts(monkeypatch) -> None:
+    # One record holding every rejected item of a hub can exceed a store's
+    # request limit (10 MiB on small OpenSearch instances).
+    from unified_kg_rag.application.storage import pending_writes
+
+    monkeypatch.setattr(pending_writes, "_PART_BYTES", 600)
+    harness = _harness()
+    rejected = [_id(_V), *_hub_edges()]
+
+    harness.run(_CORPUS, fail=_rejecting("graph.upsert", *rejected))
+
+    note = _note(harness)
+    assert note is not None and len(note["parts"]) > 1
+    parts = harness.vector.read_extraction_records(note["parts"])
+    assert set(parts) == set(note["parts"])
+    noted = {i["id"] for part in parts.values() for kind in part.values() for i in kind}
+    assert set(rejected) <= noted
+
+    harness.run(_CORPUS)
+
+    assert harness.extracted == []
+    assert harness.state() == expected_state(_CORPUS, harness.config)
+    assert _note(harness) is None
+    assert harness.vector.read_extraction_records(note["parts"]) == {}
