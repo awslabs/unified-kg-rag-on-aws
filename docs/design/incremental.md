@@ -32,7 +32,16 @@ unless noted.
    (`indexing.retire_source_scopes`). Documents whose processing keeps killing
    the run are quarantined or deferred (§5.3). A seed graph's shards are
    documents of the run's scope; one only an extraction setting changed
-   for reads unchanged (§4.5).
+   for reads unchanged (§4.5). A record also holds its file's *source
+   digest* (the file's bytes and the parser that read them:
+   `application/ingestion/source_parsing.py`), so the parsing stage parses
+   only the files whose digest is not their PROCESSED record's; for the
+   others an unparsed document carries the record's content hash into the
+   diff, and one the run processes after all (other extraction settings) is
+   parsed before its attempt opens. A reset, deduplication or an export of
+   the parsed documents parses every file. Files parse in-process until the
+   rest is expected to take longer than starting a process pool (timed per
+   file type), then in one.
 2. **Write-ahead** (`write_ahead`). Before any store write, every new and
    changed document is recorded `PENDING` (content hash `"pending"`, which no
    document hashes to) with the union of its stored text units and the ones

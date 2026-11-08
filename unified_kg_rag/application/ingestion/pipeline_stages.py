@@ -53,8 +53,13 @@ from unified_kg_rag.application.ingestion.incremental import (
     reset_namespaces,
     run_failures,
     run_incremental_indexer,
+    run_registry_scope,
     unit_source_files,
     warn_about_unapplied_retired_scopes,
+)
+from unified_kg_rag.application.ingestion.source_parsing import (
+    SourceFileParser,
+    reusable_records,
 )
 from unified_kg_rag.application.storage.indexing_manager import (
     IndexingManager,
@@ -92,6 +97,7 @@ from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.document_identity import (
     RELATIVE_PATH_KEY,
     config_registry_namespace,
+    is_unparsed,
     store_namespace_tag,
 )
 from unified_kg_rag.domain.ingestion.graph_analyzer import GraphAnalyzer
@@ -590,6 +596,8 @@ class DocumentLoadingStage(_RegistryStage):
 
         incremental = self._registry_on
         if self.config.processing.deduplicate:
+            # Deduplication compares the texts.
+            documents = self._read_unparsed(documents)
             keep = avoid = None
             if incremental and not self.config.indexing.reset:
                 keep, avoid = dedup_preferences(
@@ -616,6 +624,9 @@ class DocumentLoadingStage(_RegistryStage):
             )
         elif corpus_is_seeds_only(documents):
             self._confirm_seeds_alone()
+        # What reaches the stages after this one is read (an unparsed
+        # document of a parse cached by a run with the registry on).
+        documents = self._read_unparsed(documents)
 
         context.documents = documents
         output_count = len(context.documents)
@@ -767,7 +778,18 @@ class DocumentLoadingStage(_RegistryStage):
                 self.rebuild_for_artifacts is not None and self.rebuild_for_artifacts()
             ),
             deletions=self.deletions() if self.deletions is not None else None,
+            read_unparsed=self._source_parser().read_unparsed,
         )
+
+    def _source_parser(self) -> SourceFileParser:
+        return SourceFileParser(self.config, self.loader.source_directory)
+
+    def _read_unparsed(self, documents: list[Document]) -> list[Document]:
+        """``documents`` with every unparsed one read (one that fails to
+        parse is dropped)."""
+        if not any(is_unparsed(document) for document in documents):
+            return documents
+        return self._source_parser().read_unparsed(documents)[0]
 
     @staticmethod
     def _parsing_completed(context: PipelineContext) -> bool:
@@ -778,7 +800,7 @@ class DocumentLoadingStage(_RegistryStage):
         )
 
 
-class DocumentParsingStage(PipelineStage):
+class DocumentParsingStage(_RegistryStage):
     """Parse the raw corpus into ``Document`` objects.
 
     When ``target_directory`` is set, each parsed document is also exported as
@@ -797,8 +819,13 @@ class DocumentParsingStage(PipelineStage):
         target_directory: Path | None = None,
         cache_directory: Path | None = None,
         providers: Providers | None = None,
+        doc_status: "DocStatusPort | None" = None,
     ):
         super().__init__(PipelineStageType.DOCUMENT_PARSING, config, providers)
+        # The registry whose records tell which files need no parse
+        # (source_parsing); injected by the pipeline when the loading stage
+        # runs too, since it reads the documents that are not parsed here.
+        self._doc_status = doc_status
         self.source_directory = Path(source_directory)
         self.target_directory = Path(target_directory) if target_directory else None
         self.cache_directory = Path(cache_directory) if cache_directory else None
@@ -866,31 +893,31 @@ class DocumentParsingStage(PipelineStage):
 
         logger.info("Found %s files to parse", input_count)
 
+        parser = SourceFileParser(self.config, self.source_directory)
+        digests: dict[Path, str] | None = None
+        reusable: dict[Path, Document] = {}
+        if self._registry_on:
+            digests, reusable = self._reusable_parses(parser, files_to_parse)
+        parsed, failed_files = parser.parse(
+            [path for path in files_to_parse if path not in reusable], digests
+        )
         parsed_documents = []
-        failed_files = []
-
         for file_path in files_to_parse:
-            try:
-                parser = ParserFactory.create_parser(file_path, self.config)
-                document = parser.parse_file(
-                    file_path, self.config.processing.document_parsing.index_value
-                )
-                assign_document_identity(
-                    document,
-                    self.source_directory,
-                    self.config.indexing.additional_suffix,
-                    store_namespace_tag(self.config.indexing),
-                )
+            if (unparsed := reusable.get(file_path)) is not None:
+                parsed_documents.append(unparsed)
+            elif (document := parsed.get(file_path)) is not None:
                 parsed_documents.append(document)
-
                 if self.target_directory is not None:
                     self._save_parsed_document(
                         document, file_path, self.target_directory
                     )
-
-            except Exception as e:  # noqa: BLE001 - reported as a failed file
-                logger.error("Failed to parse '%s': %s", file_path, e)
-                failed_files.append(str(file_path))
+        if reusable:
+            logger.info(
+                "%d of %d files are unchanged since they were indexed (source "
+                "digest): not parsed",
+                len(reusable),
+                input_count,
+            )
 
         context.documents = parsed_documents
         # Incremental delta detection must not mistake a file that failed to
@@ -900,7 +927,10 @@ class DocumentParsingStage(PipelineStage):
 
         metrics = {
             "input_files": input_count,
-            "parsed_files": [doc.file_name for doc in parsed_documents],
+            "parsed_files": [
+                doc.file_name for doc in parsed_documents if not is_unparsed(doc)
+            ],
+            "files_unparsed": len(reusable),
             "failed_files": failed_files,
             "files_failed": len(failed_files),
             "files_skipped": len(skipped_files),
@@ -909,6 +939,46 @@ class DocumentParsingStage(PipelineStage):
         }
 
         return input_count, output_count, metrics
+
+    def _reusable_parses(
+        self, parser: SourceFileParser, files: list[Path]
+    ) -> tuple[dict[Path, str], dict[Path, Document]]:
+        """Every file's source digest, and the unparsed documents of the
+        files whose PROCESSED record holds theirs
+        (``source_parsing.reusable_records``): they need no parse. None
+        without an injected registry (the pipeline injects it
+        when the loading stage runs, which reads what is not parsed here) or
+        when the run reads every document's text anyway: a reset,
+        deduplication (it compares the texts) or an export of the parsed
+        documents (``target_directory``)."""
+        digests = {}
+        for path in files:
+            try:
+                digests[path] = parser.source_digest(path)
+            except Exception:  # noqa: BLE001 - its parse reports it
+                continue
+        if (
+            self._doc_status is None
+            or self.config.indexing.reset
+            or self.config.processing.deduplicate
+            or self.target_directory is not None
+        ):
+            return digests, {}
+        # Resolved, as the loading stage keys the run (DirectoryLoader).
+        _, _, source_scope, _ = run_registry_scope(
+            self.config, self.source_directory.resolve(), []
+        )
+        try:
+            return digests, reusable_records(
+                parser, digests, self._doc_status, source_scope
+            )
+        except Exception as e:  # noqa: BLE001 - every file is parsed instead
+            logger.warning(
+                "Could not read the doc-status registry to skip unchanged files "
+                "(%s): parsing every file",
+                e,
+            )
+            return digests, {}
 
     def _discover_source_files(self) -> tuple[list[Path], list[str]]:
         """The files to parse, and the files skipped for a file type no

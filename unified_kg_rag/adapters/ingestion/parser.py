@@ -1,6 +1,11 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
+import functools
+import hashlib
 import importlib.util
+import inspect
+import sys
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -244,3 +249,83 @@ class ParserFactory:
     @classmethod
     def get_supported_extensions(cls) -> list[str]:
         return list(cls._loader_configs.keys())
+
+    @classmethod
+    def loader_spec(
+        cls, extension: str
+    ) -> tuple[type[BaseLoader], dict[str, Any], str]:
+        """The ``(loader_class, loader_kwargs, file_type_name)`` registered for
+        ``extension``, what :meth:`create_parser` builds a parser from.
+
+        Raises:
+            DataProcessingError: No loader reads the extension.
+        """
+        ext = extension.lower()
+        if ext not in cls._loader_configs:
+            raise DataProcessingError(f"Unsupported file type: '{ext}'")
+        return cls._loader_configs[ext]
+
+    @classmethod
+    def parser_fingerprint(cls, extension: str) -> str:
+        """What a file of ``extension`` parses to depends on, for its source
+        digest (``compute_source_digest``): this package's version and parser
+        modules, the registered loader (class, module source, kwargs) and the
+        installed versions of the parsing libraries. An upgrade of any of
+        them parses every file again once.
+
+        Raises:
+            DataProcessingError: No loader reads the extension.
+        """
+        loader_class, loader_kwargs, file_type_name = cls.loader_spec(extension)
+        return _fingerprint(
+            loader_class, repr(sorted(loader_kwargs.items())), file_type_name
+        )
+
+
+# The libraries the built-in loaders read files with; their versions are
+# part of every parser fingerprint.
+_PARSING_DISTRIBUTIONS = (
+    "charset-normalizer",
+    "langchain-core",
+    "pypdf",
+    "python-docx",
+    "unstructured",
+)
+
+
+@functools.lru_cache(maxsize=32)
+def _fingerprint(
+    loader_class: type[BaseLoader], loader_kwargs: str, file_type_name: str
+) -> str:
+    from unified_kg_rag import __version__
+
+    sources = []
+    for module in {
+        __name__,
+        convert_langchain_to_document.__module__,
+        loader_class.__module__,
+    }:
+        try:
+            sources.append(Path(inspect.getfile(sys.modules[module])).read_bytes())
+        except (KeyError, OSError, TypeError):
+            sources.append(module.encode("utf-8"))
+    versions = []
+    for distribution in _PARSING_DISTRIBUTIONS:
+        try:
+            versions.append(f"{distribution}={metadata.version(distribution)}")
+        except metadata.PackageNotFoundError:
+            versions.append(f"{distribution}=-")
+    digest = hashlib.sha256(
+        repr(
+            (
+                __version__,
+                f"{loader_class.__module__}.{loader_class.__qualname__}",
+                loader_kwargs,
+                file_type_name,
+                versions,
+            )
+        ).encode("utf-8")
+    )
+    for source in sorted(sources):
+        digest.update(source)
+    return digest.hexdigest()

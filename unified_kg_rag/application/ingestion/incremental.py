@@ -64,8 +64,10 @@ from unified_kg_rag.domain.ingestion.derivation import with_entity_ids
 from unified_kg_rag.domain.ingestion.document_identity import (
     DEFAULT_NAMESPACE,
     RELATIVE_PATH_KEY,
+    SOURCE_DIGEST_KEY,
     compute_doc_id,
     config_registry_namespace,
+    is_unparsed,
     normalize_source_path,
     normalize_source_scope,
     relative_source_path,
@@ -142,6 +144,7 @@ def build_document_lineage(
             suffix=suffix,
             file_path=doc.metadata.get(RELATIVE_PATH_KEY) or doc.file_path,
             text_unit_ids=sorted(set(units_by_doc[docid_to_stable[doc.document_id]])),
+            source_digest=doc.metadata.get(SOURCE_DIGEST_KEY),
         )
         for doc in documents
     ]
@@ -1142,6 +1145,7 @@ class IncrementalIndexer:
                 ),
                 file_path=lineage.file_path,
                 text_unit_ids=lineage.text_unit_ids,
+                source_digest=lineage.source_digest,
             )
             records.append(record)
         unrecorded = sorted(set(self._pending) - {r.doc_id for r in records})
@@ -1708,6 +1712,7 @@ def filter_to_delta(
     confirm_deletions: Callable[[str], bool] | None = None,
     guard_reset_deletions: bool = False,
     deletions: Sequence[str] | None = None,
+    read_unparsed: ReadUnparsed | None = None,
 ) -> tuple[list[Document], int]:
     """Keep only new/changed documents per the DynamoDB doc-status registry.
 
@@ -1728,6 +1733,13 @@ def filter_to_delta(
     relative paths (ids) are deleted, and the scope's other documents are
     kept (``DocumentChanges``); no mass deletion is asked, the caller named
     them. Such a run cannot reset.
+
+    An unparsed document (its file's source digest is its record's, see
+    ``source_parsing``) the run processes after all is read by
+    ``read_unparsed`` before any attempt opens, so the attempt and the
+    commit record the hash of the text read. The unchanged documents'
+    records get their source digest when they lack it
+    (:func:`record_source_digests`).
 
     Raises :class:`DocStatusRegistryError` when the registry cannot be
     read, and :class:`DocumentNotFoundError` when a deletion names a
@@ -1799,6 +1811,7 @@ def filter_to_delta(
                 for document in documents
                 if document_doc_id(document) not in quarantined
             ]
+        documents = _read_unparsed(documents, fingerprints, read_unparsed)
         context.incremental_delta = DocumentDelta(
             new=[doc_id for doc_id in fingerprints if doc_id not in quarantined]
         )
@@ -1866,6 +1879,7 @@ def filter_to_delta(
             confirm,
             confirm_deletions,
             deletions=deletions,
+            read_unparsed=read_unparsed,
         )
     # Before any write, under the stored spelling of the scope.
     if seeds_only:
@@ -1877,6 +1891,13 @@ def filter_to_delta(
             delta, config.indexing.max_deletion_share, source_scope, confirm_deletions
         )
     _warn_about_a_shared_seed(doc_status, documents, delta, namespace, scope)
+    to_read = set(delta.to_process)
+    documents = _read_unparsed(
+        documents,
+        fingerprints,
+        read_unparsed,
+        lambda document: document_doc_id(document) in to_read,
+    )
     context.incremental_delta = delta
     context.incremental_fingerprints = fingerprints
     context.incremental_scope = scope
@@ -1894,6 +1915,7 @@ def filter_to_delta(
         },
         written_by=context.pipeline_id,
     )
+    record_source_digests(store, documents, delta, context.pipeline_id)
     if not config.processing.document_parsing.source_scope:
         _warn_about_other_local_scopes(
             store,
@@ -1915,6 +1937,74 @@ def filter_to_delta(
         len(delta.deferred),
     )
     return to_process, skipped
+
+
+# Reads the unparsed documents a predicate selects, in place in a list:
+# the list, and the content hash of each read one by registry id
+# (``source_parsing.SourceFileParser.read_unparsed``).
+ReadUnparsed = Callable[
+    [list[Document], Callable[[Document], bool]],
+    tuple[list[Document], dict[str, str]],
+]
+
+
+def _read_unparsed(
+    documents: list[Document],
+    fingerprints: dict[str, str],
+    read_unparsed: ReadUnparsed | None,
+    selected: Callable[[Document], bool] = lambda _: True,
+) -> list[Document]:
+    """``documents`` with the unparsed ones ``selected`` accepts read, their
+    fingerprints the hashes of the texts read. Without a reader an unparsed
+    document cannot be processed: ``DataProcessingError``."""
+    if not any(is_unparsed(d) and selected(d) for d in documents):
+        return documents
+    if read_unparsed is None:
+        raise DataProcessingError(
+            "The run processes documents whose source files it did not parse "
+            "and has no parser to read them"
+        )
+    documents, hashes = read_unparsed(documents, selected)
+    fingerprints.update(hashes)
+    return documents
+
+
+def record_source_digests(
+    store: DocStatusPort,
+    documents: Sequence[Document],
+    delta: DocumentDelta,
+    written_by: str | None = None,
+) -> int:
+    """Give the PROCESSED records of the unchanged documents the source
+    digest their file has now (``SOURCE_DIGEST_KEY``) where they hold
+    another or none (a record of an earlier release, or a parser upgrade
+    that left the text as it was), so the next run need not parse them.
+    One batched read and write; returns how many it updated."""
+    unchanged = set(delta.unchanged)
+    digests = {
+        doc_id: digest
+        for document in documents
+        if (doc_id := document_doc_id(document)) in unchanged
+        and isinstance(digest := document.metadata.get(SOURCE_DIGEST_KEY), str)
+        and not is_unparsed(document)
+    }
+    if not digests:
+        return 0
+    stale = [
+        record.model_copy(update={"source_digest": digests[doc_id]})
+        for doc_id, record in store.get_many(digests).items()
+        if record.status is DocStatus.PROCESSED
+        and record.source_digest != digests[doc_id]
+    ]
+    if stale:
+        check_write_fence()
+        store.put_many(_written_by(stale, written_by))
+        logger.info(
+            "Recorded the source digest of %d unchanged documents (their files "
+            "are not parsed again while it holds)",
+            len(stale),
+        )
+    return len(stale)
 
 
 def _reset_deletions(

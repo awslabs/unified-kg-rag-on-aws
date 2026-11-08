@@ -105,6 +105,13 @@ class DocStatusRecord(BaseModel):
         "kept in (see ``doc_id_namespace``)"
     )
     content_hash: str = Field(description="Content hash used for change detection")
+    source_digest: str | None = Field(
+        default=None,
+        description="Hash of the source file's bytes and of the parser that "
+        "read them (``compute_source_digest``): a run parses a file again "
+        "only when it differs. None for a record of an earlier release or of "
+        "a document given as text",
+    )
     status: DocStatus = Field(
         default=DocStatus.PENDING, description="Current processing status"
     )
@@ -220,6 +227,11 @@ class DocumentLineage(BaseModel):
         default=None, description="Source file path relative to the corpus root"
     )
     text_unit_ids: list[str] = Field(default_factory=list)
+    source_digest: str | None = Field(
+        default=None,
+        description="The document's source digest, for its record "
+        "(``DocStatusRecord.source_digest``)",
+    )
 
     # The per-artifact id lists of earlier releases are gone: passing one is
     # an error, not silently ignored.

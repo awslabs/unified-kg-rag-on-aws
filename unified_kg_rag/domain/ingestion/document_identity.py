@@ -25,6 +25,11 @@ moved stay under the old scope until a run retires it, see
   path. A document read outside an incremental run has no source scope
   (namespace and path only).
 * ``compute_text_hash(text)`` -- content fingerprint (change detection).
+* ``compute_source_digest(raw, parser)`` -- the hash of a source file's
+  bytes and the parser that reads them. A registry record keeps it, so a run
+  reads (parses) only the files whose digest changed: the same bytes through
+  the same parser give the same text (an *unparsed* document stands in for
+  the others, with its record's content hash).
 * ``compute_document_id(source_key, content_hash)`` -- the per-version
   ``Document.document_id`` that text-unit ids derive from. Hashing the full
   text, not a prefix, keeps two files with the same name and the same opening
@@ -37,8 +42,10 @@ outside the pipeline); the pipeline stages re-derive the id against the root.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING
 
@@ -48,6 +55,7 @@ from unified_kg_rag.shared.utils.common import compute_hash, generate_stable_id
 
 if TYPE_CHECKING:
     from unified_kg_rag.domain.models.config import IndexingConfig
+    from unified_kg_rag.domain.models.document import Document
 
 # Document.metadata key holding the path relative to the corpus root (the
 # directory loader already records it under this name).
@@ -57,6 +65,14 @@ REGISTRY_NAMESPACE_KEY = "registry_namespace"
 # Document.metadata key holding the corpus source scope the document was read
 # from (``document_parsing.source_scope``, else the resolved source directory).
 REGISTRY_SOURCE_KEY = "registry_source"
+
+# Document.metadata key holding the document's source digest
+# (compute_source_digest), recorded by the doc-status registry.
+SOURCE_DIGEST_KEY = "source_digest"
+# Document.metadata key of a document whose source file this run did not
+# parse (its source digest is the one its PROCESSED registry record holds):
+# that record's content hash. Its page_content is empty until it is read.
+UNPARSED_CONTENT_HASH_KEY = "unparsed_content_hash"
 
 # A document without an index value is registered under the default index
 # suffix.
@@ -79,17 +95,37 @@ def relative_source_path(file_path: str | Path, source_root: str | Path) -> str 
     when the file is not under the root."""
     path = Path(file_path)
     root = Path(source_root)
-    for candidate, base in ((path, root), (path.resolve(), root.resolve())):
-        try:
-            return candidate.relative_to(base).as_posix()
-        except ValueError:
-            continue
-    return None
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        pass
+    # Resolved only when needed: two filesystem walks per document.
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return None
 
 
 def compute_text_hash(text: str) -> str:
     """Content hash used for change detection and document-version ids."""
     return compute_hash(text, length=_ID_HASH_LENGTH)
+
+
+def compute_source_digest(raw: Iterable[bytes], parser_fingerprint: str) -> str:
+    """The digest of a source file's bytes (``raw``, in order) as
+    ``parser_fingerprint`` (the parser's identity and version) reads them:
+    equal digests give equal parsed text."""
+    digest = hashlib.sha256(parser_fingerprint.encode("utf-8"))
+    digest.update(b"\0")
+    for chunk in raw:
+        digest.update(chunk)
+    return digest.hexdigest()[:_ID_HASH_LENGTH]
+
+
+def is_unparsed(document: Document) -> bool:
+    """Whether ``document`` stands in for a source file this run did not
+    parse (:data:`UNPARSED_CONTENT_HASH_KEY`)."""
+    return isinstance(document.metadata.get(UNPARSED_CONTENT_HASH_KEY), str)
 
 
 def compute_document_id(source_key: str, content_hash: str) -> str:
