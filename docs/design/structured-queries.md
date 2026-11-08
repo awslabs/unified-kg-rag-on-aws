@@ -102,9 +102,12 @@ the model-written plan text the output guardrail screens).
    (capped at `max_schema_tokens` by the configured token counter, least
    frequent entries cut first), the grammar, nine neutral few-shot plans
    (one of them unanswerable) and the question in `<question>` tags marked
-   as data. Mentions are written as the question writes them (the query
-   language, `query_language`), the string values of conditions as the data
-   writes them (the index language), and a text or order comparison is
+   as data. Mentions, the entity names and themes and the string values of
+   conditions are written as the data writes them (the index language,
+   `data_language`), whatever language the question is in: a Korean
+   question on an English corpus names its entities in English, so they
+   link (and the fallback looks them up) instead of falling back
+   `unlinked_mention`. A text or order comparison is
    allowed only on a property of one value kind (`contains` on strings
    alone: Gremlin fails a substring test of a number). The plan also lists the question's entity names and
    themes (`entities`, `keywords`), which the fallback strategy reads in

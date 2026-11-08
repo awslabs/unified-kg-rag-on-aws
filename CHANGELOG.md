@@ -753,7 +753,8 @@ From a `main` checkout (formats and keys no release had):
   lists, paths between two named entities and seed-entity properties from a query the graph store runs. One planner
   call (`models.roles.graph_query`, default tier; `custom_prompts.graph_query_*`;
   `search.output_ceilings.graph_query`) writes the question as a closed JSON plan over the graph's schema profile
-  (declared types plus a sampled profile of what the suffix holds), never query text; code validates it (one repair
+  (declared types plus a sampled profile of what the suffix holds), never query text, its names and values in the
+  index language whatever the question's; code validates it (one repair
   call with the refusal), links the names it mentions through the hybrid entity search (a name without a name match
   needs a lexical hit whose name holds every word of it, legal forms aside, Han, Hangul and Kana by character pairs
   and a word spelled alike past `processing.similarity_threshold`, so an absent entity that shares one word with a

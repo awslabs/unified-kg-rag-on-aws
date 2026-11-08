@@ -193,7 +193,6 @@ class GraphQueryPlanPrompt(BasePrompt):
     input_variables = [
         "query",
         "schema",
-        "target_language",
         "data_language",
         "max_hops",
         "feedback",
@@ -209,8 +208,8 @@ holds.
 THE PLAN
 - nodes: one to four node patterns, in the order of one chain. Each has a variable name ("var": lowercase
   letters, digits and "_"), optional entity "types" (any type when empty), an optional "mention" (an entity name
-  the question gives, written as the question writes it: code finds the matching entities), and "where"
-  conditions that must all hold.
+  the question gives, written as the data names it: code finds the matching entities), and "where" conditions
+  that must all hold.
 - edges: one edge pattern between each pair of consecutive nodes: relationship "types" (any when empty), the
   "direction" from the earlier node to the later one ("out", "in" or "both"), and "hops" [min, max] (more than
   one hop goes through other entities; at most {max_hops} hops in all).
@@ -224,16 +223,17 @@ THE PLAN
   lists extra properties to show per row.
 - unanswerable: true when the schema cannot answer the question (it needs reasons, opinions, text the graph does
   not hold as types and properties); leave nodes empty then.
-- entities and keywords: always fill them: the entity names the question mentions, as written, and up to five
-  short themes of the question.
+- entities and keywords: always fill them: the entity names the question mentions, written as the data names
+  them, and up to five short themes of the question.
 
 RULES
 - Use only the types, relationship types and property names the schema lists; never invent one.
 - Prefer a mention for a named entity over a condition on its name.
 - A count asks for count or count_distinct, a ranking for group_count with an order and a limit, a superlative
   value for aggregate, a yes/no question for exists, a connection between two named entities for path.
-- Write mentions as the question writes them (it is in {target_language}). Write the string values of conditions
-  in the language and spelling of the data ({data_language}): the schema's sampled values show how it writes them.
+- Write mentions, entities, keywords and the string values of conditions in the language and spelling of the data
+  ({data_language}), whatever language the question is in: translate or transliterate a name the question writes
+  in another language as the data would name it. The schema's sampled values show how the data writes values.
 - Respond with the JSON object only (the first character is {{ and the last is }}).
 
 FORMAT

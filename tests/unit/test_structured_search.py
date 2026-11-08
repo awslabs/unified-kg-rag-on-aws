@@ -573,7 +573,7 @@ async def test_mentions_link_through_the_hybrid_entity_search_in_any_script() ->
     assert result.metadata["structured"]["linked"] == {"x": ["v3"]}
     names = _table(result).content
     assert "株式会社サクラ" in names and "Hooli Retail" in names
-    assert "(it is in Korean)" in planner.calls[0][0]
+    assert "(English), whatever language" in planner.calls[0][0]
     link = next(c for c in documents.calls if c.query == "가나다상사")
     assert link.index_prefixes == [ENTITIES]
     assert link.search_type.value == "hybrid"
@@ -610,13 +610,41 @@ async def test_augment_fuses_the_fallback_beside_the_query_result() -> None:
     assert "context_sufficient" not in result.metadata
 
 
-async def test_the_planner_writes_in_the_query_language() -> None:
-    planner = _Planner(_with(CONFORMANCE_PLANS["count_supply_pairs"]))
-    strategy, *_ = _strategy(planner)
-    await strategy.asearch(
-        _query(metadata={"search_strategy": "structured", "query_language": "Japanese"})
+async def test_a_question_in_another_language_names_entities_as_the_data() -> None:
+    """A Korean question on an English corpus: the planner is told to write
+    its mentions in English, so they link, and the fallback's focus names
+    are the data's (the probe linked 애크미 서플라이즈 to nothing)."""
+    plan = _with(
+        {
+            "nodes": [
+                {"var": "a", "mention": "Acme Supplies"},
+                {"var": "b", "mention": "Umbrella Buyer"},
+            ],
+            "edges": [{"direction": "both", "hops": [1, 2]}],
+            "returns": {"kind": "exists"},
+        },
+        entities=["Acme Supplies", "Umbrella Buyer"],
     )
-    assert "(it is in Japanese)" in planner.calls[0][0]
+    planner = _Planner(plan)
+    strategy, *_ = _strategy(planner)
+    result = await strategy.asearch(
+        _query(
+            "애크미 서플라이즈는 엄브렐라 바이어와 연결되어 있나요?",
+            metadata={"search_strategy": "structured", "query_language": "Korean"},
+        )
+    )
+    assert result.metadata["structured"]["status"] == "answered"
+    system = planner.calls[0][0]
+    assert "in another language as the data would name it" in system
+    assert "(English), whatever language" in system and "Korean" not in system
+    # A Japanese corpus is named in Japanese.
+    config = Config(
+        processing={"translation": {"enabled": False, "source_language": "ja"}}
+    )
+    planner = _Planner(plan)
+    strategy, *_ = _strategy(planner, config=config)
+    await strategy.asearch(_query())
+    assert "(Japanese), whatever language" in planner.calls[0][0]
 
 
 async def test_the_profile_is_read_once_per_suffix_and_ttl() -> None:
@@ -831,5 +859,7 @@ async def test_values_are_asked_in_the_data_language() -> None:
         _query(metadata={"search_strategy": "structured", "query_language": "Korean"})
     )
     system = planner.calls[0][0]
-    assert "(it is in Korean)" in system
-    assert "the language and spelling of the data (" in system
+    # The question's language is not the mentions': the data's is.
+    assert "Korean" not in system
+    assert "Write mentions, entities, keywords and the string values" in system
+    assert "(English), whatever language" in system

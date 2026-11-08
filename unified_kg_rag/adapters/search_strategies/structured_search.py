@@ -486,7 +486,6 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                     {
                         "query": query.query,
                         "schema": schema,
-                        "target_language": self.query_language(query),
                         "data_language": language_name(index_language(self.config)),
                         "max_hops": str(settings.max_hops),
                         "feedback": feedback,

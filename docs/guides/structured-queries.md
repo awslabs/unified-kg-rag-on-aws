@@ -64,7 +64,9 @@ search for it whose names hold every word of it (legal forms aside; Han,
 Hangul and Kana compared by character pairs). Any other name links nothing,
 and the query falls back (`unlinked_mention`): neither "Does Zorblax
 Industries supply Acme?" nor "Does Zorblax Supplies ...", which shares one
-word with `Acme Supplies`, is answered from a lookalike. The context shows which entities
+word with `Acme Supplies`, is answered from a lookalike. The plan names
+entities and values as the data writes them (the index language), so a
+Korean question on an English corpus links its names in English. The context shows which entities
 each name linked to.
 
 ## When no plan answers
