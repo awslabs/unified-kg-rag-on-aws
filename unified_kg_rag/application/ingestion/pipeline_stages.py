@@ -60,10 +60,6 @@ from unified_kg_rag.application.storage.indexing_manager import (
     IndexingManager,
     stripped_descriptions,
 )
-from unified_kg_rag.domain.ingestion.base_resolver import (
-    compact_name_key,
-    normalize_entity_type,
-)
 from unified_kg_rag.domain.ingestion.cache_keys import (
     extraction_settings,
     is_excluded_source_path,
@@ -106,6 +102,10 @@ from unified_kg_rag.domain.ingestion.methodologies import (
     built_artifacts,
     selected_stages,
     stored_artifacts,
+)
+from unified_kg_rag.domain.ingestion.names import (
+    compact_name_key,
+    normalize_entity_type,
 )
 from unified_kg_rag.domain.ingestion.seed_graph import (
     DOCUMENT_SOURCE_KIND,

@@ -14,16 +14,14 @@ from collections.abc import Collection
 from typing import Any
 
 from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
-from unified_kg_rag.domain.ingestion.base_resolver import (
-    FuzzyMatcher,
-    entity_types_compatible,
-)
+from unified_kg_rag.domain.ingestion.base_resolver import FuzzyMatcher
 from unified_kg_rag.domain.ingestion.claim_resolver import merge_claim_statuses
 from unified_kg_rag.domain.ingestion.descriptions import merge_descriptions
 from unified_kg_rag.domain.ingestion.graph_resolver import (
     ENTITY_KEYS_ATTRIBUTE,
     entity_keys,
 )
+from unified_kg_rag.domain.ingestion.names import entity_types_compatible
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     overlay_weights,

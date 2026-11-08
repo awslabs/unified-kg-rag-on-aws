@@ -10,12 +10,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
-from unified_kg_rag.domain.ingestion.base_resolver import (
-    BaseResolver,
-    FuzzyMatcher,
-    normalize_entity_type,
-)
+from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from unified_kg_rag.domain.ingestion.graph_rank import with_graph_ranks
+from unified_kg_rag.domain.ingestion.names import normalize_entity_type
 from unified_kg_rag.domain.ingestion.relationship_endpoints import (
     sync_relationship_endpoint_names,
 )

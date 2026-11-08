@@ -52,8 +52,8 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.storage.filter_schema import document_filters
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
-from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     Config,

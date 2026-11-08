@@ -37,7 +37,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.claim_resolver import (
     ClaimResolver,
     earlier_claim_ids,
@@ -52,6 +51,7 @@ from unified_kg_rag.domain.ingestion.graph_resolver import (
     GraphResolver,
     entity_keys,
 )
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
     overlay_weights,

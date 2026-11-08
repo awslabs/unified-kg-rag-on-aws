@@ -68,7 +68,7 @@ from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
-from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.models import (
     Config,
     ModelRole,
