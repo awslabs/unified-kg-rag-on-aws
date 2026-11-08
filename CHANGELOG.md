@@ -1220,9 +1220,11 @@ From a `main` checkout (formats and keys no release had):
   the raw question as its keyword, as upstream LightRAG does, and a WARNING names the model role and model that
   answered. It failed the whole `mix`, `hybrid` or `iterative` query with the parser's `Expecting value` (#629).
 - The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
-  naming `processing.translation.source_language`, when its script disagrees with the setting: a Korean, Japanese
-  or Chinese corpus under the default `en` was extracted with prompts asking for English and analyzed as English
-  without a word. `run-prompt-tuning` writes the `source_language` the sample reads as into its output (#629).
+  naming `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese,
+  Chinese, Russian, Thai, Arabic or German corpus under the default `en` was extracted with prompts asking for
+  English and analyzed as English without a word. The sample's language is read by the rule a query's is (its
+  script, and a Latin-script one's function words). `run-prompt-tuning` writes the `source_language` the sample
+  reads as into its output (#629).
 - `backend: local`: the refusals and retrieval logs of the embedded vector store name it ("The embedded SQLite search
   engine index ...") instead of OpenSearch, and a query where nothing was ingested reads an empty store with a
   WARNING naming `providers.vector.sqlite_path` instead of creating an empty `vector.sqlite3` (in the working

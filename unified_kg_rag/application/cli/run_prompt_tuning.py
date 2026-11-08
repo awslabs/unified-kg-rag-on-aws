@@ -49,7 +49,7 @@ from unified_kg_rag.application.cli.provider_args import (
 from unified_kg_rag.application.cli.query_args import positive_int
 from unified_kg_rag.application.config import load_cli_dotenv
 from unified_kg_rag.domain.ingestion.cache_keys import is_excluded_source_path
-from unified_kg_rag.domain.ingestion.corpus_language import corpus_source_language
+from unified_kg_rag.domain.languages.corpus import corpus_source_language
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.utils import event_loop

@@ -86,10 +86,6 @@ from unified_kg_rag.domain.ingestion.contributions import (
     record_payload,
     unit_entities,
 )
-from unified_kg_rag.domain.ingestion.corpus_language import (
-    script_share,
-    source_language_mismatch,
-)
 from unified_kg_rag.domain.ingestion.delta_detector import (
     assign_document_identity,
 )
@@ -121,6 +117,10 @@ from unified_kg_rag.domain.ingestion.seed_graph import (
     parse_seed_unit,
     seed_only,
     seed_text_units,
+)
+from unified_kg_rag.domain.languages.corpus import (
+    corpus_sample,
+    source_language_mismatch,
 )
 from unified_kg_rag.domain.models import (
     ChunkingStrategy,
@@ -553,12 +553,12 @@ class DocumentLoadingStage(_RegistryStage):
         under the default 'en' is extracted with English prompts and
         analyzed as English); the run goes on."""
         source_language = self.config.processing.translation.source_language
-        share = script_share(
+        sample = corpus_sample(
             document.page_content
             for document in documents
             if not is_seed_document(document)
         )
-        if reason := source_language_mismatch(share, source_language):
+        if reason := source_language_mismatch(sample, source_language):
             logger.warning("Corpus language: %s", reason)
 
     def _execute_core(
