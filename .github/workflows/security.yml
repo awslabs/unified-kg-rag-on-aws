@@ -2,7 +2,9 @@ name: security
 
 # Automated Security Helper (ASH) scan: bandit, semgrep, detect-secrets,
 # checkov, cdk-nag and npm-audit. A gate: an unsuppressed finding at MEDIUM or
-# above fails the job. The threshold, the path-scoped suppressions (each with
+# above fails the job. The pip-audit job checks the locked Python
+# dependencies against the advisory databases (ASH's own dependency scanners,
+# grype and syft, cannot run here: .ash/.ash.yaml). The threshold, the path-scoped suppressions (each with
 # its reason) and the scanners left out are in .ash/.ash.yaml; a suppression
 # about one statement sits on that line (`# nosec`, `# nosemgrep`,
 # `# pragma: allowlist secret`).
@@ -72,3 +74,36 @@ jobs:
           name: ash-reports
           path: .ash/ash_output/reports/
           if-no-files-found: ignore
+
+  pip-audit:
+    # Every locked runtime dependency, of every extra (the dev group is not
+    # shipped), against PyPI's advisory database and OSV. A known
+    # vulnerability fails the job unless .github/pip-audit-accepted.txt lists
+    # its id with the reason it does not apply. Nothing is installed: the
+    # exported lock is hashed, so pip-audit resolves nothing itself.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.23"
+          python-version: "3.12"
+
+      - name: Audit the locked dependencies
+        # pip-audit and its own dependencies resolve as of the date, as ASH's
+        # do; move it when bumping pip-audit.
+        run: |
+          uv export --frozen --all-extras --no-dev --no-emit-project \
+            --format requirements-txt --output-file "$RUNNER_TEMP/requirements.txt"
+          ignores=()
+          while read -r id; do
+            ignores+=(--ignore-vuln "$id")
+          done < <(grep -oE '^[A-Z]+-[0-9A-Za-z-]+' .github/pip-audit-accepted.txt)
+          uvx --exclude-newer 2026-11-01T00:00:00Z pip-audit==2.10.1 \
+            --requirement "$RUNNER_TEMP/requirements.txt" --disable-pip \
+            --progress-spinner off "${ignores[@]}"

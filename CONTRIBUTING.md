@@ -134,7 +134,10 @@ the same check over the runtime npm dependencies the console's web client bundle
 `console/web/package-lock.json`.
 
 The [`security`](./.github/workflows/security.yml) workflow runs the Automated Security Helper (ASH: bandit, semgrep,
-detect-secrets, checkov, cdk-nag, npm-audit) and fails on an unsuppressed finding at MEDIUM or above. To run it locally
+detect-secrets, checkov, cdk-nag, npm-audit) and fails on an unsuppressed finding at MEDIUM or above. Its `pip-audit`
+job checks every locked runtime dependency (all extras, no dev group) for known vulnerabilities and fails on one
+that [`.github/pip-audit-accepted.txt`](./.github/pip-audit-accepted.txt) does not list with the reason it does not
+apply; remove a line once a fixed release is locked. To run ASH locally
 (the same pinned version and dependency date, as CI does; reports land in the gitignored `.ash/ash_output/`):
 
 ```bash
