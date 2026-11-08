@@ -112,6 +112,17 @@ class McpServerConfig(BaseModel):
             "message on the wire is up to about 2-4 times this"
         ),
     )
+    uncited_records: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description=(
+            "Records a kg_answer with records=cited returns when its answer "
+            "cites none (its strategy's citations are off, global and drift by "
+            "default, or it wrote no [n] marker): the first ones, best first "
+            "(records_kept: top); records=all returns every one"
+        ),
+    )
     max_concurrent_calls: int = Field(
         default=4,
         ge=1,

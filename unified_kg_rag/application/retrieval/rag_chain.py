@@ -34,7 +34,13 @@ from langchain_core.runnables import (
     RunnablePassthrough,
 )
 from langchain_core.runnables.config import merge_configs
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from unified_kg_rag.adapters.llm.chain_factory import (
@@ -178,6 +184,7 @@ from unified_kg_rag.shared import (
     observability,
 )
 from unified_kg_rag.shared.exceptions import (
+    ERROR_CLASS_KEY,
     MethodologyNotIndexedError,
     ToolArgumentError,
     classify,
@@ -558,6 +565,31 @@ class RAGInput(BaseModel):
                 "(use_memory), not both."
             )
         return self
+
+    @classmethod
+    def checked(cls, **fields: Any) -> "RAGInput":
+        """A query from a surface's arguments. One it refuses (an empty
+        query, a value out of range) raises ``ToolArgumentError``, an
+        ``invalid_argument`` (``ErrorClass``), naming each field and why,
+        rather than a ``ValidationError``.
+
+        Raises:
+            ToolArgumentError: A field the query cannot take.
+        """
+        try:
+            return cls(**fields)
+        except ValidationError as e:
+            raise ToolArgumentError(validation_message(e)) from None
+
+
+def validation_message(error: ValidationError) -> str:
+    """``error`` as one line: each refused field and why
+    (``query: The query is empty.``)."""
+    return "; ".join(
+        f"{'.'.join(str(p) for p in item.get('loc', ())) or 'input'}: "
+        f"{str(item.get('msg', '')).removeprefix('Value error, ')}"
+        for item in error.errors()
+    )
 
 
 class RAGOutput(BaseModel):
@@ -2433,7 +2465,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
                 metadata={
                     "error": True,
                     "error_type": type(e).__name__,
-                    "error_class": classify(e).value,
+                    ERROR_CLASS_KEY: classify(e).value,
                 },
                 search_metadata={"error": str(e)},
             )
@@ -2976,7 +3008,9 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         # A copy: the generated conversation id and a masked query must not
         # change the caller's object.
         rag_input = (
-            RAGInput(**inputs) if isinstance(inputs, dict) else inputs.model_copy()
+            RAGInput.checked(**inputs)
+            if isinstance(inputs, dict)
+            else inputs.model_copy()
         )
 
         # A string for a boolean or numeric field becomes that type: the

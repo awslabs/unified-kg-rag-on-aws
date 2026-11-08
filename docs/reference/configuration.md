@@ -1023,6 +1023,7 @@ The read-only MCP server of run-mcp-server
 | `max_query_chars` | integer (≥ 1) | `2000` | Longest query (and entity name) a call may give, in characters |
 | `max_text_chars` | integer (≥ 100) | `2000` | Characters of text each returned record keeps (chunk text, a description); a longer one is cut and marked text_truncated |
 | `max_response_chars` | integer (≥ 1000) | `60000` | Characters of serialized records one response holds; past it the lowest-ranked records are left out (truncated, omitted). The MCP message carries the result twice (structured content and its JSON text) and JSON escaping lengthens non-ASCII text, so the message on the wire is up to about 2-4 times this |
+| `uncited_records` | integer (≥ 1, ≤ 100) | `5` | Records a kg_answer with records=cited returns when its answer cites none (its strategy's citations are off, global and drift by default, or it wrote no [n] marker): the first ones, best first (records_kept: top); records=all returns every one |
 | `max_concurrent_calls` | integer (≥ 1) | `4` | Tool calls the server runs at once; further calls wait, and the wait counts toward the call's one deadline (search.query_timeout_seconds) |
 
 ## Long defaults

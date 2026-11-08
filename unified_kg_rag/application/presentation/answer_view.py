@@ -8,9 +8,12 @@
 entities it is about, its seed provenance, the ``[n]`` marker the answer
 context gave it and whether the answer cites it) and the model-written
 sections the answer may cite that are no source (``written``: global
-search's key points, DRIFT's intermediate answers). The console, the MCP
-``kg_answer`` tool and ``run-rag`` map it to their own shapes, cutting the
-text to their own lengths; none of them reads ``RAGOutput.sources`` itself.
+search's key points, DRIFT's intermediate answers) and what the answer was given without
+(:class:`QueryOutcome`: the degraded steps, the unresolved citation reads, the
+class of an absorbed error). The console, the MCP ``kg_answer`` tool and
+``run-rag`` map it to their own shapes, cutting the text to their own lengths;
+none of them reads ``RAGOutput.sources`` or the outcome's metadata keys itself.
+A search without an answer reports its :class:`QueryOutcome` too.
 """
 
 from __future__ import annotations
@@ -26,15 +29,64 @@ from unified_kg_rag.application.retrieval.rag_chain import (
 )
 from unified_kg_rag.domain.models import Citation, RetrievalResult, Source
 from unified_kg_rag.domain.retrieval import source_fields
+from unified_kg_rag.domain.retrieval.degradation import (
+    Degradation,
+    DegradationReport,
+)
 from unified_kg_rag.domain.retrieval.source_fields import EntityRef
+from unified_kg_rag.domain.retrieval.source_fields import text_value as _text
+from unified_kg_rag.shared.exceptions import ERROR_CLASS_KEY, error_class_of
 
-__all__ = ["AnswerView", "EntityRef", "SourceView"]
+__all__ = ["AnswerView", "EntityRef", "QueryOutcome", "SourceView"]
 
 
-def _text(value: Any) -> str | None:
-    if isinstance(value, list) and len(value) == 1:
-        value = value[0]
-    return str(value) if value not in (None, "") else None
+class QueryOutcome(BaseModel):
+    """What a query's answer (or search) was given without, and the class
+    of the error it absorbed, as every surface reports them."""
+
+    degraded: list[Degradation] = Field(
+        default_factory=list,
+        description="The steps it answered without (a partial answer): each "
+        "step, reason and error type",
+    )
+    degraded_error: str | None = Field(
+        default=None, description="The error type of the first that names one"
+    )
+    citations_unresolved: list[Degradation] = Field(
+        default_factory=list,
+        description="The lineage reads that failed: its sources name fewer "
+        "documents; the answer is not degraded",
+    )
+    error_class: str | None = Field(
+        default=None,
+        description="The class of the error answer's failure (ErrorClass: "
+        "invalid_filter, timeout, ...), with processing.ignore_errors",
+    )
+
+    @classmethod
+    def of(cls, metadata: dict[str, Any] | None) -> QueryOutcome:
+        """The outcome a result's ``metadata`` reports."""
+        metadata = metadata or {}
+        report = DegradationReport.of(metadata)
+        return cls(
+            degraded=report.degraded,
+            degraded_error=report.degraded_error,
+            citations_unresolved=report.citations_unresolved,
+            error_class=(
+                error_class_of(metadata.get(ERROR_CLASS_KEY)).value
+                if metadata.get("error")
+                else None
+            ),
+        )
+
+    @property
+    def partial(self) -> bool:
+        """It answered without a step (and is no error answer)."""
+        return bool(self.degraded) and self.error_class is None
+
+    def outcome_fields(self) -> dict[str, Any]:
+        """The outcome's fields, as a surface's JSON document holds them."""
+        return self.model_dump(mode="json", include=set(QueryOutcome.model_fields))
 
 
 class SourceView(BaseModel):
@@ -241,7 +293,7 @@ def _written(output: RAGOutput, matched: set[int]) -> list[SourceView]:
     return views
 
 
-class AnswerView(BaseModel):
+class AnswerView(QueryOutcome):
     """An answer as every surface shows it (:meth:`from_output`)."""
 
     answer: str
@@ -295,6 +347,7 @@ class AnswerView(BaseModel):
             metadata.get(ROUTING_KEY),
         )
         return cls(
+            **QueryOutcome.of(metadata).model_dump(),
             answer=output.answer,
             strategy=_text(metadata.get("search_strategy")),
             routing=routing if isinstance(routing, dict) else None,

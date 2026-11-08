@@ -47,9 +47,15 @@ run-rag --query "..." --verbose --filters attr_category:research type:person \
 - **`--mode search`**는 검색 결과를 출력합니다. 유형, 파일(텍스트 유닛이며 파일에 청크가
   여럿이면 청크 번호도) 또는 이름(엔티티, 커뮤니티 리포트, 관계는 양 끝), 점수, 텍스트
   앞부분이며 `--verbose`가 없으면 처음 20개만 보여 줍니다.
+- **부분 답변**(global 검색의 맵 호출이 스로틀링된 경우처럼 실패한 단계 없이 만든 답변)은
+  답변 뒤 한 줄에 그렇다고 알립니다(`Partial answer: given without global_map (1/3
+  reports unrated)`). 인용 계보(lineage) 읽기가 실패하면 `Some citations name no
+  document`가 붙습니다. `--verbose`는 답변이 인용할 수 있는 모델 작성 섹션(global 검색의
+  핵심 요점, DRIFT의 중간 답변)도 나열합니다.
 - **`--output-format json`**은 결과를 문서 하나로 출력합니다. 답변의 `search_results`에서는
   `sources`와 겹치는 `results`를 빼며, `--verbose`를 주면 남깁니다(컨텍스트 예산에서 잘린
-  결과도 들어 있습니다).
+  결과도 들어 있습니다). 콘솔과 MCP 서버가 보여 주는 `degraded`, `degraded_error`,
+  `citations_unresolved`, `error_class`와 답변이면 `written`(모델 작성 섹션)도 담습니다.
 
 ## 필터
 

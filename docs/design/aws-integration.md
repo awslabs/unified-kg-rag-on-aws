@@ -54,7 +54,15 @@ strategy), the answer every entry of the query (`RAGOutput.metadata["degraded"]`
 each `step`, `reason`, `error_type`), and `degraded_error` stays the error
 type of the first. A findings-lineage read of a strategy whose answers do not
 cite (`search.citations`; global and DRIFT by default) only makes its reported
-sources less precise: it is recorded apart (`metadata.citations_unresolved`).
+sources less precise: it is recorded apart (`metadata.citations_unresolved`,
+its entries in the same shape), as is a failed read of the documents of the
+answer's own graph citations (`citation_lineage`). The ledger is the one
+channel: query processing records its fallbacks there (no field of
+`ProcessedQuery` repeats them), and a caller driving the composed runnable
+without `ainvoke` gets a ledger opened at its entry. `AnswerView`
+(`QueryOutcome.of`, over `DegradationReport.of`) reads the three keys back
+for the console (a "partial answer" notice), the MCP tools (`degraded`,
+`degraded_error`, `citations_unresolved` after the answer) and `run-rag`.
 `run-eval` counts the answers with any entry (`degraded_queries`).
 
 A query is checked before its first model call: its namespace is resolved

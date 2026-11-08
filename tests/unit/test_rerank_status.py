@@ -33,6 +33,7 @@ from rich.console import Console
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import fake_model_info
+from tests.fixtures.run_rag import answer_document
 from unified_kg_rag.adapters.local.rerank import NoRerankFactory
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.adapters.retrieval.hybrid_scorer import HybridScorer, RerankTrace
@@ -533,9 +534,7 @@ def _print(metadata: dict[str, Any]) -> str:
     original = run_rag_chain.console
     run_rag_chain.console = console
     try:
-        RAGChainRunner._print_result(
-            {"success": True, "answer": "ok", "metadata": metadata}, verbose=True
-        )
+        RAGChainRunner._print_result(answer_document(metadata=metadata), verbose=True)
     finally:
         run_rag_chain.console = original
     return out.getvalue()

@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.config import McpServerConfig
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
+    ErrorClass,
     InvalidFilterError,
     MethodologyNotIndexedError,
     QueryTimeoutError,
@@ -586,12 +587,18 @@ async def test_a_cited_model_written_section_is_a_record(
     assert [r.citation for r in found] == [None, None]
 
 
-async def test_an_answer_that_cites_nothing_keeps_every_record() -> None:
+async def test_an_answer_that_cites_nothing_keeps_its_first_records() -> None:
     # Citations off (global and drift by default) or no marker written:
-    # nothing tells which sources the answer rests on.
+    # nothing tells which sources the answer rests on. Regression (rv8):
+    # every record came back (a DRIFT answer's 35 records, 57 KB).
     result = await _tools(FakeChain()).answer("q")
-    assert result.records_kept == "all"
+    assert result.records_kept == "top"
     assert [r.kind for r in result.records] == ["text", "entity", "relationship"]
+    capped = await _tools(uncited_records=2).answer("q")
+    assert (capped.records_kept, len(capped.records)) == ("top", 2)
+    assert [r.kind for r in capped.records] == ["text", "entity"]
+    every = await _tools(uncited_records=2).answer("q", records="all")
+    assert (every.records_kept, len(every.records)) == ("all", 3)
 
 
 async def test_the_answer_comes_before_its_records() -> None:
@@ -705,9 +712,10 @@ def test_caller_errors_keep_their_message_others_do_not() -> None:
 
 
 async def test_the_error_answer_of_ignore_errors_is_a_failure() -> None:
-    with pytest.raises(mcp_tools._DegradedQueryError) as raised:
+    with pytest.raises(mcp_tools._AbsorbedQueryError) as raised:
         await _tools(FakeChain(error=True)).answer("q")
     assert describe_error(raised.value)[1] is False
+    assert raised.value.error_class is ErrorClass.FAILURE
 
 
 async def test_a_graph_call_past_the_deadline_times_out(
@@ -886,12 +894,13 @@ async def test_a_refusal_the_error_answer_absorbed_keeps_its_message() -> None:
             return output
 
     refusal = "auto may run only local, and none of them serves it"
-    with pytest.raises(mcp_tools._ReportedCallerError) as raised:
+    with pytest.raises(mcp_tools._AbsorbedQueryError) as raised:
         await _tools(Absorbing("MethodologyNotIndexedError", refusal)).search("q")
     assert describe_error(raised.value) == (refusal, True)
+    assert raised.value.error_class is ErrorClass.NOT_INDEXED
     for internal in ("StoreConnectionError", "ModelUnreachableError"):
         # Its message names an endpoint: never the caller's.
-        with pytest.raises(mcp_tools._DegradedQueryError) as failed:
+        with pytest.raises(mcp_tools._AbsorbedQueryError) as failed:
             await _tools(Absorbing(internal, "https://vpc-x")).search("q")
         assert describe_error(failed.value) == (INTERNAL_ERROR_MESSAGE, False)
 

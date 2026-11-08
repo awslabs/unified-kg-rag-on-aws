@@ -228,7 +228,8 @@ def _descriptions(tools: KnowledgeGraphTools) -> dict[str, str]:
             "a generated answer): the answer first, whether it abstained "
             "because the index does not cover the question, then the sources "
             "it cites (records: all for every source it saw, none for "
-            "none) and the model usage. For a follow-up question, pass the "
+            "none), the steps it was given without (degraded: a partial "
+            "answer) and the model usage. For a follow-up question, pass the "
             "conversation so far as history (the server keeps none). Costs "
             "model calls; prefer kg_search when you write the answer yourself."
         ),
@@ -417,9 +418,10 @@ def build_mcp_server(
                 Field(
                     description=(
                         "Which supporting records to return after the answer: "
-                        "cited (the sections the answer cites; every source "
+                        "cited (the sections the answer cites; the first few "
                         "when it cites none), all (every source the answer "
-                        "model saw) or none"
+                        "model saw and the model-written sections it may "
+                        "cite) or none"
                     ),
                 ),
             ],

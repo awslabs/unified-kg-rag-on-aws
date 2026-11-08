@@ -113,7 +113,13 @@ holds:
 - **`run-rag`**: `success` and the answer or the search results; a failed
   query has `"success": false` and its `error` (exit `1`). An answer's
   `search_results` leaves out `results`, which repeat its `sources`, unless
-  `--verbose` (they also hold the results the context budget cut).
+  `--verbose` (they also hold the results the context budget cut). From the
+  one view of an answer every surface reads (`AnswerView`): `degraded` (the
+  steps it was given without: `step`, `reason`, `error_type`),
+  `degraded_error`, `citations_unresolved` (the lineage reads that failed,
+  in the same shape), `error_class` (of the error answer under
+  `processing.ignore_errors`, else `null`) and an answer's `written` (the
+  model-written sections it may cite).
 - **`run-ingestion`**: with `--verify-metadata`, `pipeline_id` and
   `"metadata_valid": true` (a missing or corrupt record exits `1` with the
   status document below). Otherwise the pipeline id, the status, the model

@@ -382,6 +382,13 @@ function TurnView({
             </Notice>
           </div>
         ) : null}
+        {result && !result.error && result.degraded?.length ? (
+          <div style={{ marginTop: 12 }}>
+            <Notice tone="warn" title={t("ask.partial")}>
+              {t("ask.partialHelp", { steps: [...new Set(result.degraded.map((d) => d.step))].join(", ") })}
+            </Notice>
+          </div>
+        ) : null}
         {result ? (
           <div className="answer-meta">
             <span className="meta-item">

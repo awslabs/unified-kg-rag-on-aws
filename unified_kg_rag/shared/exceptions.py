@@ -334,6 +334,10 @@ def classify(exc: BaseException) -> ErrorClass:
     return ErrorClass.FAILURE
 
 
+# The result metadata key naming the class of a failure the chain absorbed.
+ERROR_CLASS_KEY = "error_class"
+
+
 def error_class_of(value: object) -> ErrorClass:
     """The :class:`ErrorClass` a result's ``metadata["error_class"]`` names
     (``FAILURE`` for none or an unknown one)."""

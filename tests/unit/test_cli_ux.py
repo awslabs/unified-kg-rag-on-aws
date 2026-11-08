@@ -11,7 +11,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.run_rag import answer_document, search_document
 from unified_kg_rag.application.cli import run_ingestion_pipeline, run_rag_chain
+from unified_kg_rag.application.presentation.answer_view import SourceView
 from unified_kg_rag.domain.models import Config, Methodology
 
 pytestmark = pytest.mark.unit
@@ -136,6 +138,7 @@ _TEXT_HIT = {
     "retriever_type": "text",
     "metadata": {
         "id": "tu-1",
+        "section_type": "text",
         "attributes": {"file_name": "acme.txt", "file_path": "corpus/acme.txt"},
     },
 }
@@ -145,11 +148,12 @@ _SECOND_CHUNK = {
     "source": "tu-2",
     "retriever_type": "text",
     "metadata": {
+        "section_type": "text",
         "attributes": {
             "file_path": "corpus/globex.txt",
             "chunk_id": 2,
             "total_chunks": 3,
-        }
+        },
     },
 }
 _RELATIONSHIP_HIT = {
@@ -157,7 +161,11 @@ _RELATIONSHIP_HIT = {
     "score": 0.25,
     "source": "rel-1",
     "retriever_type": "relationship",
-    "metadata": {"source_name": "Acme Robotics", "target_name": "Globex Sensors"},
+    "metadata": {
+        "section_type": "relationship",
+        "source_name": "Acme Robotics",
+        "target_name": "Globex Sensors",
+    },
 }
 _ENTITY_SOURCE = {
     "content": "Entity: Acme Robotics",
@@ -184,12 +192,7 @@ def printed(monkeypatch: pytest.MonkeyPatch):
 def test_search_mode_prints_each_hit(printed) -> None:
     # --mode search printed a header and nothing else without --verbose.
     run_rag_chain.RAGChainRunner._print_result(
-        {
-            "success": True,
-            "search_results": {
-                "results": [_TEXT_HIT, _SECOND_CHUNK, _RELATIONSHIP_HIT]
-            },
-        }
+        search_document([_TEXT_HIT, _SECOND_CHUNK, _RELATIONSHIP_HIT])
     )
     text = printed.getvalue()
     assert "Search Results (3)" in text
@@ -202,7 +205,7 @@ def test_search_mode_prints_each_hit(printed) -> None:
 
 def test_search_mode_shows_the_first_hits_unless_verbose(printed, monkeypatch) -> None:
     monkeypatch.setattr(run_rag_chain, "_HITS_SHOWN", 2)
-    hits = {"success": True, "search_results": {"results": [_TEXT_HIT] * 3}}
+    hits = search_document([_TEXT_HIT] * 3)
     run_rag_chain.RAGChainRunner._print_result(hits)
     assert "... and 1 more" in printed.getvalue()
     assert "3. [text]" not in printed.getvalue()
@@ -213,7 +216,7 @@ def test_search_mode_shows_the_first_hits_unless_verbose(printed, monkeypatch) -
 def test_an_answer_prints_a_short_sources_line_by_default(printed) -> None:
     sources = [_TEXT_HIT, _SECOND_CHUNK, _TEXT_HIT, _RELATIONSHIP_HIT, _ENTITY_SOURCE]
     run_rag_chain.RAGChainRunner._print_result(
-        {"success": True, "answer": "Acme supplies.", "sources": sources}
+        answer_document("Acme supplies.", sources=sources)
     )
     text = printed.getvalue()
     assert (
@@ -226,11 +229,7 @@ def test_an_answer_prints_a_short_sources_line_by_default(printed) -> None:
 
 def test_a_verbose_answer_lists_each_source_with_its_text(printed) -> None:
     run_rag_chain.RAGChainRunner._print_result(
-        {
-            "success": True,
-            "answer": "Acme supplies.",
-            "sources": [_TEXT_HIT, _ENTITY_SOURCE],
-        },
+        answer_document("Acme supplies.", sources=[_TEXT_HIT, _ENTITY_SOURCE]),
         verbose=True,
     )
     text = printed.getvalue()
@@ -245,7 +244,8 @@ def test_the_sources_line_counts_many_files_and_types(printed) -> None:
         {**_TEXT_HIT, "metadata": {"attributes": {"file_name": f"f{i}.txt"}}}
         for i in range(7)
     ] + [_ENTITY_SOURCE, _ENTITY_SOURCE]
-    line = run_rag_chain._sources_line(sources)
+    views = [SourceView.of_source(i, s) for i, s in enumerate(sources, 1)]  # type: ignore[arg-type]
+    line = run_rag_chain._sources_line(views)
     assert line.startswith("Sources (9): files: f0.txt, f1.txt, f2.txt, f3.txt, f4.txt")
     assert "and 2 more; 2 entities" in line
 

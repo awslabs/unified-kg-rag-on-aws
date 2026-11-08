@@ -237,6 +237,11 @@ function SourceCard({
               </Step>
             </>
           ) : null}
+          {source.synthesized && source.documents?.length ? (
+            <Step label={t("ask.trail.file")}>
+              <span className="mono">{source.documents.join(", ")}</span>
+            </Step>
+          ) : null}
           {source.kind === "query_result" ? (
             <>
               {source.operation ? (
@@ -282,7 +287,7 @@ function SourceCard({
             {source.text_unit_ids.length ? <span className="muted">{t("ask.trail.units", { count: source.text_unit_ids.length })}</span> : null}
           </Step>
           {source.score != null ? <Step label={t("ask.trail.score")}>{number(source.score, { maximumFractionDigits: 4 })}</Step> : null}
-          {onOpenInGraph && source.kind !== "text" && (source.kind !== "query_result" || source.node_ids?.length) ? (
+          {onOpenInGraph && source.kind !== "text" && !source.synthesized && (source.kind !== "query_result" || source.node_ids?.length) ? (
             <div>
               <button className="button button-small button-primary" onClick={() => onOpenInGraph(source)}>
                 {source.kind === "community" ? t("ask.trail.openCommunity") : t("ask.trail.openGraph")}
