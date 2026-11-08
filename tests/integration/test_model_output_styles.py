@@ -188,3 +188,30 @@ def test_every_strategy_answers_in_every_style(
     if strategy is SearchStrategy.AUTO:
         # think: the router read the first strategy its reasoning named.
         assert metadata["routing"]["decided_by"] == "router", case
+
+
+def test_dynamic_community_selection_rates_in_every_style(
+    styled: tuple[str, Path, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (rv8 retrieval L9): the fake's rating prompt never
+    # matched (the prompt wraps), so every rating was unreadable and the
+    # dynamic selection was never exercised.
+    style, root, _ = styled
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    config = get_config(root / "config.yaml")
+    config.search.global_search.use_dynamic_selection = True
+    chain = GraphRAGChain(config)
+    try:
+        out = chain.invoke(
+            RAGInput(query=QUESTION, search_strategy=SearchStrategy.GLOBAL)
+        )
+    finally:
+        chain.close()
+    metadata = out.metadata or {}
+    assert metadata.get("degraded") is None, (style, metadata.get("degraded"))
+    assert metadata["global_dynamic_selection"] is True, style
+    assert metadata["global_rated_report_count"] > 0, style
+    assert metadata["global_unrated_report_count"] == 0, style
+    assert metadata["global_selected_report_count"] > 0, style
