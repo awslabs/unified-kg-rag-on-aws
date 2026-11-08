@@ -63,8 +63,8 @@ choices:
   measures and the pairwise judge's criteria (each against a 0.5 win rate),
   with Bonferroni-level intervals; the `--arm` runs against their own base
   runs form the same four families apart (`arm_*`), and the closed-book and
-  A/A arms (an empty overlay on the run's own index, `arm.aa` in the
-  manifest) none, since their deltas bound prior knowledge or measure the
+  A/A arms (on the run's own index, a merged configuration equal to the
+  run's but for cache sizes, or `,aa=true`; `arm.aa` in the manifest) none, since their deltas bound prior knowledge or measure the
   noise floor. Each family reads at least
   20 x tests / alpha resamples so the Monte Carlo floor cannot hold it above
   alpha; ten unadjusted metrics would
@@ -463,9 +463,11 @@ on a question set measures prior knowledge, not retrieval. Its results carry
 retrieval and context metrics of it score an empty source list (read only
 the answer metrics); `--fail-if` gates skip it. Cost: one answer call per
 question and repeat. Its answers also split the questions into those the
-model knows (right in at least half of the arm's repeats on the primary
-metric) and the rest, and `deltas_by_closed_book` repeats every delta over
-each (exploratory, unadjusted): on MuSiQue the unknown subset carried
+model knows (a primary-metric mean of at least 0.5 over the arm's repeats, a
+failed answer counting 0: right in at least half of them on a 0/1 metric)
+and the rest, and `deltas_by_closed_book` repeats every other delta over
+each (exploratory, unadjusted; the arm's own is left out, since it would
+select on its scores): on MuSiQue the unknown subset carried
 differences the pooled deltas hid (iterative - mix +18.9 there; mix's
 lead over ppr only on known questions).
 

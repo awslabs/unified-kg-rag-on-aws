@@ -145,6 +145,14 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
             "metrics score no sources, and gates skip it.",
             "",
         ]
+    noise_floor = set(comparison.get("aa_arms") or ())
+    if noise_floor:
+        lines += [
+            f"{', '.join(f'`{a}`' for a in sorted(noise_floor))} ran the base "
+            "configuration again (A/A): its deltas are the noise floor of each "
+            "metric, not a finding; Holm and gates leave it out.",
+            "",
+        ]
     rows = []
     primary = (comparison.get("multiplicity") or {}).get("primary_metric")
     for key in baseline_metric_keys(comparison):
@@ -158,7 +166,11 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
     header = [
         "Metric",
         *(f"{s} (no retrieval)" if s in closed else s for s in strategies),
-        *(f"{s} - {pairs[s]} [{confidence:.0%} CI]" for s in others),
+        *(
+            f"{s} - {pairs[s]} [{confidence:.0%} CI]"
+            + (" (noise floor)" if s in noise_floor else "")
+            for s in others
+        ),
     ]
     lines += _table(header, rows)
     lines += _multiplicity_lines(comparison)

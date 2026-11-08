@@ -305,6 +305,9 @@ export interface Comparison {
   multiplicity?: Multiplicity;
   pairwise_vs_baseline?: Record<string, { criteria: Record<string, { candidate_win_rate: number | null }>; lengths?: { buckets: Record<string, { pairs: number; criteria: Record<string, { candidate_win_rate: number | null }> }> } }>;
   closed_book_arms?: string[];
+  // The A/A arms (the base configuration again): their deltas are the
+  // noise floor, left out of Holm and the gates.
+  aa_arms?: string[];
 }
 
 export interface RunSummary {

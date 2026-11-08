@@ -1175,7 +1175,8 @@ From a `main` checkout (formats and keys no release had):
   `processing.max_concurrency`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions
   in five classes and source-cited assertions from your corpus, after Microsoft BenchmarkQED (MIT; no BenchmarkQED
   data used); `run-eval --closed-book` adds an answer-model-only arm without retrieval, and `deltas_by_closed_book`
-  splits the deltas into the questions it knows and those it does not, exploratory (#595, #606). See
+  splits the other runs' deltas into the questions it knows (a primary-metric mean of at least 0.5 over its repeats,
+  a failed answer counting 0) and those it does not, exploratory (#595, #606). See
   [evaluation](docs/guides/evaluate.md#assertions-length-control-and-a-closed-book-bound).
 - Comparison cost: per strategy calls, tokens and latency per query (mean, p50, p95) with paired deltas, a USD
   estimate from an optional `evaluation.prices` table (cache read and write rates too), and per-query CSV and
@@ -1190,18 +1191,19 @@ From a `main` checkout (formats and keys no release had):
   directory; DATASET's golds and metadata replace the saved ones by query id. The run manifest records the judges'
   `judge_effort` and, with an extracted span, its model and effort in `answer_scoring` (runs without them are warned
   about, not refused) (#639).
-- `run-eval --arm NAME=overlay.yaml[,suffix=SUFFIX]` (repeatable): a configuration arm answers the dataset with the
-  run's config under a YAML overlay (validated like a config file; the run's `evaluation` section and scoring models
-  are kept: an unset judge is chosen over the base and every arm's answer models and pinned first), as a chain
+- `run-eval --arm NAME=overlay.yaml[,suffix=SUFFIX][,aa=true]` (repeatable): a configuration arm answers the dataset
+  with the run's config under a YAML overlay (validated like a config file; the run's `evaluation` section and scoring
+  models are kept: an unset judge is chosen over the base and every arm's answer models and pinned first), as a chain
   and evaluation manager of its own, with every `--search-strategy`, interleaved with the base runs. Its runs
   (`<strategy>@NAME`) are compared with the same strategy's base run and Holm-adjusted in families of their own; the
   manifest records the overlay's path and sha256 (and `aa` for an A/A arm) and the comparison order, which
-  `--from-results` keeps. An arm
-  shares the base runs' query extractions only when its overlay leaves them alone (the extraction model, the default
-  tier's effort, `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, the LLM provider with
-  its context window and region, and a
-  `search.query_extraction_cache_size` above 0). An empty overlay is an A/A arm, the noise floor without the
-  extraction's noise (it shares the extractions) (#639, #645). See
+  `--from-results` keeps. An arm shares the base runs' query extractions only when its overlay leaves them alone (the
+  extraction model, the default tier's effort, `search.output_ceilings.query_extraction`,
+  `models.default_max_output_tokens`, the LLM provider with its context window and region, and a
+  `search.query_extraction_cache_size` above 0). An arm whose merged config equals the run's but for cache sizes, on
+  the run's own index, or one given `aa=true`, is an A/A arm: the noise floor, marked so in the report and left out of
+  the Holm families and of `--fail-if` (an adjusted gate failed on it); it shares the extractions, so its floor leaves
+  out the extraction's noise unless it sets `search.query_extraction_cache_size: 0` (#639, #645). See
   [evaluation](docs/guides/evaluate.md#configuration-arms).
 - The `run-eval` judge defaults to Opus 5.5 on Bedrock (a judge judging its own answers shifted directness by
   -0.27): when the answer model, or the model that wrote re-judged answers, is Opus 5.5, an unset judge falls back

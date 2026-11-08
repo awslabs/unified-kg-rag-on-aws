@@ -1,6 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""``run-eval --arm NAME=overlay.yaml[,suffix=SUFFIX]``: a configuration arm.
+"""``run-eval --arm NAME=overlay.yaml[,suffix=SUFFIX][,aa=true]``: a
+configuration arm.
 
 The overlay is a YAML mapping merged over the run's configuration (as the
 environment layer is over a config file), validated like a config file
@@ -8,7 +9,8 @@ environment layer is over a config file), validated like a config file
 resolved against its own directory. ``suffix=`` queries another index
 namespace with the arm (``--suffix``'s, which the overlay's index settings
 otherwise follow). The arm is scored exactly as the base runs are: its
-``evaluation`` section is the run's.
+``evaluation`` section is the run's. ``aa=true`` declares it an A/A arm
+(``is_aa_arm``) whatever its overlay sets.
 """
 
 from __future__ import annotations
@@ -34,15 +36,23 @@ from unified_kg_rag.shared.utils.validation import format_validation_errors
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")
 # Labels a comparison already gives a meaning.
 _RESERVED = frozenset({"closed_book", "baseline"})
+# Settings that size a cache and change no answer: an arm whose resolved
+# configuration differs from the run's only in these is an A/A arm.
+CACHE_ONLY_SETTINGS: tuple[tuple[str, ...], ...] = (
+    ("search", "query_extraction_cache_size"),
+    ("search", "token_manager", "token_count_cache_size"),
+)
+_BOOLEANS = {"true": True, "false": False}
 
 
 def arm_spec(value: str) -> dict[str, Any]:
-    """argparse ``type`` of ``--arm``: ``{"name", "overlay", "suffix"}``."""
+    """argparse ``type`` of ``--arm``: ``{"name", "overlay", "suffix"}``,
+    and ``"aa"`` when ``aa=true|false`` is given."""
     name, sep, rest = value.partition("=")
     name = name.strip()
     if not sep or not rest.strip():
         raise argparse.ArgumentTypeError(
-            f"'{value}' is not NAME=overlay.yaml[,suffix=SUFFIX]"
+            f"'{value}' is not NAME=overlay.yaml[,suffix=SUFFIX][,aa=true]"
         )
     if not _NAME.match(name) or name.lower() in _RESERVED:
         raise argparse.ArgumentTypeError(
@@ -51,17 +61,25 @@ def arm_spec(value: str) -> dict[str, Any]:
         )
     path, *options = rest.split(",")
     suffix: str | None = None
+    aa: bool | None = None
     for option in options:
-        key, eq, setting = option.partition("=")
-        if key.strip() != "suffix" or not eq or not setting.strip():
+        key, eq, setting = (part.strip() for part in option.partition("="))
+        if key == "suffix" and eq and setting:
+            suffix = setting
+        elif key == "aa" and setting.lower() in _BOOLEANS:
+            aa = _BOOLEANS[setting.lower()]
+        else:
             raise argparse.ArgumentTypeError(
-                f"unknown --arm option '{option}' (only suffix=SUFFIX)"
+                f"unknown --arm option '{option}' (only suffix=SUFFIX and "
+                "aa=true|false)"
             )
-        suffix = setting.strip()
     overlay = Path(path.strip())
     if not overlay.is_file():
         raise argparse.ArgumentTypeError(f"overlay file not found: '{overlay}'")
-    return {"name": name, "overlay": str(overlay), "suffix": suffix}
+    spec: dict[str, Any] = {"name": name, "overlay": str(overlay), "suffix": suffix}
+    if aa is not None:
+        spec["aa"] = aa
+    return spec
 
 
 def overlay_sha256(spec: dict[str, Any]) -> str:
@@ -69,13 +87,36 @@ def overlay_sha256(spec: dict[str, Any]) -> str:
     return hashlib.sha256(Path(spec["overlay"]).read_bytes()).hexdigest()
 
 
-def is_aa_overlay(spec: dict[str, Any]) -> bool:
-    """Whether the arm runs the base configuration unchanged: its overlay
-    sets nothing but the ``evaluation`` section ``arm_config`` ignores, and
-    it queries the run's own index (no ``suffix=``). Such an A/A arm
-    measures the noise floor."""
-    data = ConfigLoader._read_file(Path(spec["overlay"]))
-    return not spec.get("suffix") and not {k for k in data if k != "evaluation"}
+def is_aa_arm(base: Config, config: Config, spec: dict[str, Any]) -> bool:
+    """Whether the arm (``spec``, its configuration ``config`` by
+    ``arm_config``) runs the base configuration ``base`` unchanged: its
+    ``aa=`` option when given, else whether it queries the run's own index
+    (no ``suffix=``) with the same resolved configuration, cache sizes
+    (``CACHE_ONLY_SETTINGS``) aside. An overlay that sets only what
+    ``arm_config`` ignores, or a value equal to the run's, counts. Such an
+    A/A arm measures the noise floor."""
+    if spec.get("aa") is not None:
+        return bool(spec["aa"])
+    return not spec.get("suffix") and _without_caches(config) == _without_caches(base)
+
+
+# What arm_config sets to the run's own on every arm: the scoring models
+# (resolved there, unset on the run's config until the judge is chosen).
+_SCORING_SETTINGS = tuple(
+    ("models", "roles", role.value)
+    for role in (ModelRole.EVALUATION, ModelRole.ANSWER_SPAN)
+)
+
+
+def _without_caches(config: Config) -> dict[str, Any]:
+    """``config`` as data, without its cache sizes and scoring models."""
+    data = config.model_dump(mode="json")
+    for *parents, key in (*CACHE_ONLY_SETTINGS, *_SCORING_SETTINGS):
+        section = data
+        for parent in parents:
+            section = section.get(parent) or {}
+        section.pop(key, None)
+    return data
 
 
 def arm_config(

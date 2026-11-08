@@ -212,6 +212,25 @@ describe("helpers", () => {
     expect(ratio.textContent).toContain("unadjusted");
     expect(within(ratio).getByText("better")).toBeInTheDocument();
   });
+  it("marks an --arm run's primary metric (the arm_primary family) too", () => {
+    const multiplicity: Multiplicity = {
+      method: "holm",
+      alpha: 0.05,
+      primary_metric: "answer_match/answer_contains",
+      families: { arm_primary: { tests: 2, interval_confidence: 0.975 }, arm_secondary: { tests: 10, interval_confidence: 0.995 } },
+    };
+    const base = { pairs: 40, wins: 9, ties: 28, losses: 3, p_value: 0.01, mean_delta: 0.01, ci_low: -0.02, ci_high: 0.04, adjusted_p_value: 0.5, adjusted_ci_low: -0.03, adjusted_ci_high: 0.05 };
+    const deltas: [string, Delta][] = [
+      ["answer_match/answer_contains", { ...base, family: "arm_primary" }],
+      ["answer_match/token_f1", { ...base, family: "arm_secondary" }],
+    ];
+    renderIn(<DeltaPlot deltas={deltas} multiplicity={multiplicity} />);
+    const rows = screen.getAllByRole("row");
+    const primary = rows.find((r) => r.textContent?.includes("answer_contains"))!;
+    expect(within(primary).getByText("primary")).toBeInTheDocument();
+    const secondary = rows.find((r) => r.textContent?.includes("token_f1"))!;
+    expect(within(secondary).queryByText("primary")).toBeNull();
+  });
   it("types filter values", () => {
     expect(parseFilters("file_name: a.pdf\nin_schema: false\nyear: 2026\n\nbad")).toEqual({ file_name: "a.pdf", in_schema: false, year: 2026 });
     expect(parseFilters("")).toBeNull();

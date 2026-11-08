@@ -76,7 +76,8 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity }: { deltas:
             const x = (v: number) => pad + ((v + extent) / (2 * extent)) * (width - 2 * pad);
             const verdict = deltaVerdict(metric, delta, alpha);
             const digits = Math.abs(delta.mean_delta) < 0.01 && delta.mean_delta !== 0 ? 4 : 3;
-            const primary = delta.family === "primary";
+            // An --arm run's primary metric is tested in arm_primary.
+            const primary = delta.family === "primary" || delta.family === "arm_primary";
             return (
               <tr key={metric}>
                 <td className="mono">

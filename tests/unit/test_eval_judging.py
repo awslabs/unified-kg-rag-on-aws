@@ -40,7 +40,7 @@ from unified_kg_rag.domain.prompts import (
 )
 from unified_kg_rag.evaluation import assertion_evaluator, pairwise
 from unified_kg_rag.evaluation.closed_book import CLOSED_BOOK_ARM, closed_book_chain
-from unified_kg_rag.evaluation.comparison import paired_comparison
+from unified_kg_rag.evaluation.comparison import closed_book_strata, paired_comparison
 from unified_kg_rag.evaluation.evaluation_manager import EvaluationManager
 from unified_kg_rag.evaluation.gates import gate_breaches, parse_gate
 from unified_kg_rag.evaluation.report import comparison_markdown
@@ -824,6 +824,26 @@ class TestAssertionComparison:
         gate = parse_gate("assertion/assertion_recall:ci_high<-0.1")
         breaches = gate_breaches(out, [gate])
         assert len(breaches) == 1 and breaches[0].startswith("global:")
+        # An A/A arm measures the noise floor: not gated either.
+        out["aa_arms"] = ["global"]
+        assert gate_breaches(out, [gate]) == []
+
+    def test_a_failed_closed_book_answer_is_an_unknown_question(self) -> None:
+        reports = [_report(q, assertion_recall=1.0) for q in "ab"]
+        results = [_result("a", "x"), _result("b", "", error=True)]
+        failed_repeat = ([_report("a", assertion_recall=1.0)], results)
+        strata = closed_book_strata(
+            [(reports, [_result(q, "x") for q in "ab"]), failed_repeat],
+            "assertion/assertion_recall",
+        )
+        # b: right once, failed once (counting 0): a mean of 0.5, known.
+        assert strata == {"a": "known", "b": "known"}
+        only_failed = closed_book_strata(
+            [([_report("a", assertion_recall=1.0)], results)],
+            "assertion/assertion_recall",
+        )
+        # A failed answer alone counts as unknown, not left out of the split.
+        assert only_failed == {"a": "known", "b": "unknown"}
 
 
 # --- Closed-book arm --------------------------------------------------------
@@ -893,7 +913,7 @@ class TestClosedBook:
                 "--data-path",
                 str(data),
                 "--search-strategy",
-                "local",
+                "local,mix",
                 "--closed-book",
                 "--output-directory",
                 str(out_dir),
@@ -905,16 +925,19 @@ class TestClosedBook:
         assert asyncio.run(runner.run()) == 0
         printed = json.loads(capsys.readouterr().out)
         comparison = printed["comparison"]
-        assert list(comparison["strategies"]) == ["local", CLOSED_BOOK_ARM]
+        assert list(comparison["strategies"]) == ["local", "mix", CLOSED_BOOK_ARM]
         assert comparison["closed_book_arms"] == [CLOSED_BOOK_ARM]
         # The arm knew both answers: every delta is on the known questions.
-        by_knowledge = comparison["deltas_by_closed_book"][CLOSED_BOOK_ARM]
+        # The arm itself is not split by its own scores (that selects on
+        # the outcome).
+        assert list(comparison["deltas_by_closed_book"]) == ["mix"]
+        by_knowledge = comparison["deltas_by_closed_book"]["mix"]
         assert list(by_knowledge) == ["known"]
         assert by_knowledge["known"]["answer_match/answer_contains"]["pairs"] == 2
-        # The RAG chain answered only the strategy's run (plus its warm-up);
+        # The RAG chain answered only the strategies' runs (plus warm-ups);
         # the closed-book arm called the answer model once per question.
         assert len(seen) == 2
-        assert all(c.get("search_strategy") == "local" for c in rag_calls)
+        assert {c.get("search_strategy") for c in rag_calls} == {"local", "mix"}
         saved = list(out_dir.rglob(f"evaluation_results_{CLOSED_BOOK_ARM}_*.json"))
         assert len(saved) == 1
         results = json.loads(saved[0].read_text())
@@ -1012,3 +1035,15 @@ def test_the_judge_prompts_declare_their_variables() -> None:
             assert "{" + name + "}" in (
                 resolved.system_prompt_template + resolved.human_prompt_template
             )
+
+
+def test_the_markdown_report_labels_an_aa_arm_as_the_noise_floor() -> None:
+    reports = [_report(q, assertion_recall=1.0) for q in "ab"]
+    results = [_result(q, "x") for q in "ab"]
+    comparison = paired_comparison(
+        {"local": [(reports, results)], "local@aa": [(reports, results)]}
+    )
+    comparison["aa_arms"] = ["local@aa"]
+    markdown = comparison_markdown(comparison)
+    assert "ran the base configuration again (A/A)" in markdown
+    assert "local@aa - local [95% CI] (noise floor)" in markdown

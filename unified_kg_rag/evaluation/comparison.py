@@ -731,17 +731,27 @@ def _paired_comparison(
     return comparison
 
 
-# A query the closed-book arm answered right in at least this share of its
-# repeats (on the comparison's primary metric) is one the answer model knows.
+# A query whose closed-book score (on the comparison's primary metric),
+# averaged over the arm's repeats, is at least this is one the answer model
+# knows: on a 0/1 metric (exact match, answer_contains) a right answer in at
+# least half the repeats; on a graded one (token F1) a mean of at least 0.5.
 CLOSED_BOOK_KNOWN_SHARE = 0.5
 
 
 def closed_book_strata(runs: Sequence[Run], metric: str) -> dict[str, str]:
-    """Per query the closed-book arm scored on ``metric``, ``known`` when
-    its mean over the arm's repeats is at least ``CLOSED_BOOK_KNOWN_SHARE``,
-    else ``unknown``: the answer model's prior knowledge of the question,
-    for ``deltas_by_closed_book``. Empty when the arm has no such score."""
-    means = per_query_means(runs).get(metric) or {}
+    """Per query the closed-book arm scored on ``metric`` or failed to
+    answer, ``known`` when its mean over the arm's repeats (a failed answer
+    counting 0, as in the comparison) is at least
+    ``CLOSED_BOOK_KNOWN_SHARE``, else ``unknown``: the answer model's prior
+    knowledge of the question, for ``deltas_by_closed_book``. Empty when the
+    arm neither scored nor failed a query."""
+    failed = {
+        result.query_id: {metric}
+        for _, results in runs
+        for result in results
+        if result.error
+    }
+    means = per_query_means(runs, failed).get(metric) or {}
     return {
         q: "known" if v >= CLOSED_BOOK_KNOWN_SHARE else "unknown"
         for q, v in sorted(means.items())
