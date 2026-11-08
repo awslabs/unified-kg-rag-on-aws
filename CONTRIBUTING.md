@@ -200,6 +200,9 @@ its reason and an expiry.
 - `tests/integration/test_local_stores.py`, the `container` cases of the store conformance suites and of
   `test_embedded_e2e.py` run against the local containers in `docker/compose.local.yaml` when `LOCAL_STORES=1` is
   set (`LOCAL_STORES_GREMLIN_PORT` / `LOCAL_STORES_OPENSEARCH_PORT` point them at other ports).
+- Every unit test file passes when run on its own: the `test-isolation` CI job runs each in a process of its own
+  (`python scripts/check_test_isolation.py tests/unit`), so a file that passes only after another bound a lazy import
+  or filled a cache fails there.
 - Tests, fixtures and evaluation data use synthetic content only (generic entities such as "Vendor" and "Buyer",
   made-up amounts). Never add real corpus text, customer names, account ids, endpoints or hostnames to code, tests,
   docs or commit messages.
