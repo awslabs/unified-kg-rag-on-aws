@@ -663,7 +663,8 @@ From a `main` checkout (formats and keys no release had):
   (declared types plus a sampled profile of what the suffix holds), never query text; code validates it (one repair
   call with the refusal), links the names it mentions through the hybrid entity search (a name without a name match
   needs a lexical hit, so an absent entity links nothing and falls back), compiles it to Gremlin bytecode (Neptune,
-  Gremlin Server) or parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
+  Gremlin Server; each branch of a hop range ends in its own `simplePath()`, since Neptune ignores one after a
+  `union`) or parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
   form against a read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer,
   and runs it read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and
   top rows are exact. The result table, the entities and paths it names (with seed provenance) and their passages are

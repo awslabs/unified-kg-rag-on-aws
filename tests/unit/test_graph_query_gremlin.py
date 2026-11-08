@@ -126,6 +126,16 @@ def test_a_variable_hop_is_a_union_of_fixed_chains() -> None:
     assert [sum(1 for s in c if s[0] == "otherV") for c in chains] == [1, 2, 3]
 
 
+def test_every_union_branch_keeps_the_walk_simple() -> None:
+    # Neptune ignores a simplePath() that follows a union(), so each branch
+    # ends with its own; the trailing one still covers the later hops.
+    steps = _query("two_hop_any").build(g).bytecode.step_instructions
+    union = next(s for s in steps if s[0] == "union")
+    chains = [arg.step_instructions for arg in union[1:]]
+    assert chains and all(c[-1] == ["simplePath"] for c in chains)
+    assert "simplePath" in [s[0] for s in steps[steps.index(union) + 1 :]]
+
+
 def test_a_linked_last_node_starts_the_walk() -> None:
     query = _query(
         {
