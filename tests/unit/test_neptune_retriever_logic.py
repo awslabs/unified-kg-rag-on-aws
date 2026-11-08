@@ -69,23 +69,23 @@ def test_apply_filters_skips_id_key(retriever) -> None:
 def test_apply_filters_list_uses_within(retriever) -> None:
     calls: list[tuple] = []
     retriever._apply_filters(
-        RecordingTraversal(calls, with_args=True), {"type": ["PERSON", "ORG"]}
+        RecordingTraversal(calls, with_args=True), {"type": ["person", "org"]}
     )
     has_calls = [c for c in calls if c[0] == "has"]
     assert len(has_calls) == 1
     key, predicate = has_calls[0][1]
     assert key == "type"
     # P.within(...) predicate object carries the list as its value.
-    assert list(predicate.value) == ["PERSON", "ORG"]
+    assert list(predicate.value) == ["person", "org"]
 
 
 def test_apply_filters_scalar_uses_equality(retriever) -> None:
     calls: list[tuple] = []
     retriever._apply_filters(
-        RecordingTraversal(calls, with_args=True), {"type": "PERSON"}
+        RecordingTraversal(calls, with_args=True), {"type": "person"}
     )
     has_calls = [c for c in calls if c[0] == "has"]
-    assert has_calls[0][1] == ("type", "PERSON")
+    assert has_calls[0][1] == ("type", "person")
 
 
 def test_apply_filters_dict_range_operators(retriever) -> None:

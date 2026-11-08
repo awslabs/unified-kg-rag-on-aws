@@ -1543,6 +1543,8 @@ From a `main` checkout (formats and keys no release had):
 Bugs present in 0.2.3.
 
 Queries and retrieval.
+- A `type` or `status` filter value matches its lowercase form too, as ingestion stores entity and claim types and
+  claim statuses: `type:PERSON` matched nothing on every store.
 - `@register_strategy` on a registered class with other arguments raises instead of replacing its record, which
   changed what that strategy reads for every caller in the process; the same arguments keep the record.
 - The no-context reply is written in the language of the script most of the question's letters are in, weighed

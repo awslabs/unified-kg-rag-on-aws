@@ -438,7 +438,7 @@ def test_neptune_drops_key_the_label_does_not_declare() -> None:
     filters = NeptuneRetriever._scope_filters_to_label(
         "Entity-default", {"id": ["e1"], "type": "PERSON", "status": "open"}
     )
-    assert filters == {"id": ["e1"], "type": "PERSON"}
+    assert filters == {"id": ["e1"], "type": ["PERSON", "person"]}
 
 
 def _matches(vertex: dict[str, Any], steps: list[list[Any]]) -> bool:
@@ -483,10 +483,11 @@ def _matches(vertex: dict[str, Any], steps: list[list[Any]]) -> bool:
     return True
 
 
+# Entity types are stored lowercase (the merge's vote).
 _VERTICES = [
-    {"id": "e1", "type": "PERSON", "attr_role": "buyer"},
-    {"id": "e2", "type": "PERSON", "attr_role": "vendor"},
-    {"id": "e3", "type": "ORGANIZATION"},
+    {"id": "e1", "type": "person", "attr_role": "buyer"},
+    {"id": "e2", "type": "person", "attr_role": "vendor"},
+    {"id": "e3", "type": "organization"},
 ]
 
 
@@ -1601,6 +1602,31 @@ def test_typed_filter_values_converts_strings_of_typed_fields(
     assert {k: type(v) for k, v in out.items()} == {
         k: type(v) for k, v in (given if typed is None else typed).items()
     }
+
+
+@pytest.mark.parametrize(
+    ("given", "typed"),
+    [
+        ({"type": "PERSON"}, {"type": ["PERSON", "person"]}),
+        ({"type": "person"}, {"type": "person"}),
+        (
+            {"type": ["Person", "person", "ORG"]},
+            {"type": ["Person", "person", "ORG", "org"]},
+        ),
+        ({"status": "TRUE"}, {"status": ["TRUE", "true"]}),
+        # A range is left as given.
+        ({"status": {"gte": "A"}}, None),
+        # Lowercased as stored (str.lower), not casefolded.
+        ({"type": "Straße"}, {"type": ["Straße", "straße"]}),
+        # Other keyword fields keep their case.
+        ({"id": "E-ABC", "attr_region": "EU"}, None),
+    ],
+)
+def test_typed_filter_values_lowercases_the_fields_stored_lowercase(
+    given: dict[str, Any], typed: dict[str, Any] | None
+) -> None:
+    # Regression (rv8 retrieval L8): type:PERSON matched nothing.
+    assert typed_filter_values(given) == (given if typed is None else typed)
 
 
 @pytest.mark.parametrize(

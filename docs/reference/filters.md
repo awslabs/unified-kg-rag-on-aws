@@ -40,8 +40,10 @@ document metadata and no nested attribute path (`attributes.<key>.<sub>`).
 
 ## Values, case and dates
 
-Entity and claim `type` and claim `status` are stored lowercase and `term`
-matches exactly: filter `type:person`, not `type:PERSON`. Relationships
+Entity and claim `type` and claim `status` are stored lowercase, and a
+filter value of theirs matches its lowercase form (`str.lower`) as well as
+itself: `type:PERSON` matches `person`, and a type a caller wrote to a store
+itself as given. Relationships
 take no `type` filter: the relationships index stores their type (as the
 graph labels the edge, `RELATED_TO` when untyped) for the context line
 `Relationship: A -[TYPE]-> B`, but a `type` filter is an entity or claim

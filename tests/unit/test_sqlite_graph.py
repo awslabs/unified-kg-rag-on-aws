@@ -593,9 +593,9 @@ async def test_retriever_filters(config: Config) -> None:
     indexer = SQLiteGraphIndexer(config)
     indexer.upsert_entities(
         [
-            _entity("s", type="ORG", rank=5),
-            _entity("a", type="ORG", rank=1, attributes={"role": "vendor"}),
-            _entity("b", type="PERSON", rank=9, attributes={"role": "buyer"}),
+            _entity("s", type="org", rank=5),
+            _entity("a", type="org", rank=1, attributes={"role": "vendor"}),
+            _entity("b", type="person", rank=9, attributes={"role": "buyer"}),
             _entity("c", rank=3),
         ]
     )
@@ -609,8 +609,8 @@ async def test_retriever_filters(config: Config) -> None:
         return sorted(r.source for r in await retriever.aretrieve(query))
 
     # A plain key is strict: c has no type and goes too. Seeds are filtered.
-    assert await ids({"type": "ORG"}) == ["a", "s"]
-    assert await ids({"type": ["PERSON", "ORG"]}) == ["a", "b", "s"]
+    assert await ids({"type": "org"}) == ["a", "s"]
+    assert await ids({"type": ["person", "org"]}) == ["a", "b", "s"]
     assert await ids({"rank": {"gte": 3}}) == ["b", "c", "s"]
     assert await ids({"rank": {"gt": 1, "lt": 9}}) == ["c", "s"]
     # An entity's own attribute is strict, as on the entities index...
@@ -694,14 +694,14 @@ async def test_retriever_filters_only_the_reached_vertex(config: Config) -> None
     indexer = SQLiteGraphIndexer(config)
     indexer.upsert_entities(
         [
-            _entity("s", type="ORG"),
-            _entity("a", type="PERSON"),
-            _entity("b", type="ORG"),
+            _entity("s", type="org"),
+            _entity("a", type="person"),
+            _entity("b", type="org"),
         ]
     )
     indexer.upsert_relationships([_rel("sa", "s", "a"), _rel("ab", "a", "b")])
     retriever = SQLiteGraphRetriever(config)
-    query = SearchQuery(query="q", filters={"id": ["s"], "type": "ORG"})
+    query = SearchQuery(query="q", filters={"id": ["s"], "type": "org"})
     assert [r.source for r in await retriever.aretrieve(query)] == ["s", "b"]
     retriever.close()
     indexer.close()

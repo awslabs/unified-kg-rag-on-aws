@@ -92,6 +92,11 @@ class FieldKind(StrEnum):
 
 
 _TYPED = frozenset({FieldKind.BOOLEAN, FieldKind.INTEGER, FieldKind.NUMBER})
+# The keyword fields ingestion writes lowercase (an entity's and a claim's
+# type, a claim's status: ``str.lower``), so a filter value matches its
+# lowercase form too: ``type: PERSON`` matched nothing. The value as given
+# still matches what a caller wrote to a store itself.
+_LOWERCASE_FIELDS = frozenset({"type", "status"})
 _REFUSED = frozenset({FieldKind.TEXT, FieldKind.UNINDEXED})
 
 # Every fixed field a store writes on an item, by how a filter on it
@@ -535,6 +540,22 @@ def _source_kind(value: Any) -> Any:
     return kind
 
 
+def _lowercased(value: Any) -> Any:
+    """``value`` with the lowercase form of each string beside it (a scalar
+    becomes a list when the forms differ); a range is left as given."""
+    if isinstance(value, str):
+        return value if value == value.lower() else [value, value.lower()]
+    if isinstance(value, list):
+        return list(
+            dict.fromkeys(
+                form
+                for v in value
+                for form in ((v, v.lower()) if isinstance(v, str) else (v,))
+            )
+        )
+    return value
+
+
 def source_kinds_values(value: Any) -> list[str]:
     """The kinds a typed ``source_kinds`` filter value names, in order."""
     return list(value) if isinstance(value, list) else [value]
@@ -552,7 +573,9 @@ def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None
     a boolean field takes only ``True``/``False``, a numeric one no boolean,
     an integer one no fractional number (``2.0`` becomes ``2``). A
     ``source_kinds`` value (or each value of a list) is a source kind, in
-    lower case. Values of other fields are unchanged.
+    lower case, and a string of a field ingestion stores lowercase
+    (``_LOWERCASE_FIELDS``) matches its lowercase form too. Values of other
+    fields are unchanged.
 
     Raises:
         InvalidFilterError: A value is not a value of its field's type.
@@ -568,6 +591,8 @@ def typed_filter_values(filters: dict[str, Any] | None) -> dict[str, Any] | None
                 if isinstance(value, list)
                 else _source_kind(value)
             )
+        elif key in _LOWERCASE_FIELDS:
+            typed[key] = _lowercased(value)
         elif kind not in _TYPED:
             typed[key] = value
         elif isinstance(value, list):
