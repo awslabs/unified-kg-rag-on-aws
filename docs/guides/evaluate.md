@@ -199,8 +199,10 @@ step failure (`degraded_error_counts`), so at the default 1.0 a run whose
 every rerank call failed exits 1, and `--max-failure-rate 0.05` fails one
 where more than 5% did. A comparison names each run's rerank failures and
 degraded answers with their rates, and warns louder (`NOT COMPARABLE AS
-IS`) when those rates differ between the compared runs, since its deltas
-then measure the failures too. Reranking that is off or could not be built
+IS`) when those rates differ between the compared runs beyond chance (the
+lowest against the highest, two-sided Fisher's exact p below 0.05), since
+its deltas then measure the failures too; a difference within chance (1/40
+against 0/40, say) gets a note with its p-value instead. Reranking that is off or could not be built
 (`disabled`, `unavailable`) is no failed call.
 
 ## Comparing strategies

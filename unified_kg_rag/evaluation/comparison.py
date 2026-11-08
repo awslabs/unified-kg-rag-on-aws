@@ -823,12 +823,49 @@ def failed_metric_counts_differ(
     return failed if len(set(failed.values())) > 1 else {}
 
 
+# Two runs' failure rates differ beyond chance below this Fisher's exact p.
+RATE_DIFFERENCE_ALPHA = 0.05
+
+
+def fisher_exact_p_value(
+    failed_a: int, total_a: int, failed_b: int, total_b: int
+) -> float:
+    """Two-sided Fisher's exact p-value that ``failed_a / total_a`` and
+    ``failed_b / total_b`` are one rate: the hypergeometric probability of
+    every split of the failures no more likely than the observed one (as
+    ``scipy.stats.fisher_exact`` sums it)."""
+    failures, total = failed_a + failed_b, total_a + total_b
+
+    def log_pmf(x: int) -> float:
+        return (
+            _log_comb(failures, x)
+            + _log_comb(total - failures, total_a - x)
+            - _log_comb(total, total_a)
+        )
+
+    observed = log_pmf(failed_a)
+    low, high = max(0, failures - total_b), min(failures, total_a)
+    # The relative tolerance scipy uses, so ties count.
+    p = sum(
+        math.exp(lp)
+        for lp in (log_pmf(x) for x in range(low, high + 1))
+        if lp <= observed + 1e-7
+    )
+    return min(1.0, p)
+
+
+def _log_comb(n: int, k: int) -> float:
+    return math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1)
+
+
 def _degraded_warnings(summary: Mapping[str, Any]) -> list[str]:
     """Warnings on answers that went out degraded: per run, the queries
     whose rerank call failed (the fused order kept) and the answers whose
-    retrieval absorbed a step failure, with their rates; and a louder one
-    when those rates differ between the compared runs, whose deltas then
-    measure the failures too."""
+    retrieval absorbed a step failure, with their rates; and when those
+    rates differ between the compared runs, a louder one if the lowest and
+    highest differ beyond chance (Fisher's exact p below
+    ``RATE_DIFFERENCE_ALPHA``), whose deltas then measure the failures too,
+    else a note."""
     reranks: dict[str, tuple[int, int]] = {}
     degraded: dict[str, tuple[int, int]] = {}
     for s, stats in summary.items():
@@ -860,13 +897,26 @@ def _degraded_warnings(summary: Mapping[str, Any]) -> list[str]:
                 f"{s} {rates[s][0]}/{rates[s][1]} ({share:.0%})"
                 for s, share in shares.items()
             )
-            warnings.append(
-                f"NOT COMPARABLE AS IS: the compared runs' {what} rates differ "
-                f"({listed}), so their deltas measure those failures as well "
-                "as the strategies or arms. Re-run the affected runs (fewer "
-                "concurrent runs, a larger retry budget), or bound them with "
-                "--max-failure-rate."
-            )
+            lowest = rates[min(shares, key=shares.__getitem__)]
+            highest = rates[max(shares, key=shares.__getitem__)]
+            p = fisher_exact_p_value(*lowest, *highest)
+            test = "p < 0.001" if p < 0.001 else f"p = {p:.3f}"
+            if p < RATE_DIFFERENCE_ALPHA:
+                warnings.append(
+                    f"NOT COMPARABLE AS IS: the compared runs' {what} rates "
+                    f"differ ({listed}; lowest against highest, Fisher's "
+                    f"exact {test}), so their deltas measure those failures "
+                    "as well as the strategies or arms. Re-run the affected "
+                    "runs (fewer concurrent runs, a larger retry budget), or "
+                    "bound them with --max-failure-rate."
+                )
+            else:
+                warnings.append(
+                    f"The compared runs' {what} rates differ within chance "
+                    f"({listed}; lowest against highest, Fisher's exact "
+                    f"{test}); their deltas may still carry some of those "
+                    "failures."
+                )
     return warnings
 
 
