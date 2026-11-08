@@ -279,7 +279,7 @@ function SourceCard({
           {source.source_kinds.length ? <Step label={t("ask.trail.sourceKinds")}>{source.source_kinds.join(", ")}</Step> : null}
           <Step label={t("ask.trail.ids")}>
             <span className="id">{source.id}</span>
-            {source.text_unit_ids.length ? <span className="id">{t("ask.trail.units", { count: source.text_unit_ids.length })}</span> : null}
+            {source.text_unit_ids.length ? <span className="muted">{t("ask.trail.units", { count: source.text_unit_ids.length })}</span> : null}
           </Step>
           {source.score != null ? <Step label={t("ask.trail.score")}>{number(source.score, { maximumFractionDigits: 4 })}</Step> : null}
           {onOpenInGraph && source.kind !== "text" && (source.kind !== "query_result" || source.node_ids?.length) ? (
@@ -299,7 +299,7 @@ function Step({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="trail-step">
       <span className="trail-step-label">{label}</span>
-      {children}
+      <span className="trail-step-value">{children}</span>
     </div>
   );
 }

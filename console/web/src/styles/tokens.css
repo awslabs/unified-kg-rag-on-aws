@@ -19,7 +19,10 @@
   --sheet-sunk: #f6f8f9;
   --trace-wash: #e7ebfb;
   --trace-ink: #1b34a6;
-  --hairline-strong: #9aa7b1;
+  --hairline-strong: #9aa7b1; /* decorative rules, chip outlines */
+  --control-edge: #7d8a95; /* field edges: 3.1:1 on film, 3.5:1 on sheet */
+  --placeholder: #6b7782; /* 4.6:1 on sheet */
+  --disabled-ink: #5f6b77; /* 5.0:1 on sheet-sunk */
 
   /* Status (never used for identity or series) */
   --good: #18794e;
@@ -53,6 +56,9 @@
   --cjk-zh: "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "Source Han Sans SC";
   --cyrillic: "Noto Sans", "Segoe UI", "Roboto", "Helvetica Neue", Arial;
 
+  --leading-body: 1.55;
+  --leading-cjk: 1.72; /* Hangul, kana and Han need more air than Latin */
+
   --text-xs: 0.75rem;
   --text-sm: 0.8125rem;
   --text-md: 0.9375rem;
@@ -74,6 +80,7 @@
   --rail: 2px;
   --station: 11px;
   --shadow: 0 1px 0 rgb(23 33 43 / 4%), 0 2px 8px rgb(23 33 43 / 6%);
+  --shadow-raised: 0 1px 0 rgb(23 33 43 / 5%), 0 6px 20px rgb(23 33 43 / 10%);
   --nav-width: 236px;
   --duration: 420ms;
 }

@@ -177,7 +177,7 @@ export function GraphCanvas({ data, colorOf, selected, highlighted, traced, trac
                 {traced.has(node.id) ? <circle className="ring" r={r + 6 / Math.sqrt(view.k)} /> : null}
                 <circle r={r} fill={colorOf(node.id)} />
                 {labelled.has(node.id) ? (
-                  <text x={r + 4 / view.k} y={4 / view.k} style={{ fontSize: `${12 / Math.sqrt(view.k)}px`, strokeWidth: `${3 / Math.sqrt(view.k)}px` }}>
+                  <text x={r + 4 / view.k} y={4 / view.k} style={{ fontSize: `${13 / Math.sqrt(view.k)}px`, strokeWidth: `${3.5 / Math.sqrt(view.k)}px` }}>
                     {byId.get(node.id)?.name}
                   </text>
                 ) : null}

@@ -18,39 +18,40 @@ body {
   color: var(--ink);
   font-family: var(--font-body);
   font-size: var(--text-md);
-  line-height: 1.55;
+  line-height: var(--leading-body);
   overflow-wrap: break-word;
 }
 
-/* Per-script fallbacks: Han glyphs follow the page language. */
-:lang(ko) body,
-:lang(ko) input,
-:lang(ko) textarea,
-:lang(ko) select,
-:lang(ko) button {
-  font-family: "Atkinson Hyperlegible Next", var(--cjk-ko), sans-serif;
+/* Per-script fallbacks: Han glyphs follow the page language. The stacks
+ * are set as tokens, so every element that takes the body or the data face
+ * (form controls, strategy chips, ids, chart text) gets the script's
+ * fallback without a per-element override. The data face falls back to the
+ * proportional CJK face: Hangul, kana and Han need no monospace, and the
+ * CJK monospace faces set them wide. */
+:lang(ko) {
+  --font-body: "Atkinson Hyperlegible Next", var(--cjk-ko), sans-serif;
+  --font-data: "Atkinson Hyperlegible Mono", ui-monospace, var(--cjk-ko), monospace;
+  --leading-body: var(--leading-cjk);
+}
+:lang(ja) {
+  --font-body: "Atkinson Hyperlegible Next", var(--cjk-ja), sans-serif;
+  --font-data: "Atkinson Hyperlegible Mono", ui-monospace, var(--cjk-ja), monospace;
+  --leading-body: var(--leading-cjk);
+}
+:lang(zh) {
+  --font-body: "Atkinson Hyperlegible Next", var(--cjk-zh), sans-serif;
+  --font-data: "Atkinson Hyperlegible Mono", ui-monospace, var(--cjk-zh), monospace;
+  --leading-body: var(--leading-cjk);
+}
+:lang(ru) {
+  --font-body: "Atkinson Hyperlegible Next", var(--cyrillic), sans-serif;
+}
+:lang(ko) body {
   word-break: keep-all;
 }
 :lang(ja) body,
-:lang(ja) input,
-:lang(ja) textarea,
-:lang(ja) select,
-:lang(ja) button {
-  font-family: "Atkinson Hyperlegible Next", var(--cjk-ja), sans-serif;
+:lang(zh) body {
   line-break: strict;
-}
-:lang(zh) body,
-:lang(zh) input,
-:lang(zh) textarea,
-:lang(zh) select,
-:lang(zh) button {
-  font-family: "Atkinson Hyperlegible Next", var(--cjk-zh), sans-serif;
-  line-break: strict;
-}
-:lang(ru) body,
-:lang(ru) input,
-:lang(ru) button {
-  font-family: "Atkinson Hyperlegible Next", var(--cyrillic), sans-serif;
 }
 /* Display headings: Bricolage has no CJK or Cyrillic; those scripts take
  * the body stack at the same weight. */
@@ -68,6 +69,11 @@ select,
 textarea {
   font: inherit;
   color: inherit;
+}
+
+::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
 }
 
 :focus-visible {
@@ -93,7 +99,7 @@ a {
 .skip-link {
   position: absolute;
   left: var(--space-3);
-  top: -40px;
+  top: -100px;
   background: var(--trace);
   color: #fff;
   padding: var(--space-2) var(--space-3);
@@ -292,6 +298,14 @@ kbd {
   .nav-list > li {
     flex: 0 0 auto;
   }
+  /* The strip scrolls: its right edge fades so a cut-off page reads as
+   * "more this way", and the padding lets the last one clear the fade. */
+  .nav-list {
+    padding-right: var(--space-6);
+    scroll-padding-inline: var(--space-4);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+  }
   .nav-link {
     flex: 0 0 auto;
     white-space: nowrap;
@@ -338,8 +352,24 @@ kbd {
 }
 .sheet-title {
   margin: 0;
-  font-size: var(--text-md);
+  font-family: var(--font-display);
+  font-stretch: 92%;
+  font-size: var(--text-lg);
+  font-weight: 650;
+  line-height: 1.3;
+}
+:lang(ko) .sheet-title,
+:lang(ja) .sheet-title,
+:lang(zh) .sheet-title,
+:lang(ru) .sheet-title {
+  font-family: inherit;
   font-weight: 700;
+}
+.sheet-sub {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--graphite);
 }
 .sheet-body {
   padding: var(--space-4) var(--space-5);
@@ -411,8 +441,12 @@ kbd {
 .button:hover {
   border-color: var(--ink);
 }
-.button:disabled {
-  opacity: 0.55;
+.button:disabled,
+.button-primary:disabled,
+.button-primary:disabled:hover {
+  background: var(--sheet-sunk);
+  border-color: var(--hairline);
+  color: var(--disabled-ink);
   cursor: not-allowed;
 }
 .button-primary {
@@ -462,7 +496,7 @@ kbd {
   width: 100%;
   min-height: 38px;
   padding: 7px 10px;
-  border: 1px solid var(--hairline-strong);
+  border: 1px solid var(--control-edge);
   border-radius: var(--radius-sm);
   background: var(--sheet);
 }
@@ -632,7 +666,15 @@ kbd {
   padding: 8px 10px;
   text-align: left;
   border-bottom: 1px solid var(--hairline);
-  vertical-align: top;
+  vertical-align: baseline;
+}
+/* Cells line up on their first line's baseline, whatever their face; an
+ * inline chart sits on the middle of that line. */
+.table td svg {
+  vertical-align: middle;
+}
+.table .mono {
+  font-size: 0.93em;
 }
 .table th {
   font-weight: 700;
@@ -640,6 +682,13 @@ kbd {
   font-size: var(--text-xs);
   text-transform: none;
   white-space: nowrap;
+  vertical-align: bottom;
+}
+.table thead th {
+  border-bottom-color: var(--hairline-strong);
+}
+.table tbody tr:last-child td {
+  border-bottom: 0;
 }
 .table td.num,
 .table th.num {
@@ -694,7 +743,6 @@ kbd {
 .stat-value {
   font-size: var(--text-2xl);
   line-height: 1.1;
-  font-variant-numeric: tabular-nums;
 }
 .stat-label {
   font-size: var(--text-sm);
@@ -733,8 +781,11 @@ kbd {
 mark {
   background: var(--highlighter);
   color: inherit;
-  padding: 0 1px;
+  padding: 0 2px;
+  margin: 0 -1px;
   border-radius: 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 details > summary {
@@ -799,6 +850,13 @@ details > summary {
   white-space: pre-wrap;
   font-size: var(--text-lg);
   line-height: 1.6;
+  max-width: 72ch;
+}
+:lang(ko) .answer-text,
+:lang(ja) .answer-text,
+:lang(zh) .answer-text {
+  line-height: 1.8;
+  max-width: 44em;
 }
 .answer-text.streaming::after {
   content: "";
@@ -971,7 +1029,9 @@ button.cite-link:hover {
 .trace-svg path {
   fill: none;
   stroke: var(--trace);
-  stroke-width: 2;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: 0.75;
   stroke-dasharray: 600;
   stroke-dashoffset: 600;
   animation: link-draw var(--duration) ease-out forwards;
@@ -1083,15 +1143,27 @@ button.cite-link:hover {
   font-size: var(--text-sm);
 }
 .trail-step {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: 4px var(--space-3);
   align-items: baseline;
 }
 .trail-step-label {
   color: var(--graphite);
   font-size: var(--text-xs);
-  min-width: 7.5rem;
+}
+.trail-step-value {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+@media (max-width: 480px) {
+  .trail-step {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
 }
 
 .filter-row {
@@ -1152,7 +1224,7 @@ button.cite-link:hover {
   cursor: pointer;
 }
 .graph-node.dim {
-  opacity: 0.25;
+  opacity: 0.3;
 }
 .graph-node.selected circle {
   stroke: var(--ink);
@@ -1165,7 +1237,8 @@ button.cite-link:hover {
   stroke-dasharray: 3 3;
 }
 .graph-node text {
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
   fill: var(--ink);
   paint-order: stroke;
   stroke: var(--sheet);
@@ -1281,15 +1354,15 @@ button.cite-link:hover {
 }
 .chart text {
   font-family: var(--font-data);
-  font-size: 11px;
+  font-size: 12px;
   fill: var(--graphite);
+  font-variant-numeric: tabular-nums;
 }
 .chart .axis {
   stroke: var(--hairline-strong);
 }
 .chart .grid {
   stroke: var(--hairline);
-  stroke-dasharray: 2 3;
 }
 .chart .bar {
   fill: var(--trace);
@@ -1520,4 +1593,57 @@ main:focus {
 .page-lede,
 .notice {
   overflow-wrap: anywhere;
+}
+
+/* Loading: a station that pulses on the trace colour, then the words. */
+.loading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.loading::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--trace);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading::before {
+    animation: none;
+    background: var(--trace-wash);
+  }
+}
+
+/* Narrow screens: the trail banner stands as a short vertical trace (a
+ * station per step) instead of a wrapped line of dots and dashes. */
+@media (max-width: 700px) {
+  .trail-banner {
+    display: grid;
+    grid-template-columns: 9px minmax(0, 1fr);
+    gap: 4px 10px;
+    align-items: center;
+  }
+  .trail-banner .seg {
+    display: none;
+  }
+  .trail-banner > span:not(.dot) {
+    grid-column: 2;
+  }
+  .trail-banner > .link-button {
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin: var(--space-1) 0 0 !important;
+  }
+}
+
+/* Figures keep the display face's digits in every locale (its zero is
+ * unslashed, the body face's is slashed); a CJK unit falls back to the
+ * locale's body stack. */
+.stat .stat-value {
+  font-family: "Bricolage Grotesque Variable", "Bricolage Grotesque", var(--font-body);
+  font-stretch: 88%;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }

@@ -26,6 +26,15 @@ export function App() {
     main.current?.focus({ preventScroll: true });
   }, [route.page, t]);
 
+  // On a narrow screen the nav is a strip that scrolls sideways: keep the
+  // current page's station in view.
+  useEffect(() => {
+    const link = document.querySelector<HTMLElement>('.nav-link[aria-current="page"]');
+    const list = link?.closest<HTMLElement>(".nav-list");
+    if (!link || !list || list.scrollWidth <= list.clientWidth) return;
+    list.scrollLeft = link.offsetLeft - (list.clientWidth - link.offsetWidth) / 2;
+  }, [route.page]);
+
   const page: Record<Page, ReactElement> = {
     ask: <AskPage status={status.data} />,
     ingest: <IngestPage status={status.data} onJobsChanged={status.reload} />,

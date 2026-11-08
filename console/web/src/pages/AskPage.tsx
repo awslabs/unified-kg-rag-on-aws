@@ -257,7 +257,7 @@ export function AskPage({ status }: { status: Status | null }) {
           </div>
         </div>
         <div className="sticky">
-        <Sheet title={t("ask.evidence")} aside={current?.result ? <span className="muted">{t("ask.evidenceFor", { question: truncate(current.question, 48) })}</span> : null}>
+        <Sheet title={t("ask.evidence")} sub={current?.result ? t("ask.evidenceFor", { question: truncate(current.question, 72) }) : null}>
           {current?.result ? (
             <div className="evidence-scroll" tabIndex={0} aria-label={t("ask.evidence")}>
               <EvidenceTrace

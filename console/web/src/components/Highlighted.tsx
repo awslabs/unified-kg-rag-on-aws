@@ -29,16 +29,35 @@ function escape(term: string): string {
   return term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** `text` split into runs, the query's terms marked; terms separated only
+ * by spaces ("Kestrel Depot") join into one run, so a phrase reads as one
+ * highlight instead of two abutting ones. */
+export function highlightRuns(text: string, query: string): { text: string; marked: boolean }[] {
+  const terms = queryTerms(query);
+  if (!terms.length) return [{ text, marked: false }];
+  const pattern = new RegExp(`(${terms.map(escape).join("|")})`, "giu");
+  const runs: { text: string; marked: boolean }[] = [];
+  const parts = text.split(pattern);
+  parts.forEach((part, index) => {
+    const marked = index % 2 === 1;
+    const last = runs[runs.length - 1];
+    if (marked && last?.marked) {
+      last.text += part;
+    } else if (!marked && /^[ \t]+$/.test(part) && last?.marked && index + 1 < parts.length && parts[index + 1]) {
+      last.text += part;
+    } else if (part) {
+      runs.push({ text: part, marked });
+    }
+  });
+  return runs;
+}
+
 /** `text` with the query's terms in the highlighter. */
 export function Highlighted({ text, query }: { text: string; query: string }) {
-  const terms = queryTerms(query);
-  if (!terms.length) return <>{text}</>;
-  const pattern = new RegExp(`(${terms.map(escape).join("|")})`, "giu");
-  const parts = text.split(pattern);
   return (
     <>
-      {parts.map((part, index) =>
-        index % 2 === 1 ? <mark key={index}>{part}</mark> : <Fragment key={index}>{part}</Fragment>,
+      {highlightRuns(text, query).map((run, index) =>
+        run.marked ? <mark key={index}>{run.text}</mark> : <Fragment key={index}>{run.text}</Fragment>,
       )}
     </>
   );
