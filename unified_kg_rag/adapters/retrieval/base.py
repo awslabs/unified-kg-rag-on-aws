@@ -71,6 +71,7 @@ from unified_kg_rag.domain.retrieval.index_prefixes import (
     held_artifacts_of,
     readable_artifacts,
 )
+from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.ppr import cap_edges_per_vertex
 from unified_kg_rag.domain.retrieval.store_names import graph_label, store_name
 from unified_kg_rag.shared import get_logger, observability
@@ -335,8 +336,8 @@ def evidence_lineage(
     community report, by its ``source``, the lineage of the records its
     findings cite in place of its community's membership, as does a report
     that carries it (``findings_lineage``)."""
-    units: dict[str, None] = {}
-    documents: dict[str, None] = {}
+    units: list[list[str]] = []
+    documents: list[list[str]] = []
     for result in results:
         metadata = result.metadata or {}
         cited = (
@@ -345,27 +346,28 @@ def evidence_lineage(
             else None
         )
         if cited is not None:
-            units.update(dict.fromkeys(cited["text_unit_ids"]))
-            documents.update(dict.fromkeys(cited["document_ids"]))
+            units.append(list(cited["text_unit_ids"]))
+            documents.append(list(cited["document_ids"]))
             continue
         if result.retriever_type == SectionType.TEXT.value:
             own = result.chunk_id or metadata.get("id") or result.source
-            units.update(dict.fromkeys(_listed(own)))
+            units.append(_listed(own))
         else:
-            units.update(dict.fromkeys(_listed(metadata.get("text_unit_ids"))))
+            units.append(_listed(metadata.get("text_unit_ids")))
         attributes = metadata.get("attributes")
-        documents.update(
-            dict.fromkeys(
-                _listed(metadata.get("document_ids"))
-                or _listed(metadata.get("document_id"))
-                or (
-                    _listed(attributes.get("document_id"))
-                    if isinstance(attributes, dict)
-                    else []
-                )
+        documents.append(
+            _listed(metadata.get("document_ids"))
+            or _listed(metadata.get("document_id"))
+            or (
+                _listed(attributes.get("document_id"))
+                if isinstance(attributes, dict)
+                else []
             )
         )
-    return {"text_unit_ids": list(units), "document_ids": list(documents)}
+    return {
+        "text_unit_ids": merge_lineages(units),
+        "document_ids": merge_lineages(documents),
+    }
 
 
 def findings_lineage(result: RetrievalResult) -> dict[str, list[str]] | None:

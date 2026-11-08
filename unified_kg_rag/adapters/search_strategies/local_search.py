@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 from langchain_core.runnables import RunnableConfig
 
-from unified_kg_rag.adapters.retrieval.base import scope_filters
+from unified_kg_rag.adapters.retrieval.base import _listed, scope_filters
 from unified_kg_rag.adapters.retrieval.ppr_ranking import (
     PPRRankingMixin,
     document_unit_ids,
@@ -30,6 +30,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
+from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.linking import choose_links
 from unified_kg_rag.domain.retrieval.ppr import summed_seed_weights
 from unified_kg_rag.shared import get_logger
@@ -810,31 +811,20 @@ class LocalSearchStrategy(PPRRankingMixin):
         # the candidate text units by the rank of the first selected entity
         # that cites them, then by how many of that entity's relationships
         # the unit states, before applying its text-unit budget. This ranks
-        # by graph support instead: each chunk by (number of expanded
-        # entities citing it, best citing entity score), in descending order,
-        # so downstream truncation keeps the chunks most entities point to.
+        # by graph support instead (``domain.retrieval.lineage``): each chunk
+        # by the number of expanded entities citing it, then the best citing
+        # entity's score, then first seen, so downstream truncation keeps the
+        # chunks most entities point to. A lineage a graph store returns as
+        # its JSON text is read as the list it encodes.
         #
         # A seed graph's units are no text chunks (the retriever leaves them
         # out of every text search too): they take no slot of the quota.
-        hit_count: dict[str, int] = {}
-        best_score: dict[str, float] = {}
-        for node in entity_nodes:
-            ids = node.metadata.get("text_unit_ids") or []
-            if not isinstance(ids, list):
-                continue
-            score = node.score
-            for raw_id in ids:
-                unit_id = str(raw_id)
-                if is_seed_unit(unit_id):
-                    continue
-                hit_count[unit_id] = hit_count.get(unit_id, 0) + 1
-                if score > best_score.get(unit_id, float("-inf")):
-                    best_score[unit_id] = score
-        return sorted(
-            hit_count,
-            key=lambda unit_id: (hit_count[unit_id], best_score.get(unit_id, 0.0)),
-            reverse=True,
+        ranked = merge_lineages(
+            (_listed(node.metadata.get("text_unit_ids")) for node in entity_nodes),
+            order="support",
+            scores=[float(node.score or 0.0) for node in entity_nodes],
         )
+        return [unit_id for unit_id in ranked if not is_seed_unit(unit_id)]
 
     @staticmethod
     def _text_unit_count(node: RetrievalResult) -> int:

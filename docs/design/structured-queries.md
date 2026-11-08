@@ -146,7 +146,9 @@ the model-written plan text the output guardrail screens).
    own context budget share `search.token_manager.type_budgets.query_result`)
    holding the code-rendered plan and the result table, numbered `[n]` like
    any evidence section (§7.1), its citation's lineage (`text_unit_ids`) the
-   units its evidence entities cite, the most cited first; one entity result
+   units its evidence entities cite, the most cited first, then those of
+   the best-ranked entity (`domain/retrieval/lineage.py` `merge`, order
+   `support`, as `local` orders its text units); one entity result
    per returned vertex (the graph projection, with `source_kinds`, `iri` and
    the entities-index document's filters, so `seed_provenance` applies);
    relationship results for a path's edges (the relationships-index

@@ -766,7 +766,8 @@ From a `main` checkout (formats and keys no release had):
   top rows are exact. The result table, the entities and paths it names (with seed provenance) and their passages are
   fused (buckets `structured_query_result`, `structured_entities`, `structured_relationships`,
   `structured_text_units`, `structured_text_hits`), the table numbered `[n]` like any evidence section and its
-  citation naming the documents of its evidence rows; counts are exact unless a document filter or seed-property
+  citation naming the documents of its evidence rows (the units most of them cite first, as `local` orders its text
+  units); counts are exact unless a document filter or seed-property
   condition makes code check up to `max_scan_rows` matches ("at least N" past it), and a count or an aggregate cites
   its first matches as entities. Filter keys are checked against the fallback that would run too. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
@@ -1510,6 +1511,10 @@ Queries and retrieval.
   `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal hybrid weights; one lookup of the joined
   names seeded a wrong neighbour beside every right seed (#517, #530), and an absent "Zorblax Supplies" seeded "Acme
   Supplies".
+- Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
+  structured query result's lineage): the units most expanded entities cite, then the best-scored citing entity's,
+  then first seen; an entity citing a unit twice counts once, and a lineage a graph store returns as its JSON text
+  is read as its list (it was skipped).
 - Graph expansion returns every seed and its neighbourhood ranked by distance (#161, #218), fetches at most its
   per-seed budget (#310), and no longer depends on the store's edge order (`indexing.neptune.deterministic_order:
   false` keeps it) (#470, #473); an expanded entity shows its type (#567).

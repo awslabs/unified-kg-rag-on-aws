@@ -40,6 +40,7 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
+    _listed,
     entity_content,
 )
 from unified_kg_rag.adapters.retrieval.strategy_registry import (
@@ -100,6 +101,7 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     vertex_rank,
 )
 from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
+from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.linking import choose_links, hit_name
 from unified_kg_rag.ports.graph_query import GraphQueryPort
 from unified_kg_rag.shared import get_logger, observability
@@ -949,14 +951,15 @@ class StructuredSearchStrategy(BaseSearchStrategy):
 
     @staticmethod
     def _lineage(entities: list[RetrievalResult]) -> list[str]:
-        """The text units the evidence entities cite, the ones most of them
-        cite first (then by id): the query result's lineage, which its
-        citation resolves to documents under the caller's filters."""
-        cited: dict[str, int] = {}
-        for entity in entities:
-            for unit in entity.metadata.get("text_unit_ids") or []:
-                cited[str(unit)] = cited.get(str(unit), 0) + 1
-        return sorted(cited, key=lambda unit: (-cited[unit], unit))
+        """The text units the evidence entities cite, by support
+        (``domain.retrieval.lineage``: the ones most of them cite first,
+        then the best-ranked entity's): the query result's lineage, which
+        its citation resolves to documents under the caller's filters."""
+        return merge_lineages(
+            (_listed(entity.metadata.get("text_unit_ids")) for entity in entities),
+            order="support",
+            scores=[float(entity.score or 0.0) for entity in entities],
+        )
 
     @staticmethod
     def _provenance(entities: list[RetrievalResult]) -> dict[str, Any] | None:
@@ -1049,14 +1052,9 @@ class StructuredSearchStrategy(BaseSearchStrategy):
         documents = self.document_retriever
         if count == 0 or documents is None or not entities:
             return {}
-        cited: dict[str, int] = {}
-        for entity in entities:
-            for unit in entity.metadata.get("text_unit_ids") or []:
-                if not is_seed_unit(str(unit)):
-                    cited[str(unit)] = cited.get(str(unit), 0) + 1
-        if not cited:
+        ranked = [unit for unit in self._lineage(entities) if not is_seed_unit(unit)]
+        if not ranked:
             return {}
-        ranked = sorted(cited, key=lambda unit: (-cited[unit], unit))
         prefix = self.config.indexing.opensearch.text_units_index_prefix
         chosen = await self._passing_ranked_units(query, ranked, count * 2)
 
