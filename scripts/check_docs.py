@@ -9,7 +9,7 @@ symlink to an untracked file), and a ``#fragment`` into a Markdown file must
 match one of its headings (GitHub slug rules, duplicate headings get ``-1``,
 ``-2``...) or an ``<a id>``/``<a name>``. An inline code span that names a
 repository path (``unified_kg_rag/...``, ``docs/...``, a package layer such as
-``domain/models/config.py``, a module such as ``ports/__init__``) must name a
+``domain/models/config/_aws.py``, a module such as ``ports/__init__``) must name a
 tracked file or directory. Code and configuration under :data:`CODE_DIRS` and
 :data:`CODE_FILES` that cite ``docs/*.md`` paths or this repository's
 ``blob/main/docs/...#fragment`` URLs are checked the same way. Each EN/KO pair

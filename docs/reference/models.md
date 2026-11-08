@@ -45,7 +45,7 @@ mappings and checked against the model's record, so an unknown model has no
 safe default; `models.embedding.dimension` picks among the
 dimensions a listed model supports (Titan Embed V2: 256, 512 or 1024; unset
 uses the largest). Adding a model is a code change: a member in
-`EmbeddingModelId`/`RerankModelId` (`domain/models/config.py`) and a record in
+`EmbeddingModelId`/`RerankModelId` (`domain/models/config/_models.py`) and a record in
 `adapters/aws/bedrock_models.py`.
 
 An embedding model is invoked on demand by the id in

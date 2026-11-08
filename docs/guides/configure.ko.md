@@ -18,7 +18,7 @@ cp config-template.yaml config.yaml
 
 뒤 단계가 앞 단계를 덮어씁니다.
 
-1. **내장 기본값**(`unified_kg_rag/domain/models/config.py`). `--config-path` 없이
+1. **내장 기본값**(`unified_kg_rag/domain/models/config/`). `--config-path` 없이
    실행하면 CLI는 이 기본값에 환경 변수만 적용합니다.
 2. **`backend` 프리셋**: `backend: local`(또는 `--backend local`)은 파일과 환경 변수가
    지정하지 않은 모든 키에 로컬 공급자와 저장소를 채웁니다([로컬 모드](./local-mode.md), 영문).

@@ -303,11 +303,11 @@ def test_documents_not_indexed_alarm_sums_the_not_indexed_outcomes() -> None:
 
 
 def _pipeline_stages() -> list[str]:
-    source = _PACKAGE / "domain" / "models" / "config.py"
-    tree = ast.parse(source.read_text(encoding="utf-8"))
+    package = _PACKAGE / "domain" / "models" / "config"
     (enum,) = (
         node
-        for node in tree.body
+        for source in sorted(package.glob("*.py"))
+        for node in ast.parse(source.read_text(encoding="utf-8")).body
         if isinstance(node, ast.ClassDef) and node.name == "PipelineStageType"
     )
     return [

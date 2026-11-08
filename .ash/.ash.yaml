@@ -74,7 +74,7 @@ global_settings:
     - path: docker/*
       rule_id: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
       reason: comments on the local store stack, whose Gremlin Server binds to 127.0.0.1 only
-    - path: unified_kg_rag/domain/models/config.py
+    - path: unified_kg_rag/domain/models/config/_aws.py
       rule_id: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
       reason: the use_ssl field description names the plain-WebSocket scheme for a local Gremlin Server; TLS is the default
     - path: pyproject.toml

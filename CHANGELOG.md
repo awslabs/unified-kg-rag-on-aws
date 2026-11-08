@@ -1345,6 +1345,8 @@ From a `main` checkout (formats and keys no release had):
 - CDK: ingestion tasks carry the task definition's tags (`project`, `cost-center`, `owner`) for cost allocation, and
   the `iac/README.md` run-task examples pass `--propagate-tags TASK_DEFINITION`; with `use_cmk` the cache bucket
   uses an S3 Bucket Key (#617).
+- Internal: the configuration models module `config.py` became the package `domain/models/config/`,
+  one module per section. No user-visible change; imports from `unified_kg_rag.domain.models.config` are unchanged.
 
 ### Deprecated
 - `graph.community_detection.auto_resolution`, `auto_resolution_candidates` and `auto_resolution_max_nodes` log a
