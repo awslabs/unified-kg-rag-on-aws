@@ -68,6 +68,7 @@ class Stores:
                 type=source.get("type") or None,
                 description=source.get("description") or None,
                 rank=source.get("rank"),
+                confidence=source.get("confidence"),
                 text_unit_ids=list(source.get("text_unit_ids") or []),
             )
             for hit in self._hits(prefix)

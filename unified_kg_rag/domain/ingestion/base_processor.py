@@ -167,6 +167,15 @@ def union_all_document_filters(
     return current
 
 
+def merged_confidence(values: Iterable[float | None]) -> float | None:
+    """The confidence of an item merged from statements of ``values``: the
+    highest one known (confidence is monotonic in evidence), ``None`` when
+    none is (the stores write that as 1.0). Every merge takes it this way:
+    the statements' merge, graph resolution and the incremental merge."""
+    known = [value for value in values if value is not None]
+    return max(known) if known else None
+
+
 def merge_attributes(
     attribute_maps: Iterable[dict[str, Any] | None],
 ) -> dict[str, Any] | None:

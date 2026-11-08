@@ -1422,8 +1422,8 @@ From a `main` checkout (formats and keys no release had):
   a part off a summarized one (#624), and when the run dies between the removal and the commit and is resumed: the
   removal notes the items it stripped in the extraction store until a commit's writes succeed), moves an item to the
   id a full build gives it, and deletes extraction records nothing names (#325, #327, #564, #589, #592). With fuzzy
-  resolution on, it folds a delta entity into its one best stored match and never joins two stored ones until a reset
-  (#564).
+  resolution on, it folds a delta entity into its one best stored match (the higher score, then the shorter name, then
+  the smaller one) and never joins two stored ones until a reset (#564).
 - An incremental run sets the rank of a stored edge whose rank alone changed (a neighbour's degree changed) in place,
   batched, instead of dropping and adding the edge (`GraphIndexer.update_relationship_ranks`, whose default rewrites
   it): most of a delta's edge writes at a hub, 0.15 ms against 10.6 ms per edge on a Gremlin Server.
@@ -1665,6 +1665,9 @@ Ingestion and incremental indexing.
 - An unreadable doc-status registry fails the loading stage (`DocStatusRegistryError`) instead of rebuilding (#186);
   incremental indexing follows the extraction settings and stops before writing after a change of the embedding
   model, languages or analyzers, or onto a suffix built with the registry off (#224, #231, #233).
+- An entity none of whose statements gives a confidence keeps none (stored as 1.0) in every merge: the statements'
+  merge and the incremental merge read a missing one as 0.0, graph resolution as 1.0, so an incremental run could
+  store 0.0 where a full build stored 1.0 (`base_processor.merged_confidence`).
 - Two relationships whose endpoint names or type hold a `:` no longer share an id: `A:B -> C` and `A -> B:C` hashed
   one string and merged into one edge. Such ids are hashed from a JSON list (`shared.utils.id_content`); others keep
   theirs. An edge an extraction record already holds keeps its id until the unit is extracted again.

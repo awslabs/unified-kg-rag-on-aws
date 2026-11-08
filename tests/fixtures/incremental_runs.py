@@ -165,7 +165,9 @@ def _unit_records(
                     name=name,
                     type="ORG" if strength % 2 else "PERSON",
                     description=f"{name} in {where}",
-                    confidence=0.5 + strength / 10,
+                    # A strength-1 statement gives no confidence (a model
+                    # may leave it out): every merge takes the highest known.
+                    confidence=None if strength == 1 else 0.5 + strength / 10,
                     text_unit_ids=[unit_id],
                 )
             )
@@ -263,6 +265,8 @@ def entity_state(entity: Entity) -> tuple[Any, ...]:
         _lines(entity.description),
         entity.rank,
         frozenset(entity.text_unit_ids or []),
+        # The stores write an unknown confidence as 1.0.
+        1.0 if entity.confidence is None else round(entity.confidence, 9),
     )
 
 
