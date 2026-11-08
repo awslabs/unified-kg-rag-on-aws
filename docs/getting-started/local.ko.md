@@ -20,15 +20,18 @@ Python 3.11–3.12, [uv](https://docs.astral.sh/uv/), Ollama가 필요합니다.
 설치하고 기본 모델 두 개를 내려받으세요.
 
 ```bash
-uv sync --extra local
+uv sync --no-dev --extra local
 ollama pull qwen2.5:7b-instruct
 ollama pull bge-m3
 ```
 
+`--no-dev`는 기여자용 테스트·린트 도구를 빼며, 이 옵션이 없으면 `uv sync`와 `uv run`이 이 도구를
+설치합니다.
+
 - **재순위화.** 로컬 프리셋은 크로스 인코더로 재순위화하며, 여기에는 `cross-encoder` extra가
-  필요합니다(`uv sync --extra local --extra cross-encoder`). 없으면 질의는 융합 순서를 그대로
+  필요합니다(`uv sync --no-dev --extra local --extra cross-encoder`). 없으면 질의는 융합 순서를 그대로
   씁니다(로그는 한 번만 남김). Linux에서 이 extra는 잠금 파일이 고정한 CUDA 빌드의 PyTorch(수 GB)를
-  설치합니다. CPU 빌드를 쓰려면 `uv sync --extra local` 뒤에
+  설치합니다. CPU 빌드를 쓰려면 `uv sync --no-dev --extra local` 뒤에
   `uv pip install --torch-backend cpu -e '.[local,cross-encoder]'`을 실행하세요(나중에 그냥
   `uv sync`를 실행하면 지워짐).
 
@@ -54,7 +57,7 @@ EOF
 인덱싱합니다.
 
 ```bash
-uv run run-ingestion --backend local --source-directory ./sample-corpus
+uv run --no-dev run-ingestion --backend local --source-directory ./sample-corpus
 ```
 
 - **파일.** 설정 파일이 없으면 저장소가 작업 디렉터리의 `.unified-kg-rag/`에
@@ -75,8 +78,8 @@ uv run run-ingestion --backend local --source-directory ./sample-corpus
 범용 전략입니다.
 
 ```bash
-uv run run-rag --backend local --search-strategy local --verbose --query "Who is the chief engineer at Acme Robotics?"
-uv run run-rag --backend local --search-strategy mix --verbose --query "How are Acme Robotics and Globex Sensors related?"
+uv run --no-dev run-rag --backend local --search-strategy local --verbose --query "Who is the chief engineer at Acme Robotics?"
+uv run --no-dev run-rag --backend local --search-strategy mix --verbose --query "How are Acme Robotics and Globex Sensors related?"
 ```
 
 `--verbose`는 답변 뒤에 답변에 쓴 근거(텍스트 단위 id와 점수)와 검색 지표를 출력합니다. 명령은 모든 단계를
@@ -122,7 +125,7 @@ EOF
 비교합니다.
 
 ```bash
-uv run run-eval --backend local --data-path sample-eval.json --search-strategy local,mix
+uv run --no-dev run-eval --backend local --data-path sample-eval.json --search-strategy local,mix
 ```
 
 전략마다 결과, 보고서, 요약 파일과 `evaluation_comparison_<timestamp>.json`(`mix`의 지표를

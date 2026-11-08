@@ -7,7 +7,9 @@ ways a reader trusts and a reviewer misses: a ``(#PR)`` placeholder the
 landing script never filled, two *Upgrading* steps with one number (an old
 and a new version of the same instruction), a "step N" reference past the
 last step (left by a step removed or merged), the same passage kept twice by
-a conflict resolution, and an extra the install instructions do not name.
+a conflict resolution (often on adjacent lines, both versions of one
+wrapped line), a line a conflict resolution joined unwrapped, and an extra
+the install instructions do not name.
 """
 
 from __future__ import annotations
@@ -22,10 +24,13 @@ from tests.fixtures.docs_check import REPO_ROOT
 pytestmark = pytest.mark.unit
 
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
-# A passage this many words long repeated further than this many lines away
-# is a duplicate (a phrase repeated within one entry is not).
+# A passage this many words long repeated further than this many words away
+# is a duplicate (a phrase repeated within one sentence is not). Words, not
+# lines: both versions of one conflicting line sit on adjacent lines.
 SHINGLE_WORDS = 14
-SHINGLE_MIN_DISTANCE = 3
+SHINGLE_MIN_DISTANCE = 40
+# Outside tables, no line is longer (the section wraps at 118).
+MAX_LINE = 120
 _PLACEHOLDER = re.compile(r"\(#\(?PR\)?\)|#\(PR\)|\(#PR\b", re.I)
 
 
@@ -63,7 +68,7 @@ def _step_references(section: str) -> list[int]:
 def _repeated_passages(section: str) -> list[tuple[int, int, str]]:
     """``(first line, repeat line, passage)`` of every run of
     ``SHINGLE_WORDS`` words that appears again more than
-    ``SHINGLE_MIN_DISTANCE`` lines after its first occurrence."""
+    ``SHINGLE_MIN_DISTANCE`` words after its first occurrence."""
     words = [
         (word.lower().strip(".,;:()"), number)
         for number, line in enumerate(section.splitlines(), 1)
@@ -74,11 +79,19 @@ def _repeated_passages(section: str) -> list[tuple[int, int, str]]:
     repeats = []
     for i in range(len(words) - SHINGLE_WORDS + 1):
         key = tuple(word for word, _ in words[i : i + SHINGLE_WORDS])
-        line = words[i][1]
-        if key in first and line - first[key] > SHINGLE_MIN_DISTANCE:
-            repeats.append((first[key], line, " ".join(key)))
-        first.setdefault(key, line)
+        if key in first and i - first[key] > SHINGLE_MIN_DISTANCE:
+            repeats.append((words[first[key]][1], words[i][1], " ".join(key)))
+        first.setdefault(key, i)
     return repeats
+
+
+def _long_lines(section: str) -> list[tuple[int, int]]:
+    """``(line, length)`` of every line over ``MAX_LINE`` outside a table."""
+    return [
+        (number, len(line))
+        for number, line in enumerate(section.splitlines(), 1)
+        if len(line) > MAX_LINE and not line.lstrip().startswith("|")
+    ]
 
 
 def _extras() -> list[str]:
@@ -109,6 +122,10 @@ def test_every_step_reference_names_a_step() -> None:
 def test_no_passage_is_repeated() -> None:
     repeats = _repeated_passages(SECTION)
     assert not repeats, repeats[:3]
+
+
+def test_no_line_is_over_long() -> None:
+    assert _long_lines(SECTION) == []
 
 
 def test_every_extra_is_named_where_the_section_lists_them() -> None:
@@ -150,9 +167,21 @@ def test_the_step_reference_scan() -> None:
 
 def test_the_repeat_scan() -> None:
     passage = " ".join(f"w{i}" for i in range(SHINGLE_WORDS))
-    near = f"- {passage}\n  {passage}\n"
-    far = f"- {passage}\n" + "x\n" * (SHINGLE_MIN_DISTANCE + 1) + f"- {passage}\n"
+    filler = " ".join(f"f{i}" for i in range(SHINGLE_MIN_DISTANCE))
+    # Within SHINGLE_MIN_DISTANCE words: one sentence repeating itself.
+    near = f"- {passage} {' '.join(filler.split()[: -SHINGLE_WORDS])}\n  {passage}\n"
+    # Both versions of one line, on adjacent lines, past it.
+    adjacent = f"- {passage} {filler}\n  {passage}\n"
+    lines = "\n".join(filler.split())
+    far = f"- {passage}\n{lines}\n- {passage}\n"
     short = " ".join(passage.split()[:-1])
     assert _repeated_passages(near) == []
-    assert _repeated_passages(f"- {short}\n" + "x\n" * 9 + f"- {short}\n") == []
-    assert [r[:2] for r in _repeated_passages(far)] == [(1, SHINGLE_MIN_DISTANCE + 3)]
+    assert _repeated_passages(f"- {short}\n{lines}\n- {short}\n") == []
+    assert [r[:2] for r in _repeated_passages(adjacent)] == [(1, 2)]
+    assert [r[:2] for r in _repeated_passages(far)] == [(1, SHINGLE_MIN_DISTANCE + 2)]
+
+
+def test_the_line_length_scan() -> None:
+    long = "x" * (MAX_LINE + 1)
+    text = f"- {'y' * (MAX_LINE - 2)}\n  {long}\n| {long} |\n"
+    assert _long_lines(text) == [(2, MAX_LINE + 3)]

@@ -196,12 +196,16 @@ def test_run_describe_names_a_wrong_suffix_on_stderr(
 def test_describing_where_nothing_was_ingested_creates_no_store(
     tmp_path: Path,
 ) -> None:
-    # It left an empty .unified-kg-rag/vector.sqlite3 in the working
-    # directory.
+    # It left an empty .unified-kg-rag/vector.sqlite3 (and, with the
+    # registry on, doc-status.sqlite3) in the working directory.
     config = embedded._config(tmp_path / "stores", tmp_path / "viz")
+    assert config.providers.doc_status.enabled
     description = describe_namespace(config)
     assert not description.exists
     assert not (tmp_path / "stores" / "vector.sqlite3").exists()
+    # Nor an empty doc-status.sqlite3 with the registry on.
+    assert description.registry == {}
+    assert not (tmp_path / "stores" / "doc-status.sqlite3").exists()
 
 
 # The registry adapter's own constructor (no_aws forbids building one).
@@ -223,13 +227,32 @@ class _DeniedSession:
             aws_secret_access_key="testing",  # nosec B106 - a stubbed client
         )
         stubber = Stubber(client)
+        self.stub(stubber)
+        stubber.activate()
+        return client
+
+    def stub(self, stubber: Stubber) -> None:
         stubber.add_client_error(
             "describe_table",
             service_error_code="AccessDeniedException",
             service_message="not authorized to perform: dynamodb:DescribeTable",
         )
-        stubber.activate()
-        return client
+
+
+class _EarlierTableSession(_DeniedSession):
+    """The table of an earlier release (keyed by ``doc_id`` alone)."""
+
+    def stub(self, stubber: Stubber) -> None:
+        table = {
+            "Table": {
+                "TableName": "old-doc-status",
+                "KeySchema": [{"AttributeName": "doc_id", "KeyType": "HASH"}],
+            }
+        }
+        # Once to see that it exists (create_table_if_missing), once to
+        # check its key schema.
+        for _ in range(2):
+            stubber.add_response("describe_table", table)
 
 
 def test_describe_reports_an_unreadable_registry_and_the_rest(
@@ -261,3 +284,24 @@ def test_describe_reports_an_unreadable_registry_and_the_rest(
     printed = " ".join(capsys.readouterr().out.split())
     assert "Doc-status registry: unavailable" in printed
     assert "Strategies:" in printed
+
+
+def test_describe_reports_an_earlier_registry_table_without_the_run_step(
+    ingested, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # It said "re-run with indexing.reset: true", a step for an ingestion.
+    config, providers = ingested
+    monkeypatch.setattr(DynamoDBDocStatusStore, "__init__", _DYNAMODB_INIT)
+    monkeypatch.setattr(
+        providers,
+        "build_doc_status",
+        lambda: DynamoDBDocStatusStore(config, boto_session=_EarlierTableSession()),  # type: ignore[arg-type]
+    )
+
+    description = describe_namespace(config, providers=providers)
+
+    assert description.registry is None
+    assert description.registry_unavailable is not None
+    assert "earlier release" in description.registry_unavailable
+    assert "indexing.reset" not in description.registry_unavailable
+    assert {"local", "mix"} <= set(description.strategies)

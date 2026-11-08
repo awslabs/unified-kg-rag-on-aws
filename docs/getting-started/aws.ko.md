@@ -78,10 +78,11 @@ Python, uv, Bedrock 액세스 권한이 있는 AWS 자격 증명, 그리고 아�
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
+uv sync --no-dev --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
 
-`uv sync`만 실행하면 수집과 질의만 설치됩니다. 선택 기능은 extra로 추가하며(이 페이지는
+`--no-dev`는 기여자용 테스트·린트 도구를 빼며, 이 옵션이 없으면 `uv sync`와 `uv run`이 이 도구를
+설치합니다. `uv sync`만 실행하면 수집과 질의만 설치됩니다. 선택 기능은 extra로 추가하며(이 페이지는
 배포에 쓰는 extra를 다룹니다), 필요한 extra가 없으면 해당 명령이 extra 이름을 알려 주고 종료
 코드 `2`로 종료합니다. 위 명령의 두 extra는 다음과 같습니다.
 
@@ -166,9 +167,9 @@ cp config-template.yaml config.yaml
 `uv run` 없이 실행하세요. 코퍼스를 인덱싱한 뒤 GraphRAG나 LightRAG 전략으로 질의합니다.
 
 ```bash
-uv run run-ingestion --source-directory ./source --config-path config.yaml
-uv run run-rag --query "What are the main themes?" --search-strategy global --config-path config.yaml
-uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
+uv run --no-dev run-ingestion --source-directory ./source --config-path config.yaml
+uv run --no-dev run-rag --query "What are the main themes?" --search-strategy global --config-path config.yaml
+uv run --no-dev run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
 ```
 
 ## 다음 단계

@@ -86,10 +86,12 @@ explain the two model tiers and how to change a role's model.
 ```bash
 git clone https://github.com/awslabs/unified-kg-rag-on-aws.git
 cd unified-kg-rag-on-aws
-uv sync --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
+uv sync --no-dev --extra eval --extra viz  # or: pip install -e '.[eval,viz]'
 ```
 
-`uv sync` alone installs ingestion and queries; optional features come as
+`--no-dev` leaves out the contributors' test and lint tools, which `uv sync`
+and `uv run` install without it. `uv sync` alone installs ingestion and
+queries; optional features come as
 extras (this page names the ones a deployment uses), and without its extra
 the command that needs it stops with exit `2`, naming it. The two above:
 
@@ -181,9 +183,9 @@ virtual environment instead and drop the `uv run` prefix. Index a corpus,
 then query it with a GraphRAG or a LightRAG strategy:
 
 ```bash
-uv run run-ingestion --source-directory ./source --config-path config.yaml
-uv run run-rag --query "What are the main themes?" --search-strategy global --config-path config.yaml
-uv run run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
+uv run --no-dev run-ingestion --source-directory ./source --config-path config.yaml
+uv run --no-dev run-rag --query "What are the main themes?" --search-strategy global --config-path config.yaml
+uv run --no-dev run-rag --query "How are Alice and Acme related?" --search-strategy mix --config-path config.yaml
 ```
 
 ## Next steps

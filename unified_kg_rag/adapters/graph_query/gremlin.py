@@ -9,7 +9,8 @@ the request cannot name one. Every vertex step is followed by
 ``hasLabel(label)``; a variable-length hop is a ``union`` of fixed-length
 chains, so each of its steps is label-checked too; values are bytecode
 arguments. The match semantics are §6.6's: ``simplePath()`` over the whole
-walk keeps its vertices distinct, bindings are projected to the vertices'
+walk keeps its vertices distinct (at the end of the walk and at the end of
+each union branch, since Neptune drops one that follows a ``union``), bindings are projected to the vertices'
 ``id`` properties and de-duplicated, so a vertex stored twice during a
 vertex-id switch counts once.
 """
@@ -191,7 +192,9 @@ class GremlinQuery:
             chain = self._step(__, edge)
             for _ in range(length - 1):
                 chain = self._step(chain, edge)
-            chains.append(chain)
+            # Neptune ignores a simplePath() after a union() (Gremlin Server
+            # honours it): each branch checks the walk so far itself.
+            chains.append(chain.simplePath())
         return traversal.union(*chains)
 
     def _ids(self, traversal: GraphTraversal, keys: Sequence[str]) -> GraphTraversal:

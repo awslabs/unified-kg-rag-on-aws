@@ -136,3 +136,21 @@ def test_a_restart_keeps_the_config_settings_saved(
     path.write_text("search:\n  no_such_key: 1\n")
     with pytest.raises(SystemExit, match="--reset-config"):
         demo.main([*args, "--prepare-only"])
+
+
+def test_without_the_console_extra_the_demo_stops_before_ingesting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # It ingested the corpus and printed the console's address, then
+    # run-console failed on the missing extra.
+    demo = load("demo")
+    monkeypatch.setattr(demo, "missing_extra", lambda: ["fastapi"])
+    monkeypatch.setattr(demo, "ingest", lambda *a: pytest.fail("ingested"))
+    workspace = tmp_path / "ws"
+    with pytest.raises(SystemExit, match="--extra console"):
+        demo.main(["--models", "fake", "--workspace", str(workspace)])
+    assert not workspace.exists()
+    # --prepare-only starts no console: it needs no extra.
+    assert (
+        demo.main(["--workspace", str(workspace), "--prepare-only", "--no-ingest"]) == 0
+    )

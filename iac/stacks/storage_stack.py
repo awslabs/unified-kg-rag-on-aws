@@ -372,19 +372,17 @@ class StorageStack(Stack):
             cloudwatch_logs_exports=[neptune.LogType.AUDIT] if audit else None,
             removal_policy=self.removal_policy,
         )
+        audit_logs = None
         if audit:
-            # The log group Neptune exports to, created here so it gets the
-            # CMK, the retention and the removal policy (Neptune would create
-            # it unencrypted and kept forever). It is created right after the
-            # cluster, before an instance can export: a new cluster's
-            # instances are created after it, and a deployed one logs only
-            # once its instances reboot.
+            # The log group Neptune exports to (/aws/neptune/<cluster id>/
+            # audit), created here so it gets the CMK, the retention and the
+            # removal policy (Neptune would create it unencrypted and kept
+            # forever). The id is the cluster's Ref, known only once the
+            # cluster exists, so the instances (the exporters) wait for it.
             audit_logs = logs.LogGroup(
                 self,
                 "NeptuneAuditLogs",
-                log_group_name=(
-                    f"/aws/neptune/cluster/{cluster.cluster_identifier}/audit"
-                ),
+                log_group_name=f"/aws/neptune/{cluster.cluster_identifier}/audit",
                 encryption_key=self.kms_key,
                 removal_policy=self.removal_policy,
             )
@@ -396,6 +394,8 @@ class StorageStack(Stack):
                 child.preferred_maintenance_window = (
                     self.config.neptune_maintenance_window
                 )
+                if audit_logs is not None:
+                    child.node.add_dependency(audit_logs)
         return cluster
 
     # ---------------------------------------------------------- OpenSearch

@@ -65,7 +65,7 @@ stored is read again: follow *Upgrading* in order.
   (`run-mcp-server`), `console` (`run-console`: FastAPI, Uvicorn, python-multipart). A feature whose
   extra is missing fails naming it: the CLIs exit 2 before any work, the library raises `ConfigurationError` (also
   under `processing.ignore_errors`). The LLM-free evaluators and the `static` renderer need no extra; the container
-  image installs none (`--build-arg UV_EXTRAS="--extra eval"` adds the ragas judge) (#467, #472, #520, #576).
+  image installs none (`--build-arg UV_EXTRAS="--extra eval"` adds the ragas judge) (#467, #472, #520, #576, #636).
 - No longer dependencies: `graspologic` (Leiden runs on `graspologic-native`), `bokeh` (with `contourpy`, `tornado`,
   `xyzservices`), `umap-learn`, `scikit-learn`, `nest-asyncio`; `langchain` comes only with `eval` (#225, #226,
   #465, #520, #576). Security floors follow the package that pulls the pinned one in: `pillow` in `eval`, `llvmlite`
@@ -322,8 +322,10 @@ See [`iac/README.md`](iac/README.md).
   `ApplyGuardrail` (`aws.bedrock.guardrail.check_input` / `check_output`, both on); ingestion and evaluation models
   are never guarded. A blocked query gets the blocked message without retrieval (`RAGOutput.metadata.blocked`), a
   masked one continues with the masked text, interventions are in `metadata.guardrail`, a guardrail error fails the
-  query, and with `check_output` a stream delivers the answer as one chunk after the check. A role outside the CDK
-  stack needs `bedrock:ApplyGuardrail` (#104, #319, #344).
+  query, and with `check_output` a stream delivers the answer as one chunk after the check. The baseline guardrail
+  `iac/` creates masks email, phone and card numbers in the query too (its PII settings acted on answers only; the
+  next deploy publishes a new version). A role outside the CDK stack needs `bedrock:ApplyGuardrail` (#104, #319,
+  #344).
 - Answers carry `[n]` citation markers by default (`search.citations.enabled`): their text and the judges' scores
   are not comparable with 0.2.3 runs; set it `false` for the earlier context and prompt (#627).
 - A query with conversation history is rewritten as a standalone question (`models.roles.query_rewrite`) that every
@@ -378,9 +380,10 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
    `GraphRagSecurity` stack (CDK metadata only) with `aws cloudformation delete-stack`; dry-run the TLS policy
    change (`aws opensearch update-domain-config ... --dry-run`) to see whether it runs blue/green; in a
    `removal_destroy` environment copy the `CacheAccessLogs` logs you need, as the bucket is deleted (#566, #583).
-   With `opensearch_count` above 1, also pass `-c opensearch_master_instance=r6g.large.search` (and keep it on later
-   deploys): 0.2.3's dedicated masters ran the data node type, the default is now `m6g.large.search`, and changing
-   them is a blue/green deployment (every shard copied, slower for hours on a large domain).
+   With `opensearch_count` above 1, also pass `-c opensearch_master_instance=` the domain's `opensearch_instance`
+   (`r6g.large.search` unless you set one; keep it on later deploys): 0.2.3's dedicated masters ran the data node
+   type, the default is now `m6g.large.search`, and changing them is a blue/green deployment (every shard copied,
+   slower for hours on a large domain) (#641).
 9. OpenSearch 2.19: put back `OPENSEARCH_VERSION = opensearch.EngineVersion.OPENSEARCH_2_19` and upgrade the domain
    as the runbook's [Upgrading OpenSearch](docs/operations.md#upgrading-opensearch) says: stop ingestion, take a
    manual snapshot (the only way back to 2.13), run the eligibility check, and deploy `GraphRagStorage` once `cdk
@@ -402,7 +405,8 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     `vpc_flow_logs`) and the OpenSearch slow-search and slow-index log groups (`OpenSearchSlowSearchLogs...` and
     `OpenSearchSlowIndexLogs...` in `GraphRagStorage`; `GraphRag<Env>...` outside `dev`), after copying what you
     keep: `aws logs describe-log-groups --log-group-name-prefix GraphRagNetwork-VpcFlowLogsLogGroup` (and
-    `GraphRagStorage-OpenSearchSlow`) names them, `aws logs delete-log-group --log-group-name <name>` deletes each.
+    `GraphRagStorage-OpenSearchSlow`) names them, `aws logs delete-log-group --log-group-name <name>` deletes each
+    (#641).
 14. Scripts: update the renamed flags, exit codes and JSON output, `.States.PrepPhase` to `.States.Ingest` and
     `$.last_phase` to `$.task`, `indexing_results` keys to `vector_*` / `graph_*`, and read `run-eval` results from
     the run directory the JSON output's `output_directory` names (#328, #333, #584, #620).
@@ -412,7 +416,7 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     `ragas/answer_correctness` instead of `langchain/correctness`. `graph_aware` coverage matches by entity key and
     can read lower than before on the same answers: run baselines again before comparing. Re-render static charts
     to get the SVG pages (#563, #576, #620). The container image leaves the `eval` extra out: a query task that runs
-    ragas needs an image built with `--build-arg UV_EXTRAS="--extra eval"` (about 390 MB more).
+    ragas needs an image built with `--build-arg UV_EXTRAS="--extra eval"` (about 390 MB more) (#636).
 16. A Python script that runs ingestion (`DataIngestionPipeline`, `DirectoryLoader.deduplicate_documents`, the
     graph resolver) must keep its entry point behind `if __name__ == "__main__":`: the deduplication and fuzzy
     matching worker processes now start from a forkserver, which imports the main module, instead of forking a
@@ -451,12 +455,13 @@ From a `main` checkout (formats and keys no release had):
 - #640 claim statuses: claims stored before it keep the status the model wrote (`True.`, `Suspected`) until a
   reset, which reads them from the stored records into the vocabulary without an extraction call; that first reset
   also asks again the community reports whose input held such a status (their input changed). Claim records stored
-  since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again.
+  since #640 keep the status that build read (`uncertain` as `disputed`) until `--force-rebuild` extracts them again
+  (#644).
 - Incremental runs may have stored a summary of a summary for an entity or relationship edited documents shared
   (#564, #589), also a run resumed after dying between its removal and its commit (#592), and a summary that kept
   the lines of a spelling a later run split off or lost those of a spelling a run folded in (#624), or the line of
   an edge a run's delta resolved under a spelling the stored graph keeps apart (#640), or the line of an edge of
-  such a spelling stated in a unit beside the edge it kept: reset once to
+  such a spelling stated in a unit beside the edge it kept (#644): reset once to
   summarize from the lines (one call per such item over the threshold), or leave it.
 - #565 changed the translation, description summary and gleaning prompts (gleaning re-keys every gleaned record,
   claims too): a reset translates, extracts and gleans every unit again, the cost of a first build; incremental runs
@@ -569,7 +574,10 @@ From a `main` checkout (formats and keys no release had):
   `auto_resolution_candidates` are refused at load (they were ignored or failed later): drop the setting the load
   names. CDK: the next deploy turns on the cache bucket's S3 Bucket Key with `use_cmk` (new objects only, no
   re-encryption; fewer KMS requests), tags the ingestion tasks and grants the state machine `ecs:TagResource` on
-  them; an `env_name` too long for the bucket or guardrail name now fails the synth. Nothing re-runs.
+  them; an `env_name` too long for the bucket or guardrail name now fails the synth. Nothing re-runs. With
+  `neptune_audit_log` on, the stack's audit log group is `/aws/neptune/<cluster id>/audit`, where Neptune writes (it
+  was `/aws/neptune/cluster/<cluster id>/audit`): if Neptune already created that group itself, copy what you keep and
+  delete it (`aws logs delete-log-group`) before the next deploy, which fails on an existing group otherwise.
 - #618 community hierarchy and report references: stored communities and reports stay as they are until the namespace
   is clustered again. Its next full build (`indexing.reset: true`) keeps the level-0 communities and changes the
   levels above them where a community was split (it is now the parent of its pieces, so the hierarchy can be a level
@@ -596,10 +604,11 @@ From a `main` checkout (formats and keys no release had):
   alpha resamples (`multiplicity.families.<f>.resamples`; `evaluation.resamples` sets the base, 2,000): the Monte
   Carlo p-value is never below 1 / (1 + resamples), so with a fixed 2,000 a family of 100 or more tests (15 strategies
   x 7 metrics) could not reject at 0.05 however large the difference, and its simultaneous intervals read their tails
-  from a fraction of one resample. A family's tests of one size draw their resamples once for all of them (the same
-  values; 120 tests over 300 queries adjust in 4.5 s instead of 25 s), holding at most 25 million resampled means
-  at once (a group of tests at a time past it, the same values again), and the console's paired-delta help names the
-  families' resample counts. `--fail-if` reads the four new statistics, and the tables print `Holm p` (#620).
+  from a fraction of one resample (#639). A family's tests of one size draw their resamples once for all of them
+  (the same values; 120 tests over 300 queries adjust in 4.5 s instead of 25 s), holding at most 25 million resampled
+  means at once (a group of tests at a time past it, the same values again), and the console's paired-delta help
+  names the families' resample counts (#645, #646). `--fail-if` reads the four new statistics, and the tables print
+  `Holm p` (#620).
 - `run-eval --pairwise-repeats all` (`evaluation.pairwise_repeats`) judges every repeat's answers, repeat r against
   repeat r, at the judge's calls times `--repeats`; each query's repeats are averaged before the queries and the win
   rate's interval resamples queries. The default still judges the first repeat (#620).
@@ -609,29 +618,29 @@ From a `main` checkout (formats and keys no release had):
   each was written from, as MS GraphRAG's reduce cites `[Data: Reports (...)]`: a report's are those of the entities
   and relationships its findings cite, read by id (its community's membership only for a report stored without
   findings, or whose cited records are all gone), and a cited point names those documents even when the evidence
-  budget left its reports out of the context; it stays model-written (screened, never a source). The answer prompt
-  (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those markers, ASCII in
-  every answer language; global and DRIFT answers are asked to cite where possible and keep a relevant point with no
-  marker (pairwise judges preferred their uncited answers on comprehensiveness). `RAGOutput.citations` lists one `Citation` per number: whether the answer
-  cites it, its documents (`CitedDocument`: document id, file name, path relative to the corpus root, pages), text
-  units, chunk id, title, seed-graph provenance and IRI; a graph section names the documents of up to
-  `search.citations.lineage_units` (10) of its text units that its query's suffix and filters let through, read
-  in batched fetches (an excluded or another tenant's document is never named; the next units fill its place),
-  alongside the answer call. A number the context did not show is reported in `metadata.unknown_citation_markers`, never as a citation
-  (a marker has at most three digits: a bracketed year such as `[2020]` is text, and sections past the 999th get no
-  number); a blocked answer has none. Earlier
-  answers reach the follow-up rewrite without their markers. `CitationMarkerScanner`
+  budget left its reports out of the context; it stays model-written (screened, never a source) (#635, #643). The
+  answer prompt (concise, comprehensive or a `custom_prompts` override) asks the model to cite them with those
+  markers, ASCII in every answer language; global and DRIFT answers are asked to cite where possible and keep a
+  relevant point with no marker (pairwise judges preferred their uncited answers on comprehensiveness) (#643).
+  `RAGOutput.citations` lists one `Citation` per number: whether the answer cites it, its documents (`CitedDocument`:
+  document id, file name, path relative to the corpus root, pages), text units, chunk id, title, seed-graph provenance
+  and IRI; a graph section names the documents of up to `search.citations.lineage_units` (10) of its text units that
+  its query's suffix and filters let through, read in batched fetches (an excluded or another tenant's document is
+  never named; the next units fill its place), alongside the answer call (#635, #643). A number the context did not
+  show is reported in `metadata.unknown_citation_markers`, never as a citation (a marker has at most three digits: a
+  bracketed year such as `[2020]` is text, and sections past the 999th get no number); a blocked answer has none
+  (#635, #643). Earlier answers reach the follow-up rewrite without their markers (#635). `CitationMarkerScanner`
   reads the markers from streamed chunks; MCP `kg_answer` records carry their `citation` marker and `cited`, and a
   cited key point or intermediate answer is a record of its own (`key_point`, `intermediate_answer`) with its
-  citation's documents. The
-  document converter keeps where each PDF page starts and text units store `page_start` / `page_end`, `relative_path`
-  and `document_id` in their attributes (ids and texts unchanged). `run-rag` prints the cited sources and its JSON
-  output carries every citation. The retrieval evaluator adds `citation_precision` and `citation_recall` against
-  `reference_sources`, each cited citation weighted by its files (a graph section of ten lineage files counts a tenth
-  per reference file, not 1 when any matches), and `citation_precision_passages` over the cited passages alone; the
-  run manifest records `citations.enabled` and the scoring, and a comparison warns when its runs differ in either. The
-  pairwise judge, `graph_aware`'s answer coverage and `answer_length` read the answers without their markers, as
-  `answer_match` does ([Design §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
+  citation's documents (#643). The document converter keeps where each PDF page starts and text units store
+  `page_start` / `page_end`, `relative_path` and `document_id` in their attributes (ids and texts unchanged).
+  `run-rag` prints the cited sources and its JSON output carries every citation. The retrieval evaluator adds
+  `citation_precision` and `citation_recall` against `reference_sources`, each cited citation weighted by its files (a
+  graph section of ten lineage files counts a tenth per reference file, not 1 when any matches), and
+  `citation_precision_passages` over the cited passages alone; the run manifest records `citations.enabled` and the
+  scoring, and a comparison warns when its runs differ in either. The pairwise judge, `graph_aware`'s answer coverage
+  and `answer_length` read the answers without their markers, as `answer_match` does (#639; [Design
+  §7.1](docs/design.md#71-document-citations), [query](docs/guides/query.md#citations)).
 - `RAGInput.history` (#627): a stateless caller passes the conversation as `{role, content}` turns, which the
   follow-up rewrite reads where it reads memory otherwise, bounded to `memory.max_messages_per_conversation` turns
   and `memory.max_history_tokens` (4,000, estimated) and screened by the input guardrail like the query (a masked
@@ -643,9 +652,9 @@ From a `main` checkout (formats and keys no release had):
   by default; another address needs `--allow-remote`, and the server authenticates no caller). Results share one
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
   seed-graph provenance; a text record's document id as its text unit stores it; a structured query's
-  `query_result` with its table up to 6000 characters and the entities it returned, by id and name). `kg_answer` takes the caller's
-  conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the server keeps
-  none). The namespace is fixed at start (`--suffix`, else `index_value`) unless
+  `query_result` with its table up to 6000 characters and the entities it returned, by id and name). `kg_answer` takes
+  the caller's conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the server
+  keeps none) (#635, #643). The namespace is fixed at start (`--suffix`, else `index_value`) unless
   `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the `mcp.max_*` bounds limit what a call
   may ask and costs (`mcp.strategies` binds the chain's new `allowed_strategies`: `auto` routes, and falls back, only
   within it, and is refused before any model call when the namespace serves none of it); every call runs under
@@ -663,7 +672,8 @@ From a `main` checkout (formats and keys no release had):
   (declared types plus a sampled profile of what the suffix holds), never query text; code validates it (one repair
   call with the refusal), links the names it mentions through the hybrid entity search (a name without a name match
   needs a lexical hit, so an absent entity links nothing and falls back), compiles it to Gremlin bytecode (Neptune,
-  Gremlin Server) or parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
+  Gremlin Server; each branch of a hop range ends in its own `simplePath()`, since Neptune ignores one after a
+  `union`) or parameterised SQL (the embedded graph) scoped to the query's suffix label, checks the compiled
   form against a read-step allowlist (typed arguments only: no lambda) or a SQL checker backed by a SQLite authorizer,
   and runs it read-only under a server-side time limit; every store cuts its page in the plan's order, so rankings and
   top rows are exact. The result table, the entities and paths it names (with seed provenance) and their passages are
@@ -674,11 +684,11 @@ From a `main` checkout (formats and keys no release had):
   its first matches as entities. Filter keys are checked against the fallback that would run too. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
   `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
-  `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the model-written plan text is screened wherever
-  it is returned: the search and answer metadata, the result table and the query-result source the console, MCP and
-  `run-rag` JSON show. `GraphQueryPort` is exported for custom
-  graph backends, and `search.token_manager.type_budgets.query_result` sizes the result's context share
-  (docs/design.md §6.6, [guide](docs/guides/structured-queries.md)).
+  `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the
+  model-written plan text is screened wherever it is returned: the search and answer metadata, the result table and
+  the query-result source the console, MCP and `run-rag` JSON show (#635). `GraphQueryPort` is exported for custom graph
+  backends, and `search.token_manager.type_budgets.query_result` sizes the result's context share (docs/design.md
+  §6.6, [guide](docs/guides/structured-queries.md)).
 - `prepare-benchmark structural [--seed N] [--size small|medium|large]` (#630): a generated, never committed,
   procurement world for the `structured` strategy: a JSONL seed graph (`country`, `founded`, `employees`; `SUPPLIES`,
   `MAKES`), a document per vendor and buyer (part of those facts, and a chief executive only text states), the schema
@@ -698,27 +708,26 @@ From a `main` checkout (formats and keys no release had):
   the first line and the list right after it), so listing them all is no match and a later "Delta is fourth" no
   pick, and
   `metadata.decline_is_correct` scores a decline of an absent vendor as right; the localized counts carry 3곳 / 세 곳
-  and 3社 / 三社 aliases. `structural-config.yaml` sets `evaluation.answer_span: extracted` (EM and F1 on the short
-  span: one fast-model call per scored answer).
-- A local web console, opt-in (the `console` extra, `run-console`; #631): ask with a strategy picker (and how `auto`
-  chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources they
-  cite, follow-ups sent with the page's conversation (`RAGInput.history`), and each source the answer read on a
+  and 3社 / 三社 aliases (#639, #645). `structural-config.yaml` sets `evaluation.answer_span: extracted` (EM and F1 on
+  the short span: one fast-model call per scored answer) (#645).
+- A local web console, opt-in (the `console` extra, `run-console`; #631, #634): ask with a strategy picker (and how
+  `auto` chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources
+  they cite, follow-ups sent with the page's conversation (`RAGInput.history`), and each source the answer read on a
   provenance trace back to its passage, file, seed graph and IRI and into the graph; ingest a workspace folder or an
-  upload with a methodology profile (starting from what the namespace's build record holds; a run that would drop
-  a held methodology for every corpus in the namespace starts only once confirmed), with live stage progress and a
-  stop the pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
+  upload with a methodology profile (starting from what the namespace's build record holds; a run that would drop a
+  held methodology for every corpus in the namespace starts only once confirmed), with live stage progress and a stop
+  the pipeline checkpoints; run and compare evaluations (progress per answer; paired deltas called by their
   Holm-adjusted p-value with the family's simultaneous interval and the primary metric marked, falling back to the
-  interval for older comparisons; gates, cost, declines, win rates by answer length) and open saved runs;
-  explore the exported graph (search, neighbourhoods, communities, degree, schema conformance, seed versus document
-  evidence); a dashboard of the questions and jobs run through it (time, tokens, cost per strategy, model and role);
-  and edit the config file with validation, a diff before saving, a confirmation before a provider endpoint or a
-  directory the console serves changes, and secrets never shown or written. Jobs run the
-  unchanged `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs
-  `--allow-remote`), requires a per-launch access token, refuses paths outside its directories and cross-site
-  requests, and loads nothing from another host. The web client (`console/web/`, Vite, React, TypeScript) is in
-  English and nine more languages, and `console/demo/demo.py` prepares a synthetic corpus, a dataset and a config
-  (kept on a restart, `--reset-config` to write it again) for fake, Ollama or Bedrock models
-  ([Console](docs/guides/console.md)).
+  interval for older comparisons; gates, cost, declines, win rates by answer length) and open saved runs; explore the
+  exported graph (search, neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a
+  dashboard of the questions and jobs run through it (time, tokens, cost per strategy, model and role); and edit the
+  config file with validation, a diff before saving, a confirmation before a provider endpoint or a directory the
+  console serves changes, and secrets never shown or written. Jobs run the unchanged `run-ingestion` and `run-eval` in
+  child processes. It binds `127.0.0.1` (another address needs `--allow-remote`), requires a per-launch access token,
+  refuses paths outside its directories and cross-site requests, and loads nothing from another host. The web client
+  (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, and `console/demo/demo.py` prepares
+  a synthetic corpus, a dataset and a config (kept on a restart, `--reset-config` to write it again) for fake, Ollama
+  or Bedrock models, and stops before the ingestion without the `console` extra ([Console](docs/guides/console.md)).
 - `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose inputs
   changed (#631).
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
@@ -760,7 +769,7 @@ From a `main` checkout (formats and keys no release had):
   default of 100,000 (about 5 GiB; 200,000 did not fit the 8 GiB task) (#608). The leaf digest that tells whether a
   tree is current reads the texts a page at a time and keeps only their ids, attributes and text hashes
   (`VectorIndexer.scan_text_unit_pages`) (#640); the port's default pages a store's `scan_text_units`, so a store
-  that implements only that one still builds the tree. Failed summaries and, with
+  that implements only that one still builds the tree (#644). Failed summaries and, with
   `refresh: on_reset`, the text units no summary covers are EMF metrics (`total_tree_summaries_failed`,
   `total_tree_uncovered_leaves`) on the CDK dashboard's "Summary tree (EMF)" widget (#603). See
   [ingest](docs/guides/ingest.md#a-raptor-summary-tree-opt-in) and
@@ -778,14 +787,18 @@ From a `main` checkout (formats and keys no release had):
   query by the config and is not cached (#619). `GraphRAGChain.aread_build_record(suffix)` and `document_retriever()`
   are public (#619). Adding a methodology to an incremental namespace rebuilds it once from its stored extractions
   (only the added model calls are new); removing one stops maintaining its artifacts without deleting them, and the
-  next run records them gone, one with no document change too (in every suffix its documents hold); while the namespace holds other source scopes' documents, a run (`insert_documents` and `delete_documents` too) that would drop a methodology it holds for them is refused before any model call (exit 2), naming the scopes and the ways out (the namespace's methodologies, a namespace of its own, a reset), as one that would add a methodology by a rebuild is; the build record names the source scopes it holds (`source_scopes`, absent from older records), so a query's refusal advises a rebuild only where one is allowed; a reset to fewer methodologies keeps the extraction
-  next run records them gone, one with no document change too (in every suffix its documents hold, which the registry's diff
-  reads, `DocumentDelta.unchanged_suffixes`, rather than a second read of the records); a reset to fewer methodologies keeps the extraction
+  next run records them gone, one with no document change too (in every suffix its documents hold, which the
+  registry's diff reads, `DocumentDelta.unchanged_suffixes`, rather than a second read of the records (#644)); while the
+  namespace holds other source scopes' documents, a run (`insert_documents` and `delete_documents` too) that would
+  drop a methodology it holds for them is refused before any model call (exit 2), naming the scopes and the ways out
+  (the namespace's methodologies, a namespace of its own, a reset), as one that would add a methodology by a rebuild
+  is; the build record names the source scopes it holds (`source_scopes`, absent from older records), so a query's
+  refusal advises a rebuild only where one is allowed (#642); a reset to fewer methodologies keeps the extraction
   records, so adding one back extracts nothing again (#626), and so does any reset that builds nothing from them
   (`raptor` alone, a second time too) (#640); a reset prunes only the kinds of record it produces, so the report
-  answers stay through any number of resets without `graphrag`, and the claim records through any number with
-  claims off (the second such reset dropped them, and adding them back asked the model again); the
-  `VectorIndexer` port gains `extraction_record_keys`, whose "cannot" default keeps every record. Every strategy class declares
+  answers stay through any number of resets without `graphrag`, and the claim records through any number with claims
+  off (the second such reset dropped them, and adding them back asked the model again); the `VectorIndexer` port gains
+  `extraction_record_keys`, whose "cannot" default keeps every record (#644). Every strategy class declares
   `BaseSearchStrategy.methodology` (`iterative` reads its base's), and one that reads less declares its artifacts
   (`StrategySpec.required_artifacts`): `naive` and `simple` serve every namespace that holds the text units, and
   `simple` sweeps only the indexes it holds (#607). A filter key is checked, after the methodology check, against the
@@ -817,15 +830,16 @@ From a `main` checkout (formats and keys no release had):
   each, under the namespace lease); the source scope's other documents are kept (`DocumentDelta.kept`). Needs the
   doc-status registry; an id the registry does not hold raises the new `DocumentNotFoundError` before any write
   (#628), and a methodology the namespace does not hold yet raises `ConfigurationError` before the run, naming the
-  methodologies held and the directory run that adds it. See [Python library](docs/guides/python-library.md#documents-from-memory).
+  methodologies held and the directory run that adds it (#640). See [Python
+  library](docs/guides/python-library.md#documents-from-memory).
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
   (`--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#628). A
   registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported unavailable, with
-  the reason in `registry_unavailable` and a warning, and the rest is still described. A missing extra and a
+  the reason in `registry_unavailable` and a warning, and the rest is still described (#636). A missing extra and a
   namespace that holds no index exit 2 with the error on stderr, and describing creates no store file where nothing
-  was ingested. See [inspect and export](docs/guides/inspect.md).
+  was ingested (#641). See [inspect and export](docs/guides/inspect.md).
 - Observability: the `observability` section and `otel` extra, spans for runs, stages, batches and query steps,
   GenAI model-call spans, OTLP, Langfuse and Phoenix exporters with redacted content capture (an IPv6 endpoint keeps
   its brackets in the logged URL); CDK `enable_cloudwatch_tracing` with an ADOT sidecar (#207, #208, #211, #219,
@@ -909,7 +923,7 @@ From a `main` checkout (formats and keys no release had):
   guardrail_contextual_grounding=true`; `GroundingCheck.blocked`); with `check_output`, model-written search results
   (DRIFT's intermediate answers, global key points) are screened too, in one check, then one per result
   (`search.max_concurrency` at a time) only when it intervenes; interventions name word lists
-  (`wordPolicy:customWords`, `wordPolicy:PROFANITY`) (#462, #471, #567, #583). See
+  (`wordPolicy:customWords`, `wordPolicy:PROFANITY`) (#462, #471, #567, #583, #643). See
   [guardrail](docs/guides/guardrail.md).
 - Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284). In `run-eval`, queries
   whose rerank call failed (a throttled rerank model keeps the fused order) and answers whose retrieval absorbed a step
@@ -919,6 +933,7 @@ From a `main` checkout (formats and keys no release had):
   so at the default 1.0 a run whose every rerank call failed exits 1; a comparison names each run's rerank failures and
   degraded answers with their rates and warns louder (`NOT COMPARABLE AS IS`) when the lowest and highest rate differ
   beyond chance (two-sided Fisher's exact p below 0.05), with a note when they differ within it.
+  degraded answers with their rates and warns louder when the rates differ between the compared runs (#645).
 - Query deadline: `search.query_timeout_seconds` bounds every query and stream (which must send a first chunk within
   `search.model_timeout_seconds`) and raises `QueryTimeoutError` (`run-rag` exits 1, `run-eval` counts a failure);
   query-time model calls get their own clients (`search.model_timeout_seconds`, `model_max_attempts`; `backend:
@@ -943,7 +958,7 @@ From a `main` checkout (formats and keys no release had):
   KAG-style decomposition into steps measured no better than the loop and is not offered (#628).
   `metadata["context_sufficient"]: false` reports a final insufficient verdict, `metadata["iterative"]` the rounds and
   their model usage, `run-eval` reports `iterative_statistics` (rounds histogram and mean, stop reasons, the share
-  stopped at `max_rounds`, degraded runs) per run and comparison arm; new `custom_prompts.iterative_controller_*`
+  stopped at `max_rounds`, degraded runs) per run and comparison arm (#639); new `custom_prompts.iterative_controller_*`
   (#594). The controller reads the context packed to the answer's budget (`controller_context_tokens: null`; a smaller
   cap left it the first passages of long chunks), a round follows at most five bridge entities, a deadline that
   cancels the round an insufficient verdict started reports it (`insufficiency_reason: deadline`), and the follow-up
@@ -1020,7 +1035,7 @@ From a `main` checkout (formats and keys no release had):
   (`--evaluators`, the span and normalization, the judges) and compares the re-scored runs, saved in this run's
   directory; DATASET's golds and metadata replace the saved ones by query id. The run manifest records the judges'
   `judge_effort` and, with an extracted span, its model and effort in `answer_scoring` (runs without them are warned
-  about, not refused).
+  about, not refused) (#639).
 - `run-eval --arm NAME=overlay.yaml[,suffix=SUFFIX]` (repeatable): a configuration arm answers the dataset with the
   run's config under a YAML overlay (validated like a config file; the run's `evaluation` section and scoring models
   are kept: an unset judge is chosen over the base and every arm's answer models and pinned first), as a chain
@@ -1031,12 +1046,13 @@ From a `main` checkout (formats and keys no release had):
   tier's effort, `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, the LLM provider with
   its context window and region, and a
   `search.query_extraction_cache_size` above 0). An empty overlay is an A/A arm, the noise floor without the
-  extraction's noise (it shares the extractions). See [evaluation](docs/guides/evaluate.md#configuration-arms).
+  extraction's noise (it shares the extractions) (#639, #645). See
+  [evaluation](docs/guides/evaluate.md#configuration-arms).
 - The `run-eval` judge defaults to Opus 5.5 on Bedrock (a judge judging its own answers shifted directness by
   -0.27): when the answer model, or the model that wrote re-judged answers, is Opus 5.5, an unset judge falls back
   to the default tier or Sonnet 5.5; a configured judge that is the answer model is kept with a warning. A comparison
   whose runs record different judges, judge efforts or ragas embedding models warns. The CDK
-  stack's default Bedrock grant covers it (#533, #536).
+  stack's default Bedrock grant covers it (#533, #536, #645).
 - Models: Claude Sonnet/Opus 5.5, Opus 4.6-4.8, Sonnet 4.6, Haiku 5.5 and OpenAI GPT models on Bedrock, free-form
   ids with `aws.bedrock.model_overrides`, reasoning effort per tier (#113, #117, #127, #128, #162, #179);
   `aws.bedrock.query_prompt_cache_ttl: 1h` (#458). See [models](docs/reference/models.md).
@@ -1069,12 +1085,12 @@ From a `main` checkout (formats and keys no release had):
 - `run-rag --suffix` that nothing was ingested under (a typo) exits 2, not 1, and the message lists the suffixes
   ingested on the store (#629); so does a query-time `ConfigurationError` (an embedding dimension the index does not
   hold). `run-eval` stops (exit 2) when its warm-up query meets either, instead of answering the whole dataset with
-  every query failing alike.
+  every query failing alike (#639).
 - `run-eval`'s comparison and statistics tables fold a long metric name or value onto the next line instead of
   cutting it ("answer_match/answer_contai…") (#629).
 - `run-rag`, `run-ingestion` and `run-prompt-tuning` load the chain, the pipeline and the tuner on first use, so
   `--help` and a refused command line import none of them: about 1 s of CPU instead of 2-4 s (#629); `run-eval` and
-  `prepare-benchmark` too, whose evaluation package exports its names on first use.
+  `prepare-benchmark` too, whose evaluation package exports its names on first use (#639).
 - Every CLI takes `--log-level` (over `logging.level`) and `--version`; with `--output-format text` the console logs
   are plain lines unless `logging.log_format` is set (they were JSON records between the CLI's own output whenever
   stdout was not a terminal; the CDK tasks set `structured` and keep them), and `prepare-benchmark assertions` logs
@@ -1115,12 +1131,14 @@ From a `main` checkout (formats and keys no release had):
   (Neptune, Gremlin Server, SQLite; the relationships index under a document filter and on Neptune, which reads every
   edge within the set, not one 100-edge page of them, before the per-vertex cap), and `SearchQuery.max_hops`
   overrides the expansion depth (#597).
-- CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs with the CMK and
-  `log_retention_days` (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot
-  the instances after the deploy (#617). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue
-  when the base image or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617); it also
-  checks the Trivy image and the Dockerfile's apt pins, and builds and scans the image with the opt-in extras, so a
-  fix released after the last pull request (or a build that broke) lands in the same issue. Dependabot also moves the console's npm lock.
+- CDK: `-c neptune_audit_log=true` turns on Neptune audit logs, exported to CloudWatch Logs
+  (`/aws/neptune/<cluster id>/audit`, created before the instances) with the CMK and `log_retention_days`
+  (`neptune_parameter_group_family` names the engine's family, `neptune1.4` by default); reboot the instances after
+  the deploy (#617). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue when the base image
+  or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617); it also checks the Trivy image
+  and the Dockerfile's apt pins, and builds and scans the image with the opt-in extras, so a fix released after the
+  last pull request lands in the same issue (#636, #641), and a build that broke in an issue of its own; a week that
+  finds them current closes them. Dependabot also moves the console's npm lock (#636).
 - Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
   (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).
@@ -1149,7 +1167,7 @@ From a `main` checkout (formats and keys no release had):
   extraction while it is in flight (the first pays, the others count a cache hit), so they retrieve on the same
   keywords; the order is also reversed on every other repeat, so an even `--repeats` balances an odd-sized dataset's
   every query. Run manifests record `run_id`, `run_order`, `repeat_extractions` and `repeat`, by which
-  `--from-results` pairs the repeats (they share a start time) (#620).
+  `--from-results` pairs the repeats (they share a start time) (#620, #639).
 - `run-eval` scores with the three LLM-free evaluators by default (`answer_match`, `retrieval`, `graph_aware`): a
   core install no longer exits 2 for want of the `eval` extra, and a run calls no judge unless asked.
   `run-eval --evaluators a,b` picks the evaluators of one run; `ragas` and `assertion` are opt-in. The `langchain`
@@ -1158,7 +1176,7 @@ From a `main` checkout (formats and keys no release had):
 - The document deduplication and fuzzy entity matching worker processes start from a forkserver (`spawn` where
   the platform has none) instead of forking the run, whose I/O and client-pool threads may hold a lock the forked
   worker would wait on forever; see *Upgrading* for scripts (#628). The forkserver imports both pools' modules
-  whichever starts it (the second pool's workers each imported theirs again).
+  whichever starts it (the second pool's workers each imported theirs again) (#640).
 - Concurrent queries in one process (`run-eval`, a server) wait less on each other: the Han, Hangul and Kana test is
   one compiled pattern (MMR ran it character by character on every word of every candidate, about a third of a
   local search's CPU, under the GIL), and the embedded search engine lists neither the whole index for an id fetch
@@ -1205,7 +1223,7 @@ From a `main` checkout (formats and keys no release had):
   them (an unindexed `findings` field): a retrieved report, and its source's metadata (each finding's ids, not its
   text), name the records each finding cites (`report_cited_ids`), pointed at the ids an incremental merge kept; a
   removal leaves a removed record's id, which a query reading the records skips; a report stored before cites none
-  until it is regenerated.
+  until it is regenerated (#640, #643).
 - Claims resolve only against the entities of their own text units, and ties of names, types and statuses break
   deterministically, so builds do not depend on document order (#398, #402, #404, #442).
 - `indexing.reset` rebuilds without taking the suffix offline (new indices and an alias swap) and a failed reset
@@ -1366,15 +1384,15 @@ Queries and retrieval.
 Ingestion and incremental indexing.
 - A run into a namespace that holds other source scopes' documents no longer exports `visualization_data.json`
   from its own corpus's graph (or fails to, `Communities must be detected before exporting`): it logs an INFO line
-  pointing at `run-describe --output-path` and leaves the earlier file in place.
+  pointing at `run-describe --output-path` and leaves the earlier file in place (#640).
 - A source scope's first run into a namespace that holds other scopes' documents is recorded as the incremental
   build it is: the build record kept only that run's documents and artifacts as a full build, restarted the
-  community counters and dropped the full build it was applied on.
+  community counters and dropped the full build it was applied on (#640).
 - With description summaries on, an incremental run no longer extends a stored summary with a delta edge's
   description when the derivation moved part of it to another edge (a delta that resolved `Vendor Inc` into `Vendor`
   where the stored graph keeps them apart): the summary held a line the edge no longer states, unlike a full
   build's (#640). Nor when the moved and the kept lines share a text unit (a delta that resolved `(주)벤더` into
-  `벤더`): an edge with an endpoint the derivation split off is summarized from its lines.
+  `벤더`): an edge with an endpoint the derivation split off is summarized from its lines (#644).
 - A document's doc-status registry namespace and its artifacts' index suffix follow one rule
   (`store_names.index_suffix`): an `index` value no store accepts, which a pre-parsed `Document` JSON can carry,
   fails the loading stage naming it instead of keying the document's record under a namespace no index has (#628).
@@ -1400,7 +1418,7 @@ Ingestion and incremental indexing.
   disputes the same one (#640). The words read are the prompt's, `SUSPECTED` and a few plain synonyms, the same in
   English, Korean, Japanese and Chinese (`uncertain`, `불확실`, `未確認` are all `unknown`; English read `uncertain` as
   `disputed` and Korean as unrecognised); the claims whose status is none of them are counted in the
-  `total_unrecognised_claim_statuses` metric.
+  `total_unrecognised_claim_statuses` metric (#644).
 - An entity without relationships no longer adds a level to the community hierarchy: it made a single root over
   the other communities read as a partition, so global search's cut depths depended on it (#608).
 - A model answer that corrects itself is parsed by its last complete answer (each XML section keeps its last closed
@@ -1569,7 +1587,7 @@ Deployment (CDK).
 - IaC: the ingestion role cannot change OpenSearch cluster settings or plugin configuration (writes under
   `_cluster`, `_plugins` and `_opendistro` are denied), nor write snapshot repositories, templates, ingest or search
   pipelines or stored scripts (`_snapshot`, `_index_template`, `_component_template`, `_template`, `_ingest`,
-  `_search/pipeline`, `_scripts`); the logger-credential semgrep finding is suppressed on each
+  `_search/pipeline`, `_scripts`) (#636, #641); the logger-credential semgrep finding is suppressed on each
   matched line, not the whole package (#617).
 - A failed query step (routing, query processing, follow-up rewrite, context optimization, the answer and its
   stream, conversation memory) or claim extraction step logs its error as its type and a digest, its text at DEBUG,

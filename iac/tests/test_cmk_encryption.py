@@ -20,8 +20,14 @@ from iac.stacks.storage_stack import StorageStack
 _ENV = cdk.Environment(account="111111111111", region="us-west-2")
 
 
-def _stacks(use_cmk: bool) -> dict[str, Any]:
-    app = cdk.App(context={"use_cmk": str(use_cmk).lower(), "vpc_flow_logs": "true"})
+def _stacks(use_cmk: bool, audit: bool = False) -> dict[str, Any]:
+    app = cdk.App(
+        context={
+            "use_cmk": str(use_cmk).lower(),
+            "vpc_flow_logs": "true",
+            "neptune_audit_log": str(audit).lower(),
+        }
+    )
     config = DeploymentConfig.from_context(app)
     security = SecurityStack(app, "Sec", config=config, env=_ENV)
     networking = NetworkingStack(
@@ -102,9 +108,10 @@ def test_cache_bucket_uses_a_bucket_key_with_the_cmk(use_cmk: bool) -> None:
         assert "BucketKeyEnabled" not in rule
 
 
+@pytest.mark.parametrize("audit", [False, True], ids=["", "audit"])
 @pytest.mark.parametrize("use_cmk", [True, False], ids=["cmk", "default"])
-def test_every_log_group_uses_cmk_only_when_enabled(use_cmk: bool) -> None:
-    stacks = _stacks(use_cmk)
+def test_every_log_group_uses_cmk_only_when_enabled(use_cmk: bool, audit: bool) -> None:
+    stacks = _stacks(use_cmk, audit)
     log_groups = {
         f"{name}/{logical_id}": resource
         for name, stack in stacks.items()
@@ -112,8 +119,9 @@ def test_every_log_group_uses_cmk_only_when_enabled(use_cmk: bool) -> None:
         .find_resources("AWS::Logs::LogGroup")
         .items()
     }
-    # Flow logs, the task and pipeline groups, and the OpenSearch app logs.
-    assert len(log_groups) == 4, sorted(log_groups)
+    # Flow logs, the task and pipeline groups, the OpenSearch app logs and
+    # (neptune_audit_log) the Neptune audit export.
+    assert len(log_groups) == 4 + audit, sorted(log_groups)
     for name, resource in log_groups.items():
         key = resource["Properties"].get("KmsKeyId")
         if use_cmk:

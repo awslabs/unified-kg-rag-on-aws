@@ -322,8 +322,11 @@ def test_a_table_of_the_earlier_key_schema_is_rejected(
         config.aws.dynamodb.create_table_if_missing = create_table_if_missing
         store = DynamoDBDocStatusStore(config, boto_session=session)
 
-        with pytest.raises(ConfigurationError, match="indexing.reset"):
+        with pytest.raises(ConfigurationError, match="indexing.reset") as exc:
             store.get("d")
+        # A reader (run-describe) reports the reason without the run's step.
+        assert "new table" in exc.value.reason  # type: ignore[attr-defined]
+        assert "indexing.reset" not in exc.value.reason  # type: ignore[attr-defined]
 
 
 def test_registry_attempts_are_bounded_as_the_takeover_wait_counts(

@@ -52,6 +52,17 @@ def test_guardrail_does_not_anonymize_names() -> None:
     assert {"EMAIL", "PHONE", "CREDIT_DEBIT_CARD_NUMBER"} <= types
 
 
+def test_guardrail_masks_pii_in_the_query_too() -> None:
+    # check_input screens the query as INPUT: an entity with only `action`
+    # takes no INPUT action, so the query's PII went on unmasked.
+    _, template = _synth({})
+    (guardrail,) = template.find_resources(_GUARDRAIL).values()
+    pii = guardrail["Properties"]["SensitiveInformationPolicyConfig"]
+    for entity in pii["PiiEntitiesConfig"]:
+        assert entity["InputAction"] == entity["OutputAction"] == "ANONYMIZE"
+        assert entity["InputEnabled"] is entity["OutputEnabled"] is True
+
+
 def test_non_dev_retains_guardrail() -> None:
     _, template = _synth({"env_name": "prod"})
     template.has_resource(

@@ -32,11 +32,11 @@ from unified_kg_rag.domain.models import (
     StoredDocument,
 )
 from unified_kg_rag.shared import (
-    ConfigurationError,
     DataProcessingError,
     DocStatusRegistryError,
     get_logger,
 )
+from unified_kg_rag.shared.exceptions import DocStatusFormatError
 from unified_kg_rag.shared.write_fence import (
     REGISTRY_CONNECT_TIMEOUT_SECONDS,
     REGISTRY_READ_TIMEOUT_SECONDS,
@@ -233,7 +233,7 @@ class DynamoDBDocStatusStore:
         )
 
     def _check_key_schema(self, client: DynamoDBClient) -> None:
-        """Raise :class:`ConfigurationError` for a table of the earlier
+        """Raise :class:`DocStatusFormatError` for a table of the earlier
         registry format (keyed by ``doc_id`` alone): its records hold
         per-artifact lineage this release does not read. A missing table is
         left to the first read, which names the fix."""
@@ -245,13 +245,14 @@ class DynamoDBDocStatusStore:
             raise
         keys = {k["AttributeName"]: k["KeyType"] for k in table.get("KeySchema", [])}
         if keys != {_PARTITION_KEY: "HASH", _SORT_KEY: "RANGE"}:
-            raise ConfigurationError(
+            raise DocStatusFormatError(
                 f"Doc-status registry: DynamoDB table '{self.table_name}' has "
                 f"the key schema {keys} of an earlier release; this release "
                 f"keys records by '{_PARTITION_KEY}' (partition) and "
                 f"'{_SORT_KEY}' (sort). Point aws.dynamodb.table_name (env "
                 "UKR__AWS__DYNAMODB__TABLE_NAME) at a new table, or deploy the CDK "
-                "stack's new table, and re-run with indexing.reset: true."
+                "stack's new table.",
+                indexing_hint="Then re-run with indexing.reset: true.",
             )
 
     def _ensure_table(self, client: DynamoDBClient) -> None:
