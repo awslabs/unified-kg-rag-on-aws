@@ -57,12 +57,17 @@ unit holds any more are deleted by the next full build
 ## Analyzers
 
 - **Analyzers** come from `indexing.opensearch.language_analyzers`. Every
-  supported language has one by default: `de: german`, `en: english`,
-  `es: spanish`, `fr: french`, `it: italian`, `pt: portuguese` and
-  `ru: russian` (OpenSearch's language analyzers: stop words and stemming),
-  `ja: cjk` and `zh: cjk` (overlapping character pairs, so "首都" matches
-  inside "日本の首都は"; no plugin), and `ko: nori`. A language without an
-  entry uses `default_analyzer`. Chunk `text` is analyzed for
+  language with a profile has one by default: `ar: arabic`, `de: german`,
+  `en: english`, `es: spanish`, `fr: french`, `hi: hindi`, `it: italian`,
+  `pt: portuguese`, `ru: russian` and `th: thai` (OpenSearch's language
+  analyzers: stop words and stemming, dictionary word segmentation for
+  Thai), `ja: cjk` and `zh: cjk` (overlapping character pairs, so "首都"
+  matches inside "日本の首都は"; no plugin), `ko: nori`, and `he: standard`
+  and `vi: standard` (OpenSearch has no built-in Hebrew or Vietnamese
+  analyzer; a plugin's can be named instead). A language without an entry
+  uses `default_analyzer`. The embedded engine of `backend: local` stems the
+  stemming languages with Snowball (from the `[local]` extra) and splits a
+  Thai run into character pairs; it keeps no stop words. Chunk `text` is analyzed for
   `source_language`, and the graph indexes for the index language, so set it
   to the corpus language even without translation: with `source_language:
   en` a Korean corpus keeps words with their particles ("홍길동으로부터") as
@@ -77,6 +82,15 @@ unit holds any more are deleted by the next full build
   (English from German), and the run goes on.
 - **Unicode.** Text and queries are NFC-normalized, so decomposed Hangul (NFD)
   matches its composed form.
+- **Other languages.** `source_language` and `target_language` take the
+  codes with a language profile (`ar`, `de`, `en`, `es`, `fr`, `he`, `hi`,
+  `it`, `ja`, `ko`, `pt`, `ru`, `th`, `vi`, `zh`) or any other BCP-47
+  language code (`sw`, `fa`; a region is dropped, `pt-BR` is `pt`). A code
+  without a profile logs one WARNING and gets the defaults: the
+  `default_analyzer` unless `language_analyzers` maps it, English declines,
+  and prompts that name the language by its code. A profile
+  (`unified_kg_rag/domain/languages/profiles/`) is one module: its name,
+  script, analyzer, decline and the words answers in it are read by.
 - **The analyzer must exist on the cluster**, or the indexing stage fails
   with `the cluster has no analyzer '<name>'`. `nori` comes from the
   `analysis-nori` plugin: the

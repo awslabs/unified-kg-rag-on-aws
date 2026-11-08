@@ -12,11 +12,18 @@ from __future__ import annotations
 
 import re
 
-# Item separators: ASCII, fullwidth and ideographic commas, ASCII and
-# fullwidth semicolons, and line breaks.
-_SEPARATORS = frozenset(",，、;；\n\r")
-# Quote pairs a model wraps an item (or the whole list) in.
-_QUOTES = {'"': '"', "“": "”", "「": "」", "『": "』"}
+from unified_kg_rag.domain.languages import profiles
+
+# Item separators: ASCII, fullwidth, ideographic and Arabic commas, ASCII,
+# fullwidth and Arabic semicolons, and line breaks.
+_SEPARATORS = frozenset(",，、،;；؛\n\r")
+# Quote pairs a model wraps an item (or the whole list) in, every
+# language's (``LanguageProfile.quote_pairs``).
+_QUOTES = {
+    opening: closing
+    for language in profiles()
+    for opening, closing in language.quote_pairs
+}
 _OPENING_QUOTES = frozenset(_QUOTES)
 _CLOSING_QUOTES = frozenset(_QUOTES.values())
 # A list marker opening a line ("- ", "* ", "• ", "1. ", "2) ").

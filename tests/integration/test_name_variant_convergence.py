@@ -763,7 +763,11 @@ def word_splits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         chunker,
         "_SPLITTER_SEPARATORS",
-        [s for s in chunker._SPLITTER_SEPARATORS if s != "(?<=[.!?…])(?= )"],
+        [
+            s
+            for s in chunker._SPLITTER_SEPARATORS
+            if s != chunker._SPACED_STOP_SEPARATOR
+        ],
     )
 
 

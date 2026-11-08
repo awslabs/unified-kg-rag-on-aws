@@ -9,34 +9,40 @@ import string
 import unicodedata
 from collections.abc import Callable, Iterator
 
+from unified_kg_rag.domain.languages import LanguageCode, profile, profiles
 from unified_kg_rag.shared.utils.scripts import (
     DENSE_SCRIPT_LETTERS,
     drop_dense_script_spaces,
     has_dense_script,
     is_dense_script_char,
     is_hangul_syllable,
+    script_of,
 )
 
-_ARTICLES = re.compile(r"\b(a|an|the)\b")
-# The articles of the other languages whose answers carry them, dropped with
-# the English ones from an answer in that language (as MLQA's evaluation
-# script does for de and es). TODO: read them from the language registry
-# once it lands, with the other per-language word lists.
+
+def _words(words: frozenset[str] | set[str]) -> re.Pattern[str]:
+    return re.compile(r"\b(" + "|".join(sorted(words, key=len, reverse=True)) + r")\b")
+
+
+# The articles of each language whose answers carry them
+# (``LanguageProfile.articles``), dropped with the English ones from an
+# answer in that language (as MLQA's evaluation script does for de and es).
+_ARTICLES = _words(profile(LanguageCode.EN).articles)
 _LANGUAGE_ARTICLES: dict[str, re.Pattern[str]] = {
-    language: re.compile(r"\b(" + "|".join(words.split()) + r")\b")
-    for language, words in {
-        "de": "der die das den dem des ein eine einen einem einer eines",
-        "es": "el la los las un una unos unas",
-        "fr": "le la les l un une des",
-        "it": "il lo la i gli le l un uno una",
-        "pt": "o a os as um uma uns umas",
-    }.items()
+    language.code.value: _words(language.articles)
+    for language in profiles()
+    if language.articles and language.code is not LanguageCode.EN
 }
 # An elided article before a vowel ("l'accord", "un'altra"): split from its
 # word before punctuation is deleted, so it is dropped as a word of its own
 # instead of gluing to the next one ("laccord").
-_ELIDED_ARTICLE = re.compile(r"(?<!\w)(l|un)['\u2019](?=\w)")
-_ELIDING_LANGUAGES = frozenset({"fr", "it"})
+_ELIDED_ARTICLES: dict[str, re.Pattern[str]] = {
+    language.code.value: re.compile(
+        r"(?<!\w)(" + "|".join(sorted(language.elided_articles)) + r")['\u2019](?=\w)"
+    )
+    for language in profiles()
+    if language.elided_articles
+}
 _ASCII_PUNCTUATION = frozenset(string.punctuation)
 # A comma followed by exactly three digits inside a number ("1,000,000").
 _THOUSANDS_SEPARATOR = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
@@ -126,8 +132,8 @@ def normalize_answer(text: str, language: str | None = None) -> str:
     and ``None``, drop the English ones only.
     """
     text = unicodedata.normalize("NFKC", text).lower()
-    if language in _ELIDING_LANGUAGES:
-        text = _ELIDED_ARTICLE.sub(r"\1 ", text)
+    if (elided := _ELIDED_ARTICLES.get(language or "")) is not None:
+        text = elided.sub(r"\1 ", text)
     text = _THOUSANDS_SEPARATOR.sub("", text)
     text = _JOINING_DASH.sub(_split_or_join_dash, text)
     text = _LEADING_MINUS.sub("-", text)
@@ -494,12 +500,7 @@ def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
 
 
 def _is_hangul(ch: str) -> bool:
-    return is_hangul_syllable(ch) or any(
-        lo <= ord(ch) <= hi for lo, hi in _HANGUL_JAMO_RANGES
-    )
-
-
-_HANGUL_JAMO_RANGES = ((0x1100, 0x11FF), (0x3130, 0x318F), (0xA960, 0xA97F))
+    return (script := script_of(ch)) is not None and script.name == "hangul"
 
 
 def _substring_beside_han_or_kana(needle: str, haystack: str) -> bool:
@@ -601,23 +602,12 @@ _HAN_COUNTERS = (
 )
 
 # Number words of the other languages with English-like counts, from zero
-# to twelve, read in an answer in that language. The forms of one that are
-# also the indefinite article ("ein", "un", "uno", "um") are left out, as
-# English's "a" is. TODO: read them from the language registry once it
-# lands, with scale words and compounds.
+# to twelve (``LanguageProfile.number_words``), read in an answer in that
+# language.
 _LANGUAGE_NUMBER_WORDS: dict[str, dict[str, int]] = {
-    language: {
-        word: value
-        for value, forms in enumerate(table.split(","))
-        for word in forms.split()
-    }
-    for language, table in {
-        "de": "null,eins,zwei,drei,vier,fünf,sechs,sieben,acht,neun,zehn,elf,zwölf",
-        "es": "cero,,dos,tres,cuatro,cinco,seis,siete,ocho,nueve,diez,once,doce",
-        "fr": "zéro,,deux,trois,quatre,cinq,six,sept,huit,neuf,dix,onze,douze",
-        "it": "zero,,due,tre,quattro,cinque,sei,sette,otto,nove,dieci,undici,dodici",
-        "pt": "zero,,dois duas,três,quatro,cinco,seis,sete,oito,nove,dez,onze,doze",
-    }.items()
+    language.code.value: dict(language.number_words)
+    for language in profiles()
+    if language.number_words
 }
 _LANGUAGE_NUMBER: dict[str, re.Pattern[str]] = {
     language: re.compile(
@@ -740,7 +730,7 @@ _NEGATED_AFTER = re.compile(
 _PARTITIVE_WHOLE_BEFORE = re.compile(
     r"(?:^|[.!?;:]\s+|\n[ \t]*)of\s+(?:the|these|those|all)\s+$", re.IGNORECASE
 )
-_DENSE_WORD = "[\u3040-\u30ff\u4e00-\u9fff가-힣]"
+_DENSE_WORD = f"[{DENSE_SCRIPT_LETTERS}]"
 _PARTITIVE_WHOLE_AFTER = re.compile(
     rf"\s?{_ANY_COUNTER}?(?:の|의)?\s?{_DENSE_WORD}{{0,5}}?\s?(?:之中|当中|當中"
     r"|中(?=[，,、\s只仅僅有的共就\d一二两兩三四五六七八九十])"

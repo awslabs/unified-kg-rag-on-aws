@@ -374,3 +374,23 @@ def test_analyzers_tokenize_like_opensearch(tmp_path: Path, analyzer: str) -> No
             assert get_analyzer(analyzer)(text) == expected, text
     finally:
         opened.close()
+
+
+def test_every_default_language_analyzer_is_built_into_opensearch(
+    tmp_path: Path,
+) -> None:
+    # A language profile names an analyzer the cluster has (nori from the
+    # container's plugin): an unknown one fails the index creation. The
+    # embedded engine registers every one of them too.
+    from unified_kg_rag.adapters.local.search_engine import analyzers
+    from unified_kg_rag.domain.models.config import DEFAULT_LANGUAGE_ANALYZERS
+
+    opened = open_harness("container", tmp_path)
+    try:
+        client = next(opened).vector_indexer.opensearch_client.client
+        for name in sorted(set(DEFAULT_LANGUAGE_ANALYZERS.values())):
+            response = client.indices.analyze(body={"analyzer": name, "text": "x 1"})
+            assert response["tokens"], name
+            assert name in analyzers._ANALYZERS, name
+    finally:
+        opened.close()

@@ -387,7 +387,8 @@ token sets (the dark one its own, not inverted), following the system
 setting unless the top bar's toggle picks one; a same-origin script sets
 the theme before the first paint, as the CSP allows no inline script. The
 graph canvas (react-force-graph-2d) loads with the Graph page only. UI copy is English
-with nine more locales (the languages `LanguageCode` lists), English being
+with nine more locales (German, Spanish, French, Italian, Japanese, Korean,
+Portuguese, Russian and Chinese), English being
 the source and the fallback.
 
 ---

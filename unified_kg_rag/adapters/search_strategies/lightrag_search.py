@@ -36,7 +36,7 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-from unified_kg_rag.adapters.llm.token_estimate import dense_char_count
+from unified_kg_rag.adapters.llm.token_estimate import UNITS_PER_TOKEN, token_units
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
@@ -149,13 +149,14 @@ def _pick_by_weighted_polling(
 
 
 def _latin_equivalent_length(text: str) -> int:
-    """``text``'s length in characters of Latin text that carry as much:
-    a dense-script character (CJK, kana, Hangul) counts as
-    ``LATIN_CHARS_PER_TOKEN`` (the token estimate's one token each against
-    ~4 Latin characters), any other as one. Upstream's gate counts
+    """``text``'s length in characters of Latin text that carry as much, at
+    the token estimate's rates (``token_units``): a dense-script character
+    (CJK, kana, Hangul) counts as ``LATIN_CHARS_PER_TOKEN`` (one token each
+    against ~4 Latin characters), a Cyrillic, Arabic or Devanagari one as
+    its script's share, any other as one. Upstream's gate counts
     characters, which let a Korean or Chinese question four times as long
     fall back to the raw query; Latin text keeps upstream's count."""
-    return len(text) + dense_char_count(text) * (LATIN_CHARS_PER_TOKEN - 1)
+    return token_units(text) * LATIN_CHARS_PER_TOKEN // UNITS_PER_TOKEN
 
 
 # NAIVE is chunk retrieval only (no graph), so it declares DOCUMENT-only roles;

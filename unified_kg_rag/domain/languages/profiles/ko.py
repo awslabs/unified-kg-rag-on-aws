@@ -1,0 +1,45 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Korean."""
+
+from unified_kg_rag.domain.languages.codes import LanguageCode
+from unified_kg_rag.domain.languages.profile import LanguageProfile
+
+PROFILE = LanguageProfile(
+    code=LanguageCode.KO,
+    name="Korean",
+    script="hangul",
+    # The analysis-nori plugin's analyzer.
+    analyzer="nori",
+    decline="사용 가능한 데이터에서 이 질문에 답할 관련 정보를 찾지 못했습니다.",
+    claim_statuses={
+        "true": ("참", "진실", "사실", "확인됨", "검증됨"),
+        "false": ("거짓", "허위", "부인됨", "반박됨"),
+        "disputed": ("논란", "분쟁", "의심", "불확실", "미확인"),
+        "unknown": ("알수없음", "불명", "없음"),
+    },
+    no_value_words=("미상", "불명", "알수없음", "없음", "해당없음", "모름"),
+    open_date_words=("미정", "현재", "진행중"),
+    # Stock, limited, limited liability, limited partnership and general
+    # partnership companies; incorporated associations, foundations.
+    dense_legal_forms=(
+        "(주)",
+        "주식회사",
+        "(유)",
+        "유한회사",
+        "유한책임회사",
+        "합자회사",
+        "합명회사",
+        "(사)",
+        "사단법인",
+        "(재)",
+        "재단법인",
+    ),
+    polarity_words={
+        "예": "yes",
+        "네": "yes",
+        "아니요": "no",
+        "아니오": "no",
+        "아닙니다": "no",
+    },
+)

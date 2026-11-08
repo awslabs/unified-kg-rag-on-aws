@@ -71,20 +71,74 @@ def test_cjk_analyzer_names_share_the_bigram_analyzer(name: str) -> None:
 def test_every_default_language_analyzer_is_known_without_a_warning(
     name: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # The embedded engine analyzes a default analyzer's field as before
-    # (english stems, the others are standard), without the unknown-name
-    # warning.
+    # The embedded engine knows every default analyzer: no unknown-name
+    # warning, and none falls back to standard by being unknown.
     with caplog.at_level(logging.WARNING):
         analyzer = get_analyzer(name)
-    assert analyzer is (english_analyzer if name == "english" else standard_analyzer)
+    assert name in analyzers._ANALYZERS and analyzer is analyzers._ANALYZERS[name]
     assert "has no" not in caplog.text
 
 
 def test_analyzes_alike_compares_the_registered_analyzers() -> None:
     assert analyzes_alike("standard", "cjk")
-    assert analyzes_alike("german", None)
+    assert analyzes_alike("standard", None)
     assert analyzes_alike("no-such-analyzer-y", "standard")
     assert not analyzes_alike("english", "standard")
+    assert not analyzes_alike("german", "standard")
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "query"),
+    [
+        ("german", "Die Lieferanten lieferten die Häuser", "Lieferant Haus"),
+        ("french", "Les fournisseurs livrent les livraisons", "fournisseur livraison"),
+        ("spanish", "Los proveedores entregaron", "proveedor"),
+        ("italian", "I fornitori consegnano", "fornitore"),
+        ("portuguese", "Os fornecedores entregaram", "fornecedor"),
+        ("russian", "Поставщики доставили блоки", "поставщика блок"),
+        ("arabic", "سلّم المورّدون الوحدات إلى المستودع", "المستودع وحدة"),
+        ("hindi", "आपूर्तिकर्ताओं ने इकाइयाँ पहुँचाईं", "आपूर्तिकर्ता"),
+    ],
+)
+def test_a_language_analyzer_stems_so_inflected_forms_match(
+    name: str, text: str, query: str
+) -> None:
+    pytest.importorskip("snowballstemmer")
+    analyze = get_analyzer(name)
+    assert set(analyze(query)) <= set(analyze(text))
+    # Standard keeps each form apart.
+    assert not set(standard_analyzer(query)) <= set(standard_analyzer(text))
+
+
+def test_arabic_drops_short_vowels_and_folds_alef_forms() -> None:
+    pytest.importorskip("snowballstemmer")
+    arabic = get_analyzer("arabic")
+    assert arabic("مُحَمَّد أحمد") == arabic("محمد احمد")
+    assert arabic("ﻣﺤﻤﺪ") == arabic("محمد")  # presentation forms
+
+
+def test_a_stemming_analyzer_without_snowballstemmer_does_not_stem(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setitem(sys.modules, "snowballstemmer", None)  # import fails
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    analyzers._snowball_stem.cache_clear()
+    try:
+        with caplog.at_level(logging.WARNING):
+            assert get_analyzer("german")("Die Häuser") == ["die", "häuser"]
+            get_analyzer("german")("Häuser")
+        assert caplog.text.count("'german' analyzer does not stem") == 1
+    finally:
+        analyzers._snowball_stem.cache_clear()
+
+
+def test_thai_runs_become_bigrams_only_under_the_thai_analyzer() -> None:
+    text = "ส่งมอบคลังสินค้า Acme"
+    assert standard_analyzer(text) == ["ส่งมอบคลังสินค้า", "acme"]
+    thai = get_analyzer("thai")(text)
+    assert thai[-1] == "acme" and len(thai) > 3
+    # A word inside the run matches.
+    assert set(get_analyzer("thai")("คลังสินค้า")) <= set(thai)
 
 
 def test_unknown_analyzer_falls_back_to_standard_and_warns_once(

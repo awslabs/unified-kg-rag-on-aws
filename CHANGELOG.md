@@ -247,11 +247,11 @@ See [exit codes and JSON output](docs/reference/exit-codes-and-json.md) and the
 - The doc-status registry is a new table (partition key `namespace`, sort key `doc_id`); a table of the 0.2.3 key
   schema is rejected at first use (#327).
 - Entity resolution merges only names equal after normalization, legal-form removal and dense-script spacing (fuzzy
-  matching is opt-in). Legal forms (one table, `shared/utils/legal_forms.py`): trailing Inc, Corp, Co, Ltd, LLC,
-  LLP, LP, PLC, Pty, Pte, GmbH, AG, SA, SAS, SARL, SRL, S.p.A., Ltda, BV, NV and KK in any dotting, and the Korean,
-  Japanese and Chinese company forms leading or trailing ("(주)", "合同会社", "股份有限公司"), so "Acme GmbH" and "Acme" of one
-  type are one entity; not after "&"/"and" nor after an article alone. Entity and relationship `rank` come from node
-  degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
+  matching is opt-in). Legal forms (the language profiles, `domain/languages/legal_forms.py`): trailing Inc, Corp,
+  Co, Ltd, LLC, LLP, LP, PLC, Pty, Pte, GmbH, AG, SA, SAS, SARL, SRL, S.p.A., Ltda, BV, NV and KK in any dotting,
+  and the Korean, Japanese and Chinese company forms leading or trailing ("(주)", "合同会社", "股份有限公司"), so "Acme GmbH"
+  and "Acme" of one type are one entity; not after "&"/"and" nor after an article alone. Entity and relationship
+  `rank` come from node degree, and a relationship's weight sums its strengths per text unit (#189, #214, #574).
 - Entities have no `MemberOf` edges to communities; an entity lists its `community_ids` (#348).
 - Hidden files and files under a hidden or `__pycache__` directory of the corpus are not parsed (#213).
 
@@ -643,6 +643,13 @@ From a `main` checkout (formats and keys no release had):
   `retrieval_config_sha256`: a resumed `--pipeline-id` runs Leiden, indexing and the summary tree again (the reports
   come from the extraction store without a model call), and runs saved before pool with new ones only under
   `--pool-runs`.
+- Languages: a Hindi, Arabic or Urdu document with a paragraph longer than a chunk is cut after `।`, `؟` or `۔`
+  now, so a reset re-chunks it and extracts its text units again (an incremental run only its changed documents);
+  names with Devanagari or Thai vowel signs may resolve otherwise on that reset.
+- Token estimate: a Russian, Greek, Arabic, Hebrew, Hindi or Thai corpus is estimated at 1.7-2.7 times the
+  tokens; with `length_unit: tokens` a reset re-chunks it and extracts it again, and the next run asks again the
+  description and tree summaries whose input now reads over or under their budgets (the default `chars` re-chunks
+  nothing).
 
 ### Added
 - A query reports every step it answered without in `metadata["degraded"]` (each `step`, `reason`, `error_type`;
@@ -1251,6 +1258,16 @@ From a `main` checkout (formats and keys no release had):
 - Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
   (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).
+- Languages (`domain/languages/`): one `LanguageProfile` per code holds the language's name, script, OpenSearch
+  analyzer, decline and the words answers in it are read by; every consumer reads the profiles. Arabic, Hebrew,
+  Hindi, Thai and Vietnamese have one (`ar: arabic`, `hi: hindi`, `th: thai`, `he` and `vi`: `standard`), and
+  `source_language`/`target_language` take any other BCP-47 code with one WARNING and the defaults (a region is
+  dropped: `pt-BR` is `pt`). The embedded engine stems German, French, Spanish, Italian, Portuguese, Russian, Arabic
+  and Hindi with Snowball, normalizes Arabic as Lucene does and splits Thai runs into character pairs. A
+  Devanagari or Thai name keeps its vowel signs in fuzzy matching (`राहुल` was `र ह ल`), Arabic short vowels and
+  Hebrew points are dropped there, a Thai span or name is grounded by character pairs (a Thai sentence was one
+  token, too short to judge), the chunker and sentence ends cut after `।`, `॥`, `؟`, `۔`, `။` and `។`, the query
+  entity list splits at `،` and `؛`, and a Thai summary's length hint counts characters.
 
 ### Changed
 - A query without a suffix (`RAGInput(suffix=None)`) reads the chain config's
@@ -1292,6 +1309,12 @@ From a `main` checkout (formats and keys no release had):
   `[CANNOT_TRANSLATE]` or `[CANNOT_REWRITE]`, which replace the refusal phrase lists of four languages; the
   router no longer routes prose naming several strategies ("not global ... local") to the first one named, and a
   rating's reason in any language no longer reads as the rating ("Auf einer Skala von 1 bis 10: 8" was 1).
+- The local token estimate (models without CountTokens, embedding truncation, `length_unit: tokens`) counts each
+  script at its rate: Cyrillic 2.4 characters a token, Arabic 2, Greek, Hebrew, Devanagari and Thai 1.5 (the
+  geometric mean of the cl100k and o200k counts over a sample), where it counted 4, a quarter to a half of the Hindi,
+  Thai and Hebrew tokens; Latin stays at 4 and Han, Hangul and Kana at one a character, now also the rarer blocks
+  (Hanja extensions, compatibility Jamo). A model whose reported input tokens are twice the estimate or more, or half
+  or less, over 20 calls logs one WARNING.
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).
@@ -1475,6 +1498,9 @@ Bugs present in 0.2.3.
 Queries and retrieval.
 - `@register_strategy` on a registered class with other arguments raises instead of replacing its record, which
   changed what that strategy reads for every caller in the process; the same arguments keep the record.
+- The no-context reply is written in the language of the script most of the question's letters are in, weighed
+  by what a letter carries, not in the first non-Latin script found: "What does 계약 mean?" gets the English reply,
+  a Japanese question quoting a Korean word the Japanese one.
 - A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
   went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
@@ -1555,6 +1581,10 @@ Ingestion and incremental indexing.
   as prose: it gets one output-fixer call, and a repair that still holds text only is read as empty, counted
   (`sections_read_empty_from_text` in the graph and claim extraction stats) and logged with the section and its
   length.
+- Korean written with Hanja reads as Korean, not Chinese, in the corpus-language WARNING and in the
+  `source_language` prompt tuning writes: one rule (`domain.languages.dense_language`) reads Han, Hangul and Kana
+  text as Korean when a tenth or more of those letters are Hangul (and no fewer than Kana), else Japanese when a
+  tenth are Kana, else Chinese.
 - A run into a namespace that holds other source scopes' documents no longer exports `visualization_data.json`
   from its own corpus's graph (or fails to, `Communities must be detected before exporting`): it logs an INFO line
   pointing at `run-describe --output-path` and leaves the earlier file in place (#640).

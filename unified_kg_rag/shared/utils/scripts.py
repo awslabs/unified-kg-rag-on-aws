@@ -1,61 +1,344 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Unicode script tests for dense (space-optional) writing systems.
+"""The one table of Unicode scripts the text heuristics read.
 
-Han, Hangul and Kana pack a morpheme into one or two characters and do not
-need spaces between words: one character carries what a whole Latin word
-carries. Several text heuristics (edit-distance fuzziness, character
-shingles, word-token counts) are tuned for Latin words and need to know when
-they face such text. The tests below go by Unicode block, not by language.
+Each :class:`Script` names its letter blocks, how its text is spaced
+(:class:`Spacing`), the marks it writes optionally (Arabic short vowels,
+Hebrew points), and the characters a BPE token covers in it. Every helper
+below, and every caller that asks "is this Hangul?", "does this text need
+spaces?" or "how many tokens is this?", reads this table instead of a range
+list of its own.
+
+- ``dense``: Han, Hangul and Kana pack a morpheme into one or two
+  characters and do not need spaces between words: one character carries
+  what a whole Latin word carries. Edit-distance fuzziness, character
+  shingles and word-token counts tuned for Latin words need to know when they
+  face such text.
+- ``spaceless``: Thai, Lao, Myanmar, Khmer and the Tai scripts are alphabets
+  written without spaces between words (a space ends a phrase), so a run of
+  their letters is many words.
+- ``spaced``: every other script separates its words with spaces.
+
+The tests go by Unicode block, not by language: which language a text is in
+is the language registry's question (``domain.languages``).
 """
 
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
+from collections import Counter
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from enum import Enum
+from functools import cache
 
 __all__ = [
+    "OTHER_LETTERS",
     "DENSE_SCRIPT_LETTERS",
     "DENSE_SCRIPT_TOKEN_RANGES",
+    "SCRIPTS",
+    "SPACELESS_SCRIPT_LETTERS",
+    "Script",
+    "ScriptCounts",
+    "Spacing",
+    "count_letters",
+    "drop_optional_marks",
     "drop_dense_script_spaces",
     "has_dense_script",
+    "has_unspaced_script",
     "is_dense_script_char",
     "is_hangul_syllable",
+    "is_unspaced_char",
+    "letter_class",
+    "script_named",
+    "script_of",
 ]
 
-# The Han, Hangul and Kana letter blocks both tables below hold.
-_CORE_LETTER_RANGES: tuple[tuple[int, int], ...] = (
+
+class Spacing(str, Enum):
+    """How a script separates its words."""
+
+    SPACED = "spaced"
+    DENSE = "dense"
+    SPACELESS = "spaceless"
+
+
+Ranges = tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True)
+class Script:
+    """A writing system: its letter blocks and how its text behaves.
+
+    ``chars_per_token`` is the local token estimate's rate for the script's
+    characters (``adapters.llm.token_estimate``): 4 for Latin and every
+    script not measured, 1 for Han, Hangul and Kana, and for the others
+    the geometric mean of what the cl100k and o200k BPE vocabularies count
+    over a sample sentence (``tests/fixtures/language_matrix.py``), rounded
+    to a twelfth of a token per character. ``optional_marks`` are the
+    combining marks the script writes or leaves out at will (vowel points),
+    so text compared for identity may drop them.
+    """
+
+    name: str
+    ranges: Ranges
+    spacing: Spacing = Spacing.SPACED
+    chars_per_token: float = 4.0
+    optional_marks: Ranges = field(default=())
+
+
+# Han, Hangul and Kana blocks.
+_HANGUL: Ranges = (
     (0x1100, 0x11FF),  # Hangul Jamo
-    (0x3040, 0x30FF),  # Hiragana + Katakana
-    (0x3400, 0x4DBF),  # CJK Unified Ideographs Extension A
-    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
+    (0x3130, 0x318F),  # Hangul Compatibility Jamo
     (0xA960, 0xA97F),  # Hangul Jamo Extended-A
     (0xAC00, 0xD7AF),  # Hangul Syllables
+    (0xD7B0, 0xD7FF),  # Hangul Jamo Extended-B
+)
+_KANA: Ranges = (
+    (0x3040, 0x30FF),  # Hiragana + Katakana
+    (0x31F0, 0x31FF),  # Katakana Phonetic Extensions
+)
+_HAN: Ranges = (
+    (0x3400, 0x4DBF),  # CJK Unified Ideographs Extension A
+    (0x4E00, 0x9FFF),  # CJK Unified Ideographs
     (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
+    (0x20000, 0x323AF),  # CJK Unified Ideographs Extensions B-H
 )
 
-# Letter blocks only: CJK punctuation and full-width forms are excluded (NFKC
+# The script table. Letter blocks only: punctuation and symbol blocks belong
+# to no script (CJK punctuation and full-width forms are not letters; NFKC
 # folds the latter to ASCII).
-_DENSE_SCRIPT_LETTER_RANGES: tuple[tuple[int, int], ...] = tuple(
-    sorted(
+SCRIPTS: tuple[Script, ...] = (
+    Script(
+        "latin",
         (
-            *_CORE_LETTER_RANGES,
-            (0x3130, 0x318F),  # Hangul Compatibility Jamo
-            (0x31F0, 0x31FF),  # Katakana Phonetic Extensions
-            (0xD7B0, 0xD7FF),  # Hangul Jamo Extended-B
-            (0x20000, 0x323AF),  # CJK Unified Ideographs Extensions B-H
-        )
-    )
+            (0x0041, 0x005A),
+            (0x0061, 0x007A),
+            (0x00AA, 0x00AA),
+            (0x00BA, 0x00BA),
+            (0x00C0, 0x00D6),
+            (0x00D8, 0x00F6),
+            (0x00F8, 0x02AF),  # Latin-1 to IPA Extensions
+            (0x1D00, 0x1DBF),  # Phonetic Extensions
+            (0x1E00, 0x1EFF),  # Latin Extended Additional (Vietnamese)
+            (0x2C60, 0x2C7F),
+            (0xA720, 0xA7FF),
+            (0xAB30, 0xAB6F),
+            (0xFB00, 0xFB06),  # Latin ligatures
+            (0xFF21, 0xFF3A),  # Full-width Latin
+            (0xFF41, 0xFF5A),
+        ),
+    ),
+    Script("greek", ((0x0370, 0x03FF), (0x1F00, 0x1FFF)), chars_per_token=1.5),
+    Script(
+        "cyrillic",
+        ((0x0400, 0x052F), (0x1C80, 0x1C8F), (0x2DE0, 0x2DFF), (0xA640, 0xA69F)),
+        chars_per_token=2.4,
+    ),
+    Script("armenian", ((0x0530, 0x058F), (0xFB13, 0xFB17))),
+    Script(
+        "hebrew",
+        ((0x0590, 0x05FF), (0xFB1D, 0xFB4F)),
+        chars_per_token=1.5,
+        # Cantillation and vowel points (niqqud).
+        optional_marks=(
+            (0x0591, 0x05BD),
+            (0x05BF, 0x05BF),
+            (0x05C1, 0x05C2),
+            (0x05C4, 0x05C5),
+            (0x05C7, 0x05C7),
+        ),
+    ),
+    Script(
+        "arabic",
+        (
+            (0x0600, 0x06FF),
+            (0x0750, 0x077F),
+            (0x0870, 0x08FF),
+            (0xFB50, 0xFDFF),
+            (0xFE70, 0xFEFF),
+        ),
+        chars_per_token=2.0,
+        # Short vowels (harakat), superscript alef, tatweel and Quranic marks.
+        optional_marks=(
+            (0x0610, 0x061A),
+            (0x0640, 0x0640),
+            (0x064B, 0x065F),
+            (0x0670, 0x0670),
+            (0x06D6, 0x06DC),
+            (0x06DF, 0x06E4),
+            (0x06E7, 0x06E8),
+            (0x06EA, 0x06ED),
+        ),
+    ),
+    Script("syriac", ((0x0700, 0x074F),)),
+    Script("thaana", ((0x0780, 0x07BF),)),
+    Script("devanagari", ((0x0900, 0x097F), (0xA8E0, 0xA8FF)), chars_per_token=1.5),
+    Script("bengali", ((0x0980, 0x09FF),)),
+    Script("gurmukhi", ((0x0A00, 0x0A7F),)),
+    Script("gujarati", ((0x0A80, 0x0AFF),)),
+    Script("oriya", ((0x0B00, 0x0B7F),)),
+    Script("tamil", ((0x0B80, 0x0BFF),)),
+    Script("telugu", ((0x0C00, 0x0C7F),)),
+    Script("kannada", ((0x0C80, 0x0CFF),)),
+    Script("malayalam", ((0x0D00, 0x0D7F),)),
+    Script("sinhala", ((0x0D80, 0x0DFF),)),
+    Script("thai", ((0x0E00, 0x0E7F),), Spacing.SPACELESS, 1.5),
+    Script("lao", ((0x0E80, 0x0EFF),), Spacing.SPACELESS),
+    Script("tibetan", ((0x0F00, 0x0FFF),)),
+    Script(
+        "myanmar",
+        ((0x1000, 0x109F), (0xA9E0, 0xA9FF), (0xAA60, 0xAA7F)),
+        Spacing.SPACELESS,
+    ),
+    Script("georgian", ((0x10A0, 0x10FF), (0x1C90, 0x1CBF), (0x2D00, 0x2D2F))),
+    Script("ethiopic", ((0x1200, 0x139F), (0x2D80, 0x2DDF))),
+    Script("khmer", ((0x1780, 0x17FF),), Spacing.SPACELESS),
+    Script(
+        "tai",
+        (
+            (0x1950, 0x19DF),  # Tai Le, New Tai Lue
+            (0x1A20, 0x1AAF),  # Tai Tham
+            (0xAA80, 0xAADF),  # Tai Viet
+            (0x11700, 0x1174F),  # Ahom
+        ),
+        Spacing.SPACELESS,
+    ),
+    Script("hangul", _HANGUL, Spacing.DENSE, 1.0),
+    Script("kana", _KANA, Spacing.DENSE, 1.0),
+    Script("han", _HAN, Spacing.DENSE, 1.0),
 )
+
+_BY_NAME = {script.name: script for script in SCRIPTS}
+# The table as sorted, disjoint spans for script_of's binary search.
+_SPANS = sorted((lo, hi, script) for script in SCRIPTS for lo, hi in script.ranges)
+_STARTS = [lo for lo, _, _ in _SPANS]
+
+
+def script_named(name: str) -> Script:
+    """The script of the table named ``name`` (``"hangul"``); ``KeyError``
+    for another name."""
+    return _BY_NAME[name]
+
+
+def script_of(ch: str) -> Script | None:
+    """The script whose blocks hold ``ch``, ``None`` for a character of no
+    script's letter block (digits, punctuation, symbols, spaces)."""
+    cp = ord(ch)
+    i = bisect_right(_STARTS, cp) - 1
+    if i >= 0 and cp <= _SPANS[i][1]:
+        return _SPANS[i][2]
+    return None
+
+
+# The name letters of no script's block are counted under.
+OTHER_LETTERS = "other"
+
+
+@dataclass(frozen=True)
+class ScriptCounts:
+    """How many letters of each script a text holds, by script name
+    (:data:`OTHER_LETTERS` for letters of no listed script)."""
+
+    by_script: Mapping[str, int] = field(default_factory=dict)
+
+    def __getitem__(self, name: str) -> int:
+        return self.by_script.get(name, 0)
+
+    @property
+    def letters(self) -> int:
+        return sum(self.by_script.values())
+
+    @property
+    def dense(self) -> int:
+        """The Han, Hangul and Kana letters."""
+        return sum(
+            count
+            for name, count in self.by_script.items()
+            if name in _BY_NAME and _BY_NAME[name].spacing is Spacing.DENSE
+        )
+
+    @property
+    def dense_share(self) -> float:
+        return self.dense / self.letters if self.letters else 0.0
+
+    def dominant(self) -> str | None:
+        """The script most of the text is in, weighed by what its letters
+        carry (its letters over its ``chars_per_token``, so one Hangul
+        syllable outweighs one Latin letter), the dense scripts together
+        as ``"dense"``; ``None`` without letters. On a tie, a script other
+        than Latin wins: a name in Latin letters is what a question in
+        another script quotes."""
+        weights: dict[str, float] = {}
+        for name, count in self.by_script.items():
+            script = _BY_NAME.get(name)
+            if script is not None and script.spacing is Spacing.DENSE:
+                group, rate = "dense", script.chars_per_token
+            else:
+                group = name
+                rate = script.chars_per_token if script is not None else 4.0
+            weights[group] = weights.get(group, 0.0) + count / rate
+        if not weights:
+            return None
+        return max(weights, key=lambda group: (weights[group], group != "latin"))
+
+
+def count_letters(
+    texts: Iterable[str],
+    *,
+    max_texts: int | None = None,
+    max_chars: int | None = None,
+) -> ScriptCounts:
+    """Count the letters of ``texts`` (the first ``max_chars`` characters of
+    each of the first ``max_texts``, when given) by script."""
+    counts: Counter[str] = Counter()
+    for i, text in enumerate(texts):
+        if max_texts is not None and i >= max_texts:
+            break
+        for ch in text if max_chars is None else text[:max_chars]:
+            if (script := script_of(ch)) is not None:
+                if ch.isalpha():
+                    counts[script.name] += 1
+            elif ch.isalpha():
+                counts[OTHER_LETTERS] += 1
+    return ScriptCounts(dict(counts))
+
+
+def _class_body(ranges: Ranges) -> str:
+    """``ranges`` as the body of a regex character class (``[...]``)."""
+    return "".join(
+        re.escape(chr(lo)) + ("" if lo == hi else "-" + re.escape(chr(hi)))
+        for lo, hi in sorted(ranges)
+    )
+
+
+def _ranges_of(spacing: Spacing) -> Ranges:
+    return tuple(
+        sorted(span for s in SCRIPTS if s.spacing is spacing for span in s.ranges)
+    )
+
+
+@cache
+def letter_class(*names: str) -> str:
+    """The letter blocks of the scripts ``names`` as the body of a regex
+    character class: ``f"[{letter_class('hangul')}]"``."""
+    return _class_body(tuple(span for n in names for span in _BY_NAME[n].ranges))
+
+
+# The Han, Hangul and Kana letters, and the spaceless scripts' letters, as
+# the body of a regex character class.
+DENSE_SCRIPT_LETTERS = _class_body(_ranges_of(Spacing.DENSE))
+SPACELESS_SCRIPT_LETTERS = _class_body(_ranges_of(Spacing.SPACELESS))
 
 # What the token estimate (``adapters.llm.token_estimate``) counts at about
-# one token per character under BPE tokenizers: the core letters, CJK
-# radicals, CJK symbols and punctuation, and half/full-width forms. Not the
-# letter blocks added to the table above after the estimate was set: adding
-# them changes the estimate, a separate, measured change.
-DENSE_SCRIPT_TOKEN_RANGES: tuple[tuple[int, int], ...] = tuple(
+# one token per character beside the dense letters: CJK radicals, CJK
+# symbols and punctuation, and half/full-width forms.
+DENSE_SCRIPT_TOKEN_RANGES: Ranges = tuple(
     sorted(
         (
-            *_CORE_LETTER_RANGES,
+            *_ranges_of(Spacing.DENSE),
             (0x2E80, 0x2FDF),  # CJK radicals / Kangxi
             (0x3000, 0x303F),  # CJK symbols and punctuation
             (0xFF00, 0xFFEF),  # Half/full-width forms
@@ -63,10 +346,18 @@ DENSE_SCRIPT_TOKEN_RANGES: tuple[tuple[int, int], ...] = tuple(
     )
 )
 
-# The same letters as the body of a regex character class (``[...]``).
-DENSE_SCRIPT_LETTERS = "".join(
-    f"{chr(lo)}-{chr(hi)}" for lo, hi in _DENSE_SCRIPT_LETTER_RANGES
+
+_OPTIONAL_MARK = re.compile(
+    f"[{_class_body(tuple(span for s in SCRIPTS for span in s.optional_marks))}]"
 )
+
+
+def drop_optional_marks(text: str) -> str:
+    """``text`` without the marks its scripts write at will (Arabic short
+    vowels and tatweel, Hebrew points): "مُحَمَّد" is "محمد", "שָׁלוֹם"
+    "שלום". Precomposed presentation forms are left as they are: normalize
+    the text (NFC or NFKC) first."""
+    return _OPTIONAL_MARK.sub("", text)
 
 
 # One compiled class: the per-character range scan these tests replaced held
@@ -95,20 +386,36 @@ def is_hangul_syllable(ch: str) -> bool:
 _WHITESPACE = re.compile(r"\s+")
 
 
-def drop_dense_script_spaces(text: str) -> str:
-    """Remove whitespace next to a Han, Hangul or Kana letter.
+_UNSPACED_LETTER = re.compile(f"[{DENSE_SCRIPT_LETTERS}{SPACELESS_SCRIPT_LETTERS}]")
+
+
+def is_unspaced_char(ch: str) -> bool:
+    """True if ``ch`` is a letter of a script that needs no spaces between
+    words: a dense one (Han, Hangul, Kana) or a spaceless one (Thai, Lao,
+    Myanmar, Khmer, Tai)."""
+    ord(ch)  # one character: TypeError otherwise
+    return _UNSPACED_LETTER.match(ch) is not None
+
+
+def has_unspaced_script(text: str) -> bool:
+    """True if ``text`` contains a letter of a dense or spaceless script."""
+    return _UNSPACED_LETTER.search(text) is not None
+
+
+def drop_dense_script_spaces(text: str, *, spaceless: bool = False) -> str:
+    """Remove whitespace next to a Han, Hangul or Kana letter (and with
+    ``spaceless`` next to a Thai, Lao, Myanmar, Khmer or Tai one).
 
     Word spacing is optional in these scripts ("가나다 상사" / "가나다상사",
     "3억 원" / "3억원"), so two spellings that differ only there compare
     equal afterwards. Other whitespace runs collapse to one space.
     """
+    letter = is_unspaced_char if spaceless else is_dense_script_char
 
     def replace(match: re.Match[str]) -> str:
         before = text[match.start() - 1] if match.start() else ""
         after = text[match.end()] if match.end() < len(text) else ""
-        dense = (bool(before) and is_dense_script_char(before)) or (
-            bool(after) and is_dense_script_char(after)
-        )
-        return "" if dense else " "
+        joined = (bool(before) and letter(before)) or (bool(after) and letter(after))
+        return "" if joined else " "
 
     return _WHITESPACE.sub(replace, text)

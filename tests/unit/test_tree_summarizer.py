@@ -38,6 +38,12 @@ SENTENCES = {
     LanguageCode.KO: "강 북쪽의 창고는 매달 지역 벤더를 위해 산업용 위젯을 보관한다.",
     LanguageCode.JA: "川の北にある倉庫は毎月地域の業者のために工業用部品を保管する。",
 }
+# Languages only the length hint's unit is checked for (Thai ends a sentence
+# with no mark).
+_HINT_SENTENCES = {
+    LanguageCode.TH: "คลังสินค้าทางเหนือของแม่น้ำเก็บชิ้นส่วนให้ผู้ขายทุกเดือน",
+    LanguageCode.HI: "नदी के उत्तर का गोदाम हर महीने विक्रेता के लिए पुर्ज़े रखता है।",
+}
 _HINT = re.compile(r"in (\d+) (words|characters) at most")
 
 
@@ -97,7 +103,7 @@ def _summarizer(
 
 
 def _cluster(language: LanguageCode, n: int = 6) -> Cluster:
-    sentence = SENTENCES[language]
+    sentence = {**SENTENCES, **_HINT_SENTENCES}[language]
     members = tuple(
         Entry(
             id=f"u{i}",
@@ -203,6 +209,9 @@ def test_the_hint_counts_characters_for_dense_languages_and_words_otherwise() ->
         (LanguageCode.EN, "words"),
         (LanguageCode.KO, "characters"),
         (LanguageCode.JA, "characters"),
+        # Thai writes no spaces between words either.
+        (LanguageCode.TH, "characters"),
+        (LanguageCode.HI, "words"),
     ]:
         summarizer = _summarizer(language, _Writer(language, 1.0))
         hint = summarizer.length_hint(_cluster(language).child_texts)
@@ -217,6 +226,8 @@ def test_the_hint_counts_characters_for_dense_languages_and_words_otherwise() ->
         ("東京は大きい。大阪も「大きい」。京都", [7, 16]),
         ("창고는 위젯을 보관한다. 은행은 돈을 빌려준다? 감사", [13, 26]),
         ("Москва большая. Казань тоже.", [15, 28]),
+        ("गोदाम बड़ा है। बैंक भी।", [14, 23]),
+        ("المستودع كبير؟ نعم.", [14, 19]),
         ("A heading\nA line.", [9, 17]),
         ("No stop at all", []),
     ],

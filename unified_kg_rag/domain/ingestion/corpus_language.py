@@ -3,24 +3,32 @@
 """Which writing system a corpus sample is in, against the configured
 ``processing.translation.source_language``.
 
-Pure: letters are counted by Unicode block with the dense-script table of
-``shared.utils.scripts`` (Hangul, Kana, Han), so the test tells a Korean,
-Japanese or Chinese corpus from one in a Latin or other script, and those
-three apart. It cannot tell two languages of one script apart (English from
+Pure: letters are counted by Unicode block with the script table of
+``shared.utils.scripts``, so the test tells a Korean, Japanese or Chinese
+corpus from one in a Latin or other script, and those three apart
+(``domain.languages.dense_language``: Korean written with Hanja is
+Korean). It cannot tell two languages of one script apart (English from
 German), so it judges only where the script decides.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 
+from unified_kg_rag.domain.languages import dense_language, profiles
 from unified_kg_rag.domain.models import LanguageCode, language_name
-from unified_kg_rag.shared.utils.scripts import is_dense_script_char
+from unified_kg_rag.shared.utils.scripts import (
+    ScriptCounts,
+    Spacing,
+    count_letters,
+    script_named,
+)
 
-# The languages whose script the dense-script table holds.
+# The languages written in a dense script (Hangul, Kana, Han).
 DENSE_SCRIPT_LANGUAGES: frozenset[LanguageCode] = frozenset(
-    {LanguageCode.KO, LanguageCode.JA, LanguageCode.ZH}
+    language.code
+    for language in profiles()
+    if script_named(language.script).spacing is Spacing.DENSE
 )
 
 # What is read of a sample: the first characters of its first documents.
@@ -37,87 +45,22 @@ _DENSE_MINORITY = 0.2
 _DENSE_MAJORITY = 0.5
 
 
-@dataclass(frozen=True)
-class ScriptShare:
-    """Letter counts of a sample by script."""
-
-    hangul: int = 0
-    kana: int = 0
-    han: int = 0
-    other: int = 0
-
-    @property
-    def letters(self) -> int:
-        return self.hangul + self.kana + self.han + self.other
-
-    @property
-    def dense(self) -> int:
-        return self.hangul + self.kana + self.han
-
-    @property
-    def dense_share(self) -> float:
-        return self.dense / self.letters if self.letters else 0.0
-
-    def dense_language(self) -> LanguageCode | None:
-        """The dense-script language the sample's dense letters read as:
-        Korean when Hangul is most of them, Japanese when Kana is a tenth
-        or more (Japanese writes its stems in Han), else Chinese; ``None``
-        without dense letters."""
-        if not self.dense:
-            return None
-        if self.hangul * 2 > self.dense:
-            return LanguageCode.KO
-        if self.kana * 10 >= self.dense:
-            return LanguageCode.JA
-        return LanguageCode.ZH
-
-
-# Hangul syllables, Jamo (and their compatibility and extended blocks).
-_HANGUL = (
-    ("\uac00", "\ud7af"),
-    ("\u1100", "\u11ff"),
-    ("\u3130", "\u318f"),
-    ("\ua960", "\ua97f"),
-    ("\ud7b0", "\ud7ff"),
-)
-# Hiragana, Katakana and the Katakana phonetic extensions.
-_KANA = (("\u3040", "\u30ff"), ("\u31f0", "\u31ff"))
-
-
-def _in(ch: str, ranges: tuple[tuple[str, str], ...]) -> bool:
-    return any(lo <= ch <= hi for lo, hi in ranges)
-
-
-def script_share(texts: Iterable[str]) -> ScriptShare:
+def script_share(texts: Iterable[str]) -> ScriptCounts:
     """Count the letters of the first :data:`SAMPLE_CHARS` characters of
     each of the first :data:`SAMPLE_DOCUMENTS` texts by script."""
-    hangul = kana = han = other = 0
-    for i, text in enumerate(texts):
-        if i >= SAMPLE_DOCUMENTS:
-            break
-        for ch in text[:SAMPLE_CHARS]:
-            if is_dense_script_char(ch):
-                if _in(ch, _HANGUL):
-                    hangul += 1
-                elif _in(ch, _KANA):
-                    kana += 1
-                else:
-                    han += 1
-            elif ch.isalpha():
-                other += 1
-    return ScriptShare(hangul=hangul, kana=kana, han=han, other=other)
+    return count_letters(texts, max_texts=SAMPLE_DOCUMENTS, max_chars=SAMPLE_CHARS)
 
 
-def detected_dense_language(share: ScriptShare) -> LanguageCode | None:
+def detected_dense_language(share: ScriptCounts) -> LanguageCode | None:
     """The dense-script language a sample is written in, or ``None`` when
     its letters are not mostly Hangul, Kana and Han (or too few)."""
     if share.letters < _MIN_LETTERS or share.dense_share <= _DENSE_MAJORITY:
         return None
-    return share.dense_language()
+    return dense_language(share)
 
 
 def source_language_mismatch(
-    share: ScriptShare, source_language: LanguageCode
+    share: ScriptCounts, source_language: LanguageCode
 ) -> str | None:
     """Why a sample's script disagrees with ``source_language``, or
     ``None``: a mostly Hangul, Kana or Han sample under another language,

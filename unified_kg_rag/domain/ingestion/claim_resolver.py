@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from unified_kg_rag.domain.ingestion.base_processor import merge_attributes
 from unified_kg_rag.domain.ingestion.base_resolver import BaseResolver, FuzzyMatcher
 from unified_kg_rag.domain.ingestion.descriptions import by_frequency
+from unified_kg_rag.domain.languages import profiles
 from unified_kg_rag.domain.models import Claim, Entity
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import entity_key, generate_stable_id
@@ -32,63 +33,20 @@ def placeholder_key(text: str | None) -> str:
     return "".join((text or "").casefold().split())
 
 
-# What a model writes for "no value", in the supported languages: the claim
-# prompt asks for NONE (an object) or UNKNOWN (a date), but a model writing
-# descriptions in the corpus language writes the placeholder in it too.
-_NO_VALUE = (
-    "",
-    "-",
-    "--",
-    "none",
-    "unknown",
-    "n/a",
-    "na",
-    "null",
-    "nil",
-    "unspecified",
-    "notapplicable",
-    # Chinese and Japanese.
-    "不明",
-    "未知",
-    "不详",
-    "不詳",
-    "未詳",
-    "无",
-    "無",
-    "なし",
-    "無し",
-    "該当なし",
-    "不明確",
-    # Korean.
-    "미상",
-    "불명",
-    "알수없음",
-    "없음",
-    "해당없음",
-    "모름",
-    # German, Spanish, French, Italian, Portuguese, Russian.
-    "unbekannt",
-    "keine",
-    "keiner",
-    "desconocido",
-    "ninguno",
-    "inconnu",
-    "inconnue",
-    "aucun",
-    "aucune",
-    "sconosciuto",
-    "nessuno",
-    "desconhecido",
-    "nenhum",
-    "неизвестно",
-    "нет",
+# What a model writes for "no value", in every language of the registry
+# (``LanguageProfile.no_value_words``) and as symbols: the claim prompt asks
+# for NONE (an object) or UNKNOWN (a date), but a model writing descriptions
+# in the corpus language writes the placeholder in it too.
+_NO_VALUE = frozenset(
+    {"", "-", "--"}
+    | {word for language in profiles() for word in language.no_value_words}
 )
 # A claim's object when it states none (the claim prompt's NONE): one
 # literal for every spelling of "no value", so an object-less claim is kept
 # under one identity rather than dropped or split by the word chosen.
 NO_OBJECT = "NONE"
 # "NA" is also a name (sodium's symbol, say): kept as an object.
-_NO_OBJECT_VALUES = frozenset(_NO_VALUE) - {"na"}
+_NO_OBJECT_VALUES = _NO_VALUE - {"na"}
 
 
 def claim_object_value(value: str | None) -> str:
@@ -100,27 +58,11 @@ def claim_object_value(value: str | None) -> str:
 
 
 # Placeholders for an absent date: "no value" (see ``_NO_VALUE``), and an
-# open period's end ("ongoing", "present"), which is no calendar date either.
-_UNKNOWN_DATE_VALUES = frozenset(
-    {
-        *_NO_VALUE,
-        "tbd",
-        "ongoing",
-        "present",
-        # Chinese and Japanese.
-        "未定",
-        "待定",
-        "現在",
-        "现在",
-        "至今",
-        "進行中",
-        "进行中",
-        # Korean.
-        "미정",
-        "현재",
-        "진행중",
-    }
-)
+# open period's end ("ongoing", "present"), which is no calendar date either
+# (``LanguageProfile.open_date_words``).
+_UNKNOWN_DATE_VALUES = _NO_VALUE | {
+    word for language in profiles() for word in language.open_date_words
+}
 # An ISO 8601 week ("2024-W03", or with its weekday "2024-W03-2"):
 # fromisoformat reads it as its Monday (or that weekday).
 _ISO_WEEK = re.compile(r"\d{4}-?W\d{2}(?P<day>-?\d)?", re.IGNORECASE)
@@ -138,121 +80,30 @@ _ABBREVIATION_DOT = re.compile(r"(?<=[A-Za-z])\s*\.")
 _COMMA = re.compile(r"\s*,\s*")
 # "Sept" is no %b abbreviation.
 _SEPT = re.compile(r"\bSept\b", re.IGNORECASE)
-# The month names (and their usual abbreviations) of the other supported
-# languages that write dates with words: German, Spanish, French, Italian,
-# Portuguese and Russian (nominative and genitive), read as the English
-# names strptime reads.
-_MONTH_WORDS: dict[str, tuple[str, ...]] = {
-    "January": (
-        "januar",
-        "jänner",
-        "enero",
-        "ene",
-        "janvier",
-        "janv",
-        "gennaio",
-        "gen",
-        "janeiro",
-        "январь",
-        "января",
-        "янв",
-    ),
-    "February": (
-        "februar",
-        "feber",
-        "febrero",
-        "février",
-        "févr",
-        "fevrier",
-        "febbraio",
-        "fevereiro",
-        "fev",
-        "февраль",
-        "февраля",
-        "фев",
-    ),
-    "March": (
-        "märz",
-        "maerz",
-        "mär",
-        "marzo",
-        "mars",
-        "março",
-        "marco",
-        "март",
-        "марта",
-        "мар",
-    ),
-    "April": ("abril", "abr", "avril", "avr", "aprile", "апрель", "апреля", "апр"),
-    "May": ("mai", "mayo", "maggio", "mag", "maio", "май", "мая"),
-    "June": ("juni", "junio", "juin", "giugno", "giu", "junho", "июнь", "июня", "июн"),
-    "July": (
-        "juli",
-        "julio",
-        "juillet",
-        "juil",
-        "luglio",
-        "lug",
-        "julho",
-        "июль",
-        "июля",
-        "июл",
-    ),
-    "August": ("agosto", "ago", "août", "aout", "август", "августа", "авг"),
-    "September": (
-        "septiembre",
-        "setiembre",
-        "septembre",
-        "settembre",
-        "set",
-        "setembro",
-        "сентябрь",
-        "сентября",
-        "сен",
-        "сент",
-    ),
-    "October": (
-        "oktober",
-        "okt",
-        "octubre",
-        "octobre",
-        "ottobre",
-        "ott",
-        "outubro",
-        "out",
-        "октябрь",
-        "октября",
-        "окт",
-    ),
-    "November": ("noviembre", "novembre", "novembro", "ноябрь", "ноября", "ноя"),
-    "December": (
-        "dezember",
-        "dez",
-        "diciembre",
-        "dic",
-        "décembre",
-        "déc",
-        "decembre",
-        "dicembre",
-        "dezembro",
-        "декабрь",
-        "декабря",
-        "дек",
-    ),
+# The month names (and their usual abbreviations) of the languages that
+# write dates with words (``LanguageProfile.month_words``), read as the
+# English names strptime reads.
+_MONTH_NAMES = {
+    word: month
+    for language in profiles()
+    for month, words in language.month_words.items()
+    for word in words
 }
-_MONTH_NAMES = {word: name for name, words in _MONTH_WORDS.items() for word in words}
 # Words a written-out date carries around its parts in those languages: the
 # Spanish and Portuguese "de"/"del" ("15 de marzo de 2024"), the Russian
-# year mark ("2024 г.", "2024 года"), the French first-day ordinal ("1er").
-_DATE_FILLERS = frozenset({"de", "del", "г", "года", "год"})
+# year mark ("2024 г.", "2024 года").
+_DATE_FILLERS = frozenset(
+    word for language in profiles() for word in language.date_fillers
+)
 _DATE_WORD = re.compile(r"[^\W\d_]+\.?")
+# A first-day ordinal: the French "1er", the Spanish and Portuguese "1º".
 _FIRST_DAY = re.compile(r"(?<=\b1)(er|º|ª|°)", re.IGNORECASE)
 # The day's dot of German ("15. März 2024"), before a month word.
 _DAY_DOT = re.compile(r"(?<=\d)\.(?=\s*[^\W\d_])")
 
 
 def _english_month_words(text: str) -> str:
-    """``text`` with the month names of :data:`_MONTH_WORDS` in English and
+    """``text`` with the month names of :data:`_MONTH_NAMES` in English and
     the filler words of :data:`_DATE_FILLERS` dropped."""
 
     def word(match: re.Match[str]) -> str:
@@ -345,7 +196,7 @@ def claim_date_value(value: str | None, *, end: bool = False) -> str | None:
     spaced), ``YYYY-MM-DD`` when it reads as a calendar date (ISO
     8601, a time dropped, unpadded ``2024-1-5``, or a written-out date such
     as "January 15th, 2024", "Jan. 15, 2024", "Sept. 3, 2024",
-    "15. März 2024", "15 de marzo de 2024" (``_MONTH_WORDS``),
+    "15. März 2024", "15 de marzo de 2024" (``_MONTH_NAMES``),
     "2024年3月15日", "2024年3月15日(金)", "令和6年3月15日", "2024년 3월 15일" or
     "2024. 3. 15."), or as a
     coarser period, stored as its first day (an ISO week ``2024-W03`` as its
@@ -442,118 +293,21 @@ DISPUTED_STATUS = "disputed"
 UNKNOWN_STATUS = "unknown"
 CLAIM_STATUSES = (TRUE_STATUS, FALSE_STATUS, DISPUTED_STATUS, UNKNOWN_STATUS)
 
-# What a model writes for a status: the prompt's words, MS GraphRAG's
-# SUSPECTED, and the few words that state the same status plainly, each with
-# its Korean, Japanese and Chinese rendering (a model answering in the index
-# language may translate the status), casefolded and stripped of punctuation
-# and spaces. MS GraphRAG's prompt defines TRUE as "the claim is confirmed"
-# and SUSPECTED as "the claim is not verified", and ours DISPUTED as
-# "conflicting information or uncertainty indicated": "confirmed" and
-# "verified" are true, "denied" and "refuted" false, "uncertain" and
-# "unverified" disputed, in every language. Any other word is read as
-# unknown and counted (``claim_status_recognised``).
-_STATUS_WORDS = {
-    TRUE_STATUS: (
-        # true
-        "true",
-        "참",
-        "진실",
-        "真",
-        "真実",
-        "真实",
-        "真實",
-        # fact
-        "fact",
-        "factual",
-        "사실",
-        "事実",
-        "事实",
-        "事實",
-        # confirmed, verified
-        "confirmed",
-        "verified",
-        "확인됨",
-        "검증됨",
-        "確認済み",
-        "検証済み",
-        "已确认",
-        "已確認",
-        "已证实",
-        "已證實",
-    ),
-    FALSE_STATUS: (
-        # false
-        "false",
-        "untrue",
-        "거짓",
-        "허위",
-        "偽",
-        "虚偽",
-        "假",
-        "虚假",
-        "虛假",
-        # denied, refuted
-        "denied",
-        "refuted",
-        "부인됨",
-        "반박됨",
-        "否定",
-        "否認",
-        "反駁",
-        "已否认",
-        "已否認",
-        "已驳斥",
-        "已駁斥",
-    ),
-    DISPUTED_STATUS: (
-        # disputed
-        "disputed",
-        "논란",
-        "분쟁",
-        "係争",
-        "争い",
-        "争议",
-        "爭議",
-        "有争议",
-        "有爭議",
-        # suspected (MS GraphRAG's status)
-        "suspected",
-        "의심",
-        "疑い",
-        "可疑",
-        "涉嫌",
-        # uncertain, unverified
-        "uncertain",
-        "unverified",
-        "불확실",
-        "미확인",
-        "不確か",
-        "不確実",
-        "未確認",
-        "不确定",
-        "不確定",
-        "未证实",
-        "未證實",
-        "未确认",
-    ),
-    UNKNOWN_STATUS: (
-        # unknown
-        "unknown",
-        "알수없음",
-        "불명",
-        "不明",
-        "未知",
-        # none
-        "none",
-        "na",
-        "없음",
-        "なし",
-        "无",
-        "無",
-    ),
-}
+# What a model writes for a status, in every language of the registry
+# (``LanguageProfile.claim_statuses``; a model answering in the index
+# language may translate the status): the prompt's words, MS GraphRAG's
+# SUSPECTED, and the few words that state the same status plainly,
+# casefolded and stripped of punctuation and spaces. MS GraphRAG's prompt
+# defines TRUE as "the claim is confirmed" and SUSPECTED as "the claim is
+# not verified", and ours DISPUTED as "conflicting information or
+# uncertainty indicated": "confirmed" and "verified" are true, "denied" and
+# "refuted" false, "uncertain" and "unverified" disputed, in every language.
+# Any other word is read as unknown and counted (``claim_status_recognised``).
 _STATUS_BY_WORD = {
-    word: status for status, words in _STATUS_WORDS.items() for word in words
+    word: status
+    for language in profiles()
+    for status, words in language.claim_statuses.items()
+    for word in words
 }
 _STATUS_NOISE = re.compile(r"[\W_]+")
 
@@ -567,7 +321,7 @@ def claim_status(raw: str | None) -> str:
     ``raw`` status names: the prompt's ``TRUE``, ``FALSE``, ``DISPUTED`` or
     ``UNKNOWN``, read case-, punctuation- and space-insensitively
     (``"True."`` is ``true``, MS GraphRAG's ``SUSPECTED`` is ``disputed``,
-    ``"참"`` is ``true``, ``"불확실"`` is ``unknown``, see ``_STATUS_WORDS``);
+    ``"참"`` is ``true``, ``"불확실"`` is ``unknown``, see ``_STATUS_BY_WORD``);
     ``unknown`` for a missing or unrecognised one."""
     return _STATUS_BY_WORD.get(_status_word(raw), UNKNOWN_STATUS)
 

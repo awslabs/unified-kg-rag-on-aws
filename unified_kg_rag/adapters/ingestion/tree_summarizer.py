@@ -35,6 +35,7 @@ from unified_kg_rag.domain.ingestion.cache_keys import (
     tree_summary_fingerprint,
 )
 from unified_kg_rag.domain.ingestion.summary_tree import Cluster, summary_input_key
+from unified_kg_rag.domain.languages import profiles
 from unified_kg_rag.domain.models import (
     Config,
     LanguageCode,
@@ -46,14 +47,19 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.prompts import TreeSummaryPrompt
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
+from unified_kg_rag.shared.utils.scripts import Spacing, script_named
 from unified_kg_rag.shared.utils.sentences import sentence_ends
 
 logger = get_logger(__name__)
 
-# Languages whose length hint counts characters (Japanese and Chinese write
-# no spaces between words, a Korean word is several tokens); the others'
-# counts words.
-_CHARACTER_LANGUAGES = frozenset({LanguageCode.JA, LanguageCode.ZH, LanguageCode.KO})
+# Languages whose length hint counts characters: those of a script that
+# needs no spaces (Japanese, Chinese and Thai write none between words, a
+# Korean word is several tokens); the others' counts words.
+_CHARACTER_LANGUAGES = frozenset(
+    language.code
+    for language in profiles()
+    if script_named(language.script).spacing is not Spacing.SPACED
+)
 
 # The share of max_summary_tokens the length hint asks for: a model's length
 # is approximate, and what is over the budget is cut. Claude Haiku wrote about

@@ -858,15 +858,14 @@ def test_a_models_claim_status_is_read_into_the_prompts_vocabulary(
 def test_every_status_word_reads_as_itself_and_is_recognised() -> None:
     # A word of the table that the reader's normalisation changes (a space,
     # a punctuation mark, another case) would never match.
-    from unified_kg_rag.domain.ingestion.claim_resolver import (
-        _STATUS_WORDS,
-        claim_status_recognised,
-    )
+    from unified_kg_rag.domain.ingestion.claim_resolver import claim_status_recognised
+    from unified_kg_rag.domain.languages import profiles
 
-    for status, words in _STATUS_WORDS.items():
-        for word in words:
-            assert claim_status(word) == status, word
-            assert claim_status_recognised(word.upper())
+    for language in profiles():
+        for status, words in language.claim_statuses.items():
+            for word in words:
+                assert claim_status(word) == status, word
+                assert claim_status_recognised(word.upper())
     assert claim_status_recognised(None) and claim_status_recognised(" ")
     assert not claim_status_recognised("probably")
 

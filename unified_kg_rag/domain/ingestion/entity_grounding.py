@@ -18,15 +18,19 @@ the gate on never silently deletes legitimate entities.
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from functools import lru_cache
 
-from unified_kg_rag.shared.utils.legal_forms import latin_legal_form
+from unified_kg_rag.domain.languages.legal_forms import latin_legal_form
 from unified_kg_rag.shared.utils.scripts import (
+    Spacing,
     drop_dense_script_spaces,
-    has_dense_script,
+    has_unspaced_script,
     is_dense_script_char,
+    is_unspaced_char,
+    script_of,
 )
 
 __all__ = [
@@ -67,14 +71,19 @@ def span_length(span: str) -> int:
     """Length of a span in approximate tokens.
 
     A Han, Hangul or Kana character counts as one (one character is a
-    syllable or morpheme, and ~1 model token), any other whitespace token as
-    one. A Japanese or Chinese sentence has no spaces, so a whitespace count
-    would call every such span one token long.
+    syllable or morpheme, and ~1 model token), the letters of a spaceless
+    script (Thai) at their script's characters per token, any other
+    whitespace token as one. A Japanese, Chinese or Thai sentence has no
+    spaces, so a whitespace count would call every such span one token long.
     """
     length = 0
     for token in _tokens(span):
-        dense = sum(1 for ch in token if is_dense_script_char(ch))
-        length += dense if dense else 1
+        unspaced = 0.0
+        for ch in token:
+            script = script_of(ch)
+            if script is not None and script.spacing is not Spacing.SPACED:
+                unspaced += 1 / script.chars_per_token
+        length += math.ceil(unspaced) if unspaced else 1
     return length
 
 
@@ -97,19 +106,26 @@ def _bigrams(text: str) -> set[str]:
     return {text[i : i + 2] for i in range(len(text) - 1)} or {text}
 
 
+def _unspaced(text: str) -> str:
+    """``text`` without the spaces next to a letter of a script that needs
+    none (Han, Hangul, Kana; Thai and the other spaceless scripts)."""
+    return drop_dense_script_spaces(text, spaceless=True)
+
+
 def char_bigram_overlap_ratio(span: str, source: str) -> float:
     """Fraction of the span's character bigrams that also occur in the source.
 
-    The fuzzy fallback for dense-script spans, compared with the spaces next
-    to Han/Hangul/Kana letters removed. Whitespace tokens fail there: a
-    Korean paraphrase changes the particles attached to every word
-    ("보증 기간이" -> "보증기간은"), and Japanese/Chinese have no spaces.
+    The fuzzy fallback for dense- and spaceless-script spans, compared with
+    the spaces next to their letters removed. Whitespace tokens fail there:
+    a Korean paraphrase changes the particles attached to every word
+    ("보증 기간이" -> "보증기간은"), and Japanese, Chinese and Thai have no
+    spaces between words.
     """
-    span_text = drop_dense_script_spaces(normalize_for_grounding(span))
+    span_text = _unspaced(normalize_for_grounding(span))
     if not span_text:
         return 0.0
     span_bigrams = _bigrams(span_text)
-    source_bigrams = _bigrams(drop_dense_script_spaces(normalize_for_grounding(source)))
+    source_bigrams = _bigrams(_unspaced(normalize_for_grounding(source)))
     return len(span_bigrams & source_bigrams) / len(span_bigrams)
 
 
@@ -130,10 +146,12 @@ def is_grounded(
        confidence/threshold path guards these instead). Length is
        :func:`span_length`: a Han/Hangul/Kana character counts as a token.
     3. Verbatim (normalized) substring match → ``True``. Punctuation is
-       ignored, and so is spacing next to Han/Hangul/Kana letters.
+       ignored, and so is spacing next to Han/Hangul/Kana (and Thai and the
+       other spaceless scripts') letters.
     4. Overlap fallback ≥ ``min_overlap_ratio`` → ``True`` (handles light
        paraphrase / whitespace edits): token overlap, or character-bigram
-       overlap (:func:`char_bigram_overlap_ratio`) for dense-script spans.
+       overlap (:func:`char_bigram_overlap_ratio`) for dense- and
+       spaceless-script spans.
     5. Otherwise → ``False`` (ungrounded; likely hallucinated).
     """
     if not source_text or not chunk_text:
@@ -147,8 +165,8 @@ def is_grounded(
     if span_length(norm_span) < min_span_tokens:
         return True
 
-    if has_dense_script(norm_span):
-        if drop_dense_script_spaces(norm_span) in drop_dense_script_spaces(norm_chunk):
+    if has_unspaced_script(norm_span):
+        if _unspaced(norm_span) in _unspaced(norm_chunk):
             return True
         return char_bigram_overlap_ratio(norm_span, norm_chunk) >= min_overlap_ratio
 
@@ -192,11 +210,12 @@ def _strip_marks(text: str) -> str:
 
 
 def _split_scripts(token: str) -> list[str]:
-    """Split a token where it changes between dense and other script."""
+    """Split a token where it changes between a script that needs no spaces
+    (dense or spaceless) and another script."""
     parts: list[str] = []
     start = 0
     for i in range(1, len(token)):
-        if is_dense_script_char(token[i]) != is_dense_script_char(token[i - 1]):
+        if is_unspaced_char(token[i]) != is_unspaced_char(token[i - 1]):
             parts.append(token[start:i])
             start = i
     parts.append(token[start:])
@@ -228,7 +247,8 @@ def _name_tokens(text: str, join: bool) -> tuple[str, ...]:
 
 
 def _is_dense(token: str) -> bool:
-    return is_dense_script_char(token[0])
+    # Dense or spaceless: matched as a substring, not as whole tokens.
+    return is_unspaced_char(token[0])
 
 
 def _same_last_token(name_token: str, text_token: str, *, suffix: bool) -> bool:
@@ -285,7 +305,7 @@ def _single_name_grounded(name: str, chunk_text: str) -> bool:
         if not name_tokens:
             continue
         text_tokens = _name_tokens(chunk_text, join)
-        dense_text = drop_dense_script_spaces(" ".join(text_tokens))
+        dense_text = _unspaced(" ".join(text_tokens))
         if all(
             (
                 _dense_segment_found("".join(segment), text_tokens, dense_text)

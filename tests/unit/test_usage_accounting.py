@@ -520,3 +520,54 @@ def test_a_response_without_usage_keeps_its_retries_and_estimates_its_output(
     assert snapshot["request_retries"] == 2
     assert snapshot["output_tokens"] == estimate_token_count(answer) > 0
     assert snapshot["input_tokens"] == (estimate_token_count(prompt) if started else 0)
+
+
+def _calls(handler: UsageCallbackHandler, prompt: str, reported: int, n: int) -> None:
+    for _ in range(n):
+        run_id = uuid4()
+        handler.on_llm_start({}, [prompt], run_id=run_id)
+        handler.on_llm_end(
+            _result(
+                content="x",
+                usage_metadata={
+                    "input_tokens": reported,
+                    "output_tokens": 1,
+                    "total_tokens": reported + 1,
+                },
+            ),
+            run_id=run_id,
+        )
+
+
+@pytest.mark.parametrize(("factor", "effect"), [(3, "overflow"), (0.3, "unused")])
+def test_a_model_far_from_the_estimate_is_warned_of_once(
+    factor: float,
+    effect: str,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unified_kg_rag.shared import logging as shared_logging
+
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    prompt = "आपूर्तिकर्ता ने दो जून को गोदाम में लिडार इकाइयाँ पहुँचाईं। " * 20
+    estimate = estimate_token_count(prompt)
+    handler = UsageCallbackHandler("vendor.model-v1", role="query")
+    with caplog.at_level("WARNING"), usage.usage_scope():
+        _calls(handler, prompt, int(estimate * factor), 19)
+        assert "local token estimate" not in caplog.text  # too few calls yet
+        _calls(handler, prompt, int(estimate * factor), 10)
+    assert caplog.text.count("local token estimate") == 1
+    assert effect in caplog.text and "vendor.model-v1" in caplog.text
+
+
+def test_a_model_near_the_estimate_is_not_warned_of(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unified_kg_rag.shared import logging as shared_logging
+
+    monkeypatch.setattr(shared_logging, "_warned_once", set())
+    prompt = "The vendor delivered the units to the warehouse. " * 20
+    handler = UsageCallbackHandler("vendor.model-v1", role="query")
+    with caplog.at_level("WARNING"), usage.usage_scope():
+        _calls(handler, prompt, int(estimate_token_count(prompt) * 1.3), 40)
+    assert "local token estimate" not in caplog.text

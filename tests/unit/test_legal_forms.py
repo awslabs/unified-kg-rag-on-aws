@@ -17,8 +17,11 @@ from unified_kg_rag.domain.ingestion.base_processor import BaseProcessor
 from unified_kg_rag.domain.ingestion.base_resolver import compact_name_key
 from unified_kg_rag.domain.ingestion.entity_grounding import is_name_grounded
 from unified_kg_rag.domain.ingestion.graph_resolver import EntityResolver
+from unified_kg_rag.domain.languages.legal_forms import (
+    latin_legal_form,
+    strip_legal_forms,
+)
 from unified_kg_rag.domain.models import Config, Entity
-from unified_kg_rag.shared.utils.legal_forms import latin_legal_form, strip_legal_forms
 
 pytestmark = pytest.mark.unit
 

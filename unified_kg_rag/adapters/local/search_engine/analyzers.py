@@ -23,10 +23,19 @@ with it. Approximations of the OpenSearch analyzers of the same names:
 - ``cjk``, ``nori``, ``kuromoji`` and ``smartcn``: the same analyzer as ``standard``.
   The bigrams stand in for their morphological analysis: recall on a
   word-in-compound query is comparable, ranking is not identical.
-- ``german``, ``french``, ``spanish``, ``italian``, ``portuguese`` and
-  ``russian`` (the default ``language_analyzers`` of those languages): the
-  same analyzer as ``standard``, without OpenSearch's stop words and
-  stemming, so an inflected query word matches only its own form.
+- ``german``, ``french``, ``spanish``, ``italian``, ``portuguese``,
+  ``russian``, ``arabic`` and ``hindi`` (the default ``language_analyzers``
+  of those languages): ``standard`` with each word of three letters or more
+  stemmed by Snowball's stemmer of the language (``snowballstemmer``, from
+  the ``[local]`` extra; without it no stemming, with one warning), where
+  OpenSearch stems with Lucene's light stemmers: an inflected query word
+  matches its other forms, the stems are not identical. No stop words.
+  ``arabic`` first normalizes as Lucene's ``ArabicNormalizer`` does (no
+  short vowels or tatweel, one alef, yeh for alef maksura, heh for teh
+  marbuta).
+- ``thai``: ``standard`` with each Thai (or other spaceless-script) run as
+  overlapping character bigrams, standing in for OpenSearch's dictionary
+  word segmentation as the bigrams do for Han, Hangul and Kana.
 - ``english``: OpenSearch's chain — possessive strip ("'s" off a token's
   end), lowercase, Lucene's 33 English stop words (``_english_``) and Porter
   stemming as Lucene's ``PorterStemmer`` (``snowballstemmer``'s "porter" with
@@ -49,7 +58,13 @@ from functools import cache, lru_cache
 
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.logging import warn_once
-from unified_kg_rag.shared.utils.scripts import DENSE_SCRIPT_LETTERS
+from unified_kg_rag.shared.utils.scripts import (
+    DENSE_SCRIPT_LETTERS,
+    SCRIPTS,
+    SPACELESS_SCRIPT_LETTERS,
+    Spacing,
+    drop_optional_marks,
+)
 
 logger = get_logger(__name__)
 
@@ -63,20 +78,7 @@ _ANALYZERS: dict[str, Analyzer] = {}
 # (UAX #29, which OpenSearch's standard tokenizer follows), read from
 # ``unicodedata`` on first use (about 0.1 s) so they follow the running
 # Python's Unicode version.
-#
-# Scripts written without spaces between words (line break class SA): the
-# tokenizer keeps a run of their letters and marks whole, apart from adjacent
-# letters of other scripts, without a dictionary.
-_SPACELESS_BLOCKS = (
-    (0x0E00, 0x0EFF),  # Thai, Lao
-    (0x1000, 0x109F),  # Myanmar
-    (0x1780, 0x17FF),  # Khmer
-    (0x1950, 0x19DF),  # Tai Le, New Tai Lue
-    (0x1A20, 0x1AAF),  # Tai Tham
-    (0xA9E0, 0xA9FF),  # Myanmar Extended-B
-    (0xAA60, 0xAADF),  # Myanmar Extended-A, Tai Viet
-    (0x11700, 0x1174F),  # Ahom
-)
+
 # Symbols with the Alphabetic property (circled and squared Latin letters).
 _ALPHABETIC_SYMBOLS = (
     (0x24B6, 0x24E9),
@@ -109,7 +111,16 @@ def _class(ranges: list[tuple[int, int]]) -> str:
 @cache
 def _word_ranges() -> dict[str, list[tuple[int, int]]]:
     """The code point ranges of each part a character plays in a word."""
-    spaceless = {cp for lo, hi in _SPACELESS_BLOCKS for cp in range(lo, hi + 1)}
+    # Scripts written without spaces between words (line break class SA):
+    # the tokenizer keeps a run of their letters and marks whole, apart from
+    # adjacent letters of other scripts, without a dictionary.
+    spaceless = {
+        cp
+        for script in SCRIPTS
+        if script.spacing is Spacing.SPACELESS
+        for lo, hi in script.ranges
+        for cp in range(lo, hi + 1)
+    }
     ranges: dict[str, list[tuple[int, int]]] = {
         role: [] for role in ("spaceless", "letter", "digit", "extend", "connector")
     }
@@ -192,6 +203,7 @@ def _dense_run(astral: bool) -> re.Pattern[str]:
 
 
 _NOT_DENSE = re.compile(f"[^{DENSE_SCRIPT_LETTERS}]+")
+_SPACELESS_START = re.compile(f"[{SPACELESS_SCRIPT_LETTERS}]")
 _ASTRAL = re.compile("[\U00010000-\U0010ffff]")
 
 
@@ -237,15 +249,24 @@ def _bigrams(run: str) -> list[str]:
     return [run[i : i + 2] for i in range(len(run) - 1)]
 
 
-def _tokens(text: str, word_filter: Callable[[str], str | None]) -> list[str]:
+def _tokens(
+    text: str,
+    word_filter: Callable[[str], str | None],
+    *,
+    spaceless_bigrams: bool = False,
+) -> list[str]:
     """Words of ``text`` lowercased (each kept by ``word_filter``, which may
-    rewrite or drop it), dense-script runs as bigrams."""
+    rewrite or drop it), dense-script runs as bigrams, and with
+    ``spaceless_bigrams`` the runs of a spaceless script (Thai) too."""
     tokens: list[str] = []
     # Per character, as Lucene lowercases: "İ" -> "i" (``str.lower`` adds a
     # combining dot), "Σ" -> "σ" (``str.lower`` makes a final one "ς").
     text = text.replace("\u0130", "i").replace("\u03a3", "\u03c3").lower()
     astral = not text.isascii() and _ASTRAL.search(text) is not None
     for word in _word_pattern(astral).findall(text):
+        if spaceless_bigrams and _SPACELESS_START.match(word):
+            tokens.extend(_bigrams(word))
+            continue
         if word.isascii():
             # No dense-script letter: the split would return the word whole.
             if (kept := word_filter(word)) is not None:
@@ -260,19 +281,7 @@ def _tokens(text: str, word_filter: Callable[[str], str | None]) -> list[str]:
     return tokens
 
 
-@register_analyzer(
-    STANDARD,
-    "cjk",
-    "nori",
-    "kuromoji",
-    "smartcn",
-    "german",
-    "french",
-    "spanish",
-    "italian",
-    "portuguese",
-    "russian",
-)
+@register_analyzer(STANDARD, "cjk", "nori", "kuromoji", "smartcn")
 def standard_analyzer(text: str) -> list[str]:
     return _tokens(text, lambda word: word)
 
@@ -365,3 +374,73 @@ def english_analyzer(text: str) -> list[str]:
         return stem(word) if stem is not None and len(word) > 2 else word
 
     return _tokens(text, keep)
+
+
+@cache
+def _snowball_stem(algorithm: str) -> Callable[[str], str] | None:
+    """Snowball's stemmer ``algorithm`` ("german"), one word at a time;
+    ``None`` (with one warning) without ``snowballstemmer``."""
+    try:
+        import snowballstemmer
+    except ImportError:
+        warn_once(
+            logger,
+            f"stemmer:{algorithm}",
+            "snowballstemmer is not installed, so the embedded search engine's "
+            "'%s' analyzer does not stem (install the [local] extra)",
+            algorithm,
+        )
+        return None
+    stemmer = snowballstemmer.stemmer(algorithm)
+    lock = threading.Lock()  # a stemmer object is not thread-safe
+
+    @lru_cache(maxsize=1 << 16)
+    def stem(word: str) -> str:
+        with lock:
+            result: str = stemmer.stemWord(word)
+        return result
+
+    return stem
+
+
+def _stemming_analyzer(
+    algorithm: str, normalize: Callable[[str], str] | None = None
+) -> Analyzer:
+    """``standard`` with each word stemmed by Snowball's ``algorithm``,
+    after ``normalize`` (the text before tokenizing)."""
+
+    def analyzer(text: str) -> list[str]:
+        stem = _snowball_stem(algorithm)
+        if normalize is not None:
+            text = normalize(text)
+        if stem is None:
+            return _tokens(text, lambda word: word)
+        return _tokens(text, lambda word: stem(word) if len(word) > 2 else word)
+
+    return analyzer
+
+
+# Lucene's ArabicNormalizer: no tatweel or short vowels (the optional marks),
+# one alef for its hamza and madda forms, yeh for alef maksura, heh for teh
+# marbuta.
+_ARABIC_FOLDS = str.maketrans({"آ": "ا", "أ": "ا", "إ": "ا", "ى": "ي", "ة": "ه"})
+
+
+def _normalize_arabic(text: str) -> str:
+    # NFKC first: it folds the presentation forms to the letters.
+    return drop_optional_marks(unicodedata.normalize("NFKC", text)).translate(
+        _ARABIC_FOLDS
+    )
+
+
+for _language in ("german", "french", "spanish", "italian", "portuguese", "russian"):
+    register_analyzer(_language)(_stemming_analyzer(_language))
+register_analyzer("arabic")(_stemming_analyzer("arabic", _normalize_arabic))
+register_analyzer("hindi")(_stemming_analyzer("hindi"))
+
+
+@register_analyzer("thai")
+def thai_analyzer(text: str) -> list[str]:
+    # OpenSearch's thai tokenizer segments words with a dictionary; the
+    # bigrams of a run stand in for it, as for Han, Hangul and Kana.
+    return _tokens(text, lambda word: word, spaceless_bigrams=True)

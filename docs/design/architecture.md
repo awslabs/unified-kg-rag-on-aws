@@ -57,6 +57,16 @@ down (the application imports the domain directly, every layer the kernel).
   `adapters/ingestion/document_converter.py`, the rich console helpers in
   `application/cli/display.py`. `setup_logging` takes the configuration
   structurally (`shared.logging.HasLoggingSettings`).
+- **Languages in one registry.** `shared/utils/scripts.py` holds the one
+  Unicode script table (letter blocks; spacing: dense, spaceless or spaced;
+  optional marks; characters per token) and `shared/utils/sentences.py` the
+  one set of sentence marks. `domain/languages/` holds one `LanguageProfile`
+  per `LanguageCode` under `profiles/` (name, script, OpenSearch analyzer,
+  decline reply, function words, claim status, placeholder and month words,
+  legal forms, yes/no words, quote pairs) and the rule by which a text's
+  script decides its language (`dense_language`, `text_language`). A
+  consumer reads the union over the profiles, not a word list of its own;
+  `tests/unit/test_languages.py` lists each profile's known gaps.
 - **Evaluation reaches the stores through the chain** (its retrievers,
   `GraphRAGChain.check_filter_values` / `check_filter_keys`) and imports no
   store adapter.

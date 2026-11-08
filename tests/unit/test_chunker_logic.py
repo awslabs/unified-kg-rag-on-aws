@@ -901,6 +901,22 @@ class TestSplitterSeparators:
         assert len(chunks) > 1
         assert all(c.rstrip()[-1] in ".!?" for c in chunks), chunks
 
+    @pytest.mark.parametrize(
+        ("sentence", "stop"),
+        [
+            ("आपूर्तिकर्ता ने गोदाम में इकाइयाँ पहुँचाईं।", "।"),
+            ("هل سلّم المورد الوحدات إلى المستودع؟", "؟"),
+            ("سپلائر نے گودام میں سامان پہنچایا۔", "۔"),
+        ],
+    )
+    def test_a_long_paragraph_splits_after_a_danda_or_an_arabic_stop(
+        self, sentence: str, stop: str
+    ) -> None:
+        splitter = SimpleTextChunker._create_splitter(100, 0)
+        chunks = splitter.split_text(" ".join([sentence] * 8))
+        assert len(chunks) > 1
+        assert all(c.rstrip()[-1] == stop for c in chunks), chunks
+
 
 # --------------------------------------------------------------------------- #
 # IntelligentTextChunker — boundary answers kept across runs

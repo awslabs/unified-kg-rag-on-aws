@@ -4,12 +4,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
+import tempfile
 import threading
+from pathlib import Path
+from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
 
+from tests.fixtures.language_matrix import MATRIX, MATRIX_IDS
 from unified_kg_rag.adapters.aws import token_counter
 from unified_kg_rag.adapters.aws.token_counter import (
     BedrockTokenCounter,
@@ -30,31 +36,64 @@ class TestEstimateTokenCount:
     def test_empty_is_zero(self) -> None:
         assert estimate_token_count("") == 0
 
-    def test_english_uses_word_count(self) -> None:
-        # 5 short words; char/4 (~5) and word count (5) are comparable.
-        assert estimate_token_count("the quick brown fox jumps") >= 5
-
-    def test_spaceless_cjk_not_undercounted(self) -> None:
-        # Whitespace split would yield 1 and a flat chars/4 would yield len/4
-        # (~4x too low). Dense CJK/Hangul chars must be counted at ~1 token each
-        # so an over-limit chunk is truncated before the embedding call rather
-        # than slipping past and failing with "Too many input tokens".
-        text = "한국어문장입니다이것은긴문장이다"  # 16 chars, 0 spaces
-        assert estimate_token_count(text) == len(text)
-        assert estimate_token_count(text) > len(text) // 4
-        assert estimate_token_count(text) > len(text.split())
-
-    def test_latin_uses_char_over_four(self) -> None:
-        # Non-dense scripts stay at ~4 chars/token (word count floors it).
-        text = "the quick brown fox jumps over the lazy dog"
-        assert estimate_token_count(text) <= len(text) // 4 + len(text.split())
-
-    def test_mixed_script_adds_dense_and_sparse(self) -> None:
-        # 4 dense chars (~4 tokens) + 8 latin chars (~2 tokens) ~= 6.
-        assert estimate_token_count("한국어문 abcdefgh") >= 5
-
     def test_never_zero_for_nonempty(self) -> None:
         assert estimate_token_count("가") == 1
+        assert estimate_token_count("a") == 1
+
+    def test_space_delimited_text_counts_at_least_its_words(self) -> None:
+        assert estimate_token_count("a b c d e f g h") == 8
+
+
+# English, beside the language matrix: its text and its cl100k / o200k counts.
+_ENGLISH = (
+    "The vendor delivered the lidar units to the warehouse on the second of "
+    "June. The buyer approved the invoice after the inspection.",
+    (25, 24),
+)
+_BPE_SAMPLES = [(s.text, s.bpe_tokens) for s in MATRIX] + [_ENGLISH]
+_BPE_IDS = [*MATRIX_IDS, "en"]
+
+
+@pytest.mark.parametrize(("text", "bpe_tokens"), _BPE_SAMPLES, ids=_BPE_IDS)
+def test_the_estimate_lies_between_two_bpe_vocabularies(
+    text: str, bpe_tokens: tuple[int, int]
+) -> None:
+    # Against real tokenizers, not the formula: at least half what the
+    # coarser vocabulary (cl100k) counts, so an over-limit text is cut before
+    # the call, and at most twice what the finer one (o200k) counts, so a
+    # budget is not wasted. A flat 4 characters per token counted a quarter
+    # of the Hindi, Thai and Hebrew tokens.
+    estimate = estimate_token_count(text)
+    assert max(bpe_tokens) / 2 <= estimate <= 2 * min(bpe_tokens), estimate
+
+
+def _cached_encodings() -> list[Any]:
+    tiktoken = pytest.importorskip("tiktoken")
+
+    cache = Path(
+        os.environ.get("TIKTOKEN_CACHE_DIR")
+        or os.environ.get("DATA_GYM_CACHE_DIR")
+        or Path(tempfile.gettempdir()) / "data-gym-cache"
+    )
+    urls = [
+        "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken",
+        "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken",
+    ]
+    if not all(
+        (cache / hashlib.sha1(u.encode(), usedforsecurity=False).hexdigest()).exists()
+        for u in urls
+    ):
+        pytest.skip("tiktoken's cl100k_base and o200k_base are not cached")
+    return [tiktoken.get_encoding(n) for n in ("cl100k_base", "o200k_base")]
+
+
+@pytest.mark.parametrize(("text", "bpe_tokens"), _BPE_SAMPLES, ids=_BPE_IDS)
+def test_the_recorded_bpe_counts_are_tiktokens(
+    text: str, bpe_tokens: tuple[int, int]
+) -> None:
+    # Run where tiktoken has both vocabularies cached (no download).
+    encodings = _cached_encodings()
+    assert tuple(len(e.encode(text)) for e in encodings) == bpe_tokens
 
 
 def test_count_tokens_degrades_to_script_aware_estimate(mocker) -> None:

@@ -7,7 +7,6 @@ from __future__ import annotations
 import pytest
 
 from unified_kg_rag.domain.models import LanguageCode
-from unified_kg_rag.domain.retrieval import no_context
 from unified_kg_rag.domain.retrieval.no_context import (
     NO_CONTEXT_ANSWER,
     NO_CONTEXT_ANSWERS,
@@ -31,13 +30,6 @@ def test_every_language_has_its_own_reply() -> None:
     )
 
 
-def test_the_function_word_lists_are_disjoint() -> None:
-    lists = list(no_context._FUNCTION_WORDS.values())
-    for i, words in enumerate(lists):
-        for other in lists[i + 1 :]:
-            assert not words & other
-
-
 @pytest.mark.parametrize(
     ("query", "language"),
     [
@@ -53,6 +45,11 @@ def test_the_function_word_lists_are_disjoint() -> None:
         ("Qui est le fournisseur et quand livre-t-il?", LanguageCode.FR),
         ("Chi è il fornitore della merce?", LanguageCode.IT),
         ("Quem é o fornecedor do comprador?", LanguageCode.PT),
+        # The script most of the letters are in decides, not the first found.
+        ("What does 계약 mean in the Vendor contract?", EN),
+        ("AWS Lambda 함수의 최대 실행 시간은 얼마입니까?", KO),
+        ("Acme社の売上高(매출)はいくらですか？", LanguageCode.JA),
+        ("供給者는 購買者에게 部品을 供給한다", KO),
     ],
 )
 def test_the_reply_follows_the_query_language(

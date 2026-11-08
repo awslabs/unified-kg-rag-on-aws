@@ -6,6 +6,8 @@ Import configuration names from this package, not from its private
 ``_*`` modules: the split is an implementation detail.
 """
 
+from unified_kg_rag.domain.languages import LanguageCode, language_name
+
 from ._aws import (
     AWSConfig,
     BedrockConfig,
@@ -20,15 +22,12 @@ from ._aws import (
     TransientRetryConfig,
 )
 from ._common import (
-    _LANGUAGE_NAMES,
     ChunkingStrategy,
     ChunkLengthUnit,
     Constants,
-    LanguageCode,
     PipelineStageType,
     ResolutionMethod,
     S3EncryptionType,
-    language_name,
 )
 from ._evaluation import (
     REMOVED_EVALUATORS,
@@ -176,7 +175,6 @@ __all__ = [
     "_coerce_model_id",
     "_EVALUATION_ROLE_FIELD",
     "_known_member",
-    "_LANGUAGE_NAMES",
     "_over_default_citations",
     "_over_default_styles",
     "_plain",

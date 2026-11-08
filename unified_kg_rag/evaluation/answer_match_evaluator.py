@@ -104,6 +104,7 @@ from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.retrieval.citations import citations_enabled
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
+from unified_kg_rag.domain.languages import profiles
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -180,28 +181,14 @@ def exact_match(
     return float(normalize(prediction) == normalize(reference))
 
 
-# Yes/no answer words, by language, mapped to their polarity. A short
-# polarity gold ("예", "是") would match inside unrelated words as a CJK
-# substring ("예를 들어", "这是"), so it is never phrase-matched.
+# Yes/no answer words of every language (``LanguageProfile.polarity_words``),
+# mapped to their polarity. A short polarity gold ("예", "是") would match
+# inside unrelated words as a CJK substring ("예를 들어", "这是"), so it is
+# never phrase-matched.
 _POLARITY = {
-    "yes": "yes",
-    "no": "no",
-    "nope": "no",
-    "예": "yes",
-    "네": "yes",
-    "아니요": "no",
-    "아니오": "no",
-    "아닙니다": "no",
-    "是": "yes",
-    "是的": "yes",
-    "对": "yes",
-    "对的": "yes",
-    "否": "no",
-    "不是": "no",
-    "不是的": "no",
-    "没有": "no",
-    "はい": "yes",
-    "いいえ": "no",
+    word: polarity
+    for language in profiles()
+    for word, polarity in language.polarity_words.items()
 }
 # A hyphen (ASCII or U+2010, which NFKC makes of the non-breaking U+2011)
 # joins the word to the next one ("no-cap"), so it is not a whole word.

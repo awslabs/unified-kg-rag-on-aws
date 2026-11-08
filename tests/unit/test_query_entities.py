@@ -28,6 +28,8 @@ pytestmark = pytest.mark.unit
         # The whole list quoted, as the prompt's example shows it.
         ('"Vendor, Buyer"', ["Vendor", "Buyer"]),
         ("「供給者」、「倉庫」。", ["供給者", "倉庫"]),
+        # Arabic commas and semicolons.
+        ("المورد، المشتري؛ المستودع", ["المورد", "المشتري", "المستودع"]),
         # A quoted item keeps its comma; a number keeps its separator.
         ('"Vendor, Inc.", Buyer', ["Vendor, Inc.", "Buyer"]),
         ("1,000 units, Depot", ["1,000 units", "Depot"]),
