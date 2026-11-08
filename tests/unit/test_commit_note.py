@@ -444,3 +444,32 @@ def test_a_noted_entity_without_edges_is_derived_again(mocker, delta) -> None:
     manager._merge._merge_suffix("default", delta, [])
 
     assert "e-noted" in {e.id for e in derive.call_args.args[1]}
+
+
+def test_a_failure_naming_no_id_keeps_every_old_id() -> None:
+    # Which items it failed on is unknown: any old id may be the one whose
+    # new item was not written.
+    manager, _, _ = _manager()
+    manager._rekeyed["default"] = {"e-old": "e-new"}
+
+    assert manager._untouched_by(
+        {"graph_entities": _failed()},
+        [],
+        manager._retired_ids(),
+        manager._rekeyed,
+    ) == ({}, {})
+
+
+def test_an_old_id_a_failed_edge_touches_is_kept() -> None:
+    manager, _, _ = _manager()
+    manager._rekeyed["default"] = {"e-old": "e-new", "f-old": "f-new"}
+    edge = Relationship(id="r1", source_id="e-new", target_id="hub")
+    stats = IndexingStats(total_items=1)
+    stats.add_error("endpoint entity write failed", ids=["r1"])
+
+    kept, moved = manager._untouched_by(
+        {"graph_relationships": stats}, [edge], manager._retired_ids(), manager._rekeyed
+    )
+
+    assert kept == {"default": ["f-old"]}
+    assert moved == {"default": {"f-old": "f-new"}}

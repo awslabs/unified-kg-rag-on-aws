@@ -853,7 +853,11 @@ class IndexingManager:
             for i in items
         ]
 
-    def delete_retired_ids(self) -> dict[str, IndexingStats]:
+    def delete_retired_ids(
+        self,
+        failed: Mapping[str, IndexingStats] | None = None,
+        written: Iterable[Any] = (),
+    ) -> dict[str, IndexingStats]:
         """Delete the items whose ids a derivation replaced (see
         ``Derived.id_remap``) from both stores.
 
@@ -862,10 +866,18 @@ class IndexingManager:
         drops no edge still in use. A suffix whose stored reports could not
         be pointed at the new ids keeps its old ids (the failure is in the
         results, so the caller keeps its note and a later run retries both).
+
+        After a commit some of whose writes failed (``failed``: its results;
+        ``written``: the items it wrote), only the old ids no failed write
+        touches are deleted (:meth:`_untouched_by`): one whose new item, or
+        an edge at it, failed keeps its old copy, which the commit note
+        leaves to a later commit. A failure that names no id keeps them all.
         """
         retired = self._retired_ids()
-        vector_only = dict(self._vector_only)
         rekeyed = {suffix: dict(rekey) for suffix, rekey in self._rekeyed.items()}
+        if failed is not None:
+            retired, rekeyed = self._untouched_by(failed, written, retired, rekeyed)
+        vector_only = dict(self._vector_only)
         self._reset_run_state()
         # The stored community reports citing an old id cite the new one
         # first: deleted, nothing would point them at it.
@@ -880,6 +892,43 @@ class IndexingManager:
                 sum(len(ids) for ids in retired.values()),
             )
         return {**repointed, **self.delete_documents(retired, vector_only)}
+
+    def _untouched_by(
+        self,
+        failed: Mapping[str, IndexingStats],
+        written: Iterable[Any],
+        retired: Mapping[str, list[str]],
+        rekeyed: Mapping[str, Mapping[str, str]],
+    ) -> tuple[dict[str, list[str]], dict[str, dict[str, str]]]:
+        """The ``retired`` ids (and ``rekeyed`` pairs) no failed write
+        touches: neither the old id nor its new one failed, nor an edge at
+        either; a dropped edge only in a suffix with no failed write. None
+        when a failure names no id."""
+        if any(stats.unattributed_failures for stats in failed.values() if stats):
+            return {}, {}
+        failed_ids = {i for stats in failed.values() if stats for i in stats.failed_ids}
+        if not failed_ids:
+            return dict(retired), {s: dict(r) for s, r in rekeyed.items()}
+        touched = set(failed_ids)
+        failing_suffixes: set[str] = set()
+        for item in written:
+            if item.id in failed_ids:
+                failing_suffixes.add(BaseIndexer.get_suffix(item))
+                if isinstance(item, Relationship):
+                    touched.update((item.source_id, item.target_id))
+        kept: dict[str, list[str]] = {}
+        moved: dict[str, dict[str, str]] = {}
+        for suffix, ids in retired.items():
+            rekey = rekeyed.get(suffix, {})
+            free = [
+                i
+                for i in ids
+                if (i in rekey and i not in touched and rekey[i] not in touched)
+                or (i not in rekey and suffix not in failing_suffixes)
+            ]
+            kept[suffix] = free
+            moved[suffix] = {old: rekey[old] for old in free if old in rekey}
+        return kept, moved
 
     def _retired_ids(self) -> dict[str, list[str]]:
         """By suffix, the ids this run's derivations re-keyed away or

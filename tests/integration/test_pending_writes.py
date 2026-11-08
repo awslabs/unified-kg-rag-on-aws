@@ -446,3 +446,21 @@ def test_a_large_note_is_split_into_parts(monkeypatch) -> None:
     assert harness.state() == expected_state(_CORPUS, harness.config)
     assert _note(harness) is None
     assert harness.vector.read_extraction_records(note["parts"]) == {}
+
+
+def test_a_write_that_keeps_failing_holds_back_only_the_re_keys_it_touches() -> None:
+    # A hub whose write keeps failing kept every other re-keyed item's old
+    # copy too, for as long as it failed.
+    harness = _harness()
+    before, after = _SPELLINGS
+    after = {**after, "/corpus/v.txt": [[(_V, _C, 1)]]}
+    vendor = _id(_V)
+    harness.run(before)
+
+    harness.run(after, fail=_rejecting("graph.upsert_entities", vendor))
+
+    want = expected_state(after, harness.config)
+    stale = set(harness.state()["graph_edges"]) - set(want["graph_edges"])
+    assert stale == set()
+    harness.run(after)
+    assert harness.state() == want
