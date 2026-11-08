@@ -135,8 +135,9 @@ stored is read again: follow *Upgrading* in order.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
   `true`), at the end of every run that indexed, from the namespace's stores, and prints its path;
   `run-visualization` renders it (without `--data-path` the newest export, of `--suffix`'s namespace when given)
-  with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are gone. `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown
-  key (#344, #467). See [visualize](docs/guides/visualize.md).
+  with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are gone.
+  `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown key (#344,
+  #467). See [visualize](docs/guides/visualize.md).
 - Environment variables: `UKR__<SECTION>__<KEY>` sets any key (double underscores between segments, any case, JSON
   for lists and mappings); the 0.2.3 names are no longer read (#335). `NEPTUNE_ENDPOINT` is
   `UKR__AWS__NEPTUNE__ENDPOINT`; `OPENSEARCH_ENDPOINT` / `_USERNAME` / `_PASSWORD` are
@@ -822,10 +823,10 @@ From a `main` checkout (formats and keys no release had):
   exported graph (search, neighbourhoods, communities, degree, schema conformance, seed versus document evidence); a
   dashboard of the questions and jobs run through it (time, tokens, cost per strategy, model and role); and edit the
   config file with validation, a diff before saving, a confirmation before a provider endpoint or a file or directory
-  path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged `run-ingestion` and `run-eval` in
-  child processes. It binds `127.0.0.1` (another address needs `--allow-remote`), requires a per-launch access token,
-  refuses paths outside its directories, cross-site requests and uploads of a type ingestion does not read, writes an
-  upload all or none, and loads nothing from another host. The web client
+  path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged
+  `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),
+  requires a per-launch access token, refuses paths outside its directories, cross-site requests and uploads of a
+  type ingestion does not read, writes an upload all or none, and loads nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
   figures; self-hosted, SIL OFL), with a force-directed canvas graph (the focused node and its neighbours labelled,
