@@ -1342,41 +1342,57 @@ def _cache_warnings(strategies: Mapping[str, Any], names: Sequence[str]) -> list
 DEFAULT_PRIMARY_METRIC = "answer_match/answer_contains"
 
 
+# The Holm families of a comparison, by kind of test (``FAMILY_KINDS``),
+# and the prefix of the families of ``run-eval --arm`` comparisons.
+FAMILY_KINDS = ("primary", "secondary", "cost", "pairwise")
+ARM_FAMILY_PREFIX = "arm_"
+
+
 def adjust_for_multiplicity(
     comparison: dict[str, Any],
     *,
     primary_metric: str | None = None,
     exclude: Collection[str] = (),
+    arms: Collection[str] = (),
 ) -> dict[str, Any]:
     """Add Holm-adjusted p-values and intervals to ``comparison``'s deltas.
 
     A comparison reads many deltas, and each 95% interval excludes 0 on
     noise alone in 5% of runs: over ten metrics a clean change shows a
     "supported" difference in 30-40% of runs. So the deltas fall into
-    families, each adjusted over its tests (every compared strategy but
-    ``exclude``, the closed-book arms, times its measures):
+    families, each adjusted over its tests (every compared run but
+    ``exclude``, the closed-book and A/A arms, times its measures):
 
     - ``primary``: ``primary_metric`` (default ``DEFAULT_PRIMARY_METRIC``
       when a strategy scored it), the one metric declared in advance, so
       adjusted only over the compared strategies (with one, unadjusted);
     - ``secondary``: every other metric of ``deltas_vs_baseline`` with
       per-query deltas (``abstention/precision``, a ratio, has none);
-    - ``cost``: the measures of ``cost.deltas_vs_baseline``.
+    - ``cost``: the measures of ``cost.deltas_vs_baseline``;
+    - ``pairwise``: the pairwise judge's criteria
+      (``pairwise_vs_baseline.<s>.criteria.<c>``), each a test of its win
+      rate against 0.5 (the per-query scores minus 0.5).
 
-    Each delta gets ``family``, ``adjusted_p_value`` (Holm over the family,
+    The runs of ``arms`` (``run-eval --arm`` runs, each against its own
+    strategy's base run) answer another question than the strategies
+    compared with the first, so their tests form families of their own,
+    the same four named ``arm_primary`` and so on.
+
+    Each test gets ``family``, ``adjusted_p_value`` (Holm over the family,
     from the sign-flip ``p_value``) and ``adjusted_ci_low`` /
-    ``adjusted_ci_high``: the paired bootstrap interval at confidence
-    ``1 - alpha / m`` (Bonferroni over the family's ``m`` tests, so
-    simultaneous for the family and a little wider than Holm's decision
-    needs: read ``adjusted_p_value`` for whether a difference counts, the
-    interval for its size). Both read ``family_resamples`` resamples (at
-    least ``FAMILY_RESAMPLES_FACTOR * m / alpha``): a p-value under alpha is
-    drawn again from that many sign patterns (``p_value_resamples``), so the
-    Monte Carlo floor ``1 / (1 + resamples)`` times ``m`` stays far below
-    alpha, and the interval's ``alpha / (2 m)`` tails hold enough resampled
-    means. ``deltas_by_category`` stays unadjusted (exploratory). Returns
-    ``comparison``, with a ``multiplicity`` block (each family's ``tests``,
-    ``interval_confidence`` and ``resamples``).
+    ``adjusted_ci_high``: the paired bootstrap interval (of the win rate
+    for a pairwise criterion) at confidence ``1 - alpha / m`` (Bonferroni
+    over the family's ``m`` tests, so simultaneous for the family and a
+    little wider than Holm's decision needs: read ``adjusted_p_value`` for
+    whether a difference counts, the interval for its size). Both read
+    ``family_resamples`` resamples (at least ``FAMILY_RESAMPLES_FACTOR * m /
+    alpha``): a p-value under alpha is drawn again from that many sign
+    patterns (``p_value_resamples``), so the Monte Carlo floor ``1 / (1 +
+    resamples)`` times ``m`` stays far below alpha, and the interval's
+    ``alpha / (2 m)`` tails hold enough resampled means.
+    ``deltas_by_category`` and ``deltas_by_closed_book`` stay unadjusted
+    (exploratory). Returns ``comparison``, with a ``multiplicity`` block
+    (each family's ``tests``, ``interval_confidence`` and ``resamples``).
     """
     stats = comparison.get("bootstrap") or {}
     resamples = int(stats.get("resamples", 2000))
@@ -1385,10 +1401,11 @@ def adjust_for_multiplicity(
     alpha = 1.0 - confidence
     deltas = comparison.get("deltas_vs_baseline") or {}
     cost = (comparison.get("cost") or {}).get("deltas_vs_baseline") or {}
-    compared = [s for s in deltas if s not in exclude]
+    pairwise = comparison.get("pairwise_vs_baseline") or {}
+    compared = [s for s in dict.fromkeys([*deltas, *pairwise]) if s not in exclude]
     primary: str | None = primary_metric or DEFAULT_PRIMARY_METRIC
     if not any(primary in (deltas.get(s) or {}) for s in compared):
-        if primary_metric is not None and compared:
+        if primary_metric is not None and any(s in deltas for s in compared):
             warning = (
                 f"The primary metric '{primary}' has no paired delta in this "
                 "comparison: every metric is tested as secondary (Holm over "
@@ -1397,18 +1414,26 @@ def adjust_for_multiplicity(
             logger.warning("%s", warning)
             comparison.setdefault("warnings", []).append(warning)
         primary = None
-    families: dict[str, list[dict[str, Any]]] = {
-        "primary": [],
-        "secondary": [],
-        "cost": [],
+    # Per family, its tests: the statistic and the value of its null.
+    families: dict[str, list[tuple[dict[str, Any], float]]] = {
+        f"{prefix}{kind}": []
+        for prefix in ("", ARM_FAMILY_PREFIX)
+        for kind in FAMILY_KINDS
     }
     for strategy in compared:
+        prefix = ARM_FAMILY_PREFIX if strategy in arms else ""
         for key, delta in (deltas.get(strategy) or {}).items():
             if "p_value" in delta and "per_query" in delta:
-                families["primary" if key == primary else "secondary"].append(delta)
+                kind = "primary" if key == primary else "secondary"
+                families[prefix + kind].append((delta, 0.0))
         for delta in (cost.get(strategy) or {}).values():
             if "p_value" in delta and "per_query" in delta:
-                families["cost"].append(delta)
+                families[prefix + "cost"].append((delta, 0.0))
+        for criterion in (
+            (pairwise.get(strategy) or {}).get("criteria") or {}
+        ).values():
+            if criterion.get("p_value") is not None and criterion.get("per_query"):
+                families[prefix + "pairwise"].append((criterion, 0.5))
     summary: dict[str, Any] = {}
     for name, members in families.items():
         if not members:
@@ -1419,24 +1444,28 @@ def adjust_for_multiplicity(
         # falls below the raw one): those are read again from enough sign
         # patterns that the Monte Carlo floor is no bound.
         reread = [
-            d for d in members if scaled > resamples and float(d["p_value"]) < alpha
+            (d, null)
+            for d, null in members
+            if scaled > resamples and float(d["p_value"]) < alpha
         ]
         p_values = sign_flip_p_values(
-            [list(d["per_query"].values()) for d in reread],
+            [[v - null for v in d["per_query"].values()] for d, null in reread],
             resamples=scaled,
             seed=seed,
         )
-        for delta, p_value in zip(reread, p_values, strict=True):
+        for (delta, _), p_value in zip(reread, p_values, strict=True):
             delta["p_value"] = p_value
             delta["p_value_resamples"] = scaled
-        adjusted = holm_adjusted([float(d["p_value"]) for d in members])
+        adjusted = holm_adjusted([float(d["p_value"]) for d, _ in members])
         intervals = bootstrap_cis(
-            [list(d["per_query"].values()) for d in members],
+            [list(d["per_query"].values()) for d, _ in members],
             resamples=scaled,
             confidence=level,
             seed=seed,
         )
-        for delta, value, (low, high) in zip(members, adjusted, intervals, strict=True):
+        for (delta, _), value, (low, high) in zip(
+            members, adjusted, intervals, strict=True
+        ):
             delta.update(
                 family=name,
                 adjusted_p_value=value,

@@ -75,7 +75,12 @@ def _win_rate(stats: Mapping[str, Any] | None) -> str:
     rate = f"{stats['candidate_win_rate']:.2f}"
     if stats.get("ci_low") is None:
         return rate
-    return f"{rate} [{stats['ci_low']:.2f}, {stats['ci_high']:.2f}]"
+    holm = (
+        f" (Holm p {stats['adjusted_p_value']:.3g})"
+        if stats.get("adjusted_p_value") is not None
+        else ""
+    )
+    return f"{rate} [{stats['ci_low']:.2f}, {stats['ci_high']:.2f}]{holm}"
 
 
 def _dist(stats: Mapping[str, float] | None, digits: int = 1) -> str:

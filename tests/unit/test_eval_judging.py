@@ -967,6 +967,39 @@ def test_the_markdown_report_has_the_length_table() -> None:
     assert "| global vs local | 0.91-1.1x | 1 | 0.50 |" in markdown
 
 
+def test_the_markdown_report_has_the_slot_effect_and_holm_p() -> None:
+    comparison = {
+        "baseline": "local",
+        "baselines": {"global": "local"},
+        "strategies": {"local": {"metrics": {}}, "global": {"metrics": {}}},
+        "deltas_vs_baseline": {"global": {}},
+        "pairwise_vs_baseline": {
+            "global": {
+                "mode": "differential",
+                "judged": 2,
+                "failed": 0,
+                "position_consistency": 1.0,
+                "criteria": {
+                    "comprehensiveness": {
+                        "candidate_win_rate": 0.75,
+                        "ci_low": 0.5,
+                        "ci_high": 1.0,
+                        "adjusted_p_value": 0.0312,
+                    }
+                },
+                "slots": {
+                    "order": list(pairwise.SPLIT_SLOTS),
+                    "criteria": {"comprehensiveness": {"slot_effect": 0.165}},
+                },
+            }
+        },
+    }
+    markdown = comparison_markdown(comparison)
+    assert "0.75 [0.50, 1.00] (Holm p 0.0312)" in markdown
+    assert "Split slot effect" in markdown
+    assert "| global vs local | +0.17 |" in markdown
+
+
 def test_the_judge_prompts_declare_their_variables() -> None:
     for prompt in (
         PairwiseOverlapPrompt,

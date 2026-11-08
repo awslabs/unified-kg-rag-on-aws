@@ -5,9 +5,10 @@
 Configuration arms (an A/A copy and citations off) answer one dataset next to
 the base configuration, each with its own chain and evaluation manager,
 interleaved with the base runs; each arm run is compared with the same
-strategy's base run, the arms are Holm-adjusted with the strategies, the
-manifests record the overlays, and ``--from-results`` rebuilds the same
-comparison. The models are the Ollama adapters against a fake server, the
+strategy's base run, the arms are Holm-adjusted in families of their own
+apart from the strategies, the A/A arms not at all (their deltas are the
+noise floor), the manifests record the overlays, and ``--from-results``
+rebuilds the same comparison. The models are the Ollama adapters against a fake server, the
 stores the SQLite ones: no container, no AWS.
 """
 
@@ -148,13 +149,21 @@ def test_configuration_arms_are_answered_paired_and_rebuilt(
         "local@uncited": "local",
         "mix@uncited": "mix",
     }
-    # The arms are tested with the strategies: Holm over five comparisons.
+    # The strategies against the first, the arms against their base runs:
+    # separate Holm families; the A/A arms are the noise floor, unadjusted.
     families = comparison["multiplicity"]["families"]
-    assert families["primary"]["tests"] == len(_LABELS) - 1
+    assert families["primary"]["tests"] == 1
+    assert families["arm_primary"]["tests"] == 2
+    assert comparison["aa_arms"] == ["local@aa", "mix@aa"]
+    assert comparison["multiplicity"]["unadjusted"] == ["local@aa", "mix@aa"]
     aa_delta = comparison["deltas_vs_baseline"]["local@aa"][
         "answer_match/answer_contains"
     ]
-    assert aa_delta["mean_delta"] == 0.0 and aa_delta["family"] == "primary"
+    assert aa_delta["mean_delta"] == 0.0 and "family" not in aa_delta
+    uncited_delta = comparison["deltas_vs_baseline"]["mix@uncited"][
+        "answer_match/answer_contains"
+    ]
+    assert uncited_delta["family"] == "arm_primary"
     # The citations arm differs from the base in search.citations.enabled.
     assert any("whether their answers cite" in w for w in comparison["warnings"])
     # Each arm run's manifest names its overlay; its files carry its label.
@@ -173,6 +182,7 @@ def test_configuration_arms_are_answered_paired_and_rebuilt(
         "overlay": str(uncited),
         "overlay_sha256": hashlib.sha256(uncited.read_bytes()).hexdigest(),
         "suffix": None,
+        "aa": False,
     }
     assert manifest["citations"]["enabled"] is False
     assert manifest["run_order"] == "interleaved" and manifest["repeat"] == 1
@@ -191,6 +201,8 @@ def test_configuration_arms_are_answered_paired_and_rebuilt(
     # interleaved runs share a start time and their stamps are random).
     assert list(again["strategies"]) == _LABELS
     assert again["baselines"] == comparison["baselines"]
+    assert again["aa_arms"] == comparison["aa_arms"]
+    assert again["multiplicity"]["families"] == families
     assert (
         again["deltas_vs_baseline"]["mix@uncited"]["answer_match/answer_contains"][
             "mean_delta"
