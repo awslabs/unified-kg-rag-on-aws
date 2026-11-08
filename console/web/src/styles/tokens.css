@@ -1,36 +1,73 @@
 /* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
- * The console's tokens (docs/design.md#101-the-console-run-console-opt-in).
- * Six named colours carry the identity; status and chart colours are
- * functional and kept apart from them.
+ * The console's tokens; the brief is console/web/DESIGN.md (a developer
+ * tool: a dark, GitHub-like palette with a matching light one, one indigo
+ * accent, a highlighter for evidence). Two first-class themes, each a full
+ * set of the same roles: light on :root, dark under data-theme="dark",
+ * which public/theme.js sets before the first paint. Contrast ratios are
+ * against --sheet unless named.
  */
 :root {
-  /* Identity */
-  --film: #eef2f3; /* drafting-film background */
-  --ink: #17212b; /* blue-black text */
-  --graphite: #5a6773; /* secondary text, 5.2:1 on film */
-  --hairline: #c9d2d8; /* rules and borders */
-  --trace: #2747d6; /* the provenance trace, focus, primary actions */
-  --highlighter: #ffd84d; /* matched terms only */
+  /* Ground and surfaces */
+  --paper: #f6f7f9; /* page ground */
+  --sheet: #ffffff; /* cards and panels */
+  --sheet-sunk: #f1f3f6; /* a well inside a card: code, diffs, inputs' ground */
+  --sheet-hover: #eceff3;
+  --overlay-bg: rgb(255 255 255 / 94%); /* a legend over the graph */
+  --rule: #d9dde3; /* borders */
+  --rule-strong: #b8bfc8;
+  --control-edge: #848c96; /* field edges, 3.4:1 on sheet, 3.2:1 on paper */
 
-  /* Surfaces derived from them */
-  --sheet: #ffffff;
-  --sheet-sunk: #f6f8f9;
-  --trace-wash: #e7ebfb;
-  --trace-ink: #1b34a6;
-  --hairline-strong: #9aa7b1;
+  /* Text */
+  --ink: #1c2128; /* 16.2:1 on sheet, 15.1:1 on paper */
+  --graphite: #59636e; /* secondary, 6.1:1 on sheet, 5.7:1 on paper */
+  --placeholder: #6b7480; /* 4.8:1 */
+  --disabled-ink: #6b7480; /* 4.3:1 on sheet-sunk, a disabled control */
 
-  /* Status (never used for identity or series) */
-  --good: #18794e;
-  --good-wash: #e3f3ea;
-  --warn: #8a5300;
-  --warn-wash: #fdf1d8;
-  --bad: #b42318;
-  --bad-wash: #fde8e6;
+  /* The accent: indigo. The trace, links, focus, the primary action. */
+  --cobalt: #4f46e5; /* 6.3:1 on sheet, 5.9:1 on paper */
+  --trace: var(--cobalt);
+  --trace-ink: #3730a3; /* accent text on its wash, 8.8:1 */
+  --trace-wash: #eef0ff;
+  --primary-bg: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-ink: #ffffff; /* 6.3:1 */
+  --primary-meta: #dcdcff;
 
-  /* Chart series: the validated categorical order (dataviz reference),
-   * first eight slots; a ninth folds into "other". */
+  /* The top bar */
+  --rail-bg: #ffffff;
+  --rail-hover: #eceff3;
+  --rail-line: #d9dde3;
+  --rail-ink: #59636e;
+  --rail-muted: #59636e;
+  --rail-strong: #1c2128;
+
+  /* The highlighter: matched evidence */
+  --highlighter: #ffd33d;
+  --mark-ink: #1c2128; /* 11.3:1 on the highlighter, in both themes */
+
+  /* Code, logs, tooltips, the graph canvas */
+  --log-bg: #0e1117;
+  --log-ink: #e6e9ee;
+  --tooltip-bg: #1c2128;
+  --tooltip-ink: #ffffff;
+  --grid-dot: rgb(28 33 40 / 10%);
+  --canvas-bg: #fbfcfd;
+  --shadow-card: 0 1px 2px rgb(28 33 40 / 6%);
+  --shadow-raised: 0 4px 16px rgb(28 33 40 / 12%);
+
+  /* Status: GitHub-like, always with a label */
+  --good: #1a7f37; /* 4.6:1 on its wash */
+  --good-wash: #dafbe1;
+  --warn: #9a6700; /* 4.5:1 */
+  --warn-wash: #fff8c5;
+  --bad: #cf222e; /* 4.7:1 */
+  --bad-wash: #ffebe9;
+
+  /* Chart and graph series: the validated categorical order (dataviz
+   * reference); a ninth folds into "other". Slots 3-5 are under 3:1 on the
+   * sheet, so nodes keep their labels and a legend. */
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
@@ -40,26 +77,99 @@
   --series-7: #6250d6;
   --series-8: #e34948;
   --series-other: #9aa7b1;
+}
 
-  /* Type */
-  --font-display: "Bricolage Grotesque Variable", "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
-  --font-body: "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans",
-    "Helvetica Neue", Arial, sans-serif;
-  --font-data: "Atkinson Hyperlegible Mono", ui-monospace, "SFMono-Regular", "Cascadia Mono", Menlo, Consolas,
-    "Noto Sans Mono", monospace;
-  --cjk-ko: "Apple SD Gothic Neo", "Noto Sans KR", "Noto Sans CJK KR", "Malgun Gothic", "Source Han Sans K";
-  --cjk-ja: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Noto Sans CJK JP", "Yu Gothic UI",
-    "Yu Gothic", "Meiryo", "Source Han Sans";
-  --cjk-zh: "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "Source Han Sans SC";
-  --cyrillic: "Noto Sans", "Segoe UI", "Roboto", "Helvetica Neue", Arial;
+:root[data-theme="dark"] {
+  --paper: #0e1117;
+  --sheet: #151a21;
+  --sheet-sunk: #1c222a;
+  --sheet-hover: #232a33;
+  --overlay-bg: rgb(21 26 33 / 94%);
+  --rule: #2e353f;
+  --rule-strong: #3d4652;
+  --control-edge: #6b7480; /* 3.6:1 on sheet, 4.0:1 on paper */
 
-  --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-md: 0.9375rem;
-  --text-lg: 1.0625rem;
-  --text-xl: 1.375rem;
-  --text-2xl: 1.875rem;
-  --text-3xl: 2.5rem;
+  --ink: #e6e9ee; /* 14.4:1 on sheet, 15.5:1 on paper */
+  --graphite: #8f98a3; /* 6.0:1 on sheet, 6.5:1 on paper, 5.5:1 on sheet-sunk */
+  --placeholder: #7d8691; /* 4.7:1 */
+  --disabled-ink: #8f98a3;
+
+  --cobalt: #a5a8ff; /* 8.0:1 on sheet */
+  --trace-ink: #c9ccff; /* 9.2:1 on its wash */
+  --trace-wash: #232557;
+  --primary-bg: #5b5bd6;
+  --primary-hover: #6c6ce0;
+  --primary-ink: #ffffff; /* 5.4:1 */
+  --primary-meta: #dcdcff;
+
+  --rail-bg: #151a21;
+  --rail-hover: #1c222a;
+  --rail-line: #2e353f;
+  --rail-ink: #8f98a3;
+  --rail-muted: #8f98a3;
+  --rail-strong: #e6e9ee;
+
+  --log-bg: #0b0e13;
+  --log-ink: #e6e9ee;
+  --tooltip-bg: #e6e9ee;
+  --tooltip-ink: #0e1117;
+  --grid-dot: rgb(230 233 238 / 7%);
+  --canvas-bg: #0e1117;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-raised: 0 4px 16px rgb(0 0 0 / 45%);
+
+  --good: #3fb950; /* 6.3:1 on its wash */
+  --good-wash: #12261a;
+  --warn: #d29922; /* 6.2:1 */
+  --warn-wash: #2a2210;
+  --bad: #f85149; /* 4.9:1 */
+  --bad-wash: #331616;
+
+  /* The same eight hues stepped for the dark surface (dataviz reference),
+   * all at least 3:1 on the sheet. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --series-other: #6b7480;
+}
+
+:root {
+  /* Type: Pretendard (Latin and Hangul in one design; Pretendard JP for a
+   * Japanese page), the platform's own faces after it; JetBrains Mono for
+   * ids, strategies and figures. Documents and questions can be in any
+   * language whatever the page's, so every stack carries the CJK faces; a
+   * locale's stack (app.css) puts its script first, for the Han glyphs. */
+  --cjk-ko: "Pretendard Variable", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR";
+  --cjk-ja: "Pretendard JP Variable", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic",
+    "Meiryo", "Noto Sans JP", "Noto Sans CJK JP";
+  --cjk-zh: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC";
+  --font-latin: "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue",
+    Arial;
+  --font-body: var(--font-latin), var(--cjk-ko), var(--cjk-ja), var(--cjk-zh), sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas;
+  --font-data: var(--font-mono), var(--cjk-ko), var(--cjk-ja), monospace;
+  /* Headings: tighter tracking for Latin; Hangul sets a little tighter too. */
+  --tracking-display: -0.02em;
+
+  /* Scale: size / line height */
+  --text-xs: 0.75rem; /* 12/16 labels, captions */
+  --text-sm: 0.8125rem; /* 13/20 */
+  --text-md: 0.875rem; /* 14/20 body compact: tables, forms, the nav */
+  --text-base: 0.9375rem; /* 15/24 body: answers */
+  --text-lg: 1.125rem; /* 18/26 card headings */
+  --text-xl: 1.375rem; /* 22/30 sections */
+  --text-2xl: 1.75rem; /* 28/36 page titles */
+  --leading-body: 1.55;
+  --leading-cjk: 1.7;
+  --weight-regular: 400;
+  --weight-strong: 600;
+  --weight-display: 700;
 
   /* Space and shape */
   --space-1: 4px;
@@ -69,12 +179,13 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
-  --radius: 8px;
-  --radius-sm: 5px;
+  --radius-sm: 6px; /* controls */
+  --radius: 8px; /* cards */
+  --radius-pill: 999px; /* chips */
   --rail: 2px;
   --station: 11px;
-  --shadow: 0 1px 0 rgb(23 33 43 / 4%), 0 2px 8px rgb(23 33 43 / 6%);
-  --nav-width: 236px;
+  --nav-height: 56px;
+  --content-width: 1440px;
   --duration: 420ms;
 }
 

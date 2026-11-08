@@ -12,7 +12,7 @@ Unified Knowledge Graph RAG on AWS는 대규모 다국어 문서를 Amazon Neptu
 
 **이런 팀에 맞습니다.** 자기 AWS 계정에서 그래프 RAG(지식 그래프를 검색하는 검색 증강 생성)를 운영하면서 방법을 고르고, 성능을 측정하고, 문서가 바뀔 때마다 인덱스를 최신으로 유지해야 하는 팀.
 
-<img src="./assets/console-demo.gif" alt="콘솔 데모: auto 전략이 질문에 답하면서 근거를 [n] 표시로 인용하고, 인용을 따라가면 근거 문단과 지식 그래프 속 위치까지 출처 경로가 이어집니다. 이어서 신뢰 구간이 붙은 전략 비교와, 전략별 시간·토큰·비용을 보여 주는 대시보드가 나옵니다." width="800">
+<img src="./assets/console-demo.gif" alt="콘솔 데모: auto 전략이 질문에 답하면서 근거를 [n] 표시로 인용하고, 인용한 PDF 파일과 쪽 번호를 칩으로 보여 줍니다. 출처를 열면 그 내용을 담은 문단까지 출처 경로가 이어지고, 경로는 힘 기반 그래프로 이어져 추적한 엔티티에 고리가 표시되고 이웃 엔티티에 이름이 붙습니다. 이어서 신뢰 구간이 붙은 전략 비교와, 전략별 시간·토큰·비용을 보여 주는 대시보드가 나옵니다." width="800">
 
 ## 이 프레임워크를 쓰는 이유
 
@@ -104,7 +104,7 @@ UKR__LOGGING__LEVEL=WARNING uv run --no-dev run-rag --backend local --search-str
 
 `structured`(선택 사항, 논문의 방법이 아님)는 검증을 거친 읽기 전용 그래프 질의로 개수, 순위, 목록, 경로에 답하며, 그래프가 있는 모든 네임스페이스에서 쓸 수 있고 답을 못 만들면 `local`로 넘어갑니다([구조화 질의](./docs/guides/structured-queries.ko.md)). `iterative`는 `mix`나 `local`을 감싸, 멀티홉 질문의 연결 엔티티에 대해 정해진 횟수만큼 후속 검색을 더 합니다. 기본값인 `auto`에서는 LLM 라우터가 질의마다 `search.auto_routable_strategies`(기본값 `local`, `mix`, `global`, `iterative`) 중 하나를 고릅니다. 어떤 전략을 언제 쓰는지는 [검색](./docs/concepts/retrieval.ko.md#검색-전략-선택), 계층 구조·알고리즘·데이터 모델은 [설계 문서](./docs/design.md)(영문)에 있습니다.
 
-이 모든 작업을 내 컴퓨터의 브라우저에서 하려면 로컬 [콘솔](./docs/guides/console.ko.md)(`run-console`)을 시작하세요(`uv run --no-dev --extra console python console/demo/demo.py --models fake`로 합성 코퍼스에서 바로 써 볼 수 있습니다).
+이 모든 작업을 내 컴퓨터의 브라우저에서 하려면 로컬 [콘솔](./docs/guides/console.ko.md)(`run-console`)을 시작하세요(`uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake`로 합성 코퍼스에서 바로 써 볼 수 있습니다).
 
 ## AWS에 배포(선택)
 

@@ -18,6 +18,7 @@ import ko from "./locales/ko.json";
 import pt from "./locales/pt.json";
 import ru from "./locales/ru.json";
 import zh from "./locales/zh.json";
+import { loadScriptFonts } from "../lib/scriptFonts";
 
 export type Catalog = Record<string, string>;
 
@@ -150,6 +151,7 @@ export function I18nProvider({ children, initial }: { children: ReactNode; initi
   }, []);
   useEffect(() => {
     document.documentElement.lang = LOCALES[locale].tag;
+    loadScriptFonts(LOCALES[locale].tag);
   }, [locale]);
   const value = useMemo(() => makeI18n(locale, setLocale), [locale, setLocale]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

@@ -230,7 +230,7 @@ def test_a_korean_question_is_answered_from_the_korean_note(client: Any) -> None
         client, query="케스트럴 창고까지 운송은 누가 맡나요?", search_strategy="local"
     )[-1]
     assert result["kind"] == "result"
-    assert any("contract-summary.ko.txt" == s["file_name"] for s in result["sources"])
+    assert any("contract-summary.ko.md" == s["file_name"] for s in result["sources"])
 
 
 def test_a_refused_filter_is_reported_as_such(client: Any) -> None:
@@ -404,7 +404,7 @@ def test_uploads_land_in_the_uploads_folder_and_unsafe_names_are_refused(
     assert not (workspace / "up").exists()
     corpora = {c["ref"]: c for c in client.get("/api/corpora").json()["corpora"]}
     assert corpora["uploads:extra"]["files"] == 1
-    assert corpora["workspace:corpus"]["files"] == 7
+    assert corpora["workspace:corpus"]["files"] == len(load("corpus").documents())
     assert "workspace:cache" not in corpora
 
 

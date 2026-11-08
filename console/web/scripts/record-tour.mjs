@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Record a scripted tour of the console (at most 25 s): a question streams
- * its answer, its sources open on the provenance trace, the trail leads
- * into the graph, an evaluation comparison, the dashboard.
+ * its answer with its citation (file and page), its sources open on the
+ * provenance trace, the trail leads into the graph, an evaluation
+ * comparison, the dashboard.
  *
  *   node scripts/record-tour.mjs --base-url "http://127.0.0.1:8501/?token=..." --out tour \
  *     [--question "..."] [--width 1200] [--fps 12] [--locale en] [--max-seconds 25]
@@ -132,10 +133,11 @@ async function fail(label, error) {
 
 const visible = (selector, timeout = PAGE_TIMEOUT) => page.locator(selector).first().waitFor({ state: "visible", timeout });
 
-// Ask: the strategies loaded, the question typed.
+// Ask: the page loaded (the strategy picker is folded under its summary),
+// the question typed.
 await idle("ask-page", async () => {
   await page.goto(token ? `${base}/ask?token=${encodeURIComponent(token)}` : `${base}/ask`);
-  await visible(".chip");
+  await visible(".composer-options summary");
 });
 await pause(700);
 await step("type", async () => {
@@ -161,7 +163,13 @@ await step("answer-ok", async () => {
   if (await page.locator(".answer .notice-bad").count()) throw new Error(await page.locator(".answer .notice-bad").first().innerText());
   await visible(".source[data-rank]");
 });
-await pause(1400);
+await pause(900);
+// The citation under the answer: the cited file and its page.
+const citation = page.locator(".citations-list .citation-link").first();
+if (await citation.count()) {
+  await citation.hover();
+  await pause(1300);
+}
 
 // The trace: open a graph source, follow one of its passages, back.
 const graphSource = page.locator('.source[data-kind="entity"] > button, .source[data-kind="relationship"] > button').first();
@@ -188,7 +196,7 @@ if (await passage.count()) {
 await step("open-graph", () => page.locator(".source-trail .button-primary").first().click());
 await idle("graph", async () => {
   await visible(".trail-banner");
-  await visible(".graph-node circle");
+  await visible(".graph-canvas canvas");
 });
 await pause(2300);
 await step("analysis", async () => {

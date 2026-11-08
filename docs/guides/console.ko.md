@@ -57,11 +57,33 @@ API는 `/api/status`에서 그대로 응답합니다. 클라이언트는 패키�
 설정으로 작업 공간을 준비하고, `run-ingestion`으로 코퍼스를 수집한 뒤
 `127.0.0.1:8501`에서 콘솔을 시작합니다.
 
+코퍼스는 추가 패키지(extra) 없이 기본 설치로 파싱되는 형식을 섞어 두어,
+출처 종류마다 인용이 어떻게 보이는지 확인할 수 있습니다.
+
+| 파일 | 형식 |
+|---|---|
+| `supply-agreement.pdf` | PDF 3쪽: 당사자, 수치 표가 있는 납품·위약금 조항, 보증과 서명 |
+| `quality-report.pdf` | PDF 2쪽: 검사 결과 표와 시정 조치 |
+| `logistics-plan.md` | 제목과 목록이 있는 Markdown |
+| `warranty-terms.html` | 표가 있는 HTML |
+| `shipments.csv` | 운송 건마다 한 행인 CSV |
+| `steering-minutes.json` | JSON 회의록 |
+| `contract-summary.ko.md` | 한국어 Markdown 메모 |
+| `quality-memo.ja.txt` | 일본어 텍스트 메모 |
+
+PDF는 데모를 시작할 때 만듭니다(`console/demo/pdf_writer.py`, 표준
+라이브러리만 쓰는 작은 생성기로 실행할 때마다 같은 바이트를 씁니다).
+코퍼스를 대략 한 쪽 단위로 청크로 나누므로 PDF에서 인용한 구절은 그 쪽
+번호를 함께 보여 줍니다(가짜 모델에서 *Who carries the lidar units to
+Kestrel Depot, and how fast?*는 `supply-agreement.pdf` 2쪽을 인용합니다).
+
 ```bash
-uv sync --extra console
 (cd console/web && npm ci && npm run build)
-uv run python console/demo/demo.py --models fake
+uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake
 ```
+
+가짜 모델과 Ollama는 로컬 모드로 실행되므로 `local` extra도 필요합니다(`bedrock`은
+필요 없음). 데모는 무엇을 쓰거나 수집하기 전에 두 extra를 확인합니다.
 
 | `--models` | 답하는 쪽 | 필요한 것 |
 |---|---|---|
@@ -236,19 +258,27 @@ diff, 오류, 경고를 보여 줍니다. 저장하면 파일을 쓰며, 그사�
 - 무언가를 바꾸는 요청에는 다른 사이트의 폼이 보낼 수 없는 헤더가 있어야
   하고, 다른 출처의 요청은 거부합니다. 루프백에서는 다른 호스트 이름으로 온
   요청을 거부합니다(DNS 리바인딩). 어떤 응답에도 CORS 헤더가 없습니다.
-- 페이지는 다른 호스트에서 아무것도 불러오지 않습니다. 글꼴(Bricolage
-  Grotesque, Atkinson Hyperlegible Next와 Mono, SIL Open Font License)은
-  빌드에 포함되므로 오프라인과 프라이빗 VPC에서도 동작합니다.
+- 페이지는 다른 호스트에서 아무것도 불러오지 않습니다. 글꼴(Pretendard,
+  Pretendard JP, JetBrains Mono, SIL Open Font License, 전문은
+  `console/web/public/licenses/`)은 빌드에 포함되므로 오프라인과 프라이빗
+  VPC에서도 동작합니다.
 - 인덱스 네임스페이스마다 수집이나 평가 작업은 동시에 들어온 요청까지
   포함해 한 번에 하나입니다. 다른 곳에서 시작한 `run-ingestion`은
   파이프라인의 네임스페이스 리스가 계속 막아 줍니다. 콘솔을 멈추면 그
   작업들을 멈추고 CLI의 중지 유예 시간(110초)까지 기다립니다.
 
+## 라이트와 다크
+
+페이지에는 라이트 테마와 다크 테마가 있습니다. 기본값은 운영체제 설정을
+따르며, 상단 바(좁은 화면에서는 **메뉴** 안)의 **테마**에서 *시스템*, *라이트*,
+*다크*로 바꿀 수 있고 선택은 브라우저에 저장됩니다. 그래프, 차트, 근거
+강조 표시도 테마를 따릅니다.
+
 ## 언어
 
 페이지는 영어, 한국어, 일본어, 중국어 간체, 독일어, 스페인어, 프랑스어,
 이탈리아어, 포르투갈어, 러시아어(라이브러리가 지원하는 언어)로 볼 수
-있습니다. 사이드바나 설정 페이지에서 고르며, 기본값은 브라우저 언어이고
+있습니다. 상단 바나 설정 페이지에서 고르며, 기본값은 브라우저 언어이고
 선택은 브라우저에 저장됩니다. 문서, 질문, 답변은 어떤 언어든 됩니다.
 숫자, 날짜, 기간, 통화는 고른 언어의 형식을 따릅니다.
 
@@ -269,13 +299,19 @@ npm run typecheck && npm run lint && npm test
 npm run build
 ```
 
+- 디자인 개요(팔레트, 글자 크기 체계, 참고 사례, 피할 것)는
+  [`console/web/DESIGN.md`](../../console/web/DESIGN.md)(영문)에 있습니다.
+  방향을 바꿀 때는 이 문서부터 고칩니다. `npm run fonts`(`dev`, `build`,
+  `typecheck`가 먼저 실행)는 `@fontsource` 패키지에서
+  `src/styles/fonts.css`를 만듭니다. 스타일이 쓰는 굵기와 문자 범위만, WOFF2로만
+  담습니다.
 - `npm run test:smoke`는 실행 중인 콘솔(`CONSOLE_URL`, 토큰이 붙은 출력
   주소)에 대해 Playwright 스모크 테스트를 실행합니다.
   브라우저가 없으면 건너뜁니다(`npx playwright install chromium`).
 - `node scripts/screenshots.mjs --base-url <url> --out <dir>`은 모든 페이지의
   스크린샷을 찍습니다(`--locales en,ko --widths 1440,390`).
 - `node scripts/record-tour.mjs --base-url <출력된 주소> --out <dir>`은 25초
-  이내의 정해진 둘러보기(질문, 출처, 그래프로 이어지는 경로, 평가 비교,
+  이내의 정해진 둘러보기(질문, 인용한 파일과 쪽, 출처, 그래프로 이어지는 경로, 평가 비교,
   대시보드)를 녹화합니다. 단계마다 보여 줄 상태를 기다리고, 깨진 상태를
   녹화하는 대신 스크린샷과 함께 실패하며, 모델 대기 시간은 잘라 냅니다.
   경로에 `ffmpeg`가 있으면 같은 구도의 MP4와 GIF로 씁니다.

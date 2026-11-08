@@ -49,7 +49,7 @@ export function deltaInterval(delta: Delta, multiplicity: Multiplicity | null | 
  * family's simultaneous interval, the primary metric marked. */
 export function DeltaPlot({ deltas, confidence = 0.95, multiplicity }: { deltas: [string, Delta][]; confidence?: number; multiplicity?: Multiplicity | null }) {
   const { t, number, percent } = useI18n();
-  const width = 220;
+  const width = 180;
   const pad = 10;
   const adjusted = deltas.some(([, d]) => d.adjusted_p_value != null) && multiplicity != null;
   const alpha = multiplicity?.alpha ?? null;
@@ -118,35 +118,51 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity }: { deltas:
   );
 }
 
-// Advance of one character of the 11px data face, to centre a label.
-const MONO_WIDTH = 6.6;
+// Advance of one character of the 12px data face, to centre a label.
+const MONO_WIDTH = 7.2;
 const tickText = (key: string) => (key.length > 6 ? key.slice(-5) : key);
+// Bars are capped at 24px: the band's leftover stays air (dataviz specs).
+const BAR_MAX = 24;
+const BAR_GAP = 10;
 
-/** Vertical bars over a category axis, one series, labelled with values. */
+/** Vertical bars over a category axis, one series, on a scale with its
+ * maximum and (when it is a clean value) its half marked. */
 export function Bars({ data, format, label }: { data: { key: string; value: number }[]; format: (v: number) => string; label: string }) {
   const [hover, setHover] = useState<{ key: string; x: number; y: number } | null>(null);
   const height = 140;
-  const barWidth = Math.max(10, Math.min(36, 560 / Math.max(1, data.length) - 6));
-  const width = Math.max(220, data.length * (barWidth + 6) + 40);
+  const top = 20;
+  const barWidth = Math.max(10, Math.min(BAR_MAX, 560 / Math.max(1, data.length) - BAR_GAP));
   const max = Math.max(...data.map((d) => d.value), 0) || 1;
+  const y = (v: number) => height - (v / max) * (height - top);
+  const half = !Number.isInteger(max) || max % 2 === 0;
+  // The scale's labels sit in a gutter left of the first bar, so no bar
+  // ever covers one.
+  const gutter = Math.ceil(Math.max(format(max).length, half ? format(max / 2).length : 0) * MONO_WIDTH) + 12;
+  const width = Math.max(220, gutter + data.length * (barWidth + BAR_GAP) + 8);
   return (
     <div style={{ position: "relative", overflowX: "auto" }}>
       <svg className="chart" width={width} height={height + 34} role="img" aria-label={label}>
-        <line className="axis" x1={30} x2={width} y1={height} y2={height} />
-        <line className="grid" x1={30} x2={width} y1={height / 2} y2={height / 2} />
-        <text x={0} y={12}>{format(max)}</text>
+        <line className="grid" x1={0} x2={width} y1={y(max)} y2={y(max)} />
+        <text x={0} y={y(max) - 5}>{format(max)}</text>
+        {half ? (
+          <>
+            <line className="grid" x1={0} x2={width} y1={y(max / 2)} y2={y(max / 2)} />
+            <text x={0} y={y(max / 2) - 5}>{format(max / 2)}</text>
+          </>
+        ) : null}
+        <line className="axis" x1={0} x2={width} y1={height} y2={height} />
         {data.map((d, i) => {
-          const h = (d.value / max) * (height - 16);
-          const x = 34 + i * (barWidth + 6);
+          const h = height - y(d.value);
+          const x = gutter + BAR_GAP / 2 + i * (barWidth + BAR_GAP);
           return (
             <g
               key={d.key}
               onMouseEnter={(e) => setHover({ key: d.key, x: e.clientX, y: e.clientY })}
               onMouseLeave={() => setHover(null)}
             >
-              <rect x={x - 3} y={0} width={barWidth + 6} height={height} fill="transparent" />
+              <rect x={x - BAR_GAP / 2} y={0} width={barWidth + BAR_GAP} height={height} fill="transparent" />
               <path className="bar" d={roundedTop(x, height - h, barWidth, h)} />
-              <text x={x + barWidth / 2 - (tickText(d.key).length * MONO_WIDTH) / 2} y={height + 14}>
+              <text x={x + barWidth / 2 - (tickText(d.key).length * MONO_WIDTH) / 2} y={height + 16}>
                 {tickText(d.key)}
               </text>
             </g>

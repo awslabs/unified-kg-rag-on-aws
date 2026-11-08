@@ -16,13 +16,27 @@ export function PageHead({ title, lede, aside }: { title: string; lede?: ReactNo
   );
 }
 
-export function Sheet({ title, aside, children, pad = true }: { title?: ReactNode; aside?: ReactNode; children: ReactNode; pad?: boolean }) {
+export function Sheet({
+  title,
+  aside,
+  sub,
+  children,
+  pad = true,
+}: {
+  title?: ReactNode;
+  aside?: ReactNode;
+  /** A line under the title (what the sheet is about). */
+  sub?: ReactNode;
+  children: ReactNode;
+  pad?: boolean;
+}) {
   return (
     <section className="sheet">
       {title ? (
         <div className="sheet-head">
           <h2 className="sheet-title">{title}</h2>
           {aside ? <div style={{ marginLeft: "auto" }}>{aside}</div> : null}
+          {sub ? <p className="sheet-sub">{sub}</p> : null}
         </div>
       ) : null}
       <div className={pad ? "sheet-body" : undefined}>{children}</div>
@@ -66,7 +80,7 @@ export function JobStatusBadge({ status }: { status: string }) {
 export function Loading() {
   const { t } = useI18n();
   return (
-    <p className="muted" role="status">
+    <p className="muted loading" role="status">
       {t("common.loading")}
     </p>
   );

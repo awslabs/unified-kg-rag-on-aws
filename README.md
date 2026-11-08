@@ -12,7 +12,7 @@ Unified Knowledge Graph RAG on AWS turns a large, multilingual document collecti
 
 **For** teams who want graph RAG (retrieval-augmented generation over a knowledge graph) in their own AWS account and need to pick a method, measure it and keep the index current as documents change.
 
-<img src="./assets/console-demo.gif" alt="Console demo: a question answered with the auto strategy cites its sources as [n] markers; following a citation opens its provenance trail to the source passage and its place in the knowledge graph; then a strategy comparison with paired intervals, and the dashboard of time, tokens and cost per strategy." width="800">
+<img src="./assets/console-demo.gif" alt="Console demo: a question answered with the auto strategy cites its source as an [n] marker, shown as a chip with the PDF file and its page; opening a source shows its provenance trail to the passages that state it; the trail leads into a force-directed graph with the traced entity ringed and its neighbours labelled; then a strategy comparison with paired intervals, and the dashboard of time, tokens and cost per strategy." width="800">
 
 ## Why this framework
 
@@ -104,7 +104,7 @@ Ingestion is a resumable 13-stage pipeline: parse, chunk, extract entities and r
 
 `structured` (opt-in, not one of the papers' methods) answers counts, rankings, lists and paths from a checked, read-only graph query on any namespace that holds the graph, and falls back to `local` without one ([Structured queries](./docs/guides/structured-queries.md)). `iterative` wraps `mix` or `local` with bounded follow-up rounds on the bridge entities of a multi-hop question. `auto`, the default, lets an LLM router pick one of `search.auto_routable_strategies` per query (default `local`, `mix`, `global`, `iterative`). [Retrieval](./docs/concepts/retrieval.md#search-strategies--when-to-use-which) explains when to use which strategy, and the [Design Doc](./docs/design.md) the layers, algorithms and data model.
 
-To do all of this in a browser on your machine, start the local [console](./docs/guides/console.md) (`run-console`; `uv run --no-dev --extra console python console/demo/demo.py --models fake` tries it on a synthetic corpus).
+To do all of this in a browser on your machine, start the local [console](./docs/guides/console.md) (`run-console`; `uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake` tries it on a synthetic corpus).
 
 ## Deploy on AWS (optional)
 

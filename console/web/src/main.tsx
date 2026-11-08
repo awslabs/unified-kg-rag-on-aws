@@ -1,14 +1,14 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-// Self-hosted fonts (OFL-1.1), bundled by the build: no request leaves the host.
-import "@fontsource-variable/bricolage-grotesque/standard.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-400.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-ext-400.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-500.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-ext-500.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-700.css";
-import "@fontsource/atkinson-hyperlegible-next/latin-ext-700.css";
-import "@fontsource/atkinson-hyperlegible-mono/latin-400.css";
+// Self-hosted fonts (SIL OFL 1.1), bundled by the build: no request leaves
+// the host. Pretendard is the vendor's own variable font and its own
+// dynamic-subset stylesheet, unmodified (its Reserved Font Name stays
+// valid); one file per slice carries every weight, and a browser fetches a
+// slice only for the characters a page shows. Pretendard JP loads with the
+// Japanese page only (lib/scriptFonts.ts). JetBrains Mono: fonts.css, which
+// scripts/gen-fonts.mjs writes (npm run fonts).
+import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
+import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/app.css";
 import { StrictMode } from "react";

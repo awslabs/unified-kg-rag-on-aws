@@ -14,3 +14,26 @@ HKUDS/LightRAG
 https://github.com/HKUDS/LightRAG
 MIT License — Copyright (c) 2025 LightRAG Team
 --------------------------------------------------------------------------------
+
+================================================================================
+Bundled with the console's web client (console/web)
+
+The console's build (console/web/dist) redistributes these fonts as WOFF2
+files, installed from their npm packages. The licence texts are in
+console/web/public/licenses/ and are copied into the build.
+
+--------------------------------------------------------------------------------
+Pretendard, Pretendard JP
+https://github.com/orioncactus/pretendard
+SIL Open Font License, Version 1.1 — Copyright (c) 2021 Kil Hyung-jin, with
+Reserved Font Names "Pretendard" and "Pretendard JP".
+Served as the vendor ships them: the variable fonts' own dynamic-subset WOFF2
+files and stylesheets from the `pretendard` and `pretendard-jp` packages,
+unmodified, so they keep their names. A font re-subset or otherwise modified
+from them must not carry a Reserved Font Name (OFL 1.1, condition 3).
+--------------------------------------------------------------------------------
+JetBrains Mono
+https://github.com/JetBrains/JetBrainsMono
+SIL Open Font License, Version 1.1 — Copyright 2020 The JetBrains Mono Project Authors
+(subsets of the @fontsource package; no Reserved Font Name)
+--------------------------------------------------------------------------------

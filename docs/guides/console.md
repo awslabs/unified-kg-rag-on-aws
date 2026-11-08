@@ -58,13 +58,36 @@ with a Korean and a Japanese note on the same deal; every name is made up),
 a matching seven-question `run-eval` dataset with one unanswerable
 question, a config with the embedded SQLite stores and incremental
 indexing on, ingests the corpus with `run-ingestion` and starts the
-console on `127.0.0.1:8501`:
+console on `127.0.0.1:8501`.
+
+The corpus mixes the formats the core install parses without an extra,
+so the citations show each kind of source:
+
+| File | Format |
+|---|---|
+| `supply-agreement.pdf` | PDF, 3 pages: parties, delivery and penalties with a table of figures, warranty and signatures |
+| `quality-report.pdf` | PDF, 2 pages: an inspection table and the corrective action |
+| `logistics-plan.md` | Markdown with headings and a list |
+| `warranty-terms.html` | HTML with a table |
+| `shipments.csv` | CSV, a row per shipment |
+| `steering-minutes.json` | JSON meeting minutes |
+| `contract-summary.ko.md` | Korean Markdown note |
+| `quality-memo.ja.txt` | Japanese text note |
+
+The demo writes the PDFs when it starts (`console/demo/pdf_writer.py`, a
+small standard-library writer: the same bytes on every run) and chunks the
+corpus about a page at a time, so a passage cited from a PDF names its
+page (with the fake models, *Who carries the lidar units to Kestrel
+Depot, and how fast?* cites `supply-agreement.pdf` page 2).
 
 ```bash
-uv sync --extra console
 (cd console/web && npm ci && npm run build)
-uv run python console/demo/demo.py --models fake
+uv run --no-dev --extra console --extra local python console/demo/demo.py --models fake
 ```
+
+The fake and Ollama models run in local mode and need the `local` extra
+as well (`bedrock` does not); the demo checks both extras before it writes
+or ingests anything.
 
 | `--models` | What answers | Needs |
 |---|---|---|
@@ -258,19 +281,28 @@ The next question and job use the saved file.
   send, and one from another origin is refused; on loopback a request for
   another host name is refused (DNS rebinding). No response carries a CORS
   header.
-- The page loads nothing from another host: its fonts (Bricolage Grotesque,
-  Atkinson Hyperlegible Next and Mono, SIL Open Font License) are bundled by
-  the build, so it works offline and in a private VPC.
+- The page loads nothing from another host: its fonts (Pretendard,
+  Pretendard JP and JetBrains Mono, SIL Open Font License; the texts are in
+  `console/web/public/licenses/`) are part of the build, so it works
+  offline and in a private VPC.
 - One ingestion or evaluation job per index namespace at a time, also for
   requests made at the same moment; the pipeline's namespace lease still
   guards against a `run-ingestion` started elsewhere. Stopping the console
   stops its jobs and waits up to the CLIs' stop grace (110 s) for them.
 
+## Light and dark
+
+The page has a light and a dark theme. It follows the operating system's
+setting by default; **Theme** in the top bar (under **Menu** on a
+narrow screen) switches it to *System*, *Light* or *Dark*, and the browser keeps
+the choice. The graph, the charts and the evidence highlights follow the
+theme.
+
 ## Languages
 
 The page is in English, Korean, Japanese, Simplified Chinese, German,
 Spanish, French, Italian, Portuguese and Russian (the languages the
-library supports), chosen in the side bar or on the Settings page,
+library supports), chosen in the top bar or on the Settings page,
 defaulting to the browser's language and kept in the browser. Documents,
 questions and answers can be in any language; numbers, dates, durations
 and currency follow the chosen language.
@@ -293,13 +325,18 @@ npm run typecheck && npm run lint && npm test
 npm run build
 ```
 
+- The design brief (palette, type scale, references, what to avoid) is
+  [`console/web/DESIGN.md`](../../console/web/DESIGN.md); change it first
+  when the direction changes. `npm run fonts` (run by `dev`, `build` and
+  `typecheck`) writes `src/styles/fonts.css` from the `@fontsource`
+  packages: WOFF2 only, the weights and subsets the styles use.
 - `npm run test:smoke` runs the Playwright smoke test against a running
   console (`CONSOLE_URL`, the printed address with its token); it skips when
   no browser is installed (`npx playwright install chromium`).
 - `node scripts/screenshots.mjs --base-url <url> --out <dir>` screenshots
   every page (`--locales en,ko --widths 1440,390`).
 - `node scripts/record-tour.mjs --base-url <printed address> --out <dir>`
-  records a scripted tour of at most 25 seconds (a question, its sources, the trail into the
+  records a scripted tour of at most 25 seconds (a question, its cited file and page, its sources, the trail into the
   graph, an evaluation comparison, the dashboard): each step waits for what
   it shows and fails with a screenshot rather than record a broken state;
   waits on models are cut. With `ffmpeg` on the path it writes the edit as

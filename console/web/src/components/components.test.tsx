@@ -12,7 +12,7 @@ import { intervalResamples } from "../pages/EvaluatePage";
 import { AnswerText, CitationList } from "./AnswerText";
 import { DeltaPlot, deltaInterval, deltaVerdict, higherIsBetter } from "./charts";
 import { citedBy, EvidenceTrace, excerptBody } from "./EvidenceTrace";
-import { queryTerms } from "./Highlighted";
+import { highlightRuns, queryTerms } from "./Highlighted";
 import { StrategyPicker } from "./StrategyPicker";
 
 function source(rank: number, kind: string, extra: Partial<Source> = {}): Source {
@@ -131,6 +131,16 @@ describe("helpers", () => {
     expect(queryTerms("Who carries the units to Kestrel?")).toEqual(["carries", "kestrel", "units"]);
     expect(queryTerms("케스트럴 창고")).toEqual(["케스", "스트", "트럴", "창고"]);
     expect(queryTerms("in 2026")).toEqual(["2026"]);
+  });
+  it("joins marked terms that only spaces separate into one highlight", () => {
+    expect(highlightRuns("Kestrel Depot stores units.", "kestrel depot units")).toEqual([
+      { text: "Kestrel Depot", marked: true },
+      { text: " stores ", marked: false },
+      { text: "units", marked: true },
+      { text: ".", marked: false },
+    ]);
+    // A line break is not joined across.
+    expect(highlightRuns("Kestrel\nDepot", "kestrel depot").map((r) => r.marked)).toEqual([true, false, true]);
   });
   it("calls a delta better or worse only outside zero, by direction", () => {
     const delta = { pairs: 5, mean_delta: 0.1, ci_low: 0.05, ci_high: 0.2, wins: 3, ties: 2, losses: 0 };

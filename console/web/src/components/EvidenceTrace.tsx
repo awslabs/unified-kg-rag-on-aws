@@ -7,7 +7,7 @@
  * evidence, and the way into the graph. A source the answer cites carries
  * its context marker [n]; the answer's markers open it here.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useI18n } from "../i18n/i18n";
 import type { Source } from "../lib/types";
 import { Highlighted } from "./Highlighted";
@@ -142,8 +142,8 @@ export function EvidenceTrace({ sources, question, onOpenInGraph, cited, open: c
           {t("ask.trace.read", { count: sources.length })}
         </div>
         <ol className="stack" style={{ listStyle: "none", margin: 0, padding: 0, gap: 8 }}>
-          {shown.map((source) => (
-            <li key={source.rank}>
+          {shown.map((source, index) => (
+            <li key={source.rank} style={{ "--i": index } as CSSProperties}>
               <SourceCard
                 source={source}
                 question={question}
@@ -279,7 +279,7 @@ function SourceCard({
           {source.source_kinds.length ? <Step label={t("ask.trail.sourceKinds")}>{source.source_kinds.join(", ")}</Step> : null}
           <Step label={t("ask.trail.ids")}>
             <span className="id">{source.id}</span>
-            {source.text_unit_ids.length ? <span className="id">{t("ask.trail.units", { count: source.text_unit_ids.length })}</span> : null}
+            {source.text_unit_ids.length ? <span className="muted">{t("ask.trail.units", { count: source.text_unit_ids.length })}</span> : null}
           </Step>
           {source.score != null ? <Step label={t("ask.trail.score")}>{number(source.score, { maximumFractionDigits: 4 })}</Step> : null}
           {onOpenInGraph && source.kind !== "text" && (source.kind !== "query_result" || source.node_ids?.length) ? (
@@ -299,7 +299,7 @@ function Step({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="trail-step">
       <span className="trail-step-label">{label}</span>
-      {children}
+      <span className="trail-step-value">{children}</span>
     </div>
   );
 }

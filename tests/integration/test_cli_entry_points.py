@@ -213,7 +213,7 @@ def _describe(workspace: Path) -> None:
     )
     assert {"local", "mix", "global"} <= set(described["strategies"])
     assert described["auto_routes"]
-    assert described["registry"] == {"processed": len(load("corpus").DOCUMENTS)}
+    assert described["registry"] == {"processed": len(load("corpus").documents())}
     assert described["export"]["counts"]["entities"] > 0
     assert (workspace / "graph.jsonl").is_file()
 
