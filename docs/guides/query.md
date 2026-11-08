@@ -50,9 +50,18 @@ What the text output shows:
   chunk when the file has several) or name (an entity, a community report;
   a relationship's two ends), score and the start of the text, the first
   20 unless `--verbose`.
+- **A partial answer** (one given without a step that failed, such as a
+  throttled map call of global search) says so on a line after it:
+  `Partial answer: given without global_map (1/3 reports unrated)`; a
+  citation lineage read that failed adds `Some citations name no document`.
+  `--verbose` also lists the model-written sections the answer may cite
+  (global search's key points, DRIFT's intermediate answers).
 - **`--output-format json`** prints the result as one document; an answer's
   `search_results` there leaves out `results`, which repeat its `sources`,
-  unless `--verbose` (they also hold what the context budget cut).
+  unless `--verbose` (they also hold what the context budget cut). It also
+  holds what the console and the MCP server report: `degraded`,
+  `degraded_error`, `citations_unresolved`, `error_class` and, for an
+  answer, `written` (the model-written sections).
 
 ## Filters
 

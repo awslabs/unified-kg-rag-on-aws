@@ -85,39 +85,20 @@ def _page(value: Any) -> int | None:
     return None
 
 
-def safe_relative_path(value: Any) -> str | None:
-    """``value`` as a path relative to the corpus root, or ``None`` when it
-    is not one (absolute, a drive or URL, or climbing out with ``..``): a
-    citation never names where the corpus lived on the indexing host."""
-    if not isinstance(value, str) or not value.strip():
-        return None
-    path = value.strip().replace("\\", "/")
-    if path.startswith("/") or ":" in path:
-        return None
-    parts = [p for p in path.split("/") if p not in ("", ".")]
-    if not parts or ".." in parts:
-        return None
-    return "/".join(parts)
-
-
 def unit_from_metadata(metadata: dict[str, Any], fallback_id: str | None) -> _Unit:
     """What a stored text unit (a hit's or source's metadata) says about its
     document."""
     attributes = metadata.get("attributes")
     attributes = attributes if isinstance(attributes, dict) else {}
     unit_id = _first_text(metadata.get("id"), fallback_id) or ""
-    file_name = source_fields.file_name(metadata)
     page = _page(attributes.get("page_start"))
     page_end = _page(attributes.get("page_end"))
+    documents = source_fields.document_ids(metadata)
     return _Unit(
         unit_id=unit_id,
-        document_id=_first_text(
-            metadata.get("document_ids"),
-            metadata.get("document_id"),
-            attributes.get("document_id"),
-        ),
-        file_name=file_name,
-        file_path=safe_relative_path(attributes.get("relative_path")),
+        document_id=documents[0] if documents else None,
+        file_name=source_fields.file_name(metadata),
+        file_path=source_fields.relative_path(metadata),
         page=page,
         page_end=page_end if page is not None and page_end is not None else page,
     )

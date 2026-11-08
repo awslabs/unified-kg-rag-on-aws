@@ -15,6 +15,7 @@ import asyncio
 
 import pytest
 
+from tests.fixtures.run_rag import answer_document
 from unified_kg_rag.application.cli import (
     display,
     prepare_benchmark,
@@ -154,13 +155,7 @@ def test_run_rag_prints_metrics_filters_and_init_errors_literally(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run_rag_chain.RAGChainRunner._print_result(
-        {
-            "success": True,
-            "answer": "ok",
-            "search_results": {"note": "[/red] note"},
-            "metadata": {},
-        },
-        verbose=True,
+        answer_document(metadata={"note": "[/red] note"}), verbose=True
     )
     state: dict = {"filters": {}}
     runner = object.__new__(run_rag_chain.RAGChainRunner)

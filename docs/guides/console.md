@@ -187,9 +187,12 @@ the corpus resumes. A job a console left running when it stopped is shown
 as lost when the console starts again (its namespace is free; the
 pipeline's namespace lease still guards the stores). Uploads go in batches
 of up to 500 files or 100 MiB; the server takes up to 10,000 files and
-500 MiB a request. The page leaves out files of a type ingestion does not
-read, and the server refuses a request that holds one; a request is
-written all or none, so a refused one leaves the folder as it was.
+500 MiB a request. The page leaves out the files ingestion does not read
+(of another type, or hidden: a file or folder whose name starts with `.`,
+or `__pycache__`), and the server refuses a request that holds one, or that
+names one path as a file and as a folder (`upload_conflict`); a request is
+written all or none, so a refused one leaves the folder as it was, without
+a folder it created.
 
 **Evaluate.** Pick a dataset (its questions, the unanswerable ones and
 which evaluators it feeds are shown), the strategies (the first is the

@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.prompts import retrieval as retrieval_prompts
 from unified_kg_rag.domain.prompts.retrieval import CITATION_INSTRUCTIONS
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.citations import (
     CitationMarkerScanner,
     cited_markers,
@@ -355,12 +356,12 @@ def test_a_passage_cites_its_unit_document_file_and_pages() -> None:
     ["/srv/corpus/a.pdf", "../a.pdf", "a/../../b.pdf", "C:\\corpus\\a.pdf", "s3://b/a"],
 )
 def test_a_citation_never_names_an_absolute_or_climbing_path(path: str) -> None:
-    assert citations.safe_relative_path(path) is None
+    assert source_fields.safe_relative_path(path) is None
 
 
 def test_a_citation_names_a_relative_path_with_forward_slashes() -> None:
-    assert citations.safe_relative_path("legal\\2024\\a.pdf") == "legal/2024/a.pdf"
-    assert citations.safe_relative_path("./a.pdf") == "a.pdf"
+    assert source_fields.safe_relative_path("legal\\2024\\a.pdf") == "legal/2024/a.pdf"
+    assert source_fields.safe_relative_path("./a.pdf") == "a.pdf"
 
 
 def test_a_seed_only_fact_cites_its_seed_graph_and_iri() -> None:
@@ -997,7 +998,16 @@ async def test_a_failed_lineage_read_leaves_the_answer_and_passages(
     store.aretrieve = broken  # type: ignore[method-assign]
     out = await chain.ainvoke(_query())
     assert out.answer.startswith("Depot stores widgets [1]")
-    assert out.metadata["citations_unresolved"] is True
+    # Recorded in the query's ledger as an unresolved read (rv8: a state
+    # flag reported as True, beside the ledger).
+    assert out.metadata["citations_unresolved"] == [
+        {
+            "step": "citation_lineage",
+            "reason": "graph citations name no document",
+            "error_type": "RuntimeError",
+        }
+    ]
+    assert "degraded" not in out.metadata
     assert out.citations[0].file_name == "contract.txt"
     assert out.citations[1].documents == []
 

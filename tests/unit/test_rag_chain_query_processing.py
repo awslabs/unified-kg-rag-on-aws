@@ -18,6 +18,7 @@ import pytest
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401 (registers strategies)
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from unified_kg_rag.adapters.retrieval.base import degradation_scope
 from unified_kg_rag.application.retrieval import query_processing
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
@@ -227,8 +228,9 @@ async def test_an_absorbed_query_processing_failure_degrades_the_answer(
     config.processing.translation.target_language = "en"
     chain = _chain(config)
     _install_fakes(chain, translation=translation, entities=entities)
-    result = await chain._process_query_step({"query": "織田信長について"})
-    assert result.degraded_error == degraded
+    with degradation_scope() as ledger:
+        await chain._process_query_step({"query": "織田信長について"})
+    assert ledger.first_error_type == degraded
 
 
 async def test_an_absorbed_keyword_failure_degrades_the_answer(
@@ -246,11 +248,12 @@ async def test_an_absorbed_keyword_failure_degrades_the_answer(
     chain._get_chain_for_prompt = fake_get_chain  # type: ignore[assignment]
     keywords = await chain._extract_dual_keywords("q", "English")
     assert keywords == ([], [])  # the contract callers rely on
-    result = await chain._process_query_step(
-        {"query": "Who supplies Buyer A?", "search_strategy": "mix"}
-    )
+    with degradation_scope() as ledger:
+        result = await chain._process_query_step(
+            {"query": "Who supplies Buyer A?", "search_strategy": "mix"}
+        )
     assert result.hl_keywords == result.ll_keywords == []
-    assert result.degraded_error is not None
+    assert ledger.first_error_type is not None
 
 
 async def test_a_failed_query_processing_step_degrades_the_answer(
@@ -263,8 +266,10 @@ async def test_a_failed_query_processing_step_degrades_the_answer(
         raise KeyError("state")
 
     monkeypatch.setattr(query_processing, "process_query", broken)
-    result = await chain._process_query_step({"query": "q"})
-    assert result.final_query == "q" and result.degraded_error == "KeyError"
+    with degradation_scope() as ledger:
+        result = await chain._process_query_step({"query": "q"})
+    assert result.final_query == "q" and ledger.first_error_type == "KeyError"
+    assert [e.step for e in ledger.entries] == ["query_processing"]
 
 
 @pytest.mark.parametrize(
@@ -307,9 +312,10 @@ async def test_a_translation_the_fixer_cannot_repair_is_degraded(
     chain = _chain(config)
     chain.factory = ScriptedLLMFactory(lambda _system, _human: "still not JSON")
     _install_fakes(chain, translation="I cannot do that.", entities=["nobunaga"])
-    result = await chain._process_query_step({"query": "織田信長について"})
+    with degradation_scope() as ledger:
+        result = await chain._process_query_step({"query": "織田信長について"})
     assert result.final_query == "織田信長について"
-    assert result.degraded_error == "OutputParserException"
+    assert ledger.first_error_type == "OutputParserException"
 
 
 async def test_unreadable_answers_are_recorded_in_the_query_ledger(

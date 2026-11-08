@@ -20,9 +20,10 @@ lineage of a community report when the strategy's answers do not cite,
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 __all__ = [
     "DEGRADED_ERROR_KEY",
@@ -30,6 +31,7 @@ __all__ = [
     "UNRESOLVED_KEY",
     "Degradation",
     "DegradationLedger",
+    "DegradationReport",
     "DegradationStep",
 ]
 
@@ -65,6 +67,9 @@ class DegradationStep:
     ITERATIVE_CONTROLLER = "iterative_controller"
     # The findings lineage of community reports (cited answers only).
     FINDINGS_LINEAGE = "findings_lineage"
+    # The documents of the answer's graph citations (the read of their text
+    # units, ``citations.aresolve_documents``): an unresolved entry.
+    CITATION_LINEAGE = "citation_lineage"
     # The structured strategy's graph query, answered by its fallback after
     # a failed call (the reason: planner_error, execution_error, timeout,
     # compile_error).
@@ -150,9 +155,50 @@ class DegradationLedger:
             out[DEGRADED_KEY] = [e.model_dump() for e in entries]
             if first := self.first_error_type:
                 out[DEGRADED_ERROR_KEY] = first
-        if self.unresolved:
-            out[UNRESOLVED_KEY] = True
+        if unresolved := self.unresolved:
+            out[UNRESOLVED_KEY] = [e.model_dump() for e in unresolved]
         return out
+
+
+class DegradationReport(BaseModel):
+    """A result's degraded steps as its metadata reports them
+    (:meth:`DegradationLedger.metadata`), read back: the one reading of
+    those keys for the surfaces that show them."""
+
+    degraded: list[Degradation] = Field(
+        default_factory=list, description="The steps the answer was given without"
+    )
+    degraded_error: str | None = Field(
+        default=None, description="The error type of the first that names one"
+    )
+    citations_unresolved: list[Degradation] = Field(
+        default_factory=list,
+        description="The lineage reads that failed: the sources name fewer "
+        "documents, the answer is not degraded",
+    )
+
+    @classmethod
+    def of(cls, metadata: Mapping[str, Any] | None) -> DegradationReport:
+        """The report of ``metadata`` (a result's or an answer's)."""
+        metadata = metadata or {}
+        error = metadata.get(DEGRADED_ERROR_KEY)
+        return cls(
+            degraded=_entries(metadata.get(DEGRADED_KEY)),
+            degraded_error=str(error) if error else None,
+            citations_unresolved=_entries(metadata.get(UNRESOLVED_KEY)),
+        )
+
+
+def _entries(value: Any) -> list[Degradation]:
+    """The entries of a reported list (one that does not read as an entry,
+    a third-party strategy's own, is left out)."""
+    entries: list[Degradation] = []
+    for item in value if isinstance(value, list) else []:
+        try:
+            entries.append(Degradation.model_validate(item))
+        except ValidationError:
+            continue
+    return entries
 
 
 def _type_name(error: BaseException | str | None) -> str | None:

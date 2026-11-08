@@ -10,8 +10,9 @@ it completes, read by ``CitationMarkerScanner`` so a marker split across
 chunks counts once it closes; none for a strategy whose citations are off),
 then ``result`` (the answer, its citations and ``cites``, whether its
 strategy cites at all (``search.citations``), its sources with their
-provenance and context markers, how ``auto`` routed, rerank status, usage,
-cost and latency) or ``error``.
+provenance and context markers, then the model-written sections it may cite,
+the steps it was given without (``degraded``: a partial answer), how
+``auto`` routed, rerank status, usage, cost and latency) or ``error``.
 
 A follow-up carries the conversation itself (``RAGInput.history``): the
 page keeps its turns, so a chain rebuilt after a settings save or an
@@ -56,7 +57,6 @@ from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
     MethodologyNotIndexedError,
     classify,
-    error_class_of,
 )
 
 logger = get_logger(__name__)
@@ -138,6 +138,10 @@ def source_view(view: SourceView) -> dict[str, Any]:
         "provenance": view.provenance,
         "title": view.title or view.id,
         "marker": view.marker,
+        # Model-written (a key point, an intermediate answer), and the files
+        # its citation names.
+        "synthesized": view.synthesized,
+        "documents": view.documents,
     }
     if view.kind == "entity":
         shown.update(entity_type=view.type, node_ids=[view.id])
@@ -347,6 +351,8 @@ class AskService:
         async def run() -> None:
             try:
                 async with self._using() as (chain, config):
+                    # The namespace asked, resolved as the chain resolves it.
+                    record["suffix"] = namespace_of(config, request.suffix)
                     output, trace_id = await self._invoke(
                         chain, config, request, query_id, queue
                     )
@@ -435,7 +441,9 @@ class AskService:
             # An auto query's route is known only with its result.
             scans = citations_enabled(config, request.search_strategy)
             output = await chain.ainvoke(
-                RAGInput(
+                # An argument the query cannot take (a blank question) is an
+                # invalid_argument, as on the other surfaces.
+                RAGInput.checked(
                     query=request.query,
                     search_strategy=request.search_strategy,
                     search_type=request.search_type,
@@ -470,12 +478,24 @@ class AskService:
         view = AnswerView.from_output(output)
         sources = [source_view(s) for s in view.sources]
         link_sources(sources)
-        # Each citation's [n] links to the source it was shown as (None: a
-        # synthesized section, no source).
+        # The model-written sections the answer may cite (global search's
+        # key points, DRIFT's intermediate answers), after the sources.
+        written = {
+            w.marker: len(sources) + i
+            for i, w in enumerate(view.written, 1)
+            if w.marker is not None
+        }
+        sources.extend(
+            source_view(w.model_copy(update={"rank": len(sources) + i}))
+            for i, w in enumerate(view.written, 1)
+        )
+        # Each citation's [n] links to the source or written section it was
+        # shown as.
         citations = [
             {
                 **c.model_dump(mode="json"),
-                "source_rank": view.citation_ranks.get(c.marker),
+                "source_rank": view.citation_ranks.get(c.marker)
+                or written.get(c.marker),
             }
             for c in view.citations
         ]
@@ -506,12 +526,10 @@ class AskService:
             "error": view.error,
             # The class of a failure the chain absorbed (ignore_errors), as
             # an error event names a raised one (_error_kind).
-            "error_kind": (
-                error_class_of(output.metadata.get("error_class")).value
-                if view.error
-                else None
-            ),
+            "error_kind": view.error_class,
             "error_message": view.error_message,
+            # What the answer was given without: a partial answer.
+            **view.outcome_fields(),
             "rerank": view.rerank,
             "usage": usage_data,
             "cost_usd": cost,

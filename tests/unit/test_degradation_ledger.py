@@ -40,6 +40,7 @@ from unified_kg_rag.domain.models import (
 )
 from unified_kg_rag.domain.retrieval.degradation import (
     DegradationLedger,
+    DegradationReport,
     DegradationStep,
 )
 from unified_kg_rag.shared import AWSServiceError
@@ -84,8 +85,32 @@ def test_an_unresolved_lineage_read_degrades_no_answer() -> None:
     ledger.record_unresolved(
         DegradationStep.FINDINGS_LINEAGE, "Report findings records", "RuntimeError"
     )
-    assert ledger.metadata() == {"citations_unresolved": True}
+    # Regression (rv8): reported as True only, so no surface could say
+    # which read failed; its entries are reported as the degraded ones are.
+    assert ledger.metadata() == {
+        "citations_unresolved": [
+            {
+                "step": "findings_lineage",
+                "reason": "Report findings records",
+                "error_type": "RuntimeError",
+            }
+        ]
+    }
     assert not ledger.entries
+    report = DegradationReport.of(ledger.metadata())
+    assert report.citations_unresolved == ledger.unresolved
+    assert report.degraded == [] and report.degraded_error is None
+
+
+def test_a_report_reads_back_what_the_ledger_reports() -> None:
+    ledger = DegradationLedger()
+    ledger.record(DegradationStep.GLOBAL_MAP, "1/2 reports unrated", "Throttling")
+    report = DegradationReport.of(ledger.metadata())
+    assert report.degraded == ledger.entries
+    assert report.degraded_error == "Throttling"
+    # A third-party strategy's own list, not entries: left out, not a crash.
+    assert DegradationReport.of({"degraded": ["odd", {"step": 1}]}).degraded == []
+    assert DegradationReport.of(None) == DegradationReport()
 
 
 def test_recording_outside_a_scope_is_nothing() -> None:

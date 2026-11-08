@@ -16,6 +16,7 @@ import re
 import pytest
 from rich.console import Console
 
+from tests.fixtures.run_rag import answer_document
 from unified_kg_rag.application.cli import run_rag_chain
 from unified_kg_rag.application.cli.run_rag_chain import RAGChainRunner
 
@@ -49,9 +50,7 @@ def _assert_inert(rendered: str) -> None:
 
 
 def test_answer_is_printed_literally(terminal: io.StringIO) -> None:
-    RAGChainRunner._print_result(
-        {"success": True, "answer": _HOSTILE + "\nline two\tcol"}
-    )
+    RAGChainRunner._print_result(answer_document(_HOSTILE + "\nline two\tcol"))
     rendered = terminal.getvalue()
     _assert_inert(rendered)
     assert "line two" in rendered
@@ -64,16 +63,15 @@ def test_error_is_printed_literally(terminal: io.StringIO) -> None:
 
 def test_verbose_panels_print_model_output_literally(terminal: io.StringIO) -> None:
     RAGChainRunner._print_result(
-        {
-            "success": True,
-            "answer": "ok",
-            "processed_query": {
+        answer_document(
+            processed_query={
                 "original_query": "q",
+                "final_query": "q",
                 "translated_query": _HOSTILE,
                 "entities": ["[link=https://evil.example]here[/link]"],
             },
-            "sources": [{"source": _HOSTILE, "score": 0.5}],
-        },
+            sources=[{"content": _HOSTILE, "source": _HOSTILE, "score": 0.5}],
+        ),
         verbose=True,
     )
     rendered = terminal.getvalue()
@@ -88,12 +86,9 @@ def test_terminal_safe_keeps_newline_and_tab() -> None:
 def test_metric_labels_read_as_words(terminal: io.StringIO) -> None:
     # The keyword counts printed as "Hl Keyword Count" / "Ll Keyword Count".
     RAGChainRunner._print_result(
-        {
-            "success": True,
-            "answer": "ok",
-            "search_results": {"hl_keyword_count": 1, "ll_keyword_count": 2},
-            "metadata": {"total_results": 3},
-        },
+        answer_document(
+            metadata={"hl_keyword_count": 1, "ll_keyword_count": 2, "total_results": 3}
+        ),
         verbose=True,
     )
     plain = re.sub(r"\x1b\[[0-9;]*m", "", terminal.getvalue())

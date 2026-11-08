@@ -18,6 +18,11 @@ from pydantic import ValidationError
 
 import unified_kg_rag.adapters.search_strategies  # noqa: F401  (registers strategies)
 from tests.fixtures.fakes.chat_models import ScriptedLLMFactory
+from unified_kg_rag.adapters.retrieval.base import (
+    current_ledger,
+    degradation_scope,
+    record_degradation,
+)
 from unified_kg_rag.adapters.retrieval.token_manager import EMPTY_CONTEXT_PLACEHOLDER
 from unified_kg_rag.application.retrieval.rag_chain import (
     GraphRAGChain,
@@ -33,6 +38,7 @@ from unified_kg_rag.domain.models import (
     SearchResult,
     SearchStrategy,
 )
+from unified_kg_rag.domain.retrieval.degradation import DegradationStep
 
 pytestmark = pytest.mark.unit
 
@@ -521,19 +527,46 @@ def test_a_degraded_query_processing_step_marks_the_output() -> None:
         "resolved_strategy": SearchStrategy.LOCAL,
         "start_time": 0.0,
         "answer": "the answer",
-        "processed_query": ProcessedQuery(
-            original_query="q", final_query="q", degraded_error="RuntimeError"
-        ),
+        "processed_query": ProcessedQuery(original_query="q", final_query="q"),
     }
-    out = GraphRAGChain._format_output_step(state)
+    # The query's ledger is the one channel (rv8: ProcessedQuery had its own
+    # degraded_error besides it).
+    with degradation_scope():
+        record_degradation(
+            DegradationStep.QUERY_PROCESSING, "searched as is", RuntimeError("x")
+        )
+        out = GraphRAGChain._format_output_step(state)
     assert out.metadata["degraded_error"] == "RuntimeError"
+    assert [d["step"] for d in out.metadata["degraded"]] == ["query_processing"]
+    assert "degraded_error" not in ProcessedQuery.model_fields
     # A strategy's own absorbed failure is the one reported.
     sr = _search_result()
     sr.metadata["degraded_error"] = "ThrottlingException"
     out = GraphRAGChain._format_output_step({**state, "search_results": sr})
     assert out.metadata["degraded_error"] == "ThrottlingException"
-    clean = {
-        **state,
-        "processed_query": ProcessedQuery(original_query="q", final_query="q"),
-    }
-    assert "degraded_error" not in GraphRAGChain._format_output_step(clean).metadata
+    assert "degraded_error" not in GraphRAGChain._format_output_step(state).metadata
+
+
+async def test_the_composed_runnable_opens_a_ledger_its_steps_record_into() -> None:
+    # A caller driving GraphRAGChain.chain without ainvoke has no query
+    # scope: the composed runnable opens the ledger its last step reads.
+    from langchain_core.runnables import RunnableLambda
+
+    from unified_kg_rag.application.retrieval.rag_chain import _Ledgered
+
+    def degrade(state: dict) -> dict:
+        record_degradation(DegradationStep.TRANSLATION, "untranslated", "Boom")
+        return state
+
+    def report(state: dict) -> dict:
+        ledger = current_ledger()
+        return {**state, "reported": ledger.metadata() if ledger else None}
+
+    runnable = _Ledgered(RunnableLambda(degrade) | RunnableLambda(report))
+    out = await runnable.ainvoke({})
+    assert out["reported"]["degraded_error"] == "Boom"
+    # Within a query it records into the query's ledger.
+    with degradation_scope() as query:
+        await runnable.ainvoke({})
+    assert [e.step for e in query.entries] == ["translation"]
+    assert current_ledger() is None

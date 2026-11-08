@@ -10,10 +10,8 @@ import pytest
 
 from unified_kg_rag.adapters.storage.filter_schema import IndexLimits
 from unified_kg_rag.domain.models import Config, RetrievalResult, SearchQuery
-from unified_kg_rag.evaluation.source_resolver import (
-    TextUnitFileResolver,
-    file_name_of,
-)
+from unified_kg_rag.domain.retrieval.source_fields import file_name
+from unified_kg_rag.evaluation.source_resolver import TextUnitFileResolver
 
 pytestmark = pytest.mark.unit
 
@@ -158,7 +156,7 @@ def _limits(limits: IndexLimits) -> Any:
     return read
 
 
-def test_file_name_of() -> None:
-    assert file_name_of({"attributes": {"file_path": "/in/a/Terms.pdf"}}) == "Terms.pdf"
-    assert file_name_of({"file_name": " x.md "}) == "x.md"
-    assert file_name_of({"file_name": ""}) is None
+def test_file_name() -> None:
+    assert file_name({"attributes": {"file_path": "/in/a/Terms.pdf"}}) == "Terms.pdf"
+    assert file_name({"file_name": " x.md "}) == "x.md"
+    assert file_name({"file_name": ""}) is None

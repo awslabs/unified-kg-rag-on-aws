@@ -26,7 +26,6 @@ from unified_kg_rag.domain.models import (
     Source,
 )
 from unified_kg_rag.domain.retrieval import source_fields
-from unified_kg_rag.evaluation.source_resolver import file_name_of
 
 pytestmark = pytest.mark.unit
 
@@ -87,9 +86,9 @@ def test_every_surface_names_the_same_file(
     assert view.file_name == name
     assert source_view(view)["file_name"] == name
     assert _record(view, 2000).document_name == name
-    assert run_rag_chain._hit_file(dict(source)) == name
+    assert run_rag_chain._hit_label(view) == (name or "tu-1")
     assert unit_from_metadata(source["metadata"], "tu-1").file_name == name
-    assert file_name_of(source["metadata"]) == name
+    assert source_fields.file_name(source["metadata"]) == name
 
 
 def _output(**metadata: Any) -> RAGOutput:
@@ -194,7 +193,7 @@ def test_the_surfaces_map_the_same_view() -> None:
     assert [c["title"] for c in console][:2] == ["contract.pdf", "Vendor -> 구매자"]
     assert [m.name for m in mcp][:2] == [None, "Vendor -> 구매자"]
     assert [c["marker"] for c in console] == [m.citation for m in mcp] == [1, 2, 3]
-    assert run_rag_chain._hit_label(view.sources[1].model_dump()) == "Vendor -> 구매자"
+    assert run_rag_chain._hit_label(view.sources[1]) == "Vendor -> 구매자"
 
 
 def test_a_source_is_the_dict_it_was_with_its_lists_decoded() -> None:

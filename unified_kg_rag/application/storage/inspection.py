@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
     validate_safe_name,
 )
 from unified_kg_rag.domain.models.methodology import methodologies_holding
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.indexer import StoredItemKind
 from unified_kg_rag.shared import ConfigurationError, get_logger
@@ -274,9 +275,9 @@ def _documents_of(item: dict[str, Any], units: dict[str, str]) -> list[str]:
 
 
 def _unit_document(unit: dict[str, Any]) -> str | None:
-    attributes = unit.get("attributes") or {}
-    name = attributes.get("file_path") or attributes.get("file_name")
-    return str(name) if name else None
+    """A text unit's document: its path relative to the corpus root, else
+    its file name; never where the corpus lived on the indexing host."""
+    return source_fields.relative_path(unit) or source_fields.file_name(unit)
 
 
 def export_graph(
@@ -414,7 +415,12 @@ class _JsonLines(_Writer):
                 record.pop("text", None)
                 for key in [k for k in record if k.startswith("translated_text_")]:
                     record.pop(key)
-            if document := _unit_document(item):
+            document = _unit_document(item)
+            attributes = item.get("attributes")
+            if isinstance(attributes, dict) and "file_path" in attributes:
+                # The indexing host's absolute path: the document instead.
+                record["attributes"] = {**attributes, "file_path": document}
+            if document:
                 record["documents"] = [document]
         else:
             record["documents"] = documents

@@ -18,12 +18,16 @@ export class ApiError extends Error {
 }
 
 /** An error as the page shows it: what kind of refusal it is, in the
- * page's language, then the server's detail. */
+ * page's language (a request's own kind, else its error class as the Ask
+ * page names it), then the server's detail. */
 export function errorMessage(t: (key: string) => string, error: unknown): string {
   if (error instanceof ApiError) {
     const key = `error.${error.code}`;
     const kind = t(key);
-    return kind === key ? error.message : `${kind} ${error.message}`;
+    if (kind !== key) return `${kind} ${error.message}`;
+    const classKey = `ask.error.${error.code}`;
+    const errorClass = t(classKey);
+    return errorClass === classKey ? error.message : `${errorClass}: ${error.message}`;
   }
   if (error instanceof TypeError) return t("error.network");
   return error instanceof Error ? error.message : String(error);

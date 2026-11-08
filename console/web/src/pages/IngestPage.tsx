@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { JobPanel } from "../components/JobPanel";
 import { Empty, ErrorText, formatBytes, JobStatusBadge, Loading, Notice, PageHead, Sheet } from "../components/ui";
 import { useI18n } from "../i18n/i18n";
@@ -38,7 +38,10 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   const [jobId, setJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadName, setUploadName] = useState("");
-  const [files, setFiles] = useState<FileWithPath[]>([]);
+  // What was picked; the upload holds the files ingestion reads, filtered
+  // again once the corpora list (its extensions) has loaded.
+  const [picked, setPicked] = useState<FileWithPath[]>([]);
+  const files = useMemo(() => readable(picked, corpora.data?.extensions), [picked, corpora.data?.extensions]);
   const [uploading, setUploading] = useState(false);
   const [over, setOver] = useState(false);
 
@@ -112,7 +115,7 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
         }
         result = await upload<{ corpus: string }>("uploads", form);
       }
-      setFiles([]);
+      setPicked([]);
       await corpora.reload();
       setCorpus(result.corpus);
     } catch (e) {
@@ -123,10 +126,10 @@ export function IngestPage({ status, onJobsChanged }: { status: Status | null; o
   }
 
   const pickFiles = (list: FileList | null) => {
-    // Only the types ingestion reads: the server refuses an upload holding another.
-    const picked = readable(Array.from(list ?? []) as FileWithPath[], corpora.data?.extensions);
-    setFiles(picked);
-    const folder = picked[0]?.webkitRelativePath?.split("/")[0];
+    // Only the files ingestion reads: the server refuses an upload holding another.
+    const chosen = Array.from(list ?? []) as FileWithPath[];
+    setPicked(chosen);
+    const folder = chosen[0]?.webkitRelativePath?.split("/")[0];
     if (folder && !uploadName) setUploadName(folder);
   };
 
@@ -380,11 +383,23 @@ function IngestResult({ job }: { job: JobRecord }) {
   );
 }
 
-/** The ``files`` whose extension is in ``extensions`` (all of them before the list loads). */
-export function readable<T extends { name: string }>(files: T[], extensions: string[] | undefined): T[] {
-  if (!extensions?.length) return files;
-  const known = new Set(extensions.map((e) => e.toLowerCase()));
+/** Whether ingestion skips the file at `path` (relative to the folder
+ * picked, its first segment): a segment that starts with "." or is
+ * __pycache__, the loader's rule (is_excluded_source_path). */
+export function hidden(path: string): boolean {
+  return path
+    .split("/")
+    .slice(1)
+    .some((part) => part.startsWith(".") || part === "__pycache__");
+}
+
+/** The ``files`` ingestion reads: not hidden, and with an extension in
+ * ``extensions`` (any extension before the list loads). */
+export function readable<T extends { name: string; webkitRelativePath?: string }>(files: T[], extensions: string[] | undefined): T[] {
+  const known = new Set((extensions ?? []).map((e) => e.toLowerCase()));
   return files.filter((file) => {
+    if (hidden(file.webkitRelativePath || `/${file.name}`)) return false;
+    if (!known.size) return true;
     const dot = file.name.lastIndexOf(".");
     return dot > 0 && known.has(file.name.slice(dot).toLowerCase());
   });

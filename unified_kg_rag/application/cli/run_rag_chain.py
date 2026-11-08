@@ -63,8 +63,7 @@ from unified_kg_rag.application.cli.query_args import (
     query_suffix,
 )
 from unified_kg_rag.application.config import load_cli_dotenv
-from unified_kg_rag.domain.models import SearchStrategy
-from unified_kg_rag.domain.retrieval import source_fields
+from unified_kg_rag.domain.models import Citation, SearchStrategy
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.shared import (
     CloudWatchEMFSink,
@@ -75,13 +74,25 @@ from unified_kg_rag.shared import (
     NullMetricsSink,
     get_logger,
 )
-from unified_kg_rag.shared.exceptions import ErrorClass, classify, error_class_of
+from unified_kg_rag.shared.exceptions import (
+    ErrorClass,
+    ToolArgumentError,
+    classify,
+    error_class_of,
+)
 from unified_kg_rag.shared.utils import event_loop
 
 if TYPE_CHECKING:
+    from unified_kg_rag.application.presentation.answer_view import (
+        AnswerView,
+        QueryOutcome,
+        SourceView,
+    )
     from unified_kg_rag.application.retrieval.rag_chain import (
         GraphRAGChain,
         RAGInput,
+        RAGOutput,
+        SearchOutput,
     )
 
 logger = get_logger(__name__)
@@ -93,9 +104,24 @@ def _chain_module() -> ModuleType:
     return rag_chain
 
 
+def _view_module() -> ModuleType:
+    from unified_kg_rag.application.presentation import answer_view
+
+    return answer_view
+
+
 # Imported on first use: --help and a refused command line load no chain.
 __getattr__, _load_chain = lazy_names(
-    globals(), {"GraphRAGChain": _chain_module, "RAGInput": _chain_module}
+    globals(),
+    {
+        "GraphRAGChain": _chain_module,
+        "RAGInput": _chain_module,
+        "RAGOutput": _chain_module,
+        "SearchOutput": _chain_module,
+        "AnswerView": _view_module,
+        "QueryOutcome": _view_module,
+        "SourceView": _view_module,
+    },
 )
 
 # --metrics-sink cloudwatch: query_latency_ms of each answered query, per
@@ -122,30 +148,42 @@ def _rerank_line(rerank: dict[str, Any]) -> str:
     return line
 
 
-def _citation_line(citation: dict[str, Any]) -> str:
-    """One cited source as ``run-rag`` prints it: its marker, file and pages
-    (or its seed graphs), and what the section is."""
-    where = citation.get("file_path") or citation.get("file_name")
-    page, page_end = citation.get("page"), citation.get("page_end")
+def _citation_line(citation: Citation) -> str:
+    """One cited section as ``run-rag`` prints it: its marker, file and
+    pages (a graph or model-written section: its first document's; else
+    its seed graphs), and what the section is (a passage's title, its file
+    name, is not named twice)."""
+    first = citation.documents[0] if citation.documents else None
+    where = (
+        citation.file_path
+        or citation.file_name
+        or (first.file_path or first.file_name if first else None)
+    )
+    page, page_end = citation.page, citation.page_end
     if where and page:
         where += (
             f", p. {page}" if page_end in (None, page) else f", pp. {page}-{page_end}"
         )
-    provenance = citation.get("provenance") or {}
+    provenance = citation.provenance or {}
     if not where and provenance.get("seed_graphs"):
         where = "seed graph " + ", ".join(provenance["seed_graphs"])
-    others = len(citation.get("documents") or []) - 1
+    others = len(citation.documents) - 1
     if where and others > 0:
         where += f" (+{others} more)"
-    title = citation.get("title")
-    detail = f"{citation.get('section_type')}: {title}" if title else None
-    parts = [p for p in (where, detail) if p] or [str(citation.get("source_id"))]
-    return f"[{citation.get('marker')}] " + " - ".join(parts)
+    title = citation.title
+    named = title and title not in (citation.file_name, citation.file_path)
+    detail = (
+        f"{citation.section_type}: {title}"
+        if named
+        else (citation.section_type if citation.section_type != "text" else None)
+    )
+    parts = [p for p in (where, detail) if p] or [str(citation.source_id)]
+    return f"[{citation.marker}] " + " - ".join(parts)
 
 
-def print_citations(result: dict[str, Any]) -> None:
-    """The context sections the answer cites (``RAGOutput.citations``)."""
-    cited = [c for c in result.get("citations") or [] if c.get("cited")]
+def print_citations(view: AnswerView) -> None:
+    """The context sections the answer cites (``AnswerView.citations``)."""
+    cited = [c for c in view.citations if c.cited]
     if not cited:
         return
     console.print(
@@ -155,6 +193,19 @@ def print_citations(result: dict[str, Any]) -> None:
             border_style="cyan",
         )
     )
+
+
+def _outcome_lines(outcome: QueryOutcome) -> list[str]:
+    """What the answer (or search) was given without: its degraded steps
+    (a partial answer) and the citation reads that failed."""
+    lines = []
+    if outcome.partial:
+        steps = "; ".join(f"{d.step} ({d.reason})" for d in outcome.degraded)
+        lines.append(f"Partial answer: given without {steps}")
+    if outcome.citations_unresolved:
+        steps = ", ".join(dict.fromkeys(d.step for d in outcome.citations_unresolved))
+        lines.append(f"Some citations name no document: {steps} failed")
+    return [terminal_safe(line) for line in lines]
 
 
 def _filter_pair(item: str) -> str:
@@ -183,32 +234,17 @@ _METRIC_LABELS = {
 }
 
 
-def _hit_kind(item: dict[str, Any]) -> str:
-    """The type of a search result or source: its retriever type
-    (``text``, ``entity``, ``relationship``, ``community``, ...)."""
-    metadata = item.get("metadata") or {}
-    return str(item.get("retriever_type") or metadata.get("section_type") or "result")
-
-
-def _hit_file(item: dict[str, Any]) -> str | None:
-    """The file a text-unit result was chunked from, when it says so."""
-    return source_fields.file_name(item.get("metadata") or {})
-
-
-def _hit_label(item: dict[str, Any]) -> str:
+def _hit_label(view: SourceView) -> str:
     """What a result is, for a person: the file of a text unit (and its
     chunk when the file has several), else its title (the entity or
     community name, a relationship's ends), else the result's id."""
-    metadata = item.get("metadata") or {}
-    if file := _hit_file(item):
-        attributes = metadata.get("attributes") or {}
+    if file := view.file_name:
+        attributes = view.metadata.get("attributes") or {}
         total = attributes.get("total_chunks")
         if isinstance(total, int) and total > 1:
             return f"{file} (chunk {attributes.get('chunk_id')}/{total})"
         return file
-    return source_fields.title(_hit_kind(item), metadata) or str(
-        item.get("source") or "N/A"
-    )
+    return view.title or view.id or "N/A"
 
 
 def _snippet(text: str) -> str:
@@ -219,38 +255,37 @@ def _snippet(text: str) -> str:
     return line
 
 
-def _print_hits(items: list[dict[str, Any]], *, limit: int | None) -> None:
-    """Print search results or sources, numbered: type, label, score and a
-    snippet of the text (retrieved text: printed literally)."""
-    shown = items if limit is None else items[:limit]
-    for i, item in enumerate(shown, 1):
-        score = item.get("score")
+def _print_hits(views: list[SourceView], *, limit: int | None) -> None:
+    """Print search results, sources or written sections, numbered: type,
+    label, score and a snippet of the text (printed literally)."""
+    shown = views if limit is None else views[:limit]
+    for i, view in enumerate(shown, 1):
+        score = view.score
         scored = f"  (score {score:.3f})" if isinstance(score, int | float) else ""
         console.print(
-            f"{i:>3}. [{_hit_kind(item)}] {terminal_safe(_hit_label(item))}{scored}",
+            f"{i:>3}. [{view.kind}] {terminal_safe(_hit_label(view))}{scored}",
             markup=False,
             highlight=False,
         )
-        if snippet := _snippet(terminal_safe(item.get("content") or "")):
+        if snippet := _snippet(terminal_safe(view.text)):
             console.print(f"     {snippet}", markup=False, highlight=False, style="dim")
-    if len(items) > len(shown):
+    if len(views) > len(shown):
         console.print(
-            f"     ... and {len(items) - len(shown)} more (--verbose lists them "
+            f"     ... and {len(views) - len(shown)} more (--verbose lists them "
             "all; --output-format json prints every field)",
             markup=False,
             highlight=False,
         )
 
 
-def _sources_line(sources: list[dict[str, Any]]) -> str:
+def _sources_line(sources: list[SourceView]) -> str:
     """One line for an answer's sources: the files its text came from and
     how many graph elements of each type it read."""
-    files = list(dict.fromkeys(f for f in map(_hit_file, sources) if f is not None))
+    files = list(dict.fromkeys(v.file_name for v in sources if v.file_name))
     counts: dict[str, int] = {}
-    for source in sources:
-        if _hit_file(source) is None:
-            kind = _hit_kind(source)
-            counts[kind] = counts.get(kind, 0) + 1
+    for view in sources:
+        if view.file_name is None:
+            counts[view.kind] = counts.get(view.kind, 0) + 1
     parts = []
     if files:
         named = ", ".join(files[:_FILES_SHOWN])
@@ -267,6 +302,28 @@ def _sources_line(sources: list[dict[str, Any]]) -> str:
     return terminal_safe(
         f"Sources ({len(sources)}): {'; '.join(parts)} (--verbose lists each)"
     )
+
+
+def _answer_view(result: dict[str, Any]) -> AnswerView:
+    """The view of an answer's JSON document (its ``RAGOutput`` fields)."""
+    _load_chain()
+    output = RAGOutput.model_validate(
+        {key: result[key] for key in RAGOutput.model_fields if key in result}
+    )
+    return AnswerView.from_output(output)
+
+
+def _search_views(result: dict[str, Any]) -> tuple[list[SourceView], QueryOutcome]:
+    """The hits of a search's JSON document and its outcome."""
+    _load_chain()
+    output = SearchOutput.model_validate(
+        {key: result[key] for key in SearchOutput.model_fields if key in result}
+    )
+    views = [
+        SourceView.of_result(i, r)
+        for i, r in enumerate(output.search_results.results, 1)
+    ]
+    return views, QueryOutcome.of(output.metadata)
 
 
 class CommandLineInterface:
@@ -379,8 +436,16 @@ class CommandLineInterface:
 
     def parse_args(self) -> argparse.Namespace:
         args = self.parser.parse_args()
-        if not args.interactive and not args.query:
+        if not args.interactive and args.query is None:
             self.parser.error("either --query or --interactive is required")
+        if args.query is not None:
+            # An empty question is refused as the chain refuses it
+            # (RAGInput.checked: invalid_argument), before any model call.
+            _load_chain()
+            try:
+                RAGInput.checked(query=args.query)
+            except ToolArgumentError as e:
+                self.parser.error(f"--query: {str(e).removeprefix('query: ')}")
         if args.interactive and args.mode != "rag":
             self.parser.error(
                 f"--mode {args.mode} is not supported with --interactive, which "
@@ -629,7 +694,7 @@ class RAGChainRunner:
     ) -> RAGInput:
         """A query with the command line's search settings."""
         _load_chain()
-        return RAGInput(
+        return RAGInput.checked(
             query=query,
             suffix=query_suffix(self.args, self.config),
             search_strategy=self.args.search_strategy,
@@ -663,13 +728,15 @@ class RAGChainRunner:
                 self._record_latency(started)
                 raise
             self._record_latency(started)
-            output = result.model_dump()
+            dumped = result.model_dump()
+            output = {**dumped, **self._view_fields(result, dumped)}
             # With processing.ignore_errors the chain does not raise: it returns
             # its error fallback flagged by metadata.error. That is a failure.
-            if (metadata := output.get("metadata") or {}).get("error"):
+            if output.get("error_class") is not None:
+                metadata = output.get("metadata") or {}
                 detail = (output.get("search_results") or {}).get("metadata", {})
                 error = str(detail.get("error") or "RAG chain returned an error")
-                error_class = error_class_of(metadata.get("error_class"))
+                error_class = error_class_of(output["error_class"])
                 if EXIT_CODES[error_class] == EXIT_USAGE and not self.args.interactive:
                     # As raised without ignore_errors (below).
                     usage_error(
@@ -714,6 +781,24 @@ class RAGChainRunner:
                 **failure_fields(EXIT_FAILURE, e),
                 "conversation_id": rag_input.conversation_id,
             }
+
+    @staticmethod
+    def _view_fields(
+        result: RAGOutput | SearchOutput, dumped: dict[str, Any]
+    ) -> dict[str, Any]:
+        """What the JSON document adds to the output, from the one view of
+        an answer every surface reads (``AnswerView``): what it was given
+        without (``degraded``, ``degraded_error``, ``citations_unresolved``),
+        the class of an absorbed error (``error_class``) and, for an
+        answer, the model-written sections it may cite (``written``)."""
+        _load_chain()
+        if not isinstance(result, RAGOutput):
+            return QueryOutcome.of(dumped.get("metadata")).outcome_fields()
+        view = AnswerView.from_output(result)
+        return {
+            **view.outcome_fields(),
+            "written": [w.model_dump(mode="json") for w in view.written],
+        }
 
     def _json_document(self, result: dict[str, Any]) -> dict[str, Any]:
         """The ``--output-format json`` document of a query: an answer's
@@ -775,101 +860,110 @@ class RAGChainRunner:
 
     @staticmethod
     def _print_result(result: dict[str, Any], verbose: bool = False) -> None:
+        """Print a query's JSON document (``_run_query``) for a person,
+        from its ``AnswerView`` (an answer) or its hits' ``SourceView``."""
         if not result.get("success", False):
             error = markup_safe(result.get("error", "Unknown error"))
             console.print(f"\n[red]Error: {error}[/red]")
             return
 
-        sources = result.get("sources")
+        view: AnswerView | None = None
+        outcome: QueryOutcome
         if "answer" in result:
+            view = outcome = _answer_view(result)
             console.print("\n\n" + "=" * 50)
             console.print("[bold blue]Final Answer:[/bold blue]")
             # Model output: never interpret it as markup.
-            console.print(
-                terminal_safe(result.get("answer") or ""), markup=False, highlight=False
-            )
+            console.print(terminal_safe(view.answer), markup=False, highlight=False)
             console.print("=" * 50)
-            print_citations(result)
-            if sources and not verbose:
-                console.print(_sources_line(sources), markup=False, highlight=False)
+            print_citations(view)
+            if view.sources and not verbose:
+                console.print(
+                    _sources_line(view.sources), markup=False, highlight=False
+                )
         else:
             # --mode search: the hits are the result.
-            hits = (result.get("search_results") or {}).get("results") or []
+            hits, outcome = _search_views(result)
             console.print("\n\n" + "=" * 50)
             console.print(f"[bold blue]Search Results ({len(hits)})[/bold blue]")
             console.print("=" * 50)
             _print_hits(hits, limit=None if verbose else _HITS_SHOWN)
+        for line in _outcome_lines(outcome):
+            console.print(line, markup=False, highlight=False, style="yellow")
 
         if verbose:
             console.print("\n[bold]Details:[/bold]")
-
-            if pq := result.get("processed_query"):
-                pq_panel_content = ""
-
-                if original_query := pq.get("original_query"):
-                    pq_panel_content += (
-                        f"  - Original Query: {markup_safe(original_query)}\n"
-                    )
-
-                if translated_query := pq.get("translated_query"):
-                    pq_panel_content += (
-                        f"  - Translated Query: {markup_safe(translated_query)}\n"
-                    )
-
-                if entities := pq.get("entities"):
-                    pq_panel_content += (
-                        f"  - Extracted Entities: {len(entities)} found\n"
-                    )
-                    if entities and len(entities) <= 5:
-                        joined = markup_safe(", ".join(map(str, entities)))
-                        pq_panel_content += f"    {joined}\n"
-
-                if pq_panel_content:
-                    console.print(
-                        Panel(
-                            pq_panel_content.rstrip(),
-                            title="[cyan]Query Processing Info[/cyan]",
-                            border_style="cyan",
-                        )
-                    )
-
-            if sources:
+            RAGChainRunner._print_query_processing(result.get("processed_query"))
+            if view is not None and view.sources:
                 console.print(
-                    f"\n[bold cyan]Reference Sources ({len(sources)})[/bold cyan]"
+                    f"\n[bold cyan]Reference Sources ({len(view.sources)})[/bold cyan]"
                 )
-                _print_hits(sources, limit=None)
-
-            search_result = result.get("search_results", {})
-            metadata = result.get("metadata", {})
-
-            metrics_content = ""
-            all_metadata = {**search_result, **metadata}
-
-            for key, value in all_metadata.items():
-                if key in ["results", "query"]:
-                    continue
-                if key == "rerank" and isinstance(value, dict):
-                    metrics_content += (
-                        f"  - Rerank: {markup_safe(_rerank_line(value))}\n"
-                    )
-                elif key == "search_strategy":
-                    metrics_content += f"  - Search Strategy: {value}\n"
-                elif key == "processing_time":
-                    metrics_content += f"  - Processing Time: {value:.2f}s\n"
-                elif isinstance(value, int | float | str | bool) or (
-                    isinstance(value, list | dict) and len(str(value)) < 100
-                ):
-                    label = _METRIC_LABELS.get(key) or key.replace("_", " ").title()
-                    metrics_content += f"  - {label}: {markup_safe(value)}\n"
-
-            if metrics_content:
+                _print_hits(view.sources, limit=None)
+            if view is not None and view.written:
+                # Model-written sections the answer may cite, no source.
                 console.print(
-                    Panel(
-                        metrics_content.rstrip(),
-                        title="[cyan]Execution Metrics[/cyan]",
-                        border_style="cyan",
-                    )
+                    "\n[bold cyan]Written Sections "
+                    f"({len(view.written)})[/bold cyan]"
                 )
+                _print_hits(view.written, limit=None)
+            RAGChainRunner._print_metrics(result)
+
+    @staticmethod
+    def _print_query_processing(pq: dict[str, Any] | None) -> None:
+        if not pq:
+            return
+        pq_panel_content = ""
+        if original_query := pq.get("original_query"):
+            pq_panel_content += f"  - Original Query: {markup_safe(original_query)}\n"
+        if translated_query := pq.get("translated_query"):
+            pq_panel_content += (
+                f"  - Translated Query: {markup_safe(translated_query)}\n"
+            )
+        if entities := pq.get("entities"):
+            pq_panel_content += f"  - Extracted Entities: {len(entities)} found\n"
+            if len(entities) <= 5:
+                joined = markup_safe(", ".join(map(str, entities)))
+                pq_panel_content += f"    {joined}\n"
+        if pq_panel_content:
+            console.print(
+                Panel(
+                    pq_panel_content.rstrip(),
+                    title="[cyan]Query Processing Info[/cyan]",
+                    border_style="cyan",
+                )
+            )
+
+    @staticmethod
+    def _print_metrics(result: dict[str, Any]) -> None:
+        search_result = result.get("search_results", {})
+        metadata = result.get("metadata", {})
+
+        metrics_content = ""
+        all_metadata = {**search_result, **metadata}
+
+        for key, value in all_metadata.items():
+            if key in ["results", "query"]:
+                continue
+            if key == "rerank" and isinstance(value, dict):
+                metrics_content += f"  - Rerank: {markup_safe(_rerank_line(value))}\n"
+            elif key == "search_strategy":
+                metrics_content += f"  - Search Strategy: {value}\n"
+            elif key == "processing_time":
+                metrics_content += f"  - Processing Time: {value:.2f}s\n"
+            elif isinstance(value, int | float | str | bool) or (
+                isinstance(value, list | dict) and len(str(value)) < 100
+            ):
+                label = _METRIC_LABELS.get(key) or key.replace("_", " ").title()
+                metrics_content += f"  - {label}: {markup_safe(value)}\n"
+
+        if metrics_content:
+            console.print(
+                Panel(
+                    metrics_content.rstrip(),
+                    title="[cyan]Execution Metrics[/cyan]",
+                    border_style="cyan",
+                )
+            )
 
     @staticmethod
     def _handle_help(**kwargs: Any) -> None:

@@ -939,3 +939,91 @@ def test_saving_new_output_directories_moves_the_roots(
     status = client.get("/api/status").json()
     assert status["directories"]["outputs"] == str(moved.resolve())
     assert client.app.state.console.jobs.evaluation_outputs == moved.resolve()
+
+
+def test_a_blank_question_is_an_invalid_argument(client: Any) -> None:
+    # Regression (rv8): "   " passed the request's length check and failed
+    # as a raw Pydantic error of kind "failure".
+    events = _ask(client, query="   ", search_strategy="local")
+    assert events[-1]["kind"] == "error"
+    assert events[-1]["error_kind"] == "invalid_argument"
+    assert events[-1]["message"] == "query: The query is empty."
+
+
+def test_the_history_records_the_namespace_asked(client: Any) -> None:
+    # Regression (rv8): a question without a suffix was recorded with None,
+    # not the namespace it was answered from.
+    _ask(client, query="Who carries the lidar units?", search_strategy="local")
+    (latest,) = client.app.state.console.store.queries(limit=1)
+    assert latest["suffix"] == "default"
+
+
+@pytest.mark.parametrize(
+    ("files", "clash"),
+    [
+        ({"a.txt": "x", "a.txt/e.txt": "y"}, "a.txt/e.txt"),
+        ({"notes/b.txt": "x", "notes": "y"}, None),
+    ],
+    ids=["file-and-folder", "folder-named-like-a-file"],
+)
+def test_an_upload_naming_a_file_and_a_folder_is_refused(
+    client: Any, workspace: Path, files: dict[str, str], clash: str | None
+) -> None:
+    # Regression (rv8): answered 500 and left the folder it had made.
+    response = _upload(client, "clash", files)
+    assert 400 <= response.status_code < 500, response.text
+    if clash is not None:
+        assert response.status_code == 409
+        assert response.json()["code"] == "upload_conflict"
+        assert clash in response.json()["error"]
+    assert not (workspace / "uploads" / "clash").exists()
+
+
+def test_an_upload_onto_a_file_the_folder_holds_is_refused(
+    client: Any, workspace: Path
+) -> None:
+    folder = workspace / "uploads" / "held"
+    folder.mkdir(parents=True)
+    (folder / "a.txt").write_text("kept")
+    (folder / "d.txt").mkdir()
+    for path in ("a.txt/b.txt", "d.txt"):
+        response = _upload(client, "held", {path: "x"})
+        assert response.status_code == 409, response.text
+    assert (folder / "a.txt").read_text() == "kept"
+    assert sorted(p.name for p in folder.iterdir()) == ["a.txt", "d.txt"]
+    assert not list((folder / "d.txt").iterdir())
+
+
+def test_an_upload_of_a_hidden_file_is_refused_as_ingestion_skips_it(
+    client: Any, workspace: Path
+) -> None:
+    # Regression (rv8): uploaded (200), then never ingested: the loader
+    # skips hidden files and folders (is_excluded_source_path).
+    for path in (".hidden.txt", ".git/notes.txt", "__pycache__/x.txt"):
+        response = _upload(client, "hidden", {"a.txt": "kept", path: "x"})
+        assert response.status_code == 415, (path, response.text)
+        assert path in response.json()["error"]
+    assert not (workspace / "uploads" / "hidden").exists()
+
+
+def test_a_configuration_error_is_named_by_its_class(client: Any) -> None:
+    # Regression (rv8): every ConfigurationError answered code "invalid",
+    # a namespace without an index or a methodology it lacks included.
+    import asyncio
+
+    from unified_kg_rag.shared.exceptions import (
+        ConfigurationError,
+        MethodologyNotIndexedError,
+        StoreConfigurationError,
+    )
+
+    handler = client.app.exception_handlers[ConfigurationError]
+    for error, code in (
+        (MethodologyNotIndexedError("holds graphrag only"), "not_indexed"),
+        (StoreConfigurationError("the store refuses the mapping"), "configuration"),
+        # The console refusing a request's own value.
+        (ConfigurationError("choose at least one strategy"), "invalid"),
+    ):
+        answered = asyncio.run(handler(None, error))
+        assert answered.status_code == 400
+        assert json.loads(answered.body)["code"] == code

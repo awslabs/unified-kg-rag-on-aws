@@ -3,6 +3,9 @@
 import { Fragment } from "react";
 
 const DENSE = /[぀-ヿ㐀-鿿가-힯]/;
+// A word's runs of one script class: Hangul, Kana or Han, or anything else
+// (a mixed word such as "Depot으로" is a Latin term and a Hangul one).
+const SCRIPT_RUNS = /[぀-ヿ㐀-鿿가-힯]+|[^぀-ヿ㐀-鿿가-힯]+/gu;
 // Words too common to be worth marking (English; other Latin-script
 // languages are marked from four letters on).
 const COMMON = new Set(
@@ -11,15 +14,17 @@ const COMMON = new Set(
 
 /** The terms of `query` worth marking: words of four or more letters (or
  * with a digit) but the most common ones, and
- * two-character runs of Hangul, Kana or Han (which have no spaces). */
+ * two-character runs of Hangul, Kana or Han (which have no spaces). A word
+ * that mixes them is split where its script changes first. */
 export function queryTerms(query: string): string[] {
   const terms = new Set<string>();
   for (const word of query.toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
-    if (!word) continue;
-    if (DENSE.test(word)) {
-      for (let i = 0; i + 2 <= word.length; i += 1) terms.add(word.slice(i, i + 2));
-    } else if ((word.length >= 4 || /\d/.test(word)) && !COMMON.has(word)) {
-      terms.add(word);
+    for (const run of word.match(SCRIPT_RUNS) ?? []) {
+      if (DENSE.test(run)) {
+        for (let i = 0; i + 2 <= run.length; i += 1) terms.add(run.slice(i, i + 2));
+      } else if ((run.length >= 4 || /\d/.test(run)) && !COMMON.has(run)) {
+        terms.add(run);
+      }
     }
   }
   return [...terms].sort((a, b) => b.length - a.length);

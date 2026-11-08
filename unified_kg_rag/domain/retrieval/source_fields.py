@@ -107,7 +107,30 @@ def file_name(metadata: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _text(value: Any) -> str | None:
+def safe_relative_path(value: Any) -> str | None:
+    """``value`` as a path relative to the corpus root, or ``None`` when it
+    is not one (absolute, a drive or URL, or climbing out with ``..``): a
+    surface never names where the corpus lived on the indexing host."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = value.strip().replace("\\", "/")
+    if path.startswith("/") or ":" in path:
+        return None
+    parts = [p for p in path.split("/") if p not in ("", ".")]
+    if not parts or ".." in parts:
+        return None
+    return "/".join(parts)
+
+
+def relative_path(metadata: Mapping[str, Any]) -> str | None:
+    """The file a text unit was chunked from, as its path relative to the
+    corpus root (its stored ``attributes.relative_path``), when it is one."""
+    return safe_relative_path(_attributes(metadata).get("relative_path"))
+
+
+def text_value(value: Any) -> str | None:
+    """A stored scalar as text (a graph store's one-element list read as its
+    value); ``None`` when empty."""
     if isinstance(value, list) and len(value) == 1:
         value = value[0]
     return str(value) if value not in (None, "") else None
@@ -134,24 +157,24 @@ def entity_refs(
         return [
             EntityRef(
                 id=item_id,
-                name=_text(metadata.get("name")),
-                type=_text(metadata.get("type")),
-                iri=_text(metadata.get("iri")),
+                name=text_value(metadata.get("name")),
+                type=text_value(metadata.get("type")),
+                iri=text_value(metadata.get("iri")),
             )
         ]
     if kind == "relationship":
         return [
             EntityRef(
-                id=_text(metadata.get(f"{end}_id")),
-                name=_text(metadata.get(f"{end}_name")),
+                id=text_value(metadata.get(f"{end}_id")),
+                name=text_value(metadata.get(f"{end}_name")),
             )
             for end in ("source", "target")
         ]
     if kind == "claim":
         return [
             EntityRef(
-                id=_text(metadata.get(f"{end}_id")),
-                name=_text(metadata.get(f"{end}_name")),
+                id=text_value(metadata.get(f"{end}_id")),
+                name=text_value(metadata.get(f"{end}_name")),
             )
             for end in ("subject", "object")
             if metadata.get(f"{end}_id") or metadata.get(f"{end}_name")
@@ -160,7 +183,7 @@ def entity_refs(
         names = metadata.get("entity_names")
         names = names if isinstance(names, list) else []
         return [
-            EntityRef(id=i, name=_text(names[n]) if n < len(names) else None)
+            EntityRef(id=i, name=text_value(names[n]) if n < len(names) else None)
             for n, i in enumerate(listed(metadata, "entity_ids"))
         ]
     return []
@@ -172,17 +195,17 @@ def title(kind: str, metadata: Mapping[str, Any]) -> str | None:
     a passage's file name."""
     if kind == "relationship":
         source, target = (
-            _text(metadata.get("source_name")),
-            _text(metadata.get("target_name")),
+            text_value(metadata.get("source_name")),
+            text_value(metadata.get("target_name")),
         )
         return f"{source or '?'} -> {target or '?'}" if source or target else None
     if kind == "query_result":
-        return _text(metadata.get("plan_description")) or _text(
+        return text_value(metadata.get("plan_description")) or text_value(
             metadata.get("operation")
         )
     if kind == "text":
         return file_name(metadata)
-    return _text(metadata.get("name")) or _text(metadata.get("title"))
+    return text_value(metadata.get("name")) or text_value(metadata.get("title"))
 
 
 def seed_provenance(metadata: Mapping[str, Any]) -> dict[str, Any] | None:

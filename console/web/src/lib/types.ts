@@ -60,6 +60,17 @@ export interface Source {
   backend?: string | null;
   /** The context marker [n] the answer model saw it under. */
   marker: number | null;
+  /** Model-written (a key point, an intermediate answer), not retrieved. */
+  synthesized?: boolean;
+  /** The file names its documents carry (a written section: its citation's). */
+  documents?: string[];
+}
+
+/** A step a query was given without (DegradationLedger). */
+export interface Degradation {
+  step: string;
+  reason: string;
+  error_type: string | null;
 }
 
 export interface CitedDocument {
@@ -115,6 +126,11 @@ export interface AskResult {
   error: boolean;
   error_kind: string | null;
   error_message: string | null;
+  /** The steps the answer was given without (a partial answer); absent from an older server. */
+  degraded?: Degradation[];
+  degraded_error?: string | null;
+  /** The citation lineage reads that failed: fewer documents named. */
+  citations_unresolved?: Degradation[];
   rerank: { status: string; reason?: string; stages?: { scope: string; status: string }[] } | null;
   usage: Usage | null;
   cost_usd: number | null;

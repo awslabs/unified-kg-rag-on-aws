@@ -56,6 +56,7 @@ from unified_kg_rag.domain.models import (
     model_id_value,
 )
 from unified_kg_rag.domain.models.config import REMOVED_EVALUATORS
+from unified_kg_rag.domain.retrieval import source_fields
 from unified_kg_rag.domain.retrieval.abstention import (
     ABSTENTION_REASON_KEY,
     CONTEXT_SUFFICIENT_KEY,
@@ -102,7 +103,7 @@ from .comparison import USAGE_SCHEMA
 from .graph_aware_evaluator import GraphAwareEvaluator
 from .iterative_statistics import iterative_statistics
 from .retrieval_evaluator import BY_SOURCE_TYPE_KEY, RetrievalEvaluator
-from .source_resolver import SourceFileResolver, TextUnitFileResolver, file_name_of
+from .source_resolver import SourceFileResolver, TextUnitFileResolver
 from .structured_statistics import structured_statistics
 
 logger = get_logger(__name__)
@@ -1052,14 +1053,18 @@ class EvaluationManager:
                 continue
             section_type = str(metadata.get("section_type") or "")
             types.append(section_type)
+            # The entities a source is about, read as every surface reads
+            # them (source_fields.entity_refs).
+            refs = source_fields.entity_refs(section_type, metadata, None)
             if section_type == SectionType.ENTITY.value:
-                if name := str(metadata.get("name") or "").strip():
+                if name := (refs[0].name or "").strip():
                     entities.append(name)
             elif section_type == SectionType.RELATIONSHIP.value:
+                source, target = (ref.name or "" for ref in refs)
                 relationships.append(
                     {
-                        "source": str(metadata.get("source_name") or ""),
-                        "target": str(metadata.get("target_name") or ""),
+                        "source": source,
+                        "target": target,
                         "description": str(metadata.get("description") or ""),
                     }
                 )
@@ -1089,7 +1094,7 @@ class EvaluationManager:
                 if isinstance(metadata, dict):
                     payloads.append(metadata)
                 for payload in payloads:
-                    if name := file_name_of(payload):
+                    if name := source_fields.file_name(payload):
                         files.append(name)
                     lineage = payload.get("text_unit_ids") or []
                     if isinstance(lineage, str):

@@ -663,8 +663,12 @@ From a `main` checkout (formats and keys no release had):
   empty search), global's rating and map calls, DRIFT's and iterative's model calls, and the chain's
   `processing.ignore_errors` fallbacks (auto's router, the follow-up rewrite, query processing, the context budget),
   from one per-query ledger (`DegradationLedger`). A failed findings-lineage read of a strategy whose answers do not
-  cite (global and DRIFT by default) is `metadata.citations_unresolved` instead. `run-eval` records `degraded_steps`
-  per answer, `degraded_step_counts` and `degraded_queries`, which `--max-failure-rate` counts.
+  cite (global and DRIFT by default), or of the documents of the answer's graph citations, is listed in
+  `metadata.citations_unresolved` instead, in the same shape. `run-eval` records `degraded_steps` per answer,
+  `degraded_step_counts` and `degraded_queries`, which `--max-failure-rate` counts. The answer view (`AnswerView`)
+  carries them with the class of an absorbed error (`degraded`, `degraded_error`, `citations_unresolved`,
+  `error_class`): the console's Ask page shows a partial answer as such, MCP `kg_answer` and `kg_search` return them
+  after the answer, and `run-rag` prints them (and its JSON document holds them).
 - `ModelUnreachableError`: a model server that cannot be reached is named with its provider kind, `base_url` and how
   to start it (`ollama serve`, the models to pull). `run-ingestion` raises it at its embedding probe, before any
   extraction (it retried for minutes and ended with "produced 0 outputs"); a query raises it (the error answer under
@@ -743,9 +747,10 @@ From a `main` checkout (formats and keys no release had):
   chunk-oriented record (chunk id, text, score, source document id and file name, cited entities with their IRIs,
   seed-graph provenance; a text record's document id as its text unit stores it; a structured query's
   `query_result` with its table up to 6000 characters and the entities it returned, by id and name). `kg_answer`
-  returns the answer first, then by default only the records it cites (`records`: `cited`, `all`, `none`; every
-  source when it cites none), and takes the caller's conversation as an optional bounded `history` for a follow-up
-  question (`RAGInput.history`; the server keeps none) (#635, #643). The namespace is fixed at start (`--suffix`,
+  returns the answer first, then by default only the records it cites (`records`: `cited`, `all`, `none`; the first
+  `mcp.uncited_records`, `records_kept: top`, when it cites none; `all` lists the model-written sections too), and
+  takes the caller's conversation as an optional bounded `history` for a follow-up question (`RAGInput.history`; the
+  server keeps none) (#635, #643). The namespace is fixed at start (`--suffix`,
   else `index_value`) unless `mcp.allowed_namespaces` lists others; `mcp.tools`, `mcp.strategies` and the
   `mcp.max_*` bounds limit what a call may ask and costs (`mcp.strategies` binds the chain's new
   `allowed_strategies`: `auto` routes, and falls back, only within it, and is refused before any model call when the
@@ -829,7 +834,9 @@ From a `main` checkout (formats and keys no release had):
   path changes (every config key that names one), and secrets never shown or written. Jobs run the unchanged
   `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs `--allow-remote`),
   requires a per-launch access token, refuses paths outside its directories, cross-site requests and uploads of a
-  type ingestion does not read, writes an upload all or none, and loads nothing from another host. The web client
+  file ingestion does not read (another type, or hidden) or naming one path as a file and a folder, writes an
+  upload all or none (a refused one leaves no folder), names an error by its class (`ErrorClass`), and loads
+  nothing from another host. The web client
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, in a light and a dark theme (the
   system's unless one is chosen in the top bar), set in Pretendard (Pretendard JP for Japanese, JetBrains Mono for
   figures; self-hosted, SIL OFL), with a force-directed canvas graph (the focused node and its neighbours labelled,
@@ -964,7 +971,8 @@ From a `main` checkout (formats and keys no release had):
 - `run-describe` (and `describe_namespace`, `export_graph`): what an index namespace holds (methodologies, the
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
-  (`--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#628). A
+  (a document by its path relative to the corpus root, else its file name, never the indexing host's path;
+  `--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#628). A
   registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported unavailable, with
   the reason in `registry_unavailable` and a warning, and the rest is still described (#636). A missing extra and a
   namespace that holds no index exit 2 with the error on stderr, and describing creates no store file where nothing
@@ -1062,8 +1070,8 @@ From a `main` checkout (formats and keys no release had):
 - Per-query rerank status (`metadata.rerank`) and opt-in `search.reranking.required` (#284). In `run-eval`, queries
   whose rerank call failed (a throttled rerank model keeps the fused order) and answers whose retrieval absorbed a step
   failure (each result's `degraded_error`, the summary's `degraded_error_counts`; a query translation or entity or
-  keyword extraction that `processing.ignore_errors` skipped among them, `ProcessedQuery.degraded_error` and the
-  chain's `metadata.degraded_error`) count against `--max-failure-rate`,
+  keyword extraction that `processing.ignore_errors` skipped among them, in the chain's `metadata.degraded_error`)
+  count against `--max-failure-rate`,
   so at the default 1.0 a run whose every rerank call failed exits 1; a comparison names each run's rerank failures and
   degraded answers with their rates and warns louder (`NOT COMPARABLE AS IS`) when the lowest and highest rate differ
   beyond chance (two-sided Fisher's exact p below 0.05), with a note when they differ within it.
@@ -1525,7 +1533,10 @@ From a `main` checkout (formats and keys no release had):
   `entity_ids`, `community_ids`, `source_kinds`, ...) are always lists of strings: a graph store's one-element value
   or JSON list string is decoded where the result is made. The console, MCP `kg_answer` and `run-rag` read an answer
   through one view, so they name a source's file (the last path segment, its stored attributes first), title (a
-  relationship's `A -> B`) and `[n]` alike.
+  relationship's `A -> B`) and `[n]` alike; `run-rag` builds its text and JSON output from it, the model-written
+  sections an answer may cite included (`written`; `--verbose` lists them), and names a passage's file once in its
+  citation line. A query a surface builds that the chain refuses (a blank question) is an `invalid_argument`
+  (`RAGInput.checked`, `ToolArgumentError`): `run-rag` exits 2 before any model call, the console names it.
 
 ### Fixed
 Bugs present in 0.2.3.

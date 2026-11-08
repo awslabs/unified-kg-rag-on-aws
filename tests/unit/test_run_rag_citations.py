@@ -93,9 +93,29 @@ def test_run_rag_prints_the_cited_sources(capsys: pytest.CaptureFixture[str]) ->
 
 def test_one_page_prints_as_one(capsys: pytest.CaptureFixture[str]) -> None:
     line = run_rag_chain._citation_line(
-        {"marker": 5, "file_name": "a.pdf", "page": 2, "page_end": 2}
+        Citation(marker=5, section_type="text", file_name="a.pdf", page=2, page_end=2)
     )
     assert line == "[5] a.pdf, p. 2"
+
+
+def test_a_passage_is_not_named_twice() -> None:
+    # Regression (rv8): a passage's title is its file name, so the line read
+    # "[2] supply-agreement.pdf, p. 2 - text: supply-agreement.pdf".
+    line = run_rag_chain._citation_line(
+        Citation(
+            marker=2,
+            section_type="text",
+            file_name="supply-agreement.pdf",
+            title="supply-agreement.pdf",
+            page=2,
+        )
+    )
+    assert line == "[2] supply-agreement.pdf, p. 2"
+    # A graph section's own title is kept.
+    entity = Citation(
+        marker=3, section_type="entity", file_name="a.pdf", title="Vendor"
+    )
+    assert run_rag_chain._citation_line(entity) == "[3] a.pdf - entity: Vendor"
 
 
 def test_the_json_output_carries_every_citation(
