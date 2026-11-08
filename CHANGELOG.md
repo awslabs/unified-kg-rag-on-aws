@@ -322,8 +322,10 @@ See [`iac/README.md`](iac/README.md).
   `ApplyGuardrail` (`aws.bedrock.guardrail.check_input` / `check_output`, both on); ingestion and evaluation models
   are never guarded. A blocked query gets the blocked message without retrieval (`RAGOutput.metadata.blocked`), a
   masked one continues with the masked text, interventions are in `metadata.guardrail`, a guardrail error fails the
-  query, and with `check_output` a stream delivers the answer as one chunk after the check. A role outside the CDK
-  stack needs `bedrock:ApplyGuardrail` (#104, #319, #344).
+  query, and with `check_output` a stream delivers the answer as one chunk after the check. The baseline guardrail
+  `iac/` creates masks email, phone and card numbers in the query too (its PII settings acted on answers only; the
+  next deploy publishes a new version). A role outside the CDK stack needs `bedrock:ApplyGuardrail` (#104, #319,
+  #344).
 - Answers carry `[n]` citation markers by default (`search.citations.enabled`): their text and the judges' scores
   are not comparable with 0.2.3 runs; set it `false` for the earlier context and prompt (#627).
 - A query with conversation history is rewritten as a standalone question (`models.roles.query_rewrite`) that every

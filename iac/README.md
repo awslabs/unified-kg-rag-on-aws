@@ -328,7 +328,8 @@ image built for the other platform stops every task at start with
 The guardrail must live in the Bedrock runtime region (`bedrock_region`),
 which can differ from the deploy region, so it is its own stack, and a
 two-step flow avoids cross-region CloudFormation references. The baseline
-guardrail anonymizes email, phone and card numbers but not `NAME`: names are
+guardrail anonymizes email, phone and card numbers, in the screened query
+and answer both, but not `NAME`: names are
 corpus content, and anonymizing them in the screened query and answer removes
 the name a question retrieves by and puts `{NAME}` in answers.
 

@@ -135,9 +135,17 @@ class GuardrailStack(Stack):
                     # up) and answers into "{NAME}". Add it only for a corpus
                     # whose names must not reach users, accepting that
                     # retrieval by name stops working.
+                    # Both directions: `action` alone masks only the
+                    # answer (OUTPUT), so check_input passed a query's PII
+                    # through to retrieval, memory and the model.
                     pii_entities_config=[
                         bedrock.CfnGuardrail.PiiEntityConfigProperty(
-                            type=t, action="ANONYMIZE"
+                            type=t,
+                            action="ANONYMIZE",
+                            input_action="ANONYMIZE",
+                            input_enabled=True,
+                            output_action="ANONYMIZE",
+                            output_enabled=True,
                         )
                         for t in PII_ANONYMIZED
                     ]
