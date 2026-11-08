@@ -53,7 +53,11 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.cache_keys import index_language
-from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
+from unified_kg_rag.domain.ingestion.seed_graph import (
+    DOCUMENT_SOURCE_KIND,
+    SEED_SOURCE_KIND,
+    is_seed_unit,
+)
 from unified_kg_rag.domain.models import (
     Config,
     Constants,
@@ -109,7 +113,7 @@ from unified_kg_rag.domain.retrieval.graph_query import (
 from unified_kg_rag.domain.retrieval.index_prefixes import held_artifacts_of
 from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.linking import choose_links, hit_name
-from unified_kg_rag.domain.retrieval.source_fields import LIST_FIELDS
+from unified_kg_rag.domain.retrieval.source_fields import LIST_FIELDS, seed_provenance
 from unified_kg_rag.ports.graph_query import GraphQueryPort
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
@@ -1051,26 +1055,23 @@ class StructuredSearchStrategy(BaseSearchStrategy):
 
     @staticmethod
     def _provenance(entities: list[RetrievalResult]) -> dict[str, Any] | None:
-        """The seed graphs the returned entities come from, when any does."""
-        kinds: set[str] = set()
-        graphs: set[str] = set()
-        for entity in entities:
-            stated = entity.metadata.get("source_kinds") or []
-            if "seed_graph" not in stated:
-                continue
-            kinds.update(str(k) for k in stated)
-            filters = (entity.metadata.get("attributes") or {}).get(
-                Constants.FILTERS.value
-            ) or {}
-            names = filters.get("seed_graph") or []
-            graphs.update(
-                str(n) for n in (names if isinstance(names, list) else [names])
-            )
-        if not kinds:
+        """The seed graphs the returned entities come from, when any does:
+        the union of their ``seed_provenance``."""
+        stated = [
+            found
+            for entity in entities
+            if (found := seed_provenance(entity.metadata or {})) is not None
+        ]
+        if not stated:
             return None
+        both = any(p["kind"] != SEED_SOURCE_KIND for p in stated)
         return {
-            "kind": "document+seed_graph" if "document" in kinds else "seed_graph",
-            "seed_graphs": sorted(graphs),
+            "kind": (
+                f"{DOCUMENT_SOURCE_KIND}+{SEED_SOURCE_KIND}"
+                if both
+                else SEED_SOURCE_KIND
+            ),
+            "seed_graphs": sorted({g for p in stated for g in p["seed_graphs"]}),
         }
 
     async def _path_relationships(

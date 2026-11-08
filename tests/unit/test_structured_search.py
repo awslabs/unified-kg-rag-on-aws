@@ -1046,3 +1046,35 @@ async def test_values_are_asked_in_the_data_language() -> None:
     assert "Korean" not in system
     assert "Write mentions, entities, keywords and the string values" in system
     assert "(English), whatever language" in system
+
+
+def test_provenance_reads_each_entitys_seed_provenance() -> None:
+    # Regression (rv8 design L7): a copy of source_fields.seed_provenance
+    # without its fallback to a graph vertex's attr_seed_graph property.
+    def entity(**metadata: Any) -> RetrievalResult:
+        return RetrievalResult(
+            content="",
+            score=1.0,
+            source="e",
+            retriever_type="entity",
+            metadata=metadata,
+        )
+
+    provenance = StructuredSearchStrategy._provenance(
+        [
+            entity(source_kinds=["seed_graph"], attr_seed_graph=["procure"]),
+            entity(
+                source_kinds=["document", "seed_graph"],
+                attributes={"filters": {"seed_graph": "catalog"}},
+            ),
+            entity(source_kinds=["document"]),
+        ]
+    )
+    assert provenance == {
+        "kind": "document+seed_graph",
+        "seed_graphs": ["catalog", "procure"],
+    }
+    assert (
+        StructuredSearchStrategy._provenance([entity(source_kinds=["document"])])
+        is None
+    )
