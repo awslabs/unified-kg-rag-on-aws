@@ -1128,7 +1128,8 @@ From a `main` checkout (formats and keys no release had):
   the deploy (#617). A weekly `pin-freshness` workflow (`scripts/check_pins.py`) opens one issue when the base image
   or uv image digest, the ADOT collector or the AWS CDK CLI is behind upstream (#617); it also checks the Trivy image
   and the Dockerfile's apt pins, and builds and scans the image with the opt-in extras, so a fix released after the
-  last pull request (or a build that broke) lands in the same issue. Dependabot also moves the console's npm lock.
+  last pull request lands in the same issue, and a build that broke in an issue of its own; a week that finds them
+  current closes them. Dependabot also moves the console's npm lock.
 - Ranking settings that were constants, with the same defaults, none measured: `search.local_search.type_quota`
   (the fusion slots per section type of local, DRIFT, ppr and iterative), `entity_candidates_per_focus`,
   `search.hybrid.normalization_window` and `search.iterative_search.max_bridge_entities` (#619).

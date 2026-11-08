@@ -172,6 +172,8 @@ def check(pins: Pins, lookups: Lookups) -> list[str]:
             f"(pinned: `{pins.base_digest}`) in docker/Dockerfile. Bump the "
             "digest, re-check the apt pins, and build both images."
         )
+    # uv is held at 0.12 on purpose (CONTRIBUTING.md, "Pins Dependabot does
+    # not move"): 0.13 is reported until that hold is lifted.
     latest_uv = lookups.latest_release(UV_RELEASES).lstrip("v")
     if _version(latest_uv) > _version(pins.uv_version):
         behind.append(
