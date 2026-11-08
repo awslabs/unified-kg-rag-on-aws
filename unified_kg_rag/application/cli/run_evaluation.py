@@ -126,8 +126,10 @@ if TYPE_CHECKING:
         closed_book_chain,
     )
     from unified_kg_rag.evaluation.comparison import (
+        DEFAULT_PRIMARY_METRIC,
         adjust_for_multiplicity,
         baseline_comparison,
+        closed_book_strata,
         paired_comparison,
         per_query_rows,
     )
@@ -236,6 +238,8 @@ __getattr__, _load_evaluation = lazy_names(
         "closed_book_arms": _closed_book_module,
         "closed_book_chain": _closed_book_module,
         "adjust_for_multiplicity": _comparison_module,
+        "DEFAULT_PRIMARY_METRIC": _comparison_module,
+        "closed_book_strata": _comparison_module,
         "baseline_comparison": _comparison_module,
         "paired_comparison": _comparison_module,
         "per_query_rows": _comparison_module,
@@ -2274,6 +2278,21 @@ class EvaluationRunner:
         # Runs saved before their usage counted rerank requests.
         unmetered = rerank_unmetered(manifests)
         names = list(runs)
+        primary_metric = (
+            getattr(self.args, "primary_metric", None)
+            or self.config.evaluation.primary_metric
+        )
+        closed = closed_book_arms(names)
+        # The questions the answer model knows without retrieval, by the
+        # closed-book arm of this run (else an earlier run's).
+        strata = (
+            closed_book_strata(
+                runs[CLOSED_BOOK_ARM if CLOSED_BOOK_ARM in closed else closed[0]],
+                primary_metric or DEFAULT_PRIMARY_METRIC,
+            )
+            if closed
+            else None
+        )
         if pairs:
             comparison = baseline_comparison(
                 {label: runs[label] for label in dict.fromkeys(pairs.values())},
@@ -2283,6 +2302,7 @@ class EvaluationRunner:
                 prices=prices,
                 unmetered_rerank=unmetered,
                 resamples=self.config.evaluation.resamples,
+                closed_book=strata,
             )
             rows = [
                 row
@@ -2305,6 +2325,7 @@ class EvaluationRunner:
                 prices=prices,
                 unmetered_rerank=unmetered,
                 resamples=self.config.evaluation.resamples,
+                closed_book=strata,
             )
             rows = [
                 row
@@ -2322,6 +2343,7 @@ class EvaluationRunner:
                 prices=prices,
                 unmetered_rerank=unmetered,
                 resamples=self.config.evaluation.resamples,
+                closed_book=strata,
             )
             rows = per_query_rows(runs, measured.categories, prices)
             pairs = dict.fromkeys(names[1:], names[0])

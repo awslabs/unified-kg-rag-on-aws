@@ -907,6 +907,10 @@ class TestClosedBook:
         comparison = printed["comparison"]
         assert list(comparison["strategies"]) == ["local", CLOSED_BOOK_ARM]
         assert comparison["closed_book_arms"] == [CLOSED_BOOK_ARM]
+        # The arm knew both answers: every delta is on the known questions.
+        by_knowledge = comparison["deltas_by_closed_book"][CLOSED_BOOK_ARM]
+        assert list(by_knowledge) == ["known"]
+        assert by_knowledge["known"]["answer_match/answer_contains"]["pairs"] == 2
         # The RAG chain answered only the strategy's run (plus its warm-up);
         # the closed-book arm called the answer model once per question.
         assert len(seen) == 2

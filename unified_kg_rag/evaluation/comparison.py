@@ -39,7 +39,11 @@ measures.
 
 Given each query's category, ``deltas_by_category`` repeats the deltas per
 category. Its intervals are per category and uncorrected for the number of
-categories and metrics compared: read them as exploratory.
+categories and metrics compared: read them as exploratory. With a
+closed-book arm, ``deltas_by_closed_book`` does the same for the questions
+the answer model answers without retrieval (``known``) and those it does
+not (``unknown``, ``closed_book_strata``), as exploratory: where retrieval
+adds what the model does not know.
 
 ``auto`` is reported with the distribution of the strategies it routed to,
 since its scores are a mix of theirs.
@@ -454,11 +458,14 @@ def paired_comparison(
     categories: Mapping[str, str] | None = None,
     prices: Mapping[str, ModelPrice] | None = None,
     unmetered_rerank: Collection[str] = (),
+    closed_book: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Compare strategies run over the same queries (the first is the baseline).
 
     ``runs`` maps each strategy, in the order given, to its repeats;
-    ``categories`` (query id to category) adds ``deltas_by_category``;
+    ``categories`` (query id to category) adds ``deltas_by_category``, and
+    ``closed_book`` (query id to ``known``/``unknown``,
+    ``closed_book_strata``) ``deltas_by_closed_book``;
     ``prices`` (model id to price) adds a USD estimate to ``cost``, with no
     USD delta between a strategy of ``unmetered_rerank`` (whose usage
     records count no rerank request) and one whose records count them.
@@ -471,6 +478,7 @@ def paired_comparison(
         categories=categories,
         prices=prices,
         unmetered_rerank=unmetered_rerank,
+        closed_book=closed_book,
     )
     for warning in comparison["warnings"]:
         logger.warning("%s", warning)
@@ -488,6 +496,7 @@ def baseline_comparison(
     categories: Mapping[str, str] | None = None,
     prices: Mapping[str, ModelPrice] | None = None,
     unmetered_rerank: Collection[str] = (),
+    closed_book: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Compare each strategy of ``runs`` with its own baseline.
 
@@ -506,6 +515,7 @@ def baseline_comparison(
             categories=categories,
             prices=prices,
             unmetered_rerank=unmetered_rerank,
+            closed_book=closed_book,
         )
         for strategy, strategy_runs in runs.items()
     }
@@ -535,10 +545,12 @@ def baseline_comparison(
         ),
         "bootstrap": first["bootstrap"],
     }
-    if categories:
-        comparison["deltas_by_category"] = {
-            s: part["deltas_by_category"][s] for s, part in parts.items()
-        }
+    for name, given in (
+        ("deltas_by_category", categories),
+        ("deltas_by_closed_book", closed_book),
+    ):
+        if given:
+            comparison[name] = {s: part[name][s] for s, part in parts.items()}
     for warning in comparison["warnings"]:
         logger.warning("%s", warning)
     return comparison
@@ -553,6 +565,7 @@ def _paired_comparison(
     categories: Mapping[str, str] | None,
     prices: Mapping[str, ModelPrice] | None,
     unmetered_rerank: Collection[str] = (),
+    closed_book: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """``paired_comparison`` without logging its warnings."""
     strategies = list(runs)
@@ -711,7 +724,28 @@ def _paired_comparison(
         comparison["deltas_by_category"] = _category_deltas(
             means, baseline, categories, stats
         )
+    if closed_book:
+        comparison["deltas_by_closed_book"] = _category_deltas(
+            means, baseline, closed_book, stats
+        )
     return comparison
+
+
+# A query the closed-book arm answered right in at least this share of its
+# repeats (on the comparison's primary metric) is one the answer model knows.
+CLOSED_BOOK_KNOWN_SHARE = 0.5
+
+
+def closed_book_strata(runs: Sequence[Run], metric: str) -> dict[str, str]:
+    """Per query the closed-book arm scored on ``metric``, ``known`` when
+    its mean over the arm's repeats is at least ``CLOSED_BOOK_KNOWN_SHARE``,
+    else ``unknown``: the answer model's prior knowledge of the question,
+    for ``deltas_by_closed_book``. Empty when the arm has no such score."""
+    means = per_query_means(runs).get(metric) or {}
+    return {
+        q: "known" if v >= CLOSED_BOOK_KNOWN_SHARE else "unknown"
+        for q, v in sorted(means.items())
+    }
 
 
 def _category_deltas(
