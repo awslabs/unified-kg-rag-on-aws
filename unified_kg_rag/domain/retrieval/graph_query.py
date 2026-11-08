@@ -644,9 +644,25 @@ def validate_plan(
             "edges", f"the pattern spans up to {total} hops; at most {max_hops}"
         )
 
+    def resolve(
+        names: Sequence[str], known: tuple[TypeProfile, ...], field: str, what: str
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        try:
+            return _resolve_types(names, known, field, what)
+        except InvalidGraphQueryError as e:
+            if not profile.sampled:
+                raise
+            # A rare type the sample missed is refused too: say so, so the
+            # repair picks a listed one and the operator can declare it.
+            raise _fail(
+                e.field,
+                f"{e.reason} (the schema lists the types of a sample of "
+                f"{profile.sample_size} entities and the declared ones)",
+            ) from e
+
     nodes: list[ResolvedNode] = []
     for index, node in enumerate(plan.nodes):
-        types, labels = _resolve_types(
+        types, labels = resolve(
             node.types, profile.entity_types, f"nodes[{index}].types", "entity type"
         )
         conditions: list[ResolvedCondition] = []
@@ -673,7 +689,7 @@ def validate_plan(
         )
     edges = []
     for index, edge in enumerate(plan.edges):
-        labels_, type_labels = _resolve_types(
+        labels_, type_labels = resolve(
             edge.types, profile.edge_types, f"edges[{index}].types", "relationship type"
         )
         edges.append(
@@ -863,7 +879,15 @@ def describe_plan(
     shown = (
         f"; showing {', '.join(p.name for p in r.properties)}" if r.properties else ""
     )
-    return f"Match {pattern}. Return {what}{shown}."
+    note = ""
+    counts_matches = r.kind == "count" or (r.kind == "group_count" and len(r.vars) != 1)
+    if counts_matches and any(edge.direction == "both" for edge in plan.edges):
+        # A match is a binding of every node: (a, b) and (b, a) are two.
+        note = (
+            " An edge of either direction matches a pair once in each order"
+            " both nodes fit, so a symmetric pattern counts each pair twice."
+        )
+    return f"Match {pattern}. Return {what}{shown}.{note}"
 
 
 # --- the store operation ------------------------------------------------------------

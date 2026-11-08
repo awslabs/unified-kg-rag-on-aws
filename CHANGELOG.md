@@ -774,7 +774,9 @@ From a `main` checkout (formats and keys no release had):
   as entities, a minimum or a maximum the entities holding it and groups by a property their listed groups'. Filter keys
   are checked against the fallback that would run too. A count of 0 or a "no" over a string
   value no vertex holds (misspelled or translated) is no answer (`unknown_value`). A stored name or a value starting
-  with `~` (a Gremlin hidden token) is refused at validation with a WARNING, not as a compiler bug. Without a structured
+  with `~` (a Gremlin hidden token) is refused at validation with a WARNING, not as a compiler bug; a type the
+  sampled profile missed is refused saying so, and a count over a symmetric `both` pattern says it counts each pair
+  twice. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
   `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
   `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the

@@ -473,6 +473,42 @@ def test_the_plan_is_described_by_code() -> None:
     assert '(x, named "가나다 상사" = "가나다 상사")' in text
     assert "(linked to nothing)" in describe_plan(mention, {})
     assert "-[MAKES *1..2]->" in text
+    assert "twice" not in text
+    # A symmetric pattern's count: each pair in both orders, and it says so.
+    pairs = validated(
+        {
+            "nodes": [
+                {"var": "a", "types": ["VENDOR"]},
+                {"var": "b", "types": ["VENDOR"]},
+            ],
+            "edges": [{"direction": "both", "hops": [1, 2]}],
+            "returns": {"kind": "count"},
+        }
+    )
+    assert "counts each pair twice" in describe_plan(pairs)
+    distinct = pairs.model_copy(
+        update={"returns": pairs.returns.model_copy(update={"kind": "count_distinct"})}
+    )
+    assert "twice" not in describe_plan(distinct)
+
+
+def test_a_type_the_sample_missed_is_refused_saying_so() -> None:
+    profile = profile_of(procurement_graph()).model_copy(
+        update={"sampled": True, "sample_size": 2000}
+    )
+    plan = _plan(nodes=[{"var": "v", "types": ["CARRIER"]}], returns={"kind": "count"})
+    with pytest.raises(InvalidGraphQueryError, match="a sample of 2000 entities"):
+        validate_plan(plan, profile, max_hops=3)
+    with pytest.raises(InvalidGraphQueryError) as e:
+        validate_plan(plan, profile_of(procurement_graph()), max_hops=3)
+    assert "sample" not in str(e.value)
+    edge = _plan(
+        nodes=[{"var": "v"}, {"var": "b"}],
+        edges=[{"types": ["SHIPS"]}],
+        returns={"kind": "count"},
+    )
+    with pytest.raises(InvalidGraphQueryError, match="edges.0..types.*a sample"):
+        validate_plan(edge, profile, max_hops=3)
 
 
 def test_the_store_aggregates_unless_code_must_check_the_bindings() -> None:

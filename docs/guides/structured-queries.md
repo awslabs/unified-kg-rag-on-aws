@@ -55,7 +55,12 @@ sampled values of a low-cardinality string property); it never sees entity
 names. A plan naming a type, relationship or property the schema does not
 list is refused, and the planner is called once more with the refusal; so
 is a substring or order comparison on a property that holds values of
-several kinds. Under a filter the schema shows no sampled value.
+several kinds. Under a filter the schema shows no sampled value. The
+profile is a sample (`profile_sample_vertices`), so a type too rare to be
+in it is refused like an unknown one unless the extraction schema declares
+it; the refusal says so. An edge of either direction (`both`) matches a
+pair once in each order both nodes fit: a count over a symmetric pattern
+counts each pair twice, which the plan's description in the context states.
 
 A name in the plan links to the stored entities whose name it is
 (spacing and legal forms aside, so `가나다상사` finds `가나다 상사`) among
