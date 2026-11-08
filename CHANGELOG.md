@@ -742,6 +742,20 @@ From a `main` checkout (formats and keys no release had):
   (`console/web/`, Vite, React, TypeScript) is in English and nine more languages, and `console/demo/demo.py` prepares
   a synthetic corpus, a dataset and a config (kept on a restart, `--reset-config` to write it again) for fake, Ollama
   or Bedrock models, and stops before the ingestion without the `console` extra ([Console](docs/guides/console.md)).
+  interval for older comparisons; gates, cost, declines, win rates by answer length) and open saved runs;
+  explore the exported graph (search, neighbourhoods, communities, degree, schema conformance, seed versus document
+  evidence); a dashboard of the questions and jobs run through it (time, tokens, cost per strategy, model and role);
+  and edit the config file with validation, a diff before saving, a confirmation before a provider endpoint or a
+  directory the console serves changes, and secrets never shown or written. Jobs run the
+  unchanged `run-ingestion` and `run-eval` in child processes. It binds `127.0.0.1` (another address needs
+  `--allow-remote`), requires a per-launch access token, refuses paths outside its directories and cross-site
+  requests, and loads nothing from another host. The web client (`console/web/`, Vite, React, TypeScript) is in
+  English and nine more languages, in a light and a dark theme (the system's unless one is chosen in the rail),
+  set in IBM Plex with its Korean and Japanese faces (self-hosted WOFF2 subsets, SIL OFL), to the brief in
+  `console/web/DESIGN.md`; `console/demo/demo.py` prepares a synthetic corpus of the formats the core install
+  parses (multi-page PDFs, whose citations name their page, Markdown, HTML, CSV, JSON and text), a dataset and a
+  config (kept on a restart, `--reset-config` to write it again) for fake, Ollama or Bedrock models
+  ([Console](docs/guides/console.md)).
 - `run-ingestion --confirm-integrity` answers only the question of a run that resumes a pipeline id whose inputs
   changed (#631).
 - `GraphRAGChain.ainvoke(on_answer_chunk=...)` hands the answer's text chunks to a callback as the answer model
