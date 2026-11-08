@@ -55,7 +55,11 @@ from typing import Any
 
 import numpy as np
 
-from unified_kg_rag.adapters.evaluators.base import error_digest, judge_model_kwargs
+from unified_kg_rag.adapters.evaluators.base import (
+    error_digest,
+    judge_effort,
+    judge_model_kwargs,
+)
 from unified_kg_rag.adapters.llm.chain_factory import setup_chain
 from unified_kg_rag.adapters.llm.langchain import LLMJsonOutputParser
 from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
@@ -74,6 +78,7 @@ from unified_kg_rag.domain.prompts import (
     PairwiseOverlapPrompt,
 )
 from unified_kg_rag.domain.retrieval.citations import strip_markers
+from unified_kg_rag.ports.model_factory import EFFORT_THINKING_TOKENS
 from unified_kg_rag.shared import EvaluationException, get_logger, observability
 
 from .comparison import bootstrap_ci
@@ -88,6 +93,22 @@ _SCORES = {"candidate": 1.0, "tie": 0.5, "baseline": 0.0}
 _BOOTSTRAP: dict[str, Any] = {"resamples": 2000, "confidence": 0.95, "seed": 0}
 # The keys of the differential mode's statement split.
 _OVERLAP_KEYS = ("shared", "unique_1", "unique_2")
+
+
+def overlap_output_floor(config: Config) -> int | None:
+    """The overlap split's output-token floor: the default cap
+    (``models.default_max_output_tokens``) above the thinking budget of
+    the effort the split runs at (``judge_effort``), since it copies both
+    answers' statements after it reasons and thinking counts toward
+    max_tokens; ``None`` (the prompt's own floor) when the cap is the
+    model maximum."""
+    cap = config.models.default_max_output_tokens
+    if cap is None:
+        return None
+    effort = judge_effort(config, config.model_id(ModelRole.PAIRWISE_OVERLAP))
+    return cap + EFFORT_THINKING_TOKENS.get(effort, 0)
+
+
 # Buckets of the answer-length ratio (candidate over baseline, in estimated
 # tokens), shortest first, symmetric in the log ratio: a candidate 1.5 times
 # as long as the baseline and one 1/1.5 (0.67) times as long sit in mirror
@@ -231,6 +252,7 @@ class PairwiseJudge:
                 LLMJsonOutputParser(answer_keys=_OVERLAP_KEYS),
                 custom_prompts=config.custom_prompts,
                 model_purpose=ModelPurpose.EVALUATION,
+                min_output_tokens=overlap_output_floor(config),
                 **judge_model_kwargs(config),
             )
             if self.mode == "differential"

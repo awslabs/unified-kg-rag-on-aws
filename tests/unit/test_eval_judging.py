@@ -290,6 +290,33 @@ class TestDifferentialJudge:
         assert (out["failed"], out["judged"]) == (1, 0)
         assert out["criteria"]["comprehensiveness"]["candidate_win_rate"] is None
 
+    @pytest.mark.parametrize(
+        ("effort", "cap", "floor"),
+        [
+            # The overlap split copies both answers' statements after the
+            # judge reasons: its output room stays the default cap above
+            # the effort's thinking budget (x3: 10/100 splits ran out at
+            # high with a fixed 16,384).
+            (None, 16384, 16384 + 2048),  # the fast tier's effort, low
+            ("high", 16384, 16384 + 8192),
+            ("max", 8000, 8000 + 32768),
+            ("high", None, None),  # the model maximum: nothing to raise
+        ],
+    )
+    def test_the_overlap_output_room_scales_with_the_judge_effort(
+        self, mocker, effort: str | None, cap: int | None, floor: int | None
+    ) -> None:
+        setup = mocker.patch.object(pairwise, "setup_chain", return_value=_Judge())
+        mocker.patch.object(pairwise.Providers, "resolve")
+        config = Config()
+        config.evaluation.pairwise_mode = "differential"
+        config.evaluation.judge_effort = effort
+        config.models.default_max_output_tokens = cap
+        pairwise.PairwiseJudge(config)
+        overlap = setup.call_args_list[1]
+        assert overlap.args[2] is PairwiseOverlapPrompt
+        assert overlap.kwargs.get("min_output_tokens") == floor
+
     def test_overall_uses_the_differential_overall_prompt(self, mocker) -> None:
         setup = mocker.patch.object(pairwise, "setup_chain", return_value=_Judge())
         mocker.patch.object(pairwise.Providers, "resolve")

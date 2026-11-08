@@ -998,7 +998,8 @@ From a `main` checkout (formats and keys no release had):
   pairwise judge reports win rates per answer-length bucket in estimated tokens (symmetric in the log ratio) and
   their correlation with length;
   `evaluation.pairwise_mode: differential` (`run-eval --pairwise-mode differential`, model role
-  `models.roles.pairwise_overlap`) judges only the statements unique to each answer; the `assertion` evaluator
+  `models.roles.pairwise_overlap`, its output limit `models.default_max_output_tokens` above the judge effort's
+  thinking budget) judges only the statements unique to each answer; the `assertion` evaluator
   (`assertion_recall`, `assertion_contradiction_rate`, `negative_assertion_violation_rate`;
   `evaluation.assertion_trials`, a majority over trials in distinct assertion orders, every judge call within
   `processing.max_concurrency`) scores a dataset's `assertions`; `prepare-benchmark assertions` generates questions

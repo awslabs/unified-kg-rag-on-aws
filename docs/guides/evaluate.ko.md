@@ -352,7 +352,10 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
      `--fail-if "assertion/assertion_recall:ci_high<-0.02"`.
    - `--pairwise-mode differential`은 빠른 계층 모델(`models.roles.pairwise_overlap`)에게 두
      답변이 함께 말하는 문장과 한쪽만 말하는 문장을 나누게 한 뒤, 한쪽만 말하는 문장만
-     판정합니다. 쌍마다 빠른 모델 호출이 한 번 더 듭니다.
+     판정합니다. 쌍마다 빠른 모델 호출이 한 번 더 듭니다. 이 호출의 출력 상한은 실행하는
+     추론 강도(`evaluation.judge_effort`, 없으면 빠른 계층의 강도)의 사고 예산에
+     `models.default_max_output_tokens`를 더한 값이므로, 추론 강도를 높여도 옮겨 적는 문장의
+     여유는 줄지 않습니다.
    - `--closed-book`은 `closed_book` 비교군을 더합니다. 답변 모델이 검색 없이 모든 질문에
      답하므로, 이를 이기지 못하는 전략은 모델이 이미 아는 것을 재고 있는 셈입니다. 비교
      결과에는 "(no retrieval)"로 표시하고 게이트에서는 제외하며, 검색·컨텍스트 지표는 빈

@@ -416,7 +416,10 @@ changes a default until a measured experiment decides
    - `--pairwise-mode differential` asks the fast tier
      (`models.roles.pairwise_overlap`) for the statements both answers make
      and those only one makes, then judges the unique ones only; one more
-     fast call per pair.
+     fast call per pair. That call's output limit is
+     `models.default_max_output_tokens` above the thinking budget of the
+     effort it runs at (`evaluation.judge_effort`, else the fast tier's), so
+     a higher effort leaves the copied statements as much room.
    - `--closed-book` adds the `closed_book` arm: the answer model answers
      every question with no retrieval. A strategy that does not beat it
      measures what the model already knows. The comparison marks it "(no
