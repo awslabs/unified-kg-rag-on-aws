@@ -118,6 +118,10 @@ class _Chain:
         ({"aws": {"bedrock": {"region_name": "eu-west-1"}}}, False),
         ({"models": {"roles": {"entity_extraction": "fast"}}}, False),
         ({"providers": {"llm": {"temperature": 0.7}}}, False),
+        # The default output cap and a local server's context window shape
+        # the extraction call too.
+        ({"models": {"default_max_output_tokens": 512}}, False),
+        ({"providers": {"llm": {"context_window_size": 4096}}}, False),
         # A cache of 0 in the overlay is the arm's: nothing kept or shared.
         ({"search": {"query_extraction_cache_size": 0}}, False),
     ],

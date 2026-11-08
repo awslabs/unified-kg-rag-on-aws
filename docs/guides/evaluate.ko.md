@@ -304,8 +304,8 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   `search.citations.enabled`가 다르면 답변 프롬프트도 다르다고 경고합니다.
 - 오버레이가 질의 추출(질문마다 한 번 호출하는 엔터티와 키워드)을 바꾸지 않으면 비교군은 기본
   실행의 추출 결과로 검색합니다. 추출 모델, 기본 계층의 추론 강도(effort),
-  `search.output_ceilings.query_extraction`, LLM 제공자(kind, `base_url`, temperature, 출력
-  상한), Bedrock 리전을 바꾸거나 `search.query_extraction_cache_size: 0`을 지정한 비교군은 직접
+  `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, LLM
+  제공자(kind, `base_url`, temperature, 출력 상한, 컨텍스트 창), Bedrock 리전을 바꾸거나 `search.query_extraction_cache_size: 0`을 지정한 비교군은 직접
   추출합니다.
 - 빈 오버레이(위의 `aa.yaml`)는 A/A 비교군입니다. 그 차이가 이 데이터셋과 반복 횟수에서 지표마다의
   잡음 수준입니다. 기본 실행과 추출 결과를 공유하므로 이 잡음 수준에는 추출의 잡음이 빠집니다.

@@ -1025,7 +1025,8 @@ From a `main` checkout (formats and keys no release had):
   (`<strategy>@NAME`) are compared with the same strategy's base run and Holm-adjusted with the other deltas; the
   manifest records the overlay's path and sha256 and the comparison order, which `--from-results` keeps. An arm
   shares the base runs' query extractions only when its overlay leaves them alone (the extraction model, the default
-  tier's effort, `search.output_ceilings.query_extraction`, the LLM provider and region, and a
+  tier's effort, `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, the LLM provider with
+  its context window and region, and a
   `search.query_extraction_cache_size` above 0). An empty overlay is an A/A arm, the noise floor without the
   extraction's noise (it shares the extractions). See [evaluation](docs/guides/evaluate.md#configuration-arms).
 - The `run-eval` judge defaults to Opus 5.5 on Bedrock (a judge judging its own answers shifted directness by

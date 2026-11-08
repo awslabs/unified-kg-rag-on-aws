@@ -318,7 +318,8 @@ def _model_id(value: str) -> str:
 def extraction_settings(config: Config) -> dict[str, Any]:
     """What a query entity or keyword extraction depends on besides its
     cache key (prompt, model, templates, question, language): the call's
-    reasoning effort and output ceiling, and the provider that answers it.
+    reasoning effort, output ceiling and default output cap, and the
+    provider that answers it (a local server's context window among it).
     An arm differing in any of them extracts on its own instead of sharing
     the base chain's extractions."""
     model = config.model_id(ModelRole.ENTITY_EXTRACTION)
@@ -328,10 +329,12 @@ def extraction_settings(config: Config) -> dict[str, Any]:
         "model": model,
         "effort": bedrock.tier_effort(config.model_tier(model)),
         "output_ceiling": config.search.output_ceilings.query_extraction,
+        "default_max_output_tokens": config.models.default_max_output_tokens,
         "provider": llm.kind,
         "base_url": llm.base_url,
         "temperature": llm.temperature,
         "max_output_tokens": llm.max_output_tokens,
+        "context_window_size": llm.context_window_size,
         "region": config.aws.bedrock_region,
         "global_profile": bedrock.enable_global_profile,
         "model_overrides": bedrock.model_overrides.get(model),

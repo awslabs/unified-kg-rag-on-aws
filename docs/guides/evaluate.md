@@ -357,8 +357,9 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
 - An arm retrieves on the base runs' query extractions (entities and
   keywords, one call per question) when its overlay leaves them alone; one
   that changes the extraction's model, the default tier's effort,
-  `search.output_ceilings.query_extraction`, the LLM provider (kind,
-  `base_url`, temperature, output cap), the Bedrock region or sets
+  `search.output_ceilings.query_extraction`,
+  `models.default_max_output_tokens`, the LLM provider (kind, `base_url`,
+  temperature, output cap, context window), the Bedrock region or sets
   `search.query_extraction_cache_size: 0` extracts on its own.
 - An empty overlay (`aa.yaml` above) is an A/A arm: its deltas are the
   noise floor of each metric for this dataset and repeat count. It shares
