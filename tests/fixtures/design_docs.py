@@ -22,7 +22,7 @@ from tests.fixtures.docs_check import check_docs
 INDEX = "docs/design.md"
 # A heading level the index lists: ## sections, ### and #### subsections.
 _LEVELS = (2, 3, 4)
-_ANCHOR = re.compile(r"^<a (?:id|name)=\"[^\"]+\"></a>$")
+_ID_TAG = re.compile(r"^<a (?:id|name)=\"[^\"]+\"></a>$")
 # An inline link's or image's target, up to its first space or ")".
 _TARGET = re.compile(r"\]\(([^)\s]+)")
 
@@ -67,7 +67,7 @@ def blocks(text: str) -> list[Block]:
         while cut and not before[cut - 1].strip():
             cut -= 1
         first = cut
-        while first and _ANCHOR.match(before[first - 1].strip()):
+        while first and _ID_TAG.match(before[first - 1].strip()):
             first -= 1
         if first < cut:
             prefixes[i], chunks[i - 1] = before[first:], before[:first]
