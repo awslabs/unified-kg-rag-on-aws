@@ -104,11 +104,7 @@ class _OkRetriever:
                 score=1.0,
                 source="entity-1",
                 retriever_type="document",
-                metadata={
-                    "id": "entity-1",
-                    "name": "Vendor",
-                    "text_unit_ids": ["chunk-1"],
-                },
+                metadata={"id": "entity-1", "text_unit_ids": ["chunk-1"]},
             )
         ]
 

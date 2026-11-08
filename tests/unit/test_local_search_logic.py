@@ -53,7 +53,6 @@ def _bare_strategy(
             ),
             neptune=SimpleNamespace(entity_label_prefix="Entity"),
         ),
-        processing=SimpleNamespace(similarity_threshold=0.85),
         search=SimpleNamespace(
             local_search=SimpleNamespace(
                 entity_frequency_threshold=20,
@@ -310,8 +309,7 @@ async def test_find_candidate_entities_prefers_the_exact_name_match() -> None:
 
 async def test_find_candidate_entities_drops_a_weak_top_hit() -> None:
     # "firm" names no entity: its top hit scores 0.5 against the exact
-    # match's 1.0, under the 0.6 floor; "Bexley" (0.7) clears it and covers
-    # "Bexly" (spelled alike past processing.similarity_threshold).
+    # match's 1.0, under the 0.6 floor; "Bexley" (0.7) clears it.
     retriever = _ByQueryRetriever(
         {
             "Alvar": [_entity("e1", "Alvar", 1.0), _entity("e2", "Jarek", 0.5)],
@@ -322,12 +320,12 @@ async def test_find_candidate_entities_drops_a_weak_top_hit() -> None:
     strat = _bare_strategy(retrievers={"document": retriever})
     query = SearchQuery(query="q", entity_focus=["Alvar", "firm", "Bexly"])
     assert _sources(await strat._find_candidate_entities(query)) == ["e1", "e4"]
-    # Without the floor "firm" still links nothing: "Calvex" does not cover
-    # it (domain.retrieval.linking).
     strat.config.search.local_search.seed_score_ratio = 0.0
-    assert _sources(await strat._find_candidate_entities(query)) == ["e1", "e4"]
-    strat.config.processing.similarity_threshold = 1.0
-    assert _sources(await strat._find_candidate_entities(query)) == ["e1"]
+    assert _sources(await strat._find_candidate_entities(query)) == [
+        "e1",
+        "e3",
+        "e4",
+    ]
 
 
 @pytest.mark.parametrize(("lexical", "vector"), [(0.5, 0.5), (0.2, 0.8), (0.8, 0.2)])
@@ -340,8 +338,7 @@ async def test_a_vector_only_hit_never_seeds_beside_a_name_match(
     retriever = _ByQueryRetriever(
         {
             "Alvar": [_entity("e1", "Alvar", 1.0)],
-            # Covers the generic focus word, so only the floor drops it.
-            "province": [_entity("e3", "Istrel Province", vector)],
+            "province": [_entity("e3", "Istrel", vector)],
         }
     )
     strat = _bare_strategy(retrievers={"document": retriever})

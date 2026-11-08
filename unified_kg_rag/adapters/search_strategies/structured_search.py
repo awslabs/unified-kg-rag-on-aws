@@ -592,7 +592,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
                 query.search_type,
                 max(settings.link_candidates * 3, 10),
             )
-            exact = choose_links(mention, hits, limit=0)
+            exact = choose_links(mention, hits, policy="cover", limit=0)
             if exact:
                 return exact
             lexical = await search(
@@ -601,6 +601,7 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             return choose_links(
                 mention,
                 lexical,
+                policy="cover",
                 limit=settings.link_candidates,
                 floor=settings.link_min_score,
                 similarity=self.config.processing.similarity_threshold,

@@ -1514,10 +1514,10 @@ Queries and retrieval.
 - A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
   went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
-  best hit whose name holds every word of it (the structured strategy's linking rule) when that scores at least
-  `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal hybrid weights; one lookup of the joined
-  names seeded a wrong neighbour beside every right seed (#517, #530), and an absent "Zorblax Supplies" seeded "Acme
-  Supplies".
+  top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal
+  hybrid weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530). A top
+  hit sharing one word with the name and covering neither way (an absent "Zorblax Supplies" for "Acme Supplies")
+  seeds nothing; semantic and alias hits ("NYC" for "New York City") seed as before.
 - Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
   structured query result's lineage): the units most expanded entities cite, then the best-scored citing entity's,
   then first seen; an entity citing a unit twice counts once, and a lineage a graph store returns as its JSON text

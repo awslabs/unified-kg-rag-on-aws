@@ -53,7 +53,7 @@ def _entity(eid: str, units: list[str]) -> RetrievalResult:
         score=1.0,
         source=eid,
         retriever_type="entity",
-        metadata={"id": eid, "name": eid, "text_unit_ids": units},
+        metadata={"id": eid, "text_unit_ids": units},
     )
 
 

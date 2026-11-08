@@ -414,10 +414,10 @@ class LocalSearchStrategy(PPRRankingMixin):
 
         Each focus entity is looked up on its own, concurrently (at most
         ``search.max_concurrency`` at once), and seeds the expansion with
-        the hits that are its name (``compact_name_key``), else with its best
-        hit whose name covers the focus name's terms when that scores at
-        least ``search.local_search.seed_score_ratio`` of the best hit of any
-        focus entity (``focus_seeds``). One query of the joined names, two
+        the hits that are its name (``compact_name_key``), else with its top
+        hit when that scores at least ``search.local_search.seed_score_ratio``
+        of the best hit of any focus entity and is no one-word lookalike
+        (``focus_seeds``). One query of the joined names, two
         hits per name and no floor seeded a wrong neighbour beside the right
         entity on every query of a synthetic 12-query multi-hop corpus, and
         a generic focus word ("province") seeded unrelated entities. Without an
@@ -447,7 +447,6 @@ class LocalSearchStrategy(PPRRankingMixin):
                 query.search_type,
                 hybrid.vector_weight / (hybrid.lexical_weight + hybrid.vector_weight),
             ),
-            self.config.processing.similarity_threshold,
         )
 
     # The vector weight the seed_score_ratio scale is set at (the default
@@ -508,26 +507,21 @@ class LocalSearchStrategy(PPRRankingMixin):
 
     @staticmethod
     def focus_seeds(
-        focus: list[str],
-        per_focus: list[list[RetrievalResult]],
-        ratio: float,
-        similarity: float = 1.0,
+        focus: list[str], per_focus: list[list[RetrievalResult]], ratio: float
     ) -> list[RetrievalResult]:
         """The seeds of the focus entities ``focus`` from their own hits
-        ``per_focus`` (best first), each linked by ``choose_links``: a focus
-        entity's exact name matches (every entity of that
-        ``compact_name_key``), else its best hit whose name covers the focus
-        name (each term, or one at least ``similarity`` alike) if it scores
-        at least ``ratio`` times the best hit of all; each seed once, in
-        focus order."""
+        ``per_focus`` (best first), by ``choose_links``'s ``rank`` policy: a
+        focus entity's exact name matches (every entity of that
+        ``compact_name_key``), else its top hit if it scores at least
+        ``ratio`` times the best hit of all and is no one-word lookalike
+        ("Acme Supplies" for "Zorblax Supplies"); each seed once, in focus
+        order."""
         best = max(
             (hit.score or 0.0 for hits in per_focus for hit in hits), default=0.0
         )
         seeds: dict[str, RetrievalResult] = {}
         for name, hits in zip(focus, per_focus, strict=True):
-            for hit in choose_links(
-                name, hits, limit=1, floor=ratio * best, similarity=similarity
-            ):
+            for hit in choose_links(name, hits, policy="rank", floor=ratio * best):
                 seeds.setdefault(str(hit.source), hit)
         return list(seeds.values())
 
