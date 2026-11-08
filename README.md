@@ -12,7 +12,7 @@ Unified Knowledge Graph RAG on AWS turns a large, multilingual document collecti
 
 **For** teams who want graph RAG (retrieval-augmented generation over a knowledge graph) in their own AWS account and need to pick a method, measure it and keep the index current as documents change.
 
-<img src="./assets/console-demo.gif" alt="Console demo: a question answered with the auto strategy cites its source as an [n] marker, listed as a PDF file and its page; opening a source shows its provenance trail to the passages that state it and its place in the knowledge graph; then a strategy comparison with paired intervals, and the dashboard of time, tokens and cost per strategy." width="800">
+<img src="./assets/console-demo.gif" alt="Console demo: a question answered with the auto strategy cites its source as an [n] marker, shown as a chip with the PDF file and its page; opening a source shows its provenance trail to the passages that state it; the trail leads into a force-directed graph with the traced entity ringed and its neighbours labelled; then a strategy comparison with paired intervals, and the dashboard of time, tokens and cost per strategy." width="800">
 
 ## Why this framework
 
