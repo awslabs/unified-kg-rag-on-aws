@@ -257,7 +257,6 @@ CONFIG_KEYING: dict[str, Keyed | Unkeyed] = {
         per_document=False,
     ),
     "aws.dynamodb.create_table_if_missing": _neutral("provisions the table"),
-    "aws.dynamodb.billing_mode": _neutral("provisions the table"),
     # --- the per-document stages -------------------------------------------
     **_keyed_at(
         _P.TEXT_CHUNKING,

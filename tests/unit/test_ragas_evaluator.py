@@ -12,11 +12,14 @@ parsing are exercised with a fake token counter and a stubbed ragas
 
 from __future__ import annotations
 
+from typing import Any, get_args
+
 import pytest
 
 pytest.importorskip("ragas", reason="needs the eval extra")
 
 import pandas as pd
+from pydantic import ValidationError
 
 import unified_kg_rag.evaluation  # noqa: F401  (resolves package import cycle)
 from tests.fixtures.fakes.chat_models import fake_model_info
@@ -31,6 +34,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
     LanguageModelId,
 )
+from unified_kg_rag.domain.models.evaluation import RagasMetricType
 
 pytestmark = pytest.mark.unit
 
@@ -341,10 +345,7 @@ class TestParseRagasReports:
 
 class TestAevaluateBatch:
     async def test_no_valid_metrics_returns_empty(self, mocker) -> None:
-        ev, _ = _make_evaluator(
-            mocker, ragas_metrics=[EvaluationMetricType.CORRECTNESS]
-        )
-        # CORRECTNESS is not a ragas metric -> metrics_to_use empty.
+        ev, _ = _make_evaluator(mocker, ragas_metrics=[])
         out = await ev.aevaluate_batch([_query()], [_result()], [""])
         assert out == []
 
@@ -810,19 +811,18 @@ class TestAevaluateBatch:
         }
 
 
-class TestValidateConfig:
-    def test_supported_metrics_valid(self, mocker) -> None:
-        ev, _ = _make_evaluator(
-            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
-        )
-        assert ev.validate_config() is True
+class TestMetricChoice:
+    def test_the_config_takes_exactly_the_metrics_ragas_scores(self) -> None:
+        assert set(get_args(RagasMetricType)) == set(RagasEvaluator.RAGAS_METRICS)
 
-    def test_unsupported_metric_invalid(self, mocker) -> None:
-        ev, _ = _make_evaluator(
-            mocker, ragas_metrics=[EvaluationMetricType.FAITHFULNESS]
-        )
-        ev.config.evaluation.ragas_metrics = [EvaluationMetricType.CORRECTNESS]
-        assert ev.validate_config() is False
+    @pytest.mark.parametrize(
+        "metric", [EvaluationMetricType.CORRECTNESS, "hit_at_k", "token_f1"]
+    )
+    def test_another_metric_fails_the_load(self, metric: Any) -> None:
+        # The evaluator dropped it at run time (or refused it after the
+        # answers were paid for).
+        with pytest.raises(ValidationError, match="ragas_metrics"):
+            Config.model_validate({"evaluation": {"ragas_metrics": [metric]}})
 
 
 class TestInitFailure:

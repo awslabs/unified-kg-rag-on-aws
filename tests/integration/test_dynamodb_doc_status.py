@@ -49,8 +49,10 @@ def ddb_store() -> DynamoDBDocStatusStore:
 
 
 def test_table_auto_created(ddb_store: DynamoDBDocStatusStore) -> None:
-    # describe_table should now succeed without raising.
-    ddb_store.client.describe_table(TableName="test-doc-status")
+    # On-demand: the creation passes no provisioned throughput, which any
+    # other billing mode needs.
+    table = ddb_store.client.describe_table(TableName="test-doc-status")["Table"]
+    assert table["BillingModeSummary"]["BillingMode"] == "PAY_PER_REQUEST"
 
 
 def test_roundtrip_all_empty_lists_and_none_scalars(

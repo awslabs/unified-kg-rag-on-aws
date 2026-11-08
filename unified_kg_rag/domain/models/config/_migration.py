@@ -172,6 +172,11 @@ REMOVED_KEYS: dict[str, str] = {
         "run-eval always answers one untimed, unscored warm-up query per "
         "strategy and run (the default before)"
     ),
+    "aws.dynamodb.billing_mode": (
+        "a table the library creates is on-demand (PAY_PER_REQUEST, the only "
+        "value that worked); provision the table yourself, with "
+        "aws.dynamodb.create_table_if_missing: false, for another mode"
+    ),
     "evaluation.langchain_metrics": (
         "the langchain evaluator is removed; ragas' answer_correctness "
         "(evaluation.ragas_metrics) scores correctness against the answer"

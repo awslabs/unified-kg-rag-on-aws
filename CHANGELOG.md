@@ -123,7 +123,12 @@ stored is read again: follow *Upgrading* in order.
   `search.fusion.method: weighted` fuses by RRF (weighted fusion is gone); `fixing.enabled: false` no longer stops
   output fixing; `cache.chunking` (an entry over 1,000 items or 50 MB is always chunked);
   `indexing.opensearch.persist_embedding_cache` (the S3 embedding cache is gone: an incremental run embeds only its
-  delta) (#344, #468, #577).
+  delta) (#344, #468, #577); `aws.dynamodb.billing_mode` (a table the library creates is on-demand, the only mode
+  that worked; provision another yourself with `aws.dynamodb.create_table_if_missing: false`).
+- `aws.opensearch.sigv4_service_name` takes only `es`: `aoss` (OpenSearch Serverless) fails the load, as its vector
+  collections assign their own document ids and have no refresh API, which the indexes need.
+  `evaluation.ragas_metrics` takes only the five metrics ragas scores (`answer_correctness`, `answer_relevancy`,
+  `context_precision`, `context_recall`, `faithfulness`); another fails the load instead of the evaluator.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
   `true`); `run-visualization` renders it with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA)
   are gone. `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown

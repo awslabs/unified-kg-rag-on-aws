@@ -15,10 +15,11 @@ from pydantic import (
     model_validator,
 )
 
-from ..evaluation import EvaluationMetricType, EvaluatorType
+from ..evaluation import EvaluationMetricType, EvaluatorType, RagasMetricType
 from ._models import EffortLevel
 
-# Stdlib logger: shared.logging imports this module, so get_logger would cycle.
+# One stdlib logger for every module of the config package, named as the
+# package (one module before the split): a filter on it sees them all.
 _logger = logging.getLogger("unified_kg_rag.domain.models.config")
 
 
@@ -160,7 +161,7 @@ class EvaluationConfig(BaseModel):
             "that names it loads with a warning and without it."
         ),
     )
-    ragas_metrics: list[EvaluationMetricType] = Field(
+    ragas_metrics: list[RagasMetricType] = Field(
         default=[
             EvaluationMetricType.ANSWER_CORRECTNESS,
             EvaluationMetricType.ANSWER_RELEVANCY,
@@ -168,7 +169,11 @@ class EvaluationConfig(BaseModel):
             EvaluationMetricType.CONTEXT_RECALL,
             EvaluationMetricType.FAITHFULNESS,
         ],
-        description="Specific evaluation metrics to calculate when using RAGAS evaluator.",
+        description=(
+            "The metrics the ragas evaluator scores: answer_correctness, "
+            "answer_relevancy, context_precision, context_recall and "
+            "faithfulness. Another metric fails the load."
+        ),
     )
     max_context_tokens: int | None = Field(
         default=None,

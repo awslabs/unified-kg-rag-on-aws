@@ -9,6 +9,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    field_validator,
     model_validator,
 )
 
@@ -486,11 +487,25 @@ class OpenSearchConfig(BaseModel):
     sigv4_service_name: str = Field(
         default="es",
         description=(
-            "SigV4 signing service for IAM auth: 'es' for a managed OpenSearch "
-            "domain, 'aoss' for an OpenSearch Serverless collection. A wrong "
-            "value fails auth (often surfacing as zero search hits)."
+            "SigV4 signing service for IAM auth: 'es', a managed OpenSearch "
+            "domain, the only store supported. OpenSearch Serverless ('aoss') "
+            "is refused: its vector collections assign their own document "
+            "ids and have no refresh API, which the indexes need."
         ),
     )
+
+    @field_validator("sigv4_service_name")
+    @classmethod
+    def _managed_domain_only(cls, value: str) -> str:
+        if value != "es":
+            raise ValueError(
+                f"sigv4_service_name {value!r} is not supported: only 'es' (a "
+                "managed OpenSearch domain). OpenSearch Serverless vector "
+                "collections assign their own document ids and have no "
+                "refresh API, which incremental indexing (upserts and deletes "
+                "by id) needs."
+            )
+        return value
 
     @model_validator(mode="after")
     def validate_anonymous_auth(self) -> "OpenSearchConfig":
@@ -554,13 +569,10 @@ class DynamoDBConfig(BaseModel):
     create_table_if_missing: bool = Field(
         default=True,
         description=(
-            "Create the doc-status table on first use. Set false when the "
-            "table is managed by IaC (the CDK stack does)."
+            "Create the doc-status table, with on-demand capacity, on first "
+            "use. Set false when the table is managed by IaC (the CDK stack "
+            "does)."
         ),
-    )
-    billing_mode: str = Field(
-        default="PAY_PER_REQUEST",
-        description="Billing mode used when auto-creating the table",
     )
 
 

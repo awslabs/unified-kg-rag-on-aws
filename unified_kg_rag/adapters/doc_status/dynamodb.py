@@ -275,7 +275,7 @@ class DynamoDBDocStatusStore:
                 {"AttributeName": _PARTITION_KEY, "AttributeType": "S"},
                 {"AttributeName": _SORT_KEY, "AttributeType": "S"},
             ],
-            BillingMode=self.ddb_config.billing_mode,  # type: ignore[arg-type]
+            BillingMode="PAY_PER_REQUEST",
         )
         client.get_waiter("table_exists").wait(TableName=self.table_name)
         # An abandoned namespace lease expires by itself (a live one is

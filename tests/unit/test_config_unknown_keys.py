@@ -215,6 +215,7 @@ _REMOVED_SETTINGS = [
     ("graph.analysis.statistics.calculate_diameter", None, True),
     ("fixing", "enabled", False),
     ("evaluation.warm_up_query", None, False),
+    ("aws.dynamodb.billing_mode", None, "PROVISIONED"),
 ]
 
 

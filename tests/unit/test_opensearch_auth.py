@@ -165,3 +165,12 @@ def test_anonymous_auth_rejects_other_auth(auth: dict) -> None:
 def test_iam_auth_rejects_basic_credentials_it_would_ignore(basic: dict) -> None:
     with pytest.raises(ValueError, match="use_iam cannot be combined"):
         OpenSearchConfig(use_iam=True, **basic)
+
+
+@pytest.mark.parametrize("service", ["aoss", "ES", ""])
+def test_only_a_managed_domain_signs(service: str) -> None:
+    # OpenSearch Serverless vector collections assign their own document ids
+    # and have no refresh API: refuse it at load, not at the first write.
+    with pytest.raises(ValueError, match="only 'es'.*own document ids"):
+        OpenSearchConfig(sigv4_service_name=service)
+    assert OpenSearchConfig().sigv4_service_name == "es"
