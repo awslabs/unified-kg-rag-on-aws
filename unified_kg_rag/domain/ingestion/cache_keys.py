@@ -798,6 +798,7 @@ def corpus_manifest_fingerprint(
     source_directory: str | Path,
     extensions: Iterable[str],
     exclude_directories: Iterable[str | Path] = (),
+    file_digest: Callable[[Path], str] = _file_digest,
 ) -> str:
     """Fingerprint the corpus contents under ``source_directory``.
 
@@ -813,6 +814,8 @@ def corpus_manifest_fingerprint(
         exclude_directories: Directories the pipeline writes into (cache,
             parsed-JSON export), skipped so its own output never changes the
             fingerprint mid-run.
+        file_digest: A file's SHA-256 (hex); a caller that also needs
+            another digest of each file computes both in one read.
 
     Returns:
         A short hex digest; an empty or missing corpus has a fixed digest.
@@ -832,7 +835,7 @@ def corpus_manifest_fingerprint(
             ):
                 continue
             entries.append(
-                f"{relative.as_posix()}\t{path.stat().st_size}\t{_file_digest(path)}"
+                f"{relative.as_posix()}\t{path.stat().st_size}\t{file_digest(path)}"
             )
     return compute_hash("\n".join(entries), length=FINGERPRINT_LENGTH)
 

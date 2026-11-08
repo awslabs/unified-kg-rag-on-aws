@@ -1481,7 +1481,8 @@ From a `main` checkout (formats and keys no release had):
   diff with its record's content hash, and one the run processes after all (other extraction settings) is parsed
   before its attempt opens. A reset, `processing.deduplicate` or a `target_directory` export parses every file. Files
   parse in a process pool once the rest is expected to take longer than starting one. The first run after upgrading
-  parses every file once and records their digests.
+  parses every file once and records their digests. The corpus fingerprint's read of each file computes its source
+  digest too, so a run reads each file's bytes once for both.
 - Stage-cache files are compact UTF-8 JSON, half the bytes to write and hash; entries written indented still load.
 - Faster at query time and ingestion: the query path no longer imports datasketch and SciPy (about a second per
   process; the name keys are in `domain/ingestion/names.py`), the SQLite registry reads records by key (a full table

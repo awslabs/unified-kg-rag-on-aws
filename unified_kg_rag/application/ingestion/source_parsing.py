@@ -20,9 +20,10 @@ text files never starts one, one of PDFs parses in parallel.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import Future
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
@@ -100,6 +101,49 @@ def _parse_in_worker(
         return str(e) or type(e).__name__
 
 
+# Source digests computed while the corpus fingerprint read each file
+# (:func:`fingerprint_digest`), by path, size, modification time and parser
+# fingerprint: the parsing stage reads each file once per run, not twice.
+_SOURCE_DIGESTS: dict[tuple[str, int, int, str], str] = {}
+_SOURCE_DIGESTS_HELD = 1 << 17
+
+
+def _stat_key(path: Path, parser_fingerprint: str) -> tuple[str, int, int, str]:
+    stat = path.stat()
+    return str(path.resolve()), stat.st_size, stat.st_mtime_ns, parser_fingerprint
+
+
+def fingerprint_digest(path: Path) -> str:
+    """``path``'s SHA-256 (hex) for the corpus fingerprint
+    (``corpus_manifest_fingerprint``), with its source digest computed in
+    the same read when a loader reads its extension (kept for
+    :meth:`SourceFileParser.source_digest`)."""
+    try:
+        parser_fingerprint: str | None = ParserFactory.parser_fingerprint(
+            path.suffix.lower()
+        )
+    except Exception:  # noqa: BLE001 - no loader: no source digest to keep
+        parser_fingerprint = None
+    plain = hashlib.sha256()
+
+    def read() -> Iterator[bytes]:
+        with path.open("rb") as handle:
+            while chunk := handle.read(_READ_CHUNK_BYTES):
+                plain.update(chunk)
+                yield chunk
+
+    if parser_fingerprint is None:
+        for _ in read():
+            pass
+        return plain.hexdigest()
+    key = _stat_key(path, parser_fingerprint)
+    source = compute_source_digest(read(), parser_fingerprint)
+    if len(_SOURCE_DIGESTS) >= _SOURCE_DIGESTS_HELD:
+        _SOURCE_DIGESTS.clear()
+    _SOURCE_DIGESTS[key] = source
+    return plain.hexdigest()
+
+
 class SourceFileParser:
     """Parses a corpus's source files into identified documents.
 
@@ -129,6 +173,8 @@ class SourceFileParser:
             fingerprint = self._fingerprints[extension] = (
                 ParserFactory.parser_fingerprint(extension)
             )
+        if (held := _SOURCE_DIGESTS.get(_stat_key(path, fingerprint))) is not None:
+            return held
         with path.open("rb") as file:
             return compute_source_digest(
                 iter(lambda: file.read(_READ_CHUNK_BYTES), b""), fingerprint

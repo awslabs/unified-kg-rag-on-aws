@@ -77,6 +77,7 @@ from unified_kg_rag.application.ingestion.pipeline_stages import (
     TextChunkingStage,
     TranslationStage,
 )
+from unified_kg_rag.application.ingestion.source_parsing import fingerprint_digest
 from unified_kg_rag.application.ingestion.summary_tree_stage import SummaryTreeStage
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.application.storage.visualization_export import (
@@ -1718,7 +1719,9 @@ class DataIngestionPipeline:
         if self.target_directory is not None:
             owned.append(self.target_directory)
         fingerprint = seed_corpus_fingerprint(
-            corpus_manifest_fingerprint(source_directory, extensions, owned),
+            corpus_manifest_fingerprint(
+                source_directory, extensions, owned, fingerprint_digest
+            ),
             [conversion.digest for conversion in self.seed_conversions],
         )
         logger.info("Corpus manifest fingerprint: '%s'", fingerprint)
