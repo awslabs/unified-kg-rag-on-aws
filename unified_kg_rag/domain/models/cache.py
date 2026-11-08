@@ -93,21 +93,11 @@ class CacheIndex(BaseModel):
 
 
 class CacheStats(BaseModel):
-    total_entries: int = Field(
-        default=0, description="Total number of entries in the cache"
-    )
     total_size_bytes: int = Field(
         default=0, description="Total size of all cache entries in bytes"
     )
     hit_count: int = Field(default=0, description="Number of cache hits")
     miss_count: int = Field(default=0, description="Number of cache misses")
-    stage_stats: dict[str, dict[str, int]] = Field(
-        default_factory=dict,
-        description="Per-stage statistics tracking hits and misses for each pipeline stage",
-    )
-    local_entries: int = Field(
-        default=0, description="Number of cache entries stored locally"
-    )
 
     @property
     def hit_rate(self) -> float:
@@ -118,14 +108,8 @@ class CacheStats(BaseModel):
     def total_size_mb(self) -> float:
         return self.total_size_bytes / (1024 * 1024)
 
-    def record_hit(self, stage_name: str) -> None:
+    def record_hit(self) -> None:
         self.hit_count += 1
-        if stage_name not in self.stage_stats:
-            self.stage_stats[stage_name] = {"hits": 0, "misses": 0}
-        self.stage_stats[stage_name]["hits"] += 1
 
-    def record_miss(self, stage_name: str) -> None:
+    def record_miss(self) -> None:
         self.miss_count += 1
-        if stage_name not in self.stage_stats:
-            self.stage_stats[stage_name] = {"hits": 0, "misses": 0}
-        self.stage_stats[stage_name]["misses"] += 1

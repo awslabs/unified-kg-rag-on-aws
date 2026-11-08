@@ -12,7 +12,8 @@ from pydantic import (
     model_validator,
 )
 
-# Stdlib logger: shared.logging imports this module, so get_logger would cycle.
+# One stdlib logger for every module of the config package, named as the
+# package (one module before the split): a filter on it sees them all.
 _logger = logging.getLogger("unified_kg_rag.domain.models.config")
 
 

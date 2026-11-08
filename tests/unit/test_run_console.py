@@ -36,7 +36,7 @@ ALL_INTERFACES = ".".join(["0"] * 4)
     ],
 )
 def test_loopback_addresses(host: str, loopback: bool) -> None:
-    assert run_console._is_loopback(host) is loopback
+    assert run_console.is_loopback(host) is loopback
 
 
 def test_the_default_host_is_loopback() -> None:

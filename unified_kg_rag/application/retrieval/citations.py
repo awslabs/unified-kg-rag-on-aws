@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import wrapped_strategy
@@ -79,13 +79,6 @@ class _Unit:
     file_path: str | None
     page: int | None
     page_end: int | None
-
-
-@dataclass
-class _Draft:
-    """A citation's documents while they are gathered, in unit order."""
-
-    units: list[_Unit] = field(default_factory=list)
 
 
 def _ids(value: Any) -> list[str]:

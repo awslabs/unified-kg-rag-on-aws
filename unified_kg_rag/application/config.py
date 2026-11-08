@@ -27,8 +27,7 @@ from unified_kg_rag.shared.utils.validation import format_validation_errors
 if TYPE_CHECKING:
     from typing_extensions import TypeForm
 
-# Stdlib logger (not get_logger): this module is imported by the logging setup,
-# so reaching back through get_logger -> get_config would risk a circular import.
+# Stdlib logger, as the config models log (domain.models.config).
 _logger = logging.getLogger(__name__)
 
 

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import ipaddress
 import sys
 from typing import Any
 
@@ -34,6 +33,7 @@ from unified_kg_rag.application.cli.conventions import (
     add_log_level_and_version_arguments,
     exits_on_sigterm,
     failed,
+    is_loopback,
     stoppable,
     usage_error,
 )
@@ -69,7 +69,6 @@ logger = get_logger(__name__)
 TRANSPORTS = ("stdio", "streamable-http")
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
-_LOOPBACK_NAMES = frozenset({"localhost"})
 
 
 def _suffix(value: str) -> str:
@@ -84,17 +83,6 @@ def _port(value: str) -> int:
     if not 1 <= port <= 65535:
         raise argparse.ArgumentTypeError(f"must be between 1 and 65535, got {port}")
     return port
-
-
-def is_loopback(host: str) -> bool:
-    """Whether ``host`` names a loopback address (``127.0.0.0/8``, ``::1``,
-    ``localhost``): reachable from this machine only."""
-    if host.lower() in _LOOPBACK_NAMES:
-        return True
-    try:
-        return ipaddress.ip_address(host.strip("[]")).is_loopback
-    except ValueError:
-        return False
 
 
 def build_parser() -> argparse.ArgumentParser:

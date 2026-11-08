@@ -173,11 +173,6 @@ class LLMOutputTruncatedError(LanguageModelError):
     retried: the same input meets the same limit."""
 
 
-class LanguageModelTimeoutError(LanguageModelError, TimeoutError):
-    """Model calls gave up after their call timeout (``BatchProcessor``) without
-    an answer (also a builtin ``TimeoutError``)."""
-
-
 class PipelineExecutionError(GraphRAGException):
     pass
 

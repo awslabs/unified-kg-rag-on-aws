@@ -37,7 +37,11 @@ from pydantic import BaseModel, Field
 from unified_kg_rag import __version__
 from unified_kg_rag.adapters.ingestion.parser import ParserFactory
 from unified_kg_rag.application.cli.console import dashboard, evaluations, graph_api
-from unified_kg_rag.application.cli.console.ask import AskRequest, AskService
+from unified_kg_rag.application.cli.console.ask import (
+    AskRequest,
+    AskService,
+    ChainFactory,
+)
 from unified_kg_rag.application.cli.console.jobs import (
     JobConflict,
     JobManager,
@@ -165,7 +169,9 @@ class UploadTooLarge(ConfigurationError):
 class ConsoleState:
     """The services of one console process."""
 
-    def __init__(self, options: ConsoleOptions, *, chain_factory: Any = None) -> None:
+    def __init__(
+        self, options: ConsoleOptions, *, chain_factory: ChainFactory | None = None
+    ) -> None:
         self.options = options
         self.settings_file = SettingsFile(options.config_path)
         self._config: Config | None = None
@@ -269,7 +275,9 @@ max-width:40rem;margin:4rem auto;padding:0 1rem">
 start; the terminal that started the console shows it.</p></body></html>"""
 
 
-def create_app(options: ConsoleOptions, *, chain_factory: Any = None) -> FastAPI:
+def create_app(
+    options: ConsoleOptions, *, chain_factory: ChainFactory | None = None
+) -> FastAPI:
     """The console app over ``options`` (``chain_factory`` builds the
     ``GraphRAGChain``, for tests)."""
     state = ConsoleState(options, chain_factory=chain_factory)

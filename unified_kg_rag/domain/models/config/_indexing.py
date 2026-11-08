@@ -192,6 +192,14 @@ DEFAULT_LANGUAGE_ANALYZERS: dict[str, str] = {
 }
 
 
+def _stripped_unique(values: list[str], field: str) -> list[str]:
+    """``values`` stripped, without repeats, in order; an empty one fails."""
+    stripped = [value.strip() for value in values]
+    if not all(stripped):
+        raise ValueError(f"{field} entries must not be empty")
+    return list(dict.fromkeys(stripped))
+
+
 class OpenSearchIndexingConfig(BaseModel):
     # Settings set in code (config.indexing.opensearch.index_settings = ...)
     # are checked too, as IndexingConfig's are.
@@ -679,10 +687,7 @@ class SummaryTreeConfig(BaseModel):
     @field_validator("partition_by")
     @classmethod
     def _strip_partition_keys(cls, keys: list[str]) -> list[str]:
-        stripped = [key.strip() for key in keys]
-        if not all(stripped):
-            raise ValueError("partition_by entries must not be empty")
-        return list(dict.fromkeys(stripped))
+        return _stripped_unique(keys, "partition_by")
 
 
 class IndexingConfig(BaseModel):
@@ -894,7 +899,4 @@ class IndexingConfig(BaseModel):
     @field_validator("retire_source_scopes")
     @classmethod
     def _strip_retired_scopes(cls, scopes: list[str]) -> list[str]:
-        stripped = [scope.strip() for scope in scopes]
-        if not all(stripped):
-            raise ValueError("retire_source_scopes entries must not be empty")
-        return list(dict.fromkeys(stripped))
+        return _stripped_unique(scopes, "retire_source_scopes")

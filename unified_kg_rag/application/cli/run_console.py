@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import ipaddress
 import json
 import os
 import secrets
@@ -29,6 +28,7 @@ from unified_kg_rag.application.cli.conventions import (
     add_output_format_argument,
     exits_on_sigterm,
     failed,
+    is_loopback,
     json_output,
     print_json,
     setup_cli_logging,
@@ -138,15 +138,6 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _is_loopback(host: str) -> bool:
-    if host.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host.strip("[]")).is_loopback
-    except ValueError:
-        return False
-
-
 def missing_extra() -> list[str]:
     """The console extra's packages that are not installed."""
     return [name for name in EXTRA_PACKAGES if importlib.util.find_spec(name) is None]
@@ -188,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
             "run-console needs the console extra (missing: "
             f"{', '.join(missing)}): uv sync --extra console"
         )
-    if not _is_loopback(args.host) and not args.allow_remote:
+    if not is_loopback(args.host) and not args.allow_remote:
         usage_error(
             f"--host {args.host} is not a loopback address: pass --allow-remote "
             "as well, and put an authenticating reverse proxy in front (the "
@@ -222,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         cache_directory=cache,
         config_path=config_path,
         allow_unknown_keys=args.allow_unknown_keys,
-        loopback=_is_loopback(args.host),
+        loopback=is_loopback(args.host),
         web_directory=web,
         trace_url_template=args.trace_url,
         sample_questions=_sample_questions(workspace),
