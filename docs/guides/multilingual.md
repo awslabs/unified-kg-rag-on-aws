@@ -78,7 +78,8 @@ unit holds any more are deleted by the next full build
   `processing.translation.source_language` when the sample's script
   disagrees with it: mostly Hangul, Kana or Han letters under a language of
   another script (it suggests `ko`, `ja` or `zh`), or few of them under
-  `ko`, `ja` or `zh`. It cannot tell two languages of one script apart
+  `ko`, `ja` or `zh` (not when the sample still reads as that language: a
+  Korean document that is mostly code). It cannot tell two languages of one script apart
   (English from German), and the run goes on.
 - **Unicode.** Text and queries are NFC-normalized, so decomposed Hangul (NFD)
   matches its composed form.

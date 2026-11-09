@@ -103,13 +103,16 @@ def source_language_mismatch(
 ) -> str | None:
     """Why ``sample`` disagrees with ``source_language``, or ``None``: few of
     its letters are in that language's script, or it reads as another
-    language."""
+    language; never when it reads as ``source_language`` (a Korean text
+    that is mostly code)."""
     counts = sample.counts
     if counts.letters < _MIN_LETTERS:
         return None
     group = _group(profile(source_language).script)
     share = _share(counts, group)
     detected = corpus_language(sample, source_language)
+    if detected is source_language:
+        return None
     setting = (
         "processing.translation.source_language is "
         f"'{source_language.value}' ({language_name(source_language.value)})"
@@ -124,7 +127,7 @@ def source_language_mismatch(
             f"only {share:.0%} of the sampled letters are {_script_label(group)}, "
             f"but {setting}: {fix}"
         )
-    if detected is not None and detected is not source_language:
+    if detected is not None:
         return (
             f"the sampled text reads as {language_name(detected.value)} "
             f"({share:.0%} {_script_label(group)} letters), but {setting}: "
