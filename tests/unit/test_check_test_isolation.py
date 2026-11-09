@@ -46,6 +46,22 @@ def test_a_file_that_needs_another_first_fails(tmp_path: Path) -> None:
     assert script.main([str(tmp_path), "--jobs", "2"]) == 1
 
 
+@pytest.mark.timeout(60)
+def test_a_file_past_the_timeout_fails_named(tmp_path: Path) -> None:
+    # A hung file is stopped and named, not left to run the job out.
+    script = _script()
+    (tmp_path / "test_hangs.py").write_text(
+        "import time\n\n\ndef test_hangs():\n    print('started')\n"
+        "    time.sleep(120)\n"
+    )
+    (tmp_path / "test_quick.py").write_text("def test_quick():\n    pass\n")
+    failed = script.failures([tmp_path], jobs=2, timeout=8)
+    assert [(path.name, code) for path, code, _ in failed] == [
+        ("test_hangs.py", script.TIMED_OUT)
+    ]
+    assert failed[0][2].endswith("timed out after 8 s")
+
+
 def test_ci_runs_it_over_every_test_directory() -> None:
     workflow = yaml.safe_load(
         (REPO_ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8")
