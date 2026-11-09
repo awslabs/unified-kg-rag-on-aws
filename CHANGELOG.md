@@ -1333,7 +1333,8 @@ From a `main` checkout (formats and keys no release had):
   `source_language`/`target_language` take any other BCP-47 code with one WARNING and the defaults (a region is
   dropped: `pt-BR` is `pt`); such a code's text fields get OpenSearch's built-in analyzer of the language where it
   has one (`nl: dutch`, `sv: swedish`, `tr: turkish`, ... in the default `language_analyzers`; the embedded engine
-  stems those with Snowball), not `standard`. The embedded engine stems German, French, Spanish, Italian,
+  stems those with Snowball), not `standard` (`config-template.yaml` leaves the map unset: a copy listing a few
+  replaced it). The embedded engine stems German, French, Spanish, Italian,
   Portuguese, Russian, Arabic and Hindi with Snowball, normalizes Arabic as Lucene does and splits Thai runs into
   character pairs. A
   Devanagari or Thai name keeps its vowel signs in fuzzy matching (`राहुल` was `र ह ल`), Arabic short vowels and

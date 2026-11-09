@@ -89,6 +89,18 @@ def full_template() -> dict[str, Any]:
     return uncommented_template()
 
 
+def test_a_copy_of_the_template_keeps_every_default_analyzer(
+    raw_template: dict[str, Any],
+) -> None:
+    # Setting language_analyzers replaces the whole map: a template listing
+    # a few would drop the others' analyzers from every copy of it.
+    config = Config.model_validate(raw_template)
+    assert "language_analyzers" not in config.indexing.opensearch.model_fields_set
+    assert config.indexing.opensearch.language_analyzers == (
+        Config().indexing.opensearch.language_analyzers
+    )
+
+
 def test_uncommented_view_finds_the_commented_defaults() -> None:
     # Guards the parser: a template edit that breaks the commented-key layout
     # would otherwise silently shrink what the drift checks below compare.

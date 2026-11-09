@@ -113,20 +113,15 @@ indexing:
   # true for one run: rebuild the index namespace from the whole corpus
   # (with the registry on) instead of applying a delta.
   reset: false
-  opensearch:
-    # Text analyzer per language (setting the key replaces the whole map);
-    # nori needs the analysis-nori plugin, the others are built in.
-    language_analyzers:
-      de: "german"
-      en: "english"
-      es: "spanish"
-      fr: "french"
-      it: "italian"
-      ja: "cjk"
-      ko: "nori"
-      pt: "portuguese"
-      ru: "russian"
-      zh: "cjk"
+  # opensearch:
+  #   # Text analyzer per language. Unset, every language with a profile and
+  #   # every code OpenSearch has a built-in analyzer for gets its own (Long
+  #   # defaults in the reference); nori needs the analysis-nori plugin, the
+  #   # others are built in. Setting it replaces the whole map: list every
+  #   # language the corpus uses.
+  #   language_analyzers:
+  #     en: "english"
+  #     ko: "nori"
 
 search:
   # The strategies the "auto" router chooses from (drop "iterative" to keep
