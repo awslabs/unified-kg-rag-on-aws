@@ -684,7 +684,8 @@ From a `main` checkout (formats and keys no release had):
   `metadata.citations_unresolved` instead, in the same shape. `run-eval` records `degraded_steps` per answer,
   `degraded_step_counts` and `degraded_queries`, which `--max-failure-rate` counts. The answer view (`AnswerView`)
   carries them with the class of an absorbed error (`degraded`, `degraded_error`, `citations_unresolved`,
-  `error_class`): the console's Ask page shows a partial answer as such, MCP `kg_answer` and `kg_search` return them
+  `error_class`): the console's Ask page shows a partial answer and unresolved citation reads as such, naming the
+  steps in the page's language, MCP `kg_answer` and `kg_search` return them
   after the answer, and `run-rag` prints them (and its JSON document holds them).
 - `ModelUnreachableError`: a model server that cannot be reached is named with its provider kind, `base_url` and how
   to start it (`ollama serve`, the models to pull), the one server the failed connection was made to when its

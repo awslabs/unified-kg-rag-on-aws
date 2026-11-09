@@ -9,7 +9,7 @@ import { useI18n } from "../i18n/i18n";
 import { errorMessage, get, stream } from "../lib/api";
 import { navigate } from "../lib/router";
 import { useTrail } from "../lib/trail";
-import type { AskEvent, AskResult, Citation, Source, Status, StrategyInfo } from "../lib/types";
+import type { AskEvent, AskResult, Citation, Degradation, Source, Status, StrategyInfo } from "../lib/types";
 import { useApi } from "../lib/useApi";
 
 interface Turn {
@@ -316,6 +316,19 @@ export function AskPage({ status }: { status: Status | null }) {
   );
 }
 
+/** The steps of `entries`, once each, by their names in the UI locale
+ * (`ask.step.<step>`); a step the catalog does not know (a third-party
+ * strategy's) as its id. */
+export function stepNames(entries: Degradation[], t: (key: string) => string): string {
+  return [...new Set(entries.map((entry) => entry.step))]
+    .map((step) => {
+      const key = `ask.step.${step}`;
+      const name = t(key);
+      return name === key ? step : name;
+    })
+    .join(", ");
+}
+
 function truncate(text: string, length: number): string {
   return text.length > length ? `${text.slice(0, length - 1)}…` : text;
 }
@@ -385,7 +398,14 @@ function TurnView({
         {result && !result.error && result.degraded?.length ? (
           <div style={{ marginTop: 12 }}>
             <Notice tone="warn" title={t("ask.partial")}>
-              {t("ask.partialHelp", { steps: [...new Set(result.degraded.map((d) => d.step))].join(", ") })}
+              {t("ask.partialHelp", { steps: stepNames(result.degraded, t) })}
+            </Notice>
+          </div>
+        ) : null}
+        {result && !result.error && result.citations_unresolved?.length ? (
+          <div style={{ marginTop: 12 }}>
+            <Notice tone="info" title={t("ask.unresolved")}>
+              {t("ask.unresolvedHelp", { steps: stepNames(result.citations_unresolved, t) })}
             </Notice>
           </div>
         ) : null}

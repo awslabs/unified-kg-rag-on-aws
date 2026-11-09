@@ -8,7 +8,7 @@ import { ApiError, errorMessage } from "../lib/api";
 import { fieldsOf, parseValue, type JsonSchema } from "../lib/schema";
 import { answerSegments, markerNumbers } from "../lib/citations";
 import type { AskResult, Citation, Comparison, Delta, Multiplicity, Source, StrategyInfo } from "../lib/types";
-import { conversationHistory, parseFilters } from "../pages/AskPage";
+import { conversationHistory, parseFilters, stepNames } from "../pages/AskPage";
 import { intervalResamples } from "../pages/EvaluatePage";
 import { AnswerText, CitationList } from "./AnswerText";
 import { DeltaPlot, deltaInterval, deltaVerdict, higherIsBetter } from "./charts";
@@ -432,5 +432,19 @@ describe("graph query result", () => {
     expect(within(trail).getByRole("button", { name: "#2" })).toBeInTheDocument();
     fireEvent.click(within(trail).getByRole("button", { name: "Show in the graph" }));
     expect(opened).toHaveBeenCalledWith(result);
+  });
+});
+
+describe("stepNames", () => {
+  // Regression (rv9 query L12): the partial-answer notice showed the raw
+  // step ids (keyword_extraction) in every locale.
+  const steps = [
+    { step: "keyword_extraction", reason: "r", error_type: null },
+    { step: "keyword_extraction", reason: "r2", error_type: null },
+    { step: "my_plugin_step", reason: "r", error_type: null },
+  ];
+  it("names each step once in the UI locale", () => {
+    expect(stepNames(steps, (key) => translate("ko", key))).toBe("키워드 추출, my_plugin_step");
+    expect(stepNames(steps, (key) => translate("en", key))).toBe("keyword extraction, my_plugin_step");
   });
 });

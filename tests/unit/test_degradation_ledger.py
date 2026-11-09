@@ -13,6 +13,8 @@ recorded apart (``citations_unresolved``).
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -230,3 +232,20 @@ def test_a_failed_context_budgeting_degrades_the_answer() -> None:
         }
     ]
     assert out.metadata["degraded_error"] == "ValueError"
+
+
+def test_the_console_names_every_step() -> None:
+    # Regression (rv9 query L12): the console showed the raw step ids. The
+    # English catalog names each framework step (the vitest catalog test
+    # holds every locale to the English keys).
+    catalog = json.loads(
+        (Path(__file__).parents[2] / "console/web/src/i18n/locales/en.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    steps = {
+        value
+        for name, value in vars(DegradationStep).items()
+        if not name.startswith("_") and isinstance(value, str)
+    }
+    assert steps and {f"ask.step.{step}" for step in steps} <= set(catalog)
