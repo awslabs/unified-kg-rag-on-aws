@@ -1762,7 +1762,9 @@ Ingestion and incremental indexing.
   spelling took over their name) or dropped; the failed commit already deletes the old ids no failed write touches, so
   a hub whose write keeps failing holds back only the re-keys at it. A suffix whose stored reports could not be
   pointed at the new ids keeps its old ids until a later run does both. A note over 1 MiB is split into parts, each
-  its own record, under a store's request limit (10 MiB on small OpenSearch instances).
+  its own record, under a store's request limit (10 MiB on small OpenSearch instances). A noted edge the delta states
+  again takes the endpoints the delta resolves, and a noted claim derived again resolves its unit's statements
+  against every stored spelling of their names (`Acme Inc` beside `Acme`), as the full build does.
 - Deleting a document under a non-default suffix strips it from shared claims, a deletion-only run checks the
   configured suffix, and a run whose new documents name no entity still commits them (#248, #252, #256).
 - `indexing.reset` reusing a pipeline id rebuilds from the whole corpus, fails when the registry cannot be cleared,

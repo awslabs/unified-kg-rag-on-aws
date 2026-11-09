@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from tests.fixtures.doc_status_records import all_records
@@ -81,6 +81,22 @@ def _rejects(where: str, salt: int):  # noqa: ANN202
     after=_corpus,
     where=st.sampled_from(_WRITES),
     salt=st.integers(0, 1000),
+)
+# A noted claim joined alone is derived again with every statement of its
+# unit: one naming "Acme Inc" beside a stored "Acme" (one name key, two
+# entities) resolved to "Acme" without the stored spelling, a claim the
+# full build does not have.
+@example(
+    before={},
+    after={
+        "/corpus/c.txt": [[("Depot", "Acme Inc", 2)]],
+        "/corpus/d.txt": [
+            [("Depot", "Acme Inc", 2)],
+            [("Acme", "주식회사 한빛", 3), ("한빛", "Acme Inc", 3)],
+        ],
+    },
+    where="vector.upsert_claims",
+    salt=1,
 )
 def test_rejected_writes_are_written_by_the_next_run(
     before: Corpus, after: Corpus, where: str, salt: int
