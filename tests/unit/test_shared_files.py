@@ -482,6 +482,78 @@ def test_a_directory_refusing_a_sibling_stages_the_write(
     assert raised.value.errno == code
 
 
+@pytest.mark.parametrize("refusal", ["read-only file", "read-only file system"])
+def test_a_file_that_would_refuse_the_staged_copy_fails_before_the_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refusal: str
+) -> None:
+    # A read-only file system refuses the sibling with EROFS; the file
+    # itself refuses the write too (a 0444 file, or the same file system):
+    # it fails at once with the file's own error and path, before a byte
+    # of the export is staged, not once the whole block has streamed.
+    stage = _staged_in(monkeypatch, tmp_path)
+    folder = tmp_path / "ro"
+    folder.mkdir()
+    path = folder / "out.bin"
+    path.write_text("OLD")
+    real = os.open
+    target_code = errno.EACCES if refusal == "read-only file" else errno.EROFS
+
+    def refuse(file: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if Path(file).parent == folder and Path(file).name.startswith(".out.bin."):
+            raise OSError(errno.EROFS, os.strerror(errno.EROFS), str(file))
+        if Path(file) == path and target_code == errno.EROFS:
+            raise OSError(errno.EROFS, os.strerror(errno.EROFS), str(file))
+        return real(file, flags, *args, **kwargs)
+
+    monkeypatch.setattr(files.os, "open", refuse)
+    if refusal == "read-only file":
+        path.chmod(0o444)
+    ran = False
+    try:
+        if refusal == "read-only file" and os.access(path, os.W_OK):
+            pytest.skip("root writes a read-only file")
+        with pytest.raises(OSError) as raised:
+            with files.atomic_open(path, "wb") as out:
+                ran = True
+                out.write(b"NEW")
+    finally:
+        path.chmod(0o644)
+    assert not ran
+    assert raised.value.errno == target_code
+    assert raised.value.filename == str(path)
+    assert path.read_text() == "OLD"
+    assert list(stage.iterdir()) == []
+    assert sorted(p.name for p in folder.iterdir()) == ["out.bin"]
+
+
+def test_a_staged_write_opens_the_file_once_and_empties_it_only_at_the_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The file is opened when the write is staged and written through that
+    # descriptor: emptied only when the block's text goes in.
+    _staged_in(monkeypatch, tmp_path)
+    folder = tmp_path / "mounted"
+    folder.mkdir()
+    path = folder / "f.json"
+    path.write_text("OLD TEXT")
+    real = os.open
+    opened: list[int] = []
+
+    def refuse(file: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if Path(file).parent == folder and Path(file).name.startswith(".f.json."):
+            raise OSError(errno.EROFS, os.strerror(errno.EROFS), str(file))
+        if Path(file) == path:
+            opened.append(flags)
+        return real(file, flags, *args, **kwargs)
+
+    monkeypatch.setattr(files.os, "open", refuse)
+    with files.atomic_open(path) as out:
+        assert len(opened) == 1 and not opened[0] & (os.O_TRUNC | os.O_CREAT)
+        assert path.read_text() == "OLD TEXT"
+        out.write("NEW")
+    assert path.read_text() == "NEW" and len(opened) == 1
+
+
 def _copy_fails_midway(monkeypatch: pytest.MonkeyPatch) -> None:
     def short(source: Any, out: Any, *_: Any) -> None:
         out.write(source.read(3))

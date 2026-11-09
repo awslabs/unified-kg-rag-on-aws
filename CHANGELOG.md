@@ -1894,8 +1894,9 @@ Evaluation, visualization and tuning.
   is written through its descriptor, so `--output-path /dev/stdout > out.txt` (or `>>`) keeps what else the run
   prints (a file open to update ends where the write does; one open read-only is refused with its path). A file
   its directory will not let be replaced (read-only, on a read-only file system, a bind-mounted file) is staged in
-  a temporary file and copied in once written, so a failed export still leaves it whole, a copy that fails once
-  begun (a full disk) keeps the staged file and names it in the error, and `fsync` flushes the copy too; a write
+  a temporary file and copied in once written, so a failed export still leaves it whole; a file that would refuse
+  the copy too (read-only itself) fails before the export streams, with its own error and path. A copy that fails
+  once begun (a full disk) keeps the staged file and names it in the error, and `fsync` flushes the copy too; a write
   that asks for `fsync` flushes the directory after the rename where it may. A valid name of 218-255 bytes (about
   73 or more Korean or Japanese characters, a console upload's too) is written atomically: its temporary name is
   cut to fit the directory's name limit (255 bytes, 143 on eCryptfs, 255 where the file system says none).

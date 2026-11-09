@@ -86,7 +86,10 @@ def atomic_open(
     read-only directory or on a read-only file system, a bind-mounted file)
     is staged in a temporary file (beside it, or in
     :func:`tempfile.gettempdir` when its directory refuses one) and copied
-    into it when the block ends: a block that raises still leaves it as it
+    into it when the block ends. The file is opened before a write is
+    staged elsewhere, so one that would refuse the copy too (a read-only
+    file, a read-only file system) fails before the block runs, with its
+    own error and path. A block that raises still leaves the file as it
     was, but a reader may see the copy half made, and a copy that fails
     once it has begun (a full disk) keeps the staged file and names it in
     the error, the one whole copy of the new text left.
@@ -136,16 +139,26 @@ def atomic_open(
     target = path.resolve() if path.is_symlink() else path
     temp_path = temporary_sibling(target)
     beside = True
+    held: int | None = None  # the file itself, opened to stage a write into it
     try:
         temp = created(temp_path, current is not None)
     except OSError as error:
         if current is None or error.errno not in _STAGE_ERRORS:
             raise
+        # Opened (not emptied) before the block runs, so a file that will
+        # not take the write either (a read-only one, or one on a read-only
+        # file system) fails now, with its own error and path, not after
+        # the whole export is staged.
+        held = _open_in_place(target)
         logger.debug(
             "cannot create %s (%s); staging %s elsewhere", temp_path, error, target
         )
-        temp_path = temporary_sibling(Path(tempfile.gettempdir()) / target.name)
-        temp = created(temp_path, True)
+        try:
+            temp_path = temporary_sibling(Path(tempfile.gettempdir()) / target.name)
+            temp = created(temp_path, True)
+        except BaseException:
+            os.close(held)
+            raise
         beside = False
     try:
         with temp as handle:
@@ -167,23 +180,38 @@ def atomic_open(
                 beside = False
     except BaseException:
         temp_path.unlink(missing_ok=True)
+        if held is not None:
+            os.close(held)
         raise
     if not beside:  # the staged text goes into the file; _copy_in owns it now
-        _copy_in(temp_path, target, fsync=fsync)
+        _copy_in(temp_path, target, fsync=fsync, held=held)
     elif fsync:
         _fsync_directory(target.parent)
 
 
-def _copy_in(staged: Path, target: Path, *, fsync: bool) -> None:
+def _open_in_place(target: Path) -> int:
+    """``target`` open to be written in place, not yet emptied: its own
+    error (``EROFS``, ``EACCES``) and path when it will not take a write."""
+    return os.open(target, os.O_WRONLY | getattr(os, "O_BINARY", 0))
+
+
+def _copy_in(staged: Path, target: Path, *, fsync: bool, held: int | None) -> None:
     """Write ``staged``'s bytes into ``target`` in place (it keeps its
-    inode, mode and links), flushed to disk with ``fsync``, and remove
-    ``staged``: the finished text of a file that cannot be renamed over.
-    Once ``target`` is opened (and so emptied) a failure keeps ``staged``,
-    the one whole copy of the new text, and names it in the error."""
+    inode, mode and links) through ``held``, the descriptor it was opened
+    on when the write was staged (opened now when None), flushed to disk
+    with ``fsync``, and remove ``staged``: the finished text of a file that
+    cannot be renamed over. Once ``target`` is emptied a failure keeps
+    ``staged``, the one whole copy of the new text, and names it in the
+    error."""
     try:
-        source = staged.open("rb")
         try:
-            out = target.open("wb")
+            source = staged.open("rb")
+        except BaseException:
+            if held is not None:
+                os.close(held)
+            raise
+        try:
+            out = open(_open_in_place(target) if held is None else held, "wb")
         except BaseException:
             source.close()
             raise
@@ -192,6 +220,7 @@ def _copy_in(staged: Path, target: Path, *, fsync: bool) -> None:
         raise
     try:
         with source, out:
+            out.truncate(0)
             shutil.copyfileobj(source, out)
             if fsync:
                 out.flush()
