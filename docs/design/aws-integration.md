@@ -166,9 +166,7 @@ exposes a best-effort `close()` / `aclose()` that never raises:
 - **Language-aware parsing.** Query entities split at `,`, `，`, `、`,
   `;`, `；` and line breaks (`domain/retrieval/query_entities.py`). Global
   search's relevance rating skips a scale written in Korean, Japanese or
-  Chinese as in English; LightRAG's raw-query fallback gate counts a
-  dense-script character as `LATIN_CHARS_PER_TOKEN` characters (upstream
-  counts characters); claim dates read `2024年3月15日`, `2024년 3월`,
+  Chinese as in English; claim dates read `2024年3月15日`, `2024년 3월`,
   `2024. 3.`, Japanese era years (`令和6年`) and CJK quarters, the month
   names of German, Spanish, French, Italian, Portuguese and Russian
   (`15. März 2024`, `15 de marzo de 2024`), and corpus-language

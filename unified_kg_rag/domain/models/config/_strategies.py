@@ -435,13 +435,13 @@ class LightRAGSearchConfig(BaseModel):
         default=50,
         ge=0,
         description=(
-            "When dual-level keyword extraction yields no keywords, a query whose "
-            "length is below this (0 disables the gate) falls back to using the raw "
-            "query as a low-level keyword, mirroring LightRAG. Longer queries skip "
-            "the fallback to avoid an over-broad graph scan. Counted in "
-            "characters, a dense-script (CJK, kana, Hangul) character as 4: "
-            "the token estimate's ratio, so a Korean or Chinese question is "
-            "gated at the length of an English one carrying as much."
+            "When dual-level keyword extraction yields no keywords, a query "
+            "shorter than this many characters (in every script, as upstream "
+            "LightRAG's len(query) < 50) is searched as its own low-level "
+            "keyword. A longer one skips the fallback, as upstream does, since "
+            "a whole question as one keyword scans the entity index for a "
+            "sentence, not a name: hybrid then retrieves nothing and mix only "
+            "chunks. 0 turns the fallback off."
         ),
     )
     kg_stream_top_k: int = Field(

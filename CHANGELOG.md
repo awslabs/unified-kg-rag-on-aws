@@ -1236,7 +1236,8 @@ From a `main` checkout (formats and keys no release had):
   the details on every answer) (#629).
 - A LightRAG keyword extraction whose answer is no usable JSON even after the repair is a degraded step
   (`metadata.degraded`, step `keyword_extraction`), under `processing.ignore_errors: false` too: the query searches
-  the raw question as its keyword, as upstream LightRAG does, and a WARNING names the model role and model that
+  the raw question as its keyword when it is shorter than `raw_query_fallback_max_len` characters, as upstream
+  LightRAG does (the entry's reason says whether it did), and a WARNING names the model role and model that
   answered. It failed the whole `mix`, `hybrid` or `iterative` query with the parser's `Expecting value` (#629).
 - The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
   naming `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese,
@@ -1615,8 +1616,7 @@ Queries and retrieval.
 - DRIFT (primer, actions, HyDE), iterative's controller and global search's map points write in the index language
   (`source_language` with translation disabled), not always `target_language` nor a requested language, whose
   follow-up queries found no entity (#613, #619); query entities a model separates with `、`, `，` or `；` (or one per
-  line) are split into entities, not read as one; LightRAG's raw-query fallback counts a CJK or Hangul character as 4
-  against `raw_query_fallback_max_len` (a Korean question four times as long as an English one fell back) (#605).
+  line) are split into entities, not read as one (#605).
 - Store failures fail the query instead of answering from no context (unreachable, denied, rejected or overloaded
   stores, a failing embedding call) (#249, #258, #261, #266); queries no longer hang on a silent store
   (`search.store_timeout_seconds`, a Neptune traversal timeout) (#258, #264); a stalled Bedrock call no longer holds

@@ -51,6 +51,7 @@ from unified_kg_rag.domain.prompts.retrieval import (
     CANNOT_TRANSLATE_MARKER,
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
+from unified_kg_rag.domain.retrieval.keyword_fallback import fallback_outcome
 from unified_kg_rag.domain.retrieval.query_entities import split_entity_list
 from unified_kg_rag.shared import LanguageModelError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
@@ -297,9 +298,15 @@ async def process_query(
             # not fail the query, so an exception here must propagate.
             raise keyword_data
         if isinstance(keyword_data, AbsorbedKeywordFailure):
+            # Whether mix and hybrid searched the raw query then (their
+            # fallback's one gate) or no entity at all.
+            outcome = fallback_outcome(
+                str(translated_query or question),
+                chain.config.search.lightrag_search.raw_query_fallback_max_len,
+            )
             record_degradation(
                 DegradationStep.KEYWORD_EXTRACTION,
-                keyword_data.reason,
+                f"{keyword_data.reason}; {outcome}",
                 keyword_data.error_type,
             )
         hl_keywords, ll_keywords = keyword_data
@@ -457,15 +464,16 @@ def cache_extraction(chain: GraphRAGChain, key: tuple[str, ...], value: Any) -> 
 class AbsorbedKeywordFailure(tuple[list[str], list[str]]):
     """The ``([], [])`` of a keyword extraction that failed without failing
     the query (an answer unreadable after the repair, or an error
-    ``ignore_errors`` absorbed), with the error's type name and how the
-    query went on, so the answer is marked degraded (the query's ledger,
-    ``keyword_extraction``)."""
+    ``ignore_errors`` absorbed), with the error's type name and what failed,
+    so the answer is marked degraded (the query's ledger,
+    ``keyword_extraction``, with how the query went on:
+    ``keyword_fallback.fallback_outcome``)."""
 
     error_type: str
     reason: str
 
     def __new__(
-        cls, error_type: str, reason: str = "searched without keywords"
+        cls, error_type: str, reason: str = "keyword extraction failed"
     ) -> AbsorbedKeywordFailure:
         value = super().__new__(cls, ([], []))
         value.error_type = error_type
@@ -488,7 +496,8 @@ async def extract_dual_keywords(
     Robust to the LLM wrapping the JSON in prose or code fences. An answer
     still unreadable after the one repair is a degraded step, never a
     failed query: empty lists (``AbsorbedKeywordFailure``), so ``mix`` and
-    ``hybrid`` search the raw query as their keyword, as upstream LightRAG
+    ``hybrid`` search the raw query as their keyword when it is short enough
+    (``domain.retrieval.keyword_fallback``), as upstream LightRAG
     (``_parse_keywords_payload`` returns empty lists). A failed call
     returns them under ``ignore_errors`` only.
     """
@@ -526,15 +535,13 @@ async def extract_dual_keywords(
         # The error text can quote the model's answer: DEBUG only.
         logger.warning(
             "Query keyword extraction (model role %s, '%s') returned no usable "
-            "keyword JSON (%s); searching the raw query as its keyword",
+            "keyword JSON (%s); searching without keywords",
             ModelRole.ENTITY_EXTRACTION.value,
             chain.config.model_id(ModelRole.ENTITY_EXTRACTION),
             type(cause).__name__,
         )
         logger.debug("Dual-keyword answer error: %s", cause)
-        return AbsorbedKeywordFailure(
-            type(cause).__name__, "keyword answer unreadable, searched without keywords"
-        )
+        return AbsorbedKeywordFailure(type(cause).__name__, "keyword answer unreadable")
     except Exception as e:
         # A model server that cannot be reached fails every later call too.
         if not chain.ignore_errors or is_unreachable_error(e):

@@ -59,8 +59,9 @@ sensemaking questions `mix` with the comprehensive answer matched `global`
 there ([evidence](./defaults-and-evidence.md#sensemaking-strategies)).
 
 `mix` and `hybrid` read the relationships index ingestion builds; a short
-query that yields no keywords is used as a low-level keyword itself (up to
-`search.lightrag_search.raw_query_fallback_max_len`).
+query that yields no keywords is used as a low-level keyword itself (when
+shorter than `search.lightrag_search.raw_query_fallback_max_len` characters,
+as upstream LightRAG; a longer one searches no entity or relationship).
 
 Both add the source chunks the matched entities cite and, as a stream of its
 own, those the matched relationships cite (each up to

@@ -396,8 +396,7 @@ class CommandLineInterface:
             help="Skip query translation and the query-side entity and keyword "
             "extraction (no LLM call before retrieval). mix and hybrid then "
             "have no high- or low-level keywords: a question shorter than "
-            "search.lightrag_search.raw_query_fallback_max_len characters (a "
-            "CJK or Hangul character counting 4) is "
+            "search.lightrag_search.raw_query_fallback_max_len characters is "
             "searched as its own low-level keyword, a longer one retrieves no "
             "entities or relationships",
         )
