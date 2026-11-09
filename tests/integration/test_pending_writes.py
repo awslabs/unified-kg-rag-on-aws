@@ -26,6 +26,7 @@ from tests.fixtures.incremental_runs import (
     POINTS,
     Corpus,
     IncrementalRun,
+    document,
     expected_state,
     extract,
 )
@@ -147,7 +148,10 @@ def test_a_rejected_claim_is_written_next_run() -> None:
 def test_a_rejected_text_unit_fails_its_own_document_only() -> None:
     harness = _harness()
     unit = next(
-        u.id for u in extract(_CORPUS).units if u.document_ids == ["/corpus/a.txt"]
+        u.id
+        for u in extract(_CORPUS).units
+        if u.document_ids
+        == [document("/corpus/a.txt", _CORPUS["/corpus/a.txt"]).document_id]
     )
 
     harness.run(_CORPUS, fail=_rejecting("vector.upsert_text_units", unit))
@@ -241,7 +245,9 @@ _SPELLINGS: tuple[Corpus, Corpus] = (
         ]
     },
     {
-        "/corpus/c.txt": [[(_D, "Acme Corp", 1), ("Acme Inc", _B, 1)]],
+        # Its units sort before d.txt's (ids derive from the document's path
+        # and content), so the edge to Buyer is re-keyed, not dropped.
+        "/corpus/a.txt": [[(_D, "Acme Corp", 1), ("Acme Inc", _B, 1)]],
         "/corpus/d.txt": [
             [("Acme Corp", _D, 2), ("Acme Corp", _B, 2), (_B, _D, 1)],
             [(_B, _D, 1), ("Acme Inc", _D, 2)],

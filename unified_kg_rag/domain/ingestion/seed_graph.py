@@ -73,6 +73,7 @@ from unified_kg_rag.domain.ingestion.document_identity import (
     RELATIVE_PATH_KEY,
     compute_document_id,
     compute_text_hash,
+    compute_text_unit_id,
 )
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
@@ -99,7 +100,7 @@ from unified_kg_rag.domain.models.seed_graph import (
 )
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import DataProcessingError, SeedGraphError
-from unified_kg_rag.shared.utils import compute_hash, entity_key, generate_stable_id
+from unified_kg_rag.shared.utils import compute_hash, entity_key
 
 logger = get_logger(__name__)
 
@@ -470,7 +471,7 @@ def is_document_backed(relationship: Relationship) -> bool:
 
 def seed_unit_id(document_id: str, n: int) -> str:
     """Id of unit ``n`` of a shard document: the chunker's rule, prefixed."""
-    return SEED_UNIT_PREFIX + generate_stable_id(f"text_unit:{document_id}:{n}")
+    return SEED_UNIT_PREFIX + compute_text_unit_id(document_id, n)
 
 
 def _placement(values: Mapping[str, Any]) -> dict[str, Any]:

@@ -34,7 +34,10 @@ from unified_kg_rag.domain.ingestion.contributions import (
     RECORD_KEYS_ATTRIBUTE,
     record_key,
 )
-from unified_kg_rag.domain.ingestion.document_identity import RELATIVE_PATH_KEY
+from unified_kg_rag.domain.ingestion.document_identity import (
+    RELATIVE_PATH_KEY,
+    compute_text_unit_id,
+)
 from unified_kg_rag.domain.ingestion.pages import (
     PAGE_END_KEY,
     PAGE_OFFSETS_KEY,
@@ -57,7 +60,6 @@ from unified_kg_rag.domain.prompts import TextChunkingPrompt
 from unified_kg_rag.domain.retrieval.store_names import index_suffix, namespace_suffix
 from unified_kg_rag.shared import ConfigurationError, DataProcessingError, get_logger
 from unified_kg_rag.shared.usage import record_cache_hit
-from unified_kg_rag.shared.utils import generate_stable_id
 from unified_kg_rag.shared.utils.sentences import SPACED_STOPS, UNSPACED_STOPS
 
 logger = get_logger(__name__)
@@ -707,8 +709,7 @@ class BaseChunker(ABC):
             if "filters" in document.metadata:
                 attributes["filters"] = document.metadata["filters"]
 
-            text_unit_id_content = f"text_unit:{document.document_id}:{chunk_id}"
-            text_unit_id = generate_stable_id(text_unit_id_content)
+            text_unit_id = compute_text_unit_id(document.document_id, chunk_id)
 
             return TextUnit(
                 id=text_unit_id,

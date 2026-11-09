@@ -8,7 +8,10 @@ names, so "extraction" is deterministic: each unit's record (its entities,
 edges and claims, each with text naming the unit) is stored as the
 extraction stages store it, and a fresh full build of any corpus is the
 records merged and resolved by the full build's code (:func:`expected_state`),
-descriptions, names, types, ranks and claims included.
+descriptions, names, types, ranks and claims included. Documents and text
+units get the pipeline's ids: a document's from its registry key and its
+content, a unit's from its document's and its position, so a changed
+document's units all get new ids.
 
 :meth:`IncrementalRun.run` wires the steps like the indexing stage does
 (plan, write-ahead, joint removal, commit) and can be interrupted at one of
@@ -21,7 +24,6 @@ from __future__ import annotations
 
 import functools
 import hashlib
-import uuid
 from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 
@@ -48,7 +50,15 @@ from unified_kg_rag.domain.ingestion.contributions import (
     record_keys,
     record_payload,
 )
-from unified_kg_rag.domain.ingestion.delta_detector import detect_delta, document_doc_id
+from unified_kg_rag.domain.ingestion.delta_detector import (
+    compute_content_hash,
+    detect_delta,
+    document_doc_id,
+)
+from unified_kg_rag.domain.ingestion.document_identity import (
+    compute_document_id,
+    compute_text_unit_id,
+)
 from unified_kg_rag.domain.ingestion.graph_resolver import GraphResolver
 from unified_kg_rag.domain.ingestion.relationship_weights import (
     apply_text_unit_weights,
@@ -85,8 +95,14 @@ POINTS = (
     "mid_removal",
     "after_removal",
     "in_merge",
+    # The merge's re-key and split decisions are noted, nothing written.
+    "after_commit_note",
     "mid_index_delta",
+    # The delta is written, the re-keyed items' old ids still stored.
+    "before_retired_deletes",
     "before_record",
+    # The failed item writes are noted, no document recorded yet.
+    "after_write_note",
     "mid_commit",
     "mid_record_deletes",
 )
@@ -96,11 +112,11 @@ class Killed(BaseException):
     """An interruption no ``except Exception`` handler absorbs."""
 
 
-def _unit_id(path: str, index: int, unit: list[tuple[str, str, int]]) -> str:
-    digest = hashlib.sha256(f"{path}|{index}|{sorted(unit)}".encode()).hexdigest()
-    # Lowercase hex, as the chunker's ids are: they sort before every seed
-    # unit id ("sg-..."), so records merge documents first.
-    return str(uuid.UUID(digest[:32]))
+def _unit_id(document_id: str, index: int) -> str:
+    # The chunker's rule: a document's version and the unit's position, so a
+    # changed document's units all get new ids (lowercase hex: they sort
+    # before every seed unit id, "sg-...", so records merge documents first).
+    return compute_text_unit_id(document_id, index)
 
 
 def _claim_status(where: str) -> str:
@@ -110,14 +126,20 @@ def _claim_status(where: str) -> str:
 
 
 def document(path: str, content: Content | Document) -> Document:
+    """The document of ``path``, its id derived as the pipeline derives it:
+    from its registry key and its content (``assign_registry_source``)."""
     if isinstance(content, Document):
         return content
-    return Document(
+    built = Document(
         page_content=repr(content),
         document_id=path,
         file_name=path.rsplit("/", 1)[-1],
         file_path=path,
     )
+    built.document_id = compute_document_id(
+        document_doc_id(built), compute_content_hash(built)
+    )
+    return built
 
 
 class Extraction(NamedTuple):
@@ -133,6 +155,7 @@ class Extraction(NamedTuple):
 
 def _unit_records(
     path: str,
+    document_id: str,
     index: int,
     unit: list[tuple[str, str, int]],
     conformance: SchemaConformance,
@@ -144,12 +167,12 @@ def _unit_records(
     a status the unit picks (``_claim_status``: units disagree). The
     statements are checked against the schema as extraction checks them
     (``conformance``: a strict one drops the off-schema ones)."""
-    unit_id = _unit_id(path, index, unit)
+    unit_id = _unit_id(document_id, index)
     where = f"{path}#{index}"
     text_unit = TextUnit(
         id=unit_id,
         text="...",
-        document_ids=[path],
+        document_ids=[document_id],
         attributes={
             RECORD_KEYS_ATTRIBUTE: {"graph": f"g-{unit_id}", "claims": f"c-{unit_id}"}
         },
@@ -226,8 +249,11 @@ def extract(corpus: Corpus, config: Config | None = None) -> Extraction:
             units += seed_units
             records += seed_records
             continue
+        document_id = document(path, content).document_id
         for index, unit in enumerate(content):
-            text_unit, record, claims = _unit_records(path, index, unit, conformance)
+            text_unit, record, claims = _unit_records(
+                path, document_id, index, unit, conformance
+            )
             units.append(text_unit)
             records.append(record)
             claim_records[text_unit.id] = claims
@@ -522,6 +548,12 @@ class IncrementalRun:
             patch(inc, "remove_changed_and_deleted", then_kill)
         elif point == "in_merge":
             patch(self.manager, "merge_with_existing_graph", kill)
+        elif point == "after_commit_note":
+            patch(self.manager, "note_pending_commit", then_kill)
+        elif point == "before_retired_deletes":
+            patch(self.manager, "delete_retired_ids", kill)
+        elif point == "after_write_note":
+            patch(self.manager, "note_pending_writes", then_kill)
         elif point == "mid_index_delta":
             for store in (self.graph, self.vector):
                 for name in dir(store):

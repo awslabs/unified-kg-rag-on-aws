@@ -133,6 +133,13 @@ def compute_document_id(source_key: str, content_hash: str) -> str:
     return generate_stable_id(f"doc:{source_key}:{content_hash}")
 
 
+def compute_text_unit_id(document_id: str, chunk_id: int) -> str:
+    """Id of chunk ``chunk_id`` of the document version ``document_id``
+    (:func:`compute_document_id`): a changed document's text units all get
+    new ids."""
+    return generate_stable_id(f"text_unit:{document_id}:{chunk_id}")
+
+
 def store_namespace_tag(indexing: IndexingConfig) -> str | None:
     """Tag of the store set ``indexing``'s index and label prefixes name.
 
