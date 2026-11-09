@@ -532,7 +532,12 @@ class StructuredSearchStrategy(BaseSearchStrategy):
             feedback = REPAIR_FEEDBACK.format(error=error[:1500])
         # The last answer decides: still no JSON is a degraded step, a plan
         # the checks refuse a designed fallback.
-        run.fall_back("unreadable_plan" if error == _UNREADABLE else "refused_plan")
+        if error == _UNREADABLE:
+            # An unreadable answer names its reader's error, as every
+            # degraded step of unreadable model output does.
+            run.fall_back("unreadable_plan", ModelOutputError(_UNREADABLE))
+        else:
+            run.fall_back("refused_plan")
         return None
 
     def _parsed(

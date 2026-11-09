@@ -85,8 +85,10 @@ class Degradation(BaseModel):
     )
     error_type: str | None = Field(
         default=None,
-        description="The class name of the error; None for an output that "
-        "could not be read",
+        description="The class name of the error (an output no reading or "
+        "repair made usable names its reader's: OutputParserException, "
+        "ModelOutputError, LanguageModelError); None when the step failed "
+        "without one",
     )
 
 

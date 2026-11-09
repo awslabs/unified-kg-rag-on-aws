@@ -805,8 +805,8 @@ From a `main` checkout (formats and keys no release had):
   as entities, a minimum or a maximum the entities holding it and groups by a property their listed groups'. Filter keys
   are checked against the fallback that would run too. A count of 0 or a "no" over a string
   value no vertex holds (misspelled or translated) is no answer (`unknown_value`); a failed planner or store call and a
-  plan still no JSON after the repair (`unreadable_plan`) are a degradation of the query (`metadata.degraded`, step
-  `structured_query`), a designed fallback (`refused_plan`: a plan the checks still refuse) is not. A
+  plan still no JSON after the repair (`unreadable_plan`, error type `ModelOutputError`) are a degradation of the
+  query (`metadata.degraded`, step `structured_query`), a designed fallback (`refused_plan`: a plan the checks still refuse) is not. A
   stored name or a value starting with `~` (a Gremlin hidden token) is refused at validation with a WARNING, not as a
   compiler bug; a type the sampled profile missed is refused saying so, and a count over a symmetric `both` pattern says
   it counts each pair twice. Without a structured
