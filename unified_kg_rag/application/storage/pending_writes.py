@@ -223,10 +223,18 @@ class PendingWrites:
 
     def joined_entities(self) -> dict[str, set[str]]:
         """By suffix, the ids of the noted entities the commit's delta
-        holds. A stored claim may name one (its own write was not
-        rejected): the merge may fold it into another entity, as it does a
-        stored one, and the claim follows only when it is derived again."""
-        return {suffix: set(ids) for suffix, ids in self._entities.items()}
+        holds and its merge did not write under their own id. A stored
+        claim may name one (its own write was not rejected): the merge may
+        fold it into another entity, as it does a stored one, and the claim
+        follows only when it is derived again. One the merge wrote under
+        its id keeps its claims as they are (deriving them again, every run
+        a hub's write stays rejected, rewrote each claim about it)."""
+        written = self._m._derived_entities
+        joined = {
+            suffix: ids - written.get(suffix, {}).keys()
+            for suffix, ids in self._entities.items()
+        }
+        return {suffix: ids for suffix, ids in joined.items() if ids}
 
     def read(
         self, suffixes: Iterable[str], text_units: Sequence[TextUnit] = ()
@@ -260,7 +268,7 @@ class PendingWrites:
         store has them yet. A derivation before the commit joins them (a
         removal's) resolves a name against them too, as the full build
         does: without them, a claim about another spelling of the name
-        took that spelling's id, an entity no store holds. None once the
+        took that spelling's id, an entity no store holds. Empty once the
         commit read the note: its delta holds them then (merged, maybe
         re-keyed). A failed read raises."""
         if not keys or suffix in self._read:

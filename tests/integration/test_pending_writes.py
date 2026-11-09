@@ -585,3 +585,44 @@ def test_a_stored_claim_follows_a_noted_entity_the_commit_merges(
     entities = set(harness.graph.ids("entities"))
     claims = harness.vector.data.get("claims", {}).values()
     assert claims and all(c.object_id in entities for c in claims)
+
+
+@pytest.mark.parametrize("hub", ["Acme", "한빛", "ひかり"], ids=["en", "ko", "ja"])
+def test_the_claims_about_a_noted_entity_that_keeps_its_id_are_not_rewritten(
+    hub: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A hub whose entity write the vector store keeps rejecting: each run
+    # writes it again under its id, so the claims about it stay as they
+    # are. Every run read and rewrote each of them.
+    corpus: Corpus = {f"/corpus/d{i}.txt": [[(f"V{i}", hub, 3)]] for i in range(12)}
+    (hub_id,) = [e.id for e in extract(corpus).entities if e.name == hub]
+    harness = _harness()
+    harness.run(corpus)
+    claims_read: list[str] = []
+    claims_written: set[str] = set()
+    read, upsert = harness.vector.read_claims, harness.vector.upsert_claims
+
+    def counted_read(ids, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        claims_read.extend(ids)
+        return read(ids, *args, **kwargs)
+
+    def counted_upsert(items, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        claims_written.update(c.id for c in items)
+        return upsert(items, *args, **kwargs)
+
+    monkeypatch.setattr(harness.vector, "read_claims", counted_read)
+    monkeypatch.setattr(harness.vector, "upsert_claims", counted_upsert)
+    for run in range(4):
+        corpus = {**corpus, f"/corpus/new{run}.txt": [[(f"C{run}", hub, 1)]]}
+        rejected = run < 3
+        harness.run(
+            corpus,
+            fail=_rejecting("vector.upsert_entities", hub_id) if rejected else None,
+        )
+        assert (_note(harness) is not None) is rejected
+
+    # No stored claim is read back or written again (the new documents'
+    # claims are written with the delta's index write).
+    assert claims_read == []
+    assert claims_written == set()
+    assert harness.state() == expected_state(corpus, harness.config)
