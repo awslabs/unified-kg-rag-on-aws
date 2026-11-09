@@ -969,8 +969,8 @@ def test_pruning_communities_keeps_the_text_units_filters(
 
 def test_untranslated_korean_corpus_has_lexical_recall(harness: StoreHarness) -> None:
     # A Korean corpus with a Korean target is never translated, so only the
-    # ``text`` field carries it, with the source-language analyzer (nori, or
-    # the embedded engine's bigram stand-in): "홍길동" must match inside
+    # ``text`` field carries it, with the source-language analyzer (nori, the
+    # embedded engine's bigram stand-in, or the configured cjk): "홍길동" must match inside
     # "홍길동으로부터" and "보증 기간" inside "보증기간은".
     def korean(config: Any) -> None:
         config.processing.translation.source_language = LanguageCode.KO
@@ -995,9 +995,15 @@ def test_untranslated_korean_corpus_has_lexical_recall(harness: StoreHarness) ->
     assert "k2" in {r.source for r in warranty}
     assert "k1" in {r.source for r in contract}
     assert employee[0].source == "k3"
-    if harness.kind == "sqlite":
-        # The bigram analyzer shares "김철" between 김철민 and 김철수: a weaker
-        # match, never a full one.
+    opensearch = h.config.indexing.opensearch
+    nori = (
+        opensearch.language_analyzers.get("ko", opensearch.default_analyzer) == "nori"
+    )
+    if harness.kind == "sqlite" or not nori:
+        # The bigram analyzer (the embedded engine's stand-in, or cjk on a
+        # domain without the nori plugin: the CDK stack maps ko to it)
+        # shares "김철" between 김철민 and 김철수: a weaker match, never a
+        # full one.
         assert {r.source for r in other} <= {"k3"}
         assert all((r.score or 0) < (employee[0].score or 0) for r in other)
     else:

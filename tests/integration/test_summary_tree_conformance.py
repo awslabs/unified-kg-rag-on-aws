@@ -581,7 +581,15 @@ def test_a_summary_is_analyzed_in_the_index_language(
     local = harness.derive(untranslated)
     indexer = local.vector_indexer
     mapping = indexer._get_summary_nodes_mapping()["mappings"]["properties"]
-    assert mapping["text"]["analyzer"] == analyzer
+    # The configured analyzer: the default map's (``analyzer``), or what a
+    # deployment maps instead (the CDK stack maps ko to cjk, without nori).
+    opensearch = local.config.indexing.opensearch
+    configured = opensearch.language_analyzers.get(
+        language, opensearch.default_analyzer
+    )
+    assert mapping["text"]["analyzer"] == configured
+    if harness.kind != "aws":
+        assert configured == analyzer
     _tree(local, [_node("n1", 1, ["u000", "u001"], ["u000", "u001"], text=text)])
 
     (hits,) = local.retrieve(
