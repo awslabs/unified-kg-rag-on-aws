@@ -41,6 +41,7 @@ from unified_kg_rag.domain.models import (
     PipelineStageStatus,
     TextUnit,
 )
+from unified_kg_rag.domain.models.config import DEFAULT_LANGUAGE_ANALYZERS
 from unified_kg_rag.shared import ConfigurationError
 
 pytestmark = pytest.mark.unit
@@ -280,35 +281,51 @@ def test_an_index_built_before_the_default_named_its_language_keeps_it(
     assert "indexing.reset: true" in warnings[0]
 
 
-@pytest.mark.parametrize(
-    "language_analyzers",
-    [
-        # The map the user set names the language: it is followed.
-        {"en": "english", "ja": "cjk"},
-        # A map the user set, the default map's values: set all the same.
-        None,
-    ],
-    ids=["names-it", "copied-default"],
-)
-def test_an_analyzer_the_user_set_stops_an_index_built_otherwise(
-    mocker, language_analyzers: dict[str, str] | None
-) -> None:
-    from unified_kg_rag.domain.models.config._indexing import (
-        DEFAULT_LANGUAGE_ANALYZERS,
-    )
-
+def test_an_analyzer_the_user_set_stops_an_index_built_otherwise(mocker) -> None:
+    # The map the user set gives the language another analyzer than the
+    # default's: it is followed.
     client = _FakeOpenSearchClient()
     _japanese_indexer(mocker, client, _EN_KO_ANALYZERS).upsert_text_units([_unit()])
-    explicit = language_analyzers or dict(DEFAULT_LANGUAGE_ANALYZERS)
+    explicit = {"en": "english", "ja": "kuromoji"}
 
     with pytest.raises(
-        ConfigurationError, match="'text' uses 'standard' \\(needs 'cjk'\\)"
+        ConfigurationError, match="'text' uses 'standard' \\(needs 'kuromoji'\\)"
     ) as raised:
         _japanese_indexer(mocker, client, explicit).check_index_settings("default")
     message = str(raised.value)
     assert "other language settings" in message
     assert "indexing.reset: true" in message
     assert "indexing.opensearch.language_analyzers" in message
+
+
+@pytest.mark.parametrize(
+    "language_analyzers",
+    [
+        # What the CDK stack's one variable makes of the map
+        # (UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk).
+        {**DEFAULT_LANGUAGE_ANALYZERS, "ko": "cjk"},
+        # A map the user set that names the language with the default's
+        # value.
+        {"en": "english", "ja": "cjk"},
+    ],
+    ids=["another-language-set", "default-value"],
+)
+def test_a_map_set_with_the_languages_default_keeps_its_stored_fields(
+    mocker, caplog, language_analyzers: dict[str, str]
+) -> None:
+    # Regression: setting any key of the map counted as setting every
+    # language, so a deployed stack (which sets ko) stopped every namespace
+    # built before the default named its language.
+    client = _FakeOpenSearchClient()
+    _japanese_indexer(mocker, client, _EN_KO_ANALYZERS).upsert_text_units([_unit()])
+    mocker.patch.object(module, "_kept_analyzers_warned", set())
+
+    with caplog.at_level("WARNING", logger=module.__name__):
+        _japanese_indexer(mocker, client, language_analyzers).check_index_settings(
+            "default"
+        )
+
+    assert "'text' keeps 'standard' ('cjk')" in caplog.text
 
 
 def test_a_default_analyzer_keeps_no_field_of_another_language(mocker) -> None:

@@ -58,7 +58,10 @@ from unified_kg_rag.domain.models import (
     TextUnit,
     model_id_value,
 )
-from unified_kg_rag.domain.models.config import DEFAULT_INDEX_SETTINGS
+from unified_kg_rag.domain.models.config import (
+    DEFAULT_INDEX_SETTINGS,
+    DEFAULT_LANGUAGE_ANALYZERS,
+)
 from unified_kg_rag.domain.models.provider_config import BEDROCK
 from unified_kg_rag.domain.retrieval.filters import ATTRIBUTE_KEY_PREFIX
 from unified_kg_rag.domain.retrieval.index_prefixes import index_artifacts
@@ -722,18 +725,42 @@ class OpenSearchIndexer(VectorIndexer):
 
     def _keeps_stored_analyzer(self, stored: str, wanted: str) -> bool:
         """Whether a live text field analyzed by ``stored`` keeps it though
-        this config gives it ``wanted``: ``wanted`` comes from the default
-        ``language_analyzers`` (the key is not set) and ``stored`` is what
-        a language without an entry gets (``default_analyzer``). The index
-        was built before the default map named its language (the codes
-        mapped to OpenSearch's built-in analyzers, ``BUILT_IN_ANALYZERS``);
-        its field cannot change, and the default alone is no reason to make
-        a run reset it. A map the user set is followed (a mismatch stops)."""
-        opensearch = self.opensearch_config
+        this config gives it ``wanted``: ``stored`` is what a language
+        without an entry gets (``default_analyzer``) and ``wanted`` is the
+        default ``language_analyzers`` value of every language of this run
+        that this config gives it (``_analyzed_languages``). The index was
+        built before the default map named its language (the codes mapped to
+        OpenSearch's built-in analyzers, ``BUILT_IN_ANALYZERS``); its field
+        cannot change, and the default alone is no reason to make a run
+        reset it. Decided per language, so a map set for another language
+        (the CDK stack sets ``ko``) keeps it too; a language set to another
+        analyzer is followed (a mismatch stops)."""
+        languages = [
+            language
+            for language in self._analyzed_languages()
+            if self._analyzer_for(language) == wanted
+        ]
         return (
-            "language_analyzers" not in opensearch.model_fields_set
-            and stored == opensearch.default_analyzer
+            stored == self.opensearch_config.default_analyzer
             and wanted != stored
+            and bool(languages)
+            and all(
+                DEFAULT_LANGUAGE_ANALYZERS.get(code) == wanted for code in languages
+            )
+        )
+
+    def _analyzed_languages(self) -> list[str]:
+        """The languages this config analyzes text fields for: the index
+        language, the source language (``text``) and the translated ones."""
+        translation = self.config.processing.translation
+        return list(
+            dict.fromkeys(
+                [
+                    self.language,
+                    translation.source_language.value,
+                    *translation.translated_languages,
+                ]
+            )
         )
 
     def _text_field_mismatches(
