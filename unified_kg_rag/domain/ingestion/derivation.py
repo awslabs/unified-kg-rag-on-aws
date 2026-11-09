@@ -699,6 +699,14 @@ def _derive_relationships(
     return derived_relationships, dropped
 
 
+def _compact_names(claim: Claim) -> tuple[str, str | None]:
+    """The compact keys of a claim's subject and object names."""
+    return (
+        compact_name_key(claim.subject_name),
+        compact_name_key(claim.object_name) if claim.object_name else None,
+    )
+
+
 def _derive_claims(
     config: Config,
     entity_derivation: _EntityDerivation,
@@ -801,17 +809,22 @@ def _derive_claims(
             match_claim = None
         elif match_claim is None and units:
             # No resolved claim has its id under any spelling (its subject
-            # or object resolves to an entity of a third spelling): it is
-            # the resolved claim stated in most of its text units, else a
-            # full build has no such claim.
+            # or object resolves to an entity of a third spelling): it is a
+            # resolved claim stated in its text units, else a full build has
+            # no such claim. Of those, one about the names it holds (by
+            # their compact keys: a legal form or a dense-script space does
+            # not tell a spelling apart), not another statement of its unit
+            # about another entity; then the one stated in most of its units.
             sharing = [r for r in resolved_claims if units & set(r.text_unit_ids or [])]
             if not sharing:
                 dropped.append(claim.id)
                 kept_for.append(None)
                 continue
+            own_names = _compact_names(claim)
             match_claim = max(
                 sharing,
                 key=lambda r: (
+                    _compact_names(r) == own_names,
                     len(units & set(r.text_unit_ids or [])),
                     resolved_claim_id(with_entity_ids(r, derived_of)),
                 ),
