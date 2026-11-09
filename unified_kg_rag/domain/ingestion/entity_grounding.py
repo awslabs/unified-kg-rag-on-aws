@@ -31,6 +31,7 @@ from unified_kg_rag.shared.utils.scripts import (
     is_dense_script_char,
     is_unspaced_char,
     script_of,
+    without_latin_accents,
 )
 
 __all__ = [
@@ -193,7 +194,10 @@ _MIN_PLURAL_STEM = 3
 
 
 def _strip_marks(text: str) -> str:
-    """NFKD, drop combining marks on non-dense letters, recompose (NFC).
+    """NFKD, drop combining marks on non-dense letters, recompose (NFC),
+    and the Latin letters no decomposition takes a mark from as their base
+    letters, as linking compares names (``without_latin_accents``: "Łódź"
+    is "Lodz").
 
     Marks on Kana (dakuten) are kept: "ガ" and "カ" are different letters.
     """
@@ -206,7 +210,7 @@ def _strip_marks(text: str) -> str:
             continue
         base_dense = is_dense_script_char(ch)
         kept.append(ch)
-    return unicodedata.normalize("NFC", "".join(kept))
+    return without_latin_accents(unicodedata.normalize("NFC", "".join(kept)))
 
 
 def _split_scripts(token: str) -> list[str]:

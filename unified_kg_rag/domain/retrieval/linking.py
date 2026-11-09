@@ -31,13 +31,13 @@ middle dot between Han, Hangul or Kana letters removed ("オリオン・ラボ" 
 "オリオンラボ"), the letters a script writes
 for one another folded (``Script.letter_variants``: "أ", "إ", "آ" as "ا",
 "ى" as "ي", Russian "ё" as "е") and a designator written before the name
-dropped. Coverage also leaves Latin accents out ("Cafe" covers "Café").
+dropped. Coverage also leaves Latin accents out ("Cafe" covers "Café",
+"Dang" "Đặng": ``shared.utils.scripts.without_latin_accents``).
 """
 
 from __future__ import annotations
 
 import re
-import unicodedata
 from collections.abc import Sequence
 from difflib import SequenceMatcher
 from typing import Literal
@@ -53,7 +53,7 @@ from unified_kg_rag.shared.utils.scripts import (
     drop_optional_marks,
     fold_letter_variants,
     join_dense_middle_dots,
-    script_of,
+    without_latin_accents,
 )
 
 __all__ = [
@@ -110,24 +110,11 @@ def name_terms(name: str) -> frozenset[str]:
     return frozenset(terms)
 
 
-def _without_latin_accents(term: str) -> str:
-    """``term`` with the accents of its Latin letters dropped ("café" is
-    "cafe"); other scripts' marks stay."""
-    letters: list[str] = []
-    for ch in unicodedata.normalize("NFD", term):
-        if unicodedata.category(ch) == "Mn" and letters:
-            script = script_of(letters[-1])
-            if script is not None and script.name == "latin":
-                continue
-        letters.append(ch)
-    return unicodedata.normalize("NFC", "".join(letters))
-
-
 def _compared_terms(name: str) -> set[str]:
     """The terms of ``name`` as coverage compares them: Latin accents left
     out ("Cafe Central" is "Café Central"), not out of an exact link
     (:func:`exact_links`)."""
-    return {_without_latin_accents(t) for t in name_terms(name)}
+    return {without_latin_accents(t) for t in name_terms(name)}
 
 
 def covers(name: str, mention: str, similarity: float = 1.0) -> bool:

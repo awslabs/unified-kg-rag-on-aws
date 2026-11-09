@@ -184,6 +184,9 @@ NAME_GROUNDING_CASES = [
     ("Nestlé", "Nestle supplies the goods.", True),
     ("Nestle", "Nestlé supplies the goods.", True),
     ("Crème Brûlée Ltd", "creme brulee ltd delivered", True),
+    # Letters no decomposition takes a mark from, as linking folds them.
+    ("Łódź Logistics", "Lodz Logistics delivered.", True),
+    ("Dang Van Lam", "Đặng Văn Lâm signed.", True),
     # Dotted abbreviations.
     ("U.S.", "Goods shipped to the US port.", True),
     ("US", "Goods shipped to the U.S. port.", True),

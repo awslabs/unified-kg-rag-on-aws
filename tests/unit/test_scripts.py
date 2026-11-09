@@ -149,3 +149,22 @@ def test_one_latin_token_rate_and_one_hangul_predicate() -> None:
     assert scripts.script_named("latin").chars_per_token == 4
     assert [scripts.is_hangul(c) for c in "한ㄱᄀA漢"] == [True] * 3 + [False] * 2
     assert [scripts.is_hangul_syllable(c) for c in "한ㄱ"] == [True, False]
+
+
+@pytest.mark.parametrize(
+    ("text", "folded"),
+    [
+        ("Café Nguyễn", "Cafe Nguyen"),
+        ("Đặng ĐỖ", "Dang DO"),
+        ("Łódź", "Lodz"),
+        ("Yıldız İnönü", "Yildiz Inonu"),
+        ("Søren Ærø Œuvre þing Ħamrun", "Soren AEro OEuvre thing Hamrun"),
+        # Other scripts keep their marks and letters.
+        ("ガ हिन्दी Ёлка", "ガ हिन्दी Ёлка"),
+    ],
+)
+def test_without_latin_accents_folds_every_latin_mark(text: str, folded: str) -> None:
+    # Regression (rv11 query M3): one fold, linking's and grounding's, for
+    # the decomposing accents and the letters no decomposition takes a mark
+    # from.
+    assert scripts.without_latin_accents(text) == folded

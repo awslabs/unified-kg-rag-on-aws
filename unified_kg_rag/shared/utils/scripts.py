@@ -58,6 +58,7 @@ __all__ = [
     "letter_class",
     "script_named",
     "script_of",
+    "without_latin_accents",
 ]
 
 
@@ -410,6 +411,47 @@ def fold_letter_variants(text: str) -> str:
     (``Script.letter_variants``): "أحمد" is "احمد", "مستشفى" "مستشفي".
     A search fold only: an identity key keeps the letters as written."""
     return text.translate(_LETTER_VARIANTS)
+
+
+# The Latin letters with a stroke, a ligature or a dotless form, which no
+# Unicode decomposition takes their mark from, by the letters a text without
+# accents writes for them ("Đặng" is "Dang", "Łódź" "Lodz", "Yıldız"
+# "Yildiz", "Søren" "Soren").
+_LATIN_BASE_LETTERS = str.maketrans(
+    {
+        "đ": "d",
+        "Đ": "D",
+        "ł": "l",
+        "Ł": "L",
+        "ø": "o",
+        "Ø": "O",
+        "ı": "i",
+        "æ": "ae",
+        "Æ": "AE",
+        "œ": "oe",
+        "Œ": "OE",
+        "þ": "th",
+        "Þ": "TH",
+        "ħ": "h",
+        "Ħ": "H",
+    }
+)
+
+
+def without_latin_accents(text: str) -> str:
+    """``text`` with the accents of its Latin letters dropped ("café" is
+    "cafe", "Nguyễn" "Nguyen") and its letters with a stroke, a ligature or
+    a dotless form as the base letters (``_LATIN_BASE_LETTERS``: "Đặng" is
+    "Dang", "Łódź" "Lodz"); other scripts' marks stay. A comparison fold
+    only: names are stored as written."""
+    letters: list[str] = []
+    for ch in unicodedata.normalize("NFD", text):
+        if unicodedata.category(ch) == "Mn" and letters:
+            script = script_of(letters[-1])
+            if script is not None and script.name == "latin":
+                continue
+        letters.append(ch)
+    return unicodedata.normalize("NFC", "".join(letters)).translate(_LATIN_BASE_LETTERS)
 
 
 # A middle dot (Latin, hyphenation point, katakana and its half-width form)
