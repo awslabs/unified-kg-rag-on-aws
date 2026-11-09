@@ -50,7 +50,6 @@ from unified_kg_rag.application.cli.console.jobs import (
     NarrowingNotConfirmed,
     dropped_methodologies,
     ingest_config,
-    namespace_of,
 )
 from unified_kg_rag.application.cli.console.paths import (
     PathRefused,
@@ -82,6 +81,7 @@ from unified_kg_rag.domain.models import (
     validate_path_segment,
 )
 from unified_kg_rag.domain.prompts.retrieval import STRATEGY_ROUTING_GUIDE
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import (
     ConfigurationError,
@@ -494,7 +494,7 @@ def create_app(
             "version": __version__,
             "config_path": str(options.config_path) if options.config_path else None,
             "config_error": state.config_error,
-            "namespace": namespace_of(config) if config else None,
+            "namespace": resolve_namespace(config, None) if config else None,
             "backend": (
                 {
                     "llm": providers.llm.kind,

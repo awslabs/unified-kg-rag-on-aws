@@ -56,11 +56,6 @@ EntityMatch = Literal["id", "iri", "name", "search", "none"]
 GRAPH_ARTIFACTS = frozenset({IndexArtifact.ENTITIES, IndexArtifact.GRAPH})
 
 
-def namespace_name(chain: GraphRAGChain, suffix: str | None) -> str:
-    """The namespace ``suffix`` names, as messages name it."""
-    return resolve_namespace(chain.config, suffix)
-
-
 async def require_graph(chain: GraphRAGChain, suffix: str | None) -> None:
     """Raise ``MethodologyNotIndexedError`` if the namespace of ``suffix``
     holds no graph (a ``raptor``-only build): its entities index and graph
@@ -70,7 +65,7 @@ async def require_graph(chain: GraphRAGChain, suffix: str | None) -> None:
         return
     held = ", ".join(m.value for m in methodologies_holding(artifacts))
     raise MethodologyNotIndexedError(
-        f"The index namespace '{namespace_name(chain, suffix)}' holds no "
+        f"The index namespace '{resolve_namespace(chain.config, suffix)}' holds no "
         f"knowledge graph (it holds {held or 'no methodology'}); the graph "
         "tools need a namespace built with graphrag, lightrag or hipporag."
     )
@@ -122,7 +117,7 @@ async def find_entities(
     without its hamza, ``ё`` as ``е``, a leading ``شركة``) is a ``name``
     match.
     """
-    suffix = namespace_name(chain, suffix)
+    suffix = resolve_namespace(chain.config, suffix)
     entity_id, iri, name = (
         unicodedata.normalize("NFC", v) if v else v for v in (entity_id, iri, name)
     )
@@ -241,7 +236,7 @@ async def neighbourhood(
     holds it (``relationship_vectors``: their descriptions, text units and
     IRIs), else from the graph store (``aneighbourhood_edges``).
     """
-    suffix = namespace_name(chain, suffix)
+    suffix = resolve_namespace(chain.config, suffix)
     await require_graph(chain, suffix)
     graph = chain._get_retriever(RetrieverRole.GRAPH)
     walked = await graph.aretrieve(
@@ -293,7 +288,7 @@ async def text_unit_file_names(
 ) -> dict[str, str]:
     """``{text_unit_id: file name}`` of ``unit_ids``' text units (the name,
     never the path), in fetches by id of at most ``id_batch_size`` ids."""
-    suffix = namespace_name(chain, suffix)
+    suffix = resolve_namespace(chain.config, suffix)
     wanted = list(dict.fromkeys(str(i) for i in unit_ids if i))
     if not wanted:
         return {}
@@ -372,7 +367,7 @@ async def describe_namespace(
     configured methodologies), the strategies that serves, its last build
     and the extraction schema the configuration resolves to (``schema``,
     :func:`resolve_schema`'s result, when the caller holds it)."""
-    suffix = namespace_name(chain, suffix)
+    suffix = resolve_namespace(chain.config, suffix)
     artifacts = await methodology_check.namespace_artifacts(chain, suffix)
     retriever = _document_retriever(chain)
     record: dict[str, Any] | None = None
@@ -383,7 +378,7 @@ async def describe_namespace(
     resolved, error = schema if schema is not None else await resolve_schema(chain)
     fields = retriever.filter_fields()
     return NamespaceDescription(
-        namespace=namespace_name(chain, suffix),
+        namespace=resolve_namespace(chain.config, suffix),
         methodologies=list(methodologies_holding(artifacts)),
         artifacts=sorted(artifacts, key=lambda a: a.value),
         strategies=methodology_check.servable_strategies(artifacts, chain.config),

@@ -14,10 +14,10 @@ Arabic, Hebrew, Devanagari, Thai). Costs are counted in twelfths of a token
 import math
 import re
 
-from unified_kg_rag.domain.ingestion.chunk_length import LATIN_CHARS_PER_TOKEN
 from unified_kg_rag.domain.languages import LanguageCode, profile, text_language
 from unified_kg_rag.shared.utils.scripts import (
     DENSE_SCRIPT_TOKEN_RANGES,
+    LATIN_CHARS_PER_TOKEN,
     SCRIPTS,
     Spacing,
 )

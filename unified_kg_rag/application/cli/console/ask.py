@@ -32,7 +32,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from unified_kg_rag.adapters.retrieval.strategy_registry import strategy_methodology
-from unified_kg_rag.application.cli.console.jobs import namespace_of
 from unified_kg_rag.application.cli.console.store import ConsoleStore
 from unified_kg_rag.application.presentation.answer_view import AnswerView, SourceView
 from unified_kg_rag.application.retrieval.citations import citations_enabled
@@ -52,6 +51,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.domain.models.usage import LLMUsage
 from unified_kg_rag.domain.retrieval.citations import CitationMarkerScanner
+from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.evaluation.comparison import answer_cost_usd
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.exceptions import (
@@ -321,7 +321,7 @@ class AskService:
         profiles). A store error raises."""
         async with self._using() as (chain, config):
             record = await chain.aread_build_record(suffix)
-            namespace = namespace_of(config, suffix)
+            namespace = resolve_namespace(config, suffix)
         artifacts = stored_artifacts(record)
         return {
             "namespace": namespace,
@@ -352,7 +352,7 @@ class AskService:
             try:
                 async with self._using() as (chain, config):
                     # The namespace asked, resolved as the chain resolves it.
-                    record["suffix"] = namespace_of(config, request.suffix)
+                    record["suffix"] = resolve_namespace(config, request.suffix)
                     output, trace_id = await self._invoke(
                         chain, config, request, query_id, queue
                     )
@@ -542,7 +542,7 @@ class AskService:
             "context_sections_excluded": view.context_sections_excluded,
             "processed_query": view.processed_query.model_dump(mode="json"),
             "sources": sources,
-            "namespace": namespace_of(config, suffix),
+            "namespace": resolve_namespace(config, suffix),
         }
 
 

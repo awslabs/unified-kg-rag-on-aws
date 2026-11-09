@@ -30,6 +30,7 @@ committed: the data exists only at run time.
 
 from __future__ import annotations
 
+import copy
 import itertools
 import json
 import random
@@ -555,7 +556,7 @@ def _max_employees(gold: _Gold, rng: random.Random) -> list[_Question]:
                     f"in {country}?",
                     str(int(value)),
                     _number_aliases(value),
-                    json.loads(json.dumps(plan)),
+                    copy.deepcopy(plan),  # the next fn edits this one
                     answer_type="number",
                 )
             )

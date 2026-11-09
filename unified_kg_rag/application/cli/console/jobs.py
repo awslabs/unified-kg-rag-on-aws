@@ -169,10 +169,6 @@ def _cli(script: str, entry: str) -> list[str]:
     ]
 
 
-def namespace_of(config: Config, index_value: str | None = None) -> str:
-    return resolve_namespace(config, index_value)
-
-
 def ingest_config(
     config: Config, methodologies: list[str] | None
 ) -> tuple[Config, list[str] | None]:
@@ -364,7 +360,7 @@ class JobManager:
             except ValueError as e:
                 raise ConfigurationError(str(e)) from e
             env["UKR__PROCESSING__DOCUMENT_PARSING__INDEX_VALUE"] = index_value
-        namespace = namespace_of(config, index_value)
+        namespace = resolve_namespace(config, index_value)
         if not confirm_narrowing:
             await self._check_narrowing(namespace, config)
         job_id = self._new_id()
@@ -507,7 +503,7 @@ class JobManager:
             raise ConfigurationError("the failure budget must be between 0 and 1")
         if not await asyncio.to_thread(dataset.is_file):
             raise PathRefused(f"'{dataset_ref}' is not a file")
-        namespace = namespace_of(config)
+        namespace = resolve_namespace(config, None)
         job_id = self._new_id()
         self._claim(namespace, job_id)
         try:

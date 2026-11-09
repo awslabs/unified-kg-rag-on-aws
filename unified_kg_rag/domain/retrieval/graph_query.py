@@ -56,6 +56,7 @@ from unified_kg_rag.domain.models.graph_query import (
     ValueKind,
 )
 from unified_kg_rag.domain.models.schema import ExtractionSchema, schema_key
+from unified_kg_rag.domain.retrieval.filters import RANGE_BOUNDS, bound_holds
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import InvalidGraphQueryError
 
@@ -127,7 +128,7 @@ PROJECTION_KEYS: tuple[str, ...] = (
 )
 # Sampled string values longer than this are not shown as examples.
 _EXAMPLE_MAX_CHARS = 60
-_NUMERIC_OPS = frozenset({"gt", "gte", "lt", "lte"})
+_NUMERIC_OPS = RANGE_BOUNDS
 
 VertexMap = Mapping[str, Sequence[Any]]
 VertexPredicate = Callable[[Any], bool]
@@ -168,13 +169,7 @@ def scalar_holds(stored: Any, op: str, value: Any) -> bool:
     if op in _NUMERIC_OPS:
         if not _same_kind(stored, value) or value_kind(stored) == "boolean":
             return False
-        if op == "gt":
-            return bool(stored > value)
-        if op == "gte":
-            return bool(stored >= value)
-        if op == "lt":
-            return bool(stored < value)
-        return bool(stored <= value)
+        return bound_holds(op, stored, value)
     return False
 
 
