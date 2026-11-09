@@ -873,9 +873,14 @@ _ENUMERATOR_AFTER = re.compile(r"[.)\]][ \t]+\S")
 # A citation marker ("[1]", "[2, 3]", "[4-6]").
 _CITATION_BEFORE = re.compile(r"\[[\d,\s–-]*$")
 _CITATION_AFTER = re.compile(r"[\d,\s–-]*\]")
-# A year: four digits before 년/年 or opening an ISO date (or after a word
-# of time in the answer's language: ``_CountContext``).
-_YEAR_AFTER = re.compile(r"\s?(?:년|年)|-\d{1,2}-\d{1,2}")
+# A year: four digits before a word that follows one (``year_suffixes``:
+# "2019년", "2019부터", "2019以降", "从2019到现在") or opening an ISO date (or
+# after a word of time in the answer's language: ``_CountContext``).
+_YEAR_AFTER = re.compile(
+    r"\s?"
+    + _phrases({w for language in profiles() for w in language.year_suffixes})
+    + r"|-\d{1,2}-\d{1,2}"
+)
 # "no" before these words is no count of zero: "No single vendor
 # dominates", "no more than 5", "no longer".
 _NO_MODIFIES = re.compile(
@@ -1103,7 +1108,7 @@ def leading_number(text: str, language: str | None = None) -> float | None:
     社"; "没有" and "いません"/"ありません" for 0). Markdown heading lines are
     skipped; a number inside a word ("Zortal13") is none, and so are numbers
     that count nothing: list enumerators ("1. Acme"), citation markers
-    ("[2]"), years ("as of 2024", "2024년"), ordinals ("두 번째", "三つ目",
+    ("[2]"), years ("as of 2024", "2024년", "2019以降"), ordinals ("두 번째", "三つ目",
     "第三"), a negated number ("not one but three", "一つではなく", "不是一个",
     "한 곳이 아니라"), the whole of a partitive ("Of the three vendors, only
     one", "三家中一家", "세 곳 중 한 곳", "三社のうち一社": the part counts),

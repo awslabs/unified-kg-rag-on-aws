@@ -455,6 +455,11 @@ class TestLanguageNormalization:
             ("ru", "Нет, у Acme три поставщика.", 3),
             ("ru", "**Нет**. Три поставщика.", 3),
             ("es", "Tiene tres proveedores; no hay más.", 3),
+            # Low (rv11 query): a CJK word after a year, not only 년/年.
+            ("ko", "2019부터 3곳", 3),
+            ("ko", "2019 이후 3곳", 3),
+            ("ja", "2019以降、3社", 3),
+            ("zh", "从2019到现在有3家", 3),
             # Regression (rv10 query M7): a year, the whole of a partitive
             # and "one of them" in the language's own words.
             ("de", "Seit 2019 drei Lieferanten.", 3),

@@ -844,8 +844,9 @@ From a `main` checkout (formats and keys no release had):
   `metadata.answer_type: number` compares the answer's leading number (digits, English words with their scale
   words, Korean native, Sino-Korean and Han numerals with their multipliers (十二, 一万二千, 만 이천, 一千零一; 1만 2천,
   3万, 1.5万 and 3,000万 for digits), 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사, 대, 社, 台 or 円; list
-  enumerators, citation markers, years, ordinals such as 두 번째, 三つ目 and 第三, negated numbers such as "not one
-  but three", 一つではなく and 不是一家, and the whole of a partitive, so "only one of the three", 三家中只有一家, 세 곳 중
+  enumerators, citation markers, years (2019년, 2019부터, 2019以降), ordinals such as 두 번째, 三つ目 and 第三, negated
+  numbers such as "not one but three", 一つではなく and 不是一家, and the whole of a partitive, so "only one of the
+  three", 三家中只有一家, 세 곳 중
   한 곳 and 三社のうち一社 are 1, count nothing; "not ... any", "not one", "not a single", 한 곳도, 一社も, 没有 and
   いません are 0), `set` needs every one of `metadata.answer_items` in any layout and, with
   `metadata.answer_candidates` (every vendor), no other candidate in the part that answers (the extracted span, else

@@ -103,6 +103,10 @@ class LanguageProfile:
     # set the answer counts elsewhere ("one of them", "один из них"): the
     # number there counts nothing.
     year_words: tuple[str, ...] = ()
+    # The words a year comes before, written onto it or after a space
+    # ("2019년", "2019부터", "2019 이후", "2019以降"): the number there counts
+    # nothing either, in an answer in any language.
+    year_suffixes: tuple[str, ...] = ()
     partitive_words: tuple[str, ...] = ()
     partitive_anaphors: tuple[str, ...] = ()
     # The words that join the parts of a written number ("and" in "three
