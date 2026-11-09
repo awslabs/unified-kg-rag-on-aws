@@ -105,15 +105,17 @@ def test_a_note_carries_the_ids_of_the_note_it_finishes() -> None:
 def test_a_note_lists_the_old_ids_the_commit_retires() -> None:
     # Edges re-keyed or dropped alone (no entity changed): without them in
     # the note, a commit whose write fails keeps their old copies for good.
-    manager, _, vector = _manager()
+    manager, graph, vector = _manager()
     manager._rekeyed["default"] = {"r-old": "r-new"}
     manager._dropped["default"] = {"r-loop"}
-    manager._noted_retired["default"] = {"r-earlier"}
+    # An earlier note's old ids: one still stored, one a commit deleted.
+    manager._noted_retired["default"] = {"e-earlier", "e-deleted"}
+    graph.upsert_entities([_entity("e-earlier", "Acme")])
 
     manager.note_pending_commit()
 
     note = _note(vector) or {}
-    assert note["retired_ids"] == ["r-earlier", "r-loop", "r-old"]
+    assert note["retired_ids"] == ["e-earlier", "r-loop", "r-old"]
     assert note["entity_ids"] == []
 
 
