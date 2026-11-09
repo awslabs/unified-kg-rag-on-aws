@@ -123,5 +123,6 @@ processing:
 한 글자를 토큰 하나로 셉니다(문자 단위 F1). exact match는 조사가 붙은 답을 여전히 낮게
 셉니다. 독일어·스페인어·프랑스어·이탈리아어·포르투갈어 답변(질문의 언어 기준)은 그 언어의
 관사도 지우고 영어 대신 그 언어의 수사와 '없음'을 뜻하는 말과 구("no hay", "il n'y a pas
-de")를 읽습니다(스페인어 "no"는 0이 아닙니다).
+de". 수를 말하거나 비교 표현이 있는 문장의 구는 제외: "No hay más de tres"는 3)를 읽습니다(스페인어
+"no"는 0이 아닙니다).
 규칙은 [`answer_match`](../reference/evaluation-output.md#answer_match)(영문)에 있습니다.

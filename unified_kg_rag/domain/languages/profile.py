@@ -85,9 +85,13 @@ class LanguageProfile:
     # of 0 as its words for none are ("does not have any", "no hay", "il
     # n'y a pas de", "Поставщиков нет"): "…" stands for up to three words
     # between, and a leading "-" for a clitic written onto the word before
-    # ("-n't … any": "doesn't have any"). One opening a line before a comma
-    # or a stop is a yes/no answer ("Нет, три"), no count.
+    # ("-n't … any": "doesn't have any"). One states no count in a sentence
+    # that states one ("No hay duda de que son tres", "Нет, три") or holds
+    # one of the language's comparatives ("No hay más de tres": "more
+    # than", "más de", "более"); a one-word one opening a line before a
+    # comma or a stop is a yes/no answer ("Нет."), no count either.
     absence_phrases: tuple[str, ...] = ()
+    comparatives: tuple[str, ...] = ()
     # Whether it writes the ones before the tens ("vierundzwanzig"): in
     # another language the words of a number go down by place ("deux vingt"
     # is two numbers).
@@ -104,9 +108,14 @@ class LanguageProfile:
     # number there counts nothing.
     year_words: tuple[str, ...] = ()
     # The words a year comes before, written onto it or after a space
-    # ("2019년", "2019부터", "2019 이후", "2019以降"): the number there counts
-    # nothing either, in an answer in any language.
+    # ("2019년", "2019 이후", "2019以降"): the number there counts nothing
+    # either, in an answer in any language. The particles that close a
+    # range at either end ("2019부터", "2020年まで", "从2019到现在") make a
+    # four-digit number before them a year too, unless the range's other
+    # end is a four-digit count ("1500から2000社", "3000至5000家": a range of
+    # counts).
     year_suffixes: tuple[str, ...] = ()
+    range_particles: tuple[str, ...] = ()
     partitive_words: tuple[str, ...] = ()
     partitive_anaphors: tuple[str, ...] = ()
     # The words that join the parts of a written number ("and" in "three

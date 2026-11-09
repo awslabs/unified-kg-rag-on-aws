@@ -845,7 +845,8 @@ From a `main` checkout (formats and keys no release had):
   `metadata.answer_type: number` compares the answer's leading number (digits, English words with their scale
   words, Korean native, Sino-Korean and Han numerals with their multipliers (十二, 一万二千, 만 이천, 一千零一; 1만 2천,
   3万, 1.5万 and 3,000万 for digits), 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사, 대, 社, 台 or 円; list
-  enumerators, citation markers, years (2019년, 2019부터, 2019以降), ordinals such as 두 번째, 三つ目 and 第三, negated
+  enumerators, citation markers, years (2019년, 2019以降; 2019부터 and 从2019到 unless the range ends on a four-digit
+  count, as 1500から2000社 does), ordinals such as 두 번째, 三つ目 and 第三, negated
   numbers such as "not one but three", 一つではなく and 不是一家, and the whole of a partitive, so "only one of the
   three", 三家中只有一家, 세 곳 중
   한 곳 and 三社のうち一社 are 1, count nothing; "not ... any", "not one", "not a single", 한 곳도, 一社も, 没有 and
@@ -1192,7 +1193,8 @@ From a `main` checkout (formats and keys no release had):
   question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
   elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its written numbers
   ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") and its words and phrases for none ("aucun",
-  "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any") in place of
+  "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any"; none in a sentence
+  that states a count or holds a comparative: "No hay duda de que son tres", "No hay más de tres") in place of
   English's (Spanish and Portuguese "no" is no 0), its words of time, partitives and ordinals telling a number that
   counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième") (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,

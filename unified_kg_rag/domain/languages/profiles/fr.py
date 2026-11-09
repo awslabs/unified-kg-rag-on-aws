@@ -78,6 +78,14 @@ PROFILE = LanguageProfile(
         "n'ont pas de",
         "n'ont pas d'",
     ),
+    comparatives=(
+        "plus de",
+        "moins de",
+        "plus d'",
+        "moins d'",
+        "plus que",
+        "moins que",
+    ),
     ordinal_words=frozenset(
         "unième deuxième troisième quatrième cinquième sixième septième "
         "huitième neuvième dixième onzième douzième treizième quatorzième "

@@ -24,6 +24,7 @@ from unified_kg_rag.shared.utils.scripts import (
     is_hangul_syllable,
     letter_class,
 )
+from unified_kg_rag.shared.utils.sentences import sentence_ends
 
 # A Hangul letter (the script table's blocks): a Korean word goes on.
 _HANGUL = f"[{letter_class('hangul')}]"
@@ -874,12 +875,19 @@ _ENUMERATOR_AFTER = re.compile(r"[.)\]][ \t]+\S")
 _CITATION_BEFORE = re.compile(r"\[[\d,\s–-]*$")
 _CITATION_AFTER = re.compile(r"[\d,\s–-]*\]")
 # A year: four digits before a word that follows one (``year_suffixes``:
-# "2019년", "2019부터", "2019以降", "从2019到现在") or opening an ISO date (or
-# after a word of time in the answer's language: ``_CountContext``).
+# "2019년", "2019以降") or opening an ISO date (or after a word of time in
+# the answer's language: ``_CountContext``), or before a particle that
+# closes a range (``range_particles``: "2019부터", "从2019到现在") whose
+# other end is no four-digit count ("1500から2000社" ranges over counts).
 _YEAR_AFTER = re.compile(
     r"\s?"
     + _phrases({w for language in profiles() for w in language.year_suffixes})
     + r"|-\d{1,2}-\d{1,2}"
+)
+_RANGE_AFTER = re.compile(
+    r"\s?"
+    + _phrases({w for language in profiles() for w in language.range_particles})
+    + rf"(?P<counts>\s?\d{{4}}(?!\d)\s?{_ANY_COUNTER})?"
 )
 # "no" before these words is no count of zero: "No single vendor
 # dominates", "no more than 5", "no longer".
@@ -990,6 +998,7 @@ def _not_a_count(body: str, start: int, end: int, context: _CountContext) -> boo
     number = body[start:end]
     if re.fullmatch(r"\d{4}", number) and (
         _YEAR_AFTER.match(after)
+        or ((ranged := _RANGE_AFTER.match(after)) and not ranged.group("counts"))
         or (context.year_before is not None and context.year_before.search(before))
     ):
         return True
@@ -1063,25 +1072,54 @@ def _absence_pattern(language: LanguageProfile) -> re.Pattern[str] | None:
     return re.compile("|".join(map(phrase, phrases)), re.IGNORECASE)
 
 
-# The phrases of absence by language: English's for an answer in a
-# language whose numbers the reader does not know in words.
+# The phrases of absence by language, and the comparatives after which one
+# states no zero: English's for an answer in a language whose numbers the
+# reader does not know in words.
 _ABSENCES = {
     language.code.value: pattern
     for language in profiles()
     if (pattern := _absence_pattern(language)) is not None
 }
+_COMPARATIVES = {
+    language.code.value: re.compile(
+        rf"(?<!\w){_phrases(language.comparatives)}", re.IGNORECASE
+    )
+    for language in profiles()
+    if language.comparatives
+}
 
 
-def _absence(body: str, pattern: re.Pattern[str] | None) -> re.Match[str] | None:
-    """The first phrase of absence in ``body`` that states a count of 0:
-    not one opening a line before a comma or a stop ("Нет, три"), which
-    answers a yes/no question."""
+def _absence(body: str, language: str) -> re.Match[str] | None:
+    """The first phrase of absence of ``language`` in ``body`` that states
+    a count of 0: not one in a sentence that states a count ("No hay duda
+    de que son tres", "Нет, три") or holds a comparative ("No hay más de
+    tres", "Не менее трёх, нет точных данных"), nor a one-word one opening a line before a comma or a stop
+    ("Нет."), which answers a yes/no question."""
+    pattern = _ABSENCES.get(language)
+    comparative = _COMPARATIVES.get(language)
     for match in pattern.finditer(body) if pattern is not None else ():
-        if not (
-            _opens_line(body, match.start()) and _NO_POLARITY.match(body, match.end())
+        start, end = _sentence_around(body, match.start())
+        if (
+            not re.search(r"\s", match.group())
+            and _opens_line(body, match.start())
+            and _NO_POLARITY.match(body, match.end())
         ):
+            continue
+        if comparative is not None and comparative.search(body, start, end):
+            continue
+        if _leading_number(body[start:end], language, absences=False) is None:
             return match
     return None
+
+
+def _sentence_around(body: str, index: int) -> tuple[int, int]:
+    """The span of the sentence of ``body`` that holds ``index``."""
+    start = 0
+    for end in sentence_ends(body):
+        if end > index:
+            return start, end
+        start = end
+    return start, len(body)
 
 
 def _opens_line(body: str, start: int) -> bool:
@@ -1126,6 +1164,14 @@ def leading_number(text: str, language: str | None = None) -> float | None:
     los tres", "один из них", "vingt-troisième"); two side by side ("deux
     trois") are none.
     The digits, and Korean and Han numerals, read in every language."""
+    return _leading_number(text, language)
+
+
+def _leading_number(
+    text: str, language: str | None, *, absences: bool = True
+) -> float | None:
+    """:func:`leading_number`, without the phrases of absence unless
+    ``absences``."""
     lines = [
         line
         for line in unicodedata.normalize("NFKC", text).splitlines()
@@ -1162,7 +1208,7 @@ def leading_number(text: str, language: str | None = None) -> float | None:
     zeros = [
         _KOREAN_NONE.search(body),
         _CJK_NONE.search(body),
-        _absence(body, _ABSENCES.get((language or "") if grammar else "en")),
+        _absence(body, (language or "") if grammar else "en") if absences else None,
     ]
     if grammar is None:
         first(_ENGLISH_NUMBER.finditer(body), _english_value)
