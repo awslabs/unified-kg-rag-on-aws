@@ -788,9 +788,7 @@ class BaseSearchStrategy(ABC):
         ``failures`` collects the errors of the batches that failed; each is
         recorded as ``step`` (``_safe_aretrieve``)."""
         ids = list(dict.fromkeys((query.filters or {}).get(key) or ()))
-        prefixes = query.index_prefixes or []
-        if isinstance(prefixes, str):
-            prefixes = [prefixes]
+        prefixes = source_fields.id_list(query.index_prefixes)
         limits = [await retriever.aindex_limits(p, query.suffix) for p in prefixes]
         size = max(1, min((lim.id_batch_size for lim in limits), default=len(ids)))
         parts = await gather_bounded(

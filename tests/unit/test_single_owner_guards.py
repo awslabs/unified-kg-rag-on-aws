@@ -18,18 +18,26 @@ from __future__ import annotations
 
 import ast
 import re
+import unicodedata
+from pathlib import Path
 
 import pytest
 
 from tests.fixtures.source_guards import (
+    PACKAGE,
+    Source,
     SourceGuard,
+    _bindings,
+    _names_in,
     _scopes,
     any_of,
     calls,
     calls_mentioning,
+    imported,
     key_reads,
     lines_matching,
     matches,
+    method_calls,
     module_nodes,
     nodes,
     references,
@@ -37,6 +45,7 @@ from tests.fixtures.source_guards import (
     string_literals,
     string_values,
 )
+from unified_kg_rag.shared.utils.scripts import SCRIPTS
 
 pytestmark = pytest.mark.unit
 
@@ -61,14 +70,21 @@ _SURFACES = (
 )
 
 
-def _isinstance_test(node: ast.AST) -> bool:
-    """``isinstance(x, ...)`` or ``not isinstance(x, ...)``."""
+def _type_test(node: ast.AST) -> bool:
+    """``isinstance(x, ...)``, ``type(x) is ...`` (``==``, ``is not``,
+    ``!=``), or its ``not``."""
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
         node = node.operand
+    if isinstance(node, ast.Call):
+        return getattr(node.func, "id", None) == "isinstance" and len(node.args) == 2
     return (
-        isinstance(node, ast.Call)
-        and getattr(node.func, "id", None) == "isinstance"
-        and len(node.args) == 2
+        isinstance(node, ast.Compare)
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], ast.Is | ast.IsNot | ast.Eq | ast.NotEq)
+        and any(
+            isinstance(side, ast.Call) and getattr(side.func, "id", None) == "type"
+            for side in (node.left, *node.comparators)
+        )
     )
 
 
@@ -76,59 +92,114 @@ def _one_item(node: ast.AST | None) -> bool:
     return isinstance(node, ast.List | ast.Set | ast.Tuple) and len(node.elts) == 1
 
 
+# The types a value-or-list is told apart by.
+_SEQUENCES = re.compile(
+    r"\b(?:list|tuple|set|frozenset|str|bytes|Sequence|Iterable|Collection)\b"
+)
+
+
+def _tested(test: ast.AST) -> str | None:
+    """The value a type test against a sequence or string type reads (``v``
+    of ``isinstance(v, str)``; none of ``isinstance(v, dict)``)."""
+    if isinstance(test, ast.UnaryOp):
+        test = test.operand
+    if isinstance(test, ast.Call):
+        value, kind = test.args
+    else:
+        assert isinstance(test, ast.Compare)
+        typed = [s for s in (test.left, *test.comparators) if isinstance(s, ast.Call)]
+        others = [s for s in (test.left, *test.comparators) if s not in typed]
+        if not (typed and typed[0].args and others):
+            return None
+        value, kind = typed[0].args[0], others[0]
+    return ast.unparse(value) if _SEQUENCES.search(ast.unparse(kind)) else None
+
+
+def _wraps(statement: ast.stmt, value: str | None) -> bool:
+    """``x = [v]``, ``return [v]``, or either of ``... if ... else [v]``,
+    for the tested ``value`` ``v``."""
+    if not isinstance(statement, ast.Assign | ast.AnnAssign | ast.Return):
+        return False
+    bound = statement.value
+    options = (bound.body, bound.orelse) if isinstance(bound, ast.IfExp) else (bound,)
+    return any(
+        isinstance(option, ast.List | ast.Set | ast.Tuple)
+        and len(option.elts) == 1
+        and ast.unparse(option.elts[0]) == value
+        for option in options
+    )
+
+
 def _rewrap(node: ast.AST) -> bool:
-    """A value-or-list made a list: ``x if isinstance(x, list) else [x]``,
-    either way round, or ``if not isinstance(x, list): x = [x]`` (or a
-    ``return [x]``)."""
+    """A value-or-list made a list on a type test: ``x if isinstance(x,
+    list) else [x]`` either way round, an ``if`` on the test that binds or
+    returns ``[x]`` in either branch, or a ``case str():`` that does."""
     if isinstance(node, ast.IfExp):
-        return _isinstance_test(node.test) and (
+        return _type_test(node.test) and (
             _one_item(node.body) or _one_item(node.orelse)
         )
-    if not (
-        isinstance(node, ast.If)
-        and _isinstance_test(node.test)
-        and len(node.body) == 1
-        and isinstance(node.body[0], ast.Assign | ast.Return)
-    ):
+    if isinstance(node, ast.If):
+        value = _tested(node.test) if _type_test(node.test) else None
+        return value is not None and any(
+            _wraps(s, value) for s in (*node.body, *node.orelse)
+        )
+    if not isinstance(node, ast.Match):
         return False
-    value = node.body[0].value
-    return _one_item(value) or (
-        isinstance(value, ast.IfExp)
-        and (_one_item(value.body) or _one_item(value.orelse))
+    subject = ast.unparse(node.subject)
+    return any(
+        isinstance(case.pattern, ast.MatchClass)
+        and any(_wraps(s, subject) for s in case.body)
+        for case in node.cases
     )
 
 
 _RANGE_OPS = ("gt", "gte", "lt", "lte")
+# The ``operator`` functions a range operator names.
+_COMPARISONS = ("gt", "ge", "lt", "le")
 
 
-def _comparison_table(node: ast.AST, tree: ast.Module) -> bool:
-    """A mapping of range operators to how they compare: lambdas or the
-    ``operator`` module's functions, however imported."""
-    if not isinstance(node, ast.Dict):
-        return False
-    pairs = {
-        key.value: value
-        for key, value in zip(node.keys, node.values, strict=True)
-        if isinstance(key, ast.Constant)
-    }
-    compared = [pairs[op] for op in _RANGE_OPS if op in pairs]
-    return len(compared) >= 2 and all(
+def _compares(value: ast.AST, source: Source) -> bool:
+    """A comparison: a lambda, an ``operator`` function however imported,
+    or the name of one (``"ge"``, for ``getattr(operator, ...)``)."""
+    return (
         isinstance(value, ast.Lambda)
-        or (resolved(value, tree) or "").startswith("operator.")
-        for value in compared
+        or (resolved(value, source) or "").startswith("operator.")
+        or (isinstance(value, ast.Constant) and value.value in _COMPARISONS)
     )
 
 
+def _comparison_table(node: ast.AST, source: Source) -> bool:
+    """A mapping of range operators to how they compare, as a literal or a
+    ``dict(gt=...)`` call."""
+    if isinstance(node, ast.Dict):
+        pairs = {
+            key.value: value
+            for key, value in zip(node.keys, node.values, strict=True)
+            if isinstance(key, ast.Constant)
+        }
+    elif isinstance(node, ast.Call) and getattr(node.func, "id", None) == "dict":
+        pairs = {k.arg: k.value for k in node.keywords if k.arg}
+    else:
+        return False
+    compared = [pairs[op] for op in _RANGE_OPS if op in pairs]
+    return len(compared) >= 2 and all(_compares(v, source) for v in compared)
+
+
+def _names_an_operator(node: ast.AST) -> bool:
+    """A range operator's name, or a literal collection holding one."""
+    if isinstance(node, ast.Tuple | ast.List | ast.Set):
+        return any(map(_names_an_operator, node.elts))
+    return isinstance(node, ast.Constant) and node.value in _RANGE_OPS
+
+
 def _operator_branch(node: ast.AST) -> bool:
-    """A branch on a range operator's name: ``op == "gte"``, ``case "gt":``."""
+    """A branch on a range operator's name: ``op == "gte"``, ``op in ("gt",
+    "gte")``, ``case "gt":``."""
     if isinstance(node, ast.Compare):
         return (
             len(node.ops) == 1
-            and isinstance(node.ops[0], ast.Eq)
-            and any(
-                isinstance(side, ast.Constant) and side.value in _RANGE_OPS
-                for side in (node.left, *node.comparators)
-            )
+            and isinstance(node.ops[0], ast.Eq | ast.NotEq | ast.In | ast.NotIn)
+            and any(map(_names_an_operator, (node.left, *node.comparators)))
         )
     return (
         isinstance(node, ast.MatchValue)
@@ -137,42 +208,97 @@ def _operator_branch(node: ast.AST) -> bool:
     )
 
 
-_LINEAGE = re.compile(r"(?<![a-z])units?(?:_ids?)?\b|lineage")
+_LINEAGE = re.compile(r"(?<![a-z])(?:units?(?:_ids?)?|chunks|chunk_ids)\b|lineage")
 
 
 def _mentions_lineage(node: ast.AST) -> bool:
-    """Whether ``node`` reads unit ids (``text_unit_ids``, ``units``, a
-    ``lineage``), not a word that only holds the letters (``community``)."""
+    """Whether ``node`` reads unit or chunk ids (``text_unit_ids``,
+    ``units``, ``source_chunks``, a ``lineage``), not a word that only
+    holds the letters (``community``)."""
     return _LINEAGE.search(ast.unparse(node)) is not None
 
 
-def _lineage_dedup(node: ast.AST) -> bool:
-    """Unit ids merged by hand: ``dict.fromkeys(...)`` over them (a literal
-    tuple of field names is a catalog, not a lineage), or a loop that
-    appends each one not yet seen."""
-    if isinstance(node, ast.Call):
-        return (
-            ast.unparse(node.func) == "dict.fromkeys"
-            and bool(node.args)
-            and not isinstance(node.args[0], ast.Tuple | ast.List)
-            and _mentions_lineage(node.args[0])
-        )
-    if not (isinstance(node, ast.For) and _mentions_lineage(node.iter)):
-        return False
-    for child in ast.walk(node):
+def _grows(statement: ast.AST) -> bool:
+    """``out.append(u)`` or ``seen.add(u)``."""
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and getattr(statement.value.func, "attr", None) in ("append", "add")
+    )
+
+
+def _keeps_first_seen(loop: ast.For) -> bool:
+    """A loop that keeps each id once: ``if u not in out: out.append(u)``,
+    or ``if u in seen: continue`` before an append or add."""
+    grows = any(map(_grows, ast.walk(loop)))
+    for child in ast.walk(loop):
+        if not (isinstance(child, ast.If) and isinstance(child.test, ast.Compare)):
+            continue
+        op = child.test.ops[0]
+        if isinstance(op, ast.NotIn) and any(map(_grows, child.body)):
+            return True
         if (
-            isinstance(child, ast.If)
-            and isinstance(child.test, ast.Compare)
-            and isinstance(child.test.ops[0], ast.NotIn)
-            and any(
-                isinstance(b, ast.Expr)
-                and isinstance(b.value, ast.Call)
-                and getattr(b.value.func, "attr", None) == "append"
-                for b in child.body
-            )
+            isinstance(op, ast.In)
+            and grows
+            and any(isinstance(b, ast.Continue) for b in child.body)
         ):
             return True
     return False
+
+
+def _over_lineage(node: ast.DictComp | ast.SetComp, element: ast.AST) -> bool:
+    """Whether a comprehension's ``element`` is the id it draws from a
+    lineage (``u`` of ``for u in r.text_unit_ids``)."""
+    return any(
+        _mentions_lineage(g.iter) and ast.unparse(g.target) == ast.unparse(element)
+        for g in node.generators
+    )
+
+
+def _lineage_support(node: ast.AST, source: Source) -> bool:
+    """Unit ids counted to rank them by support: ``Counter(...)`` over a
+    lineage, or ``.update(...)`` of one into a name bound to a Counter."""
+    if not (isinstance(node, ast.Call) and node.args):
+        return False
+    if resolved(node.func, source) == "collections.Counter":
+        return _mentions_lineage(node.args[0])
+    func = node.func
+    return (
+        isinstance(func, ast.Attribute)
+        and func.attr == "update"
+        and isinstance(func.value, ast.Name)
+        and any(
+            isinstance(v, ast.Call)
+            and resolved(v.func, source) == "collections.Counter"
+            for v in _bindings(source).get(func.value.id, ())
+        )
+        and _mentions_lineage(node.args[0])
+    )
+
+
+def _lineage_dedup(node: ast.AST) -> bool:
+    """Unit ids merged by hand: ``fromkeys`` over them (``dict``'s or
+    ``OrderedDict``'s; a literal tuple of field names is a catalog, not a
+    lineage), ``{u: None ...}`` over them or a set of them made a list
+    (``sorted({...})``), or a loop that keeps each one not yet seen."""
+    if isinstance(node, ast.Call) and node.args:
+        first = node.args[0]
+        if ast.unparse(node.func) in ("sorted", "list"):
+            # A set of the ids made a list again.
+            return isinstance(first, ast.SetComp) and _over_lineage(first, first.elt)
+        return (
+            ast.unparse(node.func).endswith("fromkeys")
+            and not isinstance(first, ast.Tuple | ast.List)
+            and _mentions_lineage(first)
+        )
+    if isinstance(node, ast.DictComp):
+        # ``{u: None for ... in lineage}``: dict.fromkeys spelled out.
+        return isinstance(node.value, ast.Constant) and _over_lineage(node, node.key)
+    return (
+        isinstance(node, ast.For)
+        and _mentions_lineage(node.iter)
+        and _keeps_first_seen(node)
+    )
 
 
 _VIEW = re.compile(r"(?:^|[._])view$")
@@ -188,75 +314,207 @@ def _sources_read(node: ast.AST) -> bool:
     )
 
 
-# Past it, a code point is another script than ASCII's and Latin-1's (an
-# ``ord(ch) < 128`` is an ASCII test, not a script range).
+# The script table's letter blocks: a code point in (or one past the end
+# of) one is a script's. Past Latin-1 only: an ``ord(ch) < 128`` is an
+# ASCII test, ``"a" <= ch <= "z"`` not a script range. A bare number below
+# the Latin and IPA blocks' end is as likely an HTTP status (``400 <=
+# status < 500``): only a character spells a code point there.
 _LATIN_1 = 0xFF
+_SMALL_NUMBERS = 0x2FF
+_LETTER_BLOCKS = tuple(block for script in SCRIPTS for block in script.ranges)
 
 
-def _codepoint_compare(node: ast.AST, tree: ast.Module) -> bool:
-    """A script test by comparison: ``"\\u3040" <= ch <= "\\u309f"``, or
-    ``0xAC00 <= ord(ch)``."""
-    if not (
-        isinstance(node, ast.Compare)
-        and all(isinstance(op, ast.Lt | ast.LtE | ast.Gt | ast.GtE) for op in node.ops)
-    ):
-        return False
-    sides = (node.left, *node.comparators)
-    if any(
-        isinstance(s, ast.Constant)
-        and isinstance(s.value, str)
-        and len(s.value) == 1
-        and ord(s.value) > _LATIN_1
-        for s in sides
-    ):
-        return True
-    return any(
-        isinstance(s, ast.Constant)
-        and isinstance(s.value, int)
-        and not isinstance(s.value, bool)
-        and s.value > _LATIN_1
-        for s in sides
-    ) and any(
-        isinstance(s, ast.Call) and resolved(s.func, tree) == "ord" for s in sides
+def _a_script_bound(cp: int, floor: int = _LATIN_1) -> bool:
+    """Whether ``cp`` bounds a script's letters: in a block of the table, or
+    one before or past it (``< 0xD7A4``, ``> 0xABFF``), and past ``floor``."""
+    return cp > floor and any(lo - 1 <= cp <= hi + 1 for lo, hi in _LETTER_BLOCKS)
+
+
+def _code_point(node: ast.AST, source: Source) -> int | None:
+    """The code point a constant names: a one-character string, ``chr(int)``,
+    ``ord(char)``, or an int past :data:`_SMALL_NUMBERS`; ``-1`` for a
+    smaller int (a constant, but no code point)."""
+    if isinstance(node, ast.Call) and len(node.args) == 1:
+        if resolved(node.func, source) in ("chr", "ord"):
+            inner = node.args[0]
+            if isinstance(inner, ast.Constant) and isinstance(inner.value, int):
+                return inner.value
+            return _code_point(inner, source)
+        return None
+    if not isinstance(node, ast.Constant) or isinstance(node.value, bool):
+        return None
+    if isinstance(node.value, int):
+        return node.value if node.value > _SMALL_NUMBERS else -1
+    if isinstance(node.value, str) and len(node.value) == 1:
+        return ord(node.value)
+    return None
+
+
+def _a_character(node: ast.AST, source: Source) -> bool:
+    """Whether ``node`` is a character's code point or the character
+    itself: ``ord(...)``, a name bound to one, a one-character string."""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str) and len(node.value) == 1
+    if isinstance(node, ast.Name):
+        return any(_a_character(v, source) for v in _bindings(source).get(node.id, ()))
+    return isinstance(node, ast.Call) and resolved(node.func, source) in (
+        "ord",
+        "chr",
     )
 
 
-# One end of a character range: a non-ASCII character, or its escape
-# (``\x`` escapes name ASCII and Latin-1 controls, no script).
-_END = (
-    r"(?:[^\x00-\x7f]|\\u(?!00[0-7])[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8}" r"|\\N\{[^}]+\})"
-)
-_SCRIPT_RANGE = re.compile(rf"\[(?:\\.|[^\]\\])*?{_END}-{_END}")
+def _code_point_range(node: ast.AST, source: Source) -> bool:
+    """A script range spelled in code: a comparison, a pair or a
+    ``range(...)`` whose bounds both bound a script's letters (``0xAC00 <=
+    cp <= 0xD7A3``, ``(12352, 12447)``, ``range(44032, 55204)``, ``chr(0x3040)
+    <= ch``), or a character compared with one such bound
+    (``0xAC00 <= ord(ch)``, ``ch >= "\\u3040"``)."""
+    if isinstance(node, ast.Compare):
+        if not all(
+            isinstance(op, ast.Lt | ast.LtE | ast.Gt | ast.GtE) for op in node.ops
+        ):
+            return False
+        sides = (node.left, *node.comparators)
+        bounds = [cp for s in sides if (cp := _code_point(s, source)) is not None]
+        if len(bounds) == 1:
+            return _a_script_bound(bounds[0]) and any(
+                _a_character(s, source) for s in sides if _code_point(s, source) is None
+            )
+        return len(bounds) > 1 and all(map(_a_script_bound, bounds))
+    if isinstance(node, ast.Tuple | ast.List) and len(node.elts) >= 2:
+        # A block's bounds first: ``(0x3040, 0x309F)``, ``(1024, 1327, "cyrillic")``.
+        pair = node.elts[:2]
+    elif (
+        isinstance(node, ast.Call)
+        and resolved(node.func, source) == "range"
+        and len(node.args) >= 2
+    ):
+        pair = node.args[:2]
+    else:
+        return False
+    lo, hi = (_code_point(end, source) for end in pair)
+    return (
+        lo is not None
+        and hi is not None
+        and lo < hi
+        and _a_script_bound(lo)
+        and _a_script_bound(hi)
+    )
+
+
+# A character class of a pattern, and a range in it whose ends are a
+# character or its escape (``\x`` escapes name ASCII and Latin-1 only).
+_CLASS = re.compile(r"\[(?:\\.|[^\]\\])*\]")
+_END = r"(\\u[0-9A-Fa-f]{4}|\\U[0-9A-Fa-f]{8}|\\N\{[^}]+\}|[^\x00-\x7f])"
+_CLASS_RANGE = re.compile(rf"{_END}-{_END}")
+
+
+def _escaped(end: str) -> int | None:
+    if end.startswith(("\\u", "\\U")):
+        return int(end[2:], 16)
+    if end.startswith("\\N{"):
+        try:
+            return ord(unicodedata.lookup(end[3:-1]))
+        except KeyError:
+            return None
+    return ord(end)
+
+
+def _script_class(match: re.Match[str]) -> bool:
+    """A character class with a range both of whose ends bound a script's
+    letters (``[\\u3040-\\u309f]``, ``[가-힣]``; ``[\\u200b-\\u200f]``, a
+    format-character range, is none)."""
+    return any(
+        all(
+            (cp := _escaped(end)) is not None and _a_script_bound(cp)
+            for end in pair.groups()
+        )
+        for pair in _CLASS_RANGE.finditer(match.group(0))
+    )
+
+
 _DEGRADATION = "unified_kg_rag.domain.retrieval.degradation"
+_DEGRADATION_KEYS = tuple(
+    f"{_DEGRADATION}.{key}"
+    for key in ("DEGRADED_KEY", "DEGRADED_ERROR_KEY", "UNRESOLVED_KEY")
+)
+_IDENTITY = "unified_kg_rag.domain.ingestion.document_identity"
 _SCRIPTS = "unified_kg_rag.shared.utils.scripts"
-_WRITE_MODES = re.compile(r"[wax]")
+_WRITE_MODES = re.compile(r"[wax+]")
+# A mode string, not a member's name (``ZipFile.open("word/document.xml")``).
+_MODE = re.compile(r"[rwxabtU+]+")
+# The module-level ``open``s: each takes its file first, its mode second.
+_OPENERS = (
+    "open",
+    "builtins.open",
+    "io.open",
+    "codecs.open",
+    "gzip.open",
+    "bz2.open",
+    "lzma.open",
+    "tarfile.open",
+    "zipfile.ZipFile",
+    "os.fdopen",
+)
+_COPIES = ("shutil.copyfile", "shutil.copy", "shutil.copy2")
+_OS_WRITE_FLAGS = {f"os.{flag}" for flag in ("O_WRONLY", "O_RDWR", "O_APPEND")}
 
 
-def _file_write(node: ast.AST) -> bool:
-    """A write that is not atomic: ``.write_text``/``.write_bytes``, or an
-    ``open`` / ``Path.open`` for writing, appending or creating."""
+def _writes(mode: ast.AST | None) -> bool:
+    """Whether a file opened in ``mode`` may be written: a literal mode
+    that writes, appends, creates or updates (``+``), or one chosen at run
+    time; reading is the default."""
+    if mode is None:
+        return False
+    if isinstance(mode, ast.Constant) and isinstance(mode.value, str):
+        return bool(_WRITE_MODES.search(mode.value))
+    return True
+
+
+def _file_write(node: ast.AST, source: Source) -> bool:
+    """A write that is not atomic: ``.write_text``/``.write_bytes``, a copy
+    into place, an ``os.open`` for writing, or a file opened to write by a
+    module-level ``open`` (mode second) or a value's ``.open`` (a path's:
+    mode first; another's, as a zip member's, after its name)."""
     if not isinstance(node, ast.Call):
         return False
     func = node.func
     if isinstance(func, ast.Attribute) and func.attr in ("write_text", "write_bytes"):
         return True
-    if isinstance(func, ast.Name) and func.id == "open":
-        positional = node.args[1] if len(node.args) > 1 else None
-    elif isinstance(func, ast.Attribute) and func.attr == "open":
-        positional = node.args[0] if node.args else None
-    else:
+    name = resolved(func, source)
+    if name in _COPIES:
+        return True
+    if name == "os.open":
+        return bool(
+            _OS_WRITE_FLAGS & set().union(*(_names_in(a, source) for a in node.args))
+        )
+    keyword = next((k.value for k in node.keywords if k.arg == "mode"), None)
+    args = node.args
+    if name in _OPENERS:
+        return _writes(keyword or (args[1] if len(args) > 1 else None))
+    if not (
+        isinstance(func, ast.Attribute)
+        and func.attr == "open"
+        and not imported(func.value, source)
+    ):
         return False
-    mode = next((k.value for k in node.keywords if k.arg == "mode"), positional)
-    return (
-        isinstance(mode, ast.Constant)
-        and isinstance(mode.value, str)
-        and bool(_WRITE_MODES.search(mode.value))
-    )
+    first = args[0] if args else None
+    if keyword is None and not (
+        first is None
+        or (
+            isinstance(first, ast.Constant)
+            and isinstance(first.value, str)
+            and _MODE.fullmatch(first.value)
+        )
+    ):
+        return _writes(args[1] if len(args) > 1 else None)
+    return _writes(keyword or first)
 
 
-def _path_move(node: ast.AST) -> bool:
+def _path_move(node: ast.AST, source: Source) -> bool:
     """``path.replace(target)`` / ``path.rename(target)``: one positional
-    argument and none named (``str.replace`` takes two)."""
+    argument and none named (``str.replace`` takes two), on a value, not a
+    module (``dataclasses.replace(cfg)``)."""
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
@@ -264,7 +522,28 @@ def _path_move(node: ast.AST) -> bool:
         and len(node.args) == 1
         and not node.keywords
         and not isinstance(node.args[0], ast.Constant)
+        and not imported(node.func.value, source)
     )
+
+
+def _counted_into(node: ast.AST, source: Source) -> bool:
+    """A count kept by hand, keyed by a script: ``counts[script_of(c)] +=
+    1``."""
+    return (
+        isinstance(node, ast.AugAssign)
+        and isinstance(node.target, ast.Subscript)
+        and bool(_names_in(node.target.slice, source) & set(_SCRIPT_READERS))
+    )
+
+
+_SCRIPT_READERS = (f"{_SCRIPTS}.script_of", f"{_SCRIPTS}.letter_class")
+# What a decoder of a stored or model-written JSON string calls.
+_JSON_DECODERS = (
+    "json.loads",
+    "json.JSONDecoder",
+    "pydantic_core.from_json",
+    "ast.literal_eval",
+)
 
 
 GUARDS = [
@@ -274,11 +553,7 @@ GUARDS = [
         owners=("domain/retrieval/degradation.py",),
         find=any_of(
             string_literals("degraded", "degraded_error", "citations_unresolved"),
-            references(
-                f"{_DEGRADATION}.DEGRADED_KEY",
-                f"{_DEGRADATION}.DEGRADED_ERROR_KEY",
-                f"{_DEGRADATION}.UNRESOLVED_KEY",
-            ),
+            references(*_DEGRADATION_KEYS),
         ),
         allowed={
             "adapters/search_strategies/iterative_search.py::"
@@ -298,7 +573,12 @@ GUARDS = [
         use="shared.utils.model_output.parse_model_object (or the chain's "
         "json parser, which wraps it)",
         owners=("shared/utils/model_output.py",),
-        find=calls("json.loads", "ast.literal_eval"),
+        find=any_of(
+            calls(*_JSON_DECODERS, "yaml.safe_load", "yaml.load"),
+            # json.load reads a file; over a string wrapped as one, a decoder.
+            calls_mentioning(("json.load",), "io.StringIO", "io.BytesIO"),
+            method_calls("model_validate_json"),
+        ),
         within=(
             "adapters/search_strategies",
             "adapters/retrieval",
@@ -365,8 +645,9 @@ GUARDS = [
             key_reads("sources", "error_class", "error_type"),
             # The answer's error read off its raw metadata (QueryOutcome
             # reads it once).
-            key_reads("error", of=re.compile(r"metadata")),
+            key_reads("error", "error_message", of=re.compile(r"metadata")),
             string_literals("degraded", "degraded_error", "citations_unresolved"),
+            references(*_DEGRADATION_KEYS),
         ),
         within=_SURFACES,
         allowed={},
@@ -376,45 +657,19 @@ GUARDS = [
         use="shared.utils.scripts (script_of, letter_class, the Script table)",
         owners=("shared/utils/scripts.py",),
         find=any_of(
-            string_values(_SCRIPT_RANGE),
-            module_nodes(_codepoint_compare),
-            lines_matching(
-                re.compile(
-                    r"0x[0-9A-Fa-f]{4,5}\s*,\s*0x[0-9A-Fa-f]{4,5}"
-                    r"|\\U[0-9A-Fa-f]{8}-\\U[0-9A-Fa-f]{8}"
-                )
-            ),
+            string_values(_CLASS, _script_class),
+            # A regex Unicode property (``\p{Han}``, ``\p{L}``).
+            string_values(re.compile(r"\\[pP]\{")),
+            module_nodes(_code_point_range),
+            # A script read off a character's Unicode name ("HANGUL ...").
+            calls("unicodedata.name"),
         ),
         allowed={
-            # Ports of Lucene's analyzer tables: what the store does, not a
+            # A port of Lucene's analyzer table: what the store does, not a
             # script classification.
-            "adapters/local/search_engine/analyzers.py::_ALPHABETIC_SYMBOLS": (
-                4,
-                "the enclosed and squared letters Lucene's ASCII folding maps",
-            ),
             "adapters/local/search_engine/analyzers.py::_HEBREW": (
-                1,
-                "the Hebrew letters Lucene's standard tokenizer keeps whole",
-            ),
-            "adapters/local/search_engine/analyzers.py::_SCANNED": (
-                1,
-                "the planes the standard tokenizer scans",
-            ),
-            "adapters/local/search_engine/analyzers.py::_ASTRAL": (
                 2,
-                "the supplementary planes, one token each",
-            ),
-            "domain/models/seed_graph.py::_SURROGATE": (
-                1,
-                "refuses lone surrogates, an encoding error",
-            ),
-            "domain/retrieval/citations.py::_RAW_NUMBER": (
-                1,
-                "a citation marker's digits, full-width ones too",
-            ),
-            "evaluation/answer_match_evaluator.py::_LIST_ITEM": (
-                1,
-                "circled list numbers (①-⑳), a list marker",
+                "the Hebrew letters Lucene's standard tokenizer keeps whole",
             ),
         },
     ),
@@ -422,7 +677,16 @@ GUARDS = [
         name="G5 stored file name and path",
         use="domain.retrieval.source_fields.file_name / safe_relative_path",
         owners=("domain/retrieval/source_fields.py",),
-        find=key_reads("file_name", "file_path"),
+        find=any_of(
+            key_reads("file_name", "file_path", "relative_path"),
+            # A loaded Document holds its path under RELATIVE_PATH_KEY (its
+            # owner is document_identity); a stored item under its
+            # attributes, which the owner reads.
+            key_reads(
+                constants=(f"{_IDENTITY}.RELATIVE_PATH_KEY",),
+                of=re.compile(r"attributes"),
+            ),
+        ),
         allowed={
             "application/cli/console/stages.py::_failed_items": (
                 1,
@@ -458,26 +722,12 @@ GUARDS = [
                 2,
                 "filter values (a value or a list), intersected with a scope's",
             ),
-            "adapters/retrieval/base.py::BaseSearchStrategy._fetch_by_ids": (
-                1,
-                "the index prefixes argument (one or several)",
-            ),
             "adapters/retrieval/base.py::"
             "BaseSearchStrategy._expand_over_passing_relationships": (
                 1,
                 "a caller's id filter value",
             ),
-            "adapters/retrievers/opensearch_retriever.py::"
-            "OpenSearchRetriever._normalize_index_prefixes": (
-                1,
-                "the index prefixes argument (one or several)",
-            ),
-            "adapters/search_strategies/simple_search.py::"
-            "SimpleSearchStrategy._without_reports": (
-                1,
-                "a pinned type filter value",
-            ),
-            "adapters/storage/neptune_codec.py::_values": (
+            "adapters/storage/neptune_codec.py::property_values": (
                 1,
                 "the codec's reading of a Gremlin valueMap (lists by design)",
             ),
@@ -497,17 +747,10 @@ GUARDS = [
                 1,
                 "a structured plan's operand (one value or several)",
             ),
-            "evaluation/answer_match_evaluator.py::AnswerMatchEvaluator._references": (
+            "evaluation/answer_match_evaluator.py::answer_aliases": (
                 1,
-                "a dataset's answer_aliases (a string or a list)",
-            ),
-            "evaluation/evaluation_manager.py::EvaluationManager.holds_dense_script": (
-                1,
-                "a dataset's answer_aliases (a string or a list)",
-            ),
-            "adapters/retrievers/neptune_retriever.py::NeptuneRetriever._hydrate": (
-                1,
-                "a Gremlin valueMap, whose values are lists (the codec's reading)",
+                "a dataset's answer_aliases (a string or a list of strings), "
+                "read once for the evaluator and the run's language check",
             ),
             "adapters/search_strategies/structured_search.py::"
             "StructuredSearchStrategy._request": (
@@ -530,8 +773,8 @@ GUARDS = [
         owners=("shared/utils/files.py",),
         find=any_of(
             calls("os.replace", "os.rename", "shutil.move"),
-            nodes(_path_move),
-            nodes(_file_write),
+            module_nodes(_path_move),
+            module_nodes(_file_write),
         ),
         allowed={
             "application/cli/console/server.py::create_app.upload": (
@@ -552,11 +795,8 @@ GUARDS = [
         owners=("domain/languages", "shared/utils/scripts.py"),
         find=any_of(
             lines_matching(re.compile(r"\bScriptCounts\b|\bcount_letters\(")),
-            calls_mentioning(
-                "collections.Counter",
-                f"{_SCRIPTS}.script_of",
-                f"{_SCRIPTS}.letter_class",
-            ),
+            calls_mentioning(("collections.Counter", "sum", "len"), *_SCRIPT_READERS),
+            module_nodes(_counted_into),
         ),
     ),
     SourceGuard(
@@ -580,7 +820,7 @@ GUARDS = [
             "adapters/storage/neptune_codec.py",
             "domain/retrieval/source_fields.py",
         ),
-        find=calls("json.loads"),
+        find=calls(*_JSON_DECODERS),
         within=(
             "adapters/retrievers",
             "adapters/search_strategies",
@@ -614,7 +854,7 @@ GUARDS = [
         name="G11 lineage merging",
         use="domain.retrieval.lineage.merge (first_seen or support order)",
         owners=("domain/retrieval/lineage.py",),
-        find=nodes(_lineage_dedup),
+        find=any_of(nodes(_lineage_dedup), module_nodes(_lineage_support)),
         within=_READ_PATHS,
         allowed={
             "evaluation/source_resolver.py::TextUnitFileResolver.aresolve": (
@@ -630,6 +870,17 @@ GUARDS = [
                 1,
                 "one check round's ids: each lineage up to past its deepest "
                 "unchecked chunk, not a merged lineage",
+            ),
+            "adapters/search_strategies/lightrag_search.py::"
+            "LightRAGSearchStrategy._lineages": (
+                1,
+                "one stored lineage sorted, so the weighted pick does not "
+                "depend on how the graph was built; not merged with another",
+            ),
+            "evaluation/evaluation_manager.py::EvaluationManager._files_by_support": (
+                1,
+                "counts the files a source's units come from, to rank files, "
+                "not units",
             ),
             "domain/retrieval/ppr.py::PassageGraph.link_passages": (
                 1,
@@ -688,10 +939,10 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         (calls("os.replace"), "import os\nos.replace(a, b)\n", ["os.replace"]),
         (calls("os.replace"), "from os import replace\nreplace(a, b)\n", 1),
         (calls("shutil.move"), "import shutil\nshutil.move(a, b)\n", 1),
-        (nodes(_path_move), "tmp.replace(path)\n", 1),
-        (nodes(_path_move), 's.replace("a", "b")\n', []),
-        (nodes(_file_write), 'p.write_text(t)\nopen(p, "w")\np.open("ab")\n', 3),
-        (nodes(_file_write), 'open(p)\np.open()\nf(mode="after")\n', []),
+        (module_nodes(_path_move), "tmp.replace(path)\n", 1),
+        (module_nodes(_path_move), 's.replace("a", "b")\n', []),
+        (module_nodes(_file_write), 'p.write_text(t)\nopen(p, "w")\np.open("ab")\n', 3),
+        (module_nodes(_file_write), 'open(p)\np.open()\nf(mode="after")\n', []),
         (key_reads("file_name"), 'a.get("file_name")\nb["file_name"]\n', 2),
         (key_reads("file_name"), 'b["file_name"] = 1\n', []),
         (key_reads("file_name"), 'getattr(d, "file_name", None)\n', 1),
@@ -743,7 +994,7 @@ _G4 = next(g for g in GUARDS if g.name.startswith("G4 ")).find
         (_G4, 'ok = "\\u3040" <= ch <= "\\u309f"\n', 1),
         (_G4, 'C = "[\\x00-\\x1f\\x7f]"\nok = ord(ch) < 128 and ch <= "z"\n', []),
         (
-            calls_mentioning("collections.Counter", f"{_SCRIPTS}.script_of"),
+            calls_mentioning(("collections.Counter",), f"{_SCRIPTS}.script_of"),
             f"from collections import Counter as C\nfrom {_SCRIPTS} import script_of"
             " as so\nC(so(c) for c in t)\n",
             1,
@@ -811,3 +1062,43 @@ def test_module_scopes_are_keyed_by_the_name_they_bind() -> None:
         7: "C.m",
         8: "C.m",
     }
+
+
+# Planted copies the finders were not written against (a reviewer's and a
+# second, held-out set), each naming its guard, the module it stands in and
+# what the guard must do with it: ``copy`` (find it), ``clean`` (find
+# nothing: code near the concept that is not a copy), ``missed: why`` (a
+# form it does not see yet) or ``flagged: why`` (a false positive it still
+# reports). A guard that starts seeing a missed form, or stops flagging a
+# clean one, fails here until the header says so.
+_GUARD_COPIES = Path(__file__).parents[1] / "fixtures" / "guard_copies"
+_HEADER = re.compile(
+    r"# guard: (?P<guard>G\d+)\n# as: (?P<path>\S+)\n"
+    r"# expect: (?P<expect>copy|clean|missed|flagged)(?:: .+)?\n"
+)
+_BY_ID = {_id(guard): guard for guard in GUARDS}
+
+
+def _planted() -> list[object]:
+    params = []
+    for file in sorted(_GUARD_COPIES.glob("*.py")):
+        text = file.read_text(encoding="utf-8")
+        header = _HEADER.match(text)
+        assert header, f"{file.name}: no guard/as/expect header"
+        params.append(
+            pytest.param(*header.group("guard", "path", "expect"), text, id=file.stem)
+        )
+    return params
+
+
+@pytest.mark.parametrize(("guard_id", "path", "expect", "text"), _planted())
+def test_each_planted_copy_meets_its_guard(
+    guard_id: str, path: str, expect: str, text: str
+) -> None:
+    guard = _BY_ID[guard_id]
+    assert (PACKAGE / path).is_file() and guard.scans(path), (guard.name, path)
+    found = [str(hit) for hit in guard.hits_in(path, text)]
+    if expect in ("copy", "flagged"):
+        assert found, f"{guard.name} misses it"
+    else:
+        assert not found, f"{guard.name} reports {found}"

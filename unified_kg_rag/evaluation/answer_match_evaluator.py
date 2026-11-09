@@ -84,7 +84,7 @@ import hashlib
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from functools import partial
 from typing import Any
@@ -161,6 +161,19 @@ ANSWER_ITEMS_KEY = "answer_items"
 ANSWER_CANDIDATES_KEY = "answer_candidates"
 DECLINE_IS_CORRECT_KEY = "decline_is_correct"
 ANSWER_TYPES = frozenset({"number", "set"})
+# Dataset metadata: the other forms a gold answer may take (one string or a
+# list of them), each matched as the answer is.
+ANSWER_ALIASES_KEY = "answer_aliases"
+
+
+def answer_aliases(metadata: Mapping[str, Any]) -> list[str]:
+    """A dataset row's answer aliases (``metadata.answer_aliases``, a string
+    or a list), as a list of its strings."""
+    aliases = metadata.get(ANSWER_ALIASES_KEY) or []
+    if isinstance(aliases, str):
+        aliases = [aliases]
+    return [a for a in aliases if isinstance(a, str)]
+
 
 __all__ = [
     "AnswerMatchEvaluator",
@@ -470,10 +483,7 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
 
     @staticmethod
     def _references(ground_truth: str, metadata: dict[str, Any]) -> list[str]:
-        aliases = metadata.get("answer_aliases") or []
-        if isinstance(aliases, str):
-            aliases = [aliases]
-        candidates = [ground_truth, *(a for a in aliases if isinstance(a, str))]
+        candidates = [ground_truth, *answer_aliases(metadata)]
         return [c for c in candidates if c and normalize_answer(c)]
 
     def evaluate_single(

@@ -276,7 +276,7 @@ function RunView({ refName }: { refName: string }) {
     return { strategy: s.strategy, repeat, stats: s.abstention_statistics as Record<string, number | null> | null };
   });
   const pairwise = shown ? comparison?.pairwise_vs_baseline?.[shown] : undefined;
-  const lengths = (pairwise as { length?: { buckets?: Record<string, { pairs: number; criteria: Record<string, { candidate_win_rate: number | null }> }> } } | undefined)?.length?.buckets;
+  const lengths = pairwise?.length?.buckets;
 
   return (
     <div className="stack" style={{ marginTop: 24 }}>

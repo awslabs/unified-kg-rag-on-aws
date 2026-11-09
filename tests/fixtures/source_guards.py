@@ -22,8 +22,12 @@ module- or class-level assignment binds (``path::_TABLE``,
 ``path::Class.FIELD``), else ``path::<module>``; not by line, so editing a
 file does not move its entries. Names a module imports are resolved
 (``import json as j`` makes ``j.loads`` a ``json.loads`` call, ``from os
-import replace`` makes ``replace`` ``os.replace``), so an alias hides no
-copy.
+import replace`` makes ``replace`` ``os.replace``, and a relative import is
+resolved against the module's package), so an alias hides no copy.
+
+``tests/fixtures/guard_copies`` holds planted copies the finders were not
+written against, each naming the guard it must trip (or must not):
+``test_single_owner_guards`` measures every guard on them.
 """
 
 from __future__ import annotations
@@ -38,8 +42,32 @@ from pathlib import Path
 
 PACKAGE = Path(__file__).resolve().parents[2] / "unified_kg_rag"
 
+
+@dataclass(frozen=True, eq=False)
+class Source:
+    """A parsed module: its tree, its text and the dotted package its
+    relative imports resolve against (``unified_kg_rag.evaluation``)."""
+
+    tree: ast.Module
+    text: str
+    package: str
+
+    @classmethod
+    def of(cls, text: str, path: str = "probe.py") -> Source:
+        """``text`` parsed as the module at ``path`` (relative to the
+        package)."""
+        return cls(ast.parse(text), text, package_of(path))
+
+
+def package_of(path: str) -> str:
+    """The dotted package of the module at ``path`` (relative to the
+    package): ``evaluation/report.py`` and ``evaluation/__init__.py`` are
+    both in ``unified_kg_rag.evaluation``."""
+    return ".".join((PACKAGE.name, *Path(path).parts[:-1]))
+
+
 # (line, snippet) of each match in one module.
-Finder = Callable[[ast.Module, str], Iterator[tuple[int, str]]]
+Finder = Callable[[Source], Iterator[tuple[int, str]]]
 
 # An allowlist entry: how many matches its place holds, and why.
 Allowed = tuple[int, str]
@@ -83,22 +111,29 @@ class SourceGuard:
 
     @functools.cached_property
     def _hits(self) -> tuple[Hit, ...]:
-        found = []
+        found: list[Hit] = []
         for path in _modules((*self.within, *self.owners)):
             relative = path.relative_to(PACKAGE).as_posix()
-            text, tree, scopes = _parsed(path)
-            for line, snippet in self.find(tree, text):
-                found.append(Hit(relative, line, scopes.get(line, "<module>"), snippet))
+            source, scopes = _parsed(path)
+            found += _hits_of(self.find, relative, source, scopes)
         return tuple(found)
 
-    def _owned(self, hit: Hit) -> bool:
-        return any(
-            hit.path == owner or hit.path.startswith(owner.rstrip("/") + "/")
-            for owner in self.owners
-        )
+    def hits_in(self, path: str, text: str) -> list[Hit]:
+        """What ``find`` matches in ``text`` read as the module at ``path``
+        (a planted copy)."""
+        source = Source.of(text, path)
+        return _hits_of(self.find, path, source, _scopes(source.tree))
+
+    def scans(self, path: str) -> bool:
+        """Whether a copy at ``path`` would count: the guard reads the
+        module, and no owner holds it."""
+        return not self._owned(path) and any(_under(path, p) for p in self.within)
+
+    def _owned(self, path: str) -> bool:
+        return any(_under(path, owner) for owner in self.owners)
 
     def _counts(self) -> Counter[str]:
-        return Counter(hit.key for hit in self.hits() if not self._owned(hit))
+        return Counter(hit.key for hit in self.hits() if not self._owned(hit.path))
 
     def copies(self) -> list[Hit]:
         """The matches outside the owners and the allowlist, and every match
@@ -107,7 +142,7 @@ class SourceGuard:
         return [
             hit
             for hit in self.hits()
-            if not self._owned(hit)
+            if not self._owned(hit.path)
             and counts[hit.key] > self.allowed.get(hit.key, (0, ""))[0]
         ]
 
@@ -123,13 +158,11 @@ class SourceGuard:
 
     def unmatched_owners(self) -> list[str]:
         """The owners the pattern matches nothing in."""
-        held = {hit.path for hit in self.hits() if self._owned(hit)}
+        held = {hit.path for hit in self.hits() if self._owned(hit.path)}
         return [
             owner
             for owner in self.owners
-            if not any(
-                p == owner or p.startswith(owner.rstrip("/") + "/") for p in held
-            )
+            if not any(_under(path, owner) for path in held)
         ]
 
     def missing_paths(self) -> list[str]:
@@ -142,12 +175,27 @@ class SourceGuard:
         return [p for p in paths if not (PACKAGE / p).exists()]
 
 
+def _under(path: str, prefix: str) -> bool:
+    """Whether the module ``path`` is ``prefix`` or under it (``""``: the
+    whole package)."""
+    return not prefix or path == prefix or path.startswith(prefix.rstrip("/") + "/")
+
+
+def _hits_of(
+    find: Finder, path: str, source: Source, scopes: Mapping[int, str]
+) -> list[Hit]:
+    return [
+        Hit(path, line, scopes.get(line, "<module>"), snippet)
+        for line, snippet in find(source)
+    ]
+
+
 @functools.cache
-def _parsed(path: Path) -> tuple[str, ast.Module, dict[int, str]]:
-    """A module's text, tree and line scopes, parsed once per process."""
+def _parsed(path: Path) -> tuple[Source, dict[int, str]]:
+    """A module's source and line scopes, parsed once per process."""
     text = path.read_text(encoding="utf-8")
-    tree = ast.parse(text)
-    return text, tree, _scopes(tree)
+    source = Source.of(text, path.relative_to(PACKAGE).as_posix())
+    return source, _scopes(source.tree)
 
 
 def _modules(paths: Iterable[str]) -> list[Path]:
@@ -231,13 +279,25 @@ def _docstrings(tree: ast.Module) -> frozenset[int]:
     return frozenset(ids)
 
 
+def _absolute(node: ast.ImportFrom, package: str) -> str:
+    """The module an ``ImportFrom`` names, a relative one resolved against
+    ``package`` (``from ..shared import x`` in ``unified_kg_rag.evaluation``:
+    ``unified_kg_rag.shared``)."""
+    if not node.level:
+        return node.module or ""
+    parts = package.split(".")
+    base = parts[: len(parts) - (node.level - 1)]
+    return ".".join([*base, *([node.module] if node.module else [])])
+
+
 @functools.cache
-def _imports(tree: ast.Module) -> Mapping[str, str]:
+def _imports(source: Source) -> Mapping[str, str]:
     """Each name a module's imports bind, to the dotted name it stands for
     (``j`` of ``import json as j``: ``json``; ``r`` of ``from os import
-    replace as r``: ``os.replace``; a relative module keeps its dots)."""
+    replace as r``: ``os.replace``; ``k`` of ``from .degradation import
+    KEY as k``: the absolute ``unified_kg_rag....degradation.KEY``)."""
     names: dict[str, str] = {}
-    for node in _all_nodes(tree):
+    for node in _all_nodes(source.tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.asname:
@@ -246,13 +306,32 @@ def _imports(tree: ast.Module) -> Mapping[str, str]:
                     head = alias.name.split(".", 1)[0]
                     names[head] = head
         elif isinstance(node, ast.ImportFrom):
-            module = "." * node.level + (node.module or "")
+            module = _absolute(node, source.package)
             for alias in node.names:
                 names[alias.asname or alias.name] = f"{module}.{alias.name}"
     return names
 
 
-def resolved(node: ast.AST, tree: ast.Module) -> str | None:
+@functools.cache
+def _bindings(source: Source) -> Mapping[str, tuple[ast.expr, ...]]:
+    """Each local name to the values bound to it (``meta = out.metadata``,
+    ``with x as meta``, ``(meta := x)``), wherever in the module."""
+    bound: dict[str, list[ast.expr]] = {}
+    for node in _all_nodes(source.tree):
+        pairs: list[tuple[ast.expr, ast.expr]] = []
+        if isinstance(node, ast.Assign):
+            pairs = [(target, node.value) for target in node.targets]
+        elif isinstance(node, ast.AnnAssign | ast.NamedExpr) and node.value:
+            pairs = [(node.target, node.value)]
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            pairs = [(node.optional_vars, node.context_expr)]
+        for target, value in pairs:
+            if isinstance(target, ast.Name):
+                bound.setdefault(target.id, []).append(value)
+    return {name: tuple(values) for name, values in bound.items()}
+
+
+def resolved(node: ast.AST, source: Source) -> str | None:
     """The dotted name ``node`` (a name or an attribute chain) stands for,
     its first part resolved through the module's imports."""
     parts: list[str] = []
@@ -261,18 +340,24 @@ def resolved(node: ast.AST, tree: ast.Module) -> str | None:
         node = node.value
     if not isinstance(node, ast.Name):
         return None
-    head = _imports(tree).get(node.id, node.id)
+    head = _imports(source).get(node.id, node.id)
     return ".".join([head, *reversed(parts)])
 
 
-def _names_in(node: ast.AST, tree: ast.Module) -> set[str]:
+def imported(node: ast.AST, source: Source) -> bool:
+    """Whether ``node`` is a name the module imports (a module or one of
+    its functions), not a local value."""
+    return isinstance(node, ast.Name) and node.id in _imports(source)
+
+
+def _names_in(node: ast.AST, source: Source) -> set[str]:
     """The dotted names the names and attribute chains under ``node`` stand
     for."""
     return {
         name
         for child in ast.walk(node)
         if isinstance(child, ast.Name | ast.Attribute)
-        and (name := resolved(child, tree)) is not None
+        and (name := resolved(child, source)) is not None
     }
 
 
@@ -282,9 +367,9 @@ def _names_in(node: ast.AST, tree: ast.Module) -> set[str]:
 def string_literals(*values: str) -> Finder:
     """A string constant equal to one of ``values`` (docstrings aside)."""
 
-    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
-        docstrings = _docstrings(tree)
-        for node in _all_nodes(tree):
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        docstrings = _docstrings(source.tree)
+        for node in _all_nodes(source.tree):
             if (
                 isinstance(node, ast.Constant)
                 and isinstance(node.value, str)
@@ -300,12 +385,12 @@ def references(*names: str) -> Finder:
     """A use of one of the dotted ``names`` (a module's constant: the key a
     copy reads instead of the literal), however it was imported."""
 
-    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
-        for node in _all_nodes(tree):
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        for node in _all_nodes(source.tree):
             if (
                 isinstance(node, ast.Name | ast.Attribute)
                 and isinstance(node.ctx, ast.Load)
-                and resolved(node, tree) in names
+                and resolved(node, source) in names
             ):
                 yield node.lineno, ast.unparse(node)
 
@@ -317,23 +402,40 @@ def calls(*names: str) -> Finder:
     ``os.replace``), however the module imported it."""
     wanted = set(names)
 
-    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
-        for node in _all_nodes(tree):
-            if isinstance(node, ast.Call) and resolved(node.func, tree) in wanted:
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        for node in _all_nodes(source.tree):
+            if isinstance(node, ast.Call) and resolved(node.func, source) in wanted:
                 yield node.lineno, ast.unparse(node.func)
 
     return find
 
 
-def calls_mentioning(callee: str, *names: str) -> Finder:
-    """A call of ``callee`` whose arguments use one of the dotted ``names``
-    (``Counter(... script_of(c) ...)``)."""
+def method_calls(*methods: str) -> Finder:
+    """A call of a method named one of ``methods`` on any value
+    (``Model.model_validate_json(raw)``)."""
 
-    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
-        for node in _all_nodes(tree):
-            if isinstance(node, ast.Call) and resolved(node.func, tree) == callee:
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        for node in _all_nodes(source.tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in methods
+            ):
+                yield node.lineno, ast.unparse(node.func)[:80]
+
+    return find
+
+
+def calls_mentioning(callees: Iterable[str], *names: str) -> Finder:
+    """A call of one of the dotted ``callees`` whose arguments use one of
+    the dotted ``names`` (``Counter(... script_of(c) ...)``)."""
+    wanted = set(callees)
+
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        for node in _all_nodes(source.tree):
+            if isinstance(node, ast.Call) and resolved(node.func, source) in wanted:
                 used = set().union(
-                    *(_names_in(a, tree) for a in (*node.args, *node.keywords))
+                    *(_names_in(a, source) for a in (*node.args, *node.keywords))
                 )
                 if used & set(names):
                     yield node.lineno, ast.unparse(node)[:80]
@@ -341,19 +443,52 @@ def calls_mentioning(callee: str, *names: str) -> Finder:
     return find
 
 
-def key_reads(*keys: str, of: re.Pattern[str] | None = None) -> Finder:
+# The methods and ``operator`` getters that read a key.
+_KEY_METHODS = ("get", "pop")
+_GETTERS = ("operator.itemgetter", "operator.attrgetter")
+
+
+def key_reads(
+    *keys: str, of: re.Pattern[str] | None = None, constants: Iterable[str] = ()
+) -> Finder:
     """A read of one of ``keys`` from a mapping or an object:
-    ``x.get("key"...)``, ``x["key"]`` (a load, not a store),
-    ``getattr(x, "key"...)``, or a ``.get(k)`` / ``[k]`` in a loop
-    ``for k in ("key", ...)``; with ``of``, only from an ``x`` whose source
-    ``of`` searches (``metadata``: a result's raw metadata)."""
+    ``x.get("key"...)``, ``x.pop("key"...)``, ``x["key"]`` (a load, not a
+    store), ``getattr(x, "key"...)``, ``operator.itemgetter("key")`` (or
+    ``attrgetter``), a ``case {"key": ...}`` pattern, the key through a
+    name bound to it, or a ``.get(k)`` / ``[k]`` in a loop ``for k in
+    ("key", ...)``; with ``of``, only from an
+    ``x`` whose source ``of`` searches, or that is a name bound to such a
+    value (``metadata``: a result's raw metadata, ``meta =
+    out.metadata``). ``constants`` are the dotted names of constants that
+    hold a key (``RELATIVE_PATH_KEY``): a read through one is a read of the
+    key."""
+    held = set(constants)
 
-    def literal(node: ast.AST | None) -> bool:
-        return isinstance(node, ast.Constant) and node.value in keys
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        bound = _bindings(source)
 
-    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
+        def literal(node: ast.AST | None) -> bool:
+            if isinstance(node, ast.Constant):
+                return node.value in keys
+            if isinstance(node, ast.Name) and any(
+                isinstance(v, ast.Constant) and v.value in keys
+                for v in bound.get(node.id, ())
+            ):
+                return True  # the key held in a name (``_FIELD = "key"``)
+            return node is not None and resolved(node, source) in held
+
+        def read_of(value: ast.AST | None) -> bool:
+            if of is None:
+                return True
+            if value is None:
+                return False
+            texts = [ast.unparse(value)]
+            if isinstance(value, ast.Name):
+                texts += [ast.unparse(v) for v in bound.get(value.id, ())]
+            return any(of.search(text) for text in texts)
+
         looped: set[tuple[int, str]] = set()  # (id of the loop body, its var)
-        for node in _all_nodes(tree):
+        for node in _all_nodes(source.tree):
             if (
                 isinstance(node, ast.For)
                 and isinstance(node.target, ast.Name)
@@ -362,31 +497,45 @@ def key_reads(*keys: str, of: re.Pattern[str] | None = None) -> Finder:
             ):
                 for child in (n for b in node.body for n in ast.walk(b)):
                     looped.add((id(child), node.target.id))
-        for node in _all_nodes(tree):
+        for node in _all_nodes(source.tree):
+            if isinstance(node, ast.Match):
+                for case in node.cases:
+                    for pattern in ast.walk(case.pattern):
+                        if isinstance(pattern, ast.MatchMapping) and any(
+                            literal(key) for key in pattern.keys
+                        ):
+                            if read_of(node.subject):
+                                yield pattern.lineno, ast.unparse(pattern)[:80]
+                continue
             arg: ast.AST | None = None
-            source: ast.AST | None = None
+            subject: ast.AST | None = None
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "get"
+                and node.func.attr in _KEY_METHODS
                 and node.args
             ):
-                arg, source = node.args[0], node.func.value
+                arg, subject = node.args[0], node.func.value
             elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
-                arg, source = node.slice, node.value
+                arg, subject = node.slice, node.value
             elif (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
                 and node.func.id == "getattr"
                 and len(node.args) >= 2
             ):
-                arg, source = node.args[1], node.args[0]
+                arg, subject = node.args[1], node.args[0]
+            elif (
+                isinstance(node, ast.Call)
+                and resolved(node.func, source) in _GETTERS
+                and node.args
+            ):
+                # The value it reads from is its call's argument, unseen.
+                arg = next((a for a in node.args if literal(a)), node.args[0])
             if (
                 literal(arg)
                 or (isinstance(arg, ast.Name) and (id(node), arg.id) in looped)
-            ) and (
-                of is None or (source is not None and of.search(ast.unparse(source)))
-            ):
+            ) and read_of(subject):
                 yield getattr(node, "lineno", 0), ast.unparse(node)[:80]
 
     return find
@@ -396,8 +545,8 @@ def lines_matching(pattern: re.Pattern[str]) -> Finder:
     """A source line ``pattern`` matches, outside comments (for code
     forms; what a string holds is ``string_values``')."""
 
-    def find(_: ast.Module, text: str) -> Iterator[tuple[int, str]]:
-        for number, line in enumerate(text.splitlines(), 1):
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        for number, line in enumerate(source.text.splitlines(), 1):
             if pattern.search(line.split("#", 1)[0]):
                 yield number, line.strip()[:80]
 
@@ -408,7 +557,8 @@ def text_matching(pattern: re.Pattern[str]) -> Finder:
     """A match of ``pattern`` anywhere in the source, across lines (a copy
     written over several lines), at the line it starts on."""
 
-    def find(_: ast.Module, text: str) -> Iterator[tuple[int, str]]:
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        text = source.text
         for match in pattern.finditer(text):
             line = text.count("\n", 0, match.start()) + 1
             yield line, " ".join(match.group(0).split())[:80]
@@ -416,19 +566,25 @@ def text_matching(pattern: re.Pattern[str]) -> Finder:
     return find
 
 
-def string_values(pattern: re.Pattern[str]) -> Finder:
+def string_values(
+    pattern: re.Pattern[str], accept: Callable[[re.Match[str]], bool] | None = None
+) -> Finder:
     """A string constant (docstrings aside) whose value ``pattern``
     searches: what a regex or a character table holds, escapes decoded,
-    wherever a ``#`` or a line break falls in its source."""
+    wherever a ``#`` or a line break falls in its source. With ``accept``,
+    only a match it accepts (a range whose ends it checks)."""
 
-    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
-        docstrings = _docstrings(tree)
-        for node in _all_nodes(tree):
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        docstrings = _docstrings(source.tree)
+        for node in _all_nodes(source.tree):
             if (
                 isinstance(node, ast.Constant)
                 and isinstance(node.value, str)
                 and id(node) not in docstrings
-                and pattern.search(node.value)
+                and any(
+                    accept is None or accept(match)
+                    for match in pattern.finditer(node.value)
+                )
             ):
                 yield node.lineno, repr(node.value)[:80]
 
@@ -438,35 +594,40 @@ def string_values(pattern: re.Pattern[str]) -> Finder:
 def nodes(predicate: Callable[[ast.AST], bool]) -> Finder:
     """A node ``predicate`` accepts."""
 
-    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
-        for node in _all_nodes(tree):
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        for node in _all_nodes(source.tree):
             if predicate(node):
                 yield getattr(node, "lineno", 0), ast.unparse(node)[:80]
 
     return find
 
 
-def module_nodes(predicate: Callable[[ast.AST, ast.Module], bool]) -> Finder:
+def module_nodes(predicate: Callable[[ast.AST, Source], bool]) -> Finder:
     """A node ``predicate`` accepts, given its module (to resolve names)."""
 
-    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
-        for node in _all_nodes(tree):
-            if predicate(node, tree):
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        for node in _all_nodes(source.tree):
+            if predicate(node, source):
                 yield getattr(node, "lineno", 0), ast.unparse(node)[:80]
 
     return find
 
 
 def any_of(*finders: Finder) -> Finder:
-    """What any of ``finders`` matches."""
+    """What any of ``finders`` matches, a line one of them matched counted
+    once (two finders seeing one copy find one copy)."""
 
-    def find(tree: ast.Module, text: str) -> Iterator[tuple[int, str]]:
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        seen: set[int] = set()
         for finder in finders:
-            yield from finder(tree, text)
+            found = list(finder(source))
+            yield from ((line, s) for line, s in found if line not in seen)
+            seen.update(line for line, _ in found)
 
     return find
 
 
-def matches(finder: Finder, source: str) -> list[str]:
-    """What ``finder`` matches in ``source``: the pin of a pattern."""
-    return [snippet for _, snippet in finder(ast.parse(source), source)]
+def matches(finder: Finder, source: str, path: str = "probe.py") -> list[str]:
+    """What ``finder`` matches in ``source`` read as the module at ``path``:
+    the pin of a pattern."""
+    return [snippet for _, snippet in finder(Source.of(source, path))]

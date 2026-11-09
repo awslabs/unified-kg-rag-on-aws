@@ -13,9 +13,9 @@ the new tail of one sentence, the second starting a line), two entries of a
 subsection that contradict each other ("no longer exports X" beside
 "exports X", sharing a quoted message), a line a conflict resolution
 joined unwrapped, an extra the install instructions do not name, and a
-*Fixed* or *Changed* entry (a change a 0.2.3 user compares with what they
-run) that names a config key 0.2.3 did not have: a feature no release had
-belongs in its *Added* entry.
+*Fixed*, *Changed*, *Deprecated* or *Removed* entry (a change a 0.2.3 user
+compares with what they run) that names a config key 0.2.3 did not have: a
+feature no release had belongs in its *Added* entry.
 """
 
 from __future__ import annotations
@@ -65,8 +65,10 @@ def _unreleased(text: str) -> str:
 
 
 def _subsection(section: str, title: str) -> str:
-    body = section.split(f"\n### {title}\n", 1)[1]
-    return body.split("\n### ", 1)[0]
+    """The body of ``section``'s ``### title``, empty when it has none (a
+    section just after a release cut holds few headings)."""
+    parts = section.split(f"\n### {title}\n", 1)
+    return parts[1].split("\n### ", 1)[0] if len(parts) > 1 else ""
 
 
 def _placeholders(section: str) -> list[str]:
@@ -248,7 +250,12 @@ NEW_KEYS_IN_CHANGES = {
     "search.query_extraction_cache_size": "the cache the change added",
     "search.store_timeout_seconds": "the store timeout the fix added",
 }
-_CONFIG_KEY = re.compile(r"[a-z_]+(?:\.[a-z0-9_]+)+")
+# A backticked config key, bare, set (``search.top_k=20``, ``search.top_k:
+# 20``) or a family (``custom_prompts.text_chunking_*``); a call
+# (``export_data()``) or a file is none.
+_CONFIG_KEY = re.compile(r"([a-z_]+(?:\.[a-z0-9_]+)+)\*?(?:\s*[=:][\s\S]*)?")
+_FILE_SUFFIXES = frozenset({"py", "md", "json", "jsonl", "yaml", "yml", "toml", "txt"})
+PACKAGE = REPO_ROOT / "unified_kg_rag"
 
 
 def config_keys_at(commit: str, root: Path) -> set[str]:
@@ -292,17 +299,35 @@ def config_keys_at(commit: str, root: Path) -> set[str]:
     return keys
 
 
+def _a_module(name: str) -> bool:
+    """Whether the dotted ``name`` is a module or package of the package
+    (``evaluation.gates``) or a file (``search.py``), not a key."""
+    parts = name.split(".")
+    path = PACKAGE.joinpath(*parts)
+    return (
+        parts[-1] in _FILE_SUFFIXES
+        or path.is_dir()
+        or path.with_suffix(".py").is_file()
+    )
+
+
 def _new_config_keys(section: str, known: set[str], top: set[str]) -> list[str]:
-    """``<subsection>: <key>`` of each config key (a backticked dotted name
-    under a top-level section) a Fixed or Changed entry names that is not in
-    ``known``."""
+    """``<subsection>: <key>`` of each config key a Changed, Fixed,
+    Deprecated or Removed entry names that is not in ``known``: a
+    backticked dotted name, bare or set to a value, under a top-level
+    section of ``top`` or of ``known`` (a section the release had and the
+    code since removed), that names no module or file."""
+    sections = top | {key for key in known if "." not in key}
     found = []
-    for title in ("Changed", "Fixed"):
+    for title in ("Changed", "Fixed", "Deprecated", "Removed"):
         for span in re.findall(r"`([^`]+)`", _subsection(section, title)):
-            match = _CONFIG_KEY.match(span)
-            if match and match.group(0).split(".")[0] in top:
-                if match.group(0) not in known:
-                    found.append(f"{title}: {match.group(0)}")
+            match = _CONFIG_KEY.fullmatch(span)
+            if not match:
+                continue
+            key = match.group(1)
+            if key.split(".")[0] in sections and key not in known:
+                if not _a_module(key):
+                    found.append(f"{title}: {key}")
     return found
 
 
@@ -392,13 +417,25 @@ def test_the_new_key_scan() -> None:
     section = (
         "\n### Changed\n- `search.top_k` is 10; `search.new_knob: 3` sets it, "
         "`run-eval` and `metadata.degraded` are no keys.\n"
-        "### Fixed\n- `indexing.old.thing` reads.\n### Security\n- `search.x`\n"
+        "### Fixed\n- `indexing.old.thing` reads; `search.top_k=20` and "
+        "`search.other=3` are set.\n"
+        # A module, a file and a call are no keys.
+        "- `evaluation.gates`, `search.py` and "
+        "`graph.visualization.export_data()` changed.\n"
+        # A section the release had and the code removed is still one.
+        "### Removed\n- `fixing.model_new` is gone.\n"
+        "### Security\n- `search.x`\n"
     )
-    known = {"search", "search.top_k", "indexing", "indexing.old"}
-    assert _new_config_keys(section, known, {"search", "indexing"}) == [
+    known = {"search", "search.top_k", "indexing", "indexing.old", "fixing"}
+    top = {"search", "indexing", "evaluation", "graph"}
+    assert _new_config_keys(section, known, top) == [
         "Changed: search.new_knob",
         "Fixed: indexing.old.thing",
+        "Fixed: search.other",
+        "Removed: fixing.model_new",
     ]
+    # Just after a release cut the section may hold no Changed heading.
+    assert _new_config_keys("\n### Added\n- `search.n`\n", known, top) == []
 
 
 @pytest.mark.parametrize(

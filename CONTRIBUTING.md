@@ -215,7 +215,8 @@ A concept implemented in two places drifts, so each shared one has an owner modu
 (`tests/fixtures/source_guards.py`). The [Extension guide](./docs/guides/extend.md#15-extension-guide) lists the owners.
 
 - **A failing guard names the copy and the owner to call.** Call the owner. Names a module imports are resolved, so
-  an alias (`import json as j`, `from os import replace`) is still a copy.
+  an alias (`import json as j`, `from os import replace`) or a relative import (`from .degradation import ...`) is
+  still a copy.
 - **A place that holds the pattern but is not a copy** (a store's own codec, a dataset file read with `json.loads`)
   gets an allowlist entry: `"path::scope": (count, "reason")`, the scope being the enclosing function or class, or
   the name a module- or class-level assignment binds (`path::_TABLE`). The count is how many matches the place
@@ -224,6 +225,11 @@ A concept implemented in two places drifts, so each shared one has an owner modu
 - **A new guard** names a finder that matches the owner's own form (a test fails when the owner holds no match, so a
   finder that cannot see the concept cannot guard it), every path it scans must exist, and its pattern is pinned by
   `test_each_pattern_catches_the_forms_copies_took` with each form a copy took.
+- **Planted copies measure a finder on forms it was not written against.** Each file of `tests/fixtures/guard_copies`
+  is one copy (or code near the concept that is none), headed by the guard, the module it stands in and what the
+  guard must do: `copy`, `clean`, `missed: why` or `flagged: why`. Write new forms there before widening a finder,
+  and keep a form the finder still misses as `missed`: the test fails when the finder starts to see it, so the header
+  moves to `copy`.
 
 ### Code conventions
 

@@ -43,6 +43,7 @@ from unified_kg_rag.adapters.retrievers.graph_expansion import (
     edge_source_kinds,
     vertex_clauses,
 )
+from unified_kg_rag.adapters.storage.neptune_codec import property_values
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
 from unified_kg_rag.domain.ingestion.seed_graph import SOURCE_KINDS_FIELD
 from unified_kg_rag.domain.models import Config, GraphEdge, SearchQuery
@@ -466,10 +467,7 @@ class NeptuneRetriever(GraphExpansionRetriever):
             props = row.get("props") or {}
             found.setdefault(
                 str(row.get("id")),
-                {
-                    str(k): list(v) if isinstance(v, list) else [v]
-                    for k, v in props.items()
-                },
+                {str(k): property_values(v) for k, v in props.items()},
             )
         return found
 
