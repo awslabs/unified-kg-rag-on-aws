@@ -56,6 +56,7 @@ _SPELLINGS = [
     "Acme Corp",
     "주식회사 한빛",
     "(주)한빛",
+    "한빛 주식회사",
     "株式会社トヨダ",
     "トヨダ",
 ]
@@ -125,6 +126,28 @@ _FIRING_CASES = [
         },
         "point": "mid_index_delta",
         "k": 2,
+        "follow": "same",
+    },
+    # Removing a.txt merges "주식회사 한빛" into "한빛 주식회사" and splits
+    # c.txt's statement off to "(주)한빛": the strip re-points the edge to
+    # Vendor there and folds (주)한빛's own edge to Vendor into it. Killed
+    # before the folded id is deleted, the retry no longer reached the
+    # re-pointed edge, and the duplicate stayed.
+    {
+        "before": {
+            "/corpus/a.txt": [
+                [(_D, _B, 2), ("한빛 주식회사", _D, 3)],
+                [(_D, "주식회사 한빛", 3), (_D, _B, 2)],
+            ],
+            "/corpus/c.txt": [[("주식회사 한빛", _V, 2), ("(주)한빛", _V, 2)]],
+            "/corpus/d.txt": [[("한빛 주식회사", _D, 1), (_D, _B, 2), (_B, _D, 3)]],
+        },
+        "interrupted": {
+            "/corpus/c.txt": [[("주식회사 한빛", _V, 2), ("(주)한빛", _V, 2)]],
+            "/corpus/d.txt": [[("한빛 주식회사", _D, 1), (_D, _B, 2), (_B, _D, 3)]],
+        },
+        "point": "before_retired_deletes",
+        "k": 1,
         "follow": "same",
     },
 ]
