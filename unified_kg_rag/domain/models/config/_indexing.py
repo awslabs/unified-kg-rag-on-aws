@@ -314,7 +314,9 @@ class OpenSearchIndexingConfig(BaseModel):
             "a field built with default_analyzer before the default map named "
             "its language keeps it while the map gives that language the "
             "default's analyzer (one WARNING). "
-            "Setting the key replaces the whole map."
+            "In a config file the key replaces the whole map; an environment "
+            "variable sets one entry over the defaults "
+            "(UKR__INDEXING__OPENSEARCH__LANGUAGE_ANALYZERS__KO=cjk)."
         ),
     )
     refresh_after_batch: bool = Field(
@@ -349,8 +351,9 @@ class OpenSearchIndexingConfig(BaseModel):
             "fetch by id of more ids goes in batches that fit. Raise "
             "refresh_interval "
             '(or set "-1") for faster bulk loads, then reset it for live '
-            "querying. Setting the key replaces the whole map; a left-out "
-            "shard, replica or refresh setting is 1, 0 or 1s."
+            "querying. In a config file the key replaces the whole map (a "
+            "left-out shard, replica or refresh setting is 1, 0 or 1s); an "
+            "environment variable sets one entry over the defaults."
         ),
     )
     vector_search: dict[str, Any] = Field(
