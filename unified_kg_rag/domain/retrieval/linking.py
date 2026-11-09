@@ -99,9 +99,12 @@ def exact_links(mention: str, hits: Sequence[RetrievalResult]) -> list[Retrieval
 
 
 def name_terms(name: str) -> frozenset[str]:
-    """The terms of ``name`` coverage compares (module docstring)."""
+    """The terms of ``name`` coverage compares (module docstring), its
+    Latin accents left out before its words are told apart: a lowercased
+    "İ" is an "i" and a combining dot, which would split "İzmir" ("Izmir"
+    covers it)."""
     terms: set[str] = set()
-    for word in _WORD.findall(link_key(name)):
+    for word in _WORD.findall(without_latin_accents(link_key(name))):
         if latin_legal_form(word) is not None:
             continue
         for run in _DENSE_RUN.findall(word):
@@ -110,23 +113,16 @@ def name_terms(name: str) -> frozenset[str]:
     return frozenset(terms)
 
 
-def _compared_terms(name: str) -> set[str]:
-    """The terms of ``name`` as coverage compares them: Latin accents left
-    out ("Cafe Central" is "Café Central"), not out of an exact link
-    (:func:`exact_links`)."""
-    return {without_latin_accents(t) for t in name_terms(name)}
-
-
 def covers(name: str, mention: str, similarity: float = 1.0) -> bool:
     """Whether the stored ``name`` covers every term of ``mention``: each
     is a term of ``name`` or, below a ``similarity`` of 1, as alike as that
     to one of them (``difflib`` ratio), compared without Latin accents
-    (:func:`_compared_terms`: "Cafe Central" is covered by "Café Central
+    (:func:`name_terms`: "Cafe Central" is covered by "Café Central
     Wien")."""
-    wanted = _compared_terms(mention)
+    wanted = name_terms(mention)
     if not wanted:
         return False
-    held = _compared_terms(name)
+    held = name_terms(name)
     return all(
         term in held
         or (
@@ -147,7 +143,7 @@ def _lookalike(name: str, mention: str) -> bool:
     "New York City" for "NYC") nor a part of the name ("Beatles"), the
     terms compared as :func:`covers` compares them ("Nguyen Van An" is
     "Nguyễn Văn An")."""
-    held, wanted = _compared_terms(name), _compared_terms(mention)
+    held, wanted = name_terms(name), name_terms(mention)
     if not held & wanted:
         return False
     return not (wanted <= held or held <= wanted)

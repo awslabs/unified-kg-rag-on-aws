@@ -416,7 +416,7 @@ def fold_letter_variants(text: str) -> str:
 # The Latin letters with a stroke, a ligature or a dotless form, which no
 # Unicode decomposition takes their mark from, by the letters a text without
 # accents writes for them ("Đặng" is "Dang", "Łódź" "Lodz", "Yıldız"
-# "Yildiz", "Søren" "Soren").
+# "Yildiz", "Søren" "Soren", "Guðmundsson" "Gudmundsson").
 _LATIN_BASE_LETTERS = str.maketrans(
     {
         "đ": "d",
@@ -432,6 +432,8 @@ _LATIN_BASE_LETTERS = str.maketrans(
         "Œ": "OE",
         "þ": "th",
         "Þ": "TH",
+        "ð": "d",
+        "Ð": "D",
         "ħ": "h",
         "Ħ": "H",
     }
