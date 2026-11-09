@@ -67,7 +67,8 @@ PROFILE = LanguageProfile(
         "万": 10**4,
         "億": 10**8,
     },
-    year_suffixes=("年", "以降", "以来", "以前", "から", "まで"),
+    year_suffixes=("年", "以降", "以来", "以前"),
+    range_particles=("から", "まで"),
     counters=(
         "社",
         "つ",

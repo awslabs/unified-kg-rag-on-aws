@@ -16,6 +16,7 @@ from unified_kg_rag.domain.languages import (
     profile,
     text_language,
 )
+from unified_kg_rag.domain.languages.detection import text_evidence
 from unified_kg_rag.shared.utils.scripts import (
     ScriptCounts,
     count_letters,
@@ -327,8 +328,9 @@ def test_a_latin_question_quoting_a_name_in_another_script(
         # name, so the question keeps no English word.
         ("Bank of America和the Walt Disney Company是什么关系？", ZH),
         ("the Acme 계약 조건은?", KO),
-        # Three runs or more are the question's own words.
-        ("What is 계약 조건 기간?", KO),
+        # More runs than function words (and the opening "What") are the
+        # question's own words.
+        ("What is 계약 조건 기간 요약?", KO),
         ("Acme의 CEO는 누구인가요?", KO),
         ("Python的for循环怎么写？", ZH),
     ],
@@ -338,6 +340,48 @@ def test_a_quoted_latin_article_and_a_question_of_runs(
     question: str, language: LanguageCode, fallback: LanguageCode
 ) -> None:
     assert text_language(question, fallback) is language
+
+
+@pytest.mark.parametrize(
+    ("question", "language"),
+    [
+        # Regression (rv12 query 1): an acronym that is a Latin function
+        # word read the question as that word's language ("ai" is
+        # Vietnamese, "os" Portuguese, "es" Spanish, "per" Italian).
+        ("AI 모델 추천", KO),
+        ("AIとは", JA),
+        ("AI是什么", ZH),
+        ("OS 설치", KO),
+        ("ES 인덱스 설정", KO),
+        ("ES6 문법 정리", KO),
+        ("PER와 PBR 비교", KO),
+        ("Что такое AI?", LanguageCode.RU),
+        # A part of a compound is no function word.
+        ("to-do 앱 추천", KO),
+        ("how-to 가이드", KO),
+        # One function word against two runs: the runs' script.
+        ("with 문 사용법", KO),
+    ],
+)
+def test_an_acronym_or_a_compound_is_no_function_word(
+    question: str, language: LanguageCode
+) -> None:
+    for fallback in (language, LanguageCode.EN):
+        assert text_language(question, fallback) is language
+
+
+def test_the_evidence_leaves_out_codes_compounds_and_names() -> None:
+    evidence = text_evidence(
+        [
+            "Who sells the AI kit, iPhone, a to-do app and ES6 books to Bank of America 은행?"
+        ]
+    )
+    # "the AI" and "Bank of America" are names, "to-do" and "ES6" compounds.
+    assert evidence.words == ("who", "sells", "kit", "a", "app", "and", "books", "to")
+    assert evidence.openings == {"latin": 1}
+    # A text opening on an acronym or a lowercase word opens on no sentence.
+    assert text_evidence(["AI 모델"]).openings == {}
+    assert text_evidence(["with 문"]).openings == {}
 
 
 def test_italian_tiene_is_no_spanish_word() -> None:

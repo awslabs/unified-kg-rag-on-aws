@@ -701,14 +701,17 @@ list, top level or under `metadata`, which wins), taking the maximum.
   number, so `Three vendors ... Two of them ...` is 3 and does not match
   the gold 2. Numbers that count nothing are skipped: list enumerators
   (`1. Acme`), citation markers (`[2]`), years (`as of 2024`, `2024년`,
-  `2024年`), ordinals (`두 번째`, `三つ目`, `第三`), a negated number
+  `2024年`, and before a range particle, `2019부터`, `从2019到现在`, unless
+  the range ends on a four-digit count: `1500から2000社` is 1500), ordinals (`두 번째`, `三つ目`, `第三`), a negated number
   (`not one but three`, `一つではなく`, `不是一家`, `한 곳이 아니라`), the
   whole of a partitive (`Of the three vendors, only one`, `三家中只有一家`,
   `세 곳 중 한 곳`, `三社のうち一社` are 1), and
   `no` answering a yes/no question or before `single`, `more` and the like;
   `not ... any`, `not one`, `not a single`, `한 곳도`, `一社も`, `一家也`,
   `没有` and `いません`/`ありません` (not `問題ありません` or `ではありません`)
-  are 0. English scale words count (`three hundred and twelve` is 312),
+  are 0, and so is a language's phrase of absence (`no hay`) in a sentence
+  that states no count and holds no comparative (`No hay duda de que son
+  tres` is 3, `No hay más de tres` 3). English scale words count (`three hundred and twelve` is 312),
   `两`/`兩` is 2 and a space may stand before a Han counter (`三 社`). `set`
   scores 1.0 when every one of `metadata.answer_items` appears in the
   answer, in any order or layout (a numbered list too); with

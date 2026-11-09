@@ -66,30 +66,37 @@ def named_choice(text: str, names: Collection[str]) -> str | None:
     """The one of ``names`` (casefolded words) an answer that should be a
     name alone names, or ``None``, after any leading reasoning block
     (:func:`strip_leading_reasoning`), case, markdown and punctuation
-    aside: the last line that is the name alone ("local", "**Local**",
-    "`local`", "Sure, here is my choice:\n\nlocal", "local\n\nReason:
-    ..."), else the last that is a label of at most :data:`_LABEL_WORDS`
-    words, a colon and the name ("Strategy: local.", ``{"strategy":
-    "local"}``). Prose is ``None``, not guessed from, though a name is one
-    of its words ("This is a simple lookup", "Not global.", "None of these;
-    local is best")."""
-    lines = strip_leading_reasoning(text).splitlines()
-    for line in reversed(lines):
-        words: list[str] = [w.casefold() for w in _NAME_WORD.findall(line)]
-        if len(words) == 1 and words[0] in names:
-            return words[0]
-    for line in reversed(lines):
-        spans = list(_NAME_WORD.finditer(line))
-        if not 1 < len(spans) <= _LABEL_WORDS + 1:
-            continue
-        name: str = spans[-1].group().casefold()
-        label = line[spans[-2].end() : spans[-1].start()]
-        if (
-            name in names
-            and ":" in label
-            and not {w.group().casefold() for w in spans[:-1]} & set(names)
-        ):
-            return name
+    aside: the name of every line that is a name alone ("local",
+    "**Local**", "`local`", "Sure, here is my choice:\n\nlocal",
+    "local\n\nReason: ...") or a label of at most :data:`_LABEL_WORDS` words, a
+    colon and the name ("Strategy: local.", ``{"strategy": "local"}``),
+    when they all name the same one. Lines that name others ("Fallback:
+    global", an alternative listed after the answer) leave the answer to
+    the JSON reader, and prose is ``None``, not guessed from, though a name
+    is one of its words ("This is a simple lookup", "Not global.", "None
+    of these; local is best")."""
+    named = {
+        name
+        for line in strip_leading_reasoning(text).splitlines()
+        if (name := _line_name(line, names)) is not None
+    }
+    return named.pop() if len(named) == 1 else None
+
+
+def _line_name(line: str, names: Collection[str]) -> str | None:
+    """The one of ``names`` ``line`` is (the name alone) or labels (at most
+    :data:`_LABEL_WORDS` words that name none, a colon, the name)."""
+    spans = list(_NAME_WORD.finditer(line))
+    if not spans or len(spans) > _LABEL_WORDS + 1:
+        return None
+    name: str = spans[-1].group().casefold()
+    if name not in names:
+        return None
+    if len(spans) == 1:
+        return name
+    label = line[spans[-2].end() : spans[-1].start()]
+    if ":" in label and not {w.group().casefold() for w in spans[:-1]} & set(names):
+        return name
     return None
 
 

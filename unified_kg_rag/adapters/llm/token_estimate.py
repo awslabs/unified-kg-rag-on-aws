@@ -16,7 +16,8 @@ import re
 from collections.abc import Iterable
 from functools import cache
 
-from unified_kg_rag.domain.languages import LanguageCode, profile, text_language
+from unified_kg_rag.domain.languages import LanguageCode, profile
+from unified_kg_rag.domain.languages.detection import language_in_script, text_evidence
 from unified_kg_rag.shared.utils.scripts import (
     DENSE_SCRIPT_TOKEN_RANGES,
     LATIN_CHARS_PER_TOKEN,
@@ -137,9 +138,10 @@ def budget_token_count(
     counting API: the script estimate (:func:`estimate_token_count`) times
     ``multiplier``, and for a model of ``tokenizer`` at least what the
     characters per token measured for the text's language
-    (``LanguageProfile.chars_per_token``, the language told from the text's
-    first characters) count it as, :data:`BUDGET_MARGIN` over. That rate
-    counts the letters of the language's script; other letters and digits
+    (``LanguageProfile.chars_per_token``: the language of the script most
+    of the tokens of the text's first characters are in) count it as,
+    :data:`BUDGET_MARGIN` over. That rate counts the letters of the
+    language's script; other letters and digits
     (the Latin names, ids and numbers of a Korean text) count at English's,
     and spaces and punctuation at each side's share of the letters. The
     script rates are a BPE vocabulary's, which counts German or Vietnamese
@@ -151,7 +153,12 @@ def budget_token_count(
         estimate = math.ceil(estimate * multiplier)
     if tokenizer is None or not text:
         return estimate
-    language = profile(text_language(text[:_LANGUAGE_SAMPLE_CHARS], LanguageCode.EN))
+    evidence = text_evidence([text[:_LANGUAGE_SAMPLE_CHARS]])
+    script = evidence.counts.dominant()
+    language = profile(
+        (language_in_script(evidence, script, LanguageCode.EN) if script else None)
+        or LanguageCode.EN
+    )
     rate = language.chars_per_token.get(tokenizer)
     if rate is None:
         return estimate

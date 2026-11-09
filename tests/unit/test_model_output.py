@@ -223,7 +223,14 @@ async def test_a_cut_off_answer_is_not_repaired() -> None:
         ("Sure, here is my answer:\n\nlocal", "local"),
         ("Sure! Here is a simple choice:\nlocal", "local"),
         ("This is a simple factual lookup, so:\n\nlocal", "local"),
-        ("global\n\nOn reflection:\n**mix**", "mix"),
+        # Regression (rv12 query 3): lines naming two strategies (an
+        # answer and its alternatives, a revision, a fallback) leave the
+        # answer to the JSON reader, whatever their order.
+        ("global\n\nOn reflection:\n**mix**", None),
+        ("local\n\nAlternatives considered:\n- global\n- mix", None),
+        ("Strategy: local\nFallback: global", None),
+        ('{\n  "strategy": "local",\n  "fallback": "global"\n}', None),
+        ("local\n- global: no\n- mix: no", "local"),
         ("Selected strategy: `mix`", "mix"),
         # Regression (rv11 query M2): prose whose words hold one name was
         # routed to it ("simple", "local", "global" are English words).

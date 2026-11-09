@@ -845,7 +845,8 @@ From a `main` checkout (formats and keys no release had):
   `metadata.answer_type: number` compares the answer's leading number (digits, English words with their scale
   words, Korean native, Sino-Korean and Han numerals with their multipliers (十二, 一万二千, 만 이천, 一千零一; 1만 2천,
   3万, 1.5万 and 3,000万 for digits), 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사, 대, 社, 台 or 円; list
-  enumerators, citation markers, years (2019년, 2019부터, 2019以降), ordinals such as 두 번째, 三つ目 and 第三, negated
+  enumerators, citation markers, years (2019년, 2019以降; 2019부터 and 从2019到 unless the range ends on a four-digit
+  count, as 1500から2000社 does), ordinals such as 두 번째, 三つ目 and 第三, negated
   numbers such as "not one but three", 一つではなく and 不是一家, and the whole of a partitive, so "only one of the
   three", 三家中只有一家, 세 곳 중
   한 곳 and 三社のうち一社 are 1, count nothing; "not ... any", "not one", "not a single", 한 곳도, 一社も, 没有 and
@@ -1192,7 +1193,8 @@ From a `main` checkout (formats and keys no release had):
   question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
   elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its written numbers
   ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") and its words and phrases for none ("aucun",
-  "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any") in place of
+  "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any"; none in a sentence
+  that states a count or holds a comparative: "No hay duda de que son tres", "No hay más de tres") in place of
   English's (Spanish and Portuguese "no" is no 0), its words of time, partitives and ordinals telling a number that
   counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième") (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
@@ -1411,12 +1413,13 @@ From a `main` checkout (formats and keys no release had):
   still fails the query. A global map
   output that is not map JSON goes to the fixer, not to a second map call over its batch. A response cut inside
   its last object is not repaired.
-- The query translation, the follow-up rewrite and the community relevance rating answer JSON:
-  `{"translation": ...}`, `{"question": ...}`, and MS GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`;
-  the rating is divided by 5, so `relevance_threshold: 0.2` is still a rating of 1 or more). The router answers the
-  strategy name, read from a line that is the name alone or a short label and the name (a reasoning block, a
-  preamble line, markdown and case aside), and reads any other answer as `{"strategy": ...}` (a JSON answer wrote 2.9
-  times the output tokens, measured; its `max_tokens` is 1,024, a local model that may reason keeping its cap). A
+- The query translation, the follow-up rewrite and the community relevance rating answer JSON: `{"translation": ...}`,
+  `{"question": ...}`, and MS GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`; the rating is divided by
+  5, so `relevance_threshold: 0.2` is still a rating of 1 or more). The router answers the strategy name, read from
+  the lines that are the name alone or a short label and the name when they all name one (a reasoning block, a
+  preamble line, markdown and case aside; an answer listing alternatives or a fallback after it goes to the JSON
+  reader, one-line and multi-line JSON alike), and reads any other answer as `{"strategy": ...}` (a JSON answer wrote
+  2.9 times the output tokens, measured; its `max_tokens` is 1,024, a local model that may reason keeping its cap). A
   model that cannot translate or rewrite answers `[CANNOT_TRANSLATE]` or `[CANNOT_REWRITE]`, which replace the refusal
   phrase lists of four languages; the router no longer routes prose to a strategy one of its words names ("not global
   ... local", "a simple lookup"), and a rating's reason in any language no longer reads as the rating ("Auf einer
@@ -1437,16 +1440,16 @@ From a `main` checkout (formats and keys no release had):
   alone before), after the edges between two retrieved entities (#619).
 - The fixed reply to a query retrieval found nothing for (and to a decline that left no text) is written in the
   question's language, one sentence per supported language told by its script and function words (English, the 0.2.3
-  reply, or the index language when they do not tell); the script is the one most of the question's letters are in,
-  weighed by what a letter carries ("What does 계약 mean?" gets the English reply, a Japanese question quoting a Korean
-  word the Japanese one, an Arabic or Chinese one quoting Latin names the Arabic or Chinese one, the function words
-  inside a quoted name not counted: "Bank of America和…" is Chinese, and no function word opening one: "Why did Orion
-  Labs drop 한빛전자?" is English; one or two runs of another script beside a Latin function word are a quoted name however
-  much its letters carry: "Who is the CEO of 한빛전자?" is English); among Latin-script languages, Spanish and Portuguese
-  with their "how many" words, an elision only one of them writes ("dell'", "qu'"; not "d'", French and Italian) counts
-  with the function words, and a tie the index language is not in goes to the language whose own articles occur ("Qual è
-  il prezzo?" is Italian, not English); evaluation counts a decline by `metadata.abstained` alone, no longer by the
-  English text (#619).
+  reply, or the index language when they do not tell), by one scoring decision (`domain/languages/detection.py`): a
+  Latin-script language claims the question with its function words, one more when the question opens on a capitalised
+  Latin word, and another script with its runs; the larger claim wins, a tie the Latin words. Acronyms and codes
+  ("AI", "OS", "ES6", "iPhone"), parts of compounds ("to-do", "AIとは") and the words of a quoted name ("Bank of
+  America和…") are no function words, so "AI 모델 추천", "AIとは" and "OS 설치" are Korean, Japanese and Korean, "Who is the
+  CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; among Latin-script languages, Spanish and
+  Portuguese with their "how many" words, an elision only one of them writes ("dell'", "qu'"; not "d'", French and
+  Italian) counts with the function words, and a tie the index language is not in goes to the language whose own
+  articles occur ("Qual è il prezzo?" is Italian, not English); evaluation counts a decline by `metadata.abstained`
+  alone, no longer by the English text (#619).
 - `run-eval` writes each invocation into a run subdirectory of its own of the outputs directory, `run_<timestamp>_<id>`
   (the manifest's `run_id`; `evaluation.run_subdirectories: false` for the flat layout), and `--from-results` /
   `--baseline-results` read a directory with its run subdirectories. They no longer pool unrelated runs silently: the
@@ -1646,17 +1649,17 @@ Queries and retrieval.
 - A reranker that returns documents without a relevance score gives them `1 / rank`, not `1 - rank / 100`, which
   went negative past the 100th document (#619).
 - Local search looks each query entity up on its own and seeds graph expansion with the entity of its name, else its
-  top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal
-  hybrid weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530). A top
-  hit sharing one word with the name and covering neither way (an absent "Zorblax Supplies" for "Acme Supplies")
-  seeds nothing; semantic and alias hits ("NYC" for "New York City") seed as before. Local seeds compare names folded
-  at query time (stored keys unchanged): a middle dot between kana, Han or Hangul letters ("オリオン・ラボ" for
-  "オリオンラボ"), Arabic short vowels, tatweel, alef with or without hamza, alef maksura, Russian "ё" for "е" and a
-  leading "شركة" no longer keep a name from linking, nor Latin accents a name from covering or seeding ("Cafe" for
-  "Café", "Nguyen Van An" for "Nguyễn Văn An", and the letters with a stroke, a ligature or no dot: "Dang" for "Đặng",
-  "Lodz" for "Łódź", "Yildiz" for "Yıldız"); an entity written as asked links alone ("شركة النور", not also
-  "النور"). `graph_aware`'s retrieved coverage compares names the same way, and entity grounding folds those letters
-  as it folds accents.
+  top hit when that scores at least `search.local_search.seed_score_ratio` (0.6) of the best hit, read at equal hybrid
+  weights; one lookup of the joined names seeded a wrong neighbour beside every right seed (#517, #530). A top hit
+  sharing one word with the name and covering neither way (an absent "Zorblax Supplies" for "Acme Supplies") seeds
+  nothing; semantic and alias hits ("NYC" for "New York City") seed as before. Local seeds compare names folded at
+  query time (stored keys unchanged): a middle dot between kana, Han or Hangul letters ("オリオン・ラボ" for "オリオンラボ"),
+  Arabic short vowels, tatweel, alef with or without hamza, alef maksura, Russian "ё" for "е" and a leading "شركة" no
+  longer keep a name from linking, nor Latin accents a name from covering or seeding ("Cafe" for "Café", "Nguyen Van
+  An" for "Nguyễn Văn An", and the letters with a stroke, a ligature or no dot: "Dang" for "Đặng", "Lodz" for "Łódź",
+  "Yildiz" for "Yıldız", "Gudmundsson" for "Guðmundsson", "Izmir" for "İzmir"); an entity written as asked links alone
+  ("شركة النور", not also "النور"). `graph_aware`'s retrieved coverage compares names the same way, and entity
+  grounding folds those letters as it folds accents.
 - Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
   structured query result's lineage): the units most expanded entities cite, then the best-scored citing entity's,
   then first seen; an entity citing a unit twice counts once, and a lineage a graph store returns as its JSON text

@@ -87,7 +87,8 @@ PROFILE = LanguageProfile(
         "億": 10**8,
     },
     # And a sum of money ("三千万元").
-    year_suffixes=("年", "以来", "以后", "以後", "之后", "之後", "起", "到", "至"),
+    year_suffixes=("年", "以来", "以后", "以後", "之后", "之後"),
+    range_particles=("起", "到", "至"),
     counters=("家", "个", "個", "件", "人", "名", "台", "元"),
     polarity_words={
         "是": "yes",
