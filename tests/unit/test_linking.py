@@ -237,3 +237,22 @@ def test_coverage_leaves_latin_accents_out() -> None:
     assert [h.source for h in linked] == ["e1"]
     # An exact link keeps them: "Cafe" is not written as "Café".
     assert link_key("Café") != link_key("Cafe")
+
+
+@pytest.mark.parametrize(
+    ("mention", "name"),
+    [
+        ("Nguyen Van An", "Nguyễn Văn An"),
+        ("Cong ty Thanh Cong", "Công ty Thành Công"),
+        ("Cafe de Flore", "Café de Flore"),
+        ("Muller Logistik", "Müller Logistik"),
+    ],
+)
+def test_the_rank_policy_leaves_latin_accents_out(mention: str, name: str) -> None:
+    # Regression (rv10 query M5): coverage left the accents out, the
+    # lookalike test did not, so local search rejected its right top hit.
+    hits = [_hit(name, 0.9, "e1"), _hit("Other", 0.4, "e2")]
+    assert [h.source for h in choose_links(mention, hits, policy="rank")] == ["e1"]
+    # A one-word lookalike is still none ("Zorblax Flore").
+    lookalike = f"Zorblax {mention.split()[-1]}"
+    assert choose_links(lookalike, hits, policy="rank") == []

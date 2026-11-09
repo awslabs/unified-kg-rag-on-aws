@@ -123,16 +123,23 @@ def _without_latin_accents(term: str) -> str:
     return unicodedata.normalize("NFC", "".join(letters))
 
 
+def _compared_terms(name: str) -> set[str]:
+    """The terms of ``name`` as coverage compares them: Latin accents left
+    out ("Cafe Central" is "Café Central"), not out of an exact link
+    (:func:`exact_links`)."""
+    return {_without_latin_accents(t) for t in name_terms(name)}
+
+
 def covers(name: str, mention: str, similarity: float = 1.0) -> bool:
     """Whether the stored ``name`` covers every term of ``mention``: each
     is a term of ``name`` or, below a ``similarity`` of 1, as alike as that
-    to one of them (``difflib`` ratio). Latin accents are left out of the
-    comparison ("Cafe Central" is covered by "Café Central Wien"), not
-    out of an exact link (:func:`exact_links`)."""
-    wanted = {_without_latin_accents(t) for t in name_terms(mention)}
+    to one of them (``difflib`` ratio), compared without Latin accents
+    (:func:`_compared_terms`: "Cafe Central" is covered by "Café Central
+    Wien")."""
+    wanted = _compared_terms(mention)
     if not wanted:
         return False
-    held = {_without_latin_accents(t) for t in name_terms(name)}
+    held = _compared_terms(name)
     return all(
         term in held
         or (
@@ -150,8 +157,10 @@ def _lookalike(name: str, mention: str) -> bool:
     """Whether ``name`` shares a term with ``mention`` but neither covers
     the other: a lexical hit on one shared word ("Acme Supplies" for
     "Zorblax Supplies"), not a semantic or alias hit (no shared term:
-    "New York City" for "NYC") nor a part of the name ("Beatles")."""
-    held, wanted = name_terms(name), name_terms(mention)
+    "New York City" for "NYC") nor a part of the name ("Beatles"), the
+    terms compared as :func:`covers` compares them ("Nguyen Van An" is
+    "Nguyễn Văn An")."""
+    held, wanted = _compared_terms(name), _compared_terms(mention)
     if not held & wanted:
         return False
     return not (wanted <= held or held <= wanted)
