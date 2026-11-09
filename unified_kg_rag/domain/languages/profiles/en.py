@@ -59,6 +59,7 @@ PROFILE = LanguageProfile(
         "billion": 10**9,
     },
     zero_words=("none", "no"),
+    number_conjunctions=("and",),
     open_date_words=("tbd", "ongoing", "present"),
     # strptime reads the English month names itself.
     legal_forms={

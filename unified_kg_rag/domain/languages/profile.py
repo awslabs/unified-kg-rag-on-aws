@@ -62,21 +62,34 @@ class LanguageProfile:
     # (an article among them is then dropped), and a sign of the language.
     elided_prefixes: frozenset[str] = frozenset()
     # Its number words with their values, which an answer states a count by
-    # ("drei"): from zero to twelve, or with ``number_tens`` the words below
-    # twenty a tens word composes with ("twenty-one"); a form of one that is
-    # also the indefinite article ("ein", "un") is left out, as English's
-    # "a" is.
+    # ("drei"): the words below twenty a tens word composes with
+    # ("twenty-one"), and the ones it writes as one word below a hundred
+    # ("veinticuatro", "ventotto"); a form of one that is also the
+    # indefinite article ("ein", "un") is left out, as English's "a" is.
     number_words: Mapping[str, int] = field(default_factory=dict)
-    # Its tens words ("twenty", Korean "열") and scale words ("hundred"),
-    # by value, and the words that state no item at all ("none").
+    # Its tens words ("twenty", Korean "열") with the hundreds it writes as
+    # one word ("doscientos", "двести"), and its scale words ("hundred",
+    # "Millionen", "тысячи"), by value; the words that state no item at all
+    # ("none").
     number_tens: Mapping[str, int] = field(default_factory=dict)
     number_scales: Mapping[str, int] = field(default_factory=dict)
     zero_words: tuple[str, ...] = ()
+    # The words that join the parts of a written number ("and" in "three
+    # hundred and twelve", "y" in "treinta y dos", "und" in
+    # "vierundzwanzig"), and the forms of one left out of ``number_words``
+    # as articles, which count inside a written number only ("vingt et
+    # un", "einhundert", "un millón").
+    number_conjunctions: tuple[str, ...] = ()
+    compound_ones: tuple[str, ...] = ()
     # Numerals that state a count only before one of its ``counters``
-    # (Korean "세 곳", Han "三社"), by value, and the Han multipliers
-    # ("十" in "十二").
+    # (Korean "세 곳", Han "三社"), by value, and the multipliers ("十" in
+    # "十二", "万" in "一万二千", Korean "만"; after digits too: "1만 2천").
     counter_numerals: Mapping[str, int] = field(default_factory=dict)
     numeral_multipliers: Mapping[str, int] = field(default_factory=dict)
+    # Digits that state a number only beside one of its
+    # ``numeral_multipliers`` (Sino-Korean "이" in "십이", "삼만"): alone
+    # they are other words ("이" is "this").
+    multiplier_numerals: Mapping[str, int] = field(default_factory=dict)
     counters: tuple[str, ...] = ()
     # Yes/no answer words, each with its polarity ("yes" or "no").
     polarity_words: Mapping[str, str] = field(default_factory=dict)

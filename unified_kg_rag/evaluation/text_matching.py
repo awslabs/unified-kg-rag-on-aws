@@ -9,7 +9,12 @@ import string
 import unicodedata
 from collections.abc import Callable, Iterator
 
-from unified_kg_rag.domain.languages import LanguageCode, profile, profiles
+from unified_kg_rag.domain.languages import (
+    LanguageCode,
+    LanguageProfile,
+    profile,
+    profiles,
+)
 from unified_kg_rag.shared.utils.scripts import (
     DENSE_SCRIPT_LETTERS,
     drop_dense_script_spaces,
@@ -564,32 +569,124 @@ _HAN_DIGITS = {
     for language in _HAN_LANGUAGES
     for ch, value in language.counter_numerals.items()
 }
-_HAN_MULTIPLIERS = {
+# The multipliers of Han ("十", "万") and Sino-Korean ("만"), and the
+# Sino-Korean digits, which state a number only beside one ("십이").
+_MULTIPLIERS = {
     ch: value
-    for language in _HAN_LANGUAGES
+    for language in (*_HAN_LANGUAGES, _KO)
     for ch, value in language.numeral_multipliers.items()
 }
+_SINO_KOREAN_DIGITS = dict(_KO.multiplier_numerals)
 _HAN_COUNTERS = tuple(
     dict.fromkeys(c for language in _HAN_LANGUAGES for c in language.counters)
 )
 
-# Number words of the other languages with English-like counts, from zero
-# to twelve (``LanguageProfile.number_words`` without tens words to compose
-# with: English's are read by its own grammar above), read in an answer in
-# that language.
-_LANGUAGE_NUMBER_WORDS: dict[str, dict[str, int]] = {
-    language.code.value: dict(language.number_words)
+
+def _magnitude(value: int) -> int:
+    """The place a number word fills: ones, teens, tens or hundreds."""
+    return 0 if value < 10 else 1 if value < 20 else 2 if value < 100 else 3
+
+
+def _compose(parts: list[tuple[int, bool]]) -> int | None:
+    """The value of a written number's words, each ``(value, scale)``:
+    "twenty-one" 21, "three hundred and twelve" 312, "deux mille trois
+    cents" 2300, "vierundzwanzig" (4, 20) 24, "dos mil millones" 2e9.
+    ``None`` when the words are two numbers, not one ("deux trois", "zwei
+    und drei": a place filled twice)."""
+    total = current = 0
+    largest = 0
+    filled: set[int] = set()
+    for value, scale in parts:
+        if not scale:
+            place = _magnitude(value)
+            if place in filled:
+                return None
+            filled.add(place)
+            current += value
+        elif value == 100:
+            if 3 in filled:
+                return None
+            current, filled = (current or 1) * 100, {3}
+        else:
+            # A larger scale after a smaller one multiplies all before it
+            # ("mil millones"); a smaller one adds ("two million three
+            # thousand").
+            if largest and value > largest:
+                total = (total + current) * value
+            else:
+                total += (current or 1) * value
+            largest = max(largest, value)
+            current, filled = 0, set()
+    return total + current
+
+
+class _NumberGrammar:
+    """How one language writes a number in words
+    (``LanguageProfile.number_words``, ``number_tens``, ``number_scales``,
+    ``number_conjunctions``, ``compound_ones``): the words, as separate words
+    or one ("vingt-quatre", "treinta y dos", "vierundzwanzig",
+    "duecentotrentadue"), read by :func:`_compose`."""
+
+    def __init__(self, language: LanguageProfile) -> None:
+        self.words = {**language.number_words, **language.number_tens}
+        self.scales = dict(language.number_scales)
+        self.ones = frozenset(language.compound_ones)
+        word = (
+            "(?:"
+            + "|".join(
+                sorted(
+                    map(re.escape, {*self.words, *self.scales, *self.ones}),
+                    key=len,
+                    reverse=True,
+                )
+            )
+            + ")"
+        )
+        joint = "(?:" + "|".join(map(re.escape, language.number_conjunctions)) + ")"
+        # Words joined by a hyphen or spaces (on one line), a conjunction
+        # between them, or nothing: a compound written as one word.
+        space = r"(?:-|[^\S\n])+"
+        if language.number_conjunctions:
+            join = rf"(?:{space}(?:{joint}{space})?|{joint})?"
+        else:
+            join = rf"(?:{space})?"
+        self.pattern = re.compile(
+            rf"(?<!\w){word}(?:{join}{word})*(?!\w)", re.IGNORECASE
+        )
+        self._token = re.compile(word, re.IGNORECASE)
+        self._join = re.compile(join, re.IGNORECASE)
+
+    def value(self, match: re.Match[str]) -> int | None:
+        """The number ``match`` writes, ``None`` when it is none: an
+        article alone ("un fournisseur"), or two numbers side by side."""
+        text, parts, ones = match.group(), [], 0
+        position = 0
+        while position < len(text):
+            token = self._token.match(text, position)
+            if token is None:
+                return None
+            word = token.group().lower()
+            if word in self.scales:
+                parts.append((self.scales[word], True))
+            elif word in self.words:
+                parts.append((self.words[word], False))
+            else:
+                parts.append((1, False))
+                ones += 1
+            joined = self._join.match(text, token.end())
+            position = joined.end() if joined else token.end()
+        if ones == len(parts):
+            return None
+        return _compose(parts)
+
+
+# The other languages' written numbers (English's are read by its own
+# grammar above, Korean's and the Han ones before a counter), read in an
+# answer in that language.
+_LANGUAGE_NUMBERS: dict[str, _NumberGrammar] = {
+    language.code.value: _NumberGrammar(language)
     for language in profiles()
-    if language.number_words and not language.number_tens
-}
-_LANGUAGE_NUMBER: dict[str, re.Pattern[str]] = {
-    language: re.compile(
-        r"(?<!\w)("
-        + "|".join(sorted(map(re.escape, words), key=len, reverse=True))
-        + r")(?!\w)",
-        re.IGNORECASE,
-    )
-    for language, words in _LANGUAGE_NUMBER_WORDS.items()
+    if language.number_words and language.code is not LanguageCode.EN
 }
 
 _DIGITS = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?")
@@ -632,30 +729,58 @@ _CJK_NONE = re.compile(
     r"|(?:(?<!で)(?<!問題)[はがも]|^|(?<=[\s、。]))(?:いません|ありません|おりません|ございません)",
     re.MULTILINE,
 )
-_HAN_NUMBER = re.compile(
-    "["
-    + "".join([*_HAN_DIGITS, *_HAN_MULTIPLIERS])
-    + "]+(?=\\s?(?:"
-    + "|".join(_HAN_COUNTERS)
-    + "))"
+# Han, Sino-Korean and ASCII digits with the multipliers between them
+# ("十二", "一万二千", "1만 2천", "만 이천", "三"); ``_cjk_value`` reads them.
+_CJK_PART = (
+    "(?:\\d+|[" + "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, *_MULTIPLIERS]) + "])"
+)
+_CJK_NUMBER = re.compile(
+    rf"(?<!{_HANGUL})(?<![\d.,]){_CJK_PART}(?:[^\S\n]?{_CJK_PART})*"
+)
+_CJK_COUNTER_AFTER = re.compile(
+    r"[^\S\n]?(?:"
+    + "|".join(sorted({*_KOREAN_COUNTERS, *_HAN_COUNTERS}, key=len, reverse=True))
+    + ")"
 )
 
 
-def _han_value(numeral: str) -> int | None:
-    """``三`` 3, ``十二`` 12, ``二十三`` 23, ``百五`` 105; ``None`` when the
-    digits do not read as one number."""
-    if all(ch in _HAN_DIGITS for ch in numeral):
-        return int("".join(str(_HAN_DIGITS[ch]) for ch in numeral))
-    total, digit = 0, None
-    for ch in numeral:
-        if ch in _HAN_DIGITS:
-            if digit is not None:
-                return None
-            digit = _HAN_DIGITS[ch]
-        else:
-            total += (1 if digit is None else digit) * _HAN_MULTIPLIERS[ch]
+def _cjk_value(match: re.Match[str]) -> int | None:
+    """The number of a ``_CJK_NUMBER`` match: Han digits before a counter
+    ("三社", "二〇二四年" is no count), or digits with multipliers ("十二台",
+    "一万二千", "1만 2천", "십이 대") before a counter, or after ASCII digits
+    alone ("3万", "1만 2천"); ``None`` for anything else (bare ASCII digits
+    are ``_DIGITS``')."""
+    parts = re.findall(r"\d+|\S", match.group())
+    multiplied = any(part in _MULTIPLIERS for part in parts)
+    counted = bool(_CJK_COUNTER_AFTER.match(match.string, match.end()))
+    if not multiplied:
+        if not counted or not all(part in _HAN_DIGITS for part in parts):
+            return None
+        return int("".join(str(_HAN_DIGITS[part]) for part in parts))
+    if not counted and not parts[0].isdigit():
+        return None
+    total = section = 0
+    digit: int | None = None
+    for part in parts:
+        if part in _MULTIPLIERS:
+            multiplier = _MULTIPLIERS[part]
+            if multiplier >= 10**4:
+                # 万, 億: they multiply the whole section before them
+                # ("十二万" is 120,000).
+                total += ((section + (digit or 0)) or 1) * multiplier
+                section = 0
+            else:
+                section += (1 if digit is None else digit) * multiplier
             digit = None
-    return total + (digit or 0)
+        elif digit is not None:
+            return None
+        else:
+            digit = (
+                int(part)
+                if part.isdigit()
+                else _HAN_DIGITS.get(part, _SINO_KOREAN_DIGITS.get(part, 0))
+            )
+    return total + section + (digit or 0)
 
 
 def _stands_alone(text: str, start: int, end: int) -> bool:
@@ -796,24 +921,27 @@ def _not_a_count(body: str, start: int, end: int) -> bool:
     return bool(_NEGATED_BEFORE.search(before) or _NEGATED_AFTER.match(after))
 
 
-def _english_count(words: str) -> int:
-    """The value of number words: "twenty-one" 21, "three hundred and
-    twelve" 312, "two thousand five hundred" 2500."""
-    total = current = 0
-    for word in re.split(r"[-\s]+", words.lower()):
-        if word == "and":
-            continue
-        scale = _ENGLISH_SCALES.get(word)
-        if scale == 100:
-            current = (current or 1) * 100
-        elif scale is not None:
-            total += (current or 1) * scale
-            current = 0
-        elif word in _ENGLISH_TENS:
-            current += _ENGLISH_TENS[word]
-        else:
-            current += _ENGLISH_UNITS.index(word)
-    return total + current
+def _english_count(words: str) -> int | None:
+    """The value of English number words: "twenty-one" 21, "three hundred
+    and twelve" 312, "two thousand five hundred" 2500 (the regex reads
+    only well-formed ones)."""
+    parts = [
+        (
+            (_ENGLISH_SCALES[word], True)
+            if word in _ENGLISH_SCALES
+            else (
+                (
+                    _ENGLISH_TENS[word]
+                    if word in _ENGLISH_TENS
+                    else _ENGLISH_UNITS.index(word)
+                ),
+                False,
+            )
+        )
+        for word in re.split(r"[-\s]+", words.lower())
+        if word != "and"
+    ]
+    return _compose(parts)
 
 
 def _english_value(match: re.Match[str]) -> int | None:
@@ -849,8 +977,9 @@ def leading_number(text: str, language: str | None = None) -> float | None:
     number first ("Three vendors ... Two of them ..." is 3), so a numeric
     gold is compared with this number, not with every number the answer
     happens to name. With ``language`` German, Spanish, French, Italian,
-    Portuguese or Russian, that language's number words from zero to twelve
-    count too ("drei", "trois", "três", "три")."""
+    Portuguese or Russian, that language's written numbers count too
+    ("drei", "vingt-quatre", "treinta y dos", "Zwei Millionen", "три
+    тысячи"); two side by side ("deux trois") are none."""
     lines = [
         line
         for line in unicodedata.normalize("NFKC", text).splitlines()
@@ -877,6 +1006,8 @@ def leading_number(text: str, language: str | None = None) -> float | None:
         lambda m: (
             float(m.group().replace(",", ""))
             if _stands_alone(body, m.start(), m.end())
+            # A multiplier after them scales them ("3万", "1만"): _cjk_value.
+            and body[m.end() : m.end() + 1] not in _MULTIPLIERS
             else None
         ),
     )
@@ -890,10 +1021,9 @@ def leading_number(text: str, language: str | None = None) -> float | None:
             else None
         ),
     )
-    first(_HAN_NUMBER.finditer(body), lambda m: _han_value(m.group()))
-    if (words := _LANGUAGE_NUMBER.get(language or "")) is not None:
-        table = _LANGUAGE_NUMBER_WORDS[language or ""]
-        first(words.finditer(body), lambda m: table[m.group().lower()])
+    first(_CJK_NUMBER.finditer(body), _cjk_value)
+    if (grammar := _LANGUAGE_NUMBERS.get(language or "")) is not None:
+        first(grammar.pattern.finditer(body), grammar.value)
     for zero in (
         _KOREAN_NONE.search(body),
         _CJK_NONE.search(body),

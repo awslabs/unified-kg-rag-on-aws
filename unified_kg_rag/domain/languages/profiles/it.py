@@ -37,7 +37,52 @@ PROFILE = LanguageProfile(
         "dieci": 10,
         "undici": 11,
         "dodici": 12,
+        "tredici": 13,
+        "quattordici": 14,
+        "quindici": 15,
+        "sedici": 16,
+        "diciassette": 17,
+        "diciotto": 18,
+        "diciannove": 19,
+        # A tens word drops its vowel before uno and otto ("ventotto"), and
+        # tre takes an accent closing one ("ventitré").
+        **{
+            f"{stem}{ones}": tens + value
+            for stem, tens in (
+                ("vent", 20),
+                ("trent", 30),
+                ("quarant", 40),
+                ("cinquant", 50),
+                ("sessant", 60),
+                ("settant", 70),
+                ("ottant", 80),
+                ("novant", 90),
+            )
+            for ones, value in (("uno", 1), ("otto", 8))
+        },
+        "tré": 3,
     },
+    # Written as one word ("duecentotrentadue").
+    number_tens={
+        "venti": 20,
+        "trenta": 30,
+        "quaranta": 40,
+        "cinquanta": 50,
+        "sessanta": 60,
+        "settanta": 70,
+        "ottanta": 80,
+        "novanta": 90,
+    },
+    number_scales={
+        "cento": 100,
+        "mille": 1000,
+        "mila": 1000,
+        "milione": 10**6,
+        "milioni": 10**6,
+        "miliardo": 10**9,
+        "miliardi": 10**9,
+    },
+    compound_ones=("un", "uno", "una"),
     month_words={
         "January": ("gennaio", "gen"),
         "February": ("febbraio",),

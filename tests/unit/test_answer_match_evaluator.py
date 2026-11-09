@@ -17,6 +17,7 @@ from unified_kg_rag.evaluation import (
     AnswerMatchEvaluator,
     EvaluationManager,
     answer_match_evaluator,
+    text_matching,
 )
 from unified_kg_rag.evaluation.answer_match_evaluator import (
     answer_contains,
@@ -380,6 +381,25 @@ class TestLanguageNormalization:
             # The article forms of one are no count: the digits count.
             ("fr", "Un fournisseur sur 4.", 4),
             ("de", "Eine Fabrik mit 7 Hallen.", 7),
+            # Regression (rv9 query M1): a compound read as its first or
+            # last word ("Vingt-quatre" 4, "Zwei Millionen" 2).
+            ("fr", "Vingt-quatre unités.", 24),
+            ("fr", "Vingt et un fournisseurs.", 21),
+            ("fr", "Quatre-vingt-dix-sept fournisseurs.", 97),
+            ("fr", "Trois cents unités.", 300),
+            ("pt", "Vinte e quatro unidades.", 24),
+            ("pt", "Duzentos e trinta e dois.", 232),
+            ("es", "Treinta y dos proveedores.", 32),
+            ("es", "Veinticuatro proveedores.", 24),
+            ("es", "Dos mil millones.", 2_000_000_000),
+            ("de", "Zwei Millionen Euro.", 2_000_000),
+            ("de", "Vierundzwanzig Hallen.", 24),
+            ("de", "Einundzwanzig Hallen.", 21),
+            ("it", "Duecentotrentadue unità.", 232),
+            ("it", "Ventotto fornitori.", 28),
+            ("ru", "Двадцать одна единица.", 21),
+            ("ru", "Три тысячи единиц.", 3000),
+            ("ru", "Двести тридцать два.", 232),
         ],
     )
     def test_number_words_of_the_language_count(
@@ -389,6 +409,15 @@ class TestLanguageNormalization:
         # Not read as English.
         if not any(ch.isdigit() for ch in answer):
             assert not answer_match_evaluator.number_matches(answer, str(number))
+
+    @pytest.mark.parametrize(
+        ("language", "answer"),
+        [("fr", "deux trois"), ("de", "zwei und drei"), ("es", "un proveedor")],
+    )
+    def test_two_numbers_side_by_side_are_no_count(
+        self, language: str, answer: str
+    ) -> None:
+        assert text_matching.leading_number(answer, language) is None
 
     def test_the_evaluator_normalizes_in_the_questions_language(
         self, config: Config

@@ -60,7 +60,13 @@ PROFILE = LanguageProfile(
         "八": 8,
         "九": 9,
     },
-    numeral_multipliers={"十": 10, "百": 100, "千": 1000},
+    numeral_multipliers={
+        "十": 10,
+        "百": 100,
+        "千": 1000,
+        "万": 10**4,
+        "億": 10**8,
+    },
     counters=(
         "社",
         "つ",
@@ -72,6 +78,7 @@ PROFILE = LanguageProfile(
         "か所",
         "カ所",
         "ヶ所",
+        "台",
     ),
     polarity_words={"はい": "yes", "いいえ": "no"},
     quote_pairs=(("「", "」"), ("『", "』")),

@@ -279,6 +279,41 @@ class TestLeadingNumber:
     @pytest.mark.parametrize(
         ("text", "number"),
         [
+            # Regression (rv9 query L13): 台 and 대 were no counters, 万 and
+            # 만 no multipliers.
+            ("十二台を不合格とした。", 12),
+            ("十二台不合格。", 12),
+            ("两千台", 2000),
+            ("오리온 랩스는 열두 대를 불합격 처리했다.", 12),
+            ("一万二千台", 12000),
+            ("十二万台", 120_000),
+            ("一億二千万人", 120_000_000),
+            ("만 이천 대", 12000),
+            ("십이 대가 불합격이었다.", 12),
+            # Digits a multiplier scales.
+            ("1만 2천 대", 12000),
+            ("3万社", 30000),
+            ("1천만 명", 10**7),
+        ],
+    )
+    def test_cjk_counters_and_multipliers(self, text: str, number: float) -> None:
+        assert leading_number(text) == number
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # A Sino-Korean digit alone is another word ("이 곳": this place),
+            # and Han digits without a counter are no count (a year).
+            "이 곳은 넓다",
+            "二〇二四年",
+        ],
+    )
+    def test_cjk_digits_that_state_no_count(self, text: str) -> None:
+        assert leading_number(text) is None
+
+    @pytest.mark.parametrize(
+        ("text", "number"),
+        [
             # List enumerators and citation markers count nothing.
             ("1. Acme\n2. Beta\n3. Gamma\nIn total, three vendors.", 3),
             ("(1) Acme\n(2) Beta\nTwo vendors.", 2),
