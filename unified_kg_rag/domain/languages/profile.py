@@ -39,8 +39,9 @@ class LanguageProfile:
     analyzer: str
     # The fixed reply of a query declined without a model call.
     decline: str
-    # Frequent function words no other language of its script shares, which
-    # tell a short query's language apart from another of that script.
+    # Frequent function words, which tell a short query's language apart
+    # from another of its script; one two of them write ("como" in Spanish
+    # and Portuguese) counts for both, so the index language breaks the tie.
     function_words: frozenset[str] = frozenset()
     # Words a model writes for a claim status, by the status they state
     # (``claim_resolver.CLAIM_STATUSES``).

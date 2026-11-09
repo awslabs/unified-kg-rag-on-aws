@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The regression corpus of language detection, number reading, router
-answers and name folding: every case the query reviews rv9 to rv13 probed
+answers and name folding: every case the query reviews rv9 to rv14 probed
 or reported, with the answer they stated as right.
 
 A case the code answers otherwise is a documented trade-off: it carries
@@ -100,10 +100,24 @@ QUOTING = (
     "expectation is debatable)."
 )
 SHARED_WORD = (
-    'Italian and Portuguese both write "quanto"; the function word lists of '
-    "one script are disjoint (a shared word would tie them) and Italian's "
-    'holds it, while the Portuguese words left are an article ("o") and '
-    "content words (rv13 query 4)."
+    'Italian and Portuguese both write "quanto", but only Italian\'s list '
+    "holds it: listed for both it would tie them, and an Italian question "
+    'with no other word ("Quanto vale l\'azienda?" on an English index) would '
+    "read as the index language; the Portuguese words left are an article "
+    '("o") and content words (rv13 query 4, rv14 query 4).'
+)
+SHARED_TIE = (
+    'Its one function word ("como") is Spanish and Portuguese alike: tied, '
+    "with no article of either, they leave the index language (rv14 query 4)."
+)
+NO_LISTED_WORD = (
+    'No word of the text is in its language\'s list ("Comparar" is a verb, '
+    '"tại sao" and "bị" are not in the Vietnamese one): the index language '
+    "reads (rv14 query)."
+)
+URL_LETTERS = (
+    "A URL's letters count in the script totals, so a Cyrillic domain "
+    "outweighs one Korean word (pre-existing; rv14 query low)."
 )
 ARTICLES_ONLY = (
     'The one function word is Portuguese ("tem"); the Italian words are '
@@ -962,6 +976,150 @@ DETECTION: tuple[Case, ...] = (
     Case("app.cho 확장자", "ko", "ko", "rv13 query 3"),
     Case("node.js 설치", "ko", "ko", "rv13 query 3"),
     Case("Vue.js와 React 비교", "ko", "ko", "rv13 query 3"),
+    # rv14 query (detection): shouted text, acronyms in another script, URLs and
+    # joiners, Spanish and Portuguese words.
+    Case("WO IST DAS LAGER DER FIRMA?", "de", "en", "rv14 query"),
+    Case("WARUM WURDE DIE LIEFERUNG STORNIERT?", "de", "en", "rv14 query"),
+    Case("¿CUÁNTOS PROVEEDORES TIENE LA EMPRESA?", "es", "en", "rv14 query"),
+    Case("¿DÓNDE ESTÁ LA OFICINA PRINCIPAL?", "es", "en", "rv14 query"),
+    Case("POURQUOI LA LIVRAISON EST-ELLE EN RETARD ?", "fr", "en", "rv14 query"),
+    Case("OÙ SE TROUVE LE SIÈGE SOCIAL ?", "fr", "en", "rv14 query"),
+    Case("DOVE SI TROVA IL MAGAZZINO PRINCIPALE?", "it", "en", "rv14 query"),
+    Case("PERCHÉ LA CONSEGNA È IN RITARDO?", "it", "en", "rv14 query"),
+    Case("ONDE FICA O ARMAZÉM PRINCIPAL?", "pt", "en", "rv14 query"),
+    Case("QUANTOS FORNECEDORES TEM A EMPRESA?", "pt", "en", "rv14 query"),
+    Case(
+        "TẠI SAO LÔ HÀNG BỊ CHẬM?",
+        "vi",
+        "en",
+        "rv14 query",
+        Tradeoff("en", NO_LISTED_WORD),
+    ),
+    Case("CÔNG TY CÓ BAO NHIÊU NHÀ CUNG CẤP?", "vi", "en", "rv14 query"),
+    Case("ГДЕ НАХОДИТСЯ ГЛАВНЫЙ СКЛАД?", "ru", "en", "rv14 query"),
+    Case("ПОЧЕМУ ЗАДЕРЖАЛИ ПОСТАВКУ?", "ru", "en", "rv14 query"),
+    Case("WHAT ARE THE PAYMENT TERMS OF THE CONTRACT?", "en", "en", "rv14 query"),
+    Case("ΠΟΙΟΣ ΥΠΕΓΡΑΨΕ ΤΗ ΣΥΜΒΑΣΗ;", "en", "en", "rv14 query"),
+    Case("WHO SIGNED THE SUPPLY CONTRACT?", "en", "ko", "rv14 query"),
+    Case("WHERE IS THE MAIN WAREHOUSE?", "en", "ko", "rv14 query"),
+    Case("HOW MANY VENDORS DO WE HAVE?", "en", "de", "rv14 query"),
+    Case("QUIÉN ES EL DIRECTOR DE LA EMPRESA?", "es", "de", "rv14 query"),
+    Case("¿QUIÉN FIRMÓ?", "es", "en", "rv14 query", Tradeoff("en", SHOUTED)),
+    Case("WER UNTERSCHRIEB?", "de", "en", "rv14 query", Tradeoff("en", SHOUTED)),
+    Case("POURQUOI PAS?", "fr", "en", "rv14 query", Tradeoff("en", SHOUTED)),
+    Case("PERCHÉ NO?", "it", "en", "rv14 query", Tradeoff("en", SHOUTED)),
+    Case("ONDE FICA?", "pt", "en", "rv14 query", Tradeoff("en", SHOUTED)),
+    Case("ГДЕ СКЛАД?", "ru", "en", "rv14 query"),
+    Case("WHO SIGNED?", "en", "de", "rv14 query", Tradeoff("de", SHOUTED)),
+    Case("WHERE IS?", "en", "de", "rv14 query", Tradeoff("de", SHOUTED)),
+    Case("QUI A SIGNÉ LE CONTRAT AVEC 株式会社アクメ ?", "fr", "en", "rv14 query"),
+    Case("¿QUIÉN FIRMÓ EL CONTRATO CON 한빛전자?", "es", "en", "rv14 query"),
+    Case("WER IST DER CHEF VON 東京物流?", "de", "en", "rv14 query"),
+    Case("WHO IS THE CEO OF 株式会社アクメ?", "en", "en", "rv14 query"),
+    Case("AS IS TO BE 프로세스 분석", "ko", "ko", "rv14 query"),
+    Case("AS IS / TO BE 비교", "ko", "ko", "rv14 query"),
+    Case("DE EN FR 번역 품질 비교", "ko", "ko", "rv14 query"),
+    Case("EN JA ES 다국어 지원", "ko", "ko", "rv14 query"),
+    Case("PT BR ES 현지화 일정", "ko", "ko", "rv14 query"),
+    Case("US EU UK 규제 비교", "ko", "ko", "rv14 query"),
+    Case("IT OT IS 보안 점검", "ko", "ko", "rv14 query"),
+    Case("AWS EKS IAM 설정 방법", "ko", "ko", "rv14 query"),
+    Case("CEO CFO CTO 역할", "ko", "ko", "rv14 query"),
+    Case("ESG CSR IT 보고서", "ko", "ko", "rv14 query"),
+    Case("NO GO 판단 기준 IT", "ko", "ko", "rv14 query"),
+    Case("DO AND DONT 가이드", "ko", "ko", "rv14 query"),
+    Case("AS IS TO BE 分析の進め方", "ja", "ja", "rv14 query"),
+    Case("DE EN FR の翻訳品質", "ja", "ja", "rv14 query"),
+    Case("IT OT IS の違い", "ja", "ja", "rv14 query"),
+    Case("AWS EKS IAM の設定", "ja", "ja", "rv14 query"),
+    Case("AS IS TO BE 流程分析", "zh", "zh", "rv14 query"),
+    Case("DE EN FR 翻译质量", "zh", "zh", "rv14 query"),
+    Case("IT OT IS 的区别", "zh", "zh", "rv14 query"),
+    Case("AS IS TO BE анализ", "ru", "ru", "rv14 query"),
+    Case("DE EN FR перевод", "ru", "ru", "rv14 query"),
+    Case(
+        "Comparar AS IS TO BE", "es", "en", "rv14 query", Tradeoff("en", NO_LISTED_WORD)
+    ),
+    Case("Was bedeutet AS IS TO BE?", "de", "en", "rv14 query"),
+    Case("https://ejemplo.es/contacto 요약", "ko", "en", "rv14 query"),
+    Case("https://example.de/die/der/das ページを要約", "ja", "en", "rv14 query"),
+    Case("https://example.it/il-prezzo 摘要", "zh", "en", "rv14 query"),
+    Case("info@empresa.com.br 연락처", "ko", "en", "rv14 query"),
+    Case("contact@societe.fr に連絡", "ja", "en", "rv14 query"),
+    Case("ventas@empresa.es 的联系人", "zh", "en", "rv14 query"),
+    Case("C:\\Users\\the\\docs 경로", "ko", "en", "rv14 query"),
+    Case("~/work/the/notes.md ファイル", "ja", "en", "rv14 query"),
+    Case("/var/log/de/app.log 日志", "zh", "en", "rv14 query"),
+    Case("os.path.join 사용법", "ko", "en", "rv14 query"),
+    Case("std::vector の使い方", "ja", "en", "rv14 query"),
+    Case("is_valid 함수 설명", "ko", "en", "rv14 query"),
+    Case("the_value 变量", "zh", "en", "rv14 query"),
+    Case("obj.is_empty() 메서드", "ko", "en", "rv14 query"),
+    Case("com.example.de.App 클래스", "ko", "en", "rv14 query"),
+    Case("git@github.com:org/the-repo.git 클론", "ko", "en", "rv14 query"),
+    Case("s3://bucket/de/la/ruta 접근 오류", "ko", "en", "rv14 query"),
+    Case(
+        "https://пример.рф 요약", "ko", "en", "rv14 query", Tradeoff("ru", URL_LETTERS)
+    ),
+    Case("сайт пример.рф не открывается", "ru", "en", "rv14 query"),
+    Case("https://example.com/docs のページは何ですか", "ja", "en", "rv14 query"),
+    Case("Как открыть https://example.com/en/the-docs ?", "ru", "en", "rv14 query"),
+    Case("Who owns example.es?", "en", "en", "rv14 query"),
+    Case("¿Quién es el dueño de example.com?", "es", "en", "rv14 query"),
+    Case("Qui gère contact@exemple.fr ?", "fr", "en", "rv14 query"),
+    Case("Wer betreibt die Seite example.com?", "de", "en", "rv14 query"),
+    Case("Chi gestisce il sito example.it?", "it", "en", "rv14 query"),
+    Case("Quem administra o site example.com.br?", "pt", "en", "rv14 query"),
+    Case("Ai quản lý trang example.vn?", "vi", "en", "rv14 query"),
+    Case("Кто владеет доменом example.com?", "ru", "en", "rv14 query"),
+    Case("What does os.path.join do?", "en", "en", "rv14 query"),
+    Case("¿Qué hace la función os.path.join?", "es", "en", "rv14 query"),
+    Case("Quem e/ou o que foi afetado?", "pt", "en", "rv14 query"),
+    Case("¿Quién y/o qué falló?", "es", "en", "rv14 query"),
+    Case("Wer und/oder was ist betroffen?", "de", "en", "rv14 query"),
+    Case("Qui et/ou quoi est concerné ?", "fr", "en", "rv14 query"),
+    Case("Chi e/o cosa è coinvolto?", "it", "en", "rv14 query"),
+    Case("Frage:Wer hat den Vertrag unterschrieben?", "de", "en", "rv14 query"),
+    Case("Pregunta:¿quién firmó?", "es", "en", "rv14 query"),
+    Case("Question:qui a signé le contrat?", "fr", "en", "rv14 query"),
+    Case("Domanda:chi ha firmato il contratto?", "it", "en", "rv14 query"),
+    Case("Pergunta:quem assinou o contrato?", "pt", "en", "rv14 query"),
+    Case("Wer hat unterschrieben.Wo ist das Lager?", "de", "en", "rv14 query"),
+    Case("¿Quién firmó?¿Dónde está?", "es", "en", "rv14 query"),
+    Case("Quem assinou/aprovou o contrato?", "pt", "en", "rv14 query"),
+    Case("Wer hat den Vertrag unterschrieben/genehmigt?", "de", "en", "rv14 query"),
+    Case("Wer ist der Chef?Wo ist das Lager?", "de", "en", "rv14 query"),
+    Case("Who signed and/or approved?", "en", "de", "rv14 query"),
+    Case("Who is the owner/the operator?", "en", "de", "rv14 query"),
+    Case("Q:who signed the deal?", "en", "de", "rv14 query"),
+    Case("Como funciona el sistema?", "es", "en", "rv14 query"),
+    Case("Como puedo cancelar el pedido?", "es", "en", "rv14 query"),
+    Case("Como configurar la cuenta", "es", "en", "rv14 query"),
+    Case("Tan grande como Acme", "es", "en", "rv14 query", Tradeoff("en", SHARED_TIE)),
+    Case("Como se calcula el precio?", "es", "en", "rv14 query"),
+    Case("¿Como se firma un contrato?", "es", "en", "rv14 query"),
+    Case("Como esta el proyecto", "es", "en", "rv14 query"),
+    Case("Como funciona o sistema?", "pt", "en", "rv14 query"),
+    Case("Como posso cancelar o pedido?", "pt", "en", "rv14 query"),
+    Case("Como se calcula o preço?", "pt", "en", "rv14 query"),
+    Case("Como funciona?", "es", "es", "rv14 query"),
+    Case("Como se hace?", "es", "es", "rv14 query"),
+    Case("Quanto tempo ci vuole per la consegna?", "it", "en", "rv14 query"),
+    Case("Quanto vale l'azienda?", "it", "en", "rv14 query"),
+    Case("Quanto costa?", "it", "it", "rv14 query"),
+    Case("Quanto dura?", "it", "it", "rv14 query"),
+    Case(
+        "Quanto custa a licença?", "pt", "en", "rv14 query", Tradeoff("it", SHARED_WORD)
+    ),
+    Case(
+        "Quanto tempo leva a entrega?",
+        "pt",
+        "en",
+        "rv14 query",
+        Tradeoff("it", SHARED_WORD),
+    ),
+    Case("Quanto custa?", "pt", "pt", "rv14 query", Tradeoff("it", SHARED_WORD)),
+    Case("Quanto vale?", "pt", "pt", "rv14 query", Tradeoff("it", SHARED_WORD)),
 )
 
 NUMBERS: tuple[Case, ...] = (

@@ -104,14 +104,13 @@ def test_another_bcp47_code_is_accepted_with_defaults_and_one_warning(
         TranslationConfig(source_language="Portuguese (Brazil)")
 
 
-def test_the_function_word_lists_of_one_script_are_disjoint() -> None:
-    by_script: dict[str, list[frozenset[str]]] = {}
-    for language in PROFILES.values():
-        by_script.setdefault(language.script, []).append(language.function_words)
-    for lists in by_script.values():
-        for i, words in enumerate(lists):
-            for other in lists[i + 1 :]:
-                assert not words & other
+def test_a_function_word_two_languages_write_ties_them_to_the_index() -> None:
+    # "como" is Spanish and Portuguese: it counts for both, and the index
+    # language among them decides.
+    assert text_language("Como funciona?", "es") is LanguageCode.ES
+    assert text_language("Como funciona?", "pt") is LanguageCode.PT
+    assert text_language("Como funciona el sistema?", "en") is LanguageCode.ES
+    assert text_language("Como funciona o sistema?", "en") is LanguageCode.PT
 
 
 def test_no_word_states_two_meanings_across_languages() -> None:
