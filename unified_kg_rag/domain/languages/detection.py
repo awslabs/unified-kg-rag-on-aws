@@ -12,9 +12,13 @@ of evidence (:func:`text_evidence`):
 - its words that may be a language's function words: none that is an
   acronym or a code ("AI", "OS", "iPhone": a capital after its first
   letter), a part of a compound (joined by a hyphen, a digit or another
-  script's letter: "to-do", "us-east-1", "ES6", "AIとは") or,
-  in a text of two scripts, a word of a name it quotes (a run of
-  capitalised words: "Bank of America", "The Walt Disney Company");
+  script's letter: "to-do", "us-east-1", "ES6", "AIとは"), of a URL, an
+  email, a path or a dotted name ("example.com", "admin@example.es",
+  "/usr/bin/the", "com.example.Main") or, in a text of two scripts, a
+  word of a name it quotes (a run of capitalised words: "Bank of
+  America", "The Walt Disney Company"); a shouted text (three or more
+  words, every one in capitals: "QUI A SIGNÉ LE CONTRAT ?") is read
+  lowercased, its words neither acronyms nor names;
 - the texts that open on a capitalised word (a sentence starts there), by
   the script of that word.
 
@@ -113,6 +117,13 @@ _ELIDED = frozenset().union(*(p.elided_prefixes for ps in _WORDED.values() for p
 # ("dell'accordo"), and any letter or digit (what a compound joins).
 _WORD = re.compile(rf"[{letter_class(*_WORDED)}]+(?:'[{letter_class(*_WORDED)}]+)*")
 _LETTER_OR_DIGIT = re.compile(r"[^\W_]")
+# The characters that join a word to a letter or digit beside them: a
+# compound's hyphen, and the punctuation of URLs, emails, paths and dotted
+# or snake_case names.
+_JOINERS = frozenset("-./@:_\\")
+# The fewest words of a shouted text: one or two capitalised words are
+# acronyms ("AI ethics", "SUPPLIERS OF").
+_SHOUTED_WORDS = 3
 
 
 @dataclass(frozen=True)
@@ -135,13 +146,21 @@ def text_evidence(texts: Iterable[str]) -> TextEvidence:
     for text in texts:
         text = text.replace("\u2019", "'")
         spans = list(_WORD.finditer(text))
+        # A shouted text's capitals mark no acronym nor name.
+        shouted = len(spans) >= _SHOUTED_WORDS and all(
+            span.group().isupper() for span in spans
+        )
         # In a text of one script its capitalised words quote nothing
         # (German writes its nouns so).
-        names = _name_words(text, spans) if _mixes_scripts(text) else set()
+        names = (
+            _name_words(text, spans) if _mixes_scripts(text) and not shouted else set()
+        )
         words.extend(
             span.group().lower()
             for i, span in enumerate(spans)
-            if i not in names and not _is_code(span.group()) and not _joined(text, span)
+            if i not in names
+            and (shouted or not _is_code(span.group()))
+            and not _joined(text, span)
         )
         if (script := _opening_script(text)) is not None:
             openings[script] += 1
@@ -163,12 +182,14 @@ def _is_code(word: str) -> bool:
 def _joined(text: str, word: re.Match[str]) -> bool:
     """Whether ``word`` is a part of a compound: a letter of another script
     or a digit is written onto it ("ES6", "AIとは", "Acme의"), or a hyphen
-    joins it to one ("to-do", "how-to", "us-east-1")."""
+    or the punctuation of a URL, an email, a path or a dotted name
+    (``_JOINERS``) joins it to one ("to-do", "us-east-1", "example.com",
+    "admin@example.es", "/usr/bin/the", "my_var")."""
 
     def joins(i: int, step: int) -> bool:
         if not 0 <= i < len(text):
             return False
-        if text[i] == "-":
+        if text[i] in _JOINERS:
             i += step
             if not 0 <= i < len(text):
                 return False

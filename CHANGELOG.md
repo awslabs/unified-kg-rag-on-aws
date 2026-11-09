@@ -1443,10 +1443,13 @@ From a `main` checkout (formats and keys no release had):
   reply, or the index language when they do not tell), by one scoring decision (`domain/languages/detection.py`): a
   Latin-script language claims the question with its function words, one more when the question opens on a capitalised
   Latin word, and another script with its runs; the larger claim wins, a tie the Latin words. Acronyms and codes
-  ("AI", "OS", "ES6", "iPhone"), parts of compounds ("to-do", "AIとは") and the words of a quoted name ("Bank of
-  America和…") are no function words, so "AI 모델 추천", "AIとは" and "OS 설치" are Korean, Japanese and Korean, "Who is the
-  CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; among Latin-script languages, Spanish and
-  Portuguese with their "how many" words, an elision only one of them writes ("dell'", "qu'"; not "d'", French and
+  ("AI", "OS", "ES6", "iPhone"), parts of compounds ("to-do", "AIとは"), of URLs, emails, paths and dotted names
+  ("example.com", "admin@example.es", "/usr/bin/the") and the words of a quoted name ("Bank of America和…") are no
+  function words, so "AI 모델 추천", "AIとは", "OS 설치" and "example.com 无法访问" are Korean, Japanese, Korean and Chinese,
+  "Who is the CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; a shouted text (three or more
+  words, all in capitals) reads its words lowercased, so "QUI A SIGNÉ LE CONTRAT ?" is French; among Latin-script
+  languages, Spanish and Portuguese with their "how many" words ("como" Portuguese), an elision only one of them
+  writes ("dell'", "qu'"; not "d'", French and
   Italian) counts with the function words, and a tie the index language is not in goes to the language whose own
   articles occur ("Qual è il prezzo?" is Italian, not English); evaluation counts a decline by `metadata.abstained`
   alone, no longer by the English text (#619).

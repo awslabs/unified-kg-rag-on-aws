@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The regression corpus of language detection, number reading, router
-answers and name folding: every case the query reviews rv9 to rv12 probed
+answers and name folding: every case the query reviews rv9 to rv13 probed
 or reported, with the answer they stated as right.
 
 A case the code answers otherwise is a documented trade-off: it carries
@@ -79,8 +79,9 @@ NO_WORD = (
     "language (old code alike; rv12 query low)."
 )
 SHOUTED = (
-    "All-caps words are acronyms, so a shouted question holds no function "
-    "word (rv12 query 1: accepted)."
+    'Fewer than three all-caps words are acronyms ("ES index", "AI ethics"), '
+    "so a two-word shouted question holds no function word: a shouted text "
+    "is read lowercased from three words (rv13 query 1)."
 )
 NO_PROFILE = (
     "A language without a profile (tr, pl, nl, sv, id, el, uk, fa) has no "
@@ -98,9 +99,16 @@ QUOTING = (
     'matrix pins "Who is the CEO of {n}?" so for every script (the probe\'s '
     "expectation is debatable)."
 )
-SHARED_WORDS = (
-    "Italian and Portuguese share their question words (quanto, como, "
-    "tem/ha forms): the words left decide, or the index language."
+SHARED_WORD = (
+    'Italian and Portuguese both write "quanto"; the function word lists of '
+    "one script are disjoint (a shared word would tie them) and Italian's "
+    'holds it, while the Portuguese words left are an article ("o") and '
+    "content words (rv13 query 4)."
+)
+ARTICLES_ONLY = (
+    'The one function word is Portuguese ("tem"); the Italian words are '
+    'articles ("il", "un"), which decide only between languages tied on '
+    "function words (rv13 query 4)."
 )
 ONE_SCRIPT_NAMES = (
     "In a text of one script its capitalised words are not set apart as "
@@ -250,9 +258,7 @@ DETECTION: tuple[Case, ...] = (
     Case("한빛전자 CEO?", "en", "en", "rv12 probe", Tradeoff("ko", NO_WORD)),
     Case("한빛전자 revenue 2023", "en", "en", "rv12 probe", Tradeoff("ko", NO_WORD)),
     Case("SUPPLIERS OF 한빛전자?", "en", "en", "rv12 probe", Tradeoff("ko", SHOUTED)),
-    Case(
-        "WHO IS THE CEO OF 한빛전자?", "en", "en", "rv12 probe", Tradeoff("ko", SHOUTED)
-    ),
+    Case("WHO IS THE CEO OF 한빛전자?", "en", "en", "rv12 probe"),
     Case("Ivan Petrov (Иван Петров) — who is he?", "en", "en", "rv12 probe"),
     Case("The Who played where?", "en", "en", "rv12 probe"),
     Case("Who wrote The Lord of the Rings?", "en", "en", "rv12 probe"),
@@ -457,7 +463,7 @@ DETECTION: tuple[Case, ...] = (
         "pt",
         "en",
         "rv11 probe",
-        Tradeoff("it", SHARED_WORDS),
+        Tradeoff("it", SHARED_WORD),
     ),
     Case("Chi ha firmato il contratto con Acme?", "it", "en", "rv11 probe"),
     Case(
@@ -465,7 +471,7 @@ DETECTION: tuple[Case, ...] = (
         "it",
         "en",
         "rv11 probe",
-        Tradeoff("pt", SHARED_WORDS),
+        Tradeoff("pt", ARTICLES_ONLY),
     ),
     Case("Hay proveedores en Madrid?", "es", "en", "rv11 probe"),
     Case("Há fornecedores em Lisboa?", "pt", "en", "rv11 probe"),
@@ -473,13 +479,7 @@ DETECTION: tuple[Case, ...] = (
     Case("Quanti contratti ha Acme con Orion?", "it", "en", "rv11 probe"),
     Case("Come si chiama il direttore?", "it", "en", "rv11 probe"),
     Case("Como se llama el director?", "es", "en", "rv11 probe"),
-    Case(
-        "Como se chama o diretor?",
-        "pt",
-        "en",
-        "rv11 probe",
-        Tradeoff("en", SHARED_WORDS),
-    ),
+    Case("Como se chama o diretor?", "pt", "en", "rv11 probe"),
     Case("Cosa fa Acme?", "it", "en", "rv11 probe"),
     Case("Dove si trova la sede?", "it", "en", "rv11 probe"),
     Case("Il contratto tiene conto delle penali?", "it", "en", "rv11 probe"),
@@ -900,6 +900,56 @@ DETECTION: tuple[Case, ...] = (
     Case("Hanbit Electronics and Orion Electronics 비교", "ko", "en", "rv10 probe"),
     Case("What is 계약 조건 기간 요약?", "ko", "en", "rv12 fix (runs)"),
     Case("Has Acme Corp ever audited 한빛물산?", "en", "en", "rv11 query 1/5"),
+    # A shouted text reads its words lowercased (rv13 query 1).
+    Case("¿QUIÉN FIRMÓ EL CONTRATO?", "es", "en", "rv13 query 1"),
+    Case("¿QUIÉN FIRMÓ EL CONTRATO?", "es", "es", "rv13 query 1"),
+    Case("WER HAT DEN VERTRAG UNTERSCHRIEBEN?", "de", "en", "rv13 query 1"),
+    Case("QUI A SIGNÉ LE CONTRAT ?", "fr", "en", "rv13 query 1"),
+    Case("CHI HA FIRMATO IL CONTRATTO?", "it", "en", "rv13 query 1"),
+    Case("QUEM ASSINOU O CONTRATO?", "pt", "en", "rv13 query 1"),
+    Case("AI LÀ NGƯỜI KÝ HỢP ĐỒNG?", "vi", "en", "rv13 query 1"),
+    Case("WHAT IS THE PENALTY CLAUSE?", "en", "en", "rv13 query 1"),
+    Case("WHO SIGNED THE CONTRACT?", "en", "ko", "rv13 query 1"),
+    Case("Is the OS supported on ARM?", "en", "ko", "rv13 query 1"),
+    Case("AI ethics guide", "en", "ko", "rv13 query 1"),
+    Case("ES index mapping", "en", "ko", "rv13 query 1"),
+    Case("DO droplet pricing", "en", "en", "rv13 query 1"),
+    Case("EST to KST conversion", "en", "en", "rv13 query 1"),
+    # The parts of a URL, an email, a path or a dotted name are no
+    # function words (rv13 query 3).
+    Case("https://example.com 요약", "ko", "ko", "rv13 query 3"),
+    Case("example.com 접속 안 됨", "ko", "ko", "rv13 query 3"),
+    Case("www.example.com 접속 오류", "ko", "ko", "rv13 query 3"),
+    Case("admin@example.com 계정 잠김", "ko", "ko", "rv13 query 3"),
+    Case("com.example.app 패키지 오류", "ko", "ko", "rv13 query 3"),
+    Case("example.com に接続できない", "ja", "ja", "rv13 query 3"),
+    Case("admin@example.com のパスワード", "ja", "ja", "rv13 query 3"),
+    Case("https://example.com/docs を要約して", "ja", "ja", "rv13 query 3"),
+    Case("support@example.com への問い合わせ方法", "ja", "ja", "rv13 query 3"),
+    Case("example.com 无法访问", "zh", "zh", "rv13 query 3"),
+    Case("admin@example.com 密码重置", "zh", "zh", "rv13 query 3"),
+    Case("https://example.com/docs 页面摘要", "zh", "zh", "rv13 query 3"),
+    Case("support@example.com 联系方式", "zh", "zh", "rv13 query 3"),
+    Case("example.com.br 접속", "ko", "ko", "rv13 query 3"),
+    Case("example.de 접속 불가", "ko", "ko", "rv13 query 3"),
+    Case("example.es 사이트", "ko", "ko", "rv13 query 3"),
+    Case("example.it 도메인", "ko", "ko", "rv13 query 3"),
+    Case("http://example.com/do 경로 오류", "ko", "ko", "rv13 query 3"),
+    Case("/usr/local/bin/the 경로", "ko", "ko", "rv13 query 3"),
+    Case("C:\\Users\\the 폴더", "ko", "ko", "rv13 query 3"),
+    Case("my_the_var 변수", "ko", "ko", "rv13 query 3"),
+    Case("NullPointerException at com.example.Main 원인", "ko", "ko", "rv13 query 3"),
+    Case("Не открывается example.com", "ru", "ru", "rv13 query 3"),
+    Case("لا يفتح example.com", "ar", "ar", "rv13 query 3"),
+    Case("Why does example.com.br time out?", "en", "en", "rv13 query 3"),
+    Case("Where is the README of github.com/acme/tool?", "en", "en", "rv13 query 3"),
+    Case("¿Por qué falla example.com?", "es", "es", "rv13 query 3"),
+    Case("o arquivo config.do não carrega", "pt", "pt", "rv13 query 3"),
+    Case("file.per 열기", "ko", "ko", "rv13 query 3"),
+    Case("app.es 번역 파일", "ko", "ko", "rv13 query 3"),
+    Case("app.cho 확장자", "ko", "ko", "rv13 query 3"),
+    Case("node.js 설치", "ko", "ko", "rv13 query 3"),
+    Case("Vue.js와 React 비교", "ko", "ko", "rv13 query 3"),
 )
 
 NUMBERS: tuple[Case, ...] = (

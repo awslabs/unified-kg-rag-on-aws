@@ -15,8 +15,8 @@ PROFILE = LanguageProfile(
         "responder a esta pergunta."
     ),
     function_words=frozenset(
-        "os quem qual porque onde é são foi com do uma não quantos quantas tem "
-        "há".split()
+        "os quem qual porque onde é são foi com do uma não quantos quantas como "
+        "tem há".split()
     ),
     no_value_words=("desconhecido", "nenhum"),
     articles=frozenset("o a os as um uma uns umas".split()),
