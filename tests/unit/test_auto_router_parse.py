@@ -6,8 +6,10 @@ Regression: the router parsed the LLM response with SearchStrategy(text.strip()
 .lower()), which raised ValueError on anything but a bare enum word ("Local
 search.", "I'd use local") and then fell back to DRIFT — the MOST expensive
 strategy. A word scan that replaced it read "Not global ... local" as global.
-The router now answers ``{"strategy": "<name>"}`` (a bare name is read too),
-gets one repair when it does not parse, and defaults to LOCAL.
+The router now answers the strategy name alone (read with markdown, a
+reasoning block or a label around it), reads any other answer as
+``{"strategy": "<name>"}`` with one repair when it does not parse, and
+defaults to LOCAL.
 """
 
 from __future__ import annotations
@@ -58,6 +60,36 @@ async def test_a_bare_name() -> None:
     assert await parse('  "drift". ', WITH_DRIFT) == SearchStrategy.DRIFT
     assert await parse("drift") == SearchStrategy.LOCAL  # not routable by default
     assert await parse("mix") == SearchStrategy.MIX
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "**local**",
+        "Local",
+        "`local`\n",
+        "Strategy: local",
+        "local\n\nReason: an entity lookup.",
+        "<think>The user asks about one entity, maybe global.</think>\nlocal",
+        "Answer: **LOCAL**.",
+    ],
+)
+async def test_a_decorated_name_needs_no_repair(raw: str) -> None:
+    # Regression (rv10 query M4): any answer but the bare name went to the
+    # JSON reader, which cannot read a name and called the fixing model:
+    # one more round trip on every auto query of a model that writes its
+    # reasoning or markdown.
+    calls: list[str] = []
+
+    def fixer(_system: str, human: str) -> str:
+        calls.append(human)
+        return '{"strategy": "global"}'
+
+    chain = GraphRAGChain.__new__(GraphRAGChain)
+    chain.config = Config()
+    chain.factory = ScriptedLLMFactory(fixer)
+    strategy, named = await chain._routed_strategy(raw, DEFAULT)
+    assert (strategy, named, calls) == (SearchStrategy.LOCAL, True, [])
 
 
 async def test_prose_is_repaired_not_guessed_from() -> None:

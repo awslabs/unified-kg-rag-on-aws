@@ -403,7 +403,9 @@ class QueryOutputCeilingsConfig(BaseModel):
     budget (low 2,048, medium 4,096, high 8,192, xhigh 16,384, max 32,768)
     on adaptive-thinking and OpenAI reasoning models, the thinking
     budget_tokens on older Claude models, none on a model that does not
-    reason. null leaves the call at the default cap.
+    reason. null leaves the call at the default cap. A local server takes
+    no thinking budget, so a model of it that may reason (an Ollama model
+    listing thinking, any OpenAI-compatible one) keeps its whole cap.
     """
 
     strategy_selection: int | None = Field(

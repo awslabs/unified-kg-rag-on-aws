@@ -272,6 +272,42 @@ def test_openai_compatible_chat_round_trip() -> None:
     assert body["temperature"] == 0.2
 
 
+@pytest.mark.parametrize(
+    ("kind", "capabilities", "sent"),
+    [
+        # A model that may reason keeps its cap: an Ollama model listing
+        # thinking, any model of an OpenAI-compatible server (it does not
+        # say); one that does not gets the ceiling.
+        ("ollama", ["completion", "thinking"], 2048),
+        ("openai_compatible", None, 2048),
+        ("ollama", ["completion"], 1024),
+    ],
+)
+def test_an_output_ceiling_leaves_a_reasoning_model_its_cap(
+    kind: str, capabilities: list[str] | None, sent: int
+) -> None:
+    # Regression (rv10 query M4): the router's 1,024-token ceiling cut a
+    # local reasoning model off in its reasoning (these servers take no
+    # thinking budget to leave room for).
+    server = FakeServer(capabilities=capabilities)
+    factory_cls = (
+        OllamaLanguageModelFactory
+        if kind == "ollama"
+        else OpenAICompatibleLanguageModelFactory
+    )
+    factory = factory_cls(
+        _config(kind, max_output_tokens=2048), transport=httpx.MockTransport(server)
+    )
+    factory.get_model("synthetic-chat", output_ceiling=1024).invoke("hello")
+    _, body = server.requests[-1]
+    requested = (
+        body["options"]["num_predict"]
+        if kind == "ollama"
+        else body.get("max_tokens", body.get("max_completion_tokens"))
+    )
+    assert requested == sent
+
+
 async def test_openai_compatible_chat_async() -> None:
     server = FakeServer()
     factory = OpenAICompatibleLanguageModelFactory(

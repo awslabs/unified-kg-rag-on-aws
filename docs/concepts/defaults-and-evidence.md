@@ -519,7 +519,9 @@ answer was readable either way, but it wrote 2.9 times the output tokens
 (59.9k against 20.7k over 500 calls) and took 1.59 s at the median against
 1.12 s, so the router answers the name; its `max_tokens`
 (`search.output_ceilings.strategy_selection`) is 1,024, plus the thinking
-budget on a reasoning model. To keep `auto` off it, list the strategies without
+budget on a reasoning model (a local model that may reason, which takes no
+thinking budget, keeps `providers.llm.max_output_tokens`). To keep `auto` off
+it, list the strategies without
 `iterative`:
 
 ```yaml

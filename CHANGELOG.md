@@ -1407,8 +1407,10 @@ From a `main` checkout (formats and keys no release had):
 - The query translation, the follow-up rewrite and the community relevance rating answer JSON:
   `{"translation": ...}`, `{"question": ...}`, and MS GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`;
   the rating is divided by 5, so `relevance_threshold: 0.2` is still a rating of 1 or more). The router answers the
-  strategy name and reads any other answer as `{"strategy": ...}` (a JSON answer wrote 2.9 times the output tokens,
-  measured; its `max_tokens` is 1,024). A model that cannot translate or rewrite answers
+  strategy name, read as the one name on its first line (a reasoning block, markdown, a label and case aside), and
+  reads any other answer as `{"strategy": ...}` (a JSON answer wrote 2.9 times the output tokens, measured; its
+  `max_tokens` is 1,024, a local model that may reason keeping its cap). A model that cannot translate or rewrite
+  answers
   `[CANNOT_TRANSLATE]` or `[CANNOT_REWRITE]`, which replace the refusal phrase lists of four languages; the
   router no longer routes prose naming several strategies ("not global ... local") to the first one named, and a
   rating's reason in any language no longer reads as the rating ("Auf einer Skala von 1 bis 10: 8" was 1).

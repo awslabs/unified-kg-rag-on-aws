@@ -20,7 +20,7 @@ from .common import (
 )
 from .concurrency import ContextThreadPoolExecutor
 from .event_loop import configure_event_loop
-from .model_output import parse_model_object, strip_leading_reasoning
+from .model_output import named_choice, parse_model_object, strip_leading_reasoning
 
 # NOTE: the shared kernel imports no other layer, and this package root
 # re-exports only dependency-light helpers because the domain layer imports
@@ -42,6 +42,7 @@ __all__ = [
     "generate_stable_id",
     "id_content",
     "interleave",
+    "named_choice",
     "normalize_name",
     "parse_llm_score",
     "parse_model_object",
