@@ -717,6 +717,22 @@ def test_holds_any_item_tells_a_suffix_with_items(harness: StoreHarness) -> None
     assert graph.holds_any_item(suffix=other) is False
 
 
+def test_holds_any_relationship_tells_a_suffix_with_edges(
+    harness: StoreHarness,
+) -> None:
+    # Entities and their community memberships are no relationship; an
+    # edge between two of the suffix's entities is.
+    graph = harness.graph_indexer
+    tenant, other = harness.suffix("edges"), harness.suffix("none")
+    graph.upsert_entities([_entity("a", tenant), _entity("b", tenant)])
+    graph.upsert_communities([_community("c1", ["a", "b"], tenant)])
+    assert graph.holds_any_item(suffix=tenant) is True
+    assert graph.holds_any_relationship(suffix=tenant) is False
+    graph.upsert_relationships([_rel("a-b", "a", "b", tenant)])
+    assert graph.holds_any_relationship(suffix=tenant) is True
+    assert graph.holds_any_relationship(suffix=other) is False
+
+
 def test_relationship_ranks_are_set_in_place(harness: StoreHarness) -> None:
     # A delta rewrites a hub's stored edges for their rank alone: only the
     # rank changes, in the suffix's edges; an edge not stored fails by id.

@@ -364,6 +364,10 @@ class FakeGraphStore:
         scope = suffix or Constants.DEFAULT_SUFFIX.value
         return any(s == scope for s, _ in self.data.get("entities", {}))
 
+    def holds_any_relationship(self, suffix: str | None = None) -> bool:
+        scope = suffix or Constants.DEFAULT_SUFFIX.value
+        return any(s == scope for s, _ in self.data.get("relationships", {}))
+
     def read_entity_names(self, suffix: str | None = None) -> list[tuple[str, str]]:
         scope = suffix or Constants.DEFAULT_SUFFIX.value
         return [

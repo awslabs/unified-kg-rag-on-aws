@@ -77,7 +77,7 @@ processing:
   어간 추출과 불용어는 보크몰 기준입니다. 기본값에 언어가 들어가기 전에 만든 인덱스는 필드를
   만들 때 쓴 `default_analyzer`를 `indexing.reset: true` 실행 전까지 유지합니다(실행마다
   WARNING 한 번). `language_analyzers`를 직접 설정했더라도(CDK 스택은 `ko`를 설정) 그 언어에
-  기본값과 같은 분석기를 주면 마찬가지입니다. 언어에 다른 분석기를 주면 그 값을 따르며, 다르게 만든
+  기본값과 같은 분석기를 주면 마찬가지입니다(필드마다 그 필드가 담은 언어로 판단). 언어에 다른 분석기를 주면 그 값을 따르며, 다르게 만든
   필드가 있으면 실행이 멈춥니다. 내장 어간 추출기가 어근을 놓칠 수도 있습니다. Amazon OpenSearch Service
   도메인(OpenSearch 2.19)의 `indonesian`은 "pemasok"를 "asok"로, "mengirimkan"을 "irim"으로
   줄였지만 어근 "pasok"와 "kirim"은 그대로 두어, 어근으로 질의하면 문서를 찾지 못했습니다(Lucene의

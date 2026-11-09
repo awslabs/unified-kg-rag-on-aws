@@ -484,9 +484,10 @@ From a `main` checkout (formats and keys no release had):
   `it`, `ja`, `pt`, `ru` and `zh` before #574; `nl`, `sv`, `tr` and the other built-in analyzers before #671) keeps
   the `default_analyzer` its fields were built with, one WARNING per run naming them, until one `indexing.reset: true`
   run gives them the language's stemming and stop words, also with `language_analyzers` set (as the CDK stack sets
-  `ko`) while it gives the language the default's analyzer. A language it gives another analyzer than its fields
-  hold stops the run before any model call (exit 2, `was built for other language settings`): reset, or set the map
-  to what the fields hold.
+  `ko`) while it gives the language the default's analyzer, decided per field by the language it holds (another
+  language set to the same analyzer, `af: dutch` beside `nl`, keeps them too). A language it gives another analyzer
+  than its fields hold stops the run before any model call (exit 2, `was built for other language settings`): reset,
+  or set the map to what the fields hold.
 - #574 legal forms: entity `name_key` follows the larger table; reset with a new or no `--pipeline-id` to merge
   designator variants, or entities stored apart stay apart.
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
@@ -974,8 +975,10 @@ From a `main` checkout (formats and keys no release had):
   records its documents, so a first build or reset killed between the two leaves it (the next run found nothing to
   index and wrote none, and queries took the namespace to hold what the config builds). A record any index rejected
   is written again once the documents are recorded, and a run with nothing to index writes a missing one: a full
-  record naming only the artifacts the stores hold (claims and relationship vectors with the text units and graph:
-  a corpus stating none leaves them empty), the documents the registry records and community counters from
+  record naming only the artifacts the stores hold (claims with the text units and graph: a corpus stating none
+  leaves them empty; relationship vectors too unless the graph holds an edge, `GraphIndexer.holds_any_relationship`,
+  as a build with `build_relationship_vector_index: false` leaves it), the documents the registry records and
+  community counters from
   the stored reports (a WARNING says what queries assume until one is written; the run result's `build_record` and
   `run-describe` say whether one is stored). With
   `graph.community_detection.report_generation.enabled: false` a run builds no reports, so an incremental run no

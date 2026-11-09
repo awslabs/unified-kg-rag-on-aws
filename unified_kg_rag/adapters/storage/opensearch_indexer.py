@@ -723,51 +723,44 @@ class OpenSearchIndexer(VectorIndexer):
     def _mapping_funcs(self) -> dict[str, Callable[[], dict[str, Any]]]:
         return {spec.alias_prefix: spec.mapping for spec in self._specs()}
 
-    def _keeps_stored_analyzer(self, stored: str, wanted: str) -> bool:
-        """Whether a live text field analyzed by ``stored`` keeps it though
-        this config gives it ``wanted``: ``stored`` is what a language
-        without an entry gets (``default_analyzer``) and ``wanted`` is the
-        default ``language_analyzers`` value of every language of this run
-        that this config gives it (``_analyzed_languages``). The index was
-        built before the default map named its language (the codes mapped to
-        OpenSearch's built-in analyzers, ``BUILT_IN_ANALYZERS``); its field
-        cannot change, and the default alone is no reason to make a run
-        reset it. Decided per language, so a map set for another language
-        (the CDK stack sets ``ko``) keeps it too; a language set to another
-        analyzer is followed (a mismatch stops)."""
-        languages = [
-            language
-            for language in self._analyzed_languages()
-            if self._analyzer_for(language) == wanted
-        ]
+    def _keeps_stored_analyzer(self, stored: str, wanted: str, language: str) -> bool:
+        """Whether a live text field of ``language`` analyzed by ``stored``
+        keeps it though this config gives it ``wanted``: ``stored`` is what
+        a language without an entry gets (``default_analyzer``) and
+        ``wanted`` is the language's default ``language_analyzers`` value.
+        The index was built before the default map named its language (the
+        codes mapped to OpenSearch's built-in analyzers,
+        ``BUILT_IN_ANALYZERS``); its field cannot change, and the default
+        alone is no reason to make a run reset it. Decided by the field's
+        own language, so a map set for another language (the CDK stack sets
+        ``ko``, a user ``af: dutch``) keeps it too; a language set to
+        another analyzer is followed (a mismatch stops)."""
         return (
             stored == self.opensearch_config.default_analyzer
             and wanted != stored
-            and bool(languages)
-            and all(
-                DEFAULT_LANGUAGE_ANALYZERS.get(code) == wanted for code in languages
-            )
+            and DEFAULT_LANGUAGE_ANALYZERS.get(language) == wanted
         )
 
-    def _analyzed_languages(self) -> list[str]:
-        """The languages this config analyzes text fields for: the index
-        language, the source language (``text``) and the translated ones."""
+    def _text_unit_field_languages(self) -> dict[str, str]:
+        """The analyzed text fields of the text-unit index and the language
+        each holds: ``text`` the original chunk (the source language), one
+        field per translated language. Every other index's text fields hold
+        the index language."""
         translation = self.config.processing.translation
-        return list(
-            dict.fromkeys(
-                [
-                    self.language,
-                    translation.source_language.value,
-                    *translation.translated_languages,
-                ]
-            )
-        )
+        return {
+            "text": translation.source_language.value,
+            **{
+                f"translated_text_{language}": language
+                for language in translation.translated_languages
+            },
+        }
 
     def _text_field_mismatches(
         self,
         expected: dict[str, Any],
         live: dict[str, Any],
         kept: list[str] | None = None,
+        languages: Mapping[str, str] | None = None,
     ) -> list[str]:
         """The analyzed text fields of ``expected`` that ``live`` maps otherwise.
 
@@ -777,8 +770,9 @@ class OpenSearchIndexer(VectorIndexer):
         An engine with an ``analyzes_alike`` (the embedded one, where ``cjk``
         and ``standard`` are one analyzer) accepts a field whose analyzer it
         tokenizes alike under another name. A field that keeps its stored
-        analyzer (``_keeps_stored_analyzer``) is no mismatch: it is added to
-        ``kept``.
+        analyzer (``_keeps_stored_analyzer``, for its language in
+        ``languages``, else the index language) is no mismatch: it is added
+        to ``kept``.
         """
         engine_alike = getattr(self.opensearch_client, "analyzes_alike", None)
         alike: Callable[[str, str], bool] = (
@@ -800,7 +794,9 @@ class OpenSearchIndexer(VectorIndexer):
                 stored_analyzer := stored.get("analyzer", "standard"), analyzer
             ):
                 if kept is not None and self._keeps_stored_analyzer(
-                    stored_analyzer, analyzer
+                    stored_analyzer,
+                    analyzer,
+                    (languages or {}).get(name, self.language),
                 ):
                     kept.append(f"'{name}' keeps '{stored_analyzer}' ('{analyzer}')")
                     continue
@@ -886,7 +882,14 @@ class OpenSearchIndexer(VectorIndexer):
             self._check_vector_storage(index_name, expected_properties, properties)
             kept_here: list[str] = []
             mismatches = self._text_field_mismatches(
-                expected_properties, properties, kept_here
+                expected_properties,
+                properties,
+                kept_here,
+                (
+                    self._text_unit_field_languages()
+                    if prefix == self.opensearch_config.text_units_index_prefix
+                    else None
+                ),
             )
             kept += [f"{index_name}: {field}" for field in kept_here]
             if META_MODEL not in meta and META_DIMENSION not in meta:
@@ -3508,20 +3511,12 @@ class OpenSearchIndexer(VectorIndexer):
         # only through this field: Korean text under the standard analyzer
         # keeps "홍길동으로부터" as one token, which "홍길동" never matches.
         # Each translated language gets its own field and analyzer.
-        translation = self.config.processing.translation
         return self._get_base_mapping(
             {
                 "id": {"type": "keyword"},
-                "text": {
-                    "type": "text",
-                    "analyzer": self._analyzer_for(translation.source_language.value),
-                },
                 **{
-                    f"translated_text_{language}": {
-                        "type": "text",
-                        "analyzer": self._analyzer_for(language),
-                    }
-                    for language in translation.translated_languages
+                    name: {"type": "text", "analyzer": self._analyzer_for(language)}
+                    for name, language in self._text_unit_field_languages().items()
                 },
                 "text_embedding": self._get_knn_vector_mapping(),
                 "community_ids": {"type": "keyword"},

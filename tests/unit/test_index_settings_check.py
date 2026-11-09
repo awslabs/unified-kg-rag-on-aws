@@ -365,6 +365,43 @@ def test_a_newly_mapped_language_keeps_its_standard_fields(mocker, caplog) -> No
     assert "'text' keeps 'standard' ('dutch')" in caplog.text
 
 
+def test_a_field_keeps_its_analyzer_by_its_own_language(mocker, caplog) -> None:
+    # Regression: the keep rule asked every analyzed language the field's
+    # analyzer names. A Dutch corpus translated to Afrikaans, built with a
+    # map that set 'af: dutch' (so 'nl' got 'standard'), stopped on 'text'
+    # once the default map named 'nl', since 'af' (no default) also names
+    # 'dutch'. 'text' holds Dutch alone.
+    client = _FakeOpenSearchClient()
+    nl = {
+        "enabled": True,
+        "source_language": "nl",
+        "target_language": "en",
+        "additional_target_languages": ["af"],
+    }
+    mocker.patch.object(module, "OpenSearchClient", return_value=client)
+    before = Config(
+        processing={"translation": nl},
+        indexing={
+            "opensearch": {"language_analyzers": {"en": "english", "af": "dutch"}}
+        },
+    )
+    OpenSearchIndexer(
+        before, embedding_factory=HashingEmbeddingFactory(dimensions=8)
+    ).upsert_text_units([_unit()])
+    mocker.patch.object(module, "_kept_analyzers_warned", set())
+    after = Config(processing={"translation": nl})
+    analyzers = after.indexing.opensearch.language_analyzers
+    after.indexing.opensearch.language_analyzers = {**analyzers, "af": "dutch"}
+
+    with caplog.at_level("WARNING", logger=module.__name__):
+        OpenSearchIndexer(
+            after, embedding_factory=HashingEmbeddingFactory(dimensions=8)
+        ).check_index_settings("default")
+
+    assert "'text' keeps 'standard' ('dutch')" in caplog.text
+    assert "translated_text_af" not in caplog.text
+
+
 def test_an_engine_that_analyzes_both_alike_takes_the_old_index(mocker) -> None:
     # The embedded engine's 'standard' and 'cjk' are one analyzer.
     client = _FakeOpenSearchClient()

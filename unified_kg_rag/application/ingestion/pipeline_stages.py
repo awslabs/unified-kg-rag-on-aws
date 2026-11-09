@@ -2915,11 +2915,13 @@ class IndexingStage(_RegistryStage):
         if described is None:
             return None
         documents = {entry["kind"]: entry.get("documents") for entry in described}
+        graph = self.indexing_manager.graph_indexer
         return (
             stored_artifacts_shown(
                 self.config,
                 documents,
-                graph_holds=self.indexing_manager.graph_indexer.holds_any_item(suffix),
+                graph_holds=graph.holds_any_item(suffix),
+                graph_edges=graph.holds_any_relationship(suffix),
                 tree=bool(vector_indexer.read_summary_tree_record(suffix)),
             ),
             documents,

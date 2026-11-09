@@ -32,6 +32,7 @@ from unified_kg_rag.adapters.storage.neptune_codec import (
     relationship_properties,
 )
 from unified_kg_rag.domain.models import Community, Config, Entity, Relationship
+from unified_kg_rag.shared.exceptions import AWSServiceError, NamespaceLeaseError
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("skip_vertex_id_check")]
 
@@ -923,3 +924,21 @@ def test_a_failed_rebuild_drops_nothing(indexer, mocker) -> None:
     indexer.begin_rebuild(["default"])
     indexer.end_rebuild(["default"], sweep=False)
     drops.assert_not_called()
+
+
+def test_holds_any_relationship_reads_one_edge_of_the_label(indexer, mocker) -> None:
+    execute = mocker.patch.object(indexer, "_execute_with_retries", return_value=[])
+    assert indexer.holds_any_relationship("ns") is False
+    calls: list = []
+    execute.call_args.args[0](RecordingTraversal(calls, with_args=True))
+    # Between the label's vertices only, one edge at most.
+    assert calls[:3] == [("V", ()), ("hasLabel", ("Entity-ns",)), ("outE", ())]
+    assert ("limit", (1,)) in calls
+    execute.return_value = ["e1"]
+    assert indexer.holds_any_relationship("ns") is True
+    execute.side_effect = RuntimeError("timeout")
+    with pytest.raises(AWSServiceError, match="holds_any_relationship"):
+        indexer.holds_any_relationship("ns")
+    execute.side_effect = NamespaceLeaseError("lease lost")
+    with pytest.raises(NamespaceLeaseError):
+        indexer.holds_any_relationship("ns")

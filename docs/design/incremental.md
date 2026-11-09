@@ -91,7 +91,10 @@ unless noted.
    stored summary), and the endpoints of a noted edge are written with it, so
    their edges' ranks follow; an endpoint the graph no longer holds (a later
    removal re-keyed it to another spelling) is the stored entity of its
-   name's key that the edge's text units state. The note is replaced by what still fails, or
+   name's key that the edge's text units state (the one citing most of
+   them; one citing none, a spelling of another type, is not it, as a full
+   build cites each endpoint's edges' units). The note is replaced by what
+   still fails, or
    deleted. Recording the owners `FAILED` instead re-extracted every document
    a hub entity cites, on every run its write kept failing. A note that cannot
    be written falls back to that.
@@ -137,8 +140,9 @@ unless noted.
    when the configured suffix has none: a full record of the build the
    stores hold, naming the artifacts they show (a non-empty index, a graph
    item, the tree's record; claims and relationship vectors with held text
-   units and graph, which a corpus stating none leaves empty) that the
-   config builds, the documents the
+   units and graph, which a corpus stating none leaves empty, but not the
+   relationship vectors beside a stored edge, which a build that made them
+   indexes) that the config builds, the documents the
    registry records and community counters started from the stored
    reports; later incremental records carry it as their `full_build`.
    `failure_count` counts

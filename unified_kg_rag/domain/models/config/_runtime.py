@@ -134,7 +134,8 @@ class LoggingConfig(BaseModel):
         },
         description=(
             "Per-logger levels for chatty third-party libraries (logger name "
-            "-> level). Setting the key replaces the whole map."
+            "-> level). In a config file the key replaces the whole map; an "
+            "environment variable sets one entry over the defaults."
         ),
     )
 

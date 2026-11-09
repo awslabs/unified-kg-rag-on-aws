@@ -468,6 +468,19 @@ class GraphIndexer(BaseIndexer):
         """
         return _holds_any_item(self, suffix)
 
+    def holds_any_relationship(self, suffix: str | None = None) -> bool | None:
+        """Whether ``suffix``'s graph holds a relationship (an edge between
+        two of its entities).
+
+        A build record rewritten from the stores asks it to tell an empty
+        relationship vector index apart: beside a stored edge, the index
+        was never built. Default: from :meth:`read_schema_annotations`
+        (``None`` when it cannot list); adapters that override it read one
+        edge and raise when the read fails.
+        """
+        listed = self.read_schema_annotations("relationships", suffix)
+        return None if listed is None else bool(listed)
+
     def write_schema_annotations(
         self,
         kind: AnnotatedKind,

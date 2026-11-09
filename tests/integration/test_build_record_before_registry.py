@@ -303,3 +303,45 @@ def test_a_record_one_index_rejected_is_written_again_in_the_run(
     finally:
         vectors.close()
     assert builds and set(builds.values()) == {"run-1"}, builds
+
+
+@pytest.mark.usefixtures("no_aws")
+def test_a_rewritten_record_does_not_claim_relationship_vectors_never_built(
+    tmp_path: Path, mocker
+) -> None:
+    # Built with the relationship vector index switched off, the record
+    # rejected; the next run, with nothing to index, switches it back on.
+    # The graph holds edges and the relationships index none: the index was
+    # never built, so the record must not name it (mix/hybrid would answer
+    # from it unwarned, and later deltas would leave it incomplete).
+    config, providers, source = _setup(tmp_path)
+    config.indexing.methodologies = [Methodology.GRAPHRAG]
+    config.indexing.opensearch.build_relationship_vector_index = False
+    _failing_record_writes(mocker, attempts=1000)
+    e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert _record(config, providers) is None
+    mocker.stopall()
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    config.indexing.opensearch.build_relationship_vector_index = True
+
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(config, providers)
+    assert record is not None
+    assert "relationship_vectors" not in record["artifacts"]
+    assert "lightrag" not in record["methodologies"]
+    assert {"text_units", "entities", "graph", "relationships"} <= set(
+        record["artifacts"]
+    )
+    (source / "carrier.txt").write_text("Carrier ships widgets for Depot.")
+
+    # The next delta rebuilds the namespace for the missing index, which
+    # then holds every relationship.
+    context = e2e._ingest(config, providers, source, tmp_path / "run-3")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    record = _record(config, providers)
+    assert record is not None
+    assert "relationship_vectors" in record["artifacts"]
+    assert (record["mode"], record["documents"]) == ("full", 3)

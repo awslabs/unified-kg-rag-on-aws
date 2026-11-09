@@ -77,3 +77,6 @@ class NullGraphIndexer(GraphIndexer):
 
     def holds_any_item(self, suffix: str | None = None) -> bool | None:
         return False
+
+    def holds_any_relationship(self, suffix: str | None = None) -> bool | None:
+        return False
