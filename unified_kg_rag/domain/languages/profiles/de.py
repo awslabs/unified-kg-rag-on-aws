@@ -16,7 +16,7 @@ PROFILE = LanguageProfile(
     ),
     function_words=frozenset(
         "der die das was wer wie warum wann wo ist sind war wurde ein eine und "
-        "mit von nicht welche welcher".split()
+        "mit von nicht welche welcher gibt kein keine".split()
     ),
     no_value_words=("unbekannt", "keine", "keiner"),
     articles=frozenset(
@@ -69,9 +69,6 @@ PROFILE = LanguageProfile(
     compound_ones=("ein", "eine"),
     zero_words=("kein", "keine", "keinen", "keinem", "keiner", "keines"),
     ones_before_tens=True,
-    year_words=("im jahr", "in", "im", "seit", "bis", "ab", "vor", "nach", "von"),
-    partitive_words=("von den", "von diesen", "von allen", "unter den"),
-    partitive_anaphors=("von ihnen", "davon"),
     month_words={
         "January": ("januar", "jänner"),
         "February": ("februar", "feber"),

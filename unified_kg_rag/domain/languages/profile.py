@@ -82,56 +82,20 @@ class LanguageProfile:
     number_tens: Mapping[str, int] = field(default_factory=dict)
     number_scales: Mapping[str, int] = field(default_factory=dict)
     zero_words: tuple[str, ...] = ()
-    # The phrases that state there is none of what is asked, read as a count
-    # of 0 as its words for none are ("does not have any", "no hay", "il
-    # n'y a pas de", "Поставщиков нет"): "…" stands for up to three words
-    # between, and a leading "-" for a clitic written onto the word before
-    # ("-n't … any": "doesn't have any"). One states no count where one of
-    # its comparatives bounds the count instead ("No hay más de tres":
-    # "more than", "más de", "более"; a one-word one compares only before
-    # a number; "超过" in Han is written onto the number, and
-    # ``postposed_comparatives`` after it and its counter: "100人以上",
-    # "100명 이상") or a count follows it after a clause break in its
-    # sentence: a comma, a colon or a dash not between two numbers, or one
-    # of its ``clause_conjunctions`` that no comparative follows ("No hay
-    # duda de que son tres", "Нет сомнений, их три", "not any other
-    # details, but Acme has 3"; "more than 100 but fewer than 500" is one
-    # condition). A number in its own clause after it is the absent
-    # thing's ("No hay proveedores en el lote 7"; a semicolon is no clause
-    # break), and one after a stop another sentence's; a one-word one
-    # opening a line before a comma or a stop is a yes/no answer ("Нет."),
-    # no count either. A number the question states is a condition of the
-    # absent thing, not a count (``text_matching.leading_number``).
+    # The phrases that state there is none of what is asked, read as a 0
+    # as its words for none are ("does not have any", "no hay", "il n'y a
+    # pas de", "Поставщиков нет"; ``text_matching.stated_numbers``): "…"
+    # stands for up to three words between, and a leading "-" for a clitic
+    # written onto the word before ("-n't … any": "doesn't have any").
     absence_phrases: tuple[str, ...] = ()
-    comparatives: tuple[str, ...] = ()
-    postposed_comparatives: tuple[str, ...] = ()
-    clause_conjunctions: tuple[str, ...] = ()
     # Whether it writes the ones before the tens ("vierundzwanzig"): in
     # another language the words of a number go down by place ("deux vingt"
     # is two numbers).
     ones_before_tens: bool = False
     # The ordinals of the ones a tens word writes them with, as words of
     # their own ("twenty-first", "vingt-troisième", "двадцать первый"): the
-    # number before one is an ordinal, no count.
+    # tens word before one writes an ordinal, no number.
     ordinal_words: frozenset[str] = frozenset()
-    # The words a year follows ("in 2019", "seit 2019", "в 2019"; a month
-    # may stand between: "in March 2019"), the words that open the whole a
-    # partitive takes its part from ("Of the three vendors, only one",
-    # "De los tres proveedores"), and those after a one that take it from a
-    # set the answer counts elsewhere ("one of them", "один из них"): the
-    # number there counts nothing.
-    year_words: tuple[str, ...] = ()
-    # The words a year comes before, written onto it or after a space
-    # ("2019년", "2019 이후", "2019以降"): the number there counts nothing
-    # either, in an answer in any language. The particles that close a
-    # range at either end ("2019부터", "2020年まで", "从2019到现在") make a
-    # four-digit number before them a year too, unless the range's other
-    # end is a four-digit count ("1500から2000社", "3000至5000家": a range of
-    # counts).
-    year_suffixes: tuple[str, ...] = ()
-    range_particles: tuple[str, ...] = ()
-    partitive_words: tuple[str, ...] = ()
-    partitive_anaphors: tuple[str, ...] = ()
     # The words that join the parts of a written number ("and" in "three
     # hundred and twelve", "y" in "treinta y dos", "und" in
     # "vierundzwanzig"), and the forms of one left out of ``number_words``

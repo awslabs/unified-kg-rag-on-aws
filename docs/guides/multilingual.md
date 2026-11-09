@@ -149,12 +149,13 @@ answers; under the default normalization token F1 counts a Han, Hangul or
 Kana letter as a token (character F1), while exact match still under-counts
 an answer with a particle. An answer in German, Spanish, French, Italian or
 Portuguese (the question's language) also drops that language's articles
-and reads its number words and its words and phrases for none ("no hay",
-"il n'y a pas de"; not one a comparative directly follows, "No hay más de tres" is 3,
-nor one a count follows after a clause break, "No hay duda de que son tres"; a number in
-the absent thing's own phrase, "No hay proveedores en el lote 7", leaves it 0) in place of
-the English ones (Spanish "no" is no zero). A `number` item's question tells a condition
-from a count in every language: a number the question states is no count where the answer
-reads an absence ("En el lote 7 no hay proveedores" asked about lot 7, "従業員100人以上の
-仕入先はありません" asked about suppliers with 100 or more staff, are 0). The rules:
+and reads its number words and its words and phrases for none ("aucun",
+"no hay", "il n'y a pas de") in place of the English ones (Spanish "no" is
+no zero). A `number` item asks one thing in every language: whether the
+answer's first line states the gold. A gold other than 0 matches when the
+line writes it anywhere (digits, number words, Korean and Han numerals); a
+gold of 0 matches a statement of none ("No hay proveedores", "仕入先はあり
+ません", "공급업체는 없습니다") with no number the question does not write
+("En el lote 7 no hay proveedores" asked about lot 7 is 0). Which number
+is the count is left to the LLM judges. The rule and its limits:
 [`answer_match`](../reference/evaluation-output.md#answer_match).

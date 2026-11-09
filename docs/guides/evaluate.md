@@ -93,11 +93,12 @@ A JSON array of objects. Only `question` is required; `expected_entities` /
 - Per-item `metadata` (e.g. `search_strategy`) overrides the CLI defaults for
   that question. `id` may also be given as `query_id`.
 - `metadata.answer_type` says how `answer_match` reads a structured gold:
-  `number` compares the first number the answer states (digits, number
-  words, Korean and Han numerals before a counter: `세 곳`, `三社`) with
-  the gold's (list enumerators, citation markers, years, ordinals, a
-  negated number and the whole of a partitive count nothing: `only one of
-  the three` and `세 곳 중 한 곳` are 1), `set` needs every one of
+  `number` matches when the answer's first line writes the gold anywhere
+  (digits, number words, Korean and Han numerals before a counter: `세
+  곳`, `三社`; list enumerators, citation markers and ordinals are no
+  numbers), a gold of 0 when it states there is none and writes no number
+  the question does not (which number is the count is the LLM judges' to
+  read), `set` needs every one of
   `metadata.answer_items` (a list of strings) in the answer in any layout,
   and with `metadata.answer_candidates` (the names the answer picks from)
   no other candidate in the part that answers (the extracted span, or the

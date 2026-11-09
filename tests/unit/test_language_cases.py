@@ -1,8 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The regression corpus (``tests/fixtures/language_cases.py``) through the
-language-aware readers: a query's language, an answer's count, the
-router's strategy name and a stored name's cover of a mention.
+language-aware readers: a query's language, the gold number an answer
+matches, the router's strategy name and a stored name's cover of a mention.
 
 Each case is pinned to its stated answer, or to a documented trade-off's;
 a rule added for one case that moves another fails here.
@@ -26,7 +26,8 @@ from tests.fixtures.language_cases import (
 from unified_kg_rag.domain.languages import text_language
 from unified_kg_rag.domain.models import SearchStrategy
 from unified_kg_rag.domain.retrieval.linking import covers
-from unified_kg_rag.evaluation.text_matching import leading_number
+from unified_kg_rag.evaluation.answer_match_evaluator import number_matches
+from unified_kg_rag.evaluation.text_matching import stated_numbers
 from unified_kg_rag.shared import ModelOutputError
 from unified_kg_rag.shared.utils import named_choice, parse_model_object
 
@@ -44,7 +45,15 @@ def detected(case: Case) -> object:
 
 
 def counted(case: Case) -> object:
-    return leading_number(case.text, case.context, question=case.question)
+    """The gold the answer matches as ``answer_match`` scores a number item
+    (``number_matches``): the stated one when it does, else the numbers the
+    answer states, sorted (``None``: none)."""
+    gold = case.expected
+    if gold is not None and number_matches(
+        case.text, str(gold), case.context, case.question
+    ):
+        return gold
+    return tuple(sorted(stated_numbers(case.text, case.context))) or None
 
 
 def routed(case: Case) -> object:

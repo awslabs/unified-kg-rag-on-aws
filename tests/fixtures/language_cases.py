@@ -38,11 +38,12 @@ class Tradeoff:
 
 @dataclass(frozen=True)
 class Case:
-    """One probe: ``text`` and the ``expected`` answer the review stated;
-    ``context`` is the index language a detection falls back to, the
-    answer language a number is read in, or the mention a stored name
-    covers; ``question`` is the question a number answers (``None``: read
-    without one)."""
+    """One probe: ``text`` and the ``expected`` answer the review stated
+    (for a number, the gold the answer matches, ``None`` for one that
+    states no number); ``context`` is the index language a detection falls
+    back to, the answer language a number is read in, or the mention a
+    stored name covers; ``question`` is the question a number answers
+    (``None``: read without one)."""
 
     text: str
     expected: object
@@ -110,7 +111,11 @@ SHARED_WORD = (
 )
 SHARED_TIE = (
     'Its one function word ("como") is Spanish and Portuguese alike: tied, '
-    "with no article of either, they leave the index language (rv14 query 4)."
+    "they leave the index language, a third one too, and so does a tie "
+    "beside a word no list holds, a verb or an article only one of them "
+    'writes ("Como funciona?" on an English or Korean index, "Como faço '
+    'para cancelar?", "Como funciona o contrato?" on a Spanish one; rv14 '
+    "query 4, rv15 query)."
 )
 NO_LISTED_WORD = (
     'No word of the text is in its language\'s list ("Comparar" is a verb, '
@@ -135,17 +140,8 @@ QUOTED_SENTENCE = (
     "A quoted German sentence holds more function words than the English "
     "words around it."
 )
-FIRST_NUMBER = (
-    "A count answer states its number first: the first number read wins "
-    "(pre-existing design)."
-)
-YEAR_RANGE = (
-    'Both ends of the range are bare four-digit numbers, as in "1990부터 '
-    '2000까지 3곳": no rule but a year window (a heuristic) tells a range of '
-    "counts from a range of years."
-)
 HAN_BARE = (
-    "A Han numeral states a count only before a counter (pre-existing "
+    "A Han numeral states a number only before a counter (pre-existing "
     'design: "一万二千" alone may be a code or a year).'
 )
 SCALE_DIGITS = (
@@ -154,23 +150,14 @@ SCALE_DIGITS = (
     "this change)."
 )
 NO_QUESTION = (
-    "Read without its question, a number before a phrase of absence in its "
-    'clause reads first ("En el lote 7 no hay proveedores", "Поставщиков в '
-    'лоте 7 нет"), and one after a comparative it does not directly follow '
-    'is the absent thing\'s ("non ha mai avuto più di tre"): the question '
-    "tells a condition it states from a count (rv14 query 2 and 5)."
+    "A gold of 0 matches an absence with no number but those the question "
+    "writes: read without its question, the absent thing's own number (\"lot "
+    '7", "more than 100 employees", "10:30") is a number of its own.'
 )
-RESTATED = (
-    "A number the question states is a condition when the rest of the "
-    'answer reads an absence, even one of something else ("no hay más" '
-    "after a yes/no question's own count): no rule without word classes "
-    "tells that absence from the asked one (rv14 query 2)."
-)
-PARTITIVE_ALL = (
-    'A number after a partitive word opening a clause ("Из семи '
-    'поставщиков", "Of the three vendors") is the whole a part is taken '
-    'from, no count; a part of "all" ("работают все") is no word the '
-    "profiles count (pre-existing design; rv14 query 6)."
+OTHER_NUMBER = (
+    "A gold of 0 matches an absence with no other number: one the answer "
+    'adds about something else ("3 internal plants") is read as a count it '
+    "might state; the LLM judges read that nuance."
 )
 HOMONYM = (
     '"Семью" is also "семья" (family) in two of its cases, so it is left '
@@ -1153,7 +1140,6 @@ NUMBERS: tuple[Case, ...] = (
         5,
         "fr",
         "rv12 query 2/4",
-        Tradeoff(3.0, FIRST_NUMBER),
     ),
     Case("Il n'y a pas de doute : trois fournisseurs.", 3, "fr", "rv12 query 2/4"),
     Case("Il n'y a pas de fournisseur.", 0, "fr", "rv12 query 2/4"),
@@ -1165,13 +1151,7 @@ NUMBERS: tuple[Case, ...] = (
         "rv12 query 2/4",
     ),
     Case("Non ha senso: sono tre.", 3, "it", "rv12 query 2/4"),
-    Case(
-        "Non ha mai avuto più di tre fornitori.",
-        3,
-        "it",
-        "rv12 query 2/4",
-        Tradeoff(0.0, NO_QUESTION),
-    ),
+    Case("Non ha mai avuto più di tre fornitori.", 3, "it", "rv12 query 2/4"),
     Case("Non ci sono dubbi: tre fornitori.", 3, "it", "rv12 query 2/4"),
     Case("Non ci sono fornitori.", 0, "it", "rv12 query 2/4"),
     Case("Acme ha tre fornitori, non ha altri partner.", 3, "it", "rv12 query 2/4"),
@@ -1213,13 +1193,7 @@ NUMBERS: tuple[Case, ...] = (
     Case("2020年まで3社", 3, "ja", "rv12 query 2/4"),
     Case("3到5家", 3, "zh", "rv12 query 2/4"),
     Case("2000到3000家", 2000, "zh", "rv12 query 2/4"),
-    Case(
-        "1000부터 2000까지 범위에서 1500명",
-        1000,
-        "ko",
-        "rv12 query 2/4",
-        Tradeoff(1500.0, YEAR_RANGE),
-    ),
+    Case("1000부터 2000까지 범위에서 1500명", 1000, "ko", "rv12 query 2/4"),
     Case("1500から2000社", 1500, "ja", "rv12 query 2/4"),
     Case("2000명까지", 2000, "ko", "rv12 query 2/4"),
     Case("3000至5000家", 3000, "zh", "rv12 query 2/4"),
@@ -1245,7 +1219,7 @@ NUMBERS: tuple[Case, ...] = (
     Case("Of all 12 vendors, 3 signed", 3, "en", "rv11 probe"),
     Case("Since 1999 there were 4", 4, "en", "rv11 probe"),
     Case("1,200 vendors", 1200, "en", "rv11 probe"),
-    Case("No. 5 vendor", None, "en", "rv11 probe", Tradeoff(5.0, WORD_GAPS)),
+    Case("No. 5 vendor", None, "en", "rv11 probe", Tradeoff((5.0,), WORD_GAPS)),
     Case("No vendors.", 0, None, "rv11 probe"),
     Case("Three vendors", 3, None, "rv11 probe"),
     Case("Treinta y dos", None, None, "rv11 probe"),
@@ -1261,24 +1235,22 @@ NUMBERS: tuple[Case, ...] = (
     Case("Ninguno", 0, "es", "rv11 probe"),
     Case("ningún", 0, "es", "rv11 probe"),
     Case(
-        "Hay 2.500 proveedores", 2500, "es", "rv11 probe", Tradeoff(2.5, SCALE_DIGITS)
+        "Hay 2.500 proveedores",
+        2500,
+        "es",
+        "rv11 probe",
+        Tradeoff((2.5,), SCALE_DIGITS),
     ),
     Case(
         "Hay 2,5 millones",
         2500000.0,
         "es",
         "rv11 probe",
-        Tradeoff(1000000.0, SCALE_DIGITS),
+        Tradeoff((1000000.0,), SCALE_DIGITS),
     ),
     Case("Entre los 12 proveedores, 3 firmaron", 3, "es", "rv11 probe"),
     Case("En 5 años añadieron 3", 5, "es", "rv11 probe"),
-    Case(
-        "En los tres países hay 5 plantas",
-        5,
-        "es",
-        "rv11 probe",
-        Tradeoff(3.0, FIRST_NUMBER),
-    ),
+    Case("En los tres países hay 5 plantas", 5, "es", "rv11 probe"),
     Case("No total, são três fornecedores.", 3, "pt", "rv11 probe"),
     Case("No contrato, a Acme tem 3 fornecedores.", 3, "pt", "rv11 probe"),
     Case("Nenhum fornecedor", 0, "pt", "rv11 probe"),
@@ -1292,7 +1264,7 @@ NUMBERS: tuple[Case, ...] = (
     Case("Il n'y a aucun fournisseur", 0, "fr", "rv11 probe"),
     Case("Depuis 2019, trois fournisseurs", 3, "fr", "rv11 probe"),
     Case("En mars 2019, trois fournisseurs", 3, "fr", "rv11 probe"),
-    Case("Des trois fournisseurs, seul un a signé", None, "fr", "rv11 probe"),
+    Case("Des trois fournisseurs, seul un a signé", 3, "fr", "rv11 probe"),
     Case("Le chiffre des 3 fournisseurs est 5", 3, "fr", "rv11 probe"),
     Case("Des fournisseurs: 3", 3, "fr", "rv11 probe"),
     Case("L'un d'entre eux a signé; trois au total", 3, "fr", "rv11 probe"),
@@ -1300,16 +1272,19 @@ NUMBERS: tuple[Case, ...] = (
     Case("quatre-vingt-dix fournisseurs", 90, "fr", "rv11 probe"),
     Case("soixante et onze", 71, "fr", "rv11 probe"),
     Case("Les données des 3 usines", 3, "fr", "rv11 probe"),
-    Case("Je n'ai trouvé aucune information; 3 usines", 0, "fr", "rv11 probe"),
+    Case(
+        "Je n'ai trouvé aucune information; 3 usines",
+        0,
+        "fr",
+        "rv11 probe",
+        Tradeoff((0.0, 3.0), OTHER_NUMBER),
+    ),
     Case("Kein Lieferant", 0, "de", "rv11 probe"),
     Case("Keine Lieferanten", 0, "de", "rv11 probe"),
     Case("Seit 2019 drei Lieferanten", 3, "de", "rv11 probe"),
     Case("Im Jahr 2019 drei Lieferanten", 3, "de", "rv11 probe"),
     Case(
-        "Von den drei Lieferanten hat nur einer unterschrieben",
-        None,
-        "de",
-        "rv11 probe",
+        "Von den drei Lieferanten hat nur einer unterschrieben", 3, "de", "rv11 probe"
     ),
     Case("Von 2019 bis 2023 drei Lieferanten", 3, "de", "rv11 probe"),
     Case("Von den 5 Werken sind 2 aktiv", 2, "de", "rv11 probe"),
@@ -1343,11 +1318,11 @@ NUMBERS: tuple[Case, ...] = (
     Case("2024년에 세 곳", 3, "ko", "rv11 probe"),
     Case("공급업체는 없습니다", 0, "ko", "rv11 probe"),
     Case("0.5만 명", 5000, "ko", "rv11 probe"),
-    Case("3.5개 공장", None, "ko", "rv11 probe", Tradeoff(3.5, SCALE_DIGITS)),
-    Case("1.5배", None, "ko", "rv11 probe", Tradeoff(1.5, SCALE_DIGITS)),
+    Case("3.5개 공장", None, "ko", "rv11 probe", Tradeoff((3.5,), SCALE_DIGITS)),
+    Case("1.5배", None, "ko", "rv11 probe", Tradeoff((1.5,), SCALE_DIGITS)),
     Case("3.14", 3.14, "ko", "rv11 probe"),
     Case("1.5억 원", 150000000.0, "ko", "rv11 probe"),
-    Case("약 1.5 만 명", 15000, "ko", "rv11 probe", Tradeoff(1.5, SCALE_DIGITS)),
+    Case("약 1.5 만 명", 15000, "ko", "rv11 probe"),
     Case("一千零一家", 1001, "zh", "rv11 probe"),
     Case("两千零二十四家", 2024, "zh", "rv11 probe"),
     Case("一万零五百人", 10500, "zh", "rv11 probe"),
@@ -1388,16 +1363,10 @@ NUMBERS: tuple[Case, ...] = (
         3000000.0,
         "fr",
         "rv10 probe",
-        Tradeoff(3.0, SCALE_DIGITS),
+        Tradeoff((3.0, 1000000.0), SCALE_DIGITS),
     ),
     Case("deux millions trois cent mille", 2300000, "fr", "rv10 probe"),
-    Case(
-        "Le bâtiment neuf a trois fournisseurs",
-        3,
-        "fr",
-        "rv10 probe",
-        Tradeoff(9.0, WORD_GAPS),
-    ),
+    Case("Le bâtiment neuf a trois fournisseurs", 3, "fr", "rv10 probe"),
     Case("mille", 1000, "fr", "rv10 probe"),
     Case("Cent un", 101, "fr", "rv10 probe"),
     Case("un million", 1000000.0, "fr", "rv10 probe"),
@@ -1407,7 +1376,7 @@ NUMBERS: tuple[Case, ...] = (
     Case("cinq cent mille", 500000, "fr", "rv10 probe"),
     Case("vingt-et-un", 21, "fr", "rv10 probe"),
     Case("mille neuf cent quatre-vingt-dix-neuf", 1999, "fr", "rv10 probe"),
-    Case("Deux ou trois", None, "fr", "rv10 probe", Tradeoff(2.0, WORD_GAPS)),
+    Case("Deux ou trois", None, "fr", "rv10 probe", Tradeoff((2.0, 3.0), WORD_GAPS)),
     Case("Treinta y dos", 32, "es", "rv10 probe"),
     Case("ciento veintiuno", 121, "es", "rv10 probe"),
     Case("doscientos mil", 200000, "es", "rv10 probe"),
@@ -1420,7 +1389,7 @@ NUMBERS: tuple[Case, ...] = (
     Case("cien mil", 100000, "es", "rv10 probe"),
     Case("El vigésimo primero", None, "es", "rv10 probe"),
     Case("una", None, "es", "rv10 probe"),
-    Case("Dos o tres", None, "es", "rv10 probe", Tradeoff(2.0, WORD_GAPS)),
+    Case("Dos o tres", None, "es", "rv10 probe", Tradeoff((2.0, 3.0), WORD_GAPS)),
     Case("quinientos", 500, "es", "rv10 probe"),
     Case("ciento cincuenta mil", 150000, "es", "rv10 probe"),
     Case("Zwei Millionen", 2000000.0, "de", "rv10 probe"),
@@ -1462,15 +1431,15 @@ NUMBERS: tuple[Case, ...] = (
     Case("двадцать первый", None, "ru", "rv10 probe"),
     Case("сто двадцать пять", 125, "ru", "rv10 probe"),
     Case("две тысячи двадцать четыре", 2024, "ru", "rv10 probe"),
-    Case("один из них", None, "ru", "rv10 probe"),
+    Case("один из них", 1, "ru", "rv10 probe"),
     Case("из трёх поставщиков два", 2, "ru", "rv10 probe"),
     Case("пять тысяч", 5000, "ru", "rv10 probe"),
     Case("одна тысяча", 1000, "ru", "rv10 probe"),
     Case("Четырёх", 4, "ru", "rv10 probe"),
     Case("twenty-first", None, "en", "rv10 probe"),
     Case("Three hundred and twelve", 312, "en", "rv10 probe"),
-    Case("one of them", None, "en", "rv10 probe"),
-    Case("3 million", 3000000.0, "en", "rv10 probe", Tradeoff(3.0, SCALE_DIGITS)),
+    Case("one of them", 1, "en", "rv10 probe"),
+    Case("3 million", 3000000.0, "en", "rv10 probe", Tradeoff((3.0,), SCALE_DIGITS)),
     Case("two thousand twenty-four", 2024, "en", "rv10 probe"),
     Case("a dozen", 12, "en", "rv10 probe", Tradeoff(None, WORD_GAPS)),
     Case("열두 대", 12, "ko", "rv10 probe"),
@@ -1534,40 +1503,128 @@ NUMBERS: tuple[Case, ...] = (
     ),
     Case("Нет. Три поставщика.", 3, "ru", "rv12 fix (yes/no word)"),
     Case("No hay.", 0, "es", "rv12 fix (yes/no word)"),
-    Case("No hay más de una docena.", None, "es", "rv12 query 2 (comparative)"),
-    # A number in the absent thing's own phrase is no count (rv13 query 2).
+    Case(
+        "No hay más de una docena.",
+        None,
+        "es",
+        "rv12 query 2 (comparative)",
+        Tradeoff((0.0,), WORD_GAPS),
+    ),
+    # An absence with the absent thing's own number (rv13 query 2).
     Case(
         "There are not any vendors with more than 100 employees.",
         0,
         "en",
         "rv13 query 2",
+        Tradeoff((0.0, 100.0), NO_QUESTION),
     ),
-    Case("Acme does not have any plants in Zone 2.", 0, "en", "rv13 query 2"),
-    Case("Acme doesn't have any suppliers for project 7.", 0, "en", "rv13 query 2"),
-    Case("There aren't any suppliers in the top 10.", 0, "en", "rv13 query 2"),
+    Case(
+        "Acme does not have any plants in Zone 2.",
+        0,
+        "en",
+        "rv13 query 2",
+        Tradeoff((0.0, 2.0), NO_QUESTION),
+    ),
+    Case(
+        "Acme doesn't have any suppliers for project 7.",
+        0,
+        "en",
+        "rv13 query 2",
+        Tradeoff((0.0, 7.0), NO_QUESTION),
+    ),
+    Case(
+        "There aren't any suppliers in the top 10.",
+        0,
+        "en",
+        "rv13 query 2",
+        Tradeoff((0.0, 10.0), NO_QUESTION),
+    ),
     Case(
         "Acme does not have any contracts worth over 5 million.",
         0,
         "en",
         "rv13 query 2",
+        Tradeoff((0.0, 5.0), NO_QUESTION),
     ),
-    Case("No hay proveedores en el lote 7.", 0, "es", "rv13 query 2"),
-    Case("No hay proveedores con más de 50 empleados.", 0, "es", "rv13 query 2"),
-    Case("Non ci sono fornitori con più di 50 dipendenti.", 0, "it", "rv13 query 2"),
-    Case("Non ci sono fornitori nel lotto 7.", 0, "it", "rv13 query 2"),
-    Case("Il n'y a pas de fournisseur dans le lot 7.", 0, "fr", "rv13 query 2"),
     Case(
-        "Il n'y a pas de fournisseur avec plus de 50 salariés.", 0, "fr", "rv13 query 2"
+        "No hay proveedores en el lote 7.",
+        0,
+        "es",
+        "rv13 query 2",
+        Tradeoff((0.0, 7.0), NO_QUESTION),
     ),
-    Case("Não há fornecedores no lote 7.", 0, "pt", "rv13 query 2"),
-    Case("Não há fornecedores com mais de 50 funcionários.", 0, "pt", "rv13 query 2"),
-    Case("Поставщиков с более чем 50 сотрудниками нет.", 0, "ru", "rv13 query 2"),
     Case(
-        "Поставщиков в лоте 7 нет.", 0, "ru", "rv13 query 2", Tradeoff(7.0, NO_QUESTION)
+        "No hay proveedores con más de 50 empleados.",
+        0,
+        "es",
+        "rv13 query 2",
+        Tradeoff((0.0, 50.0), NO_QUESTION),
+    ),
+    Case(
+        "Non ci sono fornitori con più di 50 dipendenti.",
+        0,
+        "it",
+        "rv13 query 2",
+        Tradeoff((0.0, 50.0), NO_QUESTION),
+    ),
+    Case(
+        "Non ci sono fornitori nel lotto 7.",
+        0,
+        "it",
+        "rv13 query 2",
+        Tradeoff((0.0, 7.0), NO_QUESTION),
+    ),
+    Case(
+        "Il n'y a pas de fournisseur dans le lot 7.",
+        0,
+        "fr",
+        "rv13 query 2",
+        Tradeoff((0.0, 7.0), NO_QUESTION),
+    ),
+    Case(
+        "Il n'y a pas de fournisseur avec plus de 50 salariés.",
+        0,
+        "fr",
+        "rv13 query 2",
+        Tradeoff((0.0, 50.0), NO_QUESTION),
+    ),
+    Case(
+        "Não há fornecedores no lote 7.",
+        0,
+        "pt",
+        "rv13 query 2",
+        Tradeoff((0.0, 7.0), NO_QUESTION),
+    ),
+    Case(
+        "Não há fornecedores com mais de 50 funcionários.",
+        0,
+        "pt",
+        "rv13 query 2",
+        Tradeoff((0.0, 50.0), NO_QUESTION),
+    ),
+    Case(
+        "Поставщиков с более чем 50 сотрудниками нет.",
+        0,
+        "ru",
+        "rv13 query 2",
+        Tradeoff((0.0, 50.0), NO_QUESTION),
+    ),
+    Case(
+        "Поставщиков в лоте 7 нет.",
+        0,
+        "ru",
+        "rv13 query 2",
+        Tradeoff((0.0, 7.0), NO_QUESTION),
     ),
     Case("Не более пяти поставщиков, точно нет шести.", 5, "ru", "rv13 query 2"),
     Case("3 vendors do not have any contracts.", 3, "en", "rv13 query 2"),
-    Case("No hay datos de 2019. En 2020 tenía 3 plantas.", 0, "es", "rv13 query 2"),
+    Case(
+        "No hay datos de 2019. En 2020 tenía 3 plantas.",
+        0,
+        "es",
+        "rv13 query 2",
+        Tradeoff((0.0, 3.0, 2019.0, 2020.0), OTHER_NUMBER),
+    ),
     Case("No hay uno sino tres.", 3, "es", "rv13 query 2"),
     Case("No hay más detalles.", 0, "es", "rv13 query 5"),
     Case("Não há mais detalhes.", 0, "pt", "rv13 query 5"),
@@ -1582,9 +1639,9 @@ NUMBERS: tuple[Case, ...] = (
         0,
         "en",
         "rv13 query 2",
+        Tradeoff((0.0, 3.0), OTHER_NUMBER),
     ),
-    # A comparative ends at a word boundary; a one-word one compares only
-    # before a number (rv13 query 5).
+    # Comparatives beside an absence (rv13 query 5).
     Case("No hay proveedores; no hay más detalles.", 0, "es", "rv13 query 5"),
     Case("No hay proveedores ni menos derechos.", 0, "es", "rv13 query 5"),
     Case("Non ci sono fornitori, è il caso più diffuso.", 0, "it", "rv13 query 5"),
@@ -1605,91 +1662,148 @@ NUMBERS: tuple[Case, ...] = (
     ),
     Case("There are not any vendors, less thankfully.", 0, "en", "rv13 query 5"),
     Case("Нет больше поставщиков.", 0, "ru", "rv13 query 5"),
-    # rv14 query (numbers): a number the question states is a condition
-    # when the answer reads an absence; punctuation inside a number; ranges;
-    # Russian oblique numerals; CJK conditions.
+    # rv14 query (numbers): answers with their question; punctuation inside
+    # a number; ranges; Russian oblique numerals; CJK conditions.
     Case(
         "There are not any vendors with more than 1,000 employees.",
         0,
         "en",
         "rv14 query",
+        Tradeoff((0.0, 1000.0), NO_QUESTION),
     ),
     Case(
         "Acme does not have any contracts worth more than $1,500,000.",
         0,
         "en",
         "rv14 query",
+        Tradeoff((0.0, 1500000.0), NO_QUESTION),
     ),
     Case(
         "There are not any suppliers with revenue above 2,500 units.",
         0,
         "en",
         "rv14 query",
+        Tradeoff((0.0, 2500.0), NO_QUESTION),
     ),
     Case(
         "No hay proveedores con una facturación de más de 2,5 millones.",
         0,
         "es",
         "rv14 query",
+        Tradeoff((0.0, 1000000.0), NO_QUESTION),
     ),
     Case(
         "Il n'y a pas de fournisseur avec un chiffre d'affaires de 2,5 millions.",
         0,
         "fr",
         "rv14 query",
+        Tradeoff((0.0, 1000000.0), NO_QUESTION),
     ),
     Case(
-        "Non ci sono fornitori con un fatturato di 2,5 milioni.", 0, "it", "rv14 query"
+        "Non ci sono fornitori con un fatturato di 2,5 milioni.",
+        0,
+        "it",
+        "rv14 query",
+        Tradeoff((0.0, 1000000.0), NO_QUESTION),
     ),
-    Case("Não há fornecedores com faturamento de 2,5 milhões.", 0, "pt", "rv14 query"),
+    Case(
+        "Não há fornecedores com faturamento de 2,5 milhões.",
+        0,
+        "pt",
+        "rv14 query",
+        Tradeoff((0.0, 1000000.0), NO_QUESTION),
+    ),
     Case("Поставщиков с выручкой 2,5 млн нет.", 0, "ru", "rv14 query"),
-    Case("There are not any deliveries before 10:30.", 0, "en", "rv14 query"),
-    Case("No hay entregas antes de las 10:30.", 0, "es", "rv14 query"),
-    Case("Il n'y a pas de livraison avant 10:30.", 0, "fr", "rv14 query"),
-    Case("There are not any suppliers in lots 3–5.", 0, "en", "rv14 query"),
-    Case("No hay proveedores en los lotes 3–5.", 0, "es", "rv14 query"),
-    Case("Non ci sono fornitori nei lotti 3–5.", 0, "it", "rv14 query"),
+    Case(
+        "There are not any deliveries before 10:30.",
+        0,
+        "en",
+        "rv14 query",
+        Tradeoff((0.0, 10.0, 30.0), NO_QUESTION),
+    ),
+    Case(
+        "No hay entregas antes de las 10:30.",
+        0,
+        "es",
+        "rv14 query",
+        Tradeoff((0.0, 10.0, 30.0), NO_QUESTION),
+    ),
+    Case(
+        "Il n'y a pas de livraison avant 10:30.",
+        0,
+        "fr",
+        "rv14 query",
+        Tradeoff((0.0, 10.0, 30.0), NO_QUESTION),
+    ),
+    Case(
+        "There are not any suppliers in lots 3–5.",
+        0,
+        "en",
+        "rv14 query",
+        Tradeoff((0.0, 3.0, 5.0), NO_QUESTION),
+    ),
+    Case(
+        "No hay proveedores en los lotes 3–5.",
+        0,
+        "es",
+        "rv14 query",
+        Tradeoff((0.0, 3.0, 5.0), NO_QUESTION),
+    ),
+    Case(
+        "Non ci sono fornitori nei lotti 3–5.",
+        0,
+        "it",
+        "rv14 query",
+        Tradeoff((0.0, 3.0, 5.0), NO_QUESTION),
+    ),
     Case(
         "There are not any vendors with between 100 and 500 employees.",
         0,
         "en",
         "rv14 query",
+        Tradeoff((0.0, 100.0, 500.0), NO_QUESTION),
     ),
     Case(
         "There are not any vendors with more than 100 but fewer than 500 employees.",
         0,
         "en",
         "rv14 query",
+        Tradeoff((0.0, 100.0, 500.0), NO_QUESTION),
     ),
     Case(
         "No hay proveedores con más de 100 pero menos de 500 empleados.",
         0,
         "es",
         "rv14 query",
+        Tradeoff((0.0, 100.0, 500.0), NO_QUESTION),
     ),
     Case(
         "Il n'y a pas de fournisseur avec plus de 100 mais moins de 500 salariés.",
         0,
         "fr",
         "rv14 query",
+        Tradeoff((0.0, 100.0, 500.0), NO_QUESTION),
     ),
     Case(
         "Non ci sono fornitori con più di 100 ma meno di 500 dipendenti.",
         0,
         "it",
         "rv14 query",
+        Tradeoff((0.0, 100.0, 500.0), NO_QUESTION),
     ),
     Case(
         "Não há fornecedores com mais de 100 mas menos de 500 funcionários.",
         0,
         "pt",
         "rv14 query",
+        Tradeoff((0.0, 100.0, 500.0), NO_QUESTION),
     ),
     Case(
         "Поставщиков с более чем 100, но менее чем 500 сотрудниками нет.",
         0,
         "ru",
         "rv14 query",
+        Tradeoff((0.0, 100.0, 500.0), NO_QUESTION),
     ),
     Case(
         "There are not any suppliers in Zone 2, Zone 3 or Zone 4.",
@@ -1698,10 +1812,34 @@ NUMBERS: tuple[Case, ...] = (
         "rv14 query",
         question="How many suppliers are in Zone 2, Zone 3 or Zone 4?",
     ),
-    Case("No hay proveedores en las zonas 2, 3 y 4.", 0, "es", "rv14 query"),
-    Case("Il n'y a pas de fournisseur dans les lots 2, 3 et 4.", 0, "fr", "rv14 query"),
-    Case("Non ci sono fornitori nei lotti 2, 3 e 4.", 0, "it", "rv14 query"),
-    Case("Não há fornecedores nos lotes 2, 3 e 4.", 0, "pt", "rv14 query"),
+    Case(
+        "No hay proveedores en las zonas 2, 3 y 4.",
+        0,
+        "es",
+        "rv14 query",
+        Tradeoff((0.0, 2.0, 3.0, 4.0), NO_QUESTION),
+    ),
+    Case(
+        "Il n'y a pas de fournisseur dans les lots 2, 3 et 4.",
+        0,
+        "fr",
+        "rv14 query",
+        Tradeoff((0.0, 2.0, 3.0, 4.0), NO_QUESTION),
+    ),
+    Case(
+        "Non ci sono fornitori nei lotti 2, 3 e 4.",
+        0,
+        "it",
+        "rv14 query",
+        Tradeoff((0.0, 2.0, 3.0, 4.0), NO_QUESTION),
+    ),
+    Case(
+        "Não há fornecedores nos lotes 2, 3 e 4.",
+        0,
+        "pt",
+        "rv14 query",
+        Tradeoff((0.0, 2.0, 3.0, 4.0), NO_QUESTION),
+    ),
     Case(
         "There are not any vendors with more than 50 employees, according to the 2023 report.",
         0,
@@ -1714,6 +1852,7 @@ NUMBERS: tuple[Case, ...] = (
         0,
         "es",
         "rv14 query",
+        Tradeoff((0.0, 50.0), NO_QUESTION),
     ),
     Case(
         "There are not any vendors, among those with more than 100 employees.",
@@ -1729,15 +1868,34 @@ NUMBERS: tuple[Case, ...] = (
         "rv14 query",
         question="¿Cuántos proveedores tienen más de 100 empleados?",
     ),
-    Case("Il n'y a aucun fournisseur de plus de 100 salariés.", 0, "fr", "rv14 query"),
-    Case("Non c'è nessun fornitore con più di 100 dipendenti.", 0, "it", "rv14 query"),
+    Case(
+        "Il n'y a aucun fournisseur de plus de 100 salariés.",
+        0,
+        "fr",
+        "rv14 query",
+        Tradeoff((0.0, 100.0), NO_QUESTION),
+    ),
+    Case(
+        "Non c'è nessun fornitore con più di 100 dipendenti.",
+        0,
+        "it",
+        "rv14 query",
+        Tradeoff((0.0, 100.0), NO_QUESTION),
+    ),
     Case(
         "Es gibt keine Lieferanten mit mehr als 100 Mitarbeitern.",
         0,
         "de",
         "rv14 query",
+        Tradeoff((0.0, 100.0), NO_QUESTION),
     ),
-    Case("Es gibt keinen Lieferanten in Los 7.", 0, "de", "rv14 query"),
+    Case(
+        "Es gibt keinen Lieferanten in Los 7.",
+        0,
+        "de",
+        "rv14 query",
+        Tradeoff((0.0, 7.0), NO_QUESTION),
+    ),
     Case(
         "Lieferanten mit mehr als 100 Mitarbeitern gibt es keine.",
         0,
@@ -1829,8 +1987,20 @@ NUMBERS: tuple[Case, ...] = (
         "rv14 query",
         question="Сколько поставщиков старше 5 лет?",
     ),
-    Case("Нет поставщиков с более чем 100 сотрудниками.", 0, "ru", "rv14 query"),
-    Case("Нет поставщиков в лоте 7.", 0, "ru", "rv14 query"),
+    Case(
+        "Нет поставщиков с более чем 100 сотрудниками.",
+        0,
+        "ru",
+        "rv14 query",
+        Tradeoff((0.0, 100.0), NO_QUESTION),
+    ),
+    Case(
+        "Нет поставщиков в лоте 7.",
+        0,
+        "ru",
+        "rv14 query",
+        Tradeoff((0.0, 7.0), NO_QUESTION),
+    ),
     Case(
         "Non ha mai avuto più di tre fornitori nel 2023.",
         3,
@@ -1927,13 +2097,7 @@ NUMBERS: tuple[Case, ...] = (
     Case("No hay duda de que son seis.", 6, "es", "rv14 query"),
     Case("Не более пяти поставщиков.", 5, "ru", "rv14 query"),
     Case("Около шести поставщиков.", 6, "ru", "rv14 query"),
-    Case(
-        "Из семи поставщиков работают все.",
-        7,
-        "ru",
-        "rv14 query",
-        Tradeoff(None, PARTITIVE_ALL),
-    ),
+    Case("Из семи поставщиков работают все.", 7, "ru", "rv14 query"),
     Case("Свыше восьми поставщиков.", 8, "ru", "rv14 query"),
     Case("До девяти поставщиков.", 9, "ru", "rv14 query"),
     Case("Не менее десяти поставщиков.", 10, "ru", "rv14 query"),
@@ -2006,7 +2170,13 @@ NUMBERS: tuple[Case, ...] = (
         "rv14 query",
         question="员工超过100人的供应商有几家？",
     ),
-    Case("没有员工超过100人的供应商。", 0, "zh", "rv14 query"),
+    Case(
+        "没有员工超过100人的供应商。",
+        0,
+        "zh",
+        "rv14 query",
+        Tradeoff((0.0, 100.0), NO_QUESTION),
+    ),
     Case("第7批次没有供应商。", 0, "zh", "rv14 query"),
     Case(
         "7号批次没有供应商。", 0, "zh", "rv14 query", question="7号批次有几家供应商？"
@@ -2018,12 +2188,19 @@ NUMBERS: tuple[Case, ...] = (
     Case("Поставщиков больше нет.", 0, "ru", "rv14 query"),
     Case("Больше поставщиков нет.", 0, "ru", "rv14 query"),
     Case("Нет больше пяти поставщиков.", 5, "ru", "rv14 query"),
-    Case("Поставщиков больше пяти нет.", 0, "ru", "rv14 query"),
+    Case(
+        "Поставщиков больше пяти нет.",
+        0,
+        "ru",
+        "rv14 query",
+        Tradeoff((0.0, 5.0), NO_QUESTION),
+    ),
     Case(
         "There are not any vendors with fewer than 3 plants; most have 5.",
         0,
         "en",
         "rv14 query",
+        Tradeoff((0.0, 3.0, 5.0), OTHER_NUMBER),
     ),
     # The question restating the count the answer confirms (rv14 query 2).
     Case("Yes, 4.", 4, "en", "rv14 query 2", question="Does Acme have 4 suppliers?"),
@@ -2046,7 +2223,6 @@ NUMBERS: tuple[Case, ...] = (
         3,
         "es",
         "rv14 query 2",
-        Tradeoff(0.0, RESTATED),
         question="¿Tiene Acme tres proveedores?",
     ),
     Case(
@@ -2070,13 +2246,7 @@ NUMBERS: tuple[Case, ...] = (
         "rv14 query 2",
         question="Сколько поставщиков с более чем 50 сотрудниками?",
     ),
-    Case(
-        "没有超过三家供应商。",
-        3,
-        "zh",
-        "rv14 query 5",
-        question="有几家供应商？",
-    ),
+    Case("没有超过三家供应商。", 3, "zh", "rv14 query 5", question="有几家供应商？"),
     Case(
         "没有超过三家供应商的批次。",
         0,
@@ -2084,13 +2254,7 @@ NUMBERS: tuple[Case, ...] = (
         "rv14 query 5",
         question="超过三家供应商的批次有几个？",
     ),
-    Case(
-        "没有三家以上的供应商。",
-        3,
-        "zh",
-        "rv14 query 5",
-        question="有几家供应商？",
-    ),
+    Case("没有三家以上的供应商。", 3, "zh", "rv14 query 5", question="有几家供应商？"),
     Case(
         "没有三家以上的供应商。",
         0,
@@ -2098,20 +2262,20 @@ NUMBERS: tuple[Case, ...] = (
         "rv14 query 5",
         question="三家以上的供应商有几个批次？",
     ),
-    # Without the question, a condition before the phrase reads first.
+    # Read without the question.
     Case(
         "En el lote 7 no hay proveedores.",
         0,
         "es",
         "rv14 query 5",
-        Tradeoff(7.0, NO_QUESTION),
+        Tradeoff((0.0, 7.0), NO_QUESTION),
     ),
     Case(
         "従業員100人以上の仕入先はありません。",
         0,
         "ja",
         "rv14 query 5",
-        Tradeoff(100.0, NO_QUESTION),
+        Tradeoff((0.0, 100.0), NO_QUESTION),
     ),
 )
 

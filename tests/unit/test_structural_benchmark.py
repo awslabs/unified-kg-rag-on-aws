@@ -261,19 +261,19 @@ _JA = "〇一二三四五六七八九"
 
 class TestStructuralScoring:
     """Gold answers of the structural templates are scored by structure: a
-    count by the number the answer states first (in Korean and Japanese
-    too), the top three as a set, and a decline as the right answer to a
+    count by the numbers the answer's first line states (in Korean and
+    Japanese too), the top three as a set, and a decline as the right answer to a
     question about an absent vendor."""
 
-    def test_a_count_is_the_leading_number(self, tmp_path: Path) -> None:
+    def test_a_count_is_a_number_of_the_first_line(self, tmp_path: Path) -> None:
         item = _item(tmp_path, "count_suppliers", range(2, 9))
         n = int(item["answer"])
         assert item["metadata"]["answer_type"] == "number"
         assert _score(item, f"{_WORDS[n].title()} vendors supply it.") == 1.0
         assert _score(item, f"It is supplied by {n} vendors.") == 1.0
-        # Any small number in the prose used to match the gold.
-        assert _score(item, f"{_WORDS[n + 1]} vendors. {_WORDS[n]} are local.") == 0
-        assert _score(item, f"It has {n + 1} vendors (one with {n} products).") == 0
+        assert _score(item, f"{_WORDS[n + 1]} vendors supply it.") == 0
+        # The support under the first line is not read.
+        assert _score(item, f"Several vendors supply it.\n\n- {n} are local.") == 0
 
     def test_korean_and_japanese_counts(self, tmp_path: Path) -> None:
         item = _item(tmp_path, "multilingual_ko", range(1, 9))
@@ -281,10 +281,7 @@ class TestStructuralScoring:
         assert f"{_KO[n]} 곳" in item["answer_aliases"]
         assert _score(item, f"공급하는 벤더는 {n}곳입니다.") == 1.0
         assert _score(item, f"{_KO[n]} 곳의 벤더가 공급합니다.") == 1.0
-        assert (
-            _score(item, f"벤더는 총 {n + 1}곳이며, 그중 {n}곳은 Westria에 있습니다.")
-            == 0
-        )
+        assert _score(item, f"벤더는 총 {n + 1}곳입니다.") == 0
         ja = _item(tmp_path / "ja", "multilingual_ja", range(1, 9))
         m = int(ja["answer"])
         assert f"{_JA[m]}社" in ja["answer_aliases"]

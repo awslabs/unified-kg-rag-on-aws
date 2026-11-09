@@ -137,17 +137,6 @@ PROFILE = LanguageProfile(
     number_tens=_oblique(_TENS),
     zero_words=("ни одного", "ни одной", "ни один", "ни одна", "ни одно"),
     absence_phrases=("нет",),
-    comparatives=(
-        "более чем",
-        "менее чем",
-        "больше чем",
-        "меньше чем",
-        "более",
-        "менее",
-        "больше",
-        "меньше",
-    ),
-    clause_conjunctions=("но", "однако", "хотя"),
     # Masculine, feminine and neuter.
     ordinal_words=frozenset(
         f"{stem}{ending}"
@@ -165,9 +154,6 @@ PROFILE = LanguageProfile(
         )
         for ending in endings
     ),
-    year_words=("в", "во", "с", "со", "до", "после", "к", "начиная с"),
-    partitive_words=("из",),
-    partitive_anaphors=("из них", "из которых"),
     # The forms a count takes them in ("одна тысяча", "три тысячи", "пять
     # тысяч").
     number_scales={
