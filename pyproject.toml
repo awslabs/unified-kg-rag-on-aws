@@ -291,6 +291,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/**/*.py" = ["B018"]
+# Planted copies keep the forms a copy takes, the outdated ones too.
+"tests/fixtures/guard_copies/*.py" = ["B018", "C4", "UP"]
 
 [tool.mypy]
 # Type-checks Pydantic models' generated __init__ (field types, aliases, no
