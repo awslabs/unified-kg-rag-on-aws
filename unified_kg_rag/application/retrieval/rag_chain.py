@@ -195,6 +195,7 @@ from unified_kg_rag.shared.utils import (
     configure_event_loop,
     error_digest,
     strip_embedding_fields,
+    strip_invisible,
     text_digest,
 )
 from unified_kg_rag.shared.utils.concurrency import discard, gather_bounded, settle
@@ -550,10 +551,11 @@ class RAGInput(BaseModel):
     def _compose_query(cls, query: str) -> str:
         # Indexed text is NFC (see convert_langchain_to_document); a query typed
         # or pasted as decomposed Hangul (NFD) must compose to match it.
-        query = unicodedata.normalize("NFC", query).strip()
+        query = strip_invisible(unicodedata.normalize("NFC", query))
         if not query:
-            # Refused before any model call: an empty question was routed,
-            # extracted from and searched for.
+            # Refused before any model call: an empty question (or one of
+            # invisible characters alone, "\u200b") was routed, extracted
+            # from and searched for.
             raise ValueError("The query is empty.")
         return query
 

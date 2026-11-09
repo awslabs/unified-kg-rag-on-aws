@@ -40,7 +40,12 @@ from unified_kg_rag.shared import IndexNotFoundError
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("query", ["", "   ", "\n\t", "　"])
+@pytest.mark.parametrize(
+    "query",
+    # Regression (rv9 query L8): zero-width space, joiner, BOM and a
+    # direction mark alone passed str.strip.
+    ["", "   ", "\n\t", "　", "\u200b", " \u200d\ufeff ", "\u200f"],
+)
 def test_an_empty_query_is_refused(query: str) -> None:
     with pytest.raises(ValidationError, match="The query is empty"):
         RAGInput(query=query)
@@ -48,6 +53,9 @@ def test_an_empty_query_is_refused(query: str) -> None:
 
 def test_a_query_is_stripped() -> None:
     assert RAGInput(query="  공급사는 누구인가?\n").query == "공급사는 누구인가?"
+    assert RAGInput(query="\ufeff공급사는?\u200b").query == "공급사는?"
+    # Inside the text a joiner stays (an emoji sequence).
+    assert RAGInput(query="a\u200db").query == "a\u200db"
 
 
 class _Factory:

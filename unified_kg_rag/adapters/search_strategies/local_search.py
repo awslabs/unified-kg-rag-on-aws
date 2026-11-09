@@ -564,7 +564,7 @@ class LocalSearchStrategy(PPRRankingMixin):
             return []
 
         prefix = self.config.indexing.opensearch.claims_index_prefix
-        if not await self._claims_index_exists(prefix, query.suffix):
+        if not await self._claims_index_exists(query.suffix):
             return []
         search_query = SearchQuery(
             query=claim_query,
@@ -578,23 +578,6 @@ class LocalSearchStrategy(PPRRankingMixin):
         return await self._safe_aretrieve(
             self.document_retriever, search_query, "Claims retrieval"
         )
-
-    async def _claims_index_exists(self, prefix: str, suffix: str | None) -> bool:
-        """Whether the namespace's claims index exists (or the store cannot
-        tell). A namespace whose claim extraction found no claim holds none:
-        its search would WARN of a missing index on every query. Asked
-        until the index is found, then remembered per suffix."""
-        found: set[str | None] = self.__dict__.setdefault("_claims_indexes", set())
-        if suffix in found:
-            return True
-        assert self.document_retriever is not None  # the caller checks
-        exists = await self.document_retriever.ahas_index(prefix, suffix)
-        if exists is False:
-            logger.debug("No claims index for suffix '%s': no claims to read", suffix)
-            return False
-        if exists:
-            found.add(suffix)
-        return True
 
     async def _retrieve_community_reports(
         self, query: SearchQuery

@@ -1337,7 +1337,8 @@ From a `main` checkout (formats and keys no release had):
   `processing.document_parsing.index_value`, as ingestion writes and the CLIs query (`resolve_namespace`, the one
   rule of every entry point); it read `default`, so the console's Ask page failed with `IndexNotFoundError` after a
   successful ingest under an `index_value`. A query checks its namespace's text-units index before its first model
-  call (once per namespace), and refuses an empty or blank question (the query is stripped).
+  call (once per namespace), and refuses an empty or blank question (the query is stripped, invisible format
+  characters such as a zero-width space too; the MCP tools refuse one as empty as well).
 - `run-eval` exits 2 for a filter key no index declares, as `run-rag` does, and `run-rag` exits by the class of a
   failure `processing.ignore_errors` absorbed (2 for a `--suffix` nothing was ingested under; it exited 1).
 - Global search on a namespace without community reports declines with `abstention_reason: no_reports`.
@@ -1620,6 +1621,8 @@ Queries and retrieval.
   (`source_language` with translation disabled), not always `target_language` nor a requested language, whose
   follow-up queries found no entity (#613, #619); query entities a model separates with `、`, `，` or `；` (or one per
   line) are split into entities, not read as one (#605).
+- `simple` leaves the claims index out of its sweep when claim extraction found no claim (and built none), as
+  `local` does: every query WARNed "Index not found" for it.
 - Store failures fail the query instead of answering from no context (unreachable, denied, rejected or overloaded
   stores, a failing embedding call) (#249, #258, #261, #266); queries no longer hang on a silent store
   (`search.store_timeout_seconds`, a Neptune traversal timeout) (#258, #264); a stalled Bedrock call no longer holds

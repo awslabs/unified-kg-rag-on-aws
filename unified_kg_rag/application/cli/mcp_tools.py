@@ -61,7 +61,7 @@ from unified_kg_rag.shared.exceptions import (
     error_class_of,
 )
 from unified_kg_rag.shared.usage import usage_scope
-from unified_kg_rag.shared.utils import text_digest
+from unified_kg_rag.shared.utils import strip_invisible, text_digest
 
 logger = get_logger(__name__)
 
@@ -566,7 +566,7 @@ class KnowledgeGraphTools:
         return turns
 
     def _text(self, name: str, value: str | None) -> str:
-        text = (value or "").strip()
+        text = strip_invisible(value or "")
         if not text:
             raise ToolArgumentError(f"{name} is empty.")
         if len(text) > self.settings.max_query_chars:

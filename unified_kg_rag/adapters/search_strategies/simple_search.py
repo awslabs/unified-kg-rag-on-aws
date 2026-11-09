@@ -96,7 +96,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         if not self.document_retriever:
             return {}
 
-        search_query = self._apply_claim_gate(query)
+        search_query = await self._apply_claim_gate(query)
         if self._source_kinds_skip_reports(query):
             without = self._without_reports(search_query)
             if without is None:
@@ -127,14 +127,16 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             return None
         return query.model_copy(update={"index_prefixes": prefixes})
 
-    def _apply_claim_gate(self, query: SearchQuery) -> SearchQuery:
+    async def _apply_claim_gate(self, query: SearchQuery) -> SearchQuery:
         # Simple search sweeps every index by default. When the caller hasn't
         # pinned index_prefixes and some optional index is not built by the
         # configured pipeline (claims off, no relationship vector index, no
         # community detection) or not held by the queried namespace (a
         # lightrag-only one has no reports, a raptor-only one no entities),
         # pin the sweep to the indices that do exist so any document backend
-        # honours the same gates as OpenSearchRetriever.
+        # honours the same gates as OpenSearchRetriever. A claim extraction
+        # that found no claim built no claims index: left out too, as local
+        # leaves it (no "Index not found" WARNING on every query).
         if query.index_prefixes:
             return query
         held = held_artifacts_of(query.metadata)
@@ -143,6 +145,9 @@ class SimpleSearchStrategy(BaseSearchStrategy):
             if held is None
             else held_index_prefixes(self.config, held)
         )
+        claims = self.config.indexing.opensearch.claims_index_prefix
+        if claims in configured and not await self._claims_index_exists(query.suffix):
+            configured = [prefix for prefix in configured if prefix != claims]
         if configured == all_index_prefixes(self.config):
             return query
         return query.model_copy(update={"index_prefixes": configured})
