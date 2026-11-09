@@ -63,6 +63,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     INSUFFICIENCY_REASON_KEY,
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationReport
+from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.guardrail import GuardAction
 from unified_kg_rag.shared import (
@@ -1094,11 +1095,7 @@ class EvaluationManager:
                 for payload in payloads:
                     if name := source_fields.file_name(payload):
                         files.append(name)
-                    lineage = payload.get("text_unit_ids") or []
-                    if isinstance(lineage, str):
-                        lineage = [lineage]
-                    if isinstance(lineage, list | tuple):
-                        unit_ids.extend(str(u) for u in lineage if u)
+                    unit_ids.extend(source_fields.id_list(payload.get("text_unit_ids")))
                 if (
                     isinstance(metadata, dict)
                     and metadata.get("section_type") == SectionType.TEXT.value
@@ -1106,9 +1103,7 @@ class EvaluationManager:
                     own_id = metadata.get("chunk_id") or metadata.get("source_id")
                     if own_id:
                         unit_ids.append(str(own_id))
-            provenance.append(
-                (list(dict.fromkeys(files)), list(dict.fromkeys(unit_ids)))
-            )
+            provenance.append((list(dict.fromkeys(files)), merge_lineages([unit_ids])))
         return provenance
 
     def create_lean_context_strings(

@@ -53,6 +53,7 @@ from unified_kg_rag.domain.languages.corpus import corpus_source_language
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.shared import ConfigurationError, get_logger
 from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils.files import atomic_write_text
 
 if TYPE_CHECKING:
     from unified_kg_rag.adapters.ingestion.parser import ParserFactory
@@ -314,17 +315,17 @@ def main() -> int:
         draft: SchemaDraft | None = result.pop("schema_draft", None)
         result = _with_source_language(result, texts, config)
 
-        args.output_path.write_text(
+        atomic_write_text(
+            args.output_path,
             yaml.safe_dump(result, sort_keys=False, allow_unicode=True),
-            encoding="utf-8",
         )
         logger.info("Wrote tuned prompts to '%s'", args.output_path)
         logger.info("Detected domain: '%s'", result["profile"]["domain"])
         summary = {"output_path": str(args.output_path), "profile": result["profile"]}
         if draft is not None:
-            args.schema_out.write_text(
+            atomic_write_text(
+                args.schema_out,
                 draft.to_yaml(_schema_source_path(args.schema_out, args.config_path)),
-                encoding="utf-8",
             )
             logger.info(
                 "Wrote an extraction schema draft to '%s' (%d entity types, "

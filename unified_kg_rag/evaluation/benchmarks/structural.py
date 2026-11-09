@@ -52,6 +52,7 @@ from unified_kg_rag.domain.retrieval.graph_query import (
     validate_plan,
 )
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
 
@@ -861,12 +862,13 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
     corpus.mkdir(parents=True, exist_ok=True)
     seed_dir.mkdir(parents=True, exist_ok=True)
     for name, text in _documents(world, rng).items():
-        (corpus / name).write_text(text, "utf-8")
-    (seed_dir / "structural.jsonl").write_text(
-        "\n".join(_seed_lines(world)) + "\n", "utf-8"
+        atomic_write_text(corpus / name, text)
+    atomic_write_text(
+        seed_dir / "structural.jsonl", "\n".join(_seed_lines(world)) + "\n"
     )
-    (output_dir / "structural-config.yaml").write_text(
-        CONFIG_TEMPLATE.format(name=SEED_GRAPH_NAME), "utf-8"
+    atomic_write_text(
+        output_dir / "structural-config.yaml",
+        CONFIG_TEMPLATE.format(name=SEED_GRAPH_NAME),
     )
     found = questions(world, seed, size)
     dataset = [
@@ -895,8 +897,8 @@ def prepare(output_dir: Path, *, seed: int = 0, size: Size = "small") -> dict[st
         }
         for index, q in enumerate(found)
     ]
-    (output_dir / "eval_data.json").write_text(
-        json.dumps(dataset, ensure_ascii=False, indent=2), "utf-8"
+    atomic_write_text(
+        output_dir / "eval_data.json", json.dumps(dataset, ensure_ascii=False, indent=2)
     )
 
     def family(template: str) -> str:

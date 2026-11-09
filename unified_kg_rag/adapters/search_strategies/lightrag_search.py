@@ -58,6 +58,7 @@ from unified_kg_rag.domain.models import (
     SearchType,
 )
 from unified_kg_rag.domain.retrieval.keyword_fallback import raw_query_falls_back
+from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
@@ -743,7 +744,7 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
 
         def side(results: list[RetrievalResult]) -> tuple[list[str], int]:
             lineages = self._lineages(results)
-            cited = list(dict.fromkeys(u for lineage in lineages for u in lineage))
+            cited = merge_lineages(lineages)
             cited = [u for u in cited if u not in exclude][:room]
             return cited, min(limit, max(1, cap * len(lineages) // 2), len(cited))
 

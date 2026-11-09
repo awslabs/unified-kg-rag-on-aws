@@ -1004,7 +1004,8 @@ From a `main` checkout (formats and keys no release had):
   strategies it serves, each index's item count and embedding model, the build record, the registry's records), and
   its graph streamed from the vector store as JSON Lines or GraphML with every item's text units and documents
   (a document by its path relative to the corpus root, else its file name, never the indexing host's path;
-  `--output-path`, `--export-format`, `--max-items`); `VectorIndexer.describe_indices` and `scan_items` (#628). A
+  `--output-path`, `--export-format`, `--max-items`; written atomically, so a failed export leaves the previous file
+  and no partial one); `VectorIndexer.describe_indices` and `scan_items` (#628). A
   registry the caller cannot read (the CDK query task's role has no DynamoDB access) is reported unavailable, with
   the reason in `registry_unavailable` and a warning, and the rest is still described (#636). A missing extra and a
   namespace that holds no index exit 2 with the error on stderr, and describing creates no store file where nothing
@@ -1833,8 +1834,10 @@ Evaluation, visualization and tuning.
 - RAGAS skips `faithfulness` without context, counts each context once per batch, judges with its own metric
   objects, and stops when cancelled (#246, #366, #386, #393, #399).
 - `run-eval` reports an invalid or missing dataset with exit 2 (#227, #230).
-- `run-eval` result and comparison files (with their `.csv` and `.md`) and `Document.to_json_file` are written
-  atomically: a run stopped mid-write left a truncated JSON file that a later `--from-results` refused.
+- `run-eval` result and comparison files (with their `.csv` and `.md`), `prepare-benchmark` datasets and corpora,
+  `run-prompt-tuning` outputs, static charts and `Document.to_json_file` are written atomically: a run stopped
+  mid-write left a truncated file (a JSON file a later `--from-results` refused, a tuned-prompts file over the
+  previous one).
 - `graph_aware` matches a word through its possessive and finds a Latin word or number inside Chinese or Japanese
   text (`AWS` in `答案是AWS公司`) (#516, #563).
 - `run-visualization` rejects unknown `--renderers` and invalid data (exit 2), lays out only the drawn nodes, keeps

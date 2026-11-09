@@ -50,6 +50,7 @@ from unified_kg_rag.shared.exceptions import (
     DocStatusRegistryError,
     MethodologyNotIndexedError,
 )
+from unified_kg_rag.shared.utils.files import atomic_open
 
 logger = get_logger(__name__)
 
@@ -335,7 +336,7 @@ def export_graph(
     units: dict[str, str] = {}
     vector = providers.build_vector_indexer()
     try:
-        with target.open("w", encoding="utf-8", newline="\n") as out:
+        with atomic_open(target, newline="\n") as out:
             writer: _Writer = (
                 _JsonLines(out, include_text) if format == "jsonl" else _GraphML(out)
             )

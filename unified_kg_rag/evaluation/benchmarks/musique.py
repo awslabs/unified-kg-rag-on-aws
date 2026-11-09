@@ -43,6 +43,7 @@ from typing import Any
 
 from unified_kg_rag.evaluation.retrieval_evaluator import reference_key
 from unified_kg_rag.shared import EvaluationException, get_logger
+from unified_kg_rag.shared.utils.files import atomic_open, atomic_write_text
 
 logger = get_logger(__name__)
 
@@ -91,7 +92,8 @@ def download_dev(
             f"MuSiQue dev download has SHA-256 {digest}, expected {expected}; "
             "pass the official file with --data-path instead."
         )
-    destination.write_bytes(data)
+    with atomic_open(destination, "wb") as out:
+        out.write(data)
     return destination
 
 
@@ -454,7 +456,7 @@ def prepare(
             key = (title, text)
             if key not in files:
                 files[key] = _file_name(title, taken)
-                (corpus / files[key]).write_text(f"{title}\n\n{text}\n", "utf-8")
+                atomic_write_text(corpus / files[key], f"{title}\n\n{text}\n")
             if paragraph.get("is_supporting"):
                 supporting.append(files[key])
         return supporting
@@ -497,8 +499,8 @@ def prepare(
                 },
             }
         )
-    (output_dir / "eval_data.json").write_text(
-        json.dumps(dataset, ensure_ascii=False, indent=2), "utf-8"
+    atomic_write_text(
+        output_dir / "eval_data.json", json.dumps(dataset, ensure_ascii=False, indent=2)
     )
     counts: dict[str, Any] = {
         "benchmark": benchmark,

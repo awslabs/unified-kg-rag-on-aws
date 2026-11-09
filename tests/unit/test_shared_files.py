@@ -104,3 +104,20 @@ def test_saved_documents_results_and_comparisons_are_written_atomically(
         "out",
         "results.json",
     ]
+
+
+def test_a_stream_replaces_the_file_whole_or_not_at_all(tmp_path: Path) -> None:
+    path = tmp_path / "export.jsonl"
+    path.write_text("old")
+    with files.atomic_open(path, newline="\n") as out:
+        out.write("a\n")
+        assert path.read_text() == "old"  # not until the block ends
+    assert path.read_text() == "a\n"
+    with pytest.raises(RuntimeError), files.atomic_open(path, "wb") as raw:
+        raw.write(b"partial")
+        raise RuntimeError("the export failed")
+    assert path.read_text() == "a\n"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["export.jsonl"]
+    with pytest.raises(ValueError):
+        with files.atomic_open(path, "a"):
+            pass
