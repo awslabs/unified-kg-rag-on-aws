@@ -6,14 +6,24 @@ A concept implemented in several places drifts: each copy is fixed on its
 own, or not at all (the namespace rule, the file-name readers, the script
 ranges). A ``SourceGuard`` names the pattern of a copy, the module(s) that
 own the concept, and an allowlist of the other places that may hold the
-pattern, each with its reason. Its test fails on a match outside the owners
-and the allowlist (a new copy), and on an allowlist entry that matches
-nothing (a copy removed, so the entry goes too): the allowlist only
-shrinks.
+pattern, each with how many matches it holds and why. Its tests fail on:
+
+- a match outside the owners and the allowlist, or one more in an allowed
+  place than its entry counts (a new copy);
+- an entry that counts more matches than its place holds (a copy removed:
+  the entry shrinks or goes, so the allowlist only shrinks);
+- an owner the pattern does not match (the finder no longer sees the
+  concept's own form, so it would miss a copy of it), and an owner or a
+  ``within`` path that does not exist (a typo scans nothing).
 
 A match is keyed by its module path (relative to the package) and its
-enclosing function or class (``path::Class.method``, ``path::<module>``),
-not by line, so editing a file does not move its entries.
+scope: the enclosing function or class (``path::Class.method``), the name a
+module- or class-level assignment binds (``path::_TABLE``,
+``path::Class.FIELD``), else ``path::<module>``; not by line, so editing a
+file does not move its entries. Names a module imports are resolved
+(``import json as j`` makes ``j.loads`` a ``json.loads`` call, ``from os
+import replace`` makes ``replace`` ``os.replace``), so an alias hides no
+copy.
 """
 
 from __future__ import annotations
@@ -21,6 +31,7 @@ from __future__ import annotations
 import ast
 import functools
 import re
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +40,9 @@ PACKAGE = Path(__file__).resolve().parents[2] / "unified_kg_rag"
 
 # (line, snippet) of each match in one module.
 Finder = Callable[[ast.Module, str], Iterator[tuple[int, str]]]
+
+# An allowlist entry: how many matches its place holds, and why.
+Allowed = tuple[int, str]
 
 
 @dataclass(frozen=True)
@@ -53,14 +67,15 @@ class SourceGuard:
     """A concept's single owner: ``find`` matches a copy of it; matches in
     ``owners`` (module paths or directory prefixes, relative to the
     package) are the concept itself, and ``allowed`` maps each other
-    accepted ``path::scope`` to its reason. ``use`` says what a new copy
-    should call instead. ``within`` limits the scan to these directories."""
+    accepted ``path::scope`` to its match count and reason. ``use`` says
+    what a new copy should call instead. ``within`` limits the scan to
+    these paths (the owners are always scanned)."""
 
     name: str
     use: str
     owners: tuple[str, ...]
     find: Finder
-    allowed: Mapping[str, str] = field(default_factory=dict)
+    allowed: Mapping[str, Allowed] = field(default_factory=dict)
     within: tuple[str, ...] = ("",)
 
     def hits(self) -> list[Hit]:
@@ -69,7 +84,7 @@ class SourceGuard:
     @functools.cached_property
     def _hits(self) -> tuple[Hit, ...]:
         found = []
-        for path in _modules(self.within):
+        for path in _modules((*self.within, *self.owners)):
             relative = path.relative_to(PACKAGE).as_posix()
             text, tree, scopes = _parsed(path)
             for line, snippet in self.find(tree, text):
@@ -82,18 +97,49 @@ class SourceGuard:
             for owner in self.owners
         )
 
+    def _counts(self) -> Counter[str]:
+        return Counter(hit.key for hit in self.hits() if not self._owned(hit))
+
     def copies(self) -> list[Hit]:
-        """The matches outside the owners and the allowlist."""
+        """The matches outside the owners and the allowlist, and every match
+        of an allowed place that holds more than its entry counts."""
+        counts = self._counts()
         return [
             hit
             for hit in self.hits()
-            if not self._owned(hit) and hit.key not in self.allowed
+            if not self._owned(hit)
+            and counts[hit.key] > self.allowed.get(hit.key, (0, ""))[0]
         ]
 
     def stale(self) -> list[str]:
-        """The allowlist entries no match needs any more."""
-        keys = {hit.key for hit in self.hits() if not self._owned(hit)}
-        return sorted(set(self.allowed) - keys)
+        """The allowlist entries that count more matches than their place
+        holds (none: the entry goes; fewer: its count shrinks)."""
+        counts = self._counts()
+        return [
+            f"{key}: {expected} allowed, {counts[key]} found"
+            for key, (expected, _) in sorted(self.allowed.items())
+            if counts[key] < expected
+        ]
+
+    def unmatched_owners(self) -> list[str]:
+        """The owners the pattern matches nothing in."""
+        held = {hit.path for hit in self.hits() if self._owned(hit)}
+        return [
+            owner
+            for owner in self.owners
+            if not any(
+                p == owner or p.startswith(owner.rstrip("/") + "/") for p in held
+            )
+        ]
+
+    def missing_paths(self) -> list[str]:
+        """The owners, ``within`` paths and allowed modules that do not exist."""
+        paths = (
+            *self.owners,
+            *(p for p in self.within if p),
+            *(key.split("::", 1)[0] for key in self.allowed),
+        )
+        return [p for p in paths if not (PACKAGE / p).exists()]
 
 
 @functools.cache
@@ -104,30 +150,59 @@ def _parsed(path: Path) -> tuple[str, ast.Module, dict[int, str]]:
     return text, tree, _scopes(tree)
 
 
-def _modules(within: Iterable[str]) -> list[Path]:
-    paths: set[Path] = set()
-    for part in within:
+def _modules(paths: Iterable[str]) -> list[Path]:
+    found: set[Path] = set()
+    for part in paths:
         path = PACKAGE / part
-        paths.update([path] if path.is_file() else path.rglob("*.py"))
-    return sorted(paths)
+        found.update([path] if path.is_file() else path.rglob("*.py"))
+    return sorted(found)
+
+
+def _bound_name(node: ast.AST) -> str | None:
+    """The name a module- or class-level statement binds (its first)."""
+    targets: list[ast.expr] = []
+    if isinstance(node, ast.Assign):
+        targets = node.targets
+    elif isinstance(node, ast.AnnAssign | ast.AugAssign):
+        targets = [node.target]
+    for target in targets:
+        if isinstance(target, ast.Tuple | ast.List) and target.elts:
+            target = target.elts[0]
+        if isinstance(target, ast.Name):
+            return target.id
+    return None
 
 
 def _scopes(tree: ast.Module) -> dict[int, str]:
-    """Line number to the qualified name of the innermost def or class."""
+    """Line number to its scope: the qualified name of the innermost def or
+    class, or of the name a module- or class-level assignment binds."""
     scopes: dict[int, str] = {}
 
-    def visit(node: ast.AST, prefix: str) -> None:
+    def mark(node: ast.stmt, name: str) -> None:
+        for line in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+            scopes[line] = name
+
+    def visit(node: ast.AST, prefix: str, in_def: bool) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 name = f"{prefix}{child.name}"
-                end = child.end_lineno or child.lineno
-                for line in range(child.lineno, end + 1):
-                    scopes[line] = name
-                visit(child, f"{name}.")
+                mark(child, name)
+                visit(
+                    child,
+                    f"{name}.",
+                    in_def or not isinstance(child, ast.ClassDef),
+                )
+            elif (
+                not in_def
+                and isinstance(child, ast.stmt)
+                and (bound := _bound_name(child)) is not None
+            ):
+                mark(child, f"{prefix}{bound}")
+                visit(child, prefix, in_def)
             else:
-                visit(child, prefix)
+                visit(child, prefix, in_def)
 
-    visit(tree, "")
+    visit(tree, "", False)
     return scopes
 
 
@@ -156,6 +231,51 @@ def _docstrings(tree: ast.Module) -> frozenset[int]:
     return frozenset(ids)
 
 
+@functools.cache
+def _imports(tree: ast.Module) -> Mapping[str, str]:
+    """Each name a module's imports bind, to the dotted name it stands for
+    (``j`` of ``import json as j``: ``json``; ``r`` of ``from os import
+    replace as r``: ``os.replace``; a relative module keeps its dots)."""
+    names: dict[str, str] = {}
+    for node in _all_nodes(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    names[alias.asname] = alias.name
+                else:
+                    head = alias.name.split(".", 1)[0]
+                    names[head] = head
+        elif isinstance(node, ast.ImportFrom):
+            module = "." * node.level + (node.module or "")
+            for alias in node.names:
+                names[alias.asname or alias.name] = f"{module}.{alias.name}"
+    return names
+
+
+def resolved(node: ast.AST, tree: ast.Module) -> str | None:
+    """The dotted name ``node`` (a name or an attribute chain) stands for,
+    its first part resolved through the module's imports."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    head = _imports(tree).get(node.id, node.id)
+    return ".".join([head, *reversed(parts)])
+
+
+def _names_in(node: ast.AST, tree: ast.Module) -> set[str]:
+    """The dotted names the names and attribute chains under ``node`` stand
+    for."""
+    return {
+        name
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name | ast.Attribute)
+        and (name := resolved(child, tree)) is not None
+    }
+
+
 # --- Finders -----------------------------------------------------------------
 
 
@@ -176,61 +296,109 @@ def string_literals(*values: str) -> Finder:
     return find
 
 
-def calls(*names: str) -> Finder:
-    """A call of one of ``names``, dotted (``json.loads``, ``os.replace``)."""
-    wanted = {tuple(name.split(".")) for name in names}
+def references(*names: str) -> Finder:
+    """A use of one of the dotted ``names`` (a module's constant: the key a
+    copy reads instead of the literal), however it was imported."""
 
     def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
         for node in _all_nodes(tree):
-            if isinstance(node, ast.Call) and _dotted(node.func) in wanted:
+            if (
+                isinstance(node, ast.Name | ast.Attribute)
+                and isinstance(node.ctx, ast.Load)
+                and resolved(node, tree) in names
+            ):
+                yield node.lineno, ast.unparse(node)
+
+    return find
+
+
+def calls(*names: str) -> Finder:
+    """A call of one of the dotted ``names`` (``json.loads``,
+    ``os.replace``), however the module imported it."""
+    wanted = set(names)
+
+    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
+        for node in _all_nodes(tree):
+            if isinstance(node, ast.Call) and resolved(node.func, tree) in wanted:
                 yield node.lineno, ast.unparse(node.func)
 
     return find
 
 
-def _dotted(node: ast.AST) -> tuple[str, ...] | None:
-    parts: list[str] = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if isinstance(node, ast.Name):
-        return (node.id, *reversed(parts))
-    return None
-
-
-def key_reads(*keys: str) -> Finder:
-    """A read of one of ``keys`` from a mapping: ``x.get("key"...)`` or
-    ``x["key"]`` (a load, not a store)."""
+def calls_mentioning(callee: str, *names: str) -> Finder:
+    """A call of ``callee`` whose arguments use one of the dotted ``names``
+    (``Counter(... script_of(c) ...)``)."""
 
     def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
         for node in _all_nodes(tree):
+            if isinstance(node, ast.Call) and resolved(node.func, tree) == callee:
+                used = set().union(
+                    *(_names_in(a, tree) for a in (*node.args, *node.keywords))
+                )
+                if used & set(names):
+                    yield node.lineno, ast.unparse(node)[:80]
+
+    return find
+
+
+def key_reads(*keys: str, of: re.Pattern[str] | None = None) -> Finder:
+    """A read of one of ``keys`` from a mapping or an object:
+    ``x.get("key"...)``, ``x["key"]`` (a load, not a store),
+    ``getattr(x, "key"...)``, or a ``.get(k)`` / ``[k]`` in a loop
+    ``for k in ("key", ...)``; with ``of``, only from an ``x`` whose source
+    ``of`` searches (``metadata``: a result's raw metadata)."""
+
+    def literal(node: ast.AST | None) -> bool:
+        return isinstance(node, ast.Constant) and node.value in keys
+
+    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
+        looped: set[tuple[int, str]] = set()  # (id of the loop body, its var)
+        for node in _all_nodes(tree):
+            if (
+                isinstance(node, ast.For)
+                and isinstance(node.target, ast.Name)
+                and isinstance(node.iter, ast.Tuple | ast.List | ast.Set)
+                and any(literal(e) for e in node.iter.elts)
+            ):
+                for child in (n for b in node.body for n in ast.walk(b)):
+                    looped.add((id(child), node.target.id))
+        for node in _all_nodes(tree):
+            arg: ast.AST | None = None
+            source: ast.AST | None = None
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "get"
                 and node.args
-                and isinstance(node.args[0], ast.Constant)
-                and node.args[0].value in keys
             ):
-                yield node.lineno, ast.unparse(node)[:80]
+                arg, source = node.args[0], node.func.value
+            elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load):
+                arg, source = node.slice, node.value
             elif (
-                isinstance(node, ast.Subscript)
-                and isinstance(node.ctx, ast.Load)
-                and isinstance(node.slice, ast.Constant)
-                and node.slice.value in keys
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
             ):
-                yield node.lineno, ast.unparse(node)[:80]
+                arg, source = node.args[1], node.args[0]
+            if (
+                literal(arg)
+                or (isinstance(arg, ast.Name) and (id(node), arg.id) in looped)
+            ) and (
+                of is None or (source is not None and of.search(ast.unparse(source)))
+            ):
+                yield getattr(node, "lineno", 0), ast.unparse(node)[:80]
 
     return find
 
 
 def lines_matching(pattern: re.Pattern[str]) -> Finder:
-    """A source line ``pattern`` matches, outside comments."""
+    """A source line ``pattern`` matches, outside comments (for code
+    forms; what a string holds is ``string_values``')."""
 
     def find(_: ast.Module, text: str) -> Iterator[tuple[int, str]]:
         for number, line in enumerate(text.splitlines(), 1):
-            code = line.split("#", 1)[0] if "#" in line else line
-            if pattern.search(code):
+            if pattern.search(line.split("#", 1)[0]):
                 yield number, line.strip()[:80]
 
     return find
@@ -248,12 +416,42 @@ def text_matching(pattern: re.Pattern[str]) -> Finder:
     return find
 
 
+def string_values(pattern: re.Pattern[str]) -> Finder:
+    """A string constant (docstrings aside) whose value ``pattern``
+    searches: what a regex or a character table holds, escapes decoded,
+    wherever a ``#`` or a line break falls in its source."""
+
+    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
+        docstrings = _docstrings(tree)
+        for node in _all_nodes(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstrings
+                and pattern.search(node.value)
+            ):
+                yield node.lineno, repr(node.value)[:80]
+
+    return find
+
+
 def nodes(predicate: Callable[[ast.AST], bool]) -> Finder:
     """A node ``predicate`` accepts."""
 
     def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
         for node in _all_nodes(tree):
             if predicate(node):
+                yield getattr(node, "lineno", 0), ast.unparse(node)[:80]
+
+    return find
+
+
+def module_nodes(predicate: Callable[[ast.AST, ast.Module], bool]) -> Finder:
+    """A node ``predicate`` accepts, given its module (to resolve names)."""
+
+    def find(tree: ast.Module, _: str) -> Iterator[tuple[int, str]]:
+        for node in _all_nodes(tree):
+            if predicate(node, tree):
                 yield getattr(node, "lineno", 0), ast.unparse(node)[:80]
 
     return find
