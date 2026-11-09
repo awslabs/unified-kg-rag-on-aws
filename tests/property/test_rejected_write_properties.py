@@ -196,3 +196,128 @@ def test_writes_rejected_twice_are_written_by_the_next_run(
 
     assert harness.state() == expected_state(after, config)
     assert harness.registry_problems(after) == []
+
+
+# One entity's spellings per language (legal forms the full build folds):
+# a corpus of a few names and one language's spellings, so a run folds,
+# splits and re-keys the noted entities often.
+_SPELLINGS = {
+    "en": ["Acme Inc", "Acme Corp", "Acme", "ACME"],
+    "ko": ["주식회사 한빛", "한빛", "(주)한빛", "한빛 주식회사"],
+    "ja": ["株式会社ひかり", "ひかり", "ひかり株式会社", "(株)ひかり"],
+}
+
+
+def _corpus_of(names: list[str]) -> st.SearchStrategy[Corpus]:
+    edge = st.tuples(
+        st.sampled_from(names), st.sampled_from(names), st.integers(1, 3)
+    ).filter(lambda e: compact_name_key(e[0]) != compact_name_key(e[1]))
+    unit = st.lists(edge, min_size=1, max_size=3, unique_by=lambda e: (e[0], e[1]))
+    content = st.lists(unit, min_size=1, max_size=2)
+    return st.fixed_dictionaries({p: st.none() | content for p in _PATHS}).map(
+        lambda state: {path: c for path, c in state.items() if c}
+    )
+
+
+_spelled_corpora = st.sampled_from(sorted(_SPELLINGS)).flatmap(
+    lambda lang: st.tuples(
+        *(2 * [_corpus_of(["Depot", "Buyer", "Vendor", *_SPELLINGS[lang]])])
+    )
+)
+_REMOVAL_POINTS = [
+    "mid_removal",
+    "after_removal",
+    "in_merge",
+    "after_commit_note",
+    "mid_index_delta",
+    "before_retired_deletes",
+    "after_write_note",
+    "before_record",
+    "mid_commit",
+]
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    corpora=_spelled_corpora,
+    gone=st.sets(st.sampled_from(_PATHS), min_size=1, max_size=2),
+    where=st.sampled_from(_WRITES),
+    again=st.none() | st.sampled_from(_WRITES),
+    point=st.none() | st.sampled_from(_REMOVAL_POINTS),
+    k=st.integers(1, 3),
+    salt=st.integers(0, 1000),
+)
+# Depot's vector write is rejected (its copy cites b.txt only); the removal
+# of b.txt is killed after it stripped Depot's graph copy to a.txt's unit.
+# The retry took the stale vector copy's units for Depot's, deleted it as
+# vector-only with its edges, and a.txt's Depot -> Buyer was lost.
+@example(
+    corpora=(
+        {"/corpus/b.txt": [[("Depot", "Acme Inc", 1), ("Buyer", "Depot", 2)]]},
+        {
+            "/corpus/a.txt": [[("Depot", "Buyer", 1)]],
+            "/corpus/b.txt": [[("Depot", "Acme Inc", 1), ("Buyer", "Depot", 2)]],
+        },
+    ),
+    gone={"/corpus/b.txt"},
+    where="vector.upsert_entities",
+    again=None,
+    point="mid_index_delta",
+    k=3,
+    salt=0,
+)
+# 株式会社ひかり's graph write is rejected, the claim about it is stored.
+# Without b.txt the types of ひかり and 株式会社ひかり agree and a full build
+# has one entity: the commit folds the noted one into ひかり, and the stored
+# claim follows only when it is derived again.
+@example(
+    corpora=(
+        {},
+        {
+            "/corpus/b.txt": [[("Depot", "ひかり", 2)]],
+            "/corpus/c.txt": [[("Depot", "株式会社ひかり", 3), ("Depot", "ひかり", 1)]],
+            "/corpus/d.txt": [[("Depot", "ひかり", 2)]],
+        },
+    ),
+    gone={"/corpus/b.txt"},
+    where="graph.upsert_entities",
+    again=None,
+    point=None,
+    k=1,
+    salt=10,
+)
+def test_a_removal_after_rejected_writes_converges_when_interrupted(
+    corpora: tuple[Corpus, Corpus],
+    gone: set[str],
+    where: str,
+    again: str | None,
+    point: str | None,
+    k: int,
+    salt: int,
+) -> None:
+    # A rejected run, then a removal of one or two of its documents
+    # (interrupted at a point, or not; its writes rejected again, or not),
+    # then clean runs.
+    before, mid = corpora
+    after = {path: content for path, content in mid.items() if path not in gone}
+    config = Config()
+    config.indexing.max_failure_rate = 0.95
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+    harness.run(mid, fail=_rejects(where, salt))
+    harness.run(
+        after,
+        interrupt=point,
+        k=k,
+        fail=_rejects(again, salt + 1) if again else None,
+    )
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, config)
+    assert harness.registry_problems(after) == []
+    entities = set(harness.graph.ids("entities"))
+    for claim in harness.vector.data.get("claims", {}).values():
+        assert {claim.subject_id, claim.object_id or claim.subject_id} <= entities

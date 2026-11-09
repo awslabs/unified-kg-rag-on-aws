@@ -159,6 +159,16 @@ class TextUnitRemoval:
             **m._vector_citing(prefixes.entities_index_prefix, text_unit_ids, suffix),
             **(found or {}),
         }
+        # A vector copy the graph search missed may be stale (its write
+        # was rejected) while its graph copy cites other units too (an
+        # interrupted strip of these units rewrote it): the entity is
+        # shared then, not vector-only, so its graph copy's units count.
+        unfound = sorted(set(cited) - set(found)) if found is not None else []
+        if unfound and _reads_back(graph):
+            for entity in graph.read_entities(unfound, suffix=suffix):
+                cited[entity.id] = sorted(
+                    set(cited[entity.id]) | set(entity.text_unit_ids or [])
+                )
         edges = self._graph_edges_citing(suffix, text_unit_ids, cited)
         relationships = {
             **m._vector_citing(
@@ -398,7 +408,9 @@ class TextUnitRemoval:
             self._record_strip(
                 suffix, derived, new_entities, new_relationships, absent, made
             )
-            note.ids, split_claims = self._strip_note_ids(suffix, derived)
+            note.ids, split_claims = self._strip_note_ids(
+                suffix, derived, relationships
+            )
             doing = "Reading the claims of re-keyed entities"
             claim_ids = self._claims_to_strip(
                 suffix, derived, entities, claim_ids, split_claims
@@ -576,10 +588,14 @@ class TextUnitRemoval:
         )
 
     def _strip_note_ids(
-        self, suffix: str, derived: Derived
+        self,
+        suffix: str,
+        derived: Derived,
+        relationships: Sequence[Relationship] = (),
     ) -> tuple[tuple[set[str], set[str], set[str]] | None, set[str]]:
         """The ids a strip notes before its first write (``None``: none),
-        and the stored claims about a split's part and origin."""
+        and the stored claims about a split's part and origin
+        (``relationships``: the stored copies of the edges it derives)."""
         m = self._m
         entity_ids_now = {e.id for e in derived.entities}
         edge_ids_now = {r.id for r in derived.relationships}
@@ -595,6 +611,12 @@ class TextUnitRemoval:
         retired_edges = {
             old for old, new in derived.id_remap.items() if new in edge_ids_now
         } | {i for i in derived.dropped if i not in claim_ids_now}
+        # And the kept edges it re-pointed (at a split's part, say): another
+        # stored edge there may be the same edge under another id, which
+        # the strip folds once it writes this one (CrossRunMerge._finish).
+        # A retry reaches the edge through the entities it left no more, so
+        # without the note the duplicate stayed.
+        retired_edges |= self._repointed_edges(suffix, derived, relationships)
         # The stored claims about a split's part and origin: a retry
         # cannot tell them (the split kept the stored id).
         split_claims = (
@@ -618,6 +640,32 @@ class TextUnitRemoval:
             # subject.
             return (merged, retired_edges, split_claims), split_claims
         return None, split_claims
+
+    def _repointed_edges(
+        self,
+        suffix: str,
+        derived: Derived,
+        relationships: Sequence[Relationship],
+    ) -> set[str]:
+        """The ids of the stored edges ``derived`` keeps under their id with
+        other endpoints (``relationships``: the stored copies read; the
+        edges the derivation reached beyond them are read here)."""
+        stored = {r.id: r for r in relationships}
+        reached = [r.id for r in derived.relationships if r.id not in stored]
+        if reached:
+            stored.update(
+                (r.id, r)
+                for r in self._m.graph_indexer.read_relationships(
+                    reached, suffix=suffix
+                )
+            )
+        return {
+            r.id
+            for r in derived.relationships
+            if r.id in stored
+            and (r.source_id, r.target_id)
+            != (stored[r.id].source_id, stored[r.id].target_id)
+        }
 
     def _claims_to_strip(
         self,
