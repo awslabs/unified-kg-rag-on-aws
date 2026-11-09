@@ -89,7 +89,9 @@ unless noted.
    stored. They merge with what is stored and are derived from their records
    like any delta item (summarized from their lines, not by extending a
    stored summary), and the endpoints of a noted edge are written with it, so
-   their edges' ranks follow. The note is replaced by what still fails, or
+   their edges' ranks follow; an endpoint the graph no longer holds (a later
+   removal re-keyed it to another spelling) is the stored entity of its
+   name's key that the edge's text units state. The note is replaced by what still fails, or
    deleted. Recording the owners `FAILED` instead re-extracted every document
    a hub entity cites, on every run its write kept failing. A note that cannot
    be written falls back to that.

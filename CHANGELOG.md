@@ -1036,7 +1036,8 @@ From a `main` checkout (formats and keys no release had):
   touches, so a hub whose write keeps failing holds back only the re-keys at it (a note keeps only the old ids still
   stored), and a suffix whose stored reports could not be pointed at the new ids keeps its old ids until a later run
   does both. A note over 1 MiB is split into parts, each its own record, under a store's request limit (10 MiB on
-  small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, and a noted
+  small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, one whose
+  endpoint a later removal re-keyed takes the stored spelling of its name its units state, and a noted
   claim derived again resolves its unit's statements against every stored spelling of their names (`Acme Inc` beside
   `Acme`), as the full build does. See [incremental indexing](docs/guides/incremental.md) and [scopes and
   namespaces](docs/concepts/scopes-and-namespaces.md).

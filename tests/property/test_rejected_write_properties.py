@@ -121,3 +121,43 @@ def test_rejected_writes_are_written_by_the_next_run(
     assert harness.registry_problems(after) == []
     harness.run(after)
     assert harness.extracted == []
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    before=_corpus,
+    mid=_corpus,
+    after=_corpus,
+    where=st.sampled_from(_WRITES),
+    salt=st.integers(0, 1000),
+)
+# The noted edges at "Acme" (Acme Inc merged into it) are written by a run
+# whose removal re-keys the entity to "Acme Inc" while its own write of them
+# is rejected again: noted at an id no entity has, every later run failed
+# them ("endpoint entity not found").
+@example(
+    before={},
+    mid={
+        "/corpus/a.txt": [[("Depot", "Acme Inc", 2), ("Acme Inc", "Depot", 1)]],
+        "/corpus/d.txt": [[("Buyer", "Acme", 1)]],
+    },
+    after={"/corpus/a.txt": [[("Depot", "Acme Inc", 2), ("Acme Inc", "Depot", 1)]]},
+    where="graph.upsert_entities",
+    salt=150,
+)
+def test_writes_rejected_twice_are_written_by_the_next_run(
+    before: Corpus, mid: Corpus, after: Corpus, where: str, salt: int
+) -> None:
+    config = Config()
+    config.indexing.max_failure_rate = 0.9
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+    harness.run(mid, fail=_rejects(where, salt))
+    harness.run(after, fail=_rejects(where, salt + 1))
+
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, config)
+    assert harness.registry_problems(after) == []
