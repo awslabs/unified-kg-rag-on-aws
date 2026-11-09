@@ -23,9 +23,11 @@ Answer-text coverage grows with answer length (a wordier answer names more
 things), so the evaluator also reports ``retrieved_entity_coverage`` /
 ``retrieved_relationship_coverage`` — the same expectations matched against
 the entity names and relationship endpoints of the sources the answer model
-was given, by entity key (``compact_name_key``: the key the resolver links
-spellings of one entity by, so "ACME Corp." is "Acme", but "Seoul" is not
-"Seoul National University") — and ``answer_length`` (characters)
+was given, by the key a query's name links an entity by
+(``linking.link_key``: the resolver's ``compact_name_key`` with the
+spellings a script writes at will folded, so "ACME Corp." is "Acme",
+"أكمي" is "اكمي" and "Фёдоров" "Федоров", but "Seoul" is not "Seoul
+National University") — and ``answer_length`` (characters)
 alongside. Expected entities that share that key are one expectation, met
 when the answer mentions any of their spellings. Retrieved coverage is
 skipped for a query whose context has no entity (or relationship) source, not
@@ -52,7 +54,6 @@ from unified_kg_rag.adapters.evaluators.base import (
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
 from unified_kg_rag.application.retrieval.citations import citations_enabled
-from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.models import (
     Config,
     EvaluationMetric,
@@ -63,6 +64,7 @@ from unified_kg_rag.domain.models import (
     EvaluatorType,
 )
 from unified_kg_rag.domain.retrieval.citations import strip_markers
+from unified_kg_rag.domain.retrieval.linking import link_key
 from unified_kg_rag.shared import get_logger
 
 from .text_matching import phrase_in_text
@@ -137,7 +139,7 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         dataset order: "Acme Corp" and "ACME Corp." are one expectation."""
         groups: dict[str, list[Any]] = {}
         for item in expected:
-            key = compact_name_key(item) if isinstance(item, str) else repr(item)
+            key = link_key(item) if isinstance(item, str) else repr(item)
             groups.setdefault(key, []).append(item)
         return groups
 
@@ -164,7 +166,7 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
         sources: met when a retrieved entity has the same entity key."""
         if not groups:
             return None, 0
-        names = {compact_name_key(name) for name in retrieved if name}
+        names = {link_key(name) for name in retrieved if name}
         matched = sum(
             1
             for key, spellings in groups.items()
@@ -194,8 +196,8 @@ class GraphAwareEvaluator(BaseGraphRAGEvaluator):
                 target = element.get("target", "")
                 endpoints = cls._relationship_endpoints(item)
                 if endpoints is not None:
-                    keys = tuple(compact_name_key(end) for end in endpoints)
-                    ends = (compact_name_key(source), compact_name_key(target))
+                    keys = tuple(link_key(end) for end in endpoints)
+                    ends = (link_key(source), link_key(target))
                     if all(keys) and ends in (keys, keys[::-1]):
                         return True
                 elif isinstance(item, str) and phrase_in_text(

@@ -37,6 +37,7 @@ from unified_kg_rag.domain.models import (
 from unified_kg_rag.domain.models.methodology import methodologies_holding
 from unified_kg_rag.domain.models.schema import ExtractionSchema
 from unified_kg_rag.domain.retrieval import source_fields
+from unified_kg_rag.domain.retrieval.linking import exact_links
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.exceptions import MethodologyNotIndexedError
@@ -116,7 +117,10 @@ async def find_entities(
     ``RAGInput`` composes a query): decomposed Hangul matches its composed
     name. Without an exact match, a name is looked up again in NFKC, and
     searched in NFKC, so a full-width ``Ｄｅｐｏｔ`` or a compatibility
-    character finds the name it stands for.
+    character finds the name it stands for; a searched hit that is the name
+    as the strategies link one (``linking.exact_links``: an Arabic alef
+    without its hamza, ``ё`` as ``е``, a leading ``شركة``) is a ``name``
+    match.
     """
     suffix = namespace_name(chain, suffix)
     entity_id, iri, name = (
@@ -158,6 +162,11 @@ async def find_entities(
             suffix=suffix,
         )
     )
+    # A hit that is the name as a query's name links (linking.exact_links:
+    # "أكمي" for "اكمي", "Федоров" for "Фёдоров").
+    exact = exact_links(name, hits)
+    if exact:
+        return "name", _ranked(exact)[:limit]
     return ("search" if hits else "none"), hits[:limit]
 
 

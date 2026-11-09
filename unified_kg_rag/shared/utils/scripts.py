@@ -141,6 +141,8 @@ SCRIPTS: tuple[Script, ...] = (
         "cyrillic",
         ((0x0400, 0x052F), (0x1C80, 0x1C8F), (0x2DE0, 0x2DFF), (0xA640, 0xA69F)),
         chars_per_token=2.4,
+        # Russian writes ё as е at will ("Фёдоров", "Федоров").
+        letter_variants={"ё": "е", "Ё": "Е"},
     ),
     Script("armenian", ((0x0530, 0x058F), (0xFB13, 0xFB17))),
     Script(

@@ -191,6 +191,9 @@ def test_the_rank_policy_breaks_a_top_tie_by_coverage() -> None:
         ("أكمـــي للروبوتات", "أكمي للروبوتات"),
         ("شركة أكمي", "أكمي"),
         ("أكمي", "شركة أكمي"),
+        # Regression (rv9 query L6): Russian writes ё as е at will.
+        ("Федоров", "Фёдоров"),
+        ("ФЁДОРОВ", "Федоров"),
     ],
 )
 @pytest.mark.parametrize("policy", ["cover", "rank"])
@@ -210,3 +213,27 @@ def test_the_fold_is_query_time_only() -> None:
     # between Latin letters is no separator.
     assert link_key("شركة") == "شركة"
     assert link_key("a·b") == "a·b"
+
+
+@pytest.mark.parametrize("policy", ["cover", "rank"])
+def test_a_name_written_as_asked_links_alone(policy: str) -> None:
+    # Regression (rv9 query L5): the link_key fold made "شركة النور" (the
+    # company) and "النور" one name, so both linked.
+    hits = [_hit("النور", 0.9, "e0"), _hit("شركة النور", 0.5, "e1")]
+    linked = choose_links("شركة النور", hits, policy=policy)  # type: ignore[arg-type]
+    assert [h.source for h in linked] == ["e1"]
+    # Without a hit written as asked, the fold still links.
+    linked = choose_links("شركة النور", hits[:1], policy=policy)  # type: ignore[arg-type]
+    assert [h.source for h in linked] == ["e0"]
+
+
+def test_coverage_leaves_latin_accents_out() -> None:
+    # Regression (rv9 query L6): "Cafe" never covered "Café".
+    assert covers("Café Central Wien", "Cafe Central")
+    assert covers("Cafe Central Wien", "Café Central")
+    linked = choose_links(
+        "Cafe Central", [_hit("Café Central Wien", 0.5, "e1")], policy="cover"
+    )
+    assert [h.source for h in linked] == ["e1"]
+    # An exact link keeps them: "Cafe" is not written as "Café".
+    assert link_key("Café") != link_key("Cafe")

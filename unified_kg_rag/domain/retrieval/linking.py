@@ -3,8 +3,9 @@
 """Linking a name a query gives to the stored entities a search found.
 
 One rule for every strategy that turns a name into graph entities (local
-search's focus seeds, the structured strategy's mention nodes):
-:func:`choose_links` keeps the hits that *are* the name (the same
+search's focus seeds, the structured strategy's mention nodes, the MCP
+entity lookup): :func:`choose_links` keeps the hits that *are* the name
+(:func:`exact_links`: the same ``compact_name_key``, else the same
 :func:`link_key`), else follows its policy: ``cover`` (structured)
 keeps the hits whose name covers every term of it; ``rank`` (local, whose
 seeding is measured) keeps the top hit above a score floor unless it is a
@@ -29,12 +30,14 @@ writes at will dropped (Arabic short vowels and tatweel, Hebrew points), a
 middle dot between Han, Hangul or Kana letters removed ("オリオン・ラボ" is
 "オリオンラボ"), the letters a script writes
 for one another folded (``Script.letter_variants``: "أ", "إ", "آ" as "ا",
-"ى" as "ي") and a designator written before the name dropped.
+"ى" as "ي", Russian "ё" as "е") and a designator written before the name
+dropped. Coverage also leaves Latin accents out ("Cafe" covers "Café").
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Sequence
 from difflib import SequenceMatcher
 from typing import Literal
@@ -50,12 +53,14 @@ from unified_kg_rag.shared.utils.scripts import (
     drop_optional_marks,
     fold_letter_variants,
     join_dense_middle_dots,
+    script_of,
 )
 
 __all__ = [
     "LinkPolicy",
     "choose_links",
     "covers",
+    "exact_links",
     "hit_name",
     "link_key",
     "name_terms",
@@ -80,6 +85,19 @@ def link_key(name: str) -> str:
     return key
 
 
+def exact_links(mention: str, hits: Sequence[RetrievalResult]) -> list[RetrievalResult]:
+    """The ``hits`` whose stored name is ``mention``: those with its
+    ``compact_name_key``, else (none) those with its :func:`link_key`, so
+    a folding the comparison adds links no other entity when one is
+    written as asked ("شركة النور" is the company, not "النور")."""
+    for key_of in (compact_name_key, link_key):
+        key = key_of(mention)
+        exact = [h for h in hits if key and key_of(hit_name(h)) == key]
+        if exact:
+            return exact
+    return []
+
+
 def name_terms(name: str) -> frozenset[str]:
     """The terms of ``name`` coverage compares (module docstring)."""
     terms: set[str] = set()
@@ -92,14 +110,29 @@ def name_terms(name: str) -> frozenset[str]:
     return frozenset(terms)
 
 
+def _without_latin_accents(term: str) -> str:
+    """``term`` with the accents of its Latin letters dropped ("café" is
+    "cafe"); other scripts' marks stay."""
+    letters: list[str] = []
+    for ch in unicodedata.normalize("NFD", term):
+        if unicodedata.category(ch) == "Mn" and letters:
+            script = script_of(letters[-1])
+            if script is not None and script.name == "latin":
+                continue
+        letters.append(ch)
+    return unicodedata.normalize("NFC", "".join(letters))
+
+
 def covers(name: str, mention: str, similarity: float = 1.0) -> bool:
     """Whether the stored ``name`` covers every term of ``mention``: each
     is a term of ``name`` or, below a ``similarity`` of 1, as alike as that
-    to one of them (``difflib`` ratio)."""
-    wanted = name_terms(mention)
+    to one of them (``difflib`` ratio). Latin accents are left out of the
+    comparison ("Cafe Central" is covered by "Café Central Wien"), not
+    out of an exact link (:func:`exact_links`)."""
+    wanted = {_without_latin_accents(t) for t in name_terms(mention)}
     if not wanted:
         return False
-    held = name_terms(name)
+    held = {_without_latin_accents(t) for t in name_terms(name)}
     return all(
         term in held
         or (
@@ -134,7 +167,8 @@ def choose_links(
     similarity: float = 1.0,
 ) -> list[RetrievalResult]:
     """The entities ``mention`` links to among a search's ``hits`` (best
-    first): every hit with its :func:`link_key`; else, by ``policy``:
+    first): every hit that is the name (:func:`exact_links`); else, by
+    ``policy``:
 
     - ``cover`` (the structured strategy's mentions, where an absent name
       must link nothing): at most ``limit`` (0: none) hits that score above
@@ -146,9 +180,8 @@ def choose_links(
       (:func:`_lookalike`); a semantic or alias hit still links.
 
     Hits without a source never link."""
-    key = link_key(mention)
     named = [h for h in hits if h.source]
-    exact = [h for h in named if key and link_key(hit_name(h)) == key]
+    exact = exact_links(mention, named)
     if exact:
         return exact
     if policy == "rank":

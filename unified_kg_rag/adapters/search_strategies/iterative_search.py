@@ -69,7 +69,6 @@ from unified_kg_rag.adapters.search_strategies.local_search import (
     LocalSearchStrategy,
 )
 from unified_kg_rag.adapters.store_errors import is_fatal_retrieval_error
-from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.models import (
     Config,
     ModelRole,
@@ -84,6 +83,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     INSUFFICIENCY_REASON_KEY,
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationStep
+from unified_kg_rag.domain.retrieval.linking import link_key
 from unified_kg_rag.shared import get_logger, observability
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import interleave, text_digest
@@ -435,7 +435,7 @@ class IterativeSearchStrategy(BaseSearchStrategy):
         for name in bridges:
             if len(names) >= self.settings.max_bridge_entities:
                 break
-            key = compact_name_key(name)
+            key = link_key(name)
             if key and key not in run.bridge_keys:
                 run.bridge_keys.add(key)
                 names.append(name)

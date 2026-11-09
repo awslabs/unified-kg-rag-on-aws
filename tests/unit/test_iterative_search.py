@@ -680,8 +680,12 @@ async def test_the_controller_writes_follow_ups_in_the_query_language(
         ),
         ("東 倉庫", "東倉庫", "北星商事の倉庫はどこ？", "東倉庫はどこにある？"),
         ("东方 仓库", "东方仓库", "北辰贸易的仓库在哪里？", "东方仓库在哪里？"),
+        # Regression (rv9 query L7): the bridge key was compact_name_key,
+        # not the key a query's name links by (linking.link_key).
+        ("أكمي للروبوتات", "اكمي للروبوتات", "من يخزن قطع أكمي؟", "أين اكمي؟"),
+        ("Фёдоров Склад", "Федоров Склад", "Где склад?", "Где Федоров Склад?"),
     ],
-    ids=["ko", "ja", "zh"],
+    ids=["ko", "ja", "zh", "ar", "ru"],
 )
 async def test_dense_script_bridges_and_queries_are_followed_once(
     first: str, again: str, question: str, query: str

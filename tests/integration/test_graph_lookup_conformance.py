@@ -96,6 +96,7 @@ def _entities() -> list[Entity]:
         _entity("e-depot", "Depot", ["t2", "t3"]),
         _entity("e-hanbit", "한빛물류", ["t3"]),
         _entity("e-tokyo", "東京倉庫", ["t3"]),
+        _entity("e-fedorov", "Фёдоров Склад", ["t3"]),
     ]
 
 
@@ -114,7 +115,7 @@ def _relationship(id_: str, source: Entity, target: Entity, unit: str) -> Relati
 
 
 def _relationships() -> list[Relationship]:
-    vendor, buyer, depot, hanbit, tokyo = _entities()
+    vendor, buyer, depot, hanbit, tokyo = _entities()[:5]
     return [
         _relationship("r-vb", vendor, buyer, "t1"),
         _relationship("r-dv", depot, vendor, "t2"),
@@ -198,6 +199,22 @@ def test_a_name_without_an_exact_match_falls_back_to_a_search(
 
     match, names = _run(harness, lookup)
     assert match == "search" and "Depot" in names
+
+
+def test_a_searched_name_written_as_a_variant_is_a_name_match(
+    harness: StoreHarness,
+) -> None:
+    # Regression (rv9 query L7): the lookup took exact names only, where
+    # the strategies link "Федоров" to "Фёдоров" (linking.exact_links).
+    _ingest(harness)
+
+    async def lookup(chain: GraphRAGChain) -> tuple[str, list[str]]:
+        match, hits = await graph_lookup.find_entities(
+            chain, SUFFIX, name="Федоров Склад", limit=3
+        )
+        return match, [str(h.metadata.get("name")) for h in hits]
+
+    assert _run(harness, lookup) == ("name", ["Фёдоров Склад"])
 
 
 def test_the_neighbourhood_and_its_relationships(harness: StoreHarness) -> None:
