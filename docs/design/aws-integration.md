@@ -60,9 +60,11 @@ answer's own graph citations (`citation_lineage`). The ledger is the one
 channel: query processing records its fallbacks there (no field of
 `ProcessedQuery` repeats them), and a caller driving the composed runnable
 without `ainvoke` gets a ledger opened at its entry. `AnswerView`
-(`QueryOutcome.of`, over `DegradationReport.of`) reads the three keys back
-for the console (a "partial answer" notice), the MCP tools (`degraded`,
-`degraded_error`, `citations_unresolved` after the answer) and `run-rag`.
+(`QueryOutcome.of_output`, over `DegradationReport.of`) reads the three keys
+back, with an absorbed error's class, type and message, for the console (a
+"partial answer" notice), the MCP tools (`degraded`, `degraded_error`,
+`citations_unresolved` after the answer) and `run-rag`, none of which reads
+the metadata keys itself.
 `run-eval` counts the answers with any entry (`degraded_queries`).
 
 A query is checked before its first model call: its namespace is resolved

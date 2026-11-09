@@ -732,14 +732,13 @@ class KnowledgeGraphTools:
         """The output's outcome; raise for the chain's error answer, with its
         class: the caller's message for an error the caller can act on, a
         generic one otherwise."""
-        outcome = QueryOutcome.of(output.metadata)
+        outcome = QueryOutcome.of_output(output)
         if outcome.error_class is None:
             return outcome
         error_class = error_class_of(outcome.error_class)
         if error_class in _CALLER_CLASSES:
-            message = output.search_results.metadata.get("error")
             raise _AbsorbedQueryError(
-                str(message or "The query was refused."), error_class
+                outcome.error_message or "The query was refused.", error_class
             )
         raise _AbsorbedQueryError(
             "The query failed (processing.ignore_errors).", error_class

@@ -323,7 +323,7 @@ def _search_views(result: dict[str, Any]) -> tuple[list[SourceView], QueryOutcom
         SourceView.of_result(i, r)
         for i, r in enumerate(output.search_results.results, 1)
     ]
-    return views, QueryOutcome.of(output.metadata)
+    return views, QueryOutcome.of_output(output)
 
 
 class CommandLineInterface:
@@ -728,19 +728,17 @@ class RAGChainRunner:
                 raise
             self._record_latency(started)
             dumped = result.model_dump()
-            output = {**dumped, **self._view_fields(result, dumped)}
+            outcome, fields = self._view_fields(result, dumped)
+            output = {**dumped, **fields}
             # With processing.ignore_errors the chain does not raise: it returns
             # its error fallback flagged by metadata.error. That is a failure.
-            if output.get("error_class") is not None:
-                metadata = output.get("metadata") or {}
-                detail = (output.get("search_results") or {}).get("metadata", {})
-                error = str(detail.get("error") or "RAG chain returned an error")
-                error_class = error_class_of(output["error_class"])
+            if outcome.error_class is not None:
+                error = outcome.error_message or "RAG chain returned an error"
+                error_type = outcome.error_type or RUN_FAILED
+                error_class = error_class_of(outcome.error_class)
                 if EXIT_CODES[error_class] == EXIT_USAGE and not self.args.interactive:
                     # As raised without ignore_errors (below).
-                    usage_error(
-                        error, error_type=metadata.get("error_type") or RUN_FAILED
-                    )
+                    usage_error(error, error_type=error_type)
                 console.print(
                     f"\n[bold red]Error executing query: {markup_safe(error)}"
                     "[/bold red]"
@@ -748,11 +746,7 @@ class RAGChainRunner:
                 return {
                     "success": False,
                     **output,
-                    **failure_fields(
-                        EXIT_FAILURE,
-                        error,
-                        (output.get("metadata") or {}).get("error_type") or RUN_FAILED,
-                    ),
+                    **failure_fields(EXIT_FAILURE, error, error_type),
                 }
             console.print("\n[bold green]Query executed successfully![/bold green]")
             return {"success": True, **output}
@@ -784,17 +778,22 @@ class RAGChainRunner:
     @staticmethod
     def _view_fields(
         result: RAGOutput | SearchOutput, dumped: dict[str, Any]
-    ) -> dict[str, Any]:
-        """What the JSON document adds to the output, from the one view of
-        an answer every surface reads (``AnswerView``): what it was given
-        without (``degraded``, ``degraded_error``, ``citations_unresolved``),
-        the class of an absorbed error (``error_class``) and, for an
-        answer, the model-written sections it may cite (``written``)."""
+    ) -> tuple[QueryOutcome, dict[str, Any]]:
+        """The outcome of ``result`` and what the JSON document adds to the
+        output, from the one view of an answer every surface reads
+        (``AnswerView``): what it was given without (``degraded``,
+        ``degraded_error``, ``citations_unresolved``), the class of an
+        absorbed error (``error_class``) and, for an answer, the
+        model-written sections it may cite (``written``)."""
         _load_chain()
         if not isinstance(result, RAGOutput):
-            return QueryOutcome.of(dumped.get("metadata")).outcome_fields()
+            outcome = QueryOutcome.of(
+                dumped.get("metadata"),
+                (dumped.get("search_results") or {}).get("metadata"),
+            )
+            return outcome, outcome.outcome_fields()
         view = AnswerView.from_output(result)
-        return {
+        return view, {
             **view.outcome_fields(),
             "written": [w.model_dump(mode="json") for w in view.written],
         }

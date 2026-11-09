@@ -25,12 +25,16 @@ from rich.console import Console
 from unified_kg_rag.application.cli import mcp_tools, run_rag_chain
 from unified_kg_rag.application.cli.console.ask import AskService
 from unified_kg_rag.application.cli.mcp_tools import KnowledgeGraphTools
-from unified_kg_rag.application.presentation.answer_view import AnswerView
+from unified_kg_rag.application.presentation.answer_view import (
+    AnswerView,
+    QueryOutcome,
+)
 from unified_kg_rag.application.retrieval.rag_chain import (
     DEFAULT_ERROR_MESSAGE,
     ProcessedQuery,
     RAGInput,
     RAGOutput,
+    SearchOutput,
 )
 from unified_kg_rag.domain.models import (
     Citation,
@@ -298,3 +302,31 @@ def test_a_surface_builds_its_query_as_an_invalid_argument() -> None:
     assert classify(refused.value) is ErrorClass.INVALID_ARGUMENT
     assert str(refused.value) == "query: The query is empty."
     assert RAGInput.checked(query=" 공급사는? ").query == "공급사는?"
+
+
+def test_the_outcome_carries_the_error_answers_type_and_message() -> None:
+    # Regression (rv9 guards LM4): the MCP tools and run-rag read the error
+    # message and type from the metadata themselves; the outcome carries
+    # them, for a search without an answer too.
+    output = SearchOutput(
+        search_results=SearchResult(
+            query=SearchQuery(query="q"),
+            results=[],
+            total_results=0,
+            search_strategy="local",
+            processing_time=0.0,
+            metadata={"error": "No indices found for 'tenant-b'"},
+        ),
+        processed_query=ProcessedQuery(original_query="q", final_query="q"),
+        metadata={"error": True, "error_type": "IndexNotFoundError"},
+    )
+    outcome = QueryOutcome.of_output(output)
+    assert (outcome.error_type, outcome.error_message) == (
+        "IndexNotFoundError",
+        "No indices found for 'tenant-b'",
+    )
+    # A surface's JSON document reports its failure fields itself.
+    assert "error_message" not in outcome.outcome_fields()
+    # No error answer: no message, whatever the search metadata holds.
+    output.metadata = {}
+    assert QueryOutcome.of_output(output).error_message is None

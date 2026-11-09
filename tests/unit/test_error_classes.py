@@ -231,6 +231,8 @@ async def test_run_rag_exits_by_the_class_of_an_absorbed_failure(
     else:
         result = await runner._run_query(RAGInput(query="hi"))
         assert result["success"] is False and result["exit_code"] == 1
+        assert result["error_type"] == "SomeError"
+        assert result["error"] == "No indices found for 'tenant-b'"
 
 
 def test_run_eval_exits_2_for_a_filter_no_index_declares(mocker: Any) -> None:
