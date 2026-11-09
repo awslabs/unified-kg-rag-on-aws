@@ -108,6 +108,16 @@ def _set_values(value: list[Any]) -> list[Any]:
     return list(dict.fromkeys(item for item in value if item is not None))
 
 
+def _chunked_keys(props: dict[str, Any]) -> list[str]:
+    """The keys of ``props`` whose set has more values than one request
+    writes (``_SET_VALUES_PER_REQUEST``)."""
+    return [
+        key
+        for key, value in props.items()
+        if isinstance(value, list) and len(_set_values(value)) > _SET_VALUES_PER_REQUEST
+    ]
+
+
 def _stale_edges(
     entity_label: str, tag: str
 ) -> Callable[[GraphTraversalSource], GraphTraversal]:
@@ -1317,8 +1327,18 @@ class NeptuneIndexer(GraphIndexer):
         members. Scalars use ``Cardinality.single``; list values are written
         as multi-valued ``Cardinality.set`` properties, what the read path
         expects.
+
+        A set too large for one request (:func:`_chunked_keys`) is not
+        dropped: this request adds its first values and
+        :meth:`_add_set_values` the rest, then drops the stored values it no
+        longer has. Until then the vertex holds a superset of the old and the
+        new values, so a run killed between the requests leaves no value of
+        either out (a later run's merge reads the stored vertex).
         """
-        traversal.sideEffect(__.properties().has_key(P.neq("id")).drop())
+        dropped = __.properties().has_key(P.neq("id"))
+        for key in _chunked_keys(props):
+            dropped = dropped.has_key(P.neq(key))
+        traversal.sideEffect(dropped.drop())
         if self._rebuild_tag is not None:
             props = {**props, BUILD_TAG_PROPERTY: self._rebuild_tag}
         for key, value in props.items():
@@ -1338,56 +1358,87 @@ class NeptuneIndexer(GraphIndexer):
         properties: Callable[[Any], dict[str, Any]],
         stats: IndexingStats,
     ) -> None:
-        """Add to the vertices of ``items`` just written the values of their
-        multi-valued ``properties`` the write left out
-        (``_SET_VALUES_PER_REQUEST`` per request, each request one vertex's
-        next values). A vertex whose request fails is a failed item, written
-        again whole by a later write."""
+        """Finish the sets of the vertices of ``items`` just written that
+        were too large for their write (:func:`_chunked_keys`): add the values
+        it left out (``_SET_VALUES_PER_REQUEST`` per request), then drop the
+        stored values the item no longer has (read back, dropped in requests
+        of the same bound). Values are only added before the last request,
+        so an interruption leaves a superset, never a part, of the set. A
+        vertex whose request fails is a failed item, written again whole by a
+        later write."""
         failed = set(stats.failed_ids)
         for item in items:
             if item.id in failed:
                 continue
-            rest = [
-                (key, values[start : start + _SET_VALUES_PER_REQUEST])
-                for key, value in properties(item).items()
-                if isinstance(value, list)
-                and len(values := _set_values(value)) > _SET_VALUES_PER_REQUEST
-                for start in range(
-                    _SET_VALUES_PER_REQUEST, len(values), _SET_VALUES_PER_REQUEST
+            props = properties(item)
+
+            def vertex(
+                g: GraphTraversalSource, item_id: str = str(item.id)
+            ) -> GraphTraversal:
+                if self._custom_ids:
+                    return g.V(vertex_id(label, item_id))
+                return cast(
+                    GraphTraversal,
+                    self._rewritten(g.V().has(label, "id", item_id), label),
                 )
-            ]
-            for key, chunk in rest:
 
-                def build(
-                    g: GraphTraversalSource,
-                    item_id: str = item.id,
-                    key: str = key,
-                    chunk: list[Any] = chunk,
-                ) -> GraphTraversal:
-                    t: Any = (
-                        g.V(vertex_id(label, item_id))
-                        if self._custom_ids
-                        else self._rewritten(g.V().has(label, "id", item_id), label)
-                    )
-                    for value in chunk:
-                        t = t.property(Cardinality.set_, key, value)
-                    return cast(GraphTraversal, t.id_())
+            key = ""
+            try:
+                for key in _chunked_keys(props):
+                    values = _set_values(props[key])
+                    for start in range(
+                        _SET_VALUES_PER_REQUEST, len(values), _SET_VALUES_PER_REQUEST
+                    ):
+                        chunk = values[start : start + _SET_VALUES_PER_REQUEST]
 
-                try:
-                    written = self._execute_with_retries(
-                        build, "Adding vertex property values", results=True
-                    )
-                    if not written:
-                        raise AWSServiceError(f"vertex '{item.id}' not found")
-                except NamespaceLeaseError:
-                    raise
-                except Exception as e:  # noqa: BLE001 - a failed item
-                    stats.successful_items -= 1
-                    stats.add_error(str(e), ids=[str(item.id)])
-                    logger.warning(
-                        "Adding the %s values of %s failed: %s", key, item.id, e
-                    )
-                    break
+                        def add(
+                            g: GraphTraversalSource,
+                            key: str = key,
+                            chunk: list[Any] = chunk,
+                        ) -> GraphTraversal:
+                            t: Any = vertex(g)
+                            for value in chunk:
+                                t = t.property(Cardinality.set_, key, value)
+                            return cast(GraphTraversal, t.id_())
+
+                        written = self._execute_with_retries(
+                            add, "Adding vertex property values", results=True
+                        )
+                        if not written:
+                            raise AWSServiceError(f"vertex '{item.id}' not found")
+                    self._drop_stale_set_values(vertex, key, set(values))
+            except NamespaceLeaseError:
+                raise
+            except Exception as e:  # noqa: BLE001 - a failed item
+                stats.successful_items -= 1
+                stats.add_error(str(e), ids=[str(item.id)])
+                logger.warning(
+                    "Writing the %s values of %s failed: %s", key, item.id, e
+                )
+
+    def _drop_stale_set_values(
+        self,
+        vertex: Callable[[GraphTraversalSource], GraphTraversal],
+        key: str,
+        values: set[Any],
+    ) -> None:
+        """Drop the stored ``key`` values of ``vertex`` not in ``values``."""
+        stored = self._execute_with_retries(
+            lambda g: vertex(g).values(key),
+            "Reading vertex property values",
+            results=True,
+            fenced=False,
+        )
+        stale = [value for value in dict.fromkeys(stored) if value not in values]
+        for start in range(0, len(stale), _SET_VALUES_PER_REQUEST):
+
+            def drop(
+                g: GraphTraversalSource,
+                chunk: list[Any] = stale[start : start + _SET_VALUES_PER_REQUEST],
+            ) -> GraphTraversal:
+                return vertex(g).properties(key).hasValue(P.within(chunk)).drop()
+
+            self._execute_with_retries(drop, "Dropping stale vertex property values")
 
     def _index_generic(
         self,

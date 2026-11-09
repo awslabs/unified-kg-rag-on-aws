@@ -278,6 +278,50 @@ def test_an_interrupted_edge_rewrite_keeps_every_stored_edge(
     assert _stored_edges(graph_indexer) == before
 
 
+@pytest.mark.parametrize("kill_at", [1, 2, 3, 4])  # of its 5 requests
+def test_an_interrupted_hub_write_keeps_every_stored_value(
+    graph_indexer, monkeypatch: pytest.MonkeyPatch, kill_at: int
+) -> None:
+    # Regression: a set too large for one request lost its stored values in
+    # the first request, so a run killed before the follow-ups left a hub
+    # with the first 1,000 text units for good (the next run merges with
+    # the stored vertex). Killed after any request, the vertex now holds the
+    # old set or the new one in full; finished, the new one exactly.
+    from unified_kg_rag.adapters.storage import neptune_indexer as module
+
+    graph_indexer.clear([_SUFFIX])
+    old = [f"t{i:05d}" for i in range(1_500)]
+    new = [f"t{i:05d}" for i in range(500, 2_600)]
+    hub = Entity(id="e-hub", name="Hub", type="ORG", text_unit_ids=old)
+    assert graph_indexer.upsert_entities([hub]).failed_items == 0
+
+    class _Killed(BaseException):
+        pass
+
+    real = module.NeptuneIndexer._execute_with_retries
+    sent = {"n": 0}
+
+    def killed_after(self, build, operation_name, **kwargs):  # type: ignore[no-untyped-def]
+        if not operation_name.startswith("Reading the vertex"):  # id checks
+            sent["n"] += 1
+            if sent["n"] > kill_at:
+                raise _Killed
+        return real(self, build, operation_name, **kwargs)
+
+    monkeypatch.setattr(module.NeptuneIndexer, "_execute_with_retries", killed_after)
+    with pytest.raises(_Killed):
+        graph_indexer.upsert_entities([hub.model_copy(update={"text_unit_ids": new})])
+    monkeypatch.setattr(module.NeptuneIndexer, "_execute_with_retries", real)
+    (stored,) = graph_indexer.read_entities(["e-hub"], _SUFFIX)
+    units = set(stored.text_unit_ids or [])
+    assert units >= set(old) or units >= set(new)
+
+    update = hub.model_copy(update={"text_unit_ids": new})
+    assert graph_indexer.upsert_entities([update]).failed_items == 0
+    (stored,) = graph_indexer.read_entities(["e-hub"], _SUFFIX)
+    assert sorted(stored.text_unit_ids or []) == new
+
+
 def test_an_edge_rewrite_replaces_its_stored_copy_once(graph_indexer) -> None:
     # The drop of the stored copy and the add of the new one are one request:
     # re-pointed or resent, the edge is stored once; with an endpoint gone,
