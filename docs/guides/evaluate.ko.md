@@ -302,7 +302,9 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   다르므로 따로 Holm 묶음(`arm_primary`, `arm_secondary`, `arm_cost`, `arm_pairwise`)으로
   보정합니다.
 - 오버레이는 구성 파일처럼 검증합니다(`--allow-unknown-keys`가 없으면 알 수 없는 키에서
-  종료 코드 2로 멈춤). 모든 비교군은 기본 실행과 같은 방식으로 채점하므로 오버레이의
+  종료 코드 2로 멈춤). 오버레이가 지정한 상대 경로(SQLite 저장소, 시드 그래프, 스키마 파일)만
+  오버레이 파일의 디렉터리를 기준으로 풀고, 지정하지 않은 경로는 실행 구성의 것을 그대로 쓰므로
+  비교군은 실행과 같은 저장소를 읽습니다. 모든 비교군은 기본 실행과 같은 방식으로 채점하므로 오버레이의
   `evaluation` 섹션과 `models.roles.evaluation` / `answer_span`은 경고와 함께 무시합니다.
   LLM 판정 모델을 지정하지 않았으면 기본 실행과 모든 비교군의 답변 모델을 함께 보고(가능하면
   그중 어느 것도 아닌 모델로) 고른 뒤 비교군을 만들기 전에 고정하며, 답변 구간 추출 모델은

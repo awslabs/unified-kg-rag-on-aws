@@ -135,6 +135,39 @@ def test_an_arm_without_a_change_is_an_aa_arm(
     assert is_aa_arm(base, config, spec) is aa
 
 
+def test_an_arm_resolves_only_the_paths_its_overlay_sets(tmp_path: Path) -> None:
+    # A run configured without a file (defaults, environment) keeps its
+    # relative store paths; the arm must read the same stores, so only the
+    # paths the overlay itself writes resolve against its directory.
+    sub = tmp_path / "arms"
+    sub.mkdir()
+    overlay = sub / "o.yaml"
+    overlay.write_text("{}")
+    base = Config.model_validate({"backend": "local"})
+    spec = arm_spec(f"a={overlay}")
+    config, _ = arm_config(base, spec)
+    for section in ("doc_status", "graph", "vector"):
+        assert (
+            getattr(config.providers, section).sqlite_path
+            == getattr(base.providers, section).sqlite_path
+        )
+    assert is_aa_arm(base, config, spec)
+    overlay.write_text(
+        yaml.safe_dump(
+            {
+                "providers": {"graph": {"sqlite_path": "other.sqlite3"}},
+                "processing": {
+                    "seed_graphs": [{"name": "s", "kind": "rdf", "path": "seed.ttl"}]
+                },
+            }
+        )
+    )
+    config, _ = arm_config(base, spec)
+    assert config.providers.graph.sqlite_path == str(sub / "other.sqlite3")
+    assert config.providers.vector.sqlite_path == base.providers.vector.sqlite_path
+    assert config.processing.seed_graphs[0].path == str(sub / "seed.ttl")
+
+
 def test_aa_arms_are_read_from_the_run_manifests() -> None:
     manifests = [
         ("local", {"repeat": 1}),

@@ -1214,7 +1214,8 @@ From a `main` checkout (formats and keys no release had):
   `judge_effort` and, with an extracted span, its model and effort in `answer_scoring` (runs without them are warned
   about, not refused) (#639).
 - `run-eval --arm NAME=overlay.yaml[,suffix=SUFFIX][,aa=true]` (repeatable): a configuration arm answers the dataset
-  with the run's config under a YAML overlay (validated like a config file; the run's `evaluation` section and scoring
+  with the run's config under a YAML overlay (validated like a config file, the relative paths it sets resolved against
+  its directory and the run's own paths left as the run reads them; the run's `evaluation` section and scoring
   models are kept: an unset judge is chosen over the base and every arm's answer models and pinned first), as a chain
   and evaluation manager of its own, with every `--search-strategy`, interleaved with the base runs. Its runs
   (`<strategy>@NAME`) are compared with the same strategy's base run and Holm-adjusted in families of their own; the
