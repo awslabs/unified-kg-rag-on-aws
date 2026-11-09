@@ -2878,19 +2878,26 @@ class IndexingStage(_RegistryStage):
             return "rewrite"
         return None
 
-    def _artifacts_held(self, suffix: str) -> frozenset[IndexArtifact] | None:
+    def _artifacts_held(
+        self, suffix: str
+    ) -> tuple[frozenset[IndexArtifact], dict[str, int | None]] | None:
         """The artifacts of this config the stores of ``suffix`` show they
-        hold (``stored_artifacts_shown``), ``None`` when the vector store
-        cannot describe its indices."""
+        hold (``stored_artifacts_shown``) and the documents of each vector
+        index kind, ``None`` when the vector store cannot describe its
+        indices."""
         vector_indexer = self.indexing_manager.vector_indexer
         described = vector_indexer.describe_indices(suffix)
         if described is None:
             return None
-        return stored_artifacts_shown(
-            self.config,
-            {entry["kind"]: entry.get("documents") for entry in described},
-            graph_holds=self.indexing_manager.graph_indexer.holds_any_item(suffix),
-            tree=bool(vector_indexer.read_summary_tree_record(suffix)),
+        documents = {entry["kind"]: entry.get("documents") for entry in described}
+        return (
+            stored_artifacts_shown(
+                self.config,
+                documents,
+                graph_holds=self.indexing_manager.graph_indexer.holds_any_item(suffix),
+                tree=bool(vector_indexer.read_summary_tree_record(suffix)),
+            ),
+            documents,
         )
 
     def _record_build(
@@ -2921,9 +2928,12 @@ class IndexingStage(_RegistryStage):
         suffix's record was written on no index (the store rejected it).
 
         A run that ``rewrite``s a missing record indexed nothing: the record
-        names the artifacts the stores show they hold (``_artifacts_held``;
-        none is written when a read of them fails) and the documents the
-        registry records, not what the config would build.
+        stands for the build the stores hold, a full one (later incremental
+        records carry it as their ``full_build``). It names the artifacts
+        the stores show they hold (``_artifacts_held``; none is written when
+        a read of them fails), the documents the registry records, and
+        community counters started from the reports stored, not what the
+        config would build.
         """
         delta = context.incremental_delta
         # A delta of new documents only into a namespace the registry held
@@ -2947,7 +2957,9 @@ class IndexingStage(_RegistryStage):
             doc_id for unit in text_units for doc_id in unit.document_ids or []
         }
         artifacts = built_artifacts(self.config, _completed_stages(context))
-        if rewrite and delta is not None:
+        added = Counter(BaseIndexer.get_suffix(c) for c in communities)
+        rewritten = rewrite and delta is not None
+        if rewritten and delta is not None:
             suffix = resolve_namespace(self.config, None)
             try:
                 held = self._artifacts_held(suffix)
@@ -2959,9 +2971,13 @@ class IndexingStage(_RegistryStage):
                     e,
                 )
                 return None
-            if held is not None:
-                artifacts = held
+            incremental = False
             documents = set(delta.unchanged)
+            if held is not None:
+                artifacts, stored = held
+                reports = stored.get("community_reports")
+                if IndexArtifact.COMMUNITIES in artifacts and reports:
+                    added = Counter({suffix: reports})
         settings = context.incremental_extraction_settings or extraction_settings(
             self.config
         )
@@ -2982,7 +2998,6 @@ class IndexingStage(_RegistryStage):
                 else None
             ),
         ).with_artifacts(artifacts)
-        added = Counter(BaseIndexer.get_suffix(c) for c in communities)
         deleted = self.indexing_manager.deleted_communities
         # Written by a delta (an incremental run, or one whose scope the
         # registry knew no document of): counted once per commit.
@@ -2990,7 +3005,7 @@ class IndexingStage(_RegistryStage):
             commit_identity(
                 context.pipeline_id, delta, context.incremental_fingerprints
             )
-            if delta is not None and not self.config.indexing.reset
+            if delta is not None and not self.config.indexing.reset and not rewritten
             else None
         )
         counters: dict[str, CommunityCounters] | None = {}
@@ -3010,7 +3025,7 @@ class IndexingStage(_RegistryStage):
                     added=added[suffix],
                     deleted=len(deleted.get(suffix, ())),
                 )
-            if not incremental:
+            if not incremental and (not rewritten or added[suffix]):
                 update["communities"] = CommunityCounters(
                     clustered_at=record.built_at,
                     communities_at_clustering=added[suffix],

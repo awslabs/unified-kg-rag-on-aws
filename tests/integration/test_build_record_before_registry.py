@@ -158,9 +158,9 @@ def test_a_missing_record_is_written_by_a_run_with_nothing_to_index(
     assert record is not None
     assert record["methodologies"] == want["methodologies"] == ["lightrag", "hipporag"]
     assert record["artifacts"] == want["artifacts"]
-    # Written by a delta that indexed nothing, counting what the registry
-    # records.
-    assert (record["mode"], record["documents"]) == ("incremental", 2)
+    # Written by a delta that indexed nothing: the build the stores hold,
+    # counting the documents the registry records.
+    assert (record["mode"], record["documents"]) == ("full", 2)
 
 
 @pytest.mark.usefixtures("no_aws")
@@ -191,4 +191,40 @@ def test_a_rewritten_record_names_only_what_the_stores_hold(
         record["artifacts"]
     )
     # The documents the registry records, not the none this run indexed.
-    assert (record["mode"], record["documents"]) == ("incremental", 2)
+    assert (record["mode"], record["documents"]) == ("full", 2)
+
+
+@pytest.mark.usefixtures("no_aws")
+def test_a_rewritten_record_is_the_full_build_later_records_carry(
+    tmp_path: Path, mocker
+) -> None:
+    # Under the default profile: the rewritten record starts the community
+    # counters from the reports stored, and the next incremental record
+    # carries it as its full build (the corpus size survives).
+    config, providers, source = _setup(tmp_path)
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    _failing_record_writes(mocker, attempts=1000)
+    e2e._ingest(config, providers, source, tmp_path / "run-1")
+    mocker.stopall()
+    e2e._ingest(config, providers, source, tmp_path / "run-2")
+    rewritten = _record(config, providers)
+    assert rewritten is not None
+    assert (rewritten["mode"], rewritten["documents"]) == ("full", 2)
+    reports = next(
+        entry["documents"]
+        for entry in providers.build_vector_indexer().describe_indices(None)
+        if entry["kind"] == "community_reports"
+    )
+    assert reports
+    assert rewritten["communities"]["communities_now"] == reports
+    assert rewritten["communities"]["runs_since"] == 0
+    (source / "carrier.txt").write_text("Carrier ships widgets for Depot.")
+
+    e2e._ingest(config, providers, source, tmp_path / "run-3")
+
+    record = _record(config, providers)
+    assert record is not None
+    assert (record["mode"], record["documents"]) == ("incremental", 1)
+    assert record["full_build"]["pipeline_id"] == "run-2"
+    assert record["full_build"]["documents"] == 2
+    assert record["communities"]["runs_since"] == 1
