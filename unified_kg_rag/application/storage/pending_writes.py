@@ -127,6 +127,43 @@ def _join(
     return [*joined, *by_id.values()]
 
 
+def _repointed(
+    noted: Sequence[Relationship], delta: Sequence[Relationship]
+) -> list[Relationship]:
+    """The ``noted`` edges with the endpoints the ``delta`` resolves.
+
+    A noted edge the delta states again (its id: the same statement) takes
+    the delta's endpoints, this run's resolution of the names: the noted
+    ones may be a spelling the corpus no longer resolves to, whose entity a
+    removal has deleted since, so the joined edge would point at nothing
+    in every later commit. The other noted edges at such an endpoint are
+    pointed at the delta's one too (old endpoint id -> new, the first the
+    delta gives)."""
+    by_id = {rel.id: rel for rel in delta}
+    ends: dict[str, tuple[str, str | None]] = {}
+    for rel in noted:
+        current = by_id.get(rel.id)
+        if current is None:
+            continue
+        for old, new, name in (
+            (rel.source_id, current.source_id, current.source_name),
+            (rel.target_id, current.target_id, current.target_name),
+        ):
+            if old != new:
+                ends.setdefault(old, (new, name))
+    if not ends:
+        return list(noted)
+    repointed = []
+    for rel in noted:
+        update: dict[str, Any] = {}
+        if rel.source_id in ends:
+            update["source_id"], update["source_name"] = ends[rel.source_id]
+        if rel.target_id in ends:
+            update["target_id"], update["target_name"] = ends[rel.target_id]
+        repointed.append(rel.model_copy(update=update) if update else rel)
+    return repointed
+
+
 def _merged_entity(noted: Entity, delta: Entity) -> Entity:
     return merge_entities([noted], [delta])[0][0]
 
@@ -354,7 +391,10 @@ class PendingWrites:
 
         The endpoints of a noted relationship are written with it, as a
         delta's are, so the ranks of their stored edges follow its degree:
-        one neither the delta nor the note holds is read from the graph."""
+        one neither the delta nor the note holds is read from the graph,
+        after the noted edges took the endpoints the delta resolves
+        (:func:`_repointed`)."""
+        noted.relationships = _repointed(noted.relationships, relationships or [])
         known = {e.id for e in [*(entities or []), *noted.entities]}
         ends: dict[str, set[str]] = defaultdict(set)
         for rel in noted.relationships:

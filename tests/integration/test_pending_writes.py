@@ -14,10 +14,14 @@ recorded FAILED only for a write of its own text units.
 
 from __future__ import annotations
 
+import hashlib
+import uuid
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 
+from tests.fixtures import incremental_runs
 from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.model_servers import FakeOllama
@@ -470,3 +474,48 @@ def test_a_write_that_keeps_failing_holds_back_only_the_re_keys_it_touches() -> 
     assert stale == set()
     harness.run(after)
     assert harness.state() == want
+
+
+def test_a_noted_edge_the_delta_states_again_takes_its_endpoints(
+    monkeypatch,
+) -> None:
+    # The noted edge cites a unit the delta writes again under its id (a
+    # unit id kept while its document changed: content-keyed, as the
+    # fixture once was), and the delta states the edge again from it. The
+    # delta resolves its subject to the other spelling now; the noted
+    # spelling's entity went with the document's removal. Joined with the
+    # noted endpoints, the edge pointed at nothing in every later commit.
+    def content_keyed(path: str, index: int, unit: Any) -> str:
+        digest = hashlib.sha256(f"{path}|{index}|{sorted(unit)}".encode()).hexdigest()
+        return str(uuid.UUID(digest[:32]))
+
+    units: dict[tuple[str, int], Any] = {}
+    records = incremental_runs._unit_records
+
+    def keyed_records(
+        path, document_id, index, unit, conformance
+    ):  # noqa: ANN001, ANN202
+        units[(document_id, index)] = (path, unit)
+        return records(path, document_id, index, unit, conformance)
+
+    def unit_id(document_id: str, index: int) -> str:
+        path, unit = units[(document_id, index)]
+        return content_keyed(path, index, unit)
+
+    monkeypatch.setattr(incremental_runs, "_unit_id", unit_id)
+    monkeypatch.setattr(incremental_runs, "_unit_records", keyed_records)
+    kept = [("주식회사 한빛", _D, 1), ("주식회사 한빛", "Acme", 1), ("(주)한빛", _B, 1)]
+    before: Corpus = {"/corpus/a.txt": [kept]}
+    after: Corpus = {
+        "/corpus/a.txt": [kept, [(_D, _B, 1)]],
+        "/corpus/d.txt": [[(_D, "주식회사 한빛", 1)]],
+    }
+    rejected = [r.id for r in extract(before).relationships if r.target_name == "Acme"]
+    harness = _harness()
+    harness.run(before, fail=_rejecting("graph.upsert_relationships", *rejected))
+    assert _note(harness) is not None
+
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, harness.config)
+    assert _note(harness) is None
