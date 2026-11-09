@@ -158,5 +158,37 @@ def test_a_missing_record_is_written_by_a_run_with_nothing_to_index(
     assert record is not None
     assert record["methodologies"] == want["methodologies"] == ["lightrag", "hipporag"]
     assert record["artifacts"] == want["artifacts"]
-    # Written by a delta that indexed nothing.
-    assert (record["mode"], record["documents"]) == ("incremental", 0)
+    # Written by a delta that indexed nothing, counting what the registry
+    # records.
+    assert (record["mode"], record["documents"]) == ("incremental", 2)
+
+
+@pytest.mark.usefixtures("no_aws")
+def test_a_rewritten_record_names_only_what_the_stores_hold(
+    tmp_path: Path, mocker
+) -> None:
+    # Built under LightRAG alone, the record rejected; the next run, with
+    # nothing to index, runs the default profile. Its record must not name
+    # GraphRAG's communities and reports, which no run built: a global query
+    # would then search an empty reports index instead of being refused.
+    config, providers, source = _setup(tmp_path)
+    _failing_record_writes(mocker, attempts=1000)
+    e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert _record(config, providers) is None
+    mocker.stopall()
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert context.incremental_delta is not None
+    assert context.incremental_delta.to_process == []
+    record = _record(config, providers)
+    assert record is not None
+    assert "graphrag" not in record["methodologies"]
+    assert not {"communities", "community_reports"} & set(record["artifacts"])
+    assert {"text_units", "entities", "relationship_vectors", "graph"} <= set(
+        record["artifacts"]
+    )
+    # The documents the registry records, not the none this run indexed.
+    assert (record["mode"], record["documents"]) == ("incremental", 2)

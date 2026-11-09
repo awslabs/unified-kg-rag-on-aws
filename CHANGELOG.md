@@ -962,8 +962,9 @@ From a `main` checkout (formats and keys no release had):
   to hold what a run of the config builds, `hipporag` included (#602); a run writes the record before the registry
   records its documents, so a first build or reset killed between the two leaves it (the next run found nothing to
   index and wrote none, and queries took the namespace to hold what the config builds). A record the store rejected
-  is written again once the documents are recorded, and a run with nothing to index writes a missing one (a WARNING
-  says what queries assume until one is written). With
+  is written again once the documents are recorded, and a run with nothing to index writes a missing one naming only
+  the artifacts the stores hold and the documents the registry records (a WARNING says what queries assume until one
+  is written). With
   `graph.community_detection.report_generation.enabled: false` a run builds no reports, so an incremental run no
   longer takes them for missing and rebuilds the namespace, and the namespace holds `graphrag` for `local` while
   `global` and `drift`, which declare the reports among their artifacts, are refused naming the switch (a WARNING at

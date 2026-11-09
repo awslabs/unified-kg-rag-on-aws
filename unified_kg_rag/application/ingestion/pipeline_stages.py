@@ -103,6 +103,7 @@ from unified_kg_rag.domain.ingestion.methodologies import (
     artifacts_to_build,
     built_artifacts,
     stored_artifacts,
+    stored_artifacts_shown,
 )
 from unified_kg_rag.domain.ingestion.names import (
     compact_name_key,
@@ -2609,11 +2610,16 @@ class IndexingStage(_RegistryStage):
 
         def record_build(results: Mapping[str, IndexingStats]) -> None:
             nonlocal counters
-            if not self._writes_build_record(context, results):
+            write = self._build_record_write(context, results)
+            if write is None:
                 return
             try:
                 counters = self._record_build(
-                    context, text_units, communities, tree_pruned=_tree_pruned(results)
+                    context,
+                    text_units,
+                    communities,
+                    tree_pruned=_tree_pruned(results),
+                    rewrite=write == "rewrite",
                 )
             except NamespaceLeaseError:
                 raise
@@ -2761,12 +2767,14 @@ class IndexingStage(_RegistryStage):
         self._validate_backend_success(indexing_results)
         delta = context.incremental_delta
         if counters is None:
-            if self._writes_build_record(context, indexing_results):
+            write = self._build_record_write(context, indexing_results)
+            if write is not None:
                 counters = self._record_build(
                     context,
                     text_units,
                     communities,
                     tree_pruned=_tree_pruned(indexing_results),
+                    rewrite=write == "rewrite",
                 )
                 if counters is None:
                     logger.warning(
@@ -2843,29 +2851,46 @@ class IndexingStage(_RegistryStage):
             ),
         }
 
-    def _writes_build_record(
+    def _build_record_write(
         self, context: PipelineContext, results: Mapping[str, IndexingStats]
-    ) -> bool:
-        """Whether the run writes the build record: not an incremental run
-        that found nothing to index and wrote no item (the indices keep the
-        record of the run that did), unless the registry holds documents of
-        the configured suffix and its indices hold no record (a write the
-        store rejected, or a build from before records)."""
+    ) -> str | None:
+        """Whether the run writes the build record: ``"run"`` unless it is
+        an incremental run that found nothing to index and wrote no item
+        (the indices keep the record of the run that did); then
+        ``"rewrite"`` when the registry holds documents of the configured
+        suffix and its indices hold no record (a write the store rejected,
+        or a build from before records), else ``None``."""
         delta = context.incremental_delta
-        vector_indexer = self.indexing_manager.vector_indexer
-        return (
+        if (
             delta is None
             or self.config.indexing.reset
             or not delta.is_empty
             or any(s.total_items or s.failed_items for s in results.values())
-            or (
-                bool(delta.unchanged)
-                and keeps_build_records(vector_indexer)
-                and vector_indexer.read_build_record(
-                    resolve_namespace(self.config, None)
-                )
-                is None
-            )
+        ):
+            return "run"
+        vector_indexer = self.indexing_manager.vector_indexer
+        if (
+            delta.unchanged
+            and keeps_build_records(vector_indexer)
+            and vector_indexer.read_build_record(resolve_namespace(self.config, None))
+            is None
+        ):
+            return "rewrite"
+        return None
+
+    def _artifacts_held(self, suffix: str) -> frozenset[IndexArtifact] | None:
+        """The artifacts of this config the stores of ``suffix`` show they
+        hold (``stored_artifacts_shown``), ``None`` when the vector store
+        cannot describe its indices."""
+        vector_indexer = self.indexing_manager.vector_indexer
+        described = vector_indexer.describe_indices(suffix)
+        if described is None:
+            return None
+        return stored_artifacts_shown(
+            self.config,
+            {entry["kind"]: entry.get("documents") for entry in described},
+            graph_holds=self.indexing_manager.graph_indexer.holds_any_item(suffix),
+            tree=bool(vector_indexer.read_summary_tree_record(suffix)),
         )
 
     def _record_build(
@@ -2874,6 +2899,7 @@ class IndexingStage(_RegistryStage):
         text_units: list[TextUnit],
         communities: Sequence[Community] = (),
         tree_pruned: bool = True,
+        rewrite: bool = False,
     ) -> dict[str, CommunityCounters] | None:
         """Record on each written suffix's vector indices what built them.
 
@@ -2893,6 +2919,11 @@ class IndexingStage(_RegistryStage):
         (``IndexBuildRecord.over``). Returns the counters written, by suffix
         (none where the stored record predates them), or ``None`` when a
         suffix's record was written on no index (the store rejected it).
+
+        A run that ``rewrite``s a missing record indexed nothing: the record
+        names the artifacts the stores show they hold (``_artifacts_held``;
+        none is written when a read of them fails) and the documents the
+        registry records, not what the config would build.
         """
         delta = context.incremental_delta
         # A delta of new documents only into a namespace the registry held
@@ -2915,6 +2946,22 @@ class IndexingStage(_RegistryStage):
         documents = {
             doc_id for unit in text_units for doc_id in unit.document_ids or []
         }
+        artifacts = built_artifacts(self.config, _completed_stages(context))
+        if rewrite and delta is not None:
+            suffix = resolve_namespace(self.config, None)
+            try:
+                held = self._artifacts_held(suffix)
+            except Exception as e:  # noqa: BLE001 - best-effort, as the write
+                logger.warning(
+                    "Not rewriting the missing build record of '%s': its "
+                    "indices could not be described (%s)",
+                    suffix,
+                    e,
+                )
+                return None
+            if held is not None:
+                artifacts = held
+            documents = set(delta.unchanged)
         settings = context.incremental_extraction_settings or extraction_settings(
             self.config
         )
@@ -2929,7 +2976,7 @@ class IndexingStage(_RegistryStage):
             extraction_settings=settings,
             package_version=package_version,
             source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
-        ).with_artifacts(built_artifacts(self.config, _completed_stages(context)))
+        ).with_artifacts(artifacts)
         added = Counter(BaseIndexer.get_suffix(c) for c in communities)
         deleted = self.indexing_manager.deleted_communities
         # Written by a delta (an incremental run, or one whose scope the

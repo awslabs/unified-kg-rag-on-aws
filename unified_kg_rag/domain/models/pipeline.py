@@ -113,7 +113,8 @@ class IndexBuildRecord(BaseModel):
     documents: int = Field(
         description=(
             "Distinct documents whose text units the run indexed (an "
-            "incremental run counts only its new and changed documents)."
+            "incremental run counts only its new and changed documents; one "
+            "that rewrote a missing record, those the registry records)."
         )
     )
     extraction_fingerprint: str = Field(

@@ -46,6 +46,7 @@ from unified_kg_rag.domain.models.methodology import (
     methodologies_holding,
 )
 from unified_kg_rag.domain.retrieval import index_prefixes
+from unified_kg_rag.ports.indexer import STORED_ITEM_KINDS
 
 pytestmark = pytest.mark.unit
 
@@ -1226,3 +1227,46 @@ def test_the_auto_fallback_is_warned_about_once(caplog) -> None:
             assert routable_strategies(config, TREE_ONLY) == (SearchStrategy.TREE,)
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1 and "auto uses tree" in warnings[0].getMessage()
+
+
+def test_the_artifact_kinds_are_the_vector_stores_item_kinds() -> None:
+    assert set(mp.ARTIFACT_KINDS.values()) <= set(STORED_ITEM_KINDS)
+    # Every artifact is the vector store's, the graph's or the tree's.
+    graph = mp.GRAPH_STORE_ARTIFACTS | {IndexArtifact.RELATIONSHIPS}
+    assert set(mp.ARTIFACT_KINDS) | graph | {IndexArtifact.SUMMARY_TREE} == set(
+        IndexArtifact
+    )
+
+
+def test_stored_artifacts_shown_names_only_what_the_stores_hold() -> None:
+    config = Config()
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    lightrag_build = {"text_units": 3, "entities": 4, "relationships": 2}
+    shown = mp.stored_artifacts_shown(
+        config, lightrag_build, graph_holds=True, tree=False
+    )
+    assert shown == {
+        IndexArtifact.TEXT_UNITS,
+        IndexArtifact.ENTITIES,
+        IndexArtifact.RELATIONSHIP_VECTORS,
+        IndexArtifact.GRAPH,
+        IndexArtifact.RELATIONSHIPS,
+    }
+    with_reports = {**lightrag_build, "community_reports": 1, "claims": None}
+    shown = mp.stored_artifacts_shown(config, with_reports, graph_holds=True, tree=True)
+    assert {IndexArtifact.COMMUNITIES, IndexArtifact.COMMUNITY_REPORTS} <= shown
+    # Neither the tree (raptor is not selected) nor the empty claims index.
+    assert not {IndexArtifact.SUMMARY_TREE, IndexArtifact.CLAIMS} & shown
+    # An empty graph holds no graph artifact; one that cannot tell, the
+    # config's.
+    assert IndexArtifact.GRAPH not in mp.stored_artifacts_shown(
+        config, lightrag_build, graph_holds=False, tree=False
+    )
+    assert IndexArtifact.GRAPH in mp.stored_artifacts_shown(
+        config, lightrag_build, graph_holds=None, tree=False
+    )
+    # Without reports to show them, communities are held with the graph.
+    config.graph.community_detection.report_generation.enabled = False
+    assert IndexArtifact.COMMUNITIES in mp.stored_artifacts_shown(
+        config, lightrag_build, graph_holds=True, tree=False
+    )
