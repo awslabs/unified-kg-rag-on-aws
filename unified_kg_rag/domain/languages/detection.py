@@ -1,22 +1,51 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The language a text's script decides.
+"""The language a text's script and words decide.
 
-One rule (:func:`script_language`) tells the language of a query and of a
-corpus sample wherever the package asks (the decline's language, the
-corpus check, prompt tuning). Korean, Japanese and Chinese are told apart
-by their dense letters: Korean writes
-Hangul and may mix in Han (Hanja), Japanese writes Kana and Han (Kanji),
-Chinese Han alone. A text whose Han, Hangul and Kana letters are a tenth or
-more Hangul (and no fewer Hangul than Kana) is Korean, else a tenth or more
-Kana Japanese, else Chinese. The shares are of the dense letters only, so
-Latin terms in technical text do not move them.
+One scoring decision (:func:`script_language`) tells the language of a
+query and of a corpus sample wherever the package asks (the decline's
+language, the corpus check, prompt tuning, token budgets), from one record
+of evidence (:func:`text_evidence`):
+
+- the text's letters by script, and their runs (words, or stretches of a
+  script written without spaces: ``ScriptCounts``);
+- its words that may be a language's function words: none that is an
+  acronym or a code ("AI", "OS", "iPhone": a capital after its first
+  letter), a part of a compound (joined by a hyphen, a digit or another
+  script's letter: "to-do", "us-east-1", "ES6", "AIとは") or,
+  in a text of two scripts, a word of a name it quotes (a run of
+  capitalised words: "Bank of America", "The Walt Disney Company");
+- the texts that open on a capitalised word (a sentence starts there), by
+  the script of that word.
+
+The scripts whose languages have function words (Latin) claim a text with
+the words that are function words of one of them, and one more when it
+opens on a capitalised word of theirs; a script without them is quoted
+names there. Every other script claims it with its runs, the heaviest of
+them (``ScriptCounts.dominant``) for all of them. The larger claim decides
+the script, a tie the one with function words: "Who is the CEO of
+한빛전자?" is English (four function words and its opening against one
+run), "AI 모델 추천" Korean (no function word: "AI" is an acronym),
+"Microsoft Corporation和OpenAI是什么关系？" Chinese (the Latin words are
+a name), "with 문 사용법" Korean (one function word against two runs).
+
+The language in the script: Korean, Japanese and Chinese are told apart by
+their dense letters (:func:`dense_language`): Korean writes Hangul and may
+mix in Han (Hanja), Japanese writes Kana and Han (Kanji), Chinese Han
+alone. A text whose Han, Hangul and Kana letters are a tenth or more Hangul
+(and no fewer Hangul than Kana) is Korean, else a tenth or more Kana
+Japanese, else Chinese; the shares are of the dense letters only, so Latin
+terms in technical text do not move them. A script one language writes is
+that language, and the languages of one script by their function words and
+the elisions only one of them writes.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
 from unified_kg_rag.domain.languages.profile import LanguageProfile
@@ -25,9 +54,17 @@ from unified_kg_rag.shared.utils.scripts import (
     ScriptCounts,
     count_letters,
     letter_class,
+    script_of,
 )
 
-__all__ = ["dense_language", "script_language", "text_language", "words_of"]
+__all__ = [
+    "TextEvidence",
+    "dense_language",
+    "language_in_script",
+    "script_language",
+    "text_evidence",
+    "text_language",
+]
 
 # The share of a text's dense letters in Hangul (or Kana) that makes it
 # Korean (or Japanese). Han carries the stems of both: a Korean statute
@@ -56,52 +93,118 @@ def dense_language(
     return LanguageCode.ZH
 
 
-_WORD = re.compile(r"[^\W\d_]+(?:'[^\W\d_]+)*")
-_LATIN_LETTER = f"[{letter_class('latin')}]"
-_LATIN_WORD = re.compile(rf"{_LATIN_LETTER}+(?:'{_LATIN_LETTER}+)*")
-
-
-def words_of(text: str) -> list[str]:
-    """The lowercased words of ``text`` function words are counted in (an
-    elided word kept with its apostrophe: "dell'accordo").
-
-    In a text with letters of another script, its Latin words only (the
-    function words and elisions are Latin-script languages'), and of them
-    none of a Latin name it quotes (:func:`_name_words`): "Bank of
-    America和The Walt Disney Company是什么关系？" holds no English
-    function word."""
-    text = text.replace("\u2019", "'")
-    if not any(ch.isalpha() for ch in _LATIN_WORD.sub("", text)):
-        return _WORD.findall(text.lower())
-    words = list(_LATIN_WORD.finditer(text))
-    names = _name_words(text, words)
-    return [w.group().lower() for i, w in enumerate(words) if i not in names]
-
-
-# The function words and articles of the Latin-script languages: a
-# capitalised one opens no name ("Why", "Wie", "Quién"), but an article
-# directly before a capitalised word opens the name it belongs to ("The Walt
-# Disney Company", "the United Nations", "der Rhein").
-_LATIN_PROFILES = [p for p in PROFILES.values() if p.script == "latin"]
-_LATIN_ARTICLES = frozenset().union(*(p.articles for p in _LATIN_PROFILES))
-_LATIN_FUNCTION_WORDS = _LATIN_ARTICLES.union(
-    *(p.function_words for p in _LATIN_PROFILES)
+# The scripts whose languages have function words (spaced scripts, each
+# its own group in ``ScriptCounts``), and those languages by script: their
+# words are the evidence the words of a text give.
+_WORDED: dict[str, list[LanguageProfile]] = {}
+for _profile in PROFILES.values():
+    if _profile.function_words:
+        _WORDED.setdefault(_profile.script, []).append(_profile)
+# Their function words and articles: a capitalised one opens no name
+# ("Why", "Wie", "Quién"), but an article directly before a capitalised
+# word opens the name it belongs to ("The Walt Disney Company", "the
+# United Nations", "der Rhein").
+_ARTICLES = frozenset().union(*(p.articles for ps in _WORDED.values() for p in ps))
+_FUNCTION_WORDS = _ARTICLES.union(
+    *(p.function_words for ps in _WORDED.values() for p in ps)
 )
+_ELIDED = frozenset().union(*(p.elided_prefixes for ps in _WORDED.values() for p in ps))
+# A word of those scripts, an elided one with its apostrophe
+# ("dell'accordo"), and any letter or digit (what a compound joins).
+_WORD = re.compile(rf"[{letter_class(*_WORDED)}]+(?:'[{letter_class(*_WORDED)}]+)*")
+_LETTER_OR_DIGIT = re.compile(r"[^\W_]")
+
+
+@dataclass(frozen=True)
+class TextEvidence:
+    """What :func:`script_language` reads of one text or a sample of
+    several (:func:`text_evidence`): the letters by script with their runs,
+    the lowercased words that may be function words, and how many of the
+    texts open on a capitalised word, by its script."""
+
+    counts: ScriptCounts
+    words: tuple[str, ...] = ()
+    openings: Mapping[str, int] = field(default_factory=dict)
+
+
+def text_evidence(texts: Iterable[str]) -> TextEvidence:
+    """The evidence ``texts`` give of their language (module docstring)."""
+    texts = list(texts)
+    words: list[str] = []
+    openings: Counter[str] = Counter()
+    for text in texts:
+        text = text.replace("\u2019", "'")
+        spans = list(_WORD.finditer(text))
+        # In a text of one script its capitalised words quote nothing
+        # (German writes its nouns so).
+        names = _name_words(text, spans) if _mixes_scripts(text) else set()
+        words.extend(
+            span.group().lower()
+            for i, span in enumerate(spans)
+            if i not in names and not _is_code(span.group()) and not _joined(text, span)
+        )
+        if (script := _opening_script(text)) is not None:
+            openings[script] += 1
+    return TextEvidence(count_letters(texts), tuple(words), dict(openings))
+
+
+def _mixes_scripts(text: str) -> bool:
+    """Whether ``text`` holds letters of a script without function words
+    beside its words."""
+    return any(ch.isalpha() for ch in _WORD.sub("", text))
+
+
+def _is_code(word: str) -> bool:
+    """Whether ``word`` is an acronym or a code: a capital after its first
+    letter ("AI", "OS", "iPhone", "OpenAI")."""
+    return any(ch.isupper() for ch in word[1:])
+
+
+def _joined(text: str, word: re.Match[str]) -> bool:
+    """Whether ``word`` is a part of a compound: a letter of another script
+    or a digit is written onto it ("ES6", "AIとは", "Acme의"), or a hyphen
+    joins it to one ("to-do", "how-to", "us-east-1")."""
+
+    def joins(i: int, step: int) -> bool:
+        if not 0 <= i < len(text):
+            return False
+        if text[i] == "-":
+            i += step
+            if not 0 <= i < len(text):
+                return False
+        return _LETTER_OR_DIGIT.match(text[i]) is not None
+
+    return joins(word.start() - 1, -1) or joins(word.end(), 1)
+
+
+def _opening_script(text: str) -> str | None:
+    """The script of the capitalised word ``text`` opens on (a sentence
+    starts there: "Who", "¿Quién"), or ``None``: one that opens on a word
+    of another script, on an acronym ("AI") or on a lowercase word."""
+    first = next((ch for ch in text if ch.isalpha()), None)
+    if first is None or not first.isupper():
+        return None
+    match = _WORD.match(text, text.index(first))
+    if match is None or len(match.group()) < 2 or _is_code(match.group()):
+        return None
+    script = script_of(first)
+    return script.name if script is not None else None
 
 
 def _name_words(text: str, words: list[re.Match[str]]) -> set[int]:
-    """The indexes of ``words`` (Latin words in order) inside a name: a run
-    of two or more of them with spaces alone between, opening and closing
-    on a capitalised word, with the lowercase words inside it ("Bank of
-    America", "Procter and Gamble", "The Walt Disney Company"); a
-    capitalised word alone (a question's first word, a German noun) is no
-    name, and nor does a function word open one (:func:`_opens_name`: "Why
-    did Orion Labs drop" holds the name "Orion Labs")."""
+    """The indexes of ``words`` (in order) inside a name: a run of two or
+    more of them with spaces alone between, opening and closing on a
+    capitalised word or a code, with the lowercase words inside it ("Bank
+    of America", "Procter and Gamble", "The Walt Disney Company", "iPhone
+    and iPad"); a capitalised word alone (a question's first word, a German
+    noun) is no name, and nor does a function word open one
+    (:func:`_opens_name`: "Why did Orion Labs drop" holds the name "Orion
+    Labs")."""
     names: set[int] = set()
     run: list[int] = []
 
     def close() -> None:
-        while run and not words[run[-1]].group()[0].isupper():
+        while run and not _is_name_word(words[run[-1]].group()):
             run.pop()
         if len(run) > 1:
             names.update(run)
@@ -118,21 +221,32 @@ def _name_words(text: str, words: list[re.Match[str]]) -> set[int]:
     return names
 
 
+def _is_name_word(word: str) -> bool:
+    """Whether ``word`` is written as a name's: capitalised, or a code."""
+    return word[0].isupper() or _is_code(word)
+
+
 def _adjacent(text: str, word: re.Match[str], following: re.Match[str]) -> bool:
     """Whether only spaces stand between ``word`` and ``following``."""
     return not text[word.end() : following.start()].strip()
 
 
 def _opens_name(text: str, words: list[re.Match[str]], i: int) -> bool:
-    """Whether ``words[i]`` may open a name: a capitalised word that is no
-    Latin-script language's function word, or an article (in either case)
-    directly before a capitalised word."""
+    """Whether ``words[i]`` may open a name: a capitalised word or a code
+    that is no function word nor elided one ("Qu'a"), or an article (in
+    either case) directly before such a word."""
     word = words[i].group()
-    if word.lower() in _LATIN_ARTICLES and i + 1 < len(words):
+    if word.lower() in _ARTICLES and i + 1 < len(words):
         following = words[i + 1]
-        if following.group()[0].isupper() and _adjacent(text, words[i], following):
+        if _is_name_word(following.group()) and _adjacent(text, words[i], following):
             return True
-    return word[0].isupper() and word.lower() not in _LATIN_FUNCTION_WORDS
+    lowered = word.lower()
+    head, apostrophe, _ = lowered.partition("'")
+    return (
+        _is_name_word(word)
+        and lowered not in _FUNCTION_WORDS
+        and not (apostrophe and head in _ELIDED)
+    )
 
 
 def _signals(
@@ -171,73 +285,69 @@ def _candidates(script: str | None) -> list[LanguageProfile]:
 
 
 def script_language(
-    counts: ScriptCounts,
-    words: Iterable[str] = (),
-    fallback: LanguageCode | None = None,
+    evidence: TextEvidence, fallback: LanguageCode | None = None
 ) -> LanguageCode | None:
-    """The language a text's letters (``counts``) and ``words`` read as,
-    or ``None`` when they do not tell: the one rule a query
-    (:func:`text_language`) and a corpus sample
-    (``domain.languages.corpus``) are judged by.
+    """The language ``evidence`` reads as (module docstring), or ``None``
+    when it does not tell: the one rule a query (:func:`text_language`)
+    and a corpus sample (``domain.languages.corpus``) are judged by. The
+    script whose claim wins, and the language of its letters
+    (:func:`language_in_script`)."""
+    counts, words = evidence.counts, evidence.words
+    claims: dict[str, int] = {}
+    for name, written in _WORDED.items():
+        shared = _shared_elisions(written)
+        if found := sum(any(_signals(w, p, shared) for p in written) for w in words):
+            claims[name] = found + evidence.openings.get(name, 0)
+    # The heaviest script without function words, and its runs.
+    script = counts.dominant(without=set(_WORDED))
+    if claims:
+        best = max(claims, key=lambda name: claims[name])
+        if script is None or claims[best] >= (counts.runs or {}).get(script, 0):
+            script = best
+    return None if script is None else language_in_script(evidence, script, fallback)
 
-    The script most of the letters are in decides
-    (``ScriptCounts.dominant``): Han, Hangul and Kana read as
-    :func:`dense_language` says, a script one profile writes as that
-    language, and among the languages of one script (Latin) their function
-    words and the elisions only one of them writes decide ("dell'" is
-    Italian, "qu'" French, "d'" neither): the
-    language with the most, ``fallback`` (the index language) among those
-    tied, else the one of them whose own articles occur most, else none.
-    A script none of whose languages' words occur is names the text quotes
-    in another script ("Microsoft Corporation和OpenAI是什么关系？", "ما علاقة
-    Microsoft Corporation بـ OpenAI؟"): the next script decides; and so is
-    a script of one or two runs (``ScriptCounts.runs``) beside a Latin-script
-    language's function words: "Who is the CEO of 한빛전자?" is English,
-    however much a Hangul letter carries."""
-    words = list(words)
-    quoted: set[str] = set()
-    while (script := counts.dominant(without=quoted)) is not None:
-        if script != "latin" and _quoted_in_latin(counts, script, words):
-            quoted.add(script)
-            continue
-        if script == "dense":
-            return dense_language(counts, fallback)
-        candidates = _candidates(script)
-        if len(candidates) == 1 and candidates[0].script == script:
-            return candidates[0].code
-        shared = _shared_elisions(candidates)
+
+def language_in_script(
+    evidence: TextEvidence, script: str, fallback: LanguageCode | None = None
+) -> LanguageCode | None:
+    """The language ``evidence``'s letters in ``script`` (a group
+    ``ScriptCounts`` counts: a script's name, or ``"dense"``) read as, or
+    ``None``: Korean, Japanese or Chinese by :func:`dense_language`, the
+    language one profile writes the script in, and among the languages of
+    one script (Latin) the one whose function words and owned elisions
+    ("dell'" is Italian, "qu'" French, "d'" neither) occur most,
+    ``fallback`` (the index language) among those tied, else the one of
+    them whose own articles occur most, else none."""
+    if script == "dense":
+        return dense_language(evidence.counts, fallback)
+    if script in _WORDED:
+        written = _WORDED[script]
+        shared = _shared_elisions(written)
         hits = {
-            p.code: sum(_signals(word, p, shared) for word in words) for p in candidates
+            p.code: sum(_signals(word, p, shared) for word in evidence.words)
+            for p in written
         }
-        best = max(hits.values(), default=0)
-        if not best:
-            quoted.add(script)
-            continue
-        tied = [p for p in candidates if hits[p.code] == best]
-        if fallback in {p.code for p in tied}:
-            return fallback
-        if len(tied) > 1:
-            tied = _by_articles(tied, words)
-        return tied[0].code if len(tied) == 1 else None
-    return None
+        return _by_words(written, hits, list(evidence.words), fallback)
+    written = [p for p in PROFILES.values() if p.script == script]
+    return written[0].code if len(written) == 1 else None
 
 
-# The most runs of letters of another script (a word, or a stretch written
-# without spaces) a Latin-script question quotes as names: "Compare 한빛전자
-# and 아크미" quotes two.
-_QUOTED_RUNS = 2
-
-
-def _quoted_in_latin(counts: ScriptCounts, script: str, words: list[str]) -> bool:
-    """Whether the letters of ``script`` (a group ``counts.dominant`` names)
-    are names a Latin-script text quotes: at most :data:`_QUOTED_RUNS` runs
-    of them, and a function word or owned elision of a Latin-script
-    language among ``words``."""
-    runs = (counts.runs or {}).get(script)
-    if runs is None or runs > _QUOTED_RUNS:
-        return False
-    shared = _shared_elisions(_LATIN_PROFILES)
-    return any(_signals(word, p, shared) for p in _LATIN_PROFILES for word in words)
+def _by_words(
+    written: list[LanguageProfile],
+    hits: Mapping[LanguageCode, int],
+    words: list[str],
+    fallback: LanguageCode | None,
+) -> LanguageCode | None:
+    """Of the languages ``written`` in one script, the one with the most
+    ``hits``, ``fallback`` among those tied, else the one whose own
+    articles occur most in ``words``, else none."""
+    best = max(hits.values())
+    tied = [p for p in written if hits[p.code] == best]
+    if fallback in {p.code for p in tied}:
+        return fallback
+    if len(tied) > 1:
+        tied = _by_articles(tied, words)
+    return tied[0].code if len(tied) == 1 else None
 
 
 def _by_articles(
@@ -264,11 +374,11 @@ def text_language(text: str, fallback: LanguageCode | str) -> LanguageCode:
     written in the text's script (a Latin one for a Latin-script text),
     else English."""
     fallback = _code(fallback)
-    counts = count_letters([text])
-    found = script_language(counts, words_of(text), fallback)
+    evidence = text_evidence([text])
+    found = script_language(evidence, fallback)
     if found is not None:
         return found
-    script = counts.dominant()
+    script = evidence.counts.dominant()
     if script == "dense":
         return fallback
     return (

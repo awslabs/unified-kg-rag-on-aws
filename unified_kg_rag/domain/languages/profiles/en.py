@@ -16,7 +16,7 @@ PROFILE = LanguageProfile(
     ),
     function_words=frozenset(
         "the what which who whom whose how why when where is are were does did "
-        "of and with from this that".split()
+        "has have had can could would should of and with from this that".split()
     ),
     # The claim prompt's words, MS GraphRAG's SUSPECTED, and the few words
     # that state the same status plainly.

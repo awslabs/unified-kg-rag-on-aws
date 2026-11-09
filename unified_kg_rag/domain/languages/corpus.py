@@ -16,16 +16,18 @@ by its quotes.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 from itertools import islice
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.detection import script_language, words_of
+from unified_kg_rag.domain.languages.detection import (
+    TextEvidence,
+    script_language,
+    text_evidence,
+)
 from unified_kg_rag.domain.languages.registry import language_name, profile
 from unified_kg_rag.shared.utils.scripts import (
     ScriptCounts,
     Spacing,
-    count_letters,
     script_named,
 )
 
@@ -52,20 +54,17 @@ _MINORITY = 0.2
 _MAJORITY = 0.5
 
 
-@dataclass(frozen=True)
-class CorpusSample:
-    """A corpus sample's letters by script and its words."""
-
-    counts: ScriptCounts
-    words: tuple[str, ...]
+# A corpus sample: what its texts tell of their language.
+CorpusSample = TextEvidence
 
 
 def corpus_sample(texts: Iterable[str]) -> CorpusSample:
     """The first :data:`SAMPLE_CHARS` characters of each of the first
-    :data:`SAMPLE_DOCUMENTS` texts: their letters by script and words."""
-    sampled = [text[:SAMPLE_CHARS] for text in islice(texts, SAMPLE_DOCUMENTS)]
-    words = tuple(word for text in sampled for word in words_of(text))
-    return CorpusSample(count_letters(sampled), words)
+    :data:`SAMPLE_DOCUMENTS` texts, as the evidence of their language
+    (``detection.text_evidence``)."""
+    return text_evidence(
+        text[:SAMPLE_CHARS] for text in islice(texts, SAMPLE_DOCUMENTS)
+    )
 
 
 def _group(script: str) -> str:
@@ -96,7 +95,7 @@ def corpus_language(
     dominant = counts.dominant()
     if dominant is None or _share(counts, dominant) <= _MAJORITY:
         return None
-    return script_language(counts, sample.words, fallback)
+    return script_language(sample, fallback)
 
 
 def source_language_mismatch(
