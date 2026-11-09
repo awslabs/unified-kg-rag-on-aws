@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -89,7 +88,7 @@ from unified_kg_rag.shared.exceptions import (
     classify,
 )
 from unified_kg_rag.shared.utils import event_loop
-from unified_kg_rag.shared.utils.files import temporary_sibling
+from unified_kg_rag.shared.utils.files import open_temporary, replace_keeping_mode
 
 logger = get_logger(__name__)
 
@@ -634,14 +633,17 @@ def create_app(
             files = [f for f in form.getlist("files") if not isinstance(f, str)]
             if not isinstance(name, str) or not files:
                 raise PathRefused("an upload names its folder and holds files")
-            folder = safe_name(name, "the corpus name")
+            uploads = state.roots.root("uploads").path
+            folder = safe_name(name, "the corpus name", within=uploads)
             target = state.roots.resolve(f"uploads:{folder}", write=True)
             planned = [
                 (
                     upload_file,
                     state.roots.resolve(
                         f"uploads:{folder}/"
-                        f"{safe_relative(upload_file.filename or '').as_posix()}",
+                        + safe_relative(
+                            upload_file.filename or "", within=target
+                        ).as_posix(),
                         write=True,
                     ),
                 )
@@ -681,9 +683,11 @@ def create_app(
                     if (d == target or d.is_relative_to(target)) and not d.exists()
                 )
                 path.parent.mkdir(parents=True, exist_ok=True)
-                temporary = staged.pop(path, None) or temporary_sibling(path)
+                if (earlier := staged.pop(path, None)) is not None:
+                    earlier.unlink(missing_ok=True)  # the path named twice
+                temporary, out = open_temporary(path)
                 staged[path] = temporary
-                with temporary.open("wb") as out:
+                with out:
                     while chunk := await upload_file.read(1024 * 1024):
                         total += len(chunk)
                         if total > MAX_UPLOAD_BYTES:
@@ -692,7 +696,7 @@ def create_app(
                             )
                         out.write(chunk)
             for path, temporary in staged.items():
-                os.replace(temporary, path)
+                replace_keeping_mode(temporary, path)
             staged_count = len(staged)
             staged = {}
         except BaseException:

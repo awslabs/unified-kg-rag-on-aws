@@ -868,12 +868,6 @@ GUARDS = [
             module_nodes(_file_write),
         ),
         allowed={
-            "application/cli/console/server.py::create_app.upload": (
-                2,
-                "streams each uploaded file into a temporary sibling and replaces "
-                "the file with it once every file is staged (one upload, all or "
-                "none)",
-            ),
             "application/cli/console/jobs.py::JobManager._launch": (
                 1,
                 "a job's append-only log, which the console tails while it runs",

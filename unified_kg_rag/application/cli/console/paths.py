@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from unified_kg_rag.shared.exceptions import ConfigurationError
-from unified_kg_rag.shared.utils.files import NAME_MAX
+from unified_kg_rag.shared.utils.files import NAME_MAX, name_max
 
 # What one uploaded path segment may hold: no separator, no control
 # character, not "." or "..", not starting with "~".
@@ -108,12 +108,13 @@ def contained(root: Path, relative: str) -> Path:
     return target
 
 
-def safe_relative(relative: str) -> PurePosixPath:
+def safe_relative(relative: str, *, within: Path | None = None) -> PurePosixPath:
     """An uploaded file's relative path, checked segment by segment.
 
     Each segment is NFC-normalized and must be a plain name (no separator,
     control character, ``..``, leading ``~``), so the written path is the
-    one the user saw.
+    one the user saw, and fit the name limit of the directory it is made in
+    under ``within`` (143 bytes on eCryptfs; 255 when ``within`` is None).
 
     Raises:
         PathRefused: An empty path or an unsafe segment.
@@ -124,21 +125,23 @@ def safe_relative(relative: str) -> PurePosixPath:
     parts = [p for p in parts if p not in ("", ".")]
     if not parts:
         raise PathRefused("an uploaded file has no name")
-    for part in parts:
+    for depth, part in enumerate(parts):
         if part == ".." or part.startswith("~") or _UNSAFE_SEGMENT.search(part):
             raise PathRefused(f"'{relative}' holds an unsafe name '{part}'")
-        if len(part.encode("utf-8")) > NAME_MAX:
-            raise PathRefused(f"'{relative}' holds a name longer than {NAME_MAX} bytes")
+        limit = NAME_MAX if within is None else name_max(Path(within, *parts[:depth]))
+        if len(part.encode("utf-8")) > limit:
+            raise PathRefused(f"'{relative}' holds a name longer than {limit} bytes")
     return PurePosixPath(*parts)
 
 
-def safe_name(value: str, what: str) -> str:
-    """A single directory name a client chose (an upload's folder).
+def safe_name(value: str, what: str, *, within: Path | None = None) -> str:
+    """A single directory name a client chose (an upload's folder), made
+    in ``within`` (:func:`safe_relative`).
 
     Raises:
         PathRefused: Not a plain, non-empty name.
     """
-    path = safe_relative(value)
+    path = safe_relative(value, within=within)
     if len(path.parts) != 1:
         raise PathRefused(f"{what} must be a single name, not a path")
     return path.parts[0]

@@ -107,11 +107,7 @@ def atomic_open(
         return open(target, "w", encoding=encoding, newline=newline)
 
     def created(temp: Path, private: bool) -> IO[Any]:
-        # A new file: 0600 when it holds an existing file's text until the
-        # block ends (it is given that file's mode then), else the mode
-        # open() gives a new file (0666 less the umask), as the file gets.
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
-        fd = os.open(temp, flags, 0o600 if private else 0o666)
+        fd = _created(temp, private)
         try:
             return opened(fd)
         except BaseException:  # an unknown encoding: open() closed fd
@@ -187,6 +183,40 @@ def atomic_open(
         _copy_in(temp_path, target, fsync=fsync, held=held)
     elif fsync:
         _fsync_directory(target.parent)
+
+
+def _created(temp: Path, private: bool) -> int:
+    """A new file ``temp`` open to write: 0600 when it holds an existing
+    file's text until it replaces it (it is given that file's mode then),
+    else the mode open() gives a new file (0666 less the umask), as the
+    file gets."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    return os.open(temp, flags, 0o600 if private else 0o666)
+
+
+def open_temporary(path: Path) -> tuple[Path, IO[bytes]]:
+    """A new :func:`temporary_sibling` of ``path`` open to write bytes, for
+    a write moved into place later by :func:`replace_keeping_mode` (files
+    staged to be moved in together, all or none): private (0600) while
+    ``path`` exists, as :func:`atomic_open`'s temporary file is."""
+    temporary = temporary_sibling(path)
+    fd = _created(temporary, path.exists())
+    try:
+        return temporary, open(fd, "wb")
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def replace_keeping_mode(temporary: Path, path: Path) -> None:
+    """Rename :func:`open_temporary`'s ``temporary`` over ``path``, giving
+    it ``path``'s permission bits first when ``path`` exists (a file gone
+    since the temporary was made keeps its private 0600)."""
+    try:
+        os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+    except FileNotFoundError:
+        pass
+    os.replace(temporary, path)
 
 
 def _open_in_place(target: Path) -> int:

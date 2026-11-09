@@ -693,3 +693,20 @@ def test_a_read_only_descriptor_s_alias_names_the_path(tmp_path: Path) -> None:
     assert raised.value.errno == errno.EBADF
     assert raised.value.filename == str(alias)
     assert (tmp_path / "f").read_text() == "kept"
+
+
+def test_a_temporary_opened_to_move_in_later_is_private_and_keeps_the_mode(
+    tmp_path: Path,
+) -> None:
+    # Files staged to move in together (a console upload) use the same
+    # rule as atomic_open: 0600 while the file exists, its mode at the rename.
+    path = tmp_path / "f.txt"
+    path.write_text("old")
+    path.chmod(0o640)
+    temporary, out = files.open_temporary(path)
+    with out:
+        out.write(b"new")
+    assert temporary.stat().st_mode & 0o777 == 0o600
+    files.replace_keeping_mode(temporary, path)
+    assert path.read_text() == "new" and path.stat().st_mode & 0o777 == 0o640
+    assert [p.name for p in tmp_path.iterdir()] == ["f.txt"]
