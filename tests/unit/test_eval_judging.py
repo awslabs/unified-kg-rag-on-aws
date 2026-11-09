@@ -820,12 +820,12 @@ class TestAssertionComparison:
                 CLOSED_BOOK_ARM: [(worse, results)],
             }
         )
-        out["closed_book_arms"] = [CLOSED_BOOK_ARM]
+        out["arm_roles"] = {CLOSED_BOOK_ARM: "closed_book"}
         gate = parse_gate("assertion/assertion_recall:ci_high<-0.1")
         breaches = gate_breaches(out, [gate])
         assert len(breaches) == 1 and breaches[0].startswith("global:")
         # An A/A arm measures the noise floor: not gated either.
-        out["aa_arms"] = ["global"]
+        out["arm_roles"]["global"] = "aa"
         assert gate_breaches(out, [gate]) == []
 
     def test_a_failed_closed_book_answer_is_an_unknown_question(self) -> None:
@@ -926,7 +926,7 @@ class TestClosedBook:
         printed = json.loads(capsys.readouterr().out)
         comparison = printed["comparison"]
         assert list(comparison["strategies"]) == ["local", "mix", CLOSED_BOOK_ARM]
-        assert comparison["closed_book_arms"] == [CLOSED_BOOK_ARM]
+        assert comparison["arm_roles"] == {CLOSED_BOOK_ARM: "closed_book"}
         # The arm knew both answers: every delta is on the known questions.
         # The arm itself is not split by its own scores (that selects on
         # the outcome).
@@ -1043,7 +1043,7 @@ def test_the_markdown_report_labels_an_aa_arm_as_the_noise_floor() -> None:
     comparison = paired_comparison(
         {"local": [(reports, results)], "local@aa": [(reports, results)]}
     )
-    comparison["aa_arms"] = ["local@aa"]
+    comparison["arm_roles"] = {"local@aa": "aa"}
     markdown = comparison_markdown(comparison)
     assert "ran the base configuration again (A/A)" in markdown
     assert "local@aa - local [95% CI] (noise floor)" in markdown

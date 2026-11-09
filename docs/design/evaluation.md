@@ -459,7 +459,7 @@ compared with the first strategy like any other arm, so its scores bound what
 the answer model knows without the corpus: a strategy that does not beat it
 on a question set measures prior knowledge, not retrieval. Its results carry
 `metadata.retrieval: none` and no sources; the comparison lists it under
-`closed_book_arms` and the Markdown report marks it "(no retrieval)";
+`arm_roles` (`closed_book`) and every surface marks it "(no retrieval)";
 retrieval and context metrics of it score an empty source list (read only
 the answer metrics); `--fail-if` gates skip it. Cost: one answer call per
 question and repeat. Its answers also split the questions into those the

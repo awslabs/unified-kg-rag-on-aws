@@ -260,6 +260,14 @@ function RunView({ refName }: { refName: string }) {
   };
   const candidates = comparison ? Object.keys(comparison.deltas_vs_baseline) : [];
   const shown = candidate ?? candidates[0] ?? null;
+  // A run that is no candidate (no retrieval, the noise floor), as the
+  // comparison names it: marked wherever it is shown.
+  const roleOf = (s: string) => comparison?.arm_roles?.[s];
+  const marked = (s: string) => {
+    const role = roleOf(s);
+    return role ? `${s} (${t(`evaluate.armRole.${role}`)})` : s;
+  };
+  const shownRole = shown ? roleOf(shown) : undefined;
   const deltas = shown && comparison ? Object.entries({ ...comparison.deltas_vs_baseline[shown], ...(comparison.cost?.deltas_vs_baseline?.[shown] ?? {}) }) : [];
   const repeatOf = new Map<string, number>();
   const abstention = run.data.summaries.map((s) => {
@@ -283,7 +291,7 @@ function RunView({ refName }: { refName: string }) {
                 <th>{t("evaluate.metric")}</th>
                 {strategies.map((s) => (
                   <th key={s} className="num">
-                    {s}
+                    {marked(s)}
                     {comparison?.baseline === s ? ` (${t("evaluate.baseline")})` : ""}
                   </th>
                 ))}
@@ -306,12 +314,14 @@ function RunView({ refName }: { refName: string }) {
       </Sheet>
       {comparison && shown ? (
         <Sheet
-          title={t("evaluate.paired", { candidate: shown, baseline: comparison.baselines?.[shown] ?? comparison.baseline })}
+          title={t("evaluate.paired", { candidate: marked(shown), baseline: comparison.baselines?.[shown] ?? comparison.baseline })}
           aside={
             candidates.length > 1 ? (
               <select className="select" value={shown} onChange={(e) => setCandidate(e.target.value)} aria-label={t("evaluate.candidate")}>
                 {candidates.map((c) => (
-                  <option key={c}>{c}</option>
+                  <option key={c} value={c}>
+                    {marked(c)}
+                  </option>
                 ))}
               </select>
             ) : null
@@ -319,11 +329,13 @@ function RunView({ refName }: { refName: string }) {
         >
           <p className="field-help" style={{ marginTop: 0 }}>
             {t("evaluate.pairedHelp", { resamples: intervalResamples(comparison, shown, number) })}{" "}
-            {comparison.multiplicity && !comparison.multiplicity.unadjusted?.includes(shown)
-              ? t("evaluate.pairedHolmHelp", { alpha: number(comparison.multiplicity.alpha) })
-              : t("evaluate.pairedPlainHelp")}
+            {shownRole
+              ? t(`evaluate.armRoleHelp.${shownRole}`)
+              : comparison.multiplicity && !comparison.multiplicity.unadjusted?.includes(shown)
+                ? t("evaluate.pairedHolmHelp", { alpha: number(comparison.multiplicity.alpha) })
+                : t("evaluate.pairedPlainHelp")}
           </p>
-          <DeltaPlot deltas={deltas} confidence={comparison.bootstrap?.confidence ?? 0.95} multiplicity={comparison.multiplicity && !comparison.multiplicity.unadjusted?.includes(shown) ? comparison.multiplicity : null} />
+          <DeltaPlot deltas={deltas} confidence={comparison.bootstrap?.confidence ?? 0.95} multiplicity={comparison.multiplicity && !comparison.multiplicity.unadjusted?.includes(shown) ? comparison.multiplicity : null} noFinding={shownRole != null} />
           {comparison.warnings?.length ? (
             <div style={{ marginTop: 12 }}>
               <Notice tone="warn" title={t("evaluate.warnings")}>

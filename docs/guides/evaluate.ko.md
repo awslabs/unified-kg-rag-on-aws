@@ -327,8 +327,8 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   A/A 비교군입니다. 빈 오버레이(위의 `aa.yaml`), 무시되는 `evaluation` 섹션만 있는 오버레이,
   실행과 같은 값만 지정한 오버레이가 여기에 해당합니다. 그 차이가 이 데이터셋과 반복 횟수에서
   지표마다의 잡음 수준입니다. `,aa=true`(또는 `aa=false`)로 직접 지정할 수도 있습니다.
-  매니페스트에 `arm.aa`로 기록되고 비교 결과의 `aa_arms`에 나열되며, 보고서는 그 차이를
-  "(noise floor)"로 표시합니다. 폐쇄형 비교군처럼 모든 Holm 묶음과 `--fail-if` 게이트에서
+  매니페스트에 `arm.aa`로 기록되고 비교 결과의 `arm_roles`(`aa`)에 나열되며, 보고서와 터미널,
+  콘솔은 이를 "(noise floor)"로 표시합니다. 폐쇄형 비교군처럼 모든 Holm 묶음과 `--fail-if` 게이트에서
   빠지므로 다른 검정의 보정을 넓히거나 실행을 실패시키지 않습니다. 기본 실행과 추출 결과를 공유하므로 이 잡음 수준에는 추출의 잡음이 빠집니다.
   `search: {query_extraction_cache_size: 0}` 오버레이로 만든 A/A 비교군은 직접 추출해 그 잡음을
   포함하며, 질문과 반복마다 추출 호출이 한 번 더 듭니다.

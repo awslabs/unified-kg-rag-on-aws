@@ -708,7 +708,7 @@ From a `main` checkout (formats and keys no release had):
   only, every other metric, the cost measures and the pairwise judge's criteria (`pairwise`, each a sign-flip `p_value`
   of its per-query scores against a 0.5 win rate), each with `adjusted_p_value` and a simultaneous
   `adjusted_ci_low`/`adjusted_ci_high`. `--arm` runs against their own base runs form the same families apart
-  (`arm_primary`, ...), and the closed-book and A/A arms (`aa_arms`) are in none: they bound prior knowledge or measure
+  (`arm_primary`, ...), and closed-book and A/A arms (`arm_roles`) are in none: they bound prior knowledge or measure
   the noise floor, and widened the other tests' adjustment. On simulated A/A comparisons ten unadjusted metrics showed a
   difference on noise in 30-40% of them, the Holm-adjusted family in about 5% or fewer. Each family reads at least 20 x
   tests / alpha resamples (`multiplicity.families.<f>.resamples`; `evaluation.resamples` sets the base, 2,000): the
@@ -1224,9 +1224,11 @@ From a `main` checkout (formats and keys no release had):
   extraction model, the default tier's effort, `search.output_ceilings.query_extraction`,
   `models.default_max_output_tokens`, the LLM provider with its context window and region, and a
   `search.query_extraction_cache_size` above 0). An arm whose merged config equals the run's but for cache sizes, on
-  the run's own index, or one given `aa=true`, is an A/A arm: the noise floor, marked so in the report and left out of
-  the Holm families and of `--fail-if` (an adjusted gate failed on it); it shares the extractions, so its floor leaves
-  out the extraction's noise unless it sets `search.query_extraction_cache_size: 0` (#639, #645). See
+  the run's own index, or one given `aa=true`, is an A/A arm: the noise floor, named in the comparison's `arm_roles`
+  (with the closed-book arm), marked so in the report, the terminal table and the console (which marks none of its
+  deltas better or worse) and left out of the Holm families and of `--fail-if` (an adjusted gate failed on it); it
+  shares the extractions, so its floor leaves out the extraction's noise unless it sets
+  `search.query_extraction_cache_size: 0` (#639, #645). See
   [evaluation](docs/guides/evaluate.md#configuration-arms).
 - The `run-eval` judge defaults to Opus 5.5 on Bedrock (a judge judging its own answers shifted directness by
   -0.27): when the answer model, or the model that wrote re-judged answers, is Opus 5.5, an unset judge falls back

@@ -46,8 +46,9 @@ export function deltaInterval(delta: Delta, multiplicity: Multiplicity | null | 
 /** One row per metric: the mean paired delta and its interval on the
  * row's own scale (metrics differ in unit), zero marked; with a
  * comparison that adjusts for multiplicity, the Holm p-value and the
- * family's simultaneous interval, the primary metric marked. */
-export function DeltaPlot({ deltas, confidence = 0.95, multiplicity }: { deltas: [string, Delta][]; confidence?: number; multiplicity?: Multiplicity | null }) {
+ * family's simultaneous interval, the primary metric marked. With
+ * `noFinding` (a closed-book or A/A arm) no row is marked better or worse. */
+export function DeltaPlot({ deltas, confidence = 0.95, multiplicity, noFinding = false }: { deltas: [string, Delta][]; confidence?: number; multiplicity?: Multiplicity | null; noFinding?: boolean }) {
   const { t, number, percent } = useI18n();
   const width = 180;
   const pad = 10;
@@ -74,7 +75,9 @@ export function DeltaPlot({ deltas, confidence = 0.95, multiplicity }: { deltas:
             const interval = deltaInterval(delta, multiplicity, confidence);
             const extent = Math.max(Math.abs(interval.low), Math.abs(interval.high), Math.abs(delta.mean_delta)) || 1;
             const x = (v: number) => pad + ((v + extent) / (2 * extent)) * (width - 2 * pad);
-            const verdict = deltaVerdict(metric, delta, alpha);
+            // A closed-book or A/A arm: its deltas bound or measure the
+            // noise, so none reads as better or worse.
+            const verdict = noFinding ? "neutral" : deltaVerdict(metric, delta, alpha);
             const digits = Math.abs(delta.mean_delta) < 0.01 && delta.mean_delta !== 0 ? 4 : 3;
             // An --arm run's primary metric is tested in arm_primary.
             const primary = delta.family === "primary" || delta.family === "arm_primary";

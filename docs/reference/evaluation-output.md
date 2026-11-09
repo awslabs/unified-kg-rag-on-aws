@@ -242,7 +242,7 @@ strategies, or `--repeats`) saves every run's files and adds
   the Monte Carlo p-value is never below 1 / (1 + resamples) and Holm
   multiplies the smallest by the family's size, and the simultaneous
   interval's tails hold enough resampled means; closed-book and A/A arms
-  (`closed_book_arms`, `aa_arms`) are in none (`unadjusted`). Each member delta has `family`, `adjusted_p_value` and
+  (`arm_roles`) are in none (`unadjusted`). Each member delta has `family`, `adjusted_p_value` and
   `adjusted_ci_low` / `adjusted_ci_high`, the bootstrap interval at
   confidence 1 - 0.05 / m for a family of m tests (simultaneous over it, so
   a little wider than Holm's decision: a delta can have `adjusted_p_value`
@@ -299,11 +299,19 @@ strategies, or `--repeats`) saves every run's files and adds
   arm, else an earlier run's. The closed-book arms themselves are not split
   (that would select on their own scores). Exploratory and unadjusted like
   `deltas_by_category`.
-- `aa_arms` (with an A/A `--arm`): the arm runs whose manifest records
-  `arm.aa: true` (on the run's own index, a merged configuration equal to
-  the run's but for cache sizes, or `,aa=true`). Their deltas are the
-  noise floor: they stay out of every Holm family, `--fail-if` skips them
-  and the Markdown report marks them "(noise floor)".
+- `arm_roles` (with `--closed-book` or an A/A `--arm`): each compared run
+  that is no candidate, by role. `closed_book`: answered by the answer
+  model alone, without retrieval (`closed_book`; an earlier run's
+  `baseline:closed_book`); it compares like a strategy (its results carry
+  `metadata.retrieval: "none"` and no source, so its retrieval and context
+  metrics score an empty list; read its answer metrics) and is judged by
+  `--pairwise-judge`. `aa`: an arm run whose manifest records `arm.aa:
+  true` (on the run's own index, a merged configuration equal to the run's
+  but for cache sizes, or `,aa=true`); its deltas are the noise floor.
+  Neither is a finding: they stay out of every Holm family, `--fail-if`
+  skips them, and the Markdown report, the terminal table and the console
+  mark them "(no retrieval)" / "(noise floor)" and the console marks none
+  of their deltas better or worse.
 - `pairwise_vs_baseline.<s>` (with `--pairwise-judge`): the GraphRAG /
   LightRAG head-to-head LLM judge on comprehensiveness, diversity,
   empowerment and directness (plus LightRAG's `overall` with
@@ -367,12 +375,6 @@ strategies, or `--repeats`) saves every run's files and adds
     pair with none in either split counts in `identical_pairs` (in `judged`,
     not in `position_consistency`). A failed or malformed split (a missing
     key, a value that is not a list of strings) fails the pair.
-- `closed_book_arms` (with `--closed-book`): the arms answered by the
-  answer model alone, without retrieval (`closed_book`; an earlier run's
-  `baseline:closed_book`). They compare like a strategy (their results carry
-  `metadata.retrieval: "none"` and no source, so their retrieval and
-  context metrics score an empty list; read their answer metrics), are
-  judged by `--pairwise-judge`, and are skipped by `--fail-if`.
 - `cost.strategies.<s>`: the answers' model use per query, as `mean` /
   `p50` / `p95` over every answer of every repeat: `llm_calls_per_query`,
   `input_tokens_per_query`, `output_tokens_per_query`,
@@ -439,7 +441,7 @@ The comparison is also written as `evaluation_comparison_<timestamp>.csv`
 `baseline_value`, `value`, `delta`, `category`) and `.md` (the metric and
 cost tables, the pairwise judge's win rates with the per-length-bucket
 table, the gates and the warnings, for a pull request or a CI job summary;
-a closed-book arm is marked "(no retrieval)").
+the `arm_roles` runs are marked "(no retrieval)" / "(noise floor)").
 
 ## Rebuilding and gating rules
 
