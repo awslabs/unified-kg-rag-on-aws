@@ -29,8 +29,9 @@ Every flag: [CLI Reference](../reference/cli.md#run-describe).
   strategies they serve and those `auto` may route to: what
   [methodology profiles](../concepts/overview.md#methodology-profiles)
   check before a query. A namespace written before build records named
-  their artifacts reads as what a run of the config builds
-  (`artifacts_from: config`).
+  their artifacts, or without a record (`build_record: missing`: a store
+  rejected it; the next ingestion run writes it), reads as what a run of
+  the config builds (`artifacts_from: config`).
 - **Indices.** Each index (text units, entities, relationships, claims,
   community reports, summary nodes): its alias, the live index behind it,
   how many items it holds and the embedding model and dimension its
