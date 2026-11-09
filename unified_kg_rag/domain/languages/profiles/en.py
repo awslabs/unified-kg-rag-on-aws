@@ -59,6 +59,7 @@ PROFILE = LanguageProfile(
         "billion": 10**9,
     },
     zero_words=("none", "no"),
+    absence_phrases=("not … any", "-n't … any"),
     number_conjunctions=("and",),
     ordinal_words=frozenset(
         "first second third fourth fifth sixth seventh eighth ninth".split()

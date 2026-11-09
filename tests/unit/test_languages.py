@@ -142,6 +142,7 @@ _FACETS = (
     "articles",
     "number_words",
     "zero_words",
+    "absence_phrases",
     "year_words",
     "partitive_words",
     "polarity_words",
@@ -170,6 +171,8 @@ _GAPS: dict[str, set[str]] = {
     # Their words for none, of time and of partitives too (the answer
     # matcher reads the dense scripts' own forms for all three).
     "zero_words": {"ja", "ko", "zh"} | _NEW,
+    # German states it with its words for none ("Es gibt keine").
+    "absence_phrases": {"de", "ja", "ko", "zh"} | _NEW,
     "year_words": {"ja", "ko", "zh"} | _NEW,
     "partitive_words": {"ja", "ko", "zh"} | _NEW,
 }

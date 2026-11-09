@@ -1184,10 +1184,10 @@ From a `main` checkout (formats and keys no release had):
   Korean answers get partial credit, and a German, Spanish, French, Italian, Portuguese or Russian answer (the
   question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
   elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its written numbers
-  ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") and its words for none ("aucun", "kein", "ни
-  одного") in place of English's (Spanish and Portuguese "no" is no 0), its words of time, partitives and ordinals
-  telling a number that counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième")
-  (#324, #516, #606, #613).
+  ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") and its words and phrases for none ("aucun",
+  "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any") in place of
+  English's (Spanish and Portuguese "no" is no 0), its words of time, partitives and ordinals telling a number that
+  counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième") (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See

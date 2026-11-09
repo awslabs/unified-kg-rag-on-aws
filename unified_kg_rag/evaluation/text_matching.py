@@ -883,9 +883,6 @@ _NO_MODIFIES = re.compile(
     r"matter|doubt)\b",
     re.IGNORECASE,
 )
-# "not ... any" states zero ("does not supply any buyers", "doesn't have
-# any").
-_NOT_ANY = re.compile(r"(?:\bnot|n't)\s+(?:\w+\s+){0,3}?any\b", re.IGNORECASE)
 # One with "even" after it is zero: "한 곳도 없습니다", "一社もありません",
 # "一家也没有".
 _NOT_EVEN_ONE = re.compile(rf"\s?{_ANY_COUNTER}?\s?(?:도|も|也|都)")
@@ -1037,6 +1034,58 @@ def _english_value(match: re.Match[str]) -> int | None:
     return _english_count(match.group("count"))
 
 
+def _absence_pattern(language: LanguageProfile) -> re.Pattern[str] | None:
+    """``language``'s phrases of absence (``absence_phrases``) as one
+    pattern: "…" up to three words, a leading "-" a clitic, either
+    apostrophe."""
+
+    def phrase(text: str) -> str:
+        clitic = text.startswith("-")
+        parts = [
+            re.escape(part.strip()).replace(r"\ ", r"\s+").replace("'", "['\u2019]")
+            for part in text.lstrip("-").split("…")
+        ]
+        body = r"\s+(?:\w+\s+){0,3}?".join(parts)
+        return (
+            ("" if clitic else r"(?<!\w)")
+            + body
+            + ("" if text.endswith("'") else r"(?!\w)")
+        )
+
+    if not language.absence_phrases:
+        return None
+    phrases = sorted(language.absence_phrases, key=len, reverse=True)
+    return re.compile("|".join(map(phrase, phrases)), re.IGNORECASE)
+
+
+# The phrases of absence by language: English's for an answer in a
+# language whose numbers the reader does not know in words.
+_ABSENCES = {
+    language.code.value: pattern
+    for language in profiles()
+    if (pattern := _absence_pattern(language)) is not None
+}
+
+
+def _absence(body: str, pattern: re.Pattern[str] | None) -> re.Match[str] | None:
+    """The first phrase of absence in ``body`` that states a count of 0:
+    not one opening a line before a comma or a stop ("Нет, три"), which
+    answers a yes/no question."""
+    for match in pattern.finditer(body) if pattern is not None else ():
+        if not (
+            _opens_line(body, match.start()) and _NO_POLARITY.match(body, match.end())
+        ):
+            return match
+    return None
+
+
+def _opens_line(body: str, start: int) -> bool:
+    """Whether only spaces and markdown emphasis stand before ``start`` on
+    its line of ``body``."""
+    line_start = body.rfind("\n", 0, start) + 1
+    return not body[line_start:start].strip(" \t*_")
+
+
 # The words around a number in the answer's language: English's for an
 # answer in a language whose numbers the reader does not know in words.
 _COUNT_CONTEXTS: dict[str, _CountContext] = {
@@ -1065,10 +1114,12 @@ def leading_number(text: str, language: str | None = None) -> float | None:
     happens to name. With ``language`` German, Spanish, French, Italian,
     Portuguese or Russian, that language's written numbers and words for
     none count instead of English's ("drei", "vingt-quatre", "treinta y
-    dos", "Zwei Millionen", "три тысячи"; "aucun", "kein", "ни одного" for
-    0: Spanish "no" is no zero), and its words of time, partitives and
-    ordinals tell which state no count ("seit 2019", "De los tres", "один
-    из них", "vingt-troisième"); two side by side ("deux trois") are none.
+    dos", "Zwei Millionen", "три тысячи"; "aucun", "kein", "ни одного" and
+    its phrases of absence, ``absence_phrases``, such as "no hay" and "il
+    n'y a pas de", for 0: Spanish "no" is no zero), and its words of time,
+    partitives and ordinals tell which state no count ("seit 2019", "De
+    los tres", "один из них", "vingt-troisième"); two side by side ("deux
+    trois") are none.
     The digits, and Korean and Han numerals, read in every language."""
     lines = [
         line
@@ -1103,10 +1154,14 @@ def leading_number(text: str, language: str | None = None) -> float | None:
             else None
         ),
     )
-    zeros = [_KOREAN_NONE.search(body), _CJK_NONE.search(body)]
+    zeros = [
+        _KOREAN_NONE.search(body),
+        _CJK_NONE.search(body),
+        _absence(body, _ABSENCES.get((language or "") if grammar else "en")),
+    ]
     if grammar is None:
         first(_ENGLISH_NUMBER.finditer(body), _english_value)
-        zeros += [_NOT_ANY.search(body), _NOT_A_SINGLE.search(body)]
+        zeros.append(_NOT_A_SINGLE.search(body))
     else:
         first(grammar.pattern.finditer(body), grammar.value)
         if grammar.zero is not None:

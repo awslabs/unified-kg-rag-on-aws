@@ -439,6 +439,22 @@ class TestLanguageNormalization:
             ("pt", "Nenhum fornecedor.", 0),
             ("it", "Nessun fornitore.", 0),
             ("ru", "Ни одного поставщика.", 0),
+            # Regression (rv11 query M4): each language's "there is none",
+            # read as English's "not ... any" is.
+            ("es", "No hay proveedores.", 0),
+            ("es", "Acme no tiene proveedores.", 0),
+            ("pt", "Não há fornecedores.", 0),
+            ("it", "Non ci sono fornitori.", 0),
+            ("fr", "Il n'y a pas de fournisseur.", 0),
+            ("fr", "Il n\u2019y a pas d\u2019usine.", 0),
+            ("ru", "Поставщиков нет.", 0),
+            ("ru", "У Acme нет поставщиков.", 0),
+            ("en", "Acme doesn't have any vendors.", 0),
+            ("en", "Acme does not supply any buyers.", 0),
+            # A yes/no answer opening the line is no "none".
+            ("ru", "Нет, у Acme три поставщика.", 3),
+            ("ru", "**Нет**. Три поставщика.", 3),
+            ("es", "Tiene tres proveedores; no hay más.", 3),
             # Regression (rv10 query M7): a year, the whole of a partitive
             # and "one of them" in the language's own words.
             ("de", "Seit 2019 drei Lieferanten.", 3),
