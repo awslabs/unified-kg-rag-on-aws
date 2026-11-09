@@ -11,6 +11,8 @@ other places allowed to hold it, with how many matches each holds and why
 (``tests/fixtures/source_guards``): a new copy fails it, one more in an
 allowed place too, and so does an entry that counts more than its place
 holds, an owner the pattern does not match, or a path that does not exist.
+The guards are tripwires for the forms of a copy they know, not coverage: a
+copy spelled another way passes them, and review owns it.
 CONTRIBUTING.md ("Single-owner guards") says how to add one.
 """
 
@@ -1124,9 +1126,9 @@ def test_module_scopes_are_keyed_by_the_name_they_bind() -> None:
     }
 
 
-# Planted copies the finders were not written against (a reviewer's and a
-# second, held-out set), each naming its guard, the module it stands in and
-# what the guard must do with it: ``copy`` (find it), ``clean`` (find
+# Planted copies, tuning data (a reviewer's set and the ``tuned_`` one, held
+# out until the finders were tuned on it), each naming its guard, the module
+# it stands in and what the guard must do with it: ``copy`` (find it), ``clean`` (find
 # nothing: code near the concept that is not a copy), ``missed: why`` (a
 # form it does not see yet) or ``flagged: why`` (a false positive it still
 # reports). A guard that starts seeing a missed form, or stops flagging a

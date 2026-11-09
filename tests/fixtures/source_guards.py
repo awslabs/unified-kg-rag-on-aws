@@ -25,9 +25,13 @@ file does not move its entries. Names a module imports are resolved
 import replace`` makes ``replace`` ``os.replace``, and a relative import is
 resolved against the module's package), so an alias hides no copy.
 
-``tests/fixtures/guard_copies`` holds planted copies the finders were not
-written against, each naming the guard it must trip (or must not):
-``test_single_owner_guards`` measures every guard on them.
+A guard is a tripwire for the forms of a copy it knows, not coverage: a
+copy spelled another way passes it, and review owns those
+(CONTRIBUTING.md, "Single-owner guards").
+``tests/fixtures/guard_copies`` holds planted copies, each naming the guard
+it must trip (or must not); the finders were tuned on them, so
+``test_single_owner_guards`` pins every guard's behaviour on them rather
+than measuring what it misses.
 """
 
 from __future__ import annotations
