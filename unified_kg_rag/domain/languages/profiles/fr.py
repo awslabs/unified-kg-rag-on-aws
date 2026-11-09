@@ -15,8 +15,9 @@ PROFILE = LanguageProfile(
         "disponibles pour répondre à cette question."
     ),
     function_words=frozenset(
-        "les des qui quel quelle comment pourquoi quand où est sont était et "
-        "avec du une dans".split()
+        "les des qui quel quelle quels quelles comment combien pourquoi quand où "
+        "quoi est sont était et avec du une dans pour dont ces cette au aux "
+        "elle ils leur lequel laquelle".split()
     ),
     no_value_words=("inconnu", "inconnue", "aucun", "aucune"),
     articles=frozenset("le la les l un une des".split()),

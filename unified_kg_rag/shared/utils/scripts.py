@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_right
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import cache
@@ -271,11 +271,12 @@ class ScriptCounts:
     def dense_share(self) -> float:
         return self.dense / self.letters if self.letters else 0.0
 
-    def dominant(self) -> str | None:
+    def dominant(self, without: Collection[str] = ()) -> str | None:
         """The script most of the text is in, weighed by what its letters
         carry (its letters over its ``chars_per_token``, so one Hangul
         syllable outweighs one Latin letter), the dense scripts together
-        as ``"dense"``; ``None`` without letters. On a tie, a script other
+        as ``"dense"``, leaving out the scripts (or ``"dense"``) named in
+        ``without``; ``None`` without letters. On a tie, a script other
         than Latin wins: a name in Latin letters is what a question in
         another script quotes."""
         weights: dict[str, float] = {}
@@ -286,7 +287,8 @@ class ScriptCounts:
             else:
                 group = name
                 rate = script.chars_per_token if script is not None else 4.0
-            weights[group] = weights.get(group, 0.0) + count / rate
+            if group not in without:
+                weights[group] = weights.get(group, 0.0) + count / rate
         if not weights:
             return None
         return max(weights, key=lambda group: (weights[group], group != "latin"))

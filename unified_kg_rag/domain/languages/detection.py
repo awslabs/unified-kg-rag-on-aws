@@ -61,13 +61,32 @@ def words_of(text: str) -> list[str]:
     return _WORD.findall(text.lower().replace("\u2019", "'"))
 
 
-def _signals(word: str, language: LanguageProfile) -> bool:
-    """Whether ``word`` is one of ``language``'s function words or opens
-    with a word it elides ("dell'accordo": ``elided_prefixes``)."""
+def _signals(
+    word: str, language: LanguageProfile, shared: frozenset[str] = frozenset()
+) -> bool:
+    """Whether ``word`` is one of ``language``'s function words, or opens
+    with a word it elides that no other candidate elides (``shared``:
+    "dell'accordo" is Italian, "d'unités" either) or closes on a function
+    word ("d'où", "c'est", "dov'è")."""
     if word in language.function_words:
         return True
-    head, apostrophe, _ = word.partition("'")
-    return bool(apostrophe) and head in language.elided_prefixes
+    head, apostrophe, tail = word.partition("'")
+    if not apostrophe:
+        return False
+    return (
+        head in language.elided_prefixes and head not in shared
+    ) or tail in language.function_words
+
+
+def _shared_elisions(candidates: list[LanguageProfile]) -> frozenset[str]:
+    """The elided words more than one of ``candidates`` writes ("l'", "d'",
+    "c'" in French and Italian): a sign of neither."""
+    seen: set[str] = set()
+    shared: set[str] = set()
+    for language in candidates:
+        shared |= seen & language.elided_prefixes
+        seen |= language.elided_prefixes
+    return frozenset(shared)
 
 
 def _candidates(script: str | None) -> list[LanguageProfile]:
@@ -91,28 +110,36 @@ def script_language(
     (``ScriptCounts.dominant``): Han, Hangul and Kana read as
     :func:`dense_language` says, a script one profile writes as that
     language, and among the languages of one script (Latin) their function
-    words and elisions decide ("dell'" is Italian, "d'" French): the
+    words and the elisions only one of them writes decide ("dell'" is
+    Italian, "qu'" French, "d'" neither): the
     language with the most, ``fallback`` (the index language) among those
-    tied, else the one of them whose own articles occur most, else none."""
-    script = counts.dominant()
-    if script is None:
-        return None
-    if script == "dense":
-        return dense_language(counts, fallback)
-    candidates = _candidates(script)
-    if len(candidates) == 1 and candidates[0].script == script:
-        return candidates[0].code
+    tied, else the one of them whose own articles occur most, else none.
+    A script none of whose languages' words occur is names the text quotes
+    in another script ("Microsoft Corporation和OpenAI是什么关系？", "ما علاقة
+    Microsoft Corporation بـ OpenAI؟"): the next script decides."""
     words = list(words)
-    hits = {p.code: sum(_signals(word, p) for word in words) for p in candidates}
-    best = max(hits.values(), default=0)
-    if not best:
-        return None
-    tied = [p for p in candidates if hits[p.code] == best]
-    if fallback in {p.code for p in tied}:
-        return fallback
-    if len(tied) > 1:
-        tied = _by_articles(tied, words)
-    return tied[0].code if len(tied) == 1 else None
+    quoted: set[str] = set()
+    while (script := counts.dominant(without=quoted)) is not None:
+        if script == "dense":
+            return dense_language(counts, fallback)
+        candidates = _candidates(script)
+        if len(candidates) == 1 and candidates[0].script == script:
+            return candidates[0].code
+        shared = _shared_elisions(candidates)
+        hits = {
+            p.code: sum(_signals(word, p, shared) for word in words) for p in candidates
+        }
+        best = max(hits.values(), default=0)
+        if not best:
+            quoted.add(script)
+            continue
+        tied = [p for p in candidates if hits[p.code] == best]
+        if fallback in {p.code for p in tied}:
+            return fallback
+        if len(tied) > 1:
+            tied = _by_articles(tied, words)
+        return tied[0].code if len(tied) == 1 else None
+    return None
 
 
 def _by_articles(

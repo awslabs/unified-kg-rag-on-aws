@@ -15,14 +15,17 @@ PROFILE = LanguageProfile(
         "rispondere a questa domanda."
     ),
     function_words=frozenset(
-        "gli che chi quale come perché dove è sono della nel uno".split()
+        "gli che chi quale come perché dove è sono della nel uno quanto quanta "
+        "quanti quante cosa per sul alla delle degli dei nella questo "
+        "questa".split()
     ),
     no_value_words=("sconosciuto", "nessuno"),
     articles=frozenset("il lo la i gli le l un uno una".split()),
     # The articles and the prepositions joined to them, di, ci, quello,
-    # bello, santo, come, anche.
+    # bello, santo, come, anche, dove, quanto, cosa.
     elided_prefixes=frozenset(
-        "l un d c dell all dall nell sull coll quell bell sant com anch".split()
+        "l un d c dell all dall nell sull coll quell bell sant com anch dov quant "
+        "cos".split()
     ),
     number_words={
         "zero": 0,

@@ -201,6 +201,49 @@ def test_a_latin_tie_is_broken_by_the_registry(
     assert text_language(question, fallback) is language
 
 
+@pytest.mark.parametrize(
+    ("question", "language"),
+    [
+        # Regression (rv9 query LM3): "d'" is French and Italian alike and
+        # counted for both, then Italian's article "il" ("a-t-il") won.
+        ("Combien d'unités Orion Labs a-t-il rejetées ?", LanguageCode.FR),
+        ("D'où vient le lidar ?", LanguageCode.FR),
+        ("C'est quoi le lidar ?", LanguageCode.FR),
+        ("Combien d'argent ?", LanguageCode.FR),
+        ("Qu'a inspecté Orion Labs ?", LanguageCode.FR),
+        ("Dov'è il deposito?", LanguageCode.IT),
+        ("Quanto costa l'unità?", LanguageCode.IT),
+        ("Chi ha firmato l'accordo?", LanguageCode.IT),
+        # A shared elision tied French and Italian with Spanish.
+        ("¿Dónde vive d'Artagnan?", LanguageCode.ES),
+    ],
+)
+def test_only_an_owned_elision_tells_french_from_italian(
+    question: str, language: LanguageCode
+) -> None:
+    assert text_language(question, LanguageCode.EN) is language
+
+
+@pytest.mark.parametrize(
+    ("question", "language"),
+    [
+        # Regression (rv9 query LM4): the Latin letters of quoted names
+        # outweighed the question's own script.
+        ("ما علاقة Microsoft Corporation بشركة OpenAI؟", LanguageCode.AR),
+        ("Microsoft Corporation和OpenAI是什么关系？", LanguageCode.ZH),
+        ("Microsoft Corporation กับ OpenAI เกี่ยวข้องกันอย่างไร", LanguageCode.TH),
+        ("Acme Robotics International Holdings 계약", LanguageCode.KO),
+        # Latin function words: an English question quoting a name.
+        ("Who is 김철수 at Orion Labs?", LanguageCode.EN),
+        ("What did 华为 sign with Acme Robotics in 2023?", LanguageCode.EN),
+    ],
+)
+def test_latin_names_quoted_in_another_script(
+    question: str, language: LanguageCode
+) -> None:
+    assert text_language(question, LanguageCode.EN) is language
+
+
 def test_the_count_numerals_are_the_profiles() -> None:
     # The answer matcher reads the English, Korean and Han number words from
     # the profiles (tables moved unchanged).
