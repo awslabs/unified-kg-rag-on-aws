@@ -709,9 +709,12 @@ list, top level or under `metadata`, which wins), taking the maximum.
   `no` answering a yes/no question or before `single`, `more` and the like;
   `not ... any`, `not one`, `not a single`, `한 곳도`, `一社も`, `一家也`,
   `没有` and `いません`/`ありません` (not `問題ありません` or `ではありません`)
-  are 0, and so is a language's phrase of absence (`no hay`) in a sentence
-  that states no count and holds no comparative (`No hay duda de que son
-  tres` is 3, `No hay más de tres` 3). English scale words count (`three hundred and twelve` is 312),
+  are 0, and so is a language's phrase of absence (`no hay`) that no
+  comparative directly follows (`No hay más de tres` is 3) and no count
+  follows after a comma, a colon, a dash or a clause conjunction in its
+  sentence (`No hay duda de que son tres` is 3); a number in the absent
+  thing's own clause is no count (`No hay proveedores en el lote 7`, `There
+  are not any vendors with more than 100 employees` are 0). English scale words count (`three hundred and twelve` is 312),
   `两`/`兩` is 2 and a space may stand before a Han counter (`三 社`). `set`
   scores 1.0 when every one of `metadata.answer_items` appears in the
   answer, in any order or layout (a numbered list too); with

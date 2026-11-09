@@ -15,8 +15,8 @@ PROFILE = LanguageProfile(
         "responder a esta pergunta."
     ),
     function_words=frozenset(
-        "os quem qual porque onde é são foi com do uma não quantos quantas tem "
-        "há".split()
+        "os quem qual porque onde é são foi com do uma não quantos quantas como "
+        "tem há".split()
     ),
     no_value_words=("desconhecido", "nenhum"),
     articles=frozenset("o a os as um uma uns umas".split()),
@@ -87,6 +87,7 @@ PROFILE = LanguageProfile(
     zero_words=("nenhum", "nenhuma"),
     absence_phrases=("não há", "não tem", "não têm", "não existe", "não existem"),
     comparatives=("mais de", "menos de", "mais que", "menos que"),
+    clause_conjunctions=("mas", "porém", "embora", "de que"),
     year_words=("em", "desde", "até", "antes de", "depois de", "a partir de"),
     partitive_words=("dos", "das", "destes", "destas", "entre os", "entre as"),
     partitive_anaphors=("deles", "delas", "dos quais", "das quais"),

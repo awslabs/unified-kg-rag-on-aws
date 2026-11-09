@@ -78,7 +78,8 @@ unit holds any more are deleted by the next full build
   `processing.translation.source_language` when the sample's script
   disagrees with it: mostly Hangul, Kana or Han letters under a language of
   another script (it suggests `ko`, `ja` or `zh`), or few of them under
-  `ko`, `ja` or `zh`. It cannot tell two languages of one script apart
+  `ko`, `ja` or `zh` (not when the sample still reads as that language: a
+  Korean document that is mostly code). It cannot tell two languages of one script apart
   (English from German), and the run goes on.
 - **Unicode.** Text and queries are NFC-normalized, so decomposed Hangul (NFD)
   matches its composed form.
@@ -149,6 +150,8 @@ Kana letter as a token (character F1), while exact match still under-counts
 an answer with a particle. An answer in German, Spanish, French, Italian or
 Portuguese (the question's language) also drops that language's articles
 and reads its number words and its words and phrases for none ("no hay",
-"il n'y a pas de", none in a sentence that states a count or holds a comparative:
-"No hay más de tres" is 3) in place of the English ones (Spanish "no" is no zero). The rules:
+"il n'y a pas de"; not one a comparative directly follows, "No hay más de tres" is 3,
+nor one a count follows after a clause break, "No hay duda de que son tres"; a number in
+the absent thing's own phrase, "No hay proveedores en el lote 7", leaves it 0) in place of
+the English ones (Spanish "no" is no zero). The rules:
 [`answer_match`](../reference/evaluation-output.md#answer_match).

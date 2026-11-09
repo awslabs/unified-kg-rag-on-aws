@@ -124,6 +124,27 @@ def test_an_agreeing_or_undecidable_sample_is_not_reported(
     assert source_language_mismatch(corpus_sample([text]), source) is None
 
 
+def test_a_sample_read_as_the_setting_is_not_reported() -> None:
+    # Regression (rv13 query low): a Korean document that is mostly code
+    # holds few Hangul letters but reads as Korean; the warning told a
+    # source_language of 'ko' to be set to 'ko'.
+    code = (
+        "```python\n# List all of the buckets that the caller can access\n"
+        "for bucket in s3.buckets.all():\n"
+        "    print(bucket.name)  # the name of the bucket\n```\n"
+        "참고: The bucket name must be unique across all of AWS and it cannot "
+        "be changed after it is created.\n"
+    )
+    korean = (
+        "이 가이드는 Amazon S3 버킷 설정 방법을 설명합니다. 먼저 AWS 콘솔에 "
+        "로그인한 뒤 S3 페이지를 엽니다.\n"
+    )
+    sample = corpus_sample([korean + code] * 5)
+    assert corpus_language(sample, LanguageCode.KO) is LanguageCode.KO
+    assert sample.counts.dense < 0.2 * sample.counts.letters
+    assert source_language_mismatch(sample, LanguageCode.KO) is None
+
+
 def test_a_two_sentence_corpus_still_decides() -> None:
     # The sample corpora a first run uses are this small.
     tiny = [

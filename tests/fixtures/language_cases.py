@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 """The regression corpus of language detection, number reading, router
-answers and name folding: every case the query reviews rv9 to rv12 probed
+answers and name folding: every case the query reviews rv9 to rv13 probed
 or reported, with the answer they stated as right.
 
 A case the code answers otherwise is a documented trade-off: it carries
@@ -79,8 +79,9 @@ NO_WORD = (
     "language (old code alike; rv12 query low)."
 )
 SHOUTED = (
-    "All-caps words are acronyms, so a shouted question holds no function "
-    "word (rv12 query 1: accepted)."
+    'Fewer than three all-caps words are acronyms ("ES index", "AI ethics"), '
+    "so a two-word shouted question holds no function word: a shouted text "
+    "is read lowercased from three words (rv13 query 1)."
 )
 NO_PROFILE = (
     "A language without a profile (tr, pl, nl, sv, id, el, uk, fa) has no "
@@ -98,9 +99,16 @@ QUOTING = (
     'matrix pins "Who is the CEO of {n}?" so for every script (the probe\'s '
     "expectation is debatable)."
 )
-SHARED_WORDS = (
-    "Italian and Portuguese share their question words (quanto, como, "
-    "tem/ha forms): the words left decide, or the index language."
+SHARED_WORD = (
+    'Italian and Portuguese both write "quanto"; the function word lists of '
+    "one script are disjoint (a shared word would tie them) and Italian's "
+    'holds it, while the Portuguese words left are an article ("o") and '
+    "content words (rv13 query 4)."
+)
+ARTICLES_ONLY = (
+    'The one function word is Portuguese ("tem"); the Italian words are '
+    'articles ("il", "un"), which decide only between languages tied on '
+    "function words (rv13 query 4)."
 )
 ONE_SCRIPT_NAMES = (
     "In a text of one script its capitalised words are not set apart as "
@@ -128,6 +136,18 @@ SCALE_DIGITS = (
     "Digits before a scale word, a decimal comma or a decimal before a "
     "counter read without the scale (pre-existing; rv11 query low, outside "
     "this change)."
+)
+INNER_WORDS = (
+    'Words between a phrase of absence and a comparative ("non ha mai avuto '
+    'più di tre") read as the absent noun and its preposition ("non ci sono '
+    'fornitori con più di 50"): no rule without word classes tells an adverb '
+    "and a participle from them (rv13 query 2)."
+)
+POSTPOSED = (
+    "A number before a phrase of absence written after its noun "
+    '("Поставщиков в лоте 7 нет") reads first, as a count before one does '
+    '("3 vendors do not have any contracts"); only one after a comparative '
+    "is a condition there (rv13 query 2)."
 )
 WORD_GAPS = (
     'A word the profiles do not hold ("dozen", the article "un" for one, '
@@ -250,9 +270,7 @@ DETECTION: tuple[Case, ...] = (
     Case("한빛전자 CEO?", "en", "en", "rv12 probe", Tradeoff("ko", NO_WORD)),
     Case("한빛전자 revenue 2023", "en", "en", "rv12 probe", Tradeoff("ko", NO_WORD)),
     Case("SUPPLIERS OF 한빛전자?", "en", "en", "rv12 probe", Tradeoff("ko", SHOUTED)),
-    Case(
-        "WHO IS THE CEO OF 한빛전자?", "en", "en", "rv12 probe", Tradeoff("ko", SHOUTED)
-    ),
+    Case("WHO IS THE CEO OF 한빛전자?", "en", "en", "rv12 probe"),
     Case("Ivan Petrov (Иван Петров) — who is he?", "en", "en", "rv12 probe"),
     Case("The Who played where?", "en", "en", "rv12 probe"),
     Case("Who wrote The Lord of the Rings?", "en", "en", "rv12 probe"),
@@ -457,7 +475,7 @@ DETECTION: tuple[Case, ...] = (
         "pt",
         "en",
         "rv11 probe",
-        Tradeoff("it", SHARED_WORDS),
+        Tradeoff("it", SHARED_WORD),
     ),
     Case("Chi ha firmato il contratto con Acme?", "it", "en", "rv11 probe"),
     Case(
@@ -465,7 +483,7 @@ DETECTION: tuple[Case, ...] = (
         "it",
         "en",
         "rv11 probe",
-        Tradeoff("pt", SHARED_WORDS),
+        Tradeoff("pt", ARTICLES_ONLY),
     ),
     Case("Hay proveedores en Madrid?", "es", "en", "rv11 probe"),
     Case("Há fornecedores em Lisboa?", "pt", "en", "rv11 probe"),
@@ -473,13 +491,7 @@ DETECTION: tuple[Case, ...] = (
     Case("Quanti contratti ha Acme con Orion?", "it", "en", "rv11 probe"),
     Case("Come si chiama il direttore?", "it", "en", "rv11 probe"),
     Case("Como se llama el director?", "es", "en", "rv11 probe"),
-    Case(
-        "Como se chama o diretor?",
-        "pt",
-        "en",
-        "rv11 probe",
-        Tradeoff("en", SHARED_WORDS),
-    ),
+    Case("Como se chama o diretor?", "pt", "en", "rv11 probe"),
     Case("Cosa fa Acme?", "it", "en", "rv11 probe"),
     Case("Dove si trova la sede?", "it", "en", "rv11 probe"),
     Case("Il contratto tiene conto delle penali?", "it", "en", "rv11 probe"),
@@ -900,6 +912,56 @@ DETECTION: tuple[Case, ...] = (
     Case("Hanbit Electronics and Orion Electronics 비교", "ko", "en", "rv10 probe"),
     Case("What is 계약 조건 기간 요약?", "ko", "en", "rv12 fix (runs)"),
     Case("Has Acme Corp ever audited 한빛물산?", "en", "en", "rv11 query 1/5"),
+    # A shouted text reads its words lowercased (rv13 query 1).
+    Case("¿QUIÉN FIRMÓ EL CONTRATO?", "es", "en", "rv13 query 1"),
+    Case("¿QUIÉN FIRMÓ EL CONTRATO?", "es", "es", "rv13 query 1"),
+    Case("WER HAT DEN VERTRAG UNTERSCHRIEBEN?", "de", "en", "rv13 query 1"),
+    Case("QUI A SIGNÉ LE CONTRAT ?", "fr", "en", "rv13 query 1"),
+    Case("CHI HA FIRMATO IL CONTRATTO?", "it", "en", "rv13 query 1"),
+    Case("QUEM ASSINOU O CONTRATO?", "pt", "en", "rv13 query 1"),
+    Case("AI LÀ NGƯỜI KÝ HỢP ĐỒNG?", "vi", "en", "rv13 query 1"),
+    Case("WHAT IS THE PENALTY CLAUSE?", "en", "en", "rv13 query 1"),
+    Case("WHO SIGNED THE CONTRACT?", "en", "ko", "rv13 query 1"),
+    Case("Is the OS supported on ARM?", "en", "ko", "rv13 query 1"),
+    Case("AI ethics guide", "en", "ko", "rv13 query 1"),
+    Case("ES index mapping", "en", "ko", "rv13 query 1"),
+    Case("DO droplet pricing", "en", "en", "rv13 query 1"),
+    Case("EST to KST conversion", "en", "en", "rv13 query 1"),
+    # The parts of a URL, an email, a path or a dotted name are no
+    # function words (rv13 query 3).
+    Case("https://example.com 요약", "ko", "ko", "rv13 query 3"),
+    Case("example.com 접속 안 됨", "ko", "ko", "rv13 query 3"),
+    Case("www.example.com 접속 오류", "ko", "ko", "rv13 query 3"),
+    Case("admin@example.com 계정 잠김", "ko", "ko", "rv13 query 3"),
+    Case("com.example.app 패키지 오류", "ko", "ko", "rv13 query 3"),
+    Case("example.com に接続できない", "ja", "ja", "rv13 query 3"),
+    Case("admin@example.com のパスワード", "ja", "ja", "rv13 query 3"),
+    Case("https://example.com/docs を要約して", "ja", "ja", "rv13 query 3"),
+    Case("support@example.com への問い合わせ方法", "ja", "ja", "rv13 query 3"),
+    Case("example.com 无法访问", "zh", "zh", "rv13 query 3"),
+    Case("admin@example.com 密码重置", "zh", "zh", "rv13 query 3"),
+    Case("https://example.com/docs 页面摘要", "zh", "zh", "rv13 query 3"),
+    Case("support@example.com 联系方式", "zh", "zh", "rv13 query 3"),
+    Case("example.com.br 접속", "ko", "ko", "rv13 query 3"),
+    Case("example.de 접속 불가", "ko", "ko", "rv13 query 3"),
+    Case("example.es 사이트", "ko", "ko", "rv13 query 3"),
+    Case("example.it 도메인", "ko", "ko", "rv13 query 3"),
+    Case("http://example.com/do 경로 오류", "ko", "ko", "rv13 query 3"),
+    Case("/usr/local/bin/the 경로", "ko", "ko", "rv13 query 3"),
+    Case("C:\\Users\\the 폴더", "ko", "ko", "rv13 query 3"),
+    Case("my_the_var 변수", "ko", "ko", "rv13 query 3"),
+    Case("NullPointerException at com.example.Main 원인", "ko", "ko", "rv13 query 3"),
+    Case("Не открывается example.com", "ru", "ru", "rv13 query 3"),
+    Case("لا يفتح example.com", "ar", "ar", "rv13 query 3"),
+    Case("Why does example.com.br time out?", "en", "en", "rv13 query 3"),
+    Case("Where is the README of github.com/acme/tool?", "en", "en", "rv13 query 3"),
+    Case("¿Por qué falla example.com?", "es", "es", "rv13 query 3"),
+    Case("o arquivo config.do não carrega", "pt", "pt", "rv13 query 3"),
+    Case("file.per 열기", "ko", "ko", "rv13 query 3"),
+    Case("app.es 번역 파일", "ko", "ko", "rv13 query 3"),
+    Case("app.cho 확장자", "ko", "ko", "rv13 query 3"),
+    Case("node.js 설치", "ko", "ko", "rv13 query 3"),
+    Case("Vue.js와 React 비교", "ko", "ko", "rv13 query 3"),
 )
 
 NUMBERS: tuple[Case, ...] = (
@@ -931,7 +993,13 @@ NUMBERS: tuple[Case, ...] = (
         "rv12 query 2/4",
     ),
     Case("Non ha senso: sono tre.", 3, "it", "rv12 query 2/4"),
-    Case("Non ha mai avuto più di tre fornitori.", 3, "it", "rv12 query 2/4"),
+    Case(
+        "Non ha mai avuto più di tre fornitori.",
+        3,
+        "it",
+        "rv12 query 2/4",
+        Tradeoff(0.0, INNER_WORDS),
+    ),
     Case("Non ci sono dubbi: tre fornitori.", 3, "it", "rv12 query 2/4"),
     Case("Non ci sono fornitori.", 0, "it", "rv12 query 2/4"),
     Case("Acme ha tre fornitori, non ha altri partner.", 3, "it", "rv12 query 2/4"),
@@ -1295,6 +1363,76 @@ NUMBERS: tuple[Case, ...] = (
     Case("Нет. Три поставщика.", 3, "ru", "rv12 fix (yes/no word)"),
     Case("No hay.", 0, "es", "rv12 fix (yes/no word)"),
     Case("No hay más de una docena.", None, "es", "rv12 query 2 (comparative)"),
+    # A number in the absent thing's own phrase is no count (rv13 query 2).
+    Case(
+        "There are not any vendors with more than 100 employees.",
+        0,
+        "en",
+        "rv13 query 2",
+    ),
+    Case("Acme does not have any plants in Zone 2.", 0, "en", "rv13 query 2"),
+    Case("Acme doesn't have any suppliers for project 7.", 0, "en", "rv13 query 2"),
+    Case("There aren't any suppliers in the top 10.", 0, "en", "rv13 query 2"),
+    Case(
+        "Acme does not have any contracts worth over 5 million.",
+        0,
+        "en",
+        "rv13 query 2",
+    ),
+    Case("No hay proveedores en el lote 7.", 0, "es", "rv13 query 2"),
+    Case("No hay proveedores con más de 50 empleados.", 0, "es", "rv13 query 2"),
+    Case("Non ci sono fornitori con più di 50 dipendenti.", 0, "it", "rv13 query 2"),
+    Case("Non ci sono fornitori nel lotto 7.", 0, "it", "rv13 query 2"),
+    Case("Il n'y a pas de fournisseur dans le lot 7.", 0, "fr", "rv13 query 2"),
+    Case(
+        "Il n'y a pas de fournisseur avec plus de 50 salariés.", 0, "fr", "rv13 query 2"
+    ),
+    Case("Não há fornecedores no lote 7.", 0, "pt", "rv13 query 2"),
+    Case("Não há fornecedores com mais de 50 funcionários.", 0, "pt", "rv13 query 2"),
+    Case("Поставщиков с более чем 50 сотрудниками нет.", 0, "ru", "rv13 query 2"),
+    Case(
+        "Поставщиков в лоте 7 нет.", 0, "ru", "rv13 query 2", Tradeoff(7.0, POSTPOSED)
+    ),
+    Case("Не более пяти поставщиков, точно нет шести.", 5, "ru", "rv13 query 2"),
+    Case("3 vendors do not have any contracts.", 3, "en", "rv13 query 2"),
+    Case("No hay datos de 2019. En 2020 tenía 3 plantas.", 0, "es", "rv13 query 2"),
+    Case("No hay uno sino tres.", 3, "es", "rv13 query 2"),
+    Case("No hay más detalles.", 0, "es", "rv13 query 5"),
+    Case("Não há mais detalhes.", 0, "pt", "rv13 query 5"),
+    Case(
+        "I could not find any other details; but Acme has 3 suppliers.",
+        3,
+        "en",
+        "rv13 query 2",
+    ),
+    Case(
+        "Acme does not have any suppliers; it uses 3 internal plants.",
+        0,
+        "en",
+        "rv13 query 2",
+    ),
+    # A comparative ends at a word boundary; a one-word one compares only
+    # before a number (rv13 query 5).
+    Case("No hay proveedores; no hay más detalles.", 0, "es", "rv13 query 5"),
+    Case("No hay proveedores ni menos derechos.", 0, "es", "rv13 query 5"),
+    Case("Non ci sono fornitori, è il caso più diffuso.", 0, "it", "rv13 query 5"),
+    Case("Não há fornecedores nem mais detalhes.", 0, "pt", "rv13 query 5"),
+    Case(
+        "Il n'y a pas de fournisseur, plus des détails suivront.",
+        0,
+        "fr",
+        "rv13 query 5",
+    ),
+    Case("Поставщиков нет, больше данных нет.", 0, "ru", "rv13 query 5"),
+    Case("Поставщиков нет — по большему счёту.", 0, "ru", "rv13 query 5"),
+    Case(
+        "Acme does not have any suppliers, more thanks to the audit.",
+        0,
+        "en",
+        "rv13 query 5",
+    ),
+    Case("There are not any vendors, less thankfully.", 0, "en", "rv13 query 5"),
+    Case("Нет больше поставщиков.", 0, "ru", "rv13 query 5"),
 )
 
 ROUTER: tuple[Case, ...] = (

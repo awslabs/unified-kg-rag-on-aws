@@ -85,13 +85,21 @@ class LanguageProfile:
     # of 0 as its words for none are ("does not have any", "no hay", "il
     # n'y a pas de", "Поставщиков нет"): "…" stands for up to three words
     # between, and a leading "-" for a clitic written onto the word before
-    # ("-n't … any": "doesn't have any"). One states no count in a sentence
-    # that states one ("No hay duda de que son tres", "Нет, три") or holds
-    # one of the language's comparatives ("No hay más de tres": "more
-    # than", "más de", "более"); a one-word one opening a line before a
-    # comma or a stop is a yes/no answer ("Нет."), no count either.
+    # ("-n't … any": "doesn't have any"). One states no count when one of
+    # the language's comparatives directly follows it ("No hay más de
+    # tres": "more than", "más de", "более"; a one-word one compares only
+    # before a number) or a count follows it after a clause break in its
+    # sentence: a comma, a colon, a dash or one of its
+    # ``clause_conjunctions`` ("No hay duda de que son tres", "Нет
+    # сомнений, их три", "not any other details, but Acme has 3"). A
+    # number in its own clause is the absent thing's ("No hay proveedores
+    # en el lote 7", "with more than 100 employees"; a semicolon is no
+    # clause break), and one after a stop another sentence's; a one-word
+    # one opening a line before a comma or a stop is a yes/no answer
+    # ("Нет."), no count either.
     absence_phrases: tuple[str, ...] = ()
     comparatives: tuple[str, ...] = ()
+    clause_conjunctions: tuple[str, ...] = ()
     # Whether it writes the ones before the tens ("vierundzwanzig"): in
     # another language the words of a number go down by place ("deux vingt"
     # is two numbers).

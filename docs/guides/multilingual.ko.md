@@ -64,7 +64,8 @@ processing:
   20개 문서의 앞 2,000자)을 보고, 표본의 문자 체계가 설정과 맞지 않으면
   `processing.translation.source_language`를 지목하는 WARNING을 남깁니다. 다른 문자
   체계의 언어로 설정했는데 한글·가나·한자가 대부분이면(`ko`, `ja`, `zh` 중 하나를 제안),
-  `ko`, `ja`, `zh`로 설정했는데 그런 문자가 적으면 경고합니다. 같은 문자 체계의 두
+  `ko`, `ja`, `zh`로 설정했는데 그런 문자가 적으면 경고합니다(표본이 여전히 그 언어로
+  읽히면 경고하지 않습니다. 예: 대부분이 코드인 한국어 문서). 같은 문자 체계의 두
   언어(영어와 독일어)는 구별하지 못하며, 실행은 계속됩니다.
 - **유니코드.** 텍스트와 질의는 NFC로 정규화하므로 분해형 한글(NFD)도 조합형과 맞습니다.
 - **다른 언어.** `source_language`와 `target_language`에는 언어 프로필이 있는 코드(`ar`,
@@ -123,6 +124,7 @@ processing:
 한 글자를 토큰 하나로 셉니다(문자 단위 F1). exact match는 조사가 붙은 답을 여전히 낮게
 셉니다. 독일어·스페인어·프랑스어·이탈리아어·포르투갈어 답변(질문의 언어 기준)은 그 언어의
 관사도 지우고 영어 대신 그 언어의 수사와 '없음'을 뜻하는 말과 구("no hay", "il n'y a pas
-de". 수를 말하거나 비교 표현이 있는 문장의 구는 제외: "No hay más de tres"는 3)를 읽습니다(스페인어
-"no"는 0이 아닙니다).
+de". 바로 뒤에 비교 표현이 오는 구("No hay más de tres"는 3)와 절이 나뉜 뒤 수가 오는 구("No hay duda
+de que son tres"는 3)는 제외. 없는 대상을 꾸미는 말 속의 수는 세지 않아 "No hay proveedores en el lote
+7"은 0)를 읽습니다(스페인어 "no"는 0이 아닙니다).
 규칙은 [`answer_match`](../reference/evaluation-output.md#answer_match)(영문)에 있습니다.

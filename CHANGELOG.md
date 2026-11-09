@@ -1193,8 +1193,9 @@ From a `main` checkout (formats and keys no release had):
   question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
   elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its written numbers
   ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") and its words and phrases for none ("aucun",
-  "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any"; none in a sentence
-  that states a count or holds a comparative: "No hay duda de que son tres", "No hay más de tres") in place of
+  "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any"; none a comparative
+  directly follows, "No hay más de tres", or a count follows after a clause break, "No hay duda de que son tres", a
+  number in the absent thing's own clause no count: "No hay proveedores en el lote 7" is 0) in place of
   English's (Spanish and Portuguese "no" is no 0), its words of time, partitives and ordinals telling a number that
   counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième") (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
@@ -1294,10 +1295,11 @@ From a `main` checkout (formats and keys no release had):
   naming `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese,
   Chinese, Russian, Thai, Arabic or German corpus under the default `en` was extracted with prompts asking for
   English and analyzed as English without a word. The sample's language is read by the rule a query's is (its
-  script, and a Latin-script one's function words). `run-prompt-tuning` writes the `source_language` the sample
-  reads as into its output (#629). Han, Hangul and Kana text reads by one rule (`domain.languages.dense_language`):
-  Korean when a tenth or more of those letters are Hangul (and no fewer than Kana), so Korean written with Hanja
-  reads as Korean, else Japanese when a tenth are Kana, else Chinese.
+  script, and a Latin-script one's function words); a sample that reads as the setting is not reported, however few
+  of its letters are in its script (a Korean document that is mostly code). `run-prompt-tuning` writes the
+  `source_language` the sample reads as into its output (#629). Han, Hangul and Kana text reads by one rule
+  (`domain.languages.dense_language`): Korean when a tenth or more of those letters are Hangul (and no fewer than
+  Kana), so Korean written with Hanja reads as Korean, else Japanese when a tenth are Kana, else Chinese.
 - `backend: local`: the refusals and retrieval logs of the embedded vector store name it ("The embedded SQLite search
   engine index ...") instead of OpenSearch, and a query where nothing was ingested reads an empty store with a
   WARNING naming `providers.vector.sqlite_path` instead of creating an empty `vector.sqlite3` (in the working
@@ -1443,10 +1445,13 @@ From a `main` checkout (formats and keys no release had):
   reply, or the index language when they do not tell), by one scoring decision (`domain/languages/detection.py`): a
   Latin-script language claims the question with its function words, one more when the question opens on a capitalised
   Latin word, and another script with its runs; the larger claim wins, a tie the Latin words. Acronyms and codes
-  ("AI", "OS", "ES6", "iPhone"), parts of compounds ("to-do", "AIとは") and the words of a quoted name ("Bank of
-  America和…") are no function words, so "AI 모델 추천", "AIとは" and "OS 설치" are Korean, Japanese and Korean, "Who is the
-  CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; among Latin-script languages, Spanish and
-  Portuguese with their "how many" words, an elision only one of them writes ("dell'", "qu'"; not "d'", French and
+  ("AI", "OS", "ES6", "iPhone"), parts of compounds ("to-do", "AIとは"), of URLs, emails, paths and dotted names
+  ("example.com", "admin@example.es", "/usr/bin/the") and the words of a quoted name ("Bank of America和…") are no
+  function words, so "AI 모델 추천", "AIとは", "OS 설치" and "example.com 无法访问" are Korean, Japanese, Korean and Chinese,
+  "Who is the CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; a shouted text (three or more
+  words, all in capitals) reads its words lowercased, so "QUI A SIGNÉ LE CONTRAT ?" is French; among Latin-script
+  languages, Spanish and Portuguese with their "how many" words ("como" Portuguese), an elision only one of them
+  writes ("dell'", "qu'"; not "d'", French and
   Italian) counts with the function words, and a tie the index language is not in goes to the language whose own
   articles occur ("Qual è il prezzo?" is Italian, not English); evaluation counts a decline by `metadata.abstained`
   alone, no longer by the English text (#619).
