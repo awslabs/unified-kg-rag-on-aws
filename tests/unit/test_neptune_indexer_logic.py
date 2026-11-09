@@ -50,7 +50,9 @@ def _run_full_entity_builder(indexer, entities: list[Entity]) -> list[str]:
     calls: list[str] = []
     captured_factory = None
 
-    def fake_index_generic(items, name, prefix, factory, *, clear_first, suffixes):
+    def fake_index_generic(
+        items, name, prefix, factory, *, clear_first, suffixes, properties=None
+    ):
         nonlocal captured_factory
         captured_factory = factory("Entity")
         return None
@@ -95,7 +97,9 @@ def test_index_entities_passes_full_label_to_factory(indexer, mocker) -> None:
     # prefix, clearing that label first (full index rebuilds its own label).
     captured: dict = {}
 
-    def fake_index_generic(items, name, prefix, factory, *, clear_first, suffixes):
+    def fake_index_generic(
+        items, name, prefix, factory, *, clear_first, suffixes, properties=None
+    ):
         captured.update({"name": name, "prefix": prefix, "clear": clear_first})
 
     indexer._index_generic = fake_index_generic  # type: ignore[assignment]
@@ -112,7 +116,9 @@ def test_index_entities_writes_list_props_multi_valued(indexer) -> None:
     calls: list[str] = []
     captured_factory = None
 
-    def fake_index_generic(items, name, prefix, factory, *, clear_first, suffixes):
+    def fake_index_generic(
+        items, name, prefix, factory, *, clear_first, suffixes, properties=None
+    ):
         nonlocal captured_factory
         captured_factory = factory("Entity")
 

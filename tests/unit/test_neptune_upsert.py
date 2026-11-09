@@ -316,3 +316,73 @@ def test_a_failed_delete_batch_counts_each_of_its_ids(indexer, mocker) -> None:
 
     assert (stats.total_items, stats.successful_items) == (3, 1)
     assert (stats.failed_items, stats.failed_ids) == (2, ["a", "b"])
+
+
+def _set_value_requests(indexer, mocker, fail_op: str | None = None) -> list[list]:
+    """The ``text_unit_ids`` values of each request the writes send (the
+    requests recorded as their steps)."""
+    from tests.fixtures.fakes.gremlin import RecordingTraversal
+
+    requests: list[list] = []
+
+    def execute(
+        build, op, *, results=False, fenced=True, exhausted_level=None
+    ):  # noqa: ANN001, ANN202
+        steps: list = []
+        build(RecordingTraversal(steps, with_args=True))
+        values = [
+            args[2]
+            for name, args in steps
+            if name == "property" and len(args) == 3 and args[1] == "text_unit_ids"
+        ]
+        requests.append(values)
+        if op == fail_op:
+            raise RuntimeError("query too large")
+        return ["v"] if results else []
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
+    return requests
+
+
+def test_a_hub_vertex_writes_its_set_values_in_bounded_requests(
+    indexer, mocker
+) -> None:
+    # A hub entity's 2,500 text units in one request: Neptune refused 5,000
+    # with QueryTooLargeException under load. Each request writes at most
+    # _SET_VALUES_PER_REQUEST of them; the rest are added (set cardinality:
+    # adding a value again changes nothing).
+    from unified_kg_rag.adapters.storage import neptune_indexer as module
+    from unified_kg_rag.domain.models import Entity
+
+    units = [f"t{i:05d}" for i in range(2_500)]
+    requests = _set_value_requests(indexer, mocker)
+
+    stats = indexer.upsert_entities(
+        [Entity(id="hub", name="Hub", text_unit_ids=units), Entity(id="e", name="E")]
+    )
+
+    assert (stats.successful_items, stats.failed_items) == (2, 0)
+    bound = module._SET_VALUES_PER_REQUEST
+    assert all(len(values) <= bound for values in requests)
+    assert [v for values in requests for v in values] == units
+    assert len([values for values in requests if values]) == 3
+
+
+def test_a_failed_set_value_request_fails_its_vertex_only(indexer, mocker) -> None:
+    from unified_kg_rag.domain.models import Entity
+
+    requests = _set_value_requests(
+        indexer, mocker, fail_op="Adding vertex property values"
+    )
+
+    stats = indexer.upsert_entities(
+        [
+            Entity(id="hub", name="Hub", text_unit_ids=[f"t{i}" for i in range(1_500)]),
+            Entity(id="e", name="E", text_unit_ids=["t1"]),
+        ]
+    )
+
+    # The hub is written again whole by a later write (its failure is noted).
+    assert (stats.successful_items, stats.failed_items) == (1, 1)
+    assert stats.failed_ids == ["hub"]
+    assert len(requests) == 2

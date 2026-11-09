@@ -1773,7 +1773,9 @@ Ingestion and incremental indexing.
 - Neptune no longer loses edges when interrupted, a vertex write replaces its stored properties, and OpenSearch no
   longer stores a description cut at the Neptune cap (#252, #294, #377); an edge write looks its endpoints up by
   vertex id (property-mode ids read in one request per batch), so its cost no longer grows with the vertex count of
-  every tenant on the cluster (1.5 s an edge at 21k vertices) (#626).
+  every tenant on the cluster (1.5 s an edge at 21k vertices) (#626). A vertex's multi-valued property is written
+  1,000 values a request (a hub's 5,000 text units failed with `QueryTooLargeException` under load), and that error
+  is no longer retried as it stands.
 - A store error while preparing or clearing fails the stage, a lost create or delete response no longer fails a
   build, a failed delete batch counts every id, bulk errors name their cause, and indexing memory no longer grows
   with the corpus (#252, #265, #294, #431, #432, #440).

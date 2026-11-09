@@ -48,6 +48,8 @@ PERMANENT_NEPTUNE_ERROR_CODES: frozenset[str] = frozenset(
         "MalformedQueryException",
         "MethodNotAllowedException",
         "MissingParameterException",
+        # The same request is as large on a retry; a smaller one is needed.
+        "QueryTooLargeException",
         "ReadOnlyViolationException",
         "UnsupportedOperationException",
     }
