@@ -57,20 +57,40 @@ def strip_leading_reasoning(text: str) -> str:
 
 
 _NAME_WORD = re.compile(r"\w+")
+# The most words a label before a name holds ("Strategy: local", "Selected
+# strategy: local").
+_LABEL_WORDS = 2
 
 
 def named_choice(text: str, names: Collection[str]) -> str | None:
     """The one of ``names`` (casefolded words) an answer that should be a
-    name alone names, or ``None``: its first non-empty line after any
-    leading reasoning block (:func:`strip_leading_reasoning`) has exactly
-    one of them as a whole word, case, markdown and punctuation aside
-    ("local", "**Local**", "Strategy: local", "`local`", "local\\n\\nReason:
-    ..."). A line naming several ("not global but local") or none is
-    ``None``: not guessed from."""
-    answer = strip_leading_reasoning(text)
-    line = next((line for line in answer.splitlines() if line.strip()), "")
-    named = {word.casefold() for word in _NAME_WORD.findall(line)} & set(names)
-    return named.pop() if len(named) == 1 else None
+    name alone names, or ``None``, after any leading reasoning block
+    (:func:`strip_leading_reasoning`), case, markdown and punctuation
+    aside: the last line that is the name alone ("local", "**Local**",
+    "`local`", "Sure, here is my choice:\n\nlocal", "local\n\nReason:
+    ..."), else the last that is a label of at most :data:`_LABEL_WORDS`
+    words, a colon and the name ("Strategy: local.", ``{"strategy":
+    "local"}``). Prose is ``None``, not guessed from, though a name is one
+    of its words ("This is a simple lookup", "Not global.", "None of these;
+    local is best")."""
+    lines = strip_leading_reasoning(text).splitlines()
+    for line in reversed(lines):
+        words: list[str] = [w.casefold() for w in _NAME_WORD.findall(line)]
+        if len(words) == 1 and words[0] in names:
+            return words[0]
+    for line in reversed(lines):
+        spans = list(_NAME_WORD.finditer(line))
+        if not 1 < len(spans) <= _LABEL_WORDS + 1:
+            continue
+        name: str = spans[-1].group().casefold()
+        label = line[spans[-2].end() : spans[-1].start()]
+        if (
+            name in names
+            and ":" in label
+            and not {w.group().casefold() for w in spans[:-1]} & set(names)
+        ):
+            return name
+    return None
 
 
 def may_open_reasoning(text: str) -> bool:
