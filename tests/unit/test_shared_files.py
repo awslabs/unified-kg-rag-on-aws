@@ -405,3 +405,183 @@ def test_a_closed_descriptor_s_alias_names_the_path(tmp_path: Path) -> None:
     with pytest.raises(OSError) as raised:
         atomic_write_text(alias, "x")
     assert raised.value.filename == str(alias)
+
+
+def _temporaries(folder: Path, name: str) -> list[Path]:
+    return [p for p in folder.iterdir() if p.name.startswith(f".{name}.")]
+
+
+@pytest.mark.parametrize("target_mode", [0o600, 0o644], ids=["0600", "0644"])
+def test_the_temporary_file_is_private_while_the_block_runs(
+    tmp_path: Path, target_mode: int
+) -> None:
+    # The new text streams into the temporary file before it is renamed over
+    # the target: other users must not read it then, whatever the target's
+    # mode; the target's mode is given to it only at the rename.
+    path = tmp_path / "secret.json"
+    path.write_text("old")
+    path.chmod(target_mode)
+    with files.atomic_open(path) as out:
+        out.write("new")
+        (temporary,) = _temporaries(tmp_path, "secret.json")
+        assert temporary.stat().st_mode & 0o777 == 0o600
+    assert path.read_text() == "new"
+    assert path.stat().st_mode & 0o777 == target_mode
+
+
+@pytest.mark.skipif(_ROOT, reason="root writes into a read-only directory")
+def test_the_staged_copy_is_private_while_the_block_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The staging directory is the shared temp directory: a 0600 file's new
+    # text must not be readable there while it streams.
+    stage = _staged_in(monkeypatch, tmp_path)
+    folder = tmp_path / "ro"
+    folder.mkdir()
+    path = folder / "secret.json"
+    path.write_text("old")
+    path.chmod(0o600)
+    folder.chmod(0o555)
+    try:
+        with files.atomic_open(path) as out:
+            out.write("new")
+            (staged,) = _temporaries(stage, "secret.json")
+            assert staged.stat().st_mode & 0o777 == 0o600
+        assert path.read_text() == "new"
+        assert path.stat().st_mode & 0o777 == 0o600
+    finally:
+        folder.chmod(0o755)
+    assert list(stage.iterdir()) == []
+
+
+@pytest.mark.parametrize("code", [errno.EROFS, errno.EACCES, errno.EPERM])
+def test_a_directory_refusing_a_sibling_stages_the_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    # A bind-mounted file in a directory on a read-only file system refuses
+    # the sibling with EROFS, not a PermissionError: it is staged as well.
+    stage = _staged_in(monkeypatch, tmp_path)
+    folder = tmp_path / "mounted"
+    folder.mkdir()
+    path = folder / "f.json"
+    path.write_text("OLD")
+    real = os.open
+
+    def refuse(file: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if Path(file).parent == folder and Path(file).name.startswith(".f.json."):
+            raise OSError(code, os.strerror(code), str(file))
+        return real(file, flags, *args, **kwargs)
+
+    monkeypatch.setattr(files.os, "open", refuse)
+    atomic_write_text(path, "NEW")
+    assert path.read_text() == "NEW"
+    assert list(stage.iterdir()) == []
+    # No file yet: nothing to write in place, the directory's refusal.
+    with pytest.raises(OSError) as raised:
+        atomic_write_text(folder / "f.json.new", "x")
+    assert raised.value.errno == code
+
+
+def _copy_fails_midway(monkeypatch: pytest.MonkeyPatch) -> None:
+    def short(source: Any, out: Any, *_: Any) -> None:
+        out.write(source.read(3))
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    monkeypatch.setattr(files.shutil, "copyfileobj", short)
+
+
+@pytest.mark.skipif(_ROOT, reason="root writes into a read-only directory")
+def test_a_failed_copy_in_keeps_the_staged_text_and_names_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The copy into the file truncated it before it failed (a full disk):
+    # the staged file is the one whole copy of the new text, so it is kept
+    # and the error says where.
+    stage = _staged_in(monkeypatch, tmp_path)
+    folder = tmp_path / "ro"
+    folder.mkdir()
+    path = folder / "export.jsonl"
+    path.write_text("OLD")
+    folder.chmod(0o555)
+    _copy_fails_midway(monkeypatch)
+    try:
+        with pytest.raises(OSError) as raised:
+            atomic_write_text(path, "HALF-AND-REST")
+    finally:
+        folder.chmod(0o755)
+    (staged,) = stage.iterdir()
+    assert staged.read_text() == "HALF-AND-REST"
+    assert raised.value.errno == errno.ENOSPC
+    assert raised.value.filename == str(path) and str(staged) in str(raised.value)
+
+
+def test_a_failed_copy_in_after_a_refused_rename_keeps_the_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "mounted.json"
+    path.write_text("old")
+
+    def refuse(*_: Any) -> None:
+        raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
+
+    monkeypatch.setattr(files.os, "replace", refuse)
+    _copy_fails_midway(monkeypatch)
+    with pytest.raises(OSError) as raised:
+        atomic_write_text(path, "new text")
+    (kept,) = _temporaries(tmp_path, "mounted.json")
+    assert kept.read_text() == "new text" and str(kept) in str(raised.value)
+
+
+def test_a_copy_in_that_cannot_open_the_file_leaves_no_staged_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The file was never touched: its old text stands, nothing to keep.
+    path = tmp_path / "mounted.json"
+    path.write_text("old")
+
+    def refuse(*_: Any) -> None:
+        raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
+
+    monkeypatch.setattr(files.os, "replace", refuse)
+    path.chmod(0o444)
+    try:
+        if os.access(path, os.W_OK):
+            pytest.skip("root writes a read-only file")
+        with pytest.raises(PermissionError):
+            atomic_write_text(path, "new")
+    finally:
+        path.chmod(0o644)
+    assert path.read_text() == "old"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["mounted.json"]
+
+
+def test_the_temporary_name_fits_the_directory_s_name_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # eCryptfs allows 143 bytes: the limit is the directory's, not 255.
+    monkeypatch.setattr(files.os, "pathconf", lambda *_: 143)
+    temporary = temporary_sibling(tmp_path / ("a" * 140))
+    assert len(os.fsencode(temporary.name)) == 143
+
+    def unknown(*_: Any) -> int:
+        raise OSError(errno.EINVAL, os.strerror(errno.EINVAL))
+
+    monkeypatch.setattr(files.os, "pathconf", unknown)
+    temporary = temporary_sibling(tmp_path / ("a" * 255))
+    assert len(os.fsencode(temporary.name)) == files.NAME_MAX
+
+
+def test_a_read_only_descriptor_s_alias_names_the_path(tmp_path: Path) -> None:
+    (tmp_path / "f").write_text("kept")
+    fd = os.open(tmp_path / "f", os.O_RDONLY)
+    try:
+        alias = Path(f"/dev/fd/{fd}")
+        if not alias.exists():
+            pytest.skip("no /dev/fd here")
+        with pytest.raises(OSError) as raised:
+            atomic_write_text(alias, "x")
+    finally:
+        os.close(fd)
+    assert raised.value.errno == errno.EBADF
+    assert raised.value.filename == str(alias)
+    assert (tmp_path / "f").read_text() == "kept"
