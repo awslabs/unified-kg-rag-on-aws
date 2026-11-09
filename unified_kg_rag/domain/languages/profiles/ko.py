@@ -61,6 +61,9 @@ PROFILE = LanguageProfile(
     numeral_multipliers={"십": 10, "백": 100, "천": 1000, "만": 10**4, "억": 10**8},
     year_suffixes=("년", "이후", "이전", "이래"),
     range_particles=("부터", "까지"),
+    # The comparatives written after a number and its counter ("100명
+    # 이상", "100명을 넘는"): a bound, or a condition of what is absent.
+    postposed_comparatives=("이상", "이하", "초과", "미만", "넘는"),
     counters=("개사", "군데", "가지", "곳", "개", "명", "건", "회", "번", "대"),
     polarity_words={
         "예": "yes",

@@ -41,13 +41,15 @@ class Case:
     """One probe: ``text`` and the ``expected`` answer the review stated;
     ``context`` is the index language a detection falls back to, the
     answer language a number is read in, or the mention a stored name
-    covers."""
+    covers; ``question`` is the question a number answers (``None``: read
+    without one)."""
 
     text: str
     expected: object
     context: str | None
     source: str
     tradeoff: Tradeoff | None = None
+    question: str | None = None
 
     @property
     def answer(self) -> object:
@@ -151,17 +153,29 @@ SCALE_DIGITS = (
     "counter read without the scale (pre-existing; rv11 query low, outside "
     "this change)."
 )
-INNER_WORDS = (
-    'Words between a phrase of absence and a comparative ("non ha mai avuto '
-    'più di tre") read as the absent noun and its preposition ("non ci sono '
-    'fornitori con più di 50"): no rule without word classes tells an adverb '
-    "and a participle from them (rv13 query 2)."
+NO_QUESTION = (
+    "Read without its question, a number before a phrase of absence in its "
+    'clause reads first ("En el lote 7 no hay proveedores", "Поставщиков в '
+    'лоте 7 нет"), and one after a comparative it does not directly follow '
+    'is the absent thing\'s ("non ha mai avuto più di tre"): the question '
+    "tells a condition it states from a count (rv14 query 2 and 5)."
 )
-POSTPOSED = (
-    "A number before a phrase of absence written after its noun "
-    '("Поставщиков в лоте 7 нет") reads first, as a count before one does '
-    '("3 vendors do not have any contracts"); only one after a comparative '
-    "is a condition there (rv13 query 2)."
+RESTATED = (
+    "A number the question states is a condition when the rest of the "
+    'answer reads an absence, even one of something else ("no hay más" '
+    "after a yes/no question's own count): no rule without word classes "
+    "tells that absence from the asked one (rv14 query 2)."
+)
+PARTITIVE_ALL = (
+    'A number after a partitive word opening a clause ("Из семи '
+    'поставщиков", "Of the three vendors") is the whole a part is taken '
+    'from, no count; a part of "all" ("работают все") is no word the '
+    "profiles count (pre-existing design; rv14 query 6)."
+)
+HOMONYM = (
+    '"Семью" is also "семья" (family) in two of its cases, so it is left '
+    'out of the numerals: "с семью поставщиками" states no number (rv14 '
+    "query 6)."
 )
 WORD_GAPS = (
     'A word the profiles do not hold ("dozen", the article "un" for one, '
@@ -1156,7 +1170,7 @@ NUMBERS: tuple[Case, ...] = (
         3,
         "it",
         "rv12 query 2/4",
-        Tradeoff(0.0, INNER_WORDS),
+        Tradeoff(0.0, NO_QUESTION),
     ),
     Case("Non ci sono dubbi: tre fornitori.", 3, "it", "rv12 query 2/4"),
     Case("Non ci sono fornitori.", 0, "it", "rv12 query 2/4"),
@@ -1549,7 +1563,7 @@ NUMBERS: tuple[Case, ...] = (
     Case("Não há fornecedores com mais de 50 funcionários.", 0, "pt", "rv13 query 2"),
     Case("Поставщиков с более чем 50 сотрудниками нет.", 0, "ru", "rv13 query 2"),
     Case(
-        "Поставщиков в лоте 7 нет.", 0, "ru", "rv13 query 2", Tradeoff(7.0, POSTPOSED)
+        "Поставщиков в лоте 7 нет.", 0, "ru", "rv13 query 2", Tradeoff(7.0, NO_QUESTION)
     ),
     Case("Не более пяти поставщиков, точно нет шести.", 5, "ru", "rv13 query 2"),
     Case("3 vendors do not have any contracts.", 3, "en", "rv13 query 2"),
@@ -1591,6 +1605,514 @@ NUMBERS: tuple[Case, ...] = (
     ),
     Case("There are not any vendors, less thankfully.", 0, "en", "rv13 query 5"),
     Case("Нет больше поставщиков.", 0, "ru", "rv13 query 5"),
+    # rv14 query (numbers): a number the question states is a condition
+    # when the answer reads an absence; punctuation inside a number; ranges;
+    # Russian oblique numerals; CJK conditions.
+    Case(
+        "There are not any vendors with more than 1,000 employees.",
+        0,
+        "en",
+        "rv14 query",
+    ),
+    Case(
+        "Acme does not have any contracts worth more than $1,500,000.",
+        0,
+        "en",
+        "rv14 query",
+    ),
+    Case(
+        "There are not any suppliers with revenue above 2,500 units.",
+        0,
+        "en",
+        "rv14 query",
+    ),
+    Case(
+        "No hay proveedores con una facturación de más de 2,5 millones.",
+        0,
+        "es",
+        "rv14 query",
+    ),
+    Case(
+        "Il n'y a pas de fournisseur avec un chiffre d'affaires de 2,5 millions.",
+        0,
+        "fr",
+        "rv14 query",
+    ),
+    Case(
+        "Non ci sono fornitori con un fatturato di 2,5 milioni.", 0, "it", "rv14 query"
+    ),
+    Case("Não há fornecedores com faturamento de 2,5 milhões.", 0, "pt", "rv14 query"),
+    Case("Поставщиков с выручкой 2,5 млн нет.", 0, "ru", "rv14 query"),
+    Case("There are not any deliveries before 10:30.", 0, "en", "rv14 query"),
+    Case("No hay entregas antes de las 10:30.", 0, "es", "rv14 query"),
+    Case("Il n'y a pas de livraison avant 10:30.", 0, "fr", "rv14 query"),
+    Case("There are not any suppliers in lots 3–5.", 0, "en", "rv14 query"),
+    Case("No hay proveedores en los lotes 3–5.", 0, "es", "rv14 query"),
+    Case("Non ci sono fornitori nei lotti 3–5.", 0, "it", "rv14 query"),
+    Case(
+        "There are not any vendors with between 100 and 500 employees.",
+        0,
+        "en",
+        "rv14 query",
+    ),
+    Case(
+        "There are not any vendors with more than 100 but fewer than 500 employees.",
+        0,
+        "en",
+        "rv14 query",
+    ),
+    Case(
+        "No hay proveedores con más de 100 pero menos de 500 empleados.",
+        0,
+        "es",
+        "rv14 query",
+    ),
+    Case(
+        "Il n'y a pas de fournisseur avec plus de 100 mais moins de 500 salariés.",
+        0,
+        "fr",
+        "rv14 query",
+    ),
+    Case(
+        "Non ci sono fornitori con più di 100 ma meno di 500 dipendenti.",
+        0,
+        "it",
+        "rv14 query",
+    ),
+    Case(
+        "Não há fornecedores com mais de 100 mas menos de 500 funcionários.",
+        0,
+        "pt",
+        "rv14 query",
+    ),
+    Case(
+        "Поставщиков с более чем 100, но менее чем 500 сотрудниками нет.",
+        0,
+        "ru",
+        "rv14 query",
+    ),
+    Case(
+        "There are not any suppliers in Zone 2, Zone 3 or Zone 4.",
+        0,
+        "en",
+        "rv14 query",
+        question="How many suppliers are in Zone 2, Zone 3 or Zone 4?",
+    ),
+    Case("No hay proveedores en las zonas 2, 3 y 4.", 0, "es", "rv14 query"),
+    Case("Il n'y a pas de fournisseur dans les lots 2, 3 et 4.", 0, "fr", "rv14 query"),
+    Case("Non ci sono fornitori nei lotti 2, 3 e 4.", 0, "it", "rv14 query"),
+    Case("Não há fornecedores nos lotes 2, 3 e 4.", 0, "pt", "rv14 query"),
+    Case(
+        "There are not any vendors with more than 50 employees, according to the 2023 report.",
+        0,
+        "en",
+        "rv14 query",
+        question="According to the 2023 report, how many vendors have more than 50 employees?",
+    ),
+    Case(
+        "No hay proveedores con más de 50 empleados, según el informe.",
+        0,
+        "es",
+        "rv14 query",
+    ),
+    Case(
+        "There are not any vendors, among those with more than 100 employees.",
+        0,
+        "en",
+        "rv14 query",
+        question="How many vendors have more than 100 employees?",
+    ),
+    Case(
+        "No hay proveedores, al menos con más de 100 empleados.",
+        0,
+        "es",
+        "rv14 query",
+        question="¿Cuántos proveedores tienen más de 100 empleados?",
+    ),
+    Case("Il n'y a aucun fournisseur de plus de 100 salariés.", 0, "fr", "rv14 query"),
+    Case("Non c'è nessun fornitore con più di 100 dipendenti.", 0, "it", "rv14 query"),
+    Case(
+        "Es gibt keine Lieferanten mit mehr als 100 Mitarbeitern.",
+        0,
+        "de",
+        "rv14 query",
+    ),
+    Case("Es gibt keinen Lieferanten in Los 7.", 0, "de", "rv14 query"),
+    Case(
+        "Lieferanten mit mehr als 100 Mitarbeitern gibt es keine.",
+        0,
+        "de",
+        "rv14 query",
+        question="Wie viele Lieferanten haben mehr als 100 Mitarbeiter?",
+    ),
+    Case(
+        "Im Los 7 gibt es keine Lieferanten.",
+        0,
+        "de",
+        "rv14 query",
+        question="Wie viele Lieferanten gibt es im Los 7?",
+    ),
+    Case(
+        "In Zone 2, there are not any vendors.",
+        0,
+        "en",
+        "rv14 query",
+        question="How many vendors are there in Zone 2?",
+    ),
+    Case(
+        "For lot 7, Acme does not have any suppliers.",
+        0,
+        "en",
+        "rv14 query",
+        question="How many suppliers does Acme have for lot 7?",
+    ),
+    Case(
+        "En el lote 7 no hay proveedores.",
+        0,
+        "es",
+        "rv14 query",
+        question="¿Cuántos proveedores hay en el lote 7?",
+    ),
+    Case(
+        "Dans le lot 7, il n'y a pas de fournisseur.",
+        0,
+        "fr",
+        "rv14 query",
+        question="Combien de fournisseurs y a-t-il dans le lot 7 ?",
+    ),
+    Case(
+        "Nel lotto 7 non ci sono fornitori.",
+        0,
+        "it",
+        "rv14 query",
+        question="Quanti fornitori ci sono nel lotto 7?",
+    ),
+    Case(
+        "No lote 7 não há fornecedores.",
+        0,
+        "pt",
+        "rv14 query",
+        question="Quantos fornecedores há no lote 7?",
+    ),
+    Case(
+        "В лоте 7 поставщиков нет.",
+        0,
+        "ru",
+        "rv14 query",
+        question="Сколько поставщиков в лоте 7?",
+    ),
+    Case(
+        "Поставщиков, у которых больше 50 сотрудников, нет.",
+        0,
+        "ru",
+        "rv14 query",
+        question="Сколько поставщиков, у которых больше 50 сотрудников?",
+    ),
+    Case(
+        "Поставщиков, у которых более 100 сотрудников, нет.",
+        0,
+        "ru",
+        "rv14 query",
+        question="Сколько поставщиков, у которых более 100 сотрудников?",
+    ),
+    Case(
+        "Поставщиков с числом сотрудников больше 100 нет.",
+        0,
+        "ru",
+        "rv14 query",
+        question="Сколько поставщиков с числом сотрудников больше 100?",
+    ),
+    Case(
+        "Поставщиков старше 5 лет нет.",
+        0,
+        "ru",
+        "rv14 query",
+        question="Сколько поставщиков старше 5 лет?",
+    ),
+    Case("Нет поставщиков с более чем 100 сотрудниками.", 0, "ru", "rv14 query"),
+    Case("Нет поставщиков в лоте 7.", 0, "ru", "rv14 query"),
+    Case(
+        "Non ha mai avuto più di tre fornitori nel 2023.",
+        3,
+        "it",
+        "rv14 query",
+        question="Quanti fornitori ha avuto Acme nel 2023?",
+    ),
+    Case(
+        "Non hanno mai avuto più di due fornitori.",
+        2,
+        "it",
+        "rv14 query",
+        question="Quanti fornitori hanno avuto?",
+    ),
+    Case(
+        "Acme non ha avuto più di tre fornitori.",
+        3,
+        "it",
+        "rv14 query",
+        question="Quanti fornitori ha avuto Acme?",
+    ),
+    Case(
+        "Non ci sono mai stati più di tre fornitori.",
+        3,
+        "it",
+        "rv14 query",
+        question="Quanti fornitori ci sono stati?",
+    ),
+    Case(
+        "No tiene actualmente más de tres proveedores.",
+        3,
+        "es",
+        "rv14 query",
+        question="¿Cuántos proveedores tiene Acme?",
+    ),
+    Case(
+        "No hay actualmente más de tres proveedores.",
+        3,
+        "es",
+        "rv14 query",
+        question="¿Cuántos proveedores hay?",
+    ),
+    Case(
+        "No tiene ahora más de cinco plantas.",
+        5,
+        "es",
+        "rv14 query",
+        question="¿Cuántas plantas tiene Acme?",
+    ),
+    Case(
+        "Não há atualmente mais de três fornecedores.",
+        3,
+        "pt",
+        "rv14 query",
+        question="Quantos fornecedores há?",
+    ),
+    Case(
+        "Não tem hoje mais de cinco fábricas.",
+        5,
+        "pt",
+        "rv14 query",
+        question="Quantas fábricas a Acme tem?",
+    ),
+    Case(
+        "Acme does not currently have any more than 3 suppliers.", 3, "en", "rv14 query"
+    ),
+    Case("It does not have any more than 3 suppliers.", 3, "en", "rv14 query"),
+    Case("Non ci sono più di tre fornitori.", 3, "it", "rv14 query"),
+    Case("Нет более пяти поставщиков.", 5, "ru", "rv14 query"),
+    Case(
+        "Нет сейчас более пяти поставщиков.",
+        5,
+        "ru",
+        "rv14 query",
+        question="Сколько поставщиков у Acme?",
+    ),
+    Case("No hay proveedores locales, pero hay 4 extranjeros.", 4, "es", "rv14 query"),
+    Case("Il n'y a pas de fournisseur local, mais 4 étrangers.", 4, "fr", "rv14 query"),
+    Case("Non ci sono fornitori locali, ma 4 esteri.", 4, "it", "rv14 query"),
+    Case("Não há fornecedores locais, mas há 4 estrangeiros.", 4, "pt", "rv14 query"),
+    Case("Местных поставщиков нет, но есть 4 иностранных.", 4, "ru", "rv14 query"),
+    Case(
+        "Acme does not have any local suppliers but it has 4 foreign ones.",
+        4,
+        "en",
+        "rv14 query",
+    ),
+    Case("There is not any doubt: the answer is 6.", 6, "en", "rv14 query"),
+    Case("No hay duda — son seis.", 6, "es", "rv14 query"),
+    Case("Non c'è dubbio: sono sei.", 6, "it", "rv14 query"),
+    Case("Нет сомнений: их шесть.", 6, "ru", "rv14 query"),
+    Case("Il n'y a pas de doute, ils sont six.", 6, "fr", "rv14 query"),
+    Case("Não há dúvida de que são seis.", 6, "pt", "rv14 query"),
+    Case("No hay duda de que son seis.", 6, "es", "rv14 query"),
+    Case("Не более пяти поставщиков.", 5, "ru", "rv14 query"),
+    Case("Около шести поставщиков.", 6, "ru", "rv14 query"),
+    Case(
+        "Из семи поставщиков работают все.",
+        7,
+        "ru",
+        "rv14 query",
+        Tradeoff(None, PARTITIVE_ALL),
+    ),
+    Case("Свыше восьми поставщиков.", 8, "ru", "rv14 query"),
+    Case("До девяти поставщиков.", 9, "ru", "rv14 query"),
+    Case("Не менее десяти поставщиков.", 10, "ru", "rv14 query"),
+    Case("Компания работает с пятью поставщиками.", 5, "ru", "rv14 query"),
+    Case(
+        "Компания работает с семью поставщиками.",
+        7,
+        "ru",
+        "rv14 query",
+        Tradeoff(None, HOMONYM),
+    ),
+    Case("С восемью поставщиками.", 8, "ru", "rv14 query"),
+    Case("С десятью поставщиками.", 10, "ru", "rv14 query"),
+    Case("О пяти поставщиках известно.", 5, "ru", "rv14 query"),
+    Case("Около двадцати поставщиков.", 20, "ru", "rv14 query"),
+    Case("Около одиннадцати поставщиков.", 11, "ru", "rv14 query"),
+    Case("Не более пятнадцати поставщиков.", 15, "ru", "rv14 query"),
+    Case("Около тридцати поставщиков.", 30, "ru", "rv14 query"),
+    Case("Около ста поставщиков.", 100, "ru", "rv14 query"),
+    Case("Около двадцати пяти поставщиков.", 25, "ru", "rv14 query"),
+    Case("Пятый поставщик закрыт.", None, "ru", "rv14 query"),
+    Case("Поставщиков пять.", 5, "ru", "rv14 query"),
+    Case("У компании семь поставщиков.", 7, "ru", "rv14 query"),
+    Case(
+        "従業員100人以上の仕入先はありません。",
+        0,
+        "ja",
+        "rv14 query",
+        question="従業員100人以上の仕入先は何社ありますか？",
+    ),
+    Case(
+        "100人以上の従業員がいる仕入先はいません。",
+        0,
+        "ja",
+        "rv14 query",
+        question="100人以上の従業員がいる仕入先は何社ですか？",
+    ),
+    Case(
+        "ロット7には仕入先がありません。",
+        0,
+        "ja",
+        "rv14 query",
+        question="ロット7には仕入先が何社ありますか？",
+    ),
+    Case(
+        "직원 100명 이상인 공급업체는 없습니다.",
+        0,
+        "ko",
+        "rv14 query",
+        question="직원 100명 이상인 공급업체는 몇 곳입니까?",
+    ),
+    Case(
+        "7번 로트에는 공급업체가 없습니다.",
+        0,
+        "ko",
+        "rv14 query",
+        question="7번 로트에는 공급업체가 몇 곳 있습니까?",
+    ),
+    Case(
+        "직원이 100명을 넘는 공급업체는 없습니다.",
+        0,
+        "ko",
+        "rv14 query",
+        question="직원이 100명을 넘는 공급업체는 몇 곳입니까?",
+    ),
+    Case(
+        "员工超过100人的供应商没有。",
+        0,
+        "zh",
+        "rv14 query",
+        question="员工超过100人的供应商有几家？",
+    ),
+    Case("没有员工超过100人的供应商。", 0, "zh", "rv14 query"),
+    Case("第7批次没有供应商。", 0, "zh", "rv14 query"),
+    Case(
+        "7号批次没有供应商。", 0, "zh", "rv14 query", question="7号批次有几家供应商？"
+    ),
+    Case("No hay proveedores, más bien distribuidores.", 0, "es", "rv14 query"),
+    Case("Non ci sono fornitori più grandi.", 0, "it", "rv14 query"),
+    Case("Il n'y a pas de fournisseur plus grand.", 0, "fr", "rv14 query"),
+    Case("Acme does not have any more suppliers than Beta.", 0, "en", "rv14 query"),
+    Case("Поставщиков больше нет.", 0, "ru", "rv14 query"),
+    Case("Больше поставщиков нет.", 0, "ru", "rv14 query"),
+    Case("Нет больше пяти поставщиков.", 5, "ru", "rv14 query"),
+    Case("Поставщиков больше пяти нет.", 0, "ru", "rv14 query"),
+    Case(
+        "There are not any vendors with fewer than 3 plants; most have 5.",
+        0,
+        "en",
+        "rv14 query",
+    ),
+    # The question restating the count the answer confirms (rv14 query 2).
+    Case("Yes, 4.", 4, "en", "rv14 query 2", question="Does Acme have 4 suppliers?"),
+    Case(
+        "Acme has 4 suppliers.",
+        4,
+        "en",
+        "rv14 query 2",
+        question="Does Acme have 4 suppliers?",
+    ),
+    Case(
+        "Sí, Acme tiene 4 proveedores.",
+        4,
+        "es",
+        "rv14 query 2",
+        question="¿Tiene Acme 4 proveedores?",
+    ),
+    Case(
+        "Acme tiene tres proveedores; no hay más.",
+        3,
+        "es",
+        "rv14 query 2",
+        Tradeoff(0.0, RESTATED),
+        question="¿Tiene Acme tres proveedores?",
+    ),
+    Case(
+        "No hay más de tres proveedores.",
+        3,
+        "es",
+        "rv14 query 2",
+        question="¿Cuántos proveedores hay?",
+    ),
+    Case(
+        "No hay proveedores con más de 50 empleados.",
+        0,
+        "es",
+        "rv14 query 2",
+        question="¿Cuántos proveedores tienen más de 50 empleados?",
+    ),
+    Case(
+        "Поставщиков с более чем 50 сотрудниками нет.",
+        0,
+        "ru",
+        "rv14 query 2",
+        question="Сколько поставщиков с более чем 50 сотрудниками?",
+    ),
+    Case(
+        "没有超过三家供应商。",
+        3,
+        "zh",
+        "rv14 query 5",
+        question="有几家供应商？",
+    ),
+    Case(
+        "没有超过三家供应商的批次。",
+        0,
+        "zh",
+        "rv14 query 5",
+        question="超过三家供应商的批次有几个？",
+    ),
+    Case(
+        "没有三家以上的供应商。",
+        3,
+        "zh",
+        "rv14 query 5",
+        question="有几家供应商？",
+    ),
+    Case(
+        "没有三家以上的供应商。",
+        0,
+        "zh",
+        "rv14 query 5",
+        question="三家以上的供应商有几个批次？",
+    ),
+    # Without the question, a condition before the phrase reads first.
+    Case(
+        "En el lote 7 no hay proveedores.",
+        0,
+        "es",
+        "rv14 query 5",
+        Tradeoff(7.0, NO_QUESTION),
+    ),
+    Case(
+        "従業員100人以上の仕入先はありません。",
+        0,
+        "ja",
+        "rv14 query 5",
+        Tradeoff(100.0, NO_QUESTION),
+    ),
 )
 
 ROUTER: tuple[Case, ...] = (

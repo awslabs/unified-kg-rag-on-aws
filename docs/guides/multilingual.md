@@ -153,5 +153,8 @@ and reads its number words and its words and phrases for none ("no hay",
 "il n'y a pas de"; not one a comparative directly follows, "No hay más de tres" is 3,
 nor one a count follows after a clause break, "No hay duda de que son tres"; a number in
 the absent thing's own phrase, "No hay proveedores en el lote 7", leaves it 0) in place of
-the English ones (Spanish "no" is no zero). The rules:
+the English ones (Spanish "no" is no zero). A `number` item's question tells a condition
+from a count in every language: a number the question states is no count where the answer
+reads an absence ("En el lote 7 no hay proveedores" asked about lot 7, "従業員100人以上の
+仕入先はありません" asked about suppliers with 100 or more staff, are 0). The rules:
 [`answer_match`](../reference/evaluation-output.md#answer_match).

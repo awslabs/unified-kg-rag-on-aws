@@ -126,5 +126,8 @@ processing:
 관사도 지우고 영어 대신 그 언어의 수사와 '없음'을 뜻하는 말과 구("no hay", "il n'y a pas
 de". 바로 뒤에 비교 표현이 오는 구("No hay más de tres"는 3)와 절이 나뉜 뒤 수가 오는 구("No hay duda
 de que son tres"는 3)는 제외. 없는 대상을 꾸미는 말 속의 수는 세지 않아 "No hay proveedores en el lote
-7"은 0)를 읽습니다(스페인어 "no"는 0이 아닙니다).
+7"은 0)를 읽습니다(스페인어 "no"는 0이 아닙니다). `number` 항목은 언어와 관계없이 질문으로 조건과
+개수를 구분합니다. 답변이 '없음'을 말할 때 질문에 나온 수는 개수가 아닌 조건으로 읽습니다(로트 7을
+물은 질문에 "En el lote 7 no hay proveedores", 직원 100명 이상인 공급업체를 물은 질문에
+"従業員100人以上の仕入先はありません"은 0).
 규칙은 [`answer_match`](../reference/evaluation-output.md#answer_match)(영문)에 있습니다.

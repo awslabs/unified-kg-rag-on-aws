@@ -527,17 +527,23 @@ class TestLanguageNormalization:
         assert _values(english)["exact_match"] == 0.0
 
 
-def _report(config: Config, answer: str, ground_truth: str, metadata: dict):
+def _report(
+    config: Config,
+    answer: str,
+    ground_truth: str,
+    metadata: dict,
+    question: str = "?",
+):
     evaluator = AnswerMatchEvaluator(config)
     result = EvaluationResult(
         query_id="q",
-        question="?",
+        question=question,
         generated_answer=answer,
         ground_truth=ground_truth,
         metadata=metadata,
     )
     return evaluator.evaluate_single(
-        EvaluationQuery(query_id="q", question="?"), result, ground_truth
+        EvaluationQuery(query_id="q", question=question), result, ground_truth
     )
 
 
@@ -779,6 +785,25 @@ class TestHotpotQARule:
         # Other golds keep partial credit, with the official normalization.
         report = _report(config, "Depot and Mill", "Depot", {})
         assert _values(report)["token_f1"] == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize(
+    ("question", "answer", "gold", "contains"),
+    [
+        # A number the question states is a condition of the absent thing.
+        ("¿Cuántos proveedores hay en el lote 7?", "En el lote 7 no hay.", "0", 1.0),
+        ("仕入先は従業員100人以上で何社?", "100人以上の仕入先はありません。", "0", 1.0),
+        # One the answer adds after a comparative bounds the count.
+        ("Quanti fornitori ha avuto Acme?", "Non ha mai avuto più di tre.", "3", 1.0),
+        # No absence: the question's number is the count it confirms.
+        ("Does Acme have 4 suppliers?", "Yes, 4.", "4", 1.0),
+    ],
+)
+def test_a_number_item_reads_the_question(
+    config: Config, question: str, answer: str, gold: str, contains: float
+) -> None:
+    report = _report(config, answer, gold, {"answer_type": "number"}, question)
+    assert _values(report)["answer_contains"] == contains
 
 
 def test_answer_contains_reads_through_a_possessive() -> None:

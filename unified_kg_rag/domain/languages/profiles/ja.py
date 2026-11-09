@@ -69,6 +69,9 @@ PROFILE = LanguageProfile(
     },
     year_suffixes=("年", "以降", "以来", "以前"),
     range_particles=("から", "まで"),
+    # The comparatives written after a number and its counter ("100人以上",
+    # "100人を超える"): a bound, or a condition of what is absent.
+    postposed_comparatives=("以上", "以下", "未満", "超"),
     counters=(
         "社",
         "つ",

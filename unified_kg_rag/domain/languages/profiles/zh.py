@@ -89,6 +89,24 @@ PROFILE = LanguageProfile(
     # And a sum of money ("三千万元").
     year_suffixes=("年", "以来", "以后", "以後", "之后", "之後"),
     range_particles=("起", "到", "至"),
+    # The comparatives written before a number ("超过100人") and after it
+    # and its counter ("100人以上"): a bound, or a condition of what is
+    # absent.
+    comparatives=(
+        "超过",
+        "超過",
+        "多于",
+        "多於",
+        "少于",
+        "少於",
+        "高于",
+        "高於",
+        "低于",
+        "低於",
+        "不到",
+        "不足",
+    ),
+    postposed_comparatives=("以上", "以下"),
     counters=("家", "个", "個", "件", "人", "名", "台", "元"),
     polarity_words={
         "是": "yes",
