@@ -111,7 +111,11 @@ SHARED_WORD = (
 )
 SHARED_TIE = (
     'Its one function word ("como") is Spanish and Portuguese alike: tied, '
-    "with no article of either, they leave the index language (rv14 query 4)."
+    "they leave the index language, a third one too, and so does a tie "
+    "beside a word no list holds, a verb or an article only one of them "
+    'writes ("Como funciona?" on an English or Korean index, "Como faço '
+    'para cancelar?", "Como funciona o contrato?" on a Spanish one; rv14 '
+    "query 4, rv15 query)."
 )
 NO_LISTED_WORD = (
     'No word of the text is in its language\'s list ("Comparar" is a verb, '

@@ -113,6 +113,15 @@ def test_a_function_word_two_languages_write_ties_them_to_the_index() -> None:
     assert text_language("Como funciona o sistema?", "en") is LanguageCode.PT
 
 
+def test_es_gibt_is_german() -> None:
+    # Regression (rv15 query low): "es" is a Spanish function word, so "Es
+    # gibt keine Lieferanten" held one Spanish word and no German one.
+    assert text_language("Es gibt keine Lieferanten.", "en") is LanguageCode.DE
+    assert text_language("Gibt es keine Lieferanten?", "en") is LanguageCode.DE
+    assert text_language("Wie viele Lieferanten gibt es?", "en") is LanguageCode.DE
+    assert text_language("Es grande el contrato?", "en") is LanguageCode.ES
+
+
 def test_no_word_states_two_meanings_across_languages() -> None:
     # A consumer reads the union of every profile's words: a word may not
     # name two statuses, months or polarities in two languages.

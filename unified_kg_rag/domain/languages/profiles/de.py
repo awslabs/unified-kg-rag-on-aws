@@ -16,7 +16,7 @@ PROFILE = LanguageProfile(
     ),
     function_words=frozenset(
         "der die das was wer wie warum wann wo ist sind war wurde ein eine und "
-        "mit von nicht welche welcher".split()
+        "mit von nicht welche welcher gibt kein keine".split()
     ),
     no_value_words=("unbekannt", "keine", "keiner"),
     articles=frozenset(
