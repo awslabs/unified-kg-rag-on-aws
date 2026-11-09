@@ -89,10 +89,17 @@ def atomic_open(
     into it when the block ends. The file is opened before a write is
     staged elsewhere, so one that would refuse the copy too (a read-only
     file, a read-only file system) fails before the block runs, with its
-    own error and path. A block that raises still leaves the file as it
-    was, but a reader may see the copy half made, and a copy that fails
-    once it has begun (a full disk) keeps the staged file and names it in
-    the error, the one whole copy of the new text left.
+    own error and path. That opened file, not the path, is what the copy
+    goes into: one another writer renamed a file over or removed while the
+    block ran is no longer at the path, so the copy is refused (the text
+    would land in a file no path names). A file whose directory takes a
+    sibling is not opened first (a read-only file is replaced, not
+    written), so a read-only file bind-mounted into a writable directory
+    fails only once the block has ended and the rename is refused. A block
+    that raises still leaves the file as it was, but a reader may see the
+    copy half made; a copy that is refused or fails once it has begun (a
+    full disk) keeps the staged file and names it in the error, the one
+    whole copy of the new text left.
     ``fsync`` flushes the data to disk before the rename and the directory
     after it (a copied-in file, once copied), for state that must survive
     a power loss, not just a crash; a directory that cannot be flushed (no
@@ -146,10 +153,10 @@ def atomic_open(
         # file system) fails now, with its own error and path, not after
         # the whole export is staged.
         held = _open_in_place(target)
-        logger.debug(
-            "cannot create %s (%s); staging %s elsewhere", temp_path, error, target
-        )
-        try:
+        try:  # from here on ``held`` is closed on any way out
+            logger.debug(
+                "cannot create %s (%s); staging %s elsewhere", temp_path, error, target
+            )
             temp_path = temporary_sibling(Path(tempfile.gettempdir()) / target.name)
             temp = created(temp_path, True)
         except BaseException:
@@ -230,7 +237,9 @@ def _copy_in(staged: Path, target: Path, *, fsync: bool, held: int | None) -> No
     inode, mode and links) through ``held``, the descriptor it was opened
     on when the write was staged (opened now when None), flushed to disk
     with ``fsync``, and remove ``staged``: the finished text of a file that
-    cannot be renamed over. Once ``target`` is emptied a failure keeps
+    cannot be renamed over. The descriptor pins the file, not the path: a
+    file renamed over ``target`` or removed since it was opened is not
+    written. That refusal, or a failure once ``target`` is emptied, keeps
     ``staged``, the one whole copy of the new text, and names it in the
     error."""
     try:
@@ -250,6 +259,10 @@ def _copy_in(staged: Path, target: Path, *, fsync: bool, held: int | None) -> No
         raise
     try:
         with source, out:
+            if not _still_named(out.fileno(), target):
+                raise OSError(
+                    errno.ESTALE, "it was replaced or removed while its text was staged"
+                )
             out.truncate(0)
             shutil.copyfileobj(source, out)
             if fsync:
@@ -265,6 +278,18 @@ def _copy_in(staged: Path, target: Path, *, fsync: bool, held: int | None) -> No
         logger.warning("%s was cut short; its new text is kept in %s", target, staged)
         raise
     staged.unlink()
+
+
+def _still_named(fd: int, path: Path) -> bool:
+    """Whether ``fd`` is still open on the file at ``path``: another writer
+    may have renamed a new file over it or removed it since it was opened,
+    and a write through ``fd`` would then go into a file no path names."""
+    held = os.fstat(fd)
+    try:
+        now = path.stat()
+    except FileNotFoundError:
+        return False
+    return (held.st_dev, held.st_ino) == (now.st_dev, now.st_ino)
 
 
 # A rename over an existing file that a write in place still makes: a

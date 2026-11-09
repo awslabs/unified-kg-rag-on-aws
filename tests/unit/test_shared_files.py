@@ -587,6 +587,74 @@ def test_a_failed_copy_in_keeps_the_staged_text_and_names_it(
     assert raised.value.filename == str(path) and str(staged) in str(raised.value)
 
 
+@pytest.mark.skipif(_ROOT, reason="root writes into a read-only directory")
+@pytest.mark.parametrize("how", ["replaced", "removed"])
+def test_a_file_replaced_while_its_write_is_staged_keeps_the_staged_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str
+) -> None:
+    # The staged write holds the file open from before the block; another
+    # writer (the directory's owner) renames a new file over it, or removes
+    # it, meanwhile. Writing through the held descriptor would put the
+    # export into a file no path names: it fails instead, naming the copy.
+    stage = _staged_in(monkeypatch, tmp_path)
+    folder = tmp_path / "ro"
+    folder.mkdir()
+    path = folder / "export.jsonl"
+    path.write_text("OLD")
+    folder.chmod(0o555)
+    try:
+        with pytest.raises(OSError) as raised, files.atomic_open(path) as out:
+            out.write("NEW EXPORT")
+            folder.chmod(0o755)
+            if how == "replaced":
+                (folder / "theirs").write_text("theirs")
+                os.replace(folder / "theirs", path)
+            else:
+                path.unlink()
+            folder.chmod(0o555)
+    finally:
+        folder.chmod(0o755)
+    (staged,) = stage.iterdir()
+    assert staged.read_text() == "NEW EXPORT"
+    assert raised.value.filename == str(path) and str(staged) in str(raised.value)
+    if how == "replaced":
+        assert path.read_text() == "theirs"  # the other writer's text stands
+
+
+@pytest.mark.skipif(_ROOT, reason="root writes into a read-only directory")
+def test_an_interrupt_right_after_the_file_is_opened_closes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Ctrl-C between opening the file to stage its write and the block:
+    # the descriptor is closed, not leaked.
+    _staged_in(monkeypatch, tmp_path)
+    folder = tmp_path / "ro"
+    folder.mkdir()
+    path = folder / "export.jsonl"
+    path.write_text("OLD")
+    opened: list[int] = []
+    real = files._open_in_place
+    monkeypatch.setattr(
+        files, "_open_in_place", lambda p: (opened.append(real(p)), opened[-1])[1]
+    )
+
+    def interrupt(*_: Any) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(files.logger, "debug", interrupt)
+    folder.chmod(0o555)
+    try:
+        with pytest.raises(KeyboardInterrupt), files.atomic_open(path):
+            pytest.fail("the block runs after the interrupt")
+    finally:
+        folder.chmod(0o755)
+    (fd,) = opened
+    with pytest.raises(OSError) as closed:
+        os.fstat(fd)
+    assert closed.value.errno == errno.EBADF
+    assert path.read_text() == "OLD"
+
+
 def test_a_failed_copy_in_after_a_refused_rename_keeps_the_sibling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
