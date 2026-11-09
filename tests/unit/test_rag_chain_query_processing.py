@@ -361,6 +361,33 @@ async def test_an_unreadable_keyword_answer_is_a_recorded_degradation(
     assert [(e.step, e.error_type) for e in ledger.entries] == [
         ("keyword_extraction", "OutputParserException")
     ]
+    assert ledger.entries[0].reason == (
+        "keyword answer unreadable; searched the raw query as its low-level keyword"
+    )
+
+
+async def test_the_keyword_degradation_says_when_no_fallback_ran(
+    config: Config,
+) -> None:
+    # Regression (rv9 query M2): the reason (and the WARNING) said the raw
+    # query was searched when it was too long for the fallback.
+    from unified_kg_rag.adapters.retrieval.base import degradation_scope
+
+    config.processing.ignore_errors = False
+    chain = _chain(config)
+    chain.factory = ScriptedLLMFactory(lambda _system, _human: "still not JSON")
+    chain._get_chain_for_prompt = (  # type: ignore[assignment]
+        lambda *a, **k: _FakeChain("Sorry, no keywords today.")
+    )
+    question = "Which suppliers of Buyer A delivered parts to the warehouse in 2024?"
+    with degradation_scope() as ledger:
+        await chain._process_query_step(
+            {"query": question, "resolved_strategy": SearchStrategy.MIX}
+        )
+    assert [e.reason for e in ledger.entries] == [
+        f"keyword answer unreadable; no raw-query fallback ({len(question)} "
+        "characters, limit 50): no entities or relationships searched"
+    ]
 
 
 async def test_a_failed_keyword_call_still_fails_without_ignore_errors(

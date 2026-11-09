@@ -675,6 +675,24 @@ class BaseSearchStrategy(ABC):
         """The ``prefixes`` the configured pipeline builds."""
         return [p for p in configured_index_prefixes(self.config) if p in prefixes]
 
+    async def _claims_index_exists(self, suffix: str | None) -> bool:
+        """Whether the namespace's claims index exists (or the store cannot
+        tell). A namespace whose claim extraction found no claim holds none:
+        a search of it would WARN of a missing index on every query (local's
+        claims section, simple's sweep). Asked until the index is found,
+        then remembered per suffix."""
+        found: set[str | None] = self.__dict__.setdefault("_claims_indexes", set())
+        if suffix in found or self.document_retriever is None:
+            return True
+        prefix = self.config.indexing.opensearch.claims_index_prefix
+        exists = await self.document_retriever.ahas_index(prefix, suffix)
+        if exists is False:
+            logger.debug("No claims index for suffix '%s': no claims to read", suffix)
+            return False
+        if exists:
+            found.add(suffix)
+        return True
+
     def _reads_artifact(self, query: SearchQuery, artifact: IndexArtifact) -> bool:
         """Whether ``query``'s searches read the optional index ``artifact``
         (claims, the relationship vectors, the reports): a run of the config

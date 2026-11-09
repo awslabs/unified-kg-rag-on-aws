@@ -60,9 +60,11 @@ answer's own graph citations (`citation_lineage`). The ledger is the one
 channel: query processing records its fallbacks there (no field of
 `ProcessedQuery` repeats them), and a caller driving the composed runnable
 without `ainvoke` gets a ledger opened at its entry. `AnswerView`
-(`QueryOutcome.of`, over `DegradationReport.of`) reads the three keys back
-for the console (a "partial answer" notice), the MCP tools (`degraded`,
-`degraded_error`, `citations_unresolved` after the answer) and `run-rag`.
+(`QueryOutcome.of_output`, over `DegradationReport.of`) reads the three keys
+back, with an absorbed error's class, type and message, for the console (a
+"partial answer" notice), the MCP tools (`degraded`, `degraded_error`,
+`citations_unresolved` after the answer) and `run-rag`, none of which reads
+the metadata keys itself.
 `run-eval` counts the answers with any entry (`degraded_queries`).
 
 A query is checked before its first model call: its namespace is resolved
@@ -166,9 +168,7 @@ exposes a best-effort `close()` / `aclose()` that never raises:
 - **Language-aware parsing.** Query entities split at `,`, `，`, `、`,
   `;`, `；` and line breaks (`domain/retrieval/query_entities.py`). Global
   search's relevance rating skips a scale written in Korean, Japanese or
-  Chinese as in English; LightRAG's raw-query fallback gate counts a
-  dense-script character as `LATIN_CHARS_PER_TOKEN` characters (upstream
-  counts characters); claim dates read `2024年3月15日`, `2024년 3월`,
+  Chinese as in English; claim dates read `2024年3月15日`, `2024년 3월`,
   `2024. 3.`, Japanese era years (`令和6年`) and CJK quarters, the month
   names of German, Spanish, French, Italian, Portuguese and Russian
   (`15. März 2024`, `15 de marzo de 2024`), and corpus-language

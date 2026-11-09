@@ -8,9 +8,9 @@ client's ``ConnectionError``, botocore's ``EndpointConnectionError``). Read
 as any other failure it was retried for minutes and reported as "produced 0
 outputs" or a traceback. :func:`model_unreachable_error` turns it into a
 :class:`ModelUnreachableError` naming the provider kind and ``base_url`` of
-the configured model servers, with how to start one (``ollama serve``, the
-models to pull): at ingestion's embedding probe, before any extraction, and
-for a query.
+the configured model servers (a bedrock one by its region's endpoint), with
+how to start one (``ollama serve``, the models to pull) or reach it: at
+ingestion's embedding probe, before any extraction, and for a query.
 """
 
 from __future__ import annotations
@@ -63,17 +63,28 @@ def is_unreachable_error(exc: BaseException) -> bool:
     return False
 
 
+def bedrock_runtime_url(region: str) -> str:
+    """The Bedrock runtime endpoint of ``region``: what a bedrock model
+    server is reached at (its ``base_url`` is ignored)."""
+    return f"https://bedrock-runtime.{region}.amazonaws.com"
+
+
 def _servers(config: Config) -> list[tuple[str, str, str | None]]:
-    """``(settings, kind, base_url)`` of the language and embedding model
-    servers, one entry for the two when they are the same."""
+    """``(settings, kind, url)`` of the language and embedding model
+    servers, one entry for the two when they are the same: a bedrock one
+    at its region's runtime endpoint (a ``base_url`` left by the local
+    preset is not where it is reached)."""
     found: dict[tuple[str, str | None], list[str]] = {}
     for setting, provider in (
         ("providers.llm", config.providers.llm),
         ("providers.embedding", config.providers.embedding),
     ):
-        url = provider.base_url or (
-            _OLLAMA_DEFAULT if provider.kind == OLLAMA else None
-        )
+        if provider.kind == BEDROCK:
+            url: str | None = bedrock_runtime_url(config.aws.bedrock_region)
+        else:
+            url = provider.base_url or (
+                _OLLAMA_DEFAULT if provider.kind == OLLAMA else None
+            )
         found.setdefault((provider.kind, url), []).append(setting)
     return [(" and ".join(names), kind, url) for (kind, url), names in found.items()]
 
@@ -92,6 +103,11 @@ def _failed_endpoint(exc: BaseException) -> tuple[str, int | None] | None:
         if url:
             return _endpoint(str(url))
     return None
+
+
+def _url_of(endpoint: tuple[str, int | None]) -> str:
+    host, port = endpoint
+    return f"https://{host}" if port in (None, 443) else f"https://{host}:{port}"
 
 
 def _endpoint(url: str) -> tuple[str, int | None]:
@@ -125,7 +141,10 @@ def _hint(config: Config, servers: list[tuple[str, str, str | None]]) -> str:
             f"(ollama pull, for each of: {models}), or set its base_url."
         )
     if all(kind == BEDROCK for _, kind, _ in servers):
-        return "Check the network path to Bedrock (a VPC endpoint, a proxy)."
+        return (
+            "Check aws.bedrock_region (a region Bedrock is offered in) and the "
+            "network path to Bedrock (a VPC endpoint, a proxy)."
+        )
     return "Start the server, or set its base_url."
 
 
@@ -140,11 +159,21 @@ def model_unreachable_error(
         return exc
     servers = _servers(config)
     if (failed := _failed_endpoint(exc)) is not None:
-        servers = [
-            server
-            for server in servers
-            if server[2] is not None and _endpoint(server[2]) == failed
-        ] or servers
+        servers = (
+            [
+                server
+                for server in servers
+                if server[2] is not None and _endpoint(server[2]) == failed
+            ]
+            or [
+                # Another Bedrock endpoint (the control plane resolving a
+                # profile, an AWS_ENDPOINT_URL override): the one that failed.
+                (setting, kind, _url_of(failed))
+                for setting, kind, _ in servers
+                if kind == BEDROCK
+            ]
+            or servers
+        )
     named = ", ".join(
         f"{setting} ({kind}{f' at {url}' if url else ''})"
         for setting, kind, url in servers

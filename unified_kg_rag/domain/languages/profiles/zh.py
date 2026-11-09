@@ -3,7 +3,7 @@
 """Chinese, simplified and traditional."""
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.profile import LanguageProfile
+from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 
 PROFILE = LanguageProfile(
     code=LanguageCode.ZH,
@@ -77,8 +77,16 @@ PROFILE = LanguageProfile(
         "两": 2,
         "兩": 2,
     },
-    numeral_multipliers={"十": 10, "百": 100, "千": 1000},
-    counters=("家", "个", "個", "件", "人", "名"),
+    numeral_multipliers={
+        "十": 10,
+        "百": 100,
+        "千": 1000,
+        "万": 10**4,
+        "萬": 10**4,
+        "亿": 10**8,
+        "億": 10**8,
+    },
+    counters=("家", "个", "個", "件", "人", "名", "台"),
     polarity_words={
         "是": "yes",
         "是的": "yes",
@@ -90,4 +98,5 @@ PROFILE = LanguageProfile(
         "没有": "no",
     },
     quote_pairs=(("「", "」"), ("『", "』")),
+    chars_per_token={CLAUDE_TOKENIZER: 0.95},
 )

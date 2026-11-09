@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from unified_kg_rag.domain.languages import CLAUDE_TOKENIZER
 from unified_kg_rag.domain.models import (
     EmbeddingModelId,
     LanguageModelId,
@@ -107,6 +108,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         native_1m_context_window=True,
         adaptive_thinking_only=True,
         token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
+        tokenizer=CLAUDE_TOKENIZER,
         supported_efforts=_ANTHROPIC_EFFORTS_ALL,
         supports_sampling_params=False,
         requires_inference_profile=True,
@@ -122,6 +124,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         native_1m_context_window=True,
         adaptive_thinking_only=True,
         token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
+        tokenizer=CLAUDE_TOKENIZER,
         supported_efforts=_ANTHROPIC_EFFORTS_ALL,
         supports_sampling_params=False,
         requires_inference_profile=True,
@@ -144,6 +147,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         native_1m_context_window=True,
         adaptive_thinking_only=True,
         token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
+        tokenizer=CLAUDE_TOKENIZER,
         supported_efforts=_ANTHROPIC_EFFORTS_ALL,
         supports_sampling_params=False,
         requires_inference_profile=True,
@@ -161,6 +165,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         native_1m_context_window=True,
         adaptive_thinking_only=True,
         token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
+        tokenizer=CLAUDE_TOKENIZER,
         supports_sampling_params=False,
         requires_inference_profile=True,
         supports_count_tokens=False,
@@ -175,6 +180,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         native_1m_context_window=True,
         adaptive_thinking_only=True,
         token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
+        tokenizer=CLAUDE_TOKENIZER,
         # Opus 5 also accepts {'type': 'disabled'}, but only at effort <= high.
         # We always send adaptive, so that cap never applies.
         supports_sampling_params=False,
@@ -195,6 +201,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         native_1m_context_window=True,
         adaptive_thinking_only=True,
         token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
+        tokenizer=CLAUDE_TOKENIZER,
         supported_efforts=_ANTHROPIC_EFFORTS_ALL,
         supports_sampling_params=False,
         requires_inference_profile=True,
@@ -210,6 +217,7 @@ _LANGUAGE_MODEL_INFO: dict[str, LanguageModelInfo] = {
         native_1m_context_window=True,
         adaptive_thinking_only=True,
         token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
+        tokenizer=CLAUDE_TOKENIZER,
         supported_efforts=_ANTHROPIC_EFFORTS_ALL,
         supports_sampling_params=False,
         requires_inference_profile=True,
@@ -517,6 +525,7 @@ _CLAUDE_ADAPTIVE_ONLY_DEFAULT = LanguageModelInfo(
     supports_thinking=True,
     adaptive_thinking_only=True,
     token_estimate_multiplier=_CLAUDE_4_7_TOKENIZER_MULTIPLIER,
+    tokenizer=CLAUDE_TOKENIZER,
     supports_sampling_params=False,
     supports_count_tokens=False,
 )

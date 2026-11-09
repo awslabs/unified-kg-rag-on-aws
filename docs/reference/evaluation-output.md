@@ -693,7 +693,9 @@ list, top level or under `metadata`, which wins), taking the maximum.
   `answer_contains` reads it: `number` compares the first number the
   answer (its extracted span, with `extracted`) states, in digits, English
   words, a Korean native numeral before a counter (`세 곳`, `열두 개사`;
-  `없습니다` is 0) or a Han numeral before one (`三社`), with the gold's
+  `없습니다` is 0) or a Han or Sino-Korean numeral with its multipliers
+  before one (`三社`, `十二台`, `一万二千台`, `만 이천 대`; digits a
+  multiplier scales need none: `1만 2천`, `3万`), with the gold's
   number, so `Three vendors ... Two of them ...` is 3 and does not match
   the gold 2. Numbers that count nothing are skipped: list enumerators
   (`1. Acme`), citation markers (`[2]`), years (`as of 2024`, `2024년`,
@@ -747,8 +749,9 @@ list, top level or under `metadata`, which wins), taking the maximum.
   removed, whitespace collapsed; for an answer in German, Spanish, French,
   Italian or Portuguese that language's articles too, every French and
   Italian elided word split off first (`d'Avignon` is `d avignon`), and in
-  those languages and Russian its number words from zero to twelve
-  read as counts; the answer's language is the question's, recorded as
+  those languages and Russian its written numbers read as counts
+  (`vingt-quatre`, `treinta y dos`, `vierundzwanzig`, `Zwei Millionen`,
+  `три тысячи`; two side by side, `deux trois`, are none); the answer's language is the question's, recorded as
   `answer_language`), keeping punctuation that changes meaning
   (`-5`, `1.5`, `C++`); `evaluation.answer_normalization: official_squad` is
   the official script (MuSiQue's evaluation uses it too) and `hotpotqa` adds

@@ -512,10 +512,17 @@ async def test_no_structured_answer_runs_the_fallback(reply: Any, reason: str) -
             }
         ]
     elif reason == "unreadable_plan":
-        # Regression (rv8 retrieval M3): unrecorded as invalid_plan.
+        # Regression (rv8 retrieval M3): unrecorded as invalid_plan; and
+        # (rv9 query L11) with its reader's error type, so the answer's
+        # degraded_error names it.
         assert degraded == [
-            {"step": "structured_query", "reason": reason, "error_type": None}
+            {
+                "step": "structured_query",
+                "reason": reason,
+                "error_type": "ModelOutputError",
+            }
         ]
+        assert result.metadata["degraded_error"] == "ModelOutputError"
     else:
         assert degraded == []
 

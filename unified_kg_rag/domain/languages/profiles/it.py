@@ -15,14 +15,17 @@ PROFILE = LanguageProfile(
         "rispondere a questa domanda."
     ),
     function_words=frozenset(
-        "gli che chi quale come perché dove è sono della nel uno".split()
+        "gli che chi quale come perché dove è sono della nel uno quanto quanta "
+        "quanti quante cosa per sul alla delle degli dei nella questo "
+        "questa".split()
     ),
     no_value_words=("sconosciuto", "nessuno"),
     articles=frozenset("il lo la i gli le l un uno una".split()),
     # The articles and the prepositions joined to them, di, ci, quello,
-    # bello, santo, come, anche.
+    # bello, santo, come, anche, dove, quanto, cosa.
     elided_prefixes=frozenset(
-        "l un d c dell all dall nell sull coll quell bell sant com anch".split()
+        "l un d c dell all dall nell sull coll quell bell sant com anch dov quant "
+        "cos".split()
     ),
     number_words={
         "zero": 0,
@@ -37,7 +40,52 @@ PROFILE = LanguageProfile(
         "dieci": 10,
         "undici": 11,
         "dodici": 12,
+        "tredici": 13,
+        "quattordici": 14,
+        "quindici": 15,
+        "sedici": 16,
+        "diciassette": 17,
+        "diciotto": 18,
+        "diciannove": 19,
+        # A tens word drops its vowel before uno and otto ("ventotto"), and
+        # tre takes an accent closing one ("ventitré").
+        **{
+            f"{stem}{ones}": tens + value
+            for stem, tens in (
+                ("vent", 20),
+                ("trent", 30),
+                ("quarant", 40),
+                ("cinquant", 50),
+                ("sessant", 60),
+                ("settant", 70),
+                ("ottant", 80),
+                ("novant", 90),
+            )
+            for ones, value in (("uno", 1), ("otto", 8))
+        },
+        "tré": 3,
     },
+    # Written as one word ("duecentotrentadue").
+    number_tens={
+        "venti": 20,
+        "trenta": 30,
+        "quaranta": 40,
+        "cinquanta": 50,
+        "sessanta": 60,
+        "settanta": 70,
+        "ottanta": 80,
+        "novanta": 90,
+    },
+    number_scales={
+        "cento": 100,
+        "mille": 1000,
+        "mila": 1000,
+        "milione": 10**6,
+        "milioni": 10**6,
+        "miliardo": 10**9,
+        "miliardi": 10**9,
+    },
+    compound_ones=("un", "uno", "una"),
     month_words={
         "January": ("gennaio", "gen"),
         "February": ("febbraio",),

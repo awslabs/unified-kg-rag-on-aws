@@ -157,9 +157,41 @@ def test_the_message_names_each_server_and_how_to_start_it() -> None:
     # The embedder is no Ollama server's model to pull.
     assert "emb-m" not in message
     assert model_unreachable_error(error, config) is error
-    bedrock = model_unreachable_error(httpx.ConnectError("x"), Config())
-    assert "providers.llm and providers.embedding (bedrock)" in str(bedrock)
-    assert "ollama" not in str(bedrock)
+    config = Config()
+    bedrock = model_unreachable_error(httpx.ConnectError("x"), config)
+    runtime = f"https://bedrock-runtime.{config.aws.bedrock_region}.amazonaws.com"
+    assert f"providers.llm and providers.embedding (bedrock at {runtime})" in str(
+        bedrock
+    )
+    assert "ollama" not in str(bedrock) and "aws.bedrock_region" in str(bedrock)
+
+
+def test_a_bedrock_server_is_named_by_its_endpoint_not_a_base_url() -> None:
+    # Regression (v23 B6): backend local with the models on bedrock named
+    # "bedrock at http://localhost:11434", the local preset's base_url.
+    from botocore.exceptions import EndpointConnectionError
+
+    config = Config(backend="local")
+    config.providers.llm.kind = config.providers.embedding.kind = "bedrock"
+    config.aws.bedrock.region_name = "us-west-2"
+    runtime = model_unreachable_error(
+        EndpointConnectionError(
+            endpoint_url="https://bedrock-runtime.us-west-2.amazonaws.com/model/x"
+        ),
+        config,
+    )
+    assert "(bedrock at https://bedrock-runtime.us-west-2.amazonaws.com)" in str(
+        runtime
+    )
+    assert "11434" not in str(runtime)
+    # Another Bedrock endpoint (the control plane): the one that failed.
+    control = model_unreachable_error(
+        EndpointConnectionError(
+            endpoint_url="https://bedrock.us-west-9.amazonaws.com/"
+        ),
+        config,
+    )
+    assert "(bedrock at https://bedrock.us-west-9.amazonaws.com)" in str(control)
 
 
 def test_the_message_names_the_server_the_connection_failed_to_reach() -> None:
@@ -231,6 +263,8 @@ async def test_run_rag_exits_by_the_class_of_an_absorbed_failure(
     else:
         result = await runner._run_query(RAGInput(query="hi"))
         assert result["success"] is False and result["exit_code"] == 1
+        assert result["error_type"] == "SomeError"
+        assert result["error"] == "No indices found for 'tenant-b'"
 
 
 def test_run_eval_exits_2_for_a_filter_no_index_declares(mocker: Any) -> None:

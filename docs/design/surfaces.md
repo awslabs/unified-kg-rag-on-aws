@@ -178,7 +178,9 @@ the index was, the answer in the question's language) and its hybrid
 retrieval (`search_type` hybrid by default: BM25 and kNN fused, then
 reranked). `kg_get_entity` matches names exactly on `name.keyword`, then
 lexically on `name` with the index's analyzer (`nori`, `cjk` and the
-language analyzers), deliberately without an embedding: a name lookup
+language analyzers), a hit that is the name as the strategies link one
+(`linking.exact_links`) reported as a `name` match, deliberately without
+an embedding: a name lookup
 needs no vector, and costs no model call. Every record keeps the
 provenance the chain reports. `kg_describe_schema` lists the methodologies
 the namespace holds and the strategies they serve; `kg_neighbors` reads the

@@ -51,8 +51,9 @@ RRF, 재순위화)를 쓰며, `simple`과 `naive`는 그래프를 읽지 않습�
 요약형 질문에서 `global`과 대등했습니다([근거](./defaults-and-evidence.md#sensemaking-strategies), 영문).
 
 `mix`와 `hybrid`는 수집이 만드는 관계 인덱스를 읽습니다. 키워드가 나오지 않는 짧은
-질의는 원래 질의를 저수준 키워드로 씁니다(`search.lightrag_search.raw_query_fallback_max_len`
-이하).
+질의는 원래 질의를 저수준 키워드로 씁니다(원본 LightRAG처럼
+`search.lightrag_search.raw_query_fallback_max_len`자 미만일 때. 더 긴 질의는 엔티티와 관계를
+검색하지 않습니다).
 
 두 전략은 찾은 엔티티가 인용하는 원문 청크와, 별도 스트림으로 찾은 관계가 인용하는
 청크를 더합니다(각각 최대 `search.lightrag_search.chunk_stream_top_k`개. 결과 융합(fusion)이

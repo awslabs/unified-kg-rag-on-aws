@@ -180,6 +180,18 @@ class LanguageModelInfo(BaseModel):
             "overfilled. Has no effect on counts the API returns."
         ),
     )
+    tokenizer: str | None = Field(
+        default=None,
+        description=(
+            "The tokenizer family whose measured characters per token by "
+            "language (LanguageProfile.chars_per_token, 'claude-opus-4.7' for "
+            "Claude Opus 4.7 and later) also size the local estimate when "
+            "CountTokens is not used: a budget counts the larger of the "
+            "script estimate times token_estimate_multiplier and the text's "
+            "length at its language's rate, 10% over. None: the script "
+            "estimate alone."
+        ),
+    )
     supports_count_tokens: bool = Field(
         default=True,
         description=(

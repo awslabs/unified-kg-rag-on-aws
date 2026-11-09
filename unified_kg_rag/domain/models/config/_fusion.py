@@ -407,11 +407,13 @@ class QueryOutputCeilingsConfig(BaseModel):
     """
 
     strategy_selection: int | None = Field(
-        default=4096,
+        default=1024,
         ge=1,
         description=(
             "max_tokens of the auto router call (models.roles."
-            "strategy_selection), which answers one strategy name"
+            "strategy_selection), which answers one strategy name (a few "
+            "tokens; a reasoning model still gets its thinking budget plus "
+            "1,024)"
         ),
     )
     query_extraction: int | None = Field(

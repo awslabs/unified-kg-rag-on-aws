@@ -307,8 +307,9 @@ async def test_auto_with_no_offered_strategy_served_is_refused_before_any_call(
         (unicodedata.normalize("NFD", "한빛물류"), "name", "한빛물류"),
         # Full-width Latin: an exact name after NFKC.
         ("Ｄｅｐｏｔ", "name", "Depot"),
-        # Full-width, other case: the NFKC name search finds it.
-        ("ＤＥＰＯＴ", "search", "Depot"),
+        # Full-width, other case: the NFKC name search finds it, the name
+        # as the strategies link it (linking.exact_links).
+        ("ＤＥＰＯＴ", "name", "Depot"),
     ],
 )
 async def test_graph_tools_normalise_names_as_search_does(

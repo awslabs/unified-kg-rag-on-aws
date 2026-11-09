@@ -504,9 +504,17 @@ repeated the comparison and measured the routing:
 
 So `iterative` stays routable and the router's guidance stands; route a
 sample of your own questions with `run-eval --search-strategy auto` before
-relying on it. Both runs predate the router's JSON answer
-(`{"strategy": ...}`, the same candidates and guide entries); its agreement
-with these routes has not been measured yet. To keep `auto` off it, list the strategies without
+relying on it. Both runs routed with the router answering the strategy name
+alone, as it does. A JSON answer (`{"strategy": ...}`, the same candidates
+and guide entries; the router still reads one) was measured on 2026-11-08
+(Claude Haiku 5.5, the router call alone, two passes): it agreed with the
+name answer on 194 and 195 of the 200 MuSiQue routes and 46 and 47 of the 50
+sensemaking ones (the name answer agreed with itself on 197 and 50), every
+answer was readable either way, but it wrote 2.9 times the output tokens
+(59.9k against 20.7k over 500 calls) and took 1.59 s at the median against
+1.12 s, so the router answers the name; its `max_tokens`
+(`search.output_ceilings.strategy_selection`) is 1,024, plus the thinking
+budget on a reasoning model. To keep `auto` off it, list the strategies without
 `iterative`:
 
 ```yaml
@@ -968,6 +976,38 @@ pairwise judge. The run of 2026-11-07 re-scored the same saved answers
 So `low` stays the default: a higher effort does not extract better spans,
 and the pairwise judge at `high` needs a larger output limit for the
 overlap split.
+
+## Token estimate
+
+Bedrock's CountTokens does not count Claude Opus 4.7 and later (Opus
+4.8/5/5.5, Sonnet 5/5.5, Haiku 5.5), so their context budgets use the local
+estimate: each character at its script's rate, calibrated to two BPE
+vocabularies (cl100k and o200k), times their `token_estimate_multiplier`
+(1.3). On 2026-11-08 (v23) the input tokens Claude Sonnet and Haiku 5.5
+reported (alike) for each language-matrix text repeated twelve times (an
+English and a Spanish one of the same delivery beside them; a one-token
+baseline taken off) were set against the estimate:
+
+| Language | en | es | de | vi | ar | he | th | hi | ru | ko | ja | zh |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Characters per Claude token | 3.25 | 2.84 | 2.05 | 1.75 | 1.75 | 1.54 | 1.09 | 1.35 | 2.45 | 1.00 | 1.03 | 0.95 |
+| Script estimate / Claude tokens | 0.81 | 0.71 | 0.51 | 0.44 | 0.79 | 0.90 | 0.72 | 0.80 | 0.96 | 0.76 | 0.97 | 0.88 |
+| Times 1.3 | 1.05 | 0.92 | 0.67 | 0.57 | 1.03 | 1.17 | 0.93 | 1.04 | 1.25 | 0.99 | 1.26 | 1.15 |
+
+Latin-script languages differ most: a BPE vocabulary counts German and
+Vietnamese text in about half the tokens Claude's tokenizer does, so a
+budget of the scaled estimate overfilled the window by up to 75% there. So
+each language's rate is in the registry (`LanguageProfile.chars_per_token`
+for the tokenizer `claude-opus-4.7`), and a budget for those models counts
+the larger of the scaled estimate and the text's length at its language's
+rate, 10% over: every language above is then counted at 1.10 to 1.26 times
+its Claude tokens. French, Italian and Portuguese were not measured and keep
+the scaled estimate (Spanish, the nearest, was at 0.92). Chunking keeps the
+script estimate (stored chunks, and chunk sizes in the BPE tokens MS GraphRAG
+sizes them in). Titan Text Embeddings v2 counted differently again (script
+estimate / its tokens: en 1.30, es 0.92, de 0.82, vi 0.58, hi 0.56, he 0.63);
+its truncation at 8,192 tokens keeps the script estimate, which chunk sizes
+stay far under.
 
 ## Reproducing a measurement
 

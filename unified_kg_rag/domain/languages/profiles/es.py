@@ -3,7 +3,7 @@
 """Spanish."""
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.profile import LanguageProfile
+from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 
 PROFILE = LanguageProfile(
     code=LanguageCode.ES,
@@ -32,7 +32,64 @@ PROFILE = LanguageProfile(
         "diez": 10,
         "once": 11,
         "doce": 12,
+        "trece": 13,
+        "catorce": 14,
+        "quince": 15,
+        "dieciséis": 16,
+        "dieciseis": 16,
+        "diecisiete": 17,
+        "dieciocho": 18,
+        "diecinueve": 19,
+        "veintiuno": 21,
+        "veintiún": 21,
+        "veintiuna": 21,
+        "veintidós": 22,
+        "veintidos": 22,
+        "veintitrés": 23,
+        "veintitres": 23,
+        "veinticuatro": 24,
+        "veinticinco": 25,
+        "veintiséis": 26,
+        "veintiseis": 26,
+        "veintisiete": 27,
+        "veintiocho": 28,
+        "veintinueve": 29,
     },
+    number_tens={
+        "veinte": 20,
+        "treinta": 30,
+        "cuarenta": 40,
+        "cincuenta": 50,
+        "sesenta": 60,
+        "setenta": 70,
+        "ochenta": 80,
+        "noventa": 90,
+        "cien": 100,
+        "ciento": 100,
+        # Masculine and feminine ("doscientos", "doscientas").
+        **{
+            f"{stem}ient{ending}s": value
+            for stem, value in (
+                ("dosc", 200),
+                ("tresc", 300),
+                ("cuatroc", 400),
+                ("quin", 500),
+                ("seisc", 600),
+                ("setec", 700),
+                ("ochoc", 800),
+                ("novec", 900),
+            )
+            for ending in "oa"
+        },
+    },
+    number_scales={
+        "mil": 1000,
+        "millón": 10**6,
+        "millon": 10**6,
+        "millones": 10**6,
+    },
+    number_conjunctions=("y",),
+    compound_ones=("un", "una", "uno"),
     month_words={
         "January": ("enero", "ene"),
         "February": ("febrero",),
@@ -50,4 +107,5 @@ PROFILE = LanguageProfile(
     # "15 de marzo de 2024".
     date_fillers=("de", "del"),
     legal_forms={"sa": "sa"},
+    chars_per_token={CLAUDE_TOKENIZER: 2.84},
 )

@@ -1015,3 +1015,13 @@ async def test_exact_lookups_read_the_value_in_nfc(
     )
     assert match == "iri"
     assert asked == [{"iri": "urn:example:한빛물류"}]
+
+
+@pytest.mark.parametrize("query", ["", "   ", "\u200b", "\ufeff\u200d"])
+async def test_an_invisible_query_is_refused_as_empty(query: str) -> None:
+    # Regression (rv9 query L8): a zero-width space passed str.strip and reached the
+    # chain, which refused it with a validation error, not this message.
+    chain = FakeChain()
+    with pytest.raises(ToolArgumentError, match="query is empty"):
+        await _tools(chain).search(query)
+    assert chain.inputs == []

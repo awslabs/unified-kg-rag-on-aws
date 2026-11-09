@@ -3,7 +3,7 @@
 """German."""
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.profile import LanguageProfile
+from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 
 PROFILE = LanguageProfile(
     code=LanguageCode.DE,
@@ -36,7 +36,37 @@ PROFILE = LanguageProfile(
         "zehn": 10,
         "elf": 11,
         "zwölf": 12,
+        "dreizehn": 13,
+        "vierzehn": 14,
+        "fünfzehn": 15,
+        "sechzehn": 16,
+        "siebzehn": 17,
+        "achtzehn": 18,
+        "neunzehn": 19,
     },
+    # Written as one word, ones before tens ("vierundzwanzig",
+    # "zweitausenddreihundert").
+    number_tens={
+        "zwanzig": 20,
+        "dreißig": 30,
+        "dreissig": 30,
+        "vierzig": 40,
+        "fünfzig": 50,
+        "sechzig": 60,
+        "siebzig": 70,
+        "achtzig": 80,
+        "neunzig": 90,
+    },
+    number_scales={
+        "hundert": 100,
+        "tausend": 1000,
+        "million": 10**6,
+        "millionen": 10**6,
+        "milliarde": 10**9,
+        "milliarden": 10**9,
+    },
+    number_conjunctions=("und",),
+    compound_ones=("ein", "eine"),
     month_words={
         "January": ("januar", "jänner"),
         "February": ("februar", "feber"),
@@ -48,4 +78,5 @@ PROFILE = LanguageProfile(
         "December": ("dezember", "dez"),
     },
     legal_forms={"gmbh": "gmbh", "ag": "ag"},
+    chars_per_token={CLAUDE_TOKENIZER: 2.05},
 )

@@ -255,19 +255,19 @@ async def test_long_empty_keyword_query_does_not_fall_back(
 @pytest.mark.parametrize(
     ("query", "falls_back"),
     [
-        # 13 dense characters count 52: over the limit of 50, as a Latin
-        # question carrying as much (upstream counted 13).
-        ("창고는 누구의 부품을 보관하나요", False),
-        ("倉庫は誰の部品を保管していますか", False),
-        ("仓库为谁保管零件呢请告诉我", False),
-        # Short ones still fall back, and Latin text counts as upstream.
-        ("창고", True),
-        ("仓库", True),
+        # Regression (rv9 query M2): a dense character counted 4, so this
+        # Korean question of 19 characters (76) found no entity and
+        # abstained. The gate counts characters, as upstream's len(query).
+        ("애크미 로보틱스는 누구와 계약했나?", True),
+        ("倉庫は誰の部品を保管していますか", True),
+        ("仓库为谁保管零件呢请告诉我", True),
+        ("창" * 49, True),
+        ("창" * 50, False),
         ("x" * 49, True),
         ("x" * 50, False),
     ],
 )
-async def test_the_fallback_gate_counts_dense_scripts_as_tokens(
+async def test_the_fallback_gate_counts_characters_as_upstream(
     config: Config, query: str, falls_back: bool
 ) -> None:
     strategy, os_r, _ = _make_strategy(config)
@@ -275,6 +275,15 @@ async def test_the_fallback_gate_counts_dense_scripts_as_tokens(
         SearchQuery(query=query, metadata={"search_strategy": "hybrid"})
     )
     assert (fallback.ll_keywords == [query]) is falls_back
+
+
+async def test_a_gate_of_zero_turns_the_fallback_off(config: Config) -> None:
+    config.search.lightrag_search.raw_query_fallback_max_len = 0
+    strategy, _, _ = _make_strategy(config)
+    fallback = strategy._apply_keyword_fallback(
+        SearchQuery(query="q", metadata={"search_strategy": "hybrid"})
+    )
+    assert fallback.ll_keywords == []
 
 
 def test_relationship_endpoint_ids_collects_both_endpoints() -> None:

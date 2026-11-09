@@ -27,8 +27,14 @@ pytestmark = pytest.mark.unit
 
 
 class FakeRetriever:
-    def __init__(self) -> None:
+    def __init__(self, has_claims: bool | None = None) -> None:
         self.calls: list[SearchQuery] = []
+        self.has_claims = has_claims
+        self.asked: list[tuple[str, str | None]] = []
+
+    async def ahas_index(self, prefix: str, suffix: str | None) -> bool | None:
+        self.asked.append((prefix, suffix))
+        return self.has_claims
 
     async def aretrieve(self, query: SearchQuery) -> list[RetrievalResult]:
         self.calls.append(query)
@@ -39,9 +45,9 @@ class FakeRetriever:
         ]
 
 
-def _make_strategy(config: Config):
+def _make_strategy(config: Config, has_claims: bool | None = None):
     spec = get_strategy_spec(SearchStrategy.SIMPLE)
-    os_r = FakeRetriever()
+    os_r = FakeRetriever(has_claims)
     strategy = spec.strategy_class(
         config=config,
         retrievers={RetrieverRole.DOCUMENT.value: os_r},
@@ -80,6 +86,26 @@ async def test_claims_included_in_sweep_when_enabled(config: Config) -> None:
 
     assert len(os_r.calls) == 1
     assert os_r.calls[0].index_prefixes is None
+
+
+async def test_claims_excluded_when_no_claim_was_extracted(config: Config) -> None:
+    # Regression (rv9 query L9): a claim extraction that found no claim
+    # built no claims index, and every simple query WARNed "Index not found".
+    config.processing.claim_extraction.enabled = True
+    strategy, os_r = _make_strategy(config, has_claims=False)
+
+    await strategy.asearch(SearchQuery(query="q"))
+
+    o = config.indexing.opensearch
+    prefixes = os_r.calls[0].index_prefixes
+    assert prefixes is not None and o.claims_index_prefix not in prefixes
+    assert o.text_units_index_prefix in prefixes
+    # Once found, the index is not asked for again.
+    os_r.has_claims = True
+    await strategy.asearch(SearchQuery(query="q"))
+    await strategy.asearch(SearchQuery(query="q"))
+    assert os_r.calls[-1].index_prefixes is None
+    assert len(os_r.asked) == 2
 
 
 async def test_relationship_and_reports_excluded_when_not_built(

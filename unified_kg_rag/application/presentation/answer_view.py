@@ -26,6 +26,7 @@ from unified_kg_rag.application.retrieval.rag_chain import (
     ROUTING_KEY,
     ProcessedQuery,
     RAGOutput,
+    SearchOutput,
 )
 from unified_kg_rag.domain.models import Citation, RetrievalResult, Source
 from unified_kg_rag.domain.retrieval import source_fields
@@ -62,22 +63,40 @@ class QueryOutcome(BaseModel):
         description="The class of the error answer's failure (ErrorClass: "
         "invalid_filter, timeout, ...), with processing.ignore_errors",
     )
+    error_type: str | None = Field(
+        default=None, description="The class name of the error it absorbed"
+    )
+    error_message: str | None = Field(
+        default=None, description="The error answer's message"
+    )
 
     @classmethod
-    def of(cls, metadata: dict[str, Any] | None) -> QueryOutcome:
-        """The outcome a result's ``metadata`` reports."""
+    def of(
+        cls,
+        metadata: dict[str, Any] | None,
+        search_metadata: dict[str, Any] | None = None,
+    ) -> QueryOutcome:
+        """The outcome a result's ``metadata`` reports (and, for the error
+        answer's message, its ``search_results.metadata``)."""
         metadata = metadata or {}
         report = DegradationReport.of(metadata)
+        error = bool(metadata.get("error"))
+        message = (search_metadata or {}).get("error")
         return cls(
             degraded=report.degraded,
             degraded_error=report.degraded_error,
             citations_unresolved=report.citations_unresolved,
             error_class=(
-                error_class_of(metadata.get(ERROR_CLASS_KEY)).value
-                if metadata.get("error")
-                else None
+                error_class_of(metadata.get(ERROR_CLASS_KEY)).value if error else None
             ),
+            error_type=_text(metadata.get("error_type")),
+            error_message=str(message) if error and message else None,
         )
+
+    @classmethod
+    def of_output(cls, output: RAGOutput | SearchOutput) -> QueryOutcome:
+        """The outcome of an answer or a search without one."""
+        return cls.of(output.metadata, output.search_results.metadata)
 
     @property
     def partial(self) -> bool:
@@ -85,8 +104,12 @@ class QueryOutcome(BaseModel):
         return bool(self.degraded) and self.error_class is None
 
     def outcome_fields(self) -> dict[str, Any]:
-        """The outcome's fields, as a surface's JSON document holds them."""
-        return self.model_dump(mode="json", include=set(QueryOutcome.model_fields))
+        """The outcome's fields, as a surface's JSON document holds them (its
+        error's type and message are the document's own failure fields)."""
+        return self.model_dump(
+            mode="json",
+            include=set(QueryOutcome.model_fields) - {"error_type", "error_message"},
+        )
 
 
 class SourceView(BaseModel):
@@ -310,8 +333,6 @@ class AnswerView(QueryOutcome):
     error: bool = Field(
         default=False, description="The chain's error answer (ignore_errors)"
     )
-    error_type: str | None = None
-    error_message: str | None = None
     rerank: dict[str, Any] | None = None
     usage: dict[str, Any] | None = None
     processing_seconds: float | None = None
@@ -339,15 +360,13 @@ class AnswerView(QueryOutcome):
         metadata = output.metadata or {}
         sources = [SourceView.of_source(i, s) for i, s in enumerate(output.sources, 1)]
         ranks = _mark(sources, output.citations)
-        detail = output.search_results.metadata or {}
-        error = bool(metadata.get("error"))
         rerank, usage, routing = (
             metadata.get("rerank"),
             metadata.get("usage"),
             metadata.get(ROUTING_KEY),
         )
         return cls(
-            **QueryOutcome.of(metadata).model_dump(),
+            **QueryOutcome.of_output(output).model_dump(),
             answer=output.answer,
             strategy=_text(metadata.get("search_strategy")),
             routing=routing if isinstance(routing, dict) else None,
@@ -355,11 +374,7 @@ class AnswerView(QueryOutcome):
             abstention_reason=_text(metadata.get("abstention_reason")),
             blocked=bool(metadata.get("blocked")),
             guardrail=list(metadata.get("guardrail") or []),
-            error=error,
-            error_type=_text(metadata.get("error_type")),
-            error_message=(
-                str(detail["error"]) if error and detail.get("error") else None
-            ),
+            error=bool(metadata.get("error")),
             rerank=rerank if isinstance(rerank, dict) else None,
             usage=usage if isinstance(usage, dict) else None,
             processing_seconds=metadata.get("processing_time"),

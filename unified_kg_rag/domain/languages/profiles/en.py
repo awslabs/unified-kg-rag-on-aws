@@ -3,7 +3,7 @@
 """English."""
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.profile import LanguageProfile
+from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 
 PROFILE = LanguageProfile(
     code=LanguageCode.EN,
@@ -59,6 +59,7 @@ PROFILE = LanguageProfile(
         "billion": 10**9,
     },
     zero_words=("none", "no"),
+    number_conjunctions=("and",),
     open_date_words=("tbd", "ongoing", "present"),
     # strptime reads the English month names itself.
     legal_forms={
@@ -82,4 +83,5 @@ PROFILE = LanguageProfile(
     },
     polarity_words={"yes": "yes", "no": "no", "nope": "no"},
     quote_pairs=(('"', '"'), ("“", "”")),
+    chars_per_token={CLAUDE_TOKENIZER: 3.25},
 )

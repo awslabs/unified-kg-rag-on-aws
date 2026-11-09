@@ -723,8 +723,8 @@ DECISION OPTIMIZATION:
 - Select strategy with highest probability of successful information discovery
 
 OUTPUT FORMAT:
-Answer with one JSON object and nothing else: {{"strategy": "<name>"}}, the name written exactly as one of:
-{strategies}. No explanation or other text."""
+Answer with the strategy name alone, written exactly as one of: {strategies}. No explanation, punctuation or other
+text."""
     human_prompt_template = """Select the optimal search strategy for this query:
 
 Query: "{query}"

@@ -195,6 +195,7 @@ from unified_kg_rag.shared.utils import (
     configure_event_loop,
     error_digest,
     strip_embedding_fields,
+    strip_invisible,
     text_digest,
 )
 from unified_kg_rag.shared.utils.concurrency import discard, gather_bounded, settle
@@ -550,10 +551,11 @@ class RAGInput(BaseModel):
     def _compose_query(cls, query: str) -> str:
         # Indexed text is NFC (see convert_langchain_to_document); a query typed
         # or pasted as decomposed Hangul (NFD) must compose to match it.
-        query = unicodedata.normalize("NFC", query).strip()
+        query = strip_invisible(unicodedata.normalize("NFC", query))
         if not query:
-            # Refused before any model call: an empty question was routed,
-            # extracted from and searched for.
+            # Refused before any model call: an empty question (or one of
+            # invisible characters alone, "\u200b") was routed, extracted
+            # from and searched for.
             raise ValueError("The query is empty.")
         return query
 
@@ -1064,10 +1066,11 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
         """The strategy the router's answer ``raw`` names, and whether it
         named a routable one (else the fallback, ``_fallback_strategy``).
 
-        The answer is ``{"strategy": "<name>"}`` (``StrategySelectionPrompt``),
-        read as every JSON answer is (one repair when it does not parse); an
-        answer that is one strategy name alone, as an older custom prompt
-        asks for, is read as that name. A name is matched whole: prose naming
+        The answer is the strategy name alone (``StrategySelectionPrompt``:
+        a JSON answer made the router write about three times the output
+        tokens, docs/concepts/defaults-and-evidence.md); any other answer is
+        read as ``{"strategy": "<name>"}``, as every JSON answer is (one
+        repair when it does not parse). A name is matched whole: prose naming
         several ("not global ... local") is not guessed from.
         """
         name = raw.strip().strip("\"'`.").casefold()

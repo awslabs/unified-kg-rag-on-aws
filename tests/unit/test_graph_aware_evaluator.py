@@ -326,6 +326,26 @@ class TestRetrievedCoverage:
         assert values["answer_length"] == 3.0
         assert metadata["retrieved_matched_entity_count"] == 1
 
+    def test_retrieved_names_match_as_a_query_name_links(
+        self, evaluator: GraphAwareEvaluator
+    ) -> None:
+        # Regression (rv9 query L7): compact_name_key kept "Фёдоров" apart
+        # from "Федоров" and an Arabic alef from its hamza form.
+        result = EvaluationResult(
+            query_id="q1",
+            question="?",
+            generated_answer="No.",
+            ground_truth="",
+            metadata={"expected_entities": ["Федоров", "أكمي"]},
+            retrieved_source_types=["entity"],
+            retrieved_entities=["Фёдоров", "اكمي"],
+        )
+        report = evaluator.evaluate_single(
+            EvaluationQuery(query_id="q1", question="?"), result, ""
+        )
+        values = {m.metric_type.value: m.value for m in report.metrics}
+        assert values["retrieved_entity_coverage"] == 1.0
+
     def test_citation_markers_are_no_length(self, config: Config) -> None:
         # A citations-on arm against an off one: the markers ([1]) count
         # neither as coverage nor as answer length.

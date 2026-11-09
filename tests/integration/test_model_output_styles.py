@@ -114,6 +114,11 @@ def styled(
         config["indexing"] = {
             "methodologies": ["graphrag", "lightrag", "hipporag", "raptor"]
         }
+        # The demo corpus has two community reports: below the default
+        # minimum, global search never ran its map phase (rv9 query L10).
+        config.setdefault("search", {}).setdefault("global_search", {})[
+            "map_reduce_min_results"
+        ] = 1
         (root / "config.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
         env = {**os.environ, "NO_PROXY": "127.0.0.1,localhost"}
         run = subprocess.run(
@@ -173,11 +178,16 @@ def test_every_strategy_answers_in_every_style(
     # think: the reasoning block began every answer.
     assert out.answer.strip() and not out.answer.lstrip().startswith("<"), case
     # pydict, trailing_comma, prose: mix, hybrid and iterative failed, DRIFT
-    # answered from nothing, all without a degraded mark.
-    assert metadata.get("degraded_error") is None, (case, metadata)
+    # answered from nothing, all without a degraded mark. No step degrades
+    # (an entry without an error type escaped a degraded_error check).
+    assert not metadata.get("degraded"), (case, metadata.get("degraded"))
     assert out.sources, case
     if strategy is SearchStrategy.DRIFT:
         assert metadata["drift_answers"] > 0, case
+    if strategy is SearchStrategy.GLOBAL:
+        # The map phase ran: its points are what the answer reads.
+        assert metadata.get("global_map_call_count", 0) > 0, (case, metadata)
+        assert out.search_results.metadata["map_reduce_applied"] is True, case
     if strategy is SearchStrategy.ITERATIVE:
         assert metadata["iterative"]["stop_reason"] == "sufficient", case
     if strategy is SearchStrategy.STRUCTURED:

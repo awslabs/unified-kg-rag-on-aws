@@ -121,10 +121,11 @@ the model-written plan text the output guardrail screens).
 4. *Link mentions* through the **hybrid entity search** (BM25 with the
    configured analyzers + kNN, the request's `search_type`) on the entities
    index under the caller's filters, restricted to the node's types: the
-   hits whose `link_key` equals the mention's (the `compact_name_key`
-   folded at query time: Han, Hangul and Kana spacing and middle dots,
-   Arabic vowel marks, tatweel and alef variants, and legal forms do not
-   matter, as for `local`'s seeds); else
+   hits whose `compact_name_key` equals the mention's, else whose
+   `link_key` does (the `compact_name_key` folded at query time: Han,
+   Hangul and Kana spacing and middle dots, Arabic vowel marks, tatweel and
+   alef variants, Russian `ё`, and legal forms do not matter, as for
+   `local`'s seeds); else
    the top `link_candidates` of a **lexical** (BM25) search of the name,
    above `link_min_score`, whose names cover the mention
    (`domain/retrieval/linking.py` `choose_links`, the rule `local`'s seeds

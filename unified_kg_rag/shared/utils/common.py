@@ -181,6 +181,23 @@ def id_content(kind: str, *parts: str) -> str:
     return ":".join((kind, *parts))
 
 
+def _invisible(ch: str) -> bool:
+    return ch.isspace() or unicodedata.category(ch) == "Cf"
+
+
+def strip_invisible(text: str) -> str:
+    """``text`` without the whitespace and the invisible format characters
+    (zero-width space and joiners, a byte-order mark, direction marks) at
+    its ends: what ``str.strip`` leaves of a text that shows nothing
+    ("\u200b") is not empty, this is."""
+    start, end = 0, len(text)
+    while start < end and _invisible(text[start]):
+        start += 1
+    while end > start and _invisible(text[end - 1]):
+        end -= 1
+    return text[start:end]
+
+
 def normalize_name(name: str | None) -> str:
     """Normalize a name for token-level fuzzy similarity (not identity).
 

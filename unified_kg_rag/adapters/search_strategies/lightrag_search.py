@@ -36,7 +36,6 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-from unified_kg_rag.adapters.llm.token_estimate import UNITS_PER_TOKEN, token_units
 from unified_kg_rag.adapters.retrieval.base import (
     BaseGraphRAGRetriever,
     BaseSearchStrategy,
@@ -46,7 +45,6 @@ from unified_kg_rag.adapters.retrieval.strategy_registry import (
     register_strategy,
 )
 from unified_kg_rag.adapters.retrieval.token_manager import SectionType
-from unified_kg_rag.domain.ingestion.chunk_length import LATIN_CHARS_PER_TOKEN
 from unified_kg_rag.domain.ingestion.seed_graph import is_seed_unit
 from unified_kg_rag.domain.models import (
     Config,
@@ -59,6 +57,7 @@ from unified_kg_rag.domain.models import (
     SearchStrategy,
     SearchType,
 )
+from unified_kg_rag.domain.retrieval.keyword_fallback import raw_query_falls_back
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
 from unified_kg_rag.shared.utils.concurrency import gather_or_cancel
@@ -148,17 +147,6 @@ def _pick_by_weighted_polling(
     return selected
 
 
-def _latin_equivalent_length(text: str) -> int:
-    """``text``'s length in characters of Latin text that carry as much, at
-    the token estimate's rates (``token_units``): a dense-script character
-    (CJK, kana, Hangul) counts as ``LATIN_CHARS_PER_TOKEN`` (one token each
-    against ~4 Latin characters), a Cyrillic, Arabic or Devanagari one as
-    its script's share, any other as one. Upstream's gate counts
-    characters, which let a Korean or Chinese question four times as long
-    fall back to the raw query; Latin text keeps upstream's count."""
-    return token_units(text) * LATIN_CHARS_PER_TOKEN // UNITS_PER_TOKEN
-
-
 # NAIVE is chunk retrieval only (no graph), so it declares DOCUMENT-only roles;
 # MIX/HYBRID keep the default (DOCUMENT, GRAPH) so the opt-in multi-hop graph
 # expansion (`search.lightrag_search.enable_graph_expansion`) has a GRAPH
@@ -230,13 +218,13 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
 
         Without this, a hybrid/mix query whose keyword extraction returned
         nothing would retrieve from no graph source at all. The length gate is
-        config-driven (``search.lightrag_search.raw_query_fallback_max_len``).
+        config-driven (``search.lightrag_search.raw_query_fallback_max_len``,
+        ``domain.retrieval.keyword_fallback``).
         """
         if query.hl_keywords or query.ll_keywords:
             return query
         max_len = self.config.search.lightrag_search.raw_query_fallback_max_len
-        length = _latin_equivalent_length(query.query)
-        if query.query and length < max_len:
+        if raw_query_falls_back(query.query, max_len):
             logger.warning(
                 "No keywords extracted; falling back to raw query as ll_keyword"
             )
@@ -247,11 +235,10 @@ class LightRAGSearchStrategy(BaseSearchStrategy):
         # is empty"): hybrid then returns nothing and mix only chunks.
         logger.warning(
             "No keywords extracted and the query is too long (%s characters, "
-            "limit %s; a dense-script character counts %s) for the raw-query "
-            "fallback; no entities or relationships are retrieved",
-            length,
+            "limit %s) for the raw-query fallback; no entities or "
+            "relationships are retrieved",
+            len(query.query),
             max_len,
-            LATIN_CHARS_PER_TOKEN,
         )
         return query
 

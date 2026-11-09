@@ -61,7 +61,7 @@ from unified_kg_rag.shared.exceptions import (
     error_class_of,
 )
 from unified_kg_rag.shared.usage import usage_scope
-from unified_kg_rag.shared.utils import text_digest
+from unified_kg_rag.shared.utils import strip_invisible, text_digest
 
 logger = get_logger(__name__)
 
@@ -566,7 +566,7 @@ class KnowledgeGraphTools:
         return turns
 
     def _text(self, name: str, value: str | None) -> str:
-        text = (value or "").strip()
+        text = strip_invisible(value or "")
         if not text:
             raise ToolArgumentError(f"{name} is empty.")
         if len(text) > self.settings.max_query_chars:
@@ -732,14 +732,13 @@ class KnowledgeGraphTools:
         """The output's outcome; raise for the chain's error answer, with its
         class: the caller's message for an error the caller can act on, a
         generic one otherwise."""
-        outcome = QueryOutcome.of(output.metadata)
+        outcome = QueryOutcome.of_output(output)
         if outcome.error_class is None:
             return outcome
         error_class = error_class_of(outcome.error_class)
         if error_class in _CALLER_CLASSES:
-            message = output.search_results.metadata.get("error")
             raise _AbsorbedQueryError(
-                str(message or "The query was refused."), error_class
+                outcome.error_message or "The query was refused.", error_class
             )
         raise _AbsorbedQueryError(
             "The query failed (processing.ignore_errors).", error_class

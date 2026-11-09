@@ -15,8 +15,9 @@ PROFILE = LanguageProfile(
         "disponibles pour répondre à cette question."
     ),
     function_words=frozenset(
-        "les des qui quel quelle comment pourquoi quand où est sont était et "
-        "avec du une dans".split()
+        "les des qui quel quelle quels quelles comment combien pourquoi quand où "
+        "quoi est sont était et avec du une dans pour dont ces cette au aux "
+        "elle ils leur lequel laquelle".split()
     ),
     no_value_words=("inconnu", "inconnue", "aucun", "aucune"),
     articles=frozenset("le la les l un une des".split()),
@@ -37,7 +38,37 @@ PROFILE = LanguageProfile(
         "dix": 10,
         "onze": 11,
         "douze": 12,
+        "treize": 13,
+        "quatorze": 14,
+        "quinze": 15,
+        "seize": 16,
     },
+    # Seventy to ninety-nine compose ("soixante-dix-sept" is 60 + 17); the
+    # Belgian and Swiss tens too.
+    number_tens={
+        "vingt": 20,
+        "trente": 30,
+        "quarante": 40,
+        "cinquante": 50,
+        "soixante": 60,
+        "septante": 70,
+        "quatre-vingt": 80,
+        "quatre-vingts": 80,
+        "huitante": 80,
+        "octante": 80,
+        "nonante": 90,
+    },
+    number_scales={
+        "cent": 100,
+        "cents": 100,
+        "mille": 1000,
+        "million": 10**6,
+        "millions": 10**6,
+        "milliard": 10**9,
+        "milliards": 10**9,
+    },
+    number_conjunctions=("et",),
+    compound_ones=("un", "une"),
     month_words={
         "January": ("janvier", "janv"),
         "February": ("février", "févr", "fevrier"),

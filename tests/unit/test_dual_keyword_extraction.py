@@ -177,9 +177,11 @@ class TestExtractDualKeywords:
         assert isinstance(keywords, query_processing.AbsorbedKeywordFailure)
         assert keywords == ([], []) and keywords.error_type == "OutputParserException"
         assert "unreadable" in keywords.reason
-        # The warning names the model role that answered.
+        # The warning names the model role that answered, and claims no
+        # raw-query search (rv9 query M2: the strategy's gate decides it).
         args = logger.warning.call_args.args
-        assert "entity_extraction" in args and "raw query" in args[0]
+        assert "entity_extraction" in args and "without keywords" in args[0]
+        assert "raw query" not in args[0]
 
     @pytest.mark.parametrize(
         "raw",

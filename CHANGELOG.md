@@ -449,10 +449,10 @@ From 0.2.3; the sub-list after it is for a `main` checkout since. The runbook's
     process that runs threads (a lock another thread held could hang the worker). The console scripts and a
     notebook need nothing; what a custom pool task gets must pickle (#628).
 
-16. A `custom_prompts` override of `strategy_selection_*` should answer the JSON its built-in prompt now asks for
-    (`{"strategy": ...}`, *Changed*; a bare strategy name still reads): another answer costs one output-fixer call
-    per query. No stored data is re-keyed; the query-extraction cache keys on the prompts' text, so only its
-    in-memory entries of changed prompts are re-extracted.
+16. A `custom_prompts` override of `strategy_selection_*` should answer the strategy name alone, as the built-in
+    prompt does, or `{"strategy": ...}` (*Changed*): another answer costs one output-fixer call per query. No stored
+    data is re-keyed; the query-extraction cache keys on the prompts' text, so only its in-memory entries of changed
+    prompts are re-extracted.
 
 From a `main` checkout (formats and keys no release had):
 - Local mode: a `backend: local` config that relied on the preset for the stores gets the embedded SQLite stores; add
@@ -683,12 +683,17 @@ From a `main` checkout (formats and keys no release had):
   cite (global and DRIFT by default), or of the documents of the answer's graph citations, is listed in
   `metadata.citations_unresolved` instead, in the same shape. `run-eval` records `degraded_steps` per answer,
   `degraded_step_counts` and `degraded_queries`, which `--max-failure-rate` counts. The answer view (`AnswerView`)
-  carries them with the class of an absorbed error (`degraded`, `degraded_error`, `citations_unresolved`,
-  `error_class`): the console's Ask page shows a partial answer as such, MCP `kg_answer` and `kg_search` return them
-  after the answer, and `run-rag` prints them (and its JSON document holds them).
+  carries them with the class, type and message of an absorbed error (`degraded`, `degraded_error`,
+  `citations_unresolved`, `error_class`, `error_type`, `error_message`; a search without an answer too): the
+  console's Ask page shows a partial answer and unresolved citation reads as such, naming the steps in the page's
+  language, MCP `kg_answer` and `kg_search` return them after the answer, and `run-rag` prints them (and its JSON
+  document holds them).
 - `ModelUnreachableError`: a model server that cannot be reached is named with its provider kind, `base_url` and how
   to start it (`ollama serve`, the models to pull), the one server the failed connection was made to when its
-  transport says which. `run-ingestion` raises it at its embedding probe, before any extraction (it retried for
+  transport says which; a bedrock one by its region's endpoint (not a `base_url` the local preset left), and a model
+  that needs an inference profile in a region whose Bedrock control plane cannot be reached (one Bedrock is not
+  offered in) is refused with it, naming the region, not with advice to grant ListInferenceProfiles. `run-ingestion`
+  raises it at its embedding probe, before any extraction (it retried for
   minutes and ended with "produced 0 outputs"); a query raises it at once, without the transient retries' backoff
   (the error answer under `ignore_errors`, which no fallback absorbs), and `run-rag` exits 1 without a traceback.
   `ErrorClass` and `classify_error` name the class of a failure, which every surface maps: the CLIs' exit codes, the
@@ -805,11 +810,11 @@ From a `main` checkout (formats and keys no release had):
   as entities, a minimum or a maximum the entities holding it and groups by a property their listed groups'. Filter keys
   are checked against the fallback that would run too. A count of 0 or a "no" over a string
   value no vertex holds (misspelled or translated) is no answer (`unknown_value`); a failed planner or store call and a
-  plan still no JSON after the repair (`unreadable_plan`) are a degradation of the query (`metadata.degraded`, step
-  `structured_query`), a designed fallback (`refused_plan`: a plan the checks still refuse) is not. A
-  stored name or a value starting with `~` (a Gremlin hidden token) is refused at validation with a WARNING, not as a
-  compiler bug; a type the sampled profile missed is refused saying so, and a count over a symmetric `both` pattern says
-  it counts each pair twice. Without a structured
+  plan still no JSON after the repair (`unreadable_plan`, error type `ModelOutputError`) are a degradation of the
+  query (`metadata.degraded`, step `structured_query`), a designed fallback (`refused_plan`: a plan the checks still
+  refuse) is not. A stored name or a value starting with `~` (a Gremlin hidden token) is refused at validation with a
+  WARNING, not as a compiler bug; a type the sampled profile missed is refused saying so, and a count over a symmetric
+  `both` pattern says it counts each pair twice. Without a structured
   answer the query runs `search.structured.fallback_strategy` (`local`) and records why in `metadata["structured"]`;
   `mode: augment` runs it beside the graph query. Served by every namespace holding the graph, on every graph store;
   `auto` routes to it only once it is in `search.auto_routable_strategies`. With the output guardrail on, the
@@ -827,7 +832,8 @@ From a `main` checkout (formats and keys no release had):
   repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)). Its items say how `answer_match` reads them:
   `metadata.answer_type: number` compares the answer's leading number (digits, English words with their scale
-  words, Korean native and Han numerals, 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사 or 社; list
+  words, Korean native, Sino-Korean and Han numerals with their multipliers (十二, 一万二千, 만 이천; 1만 2천 and 3万 for
+  digits), 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사, 대, 社 or 台; list
   enumerators, citation markers, years, ordinals such as 두 번째, 三つ目 and 第三, negated numbers such as "not one
   but three", 一つではなく and 不是一家, and the whole of a partitive, so "only one of the three", 三家中只有一家, 세 곳 중
   한 곳 and 三社のうち一社 are 1, count nothing; "not ... any", "not one", "not a single", 한 곳도, 一社も, 没有 and
@@ -1146,8 +1152,8 @@ From a `main` checkout (formats and keys no release had):
   letter as a token and drops a run of Korean particles (their closed class) on a gold word, so Chinese, Japanese and
   Korean answers get partial credit, and a German, Spanish, French, Italian, Portuguese or Russian answer (the
   question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
-  elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its number words up to twelve
-  (#324, #516, #606, #613).
+  elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its written numbers
+  ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
@@ -1235,7 +1241,8 @@ From a `main` checkout (formats and keys no release had):
   the details on every answer) (#629).
 - A LightRAG keyword extraction whose answer is no usable JSON even after the repair is a degraded step
   (`metadata.degraded`, step `keyword_extraction`), under `processing.ignore_errors: false` too: the query searches
-  the raw question as its keyword, as upstream LightRAG does, and a WARNING names the model role and model that
+  the raw question as its keyword when it is shorter than `raw_query_fallback_max_len` characters, as upstream
+  LightRAG does (the entry's reason says whether it did), and a WARNING names the model role and model that
   answered. It failed the whole `mix`, `hybrid` or `iterative` query with the parser's `Expecting value` (#629).
 - The document loading stage samples the corpus (the first 2,000 characters of its first 20 documents) and WARNs,
   naming `processing.translation.source_language`, when the sample disagrees with the setting: a Korean, Japanese,
@@ -1335,7 +1342,8 @@ From a `main` checkout (formats and keys no release had):
   `processing.document_parsing.index_value`, as ingestion writes and the CLIs query (`resolve_namespace`, the one
   rule of every entry point); it read `default`, so the console's Ask page failed with `IndexNotFoundError` after a
   successful ingest under an `index_value`. A query checks its namespace's text-units index before its first model
-  call (once per namespace), and refuses an empty or blank question (the query is stripped).
+  call (once per namespace), and refuses an empty or blank question (the query is stripped, invisible format
+  characters such as a zero-width space too; the MCP tools refuse one as empty as well).
 - `run-eval` exits 2 for a filter key no index declares, as `run-rag` does, and `run-rag` exits by the class of a
   failure `processing.ignore_errors` absorbed (2 for a `--suffix` nothing was ingested under; it exited 1).
 - Global search on a namespace without community reports declines with `abstention_reason: no_reports`.
@@ -1363,10 +1371,11 @@ From a `main` checkout (formats and keys no release had):
   still fails the query. A global map
   output that is not map JSON goes to the fixer, not to a second map call over its batch. A response cut inside
   its last object is not repaired.
-- The router, the query translation, the follow-up rewrite and the community relevance rating answer JSON:
-  `{"strategy": ...}` (a bare strategy name still reads), `{"translation": ...}`, `{"question": ...}`, and MS
-  GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`; the rating is divided by 5, so
-  `relevance_threshold: 0.2` is still a rating of 1 or more). A model that cannot translate or rewrite answers
+- The query translation, the follow-up rewrite and the community relevance rating answer JSON:
+  `{"translation": ...}`, `{"question": ...}`, and MS GraphRAG's `{"reason": ..., "rating": 0-5}` (`rate_prompt.py`;
+  the rating is divided by 5, so `relevance_threshold: 0.2` is still a rating of 1 or more). The router answers the
+  strategy name and reads any other answer as `{"strategy": ...}` (a JSON answer wrote 2.9 times the output tokens,
+  measured; its `max_tokens` is 1,024). A model that cannot translate or rewrite answers
   `[CANNOT_TRANSLATE]` or `[CANNOT_REWRITE]`, which replace the refusal phrase lists of four languages; the
   router no longer routes prose naming several strategies ("not global ... local") to the first one named, and a
   rating's reason in any language no longer reads as the rating ("Auf einer Skala von 1 bis 10: 8" was 1).
@@ -1375,7 +1384,10 @@ From a `main` checkout (formats and keys no release had):
   geometric mean of the cl100k and o200k counts over a sample), where it counted 4, a quarter to a half of the Hindi,
   Thai and Hebrew tokens; Latin stays at 4 and Han, Hangul and Kana at one a character, now also the rarer blocks
   (Hanja extensions, compatibility Jamo). A model whose reported input tokens are twice the estimate or more, or half
-  or less, over 20 calls logs one WARNING.
+  or less, over 20 calls logs one WARNING. A budget for Claude Opus 4.7 and later (no CountTokens) also counts a text
+  at least at its language's characters per Claude token, measured on Bedrock (`LanguageProfile.chars_per_token`,
+  `LanguageModelInfo.tokenizer`), 10% over: the script estimate times 1.3 counted German and Vietnamese at 0.67 and
+  0.57 of their tokens and overfilled the window ([evidence](docs/concepts/defaults-and-evidence.md#token-estimate)).
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).
@@ -1383,10 +1395,11 @@ From a `main` checkout (formats and keys no release had):
   question's language, one sentence per supported language told by its script and function words (English, the
   0.2.3 reply, or the index language when they do not tell); the script is the one most of the question's letters
   are in, weighed by what a letter carries ("What does 계약 mean?" gets the English reply, a Japanese question
-  quoting a Korean word the Japanese one); among Latin-script languages, elisions ("dell'") count with the function
-  words, and a tie the index language is not in goes to the language whose own articles occur ("Qual è il prezzo?"
-  is Italian, not English); evaluation counts a decline by `metadata.abstained` alone, no longer by the English text
-  (#619).
+  quoting a Korean word the Japanese one, an Arabic or Chinese one quoting Latin names without a Latin function word
+  the Arabic or Chinese one); among Latin-script languages, an elision only one of them writes ("dell'", "qu'"; not
+  "d'", French and Italian) counts with the function words, and a tie the index language is not in goes to the
+  language whose own articles occur ("Qual è il prezzo?" is Italian, not English); evaluation counts a decline by
+  `metadata.abstained` alone, no longer by the English text (#619).
 - `run-eval` writes each invocation into a run subdirectory of its own of the outputs directory, `run_<timestamp>_<id>`
   (the manifest's `run_id`; `evaluation.run_subdirectories: false` for the flat layout), and `--from-results` /
   `--baseline-results` read a directory with its run subdirectories. They no longer pool unrelated runs silently: the
@@ -1591,7 +1604,9 @@ Queries and retrieval.
   seeds nothing; semantic and alias hits ("NYC" for "New York City") seed as before. Local seeds and the structured
   strategy's mentions compare names folded at query time (stored keys unchanged): a middle dot between kana, Han or
   Hangul letters ("オリオン・ラボ" for "オリオンラボ"), Arabic short vowels, tatweel, alef with or without hamza, alef
-  maksura and a leading "شركة" no longer keep a name from linking.
+  maksura, Russian "ё" for "е" and a leading "شركة" no longer keep a name from linking, nor Latin accents a name from
+  covering ("Cafe" for "Café"); an entity written as asked links alone ("شركة النور", not also "النور"). The MCP
+  entity lookup, iterative's bridge dedupe and `graph_aware`'s retrieved coverage compare names the same way.
 - Local search orders its candidate text units by one shared rule (`domain/retrieval/lineage.py`, also the
   structured query result's lineage): the units most expanded entities cite, then the best-scored citing entity's,
   then first seen; an entity citing a unit twice counts once, and a lineage a graph store returns as its JSON text
@@ -1614,8 +1629,9 @@ Queries and retrieval.
 - DRIFT (primer, actions, HyDE), iterative's controller and global search's map points write in the index language
   (`source_language` with translation disabled), not always `target_language` nor a requested language, whose
   follow-up queries found no entity (#613, #619); query entities a model separates with `、`, `，` or `；` (or one per
-  line) are split into entities, not read as one; LightRAG's raw-query fallback counts a CJK or Hangul character as 4
-  against `raw_query_fallback_max_len` (a Korean question four times as long as an English one fell back) (#605).
+  line) are split into entities, not read as one (#605).
+- `simple` leaves the claims index out of its sweep when claim extraction found no claim (and built none), as
+  `local` does: every query WARNed "Index not found" for it.
 - Store failures fail the query instead of answering from no context (unreachable, denied, rejected or overloaded
   stores, a failing embedding call) (#249, #258, #261, #266); queries no longer hang on a silent store
   (`search.store_timeout_seconds`, a Neptune traversal timeout) (#258, #264); a stalled Bedrock call no longer holds

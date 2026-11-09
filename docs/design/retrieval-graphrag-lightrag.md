@@ -107,9 +107,10 @@ the methodology: GraphRAG's (§6.1) and LightRAG's (§6.2), the wrapper
 - **local** — candidate entities → graph expansion → frequency filter → their
   text units, plus a community-report section and a relationship section
   (MS GraphRAG local search). Each query entity is looked up in the entities
-  index on its own, concurrently: the entities of its name
-  (`link_key`: the `compact_name_key` with a dense-script middle dot, Arabic
-  vowel marks and alef variants folded at query time) seed the expansion,
+  index on its own, concurrently: the entities of its name (those with its
+  `compact_name_key`, else with its `link_key`: the `compact_name_key` with
+  a dense-script middle dot, Arabic vowel marks and alef variants, Russian
+  `ё` and a leading legal form folded at query time) seed the expansion,
   else its top hit
   (`domain/retrieval/linking.py` `choose_links`, policy `rank`; the
   structured strategy's mentions use `cover`) when that
@@ -435,7 +436,7 @@ through the strategy registry, so there is no dispatch on the base:
    searches (mix rerun with no keyword would fall back to the search text
    as a keyword, or search no entity past `raw_query_fallback_max_len`). A
    query already searched (case-folded) or
-   a bridge already followed (`compact_name_key`, so `동부 창고` and `동부창고` are one) is
+   a bridge already followed (`link_key`, so `동부 창고` and `동부창고` are one) is
    not searched again, a round follows at most five bridge entities
    (`search.iterative_search.max_bridge_entities`, the most follow-up
    queries a round may ask for), and the controller is shown the searched list: the

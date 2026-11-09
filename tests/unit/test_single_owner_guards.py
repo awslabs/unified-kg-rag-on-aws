@@ -158,14 +158,11 @@ GUARDS = [
         owners=("application/presentation/answer_view.py",),
         find=any_of(
             nodes(_sources_read),
-            key_reads("sources", "error_class"),
+            key_reads("sources", "error_class", "error_type"),
             string_literals("degraded", "degraded_error", "citations_unresolved"),
         ),
         within=_SURFACES,
-        allowed={
-            "application/cli/run_rag_chain.py::RAGChainRunner._run_query": "reads "
-            "the view's own error_class from the JSON payload it built",
-        },
+        allowed={},
     ),
     SourceGuard(
         name="G4 Unicode script ranges",
