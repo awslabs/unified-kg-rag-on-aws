@@ -1598,27 +1598,29 @@ class CrossRunMerge:
             for name in (c.subject_name, c.object_name)
             if name
         }
+        # And the stored entities of the other spellings of their names: a
+        # retried strip re-derives the claims it noted about a split's
+        # entities without the split (it landed), and the stated spelling
+        # resolves to the part only when the part is among them. A claim
+        # whose own entities are not in the delta (a noted write joined
+        # alone) re-derives every statement of its units: one naming a
+        # stored spelling (Acme Inc beside Acme) resolves to it only when it
+        # is among them, as the full build resolves it.
+        keys = (
+            {compact_name_key(e.name) for e in entities}
+            | {
+                compact_name_key(derived_entities[i].name)
+                for i in entity_ids
+                if i in derived_entities
+            }
+            | stated_keys
+        )
+        family = set(
+            m.graph_indexer.find_entity_ids_by_name_key(sorted(keys), suffix) or []
+        ) - (entity_ids | set(derived_entities) | {e.id for e in entities})
+        if family:
+            entities += m.graph_indexer.read_entities(sorted(family), suffix=suffix)
         if removed:
-            # And the stored entities of the other spellings of their names:
-            # a retried strip re-derives the claims it noted about a split's
-            # entities without the split (it landed), and the stated
-            # spelling resolves to the part only when the part is among
-            # them. Only a strip reads them (a commit's merge reads its
-            # names' spellings already, see merge_with_existing_graph).
-            keys = (
-                {compact_name_key(e.name) for e in entities}
-                | {
-                    compact_name_key(derived_entities[i].name)
-                    for i in entity_ids
-                    if i in derived_entities
-                }
-                | stated_keys
-            )
-            family = set(
-                m.graph_indexer.find_entity_ids_by_name_key(sorted(keys), suffix) or []
-            ) - (entity_ids | set(derived_entities))
-            if family:
-                entities += m.graph_indexer.read_entities(sorted(family), suffix=suffix)
             stripped = {e.id: e for e in remove_text_units(entities, [], removed)[0]}
             entities = [stripped.get(e.id, e) for e in entities]
         entities += [

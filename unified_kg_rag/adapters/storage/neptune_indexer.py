@@ -93,6 +93,19 @@ _jitter = random.SystemRandom().uniform
 # the label's count needs.
 _DELETE_BATCH_SIZE = 500
 _EXTRA_DELETE_PASSES = 3
+# The values of one multi-valued vertex property a request writes; the rest
+# are added by requests of their own (set cardinality: adding a value again
+# changes nothing). A hub entity's text_unit_ids grow with the corpus: 5,000
+# in one request failed with Neptune's QueryTooLargeException under load on
+# a db.t4g.medium, while 2,500 passed alone (v23); no smaller bound was
+# measured.
+_SET_VALUES_PER_REQUEST = 1000
+
+
+def _set_values(value: list[Any]) -> list[Any]:
+    """The values a multi-valued property stores of ``value``: once each, in
+    order, without ``None``."""
+    return list(dict.fromkeys(item for item in value if item is not None))
 
 
 def _stale_edges(
@@ -734,6 +747,7 @@ class NeptuneIndexer(GraphIndexer):
             self._entity_vertex_builder,
             clear_first=True,
             suffixes=suffixes,
+            properties=self._entity_properties,
         )
 
     def index_communities(
@@ -803,6 +817,14 @@ class NeptuneIndexer(GraphIndexer):
             vertex_stats = self._execute_batch_traversal(
                 comms, community_vertex_builder, "Community vertex indexing"
             )
+            self._add_set_values(
+                community_label,
+                comms,
+                lambda comm: community_properties(
+                    comm, self.neptune_config.property_max_length
+                ),
+                vertex_stats,
+            )
             stats.merge(vertex_stats)
             stats.processing_time = time.time() - start_time
             total_stats.merge(stats)
@@ -823,6 +845,7 @@ class NeptuneIndexer(GraphIndexer):
             self.neptune_config.entity_label_prefix,
             self._entity_vertex_builder,
             clear_first=False,  # upsert is non-destructive
+            properties=self._entity_properties,
         )
 
     def _entity_vertex_builder(
@@ -840,13 +863,13 @@ class NeptuneIndexer(GraphIndexer):
             t: Any = g
             for entity in batch:
                 t = self._upsert_vertex(t, label, entity.id)
-                self._set_properties_on_traversal(
-                    t,
-                    entity_properties(entity, self.neptune_config.property_max_length),
-                )
+                self._set_properties_on_traversal(t, self._entity_properties(entity))
             return cast(GraphTraversal, t)
 
         return builder
+
+    def _entity_properties(self, entity: Entity) -> dict[str, Any]:
+        return entity_properties(entity, self.neptune_config.property_max_length)
 
     def _upsert_vertex(self, t: Any, label: str, item_id: str) -> GraphTraversal:
         """Continue ``t`` with the vertex ``label``/``item_id``, created if missing.
@@ -1302,11 +1325,69 @@ class NeptuneIndexer(GraphIndexer):
             if value is None:
                 continue
             if isinstance(value, list):
-                for item in value:
-                    if item is not None:
-                        traversal.property(Cardinality.set_, key, item)
+                # The first values only: _add_set_values writes the rest.
+                for item in _set_values(value)[:_SET_VALUES_PER_REQUEST]:
+                    traversal.property(Cardinality.set_, key, item)
             else:
                 traversal.property(Cardinality.single, key, value)
+
+    def _add_set_values(
+        self,
+        label: str,
+        items: list[Any],
+        properties: Callable[[Any], dict[str, Any]],
+        stats: IndexingStats,
+    ) -> None:
+        """Add to the vertices of ``items`` just written the values of their
+        multi-valued ``properties`` the write left out
+        (``_SET_VALUES_PER_REQUEST`` per request, each request one vertex's
+        next values). A vertex whose request fails is a failed item, written
+        again whole by a later write."""
+        failed = set(stats.failed_ids)
+        for item in items:
+            if item.id in failed:
+                continue
+            rest = [
+                (key, values[start : start + _SET_VALUES_PER_REQUEST])
+                for key, value in properties(item).items()
+                if isinstance(value, list)
+                and len(values := _set_values(value)) > _SET_VALUES_PER_REQUEST
+                for start in range(
+                    _SET_VALUES_PER_REQUEST, len(values), _SET_VALUES_PER_REQUEST
+                )
+            ]
+            for key, chunk in rest:
+
+                def build(
+                    g: GraphTraversalSource,
+                    item_id: str = item.id,
+                    key: str = key,
+                    chunk: list[Any] = chunk,
+                ) -> GraphTraversal:
+                    t: Any = (
+                        g.V(vertex_id(label, item_id))
+                        if self._custom_ids
+                        else self._rewritten(g.V().has(label, "id", item_id), label)
+                    )
+                    for value in chunk:
+                        t = t.property(Cardinality.set_, key, value)
+                    return cast(GraphTraversal, t.id_())
+
+                try:
+                    written = self._execute_with_retries(
+                        build, "Adding vertex property values", results=True
+                    )
+                    if not written:
+                        raise AWSServiceError(f"vertex '{item.id}' not found")
+                except NamespaceLeaseError:
+                    raise
+                except Exception as e:  # noqa: BLE001 - a failed item
+                    stats.successful_items -= 1
+                    stats.add_error(str(e), ids=[str(item.id)])
+                    logger.warning(
+                        "Adding the %s values of %s failed: %s", key, item.id, e
+                    )
+                    break
 
     def _index_generic(
         self,
@@ -1317,6 +1398,7 @@ class NeptuneIndexer(GraphIndexer):
         *,
         clear_first: bool,
         suffixes: Collection[str] = (),
+        properties: Callable[[Any], dict[str, Any]] | None = None,
     ) -> IndexingStats:
         if not items and not suffixes:
             return IndexingStats()
@@ -1342,6 +1424,8 @@ class NeptuneIndexer(GraphIndexer):
             stats = self._execute_batch_traversal(
                 chunk, traversal_builder, f"{item_type_name} indexing"
             )
+            if properties is not None:
+                self._add_set_values(label, chunk, properties, stats)
 
             stats.processing_time = time.time() - start_time
             total_stats.merge(stats)

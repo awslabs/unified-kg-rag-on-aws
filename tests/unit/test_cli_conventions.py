@@ -1073,6 +1073,8 @@ async def test_ingestion_json_result_counts_the_failed_documents() -> None:
     context.record_claims_missing_documents(["doc-b", "doc-b"])
     result = runner._json_result(context)
     assert (result["documents_without_claims"], result["failed_documents"]) == (1, 2)
+    # No indexing stage ran: nothing to say of the build record.
+    assert result["build_record"] is None
 
 
 async def test_eval_json_output_is_the_only_stdout(

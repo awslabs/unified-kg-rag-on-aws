@@ -118,6 +118,12 @@ def _print(description: NamespaceDescription) -> None:
             f"Last build: {build.get('mode')} run {build.get('pipeline_id')} at "
             f"{build.get('built_at')}, {build.get('documents')} documents"
         )
+    elif description.exists:
+        console.print(
+            "[yellow]Last build: no build record (a store rejected it, or a "
+            "build from before records): queries take the namespace to hold "
+            "what their config builds until a run writes one[/yellow]"
+        )
     origin = (
         "" if description.artifacts_from == "build_record" else " (from the config)"
     )

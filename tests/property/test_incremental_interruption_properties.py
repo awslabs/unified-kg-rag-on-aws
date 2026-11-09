@@ -39,6 +39,7 @@ from tests.fixtures.incremental_runs import (
     expected_state,
 )
 from tests.fixtures.seed_graphs import EX, Seed, random_seeds, seeded_corpus
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.models import Config, ExtractionSchema
 from unified_kg_rag.domain.models.seed_graph import SeedEdge, SeedNode
 from unified_kg_rag.shared.exceptions import SeedGraphError
@@ -47,10 +48,23 @@ pytestmark = pytest.mark.property
 
 _PATHS = ["/corpus/a.txt", "/corpus/b.txt", "/corpus/c.txt", "/corpus/d.txt"]
 _NAMES = ["Vendor", "Depot", "Carrier", "Buyer"]
+# Spellings of one entity each (legal forms the full build folds, in
+# English, Korean and Japanese): which one an entity is stored under
+# follows the corpus, so an interrupted commit may be re-keying it.
+_SPELLINGS = [
+    "Acme Inc",
+    "Acme Corp",
+    "주식회사 한빛",
+    "(주)한빛",
+    "株式会社トヨダ",
+    "トヨダ",
+]
 
 _edge = st.tuples(
-    st.sampled_from(_NAMES), st.sampled_from(_NAMES), st.integers(1, 3)
-).filter(lambda e: e[0] != e[1])
+    st.sampled_from(_NAMES + _SPELLINGS),
+    st.sampled_from(_NAMES + _SPELLINGS),
+    st.integers(1, 3),
+).filter(lambda e: compact_name_key(e[0]) != compact_name_key(e[1]))
 _unit = st.lists(_edge, min_size=1, max_size=3, unique_by=lambda e: (e[0], e[1]))
 _content = st.lists(_unit, min_size=1, max_size=2)
 _corpus = st.fixed_dictionaries({path: st.none() | _content for path in _PATHS}).map(

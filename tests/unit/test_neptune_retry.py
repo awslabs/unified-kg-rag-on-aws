@@ -180,6 +180,8 @@ def test_other_errors_are_retried(exc: BaseException) -> None:
         _neptune_error("AccessDeniedException"),
         _neptune_error("BadRequestException"),
         _neptune_error("MalformedQueryException"),
+        # As large on a retry (a hub vertex's 5,000 set values under load).
+        _neptune_error("QueryTooLargeException"),
         ValueError("bad traversal argument"),
     ],
 )

@@ -139,6 +139,22 @@ def test_list_properties_are_sets_and_an_upsert_replaces_them(
     assert read.text_unit_ids == ["c"]
 
 
+def test_a_hub_entity_keeps_every_text_unit(harness: StoreHarness) -> None:
+    # Neptune writes a long set property in bounded requests (a hub's 5,000
+    # values in one failed with QueryTooLargeException): every value lands,
+    # and a rewrite replaces them all.
+    graph = harness.graph_indexer
+    units = [f"t{i:05d}" for i in range(2_500)]
+    stats = graph.upsert_entities([_entity("hub", text_unit_ids=units)])
+    assert stats.failed_items == 0, stats.errors
+    (read,) = graph.read_entities(["hub"])
+    assert sorted(read.text_unit_ids or []) == units
+    stats = graph.index_entities([_entity("hub", text_unit_ids=units[:1_200])])
+    assert stats.failed_items == 0, stats.errors
+    (read,) = graph.read_entities(["hub"])
+    assert sorted(read.text_unit_ids or []) == units[:1_200]
+
+
 def test_upsert_is_idempotent_and_replaces_the_properties(
     harness: StoreHarness,
 ) -> None:

@@ -23,7 +23,9 @@ from tests.fixtures.fakes.model_servers import FakeOllama
 from tests.integration import test_embedded_e2e as e2e
 from tests.integration.test_embedded_e2e import no_aws  # noqa: F401 - a fixture
 from unified_kg_rag.adapters.storage.opensearch_indexer import OpenSearchIndexer
+from unified_kg_rag.application.cli.run_ingestion_pipeline import _build_record
 from unified_kg_rag.application.ingestion.incremental import IncrementalIndexer
+from unified_kg_rag.application.storage.inspection import describe_namespace
 from unified_kg_rag.domain.models import Methodology, PipelineStageStatus
 
 pytestmark = pytest.mark.integration
@@ -145,9 +147,46 @@ def test_a_missing_record_is_written_by_a_run_with_nothing_to_index(
     assert want is not None
     config, providers, source = _setup(tmp_path)
     _failing_record_writes(mocker, attempts=1000)
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+    assert _record(config, providers) is None
+    # Visible to automation: the run result and run-describe say so.
+    assert _build_record(context) == "failed"
+    assert describe_namespace(config, providers=providers).build_record == "missing"
+    mocker.stopall()
+
+    context = e2e._ingest(config, providers, source, tmp_path / "run-2")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert context.incremental_delta is not None
+    assert context.incremental_delta.to_process == []
+    assert _build_record(context) == "written"
+    assert describe_namespace(config, providers=providers).build_record == "present"
+    record = _record(config, providers)
+    assert record is not None
+    assert _build_record(e2e._ingest(config, providers, source, tmp_path / "r3")) == (
+        "kept"
+    )
+    assert record["methodologies"] == want["methodologies"] == ["lightrag", "hipporag"]
+    assert record["artifacts"] == want["artifacts"]
+    # Written by a delta that indexed nothing: the build the stores hold,
+    # counting the documents the registry records.
+    assert (record["mode"], record["documents"]) == ("full", 2)
+
+
+@pytest.mark.usefixtures("no_aws")
+def test_a_rewritten_record_names_only_what_the_stores_hold(
+    tmp_path: Path, mocker
+) -> None:
+    # Built under LightRAG alone, the record rejected; the next run, with
+    # nothing to index, runs the default profile. Its record must not name
+    # GraphRAG's communities and reports, which no run built: a global query
+    # would then search an empty reports index instead of being refused.
+    config, providers, source = _setup(tmp_path)
+    _failing_record_writes(mocker, attempts=1000)
     e2e._ingest(config, providers, source, tmp_path / "run-1")
     assert _record(config, providers) is None
     mocker.stopall()
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
 
     context = e2e._ingest(config, providers, source, tmp_path / "run-2")
 
@@ -156,7 +195,82 @@ def test_a_missing_record_is_written_by_a_run_with_nothing_to_index(
     assert context.incremental_delta.to_process == []
     record = _record(config, providers)
     assert record is not None
-    assert record["methodologies"] == want["methodologies"] == ["lightrag", "hipporag"]
-    assert record["artifacts"] == want["artifacts"]
-    # Written by a delta that indexed nothing.
-    assert (record["mode"], record["documents"]) == ("incremental", 0)
+    assert "graphrag" not in record["methodologies"]
+    assert not {"communities", "community_reports"} & set(record["artifacts"])
+    assert {"text_units", "entities", "relationship_vectors", "graph"} <= set(
+        record["artifacts"]
+    )
+    # The documents the registry records, not the none this run indexed.
+    assert (record["mode"], record["documents"]) == ("full", 2)
+
+
+@pytest.mark.usefixtures("no_aws")
+def test_a_rewritten_record_is_the_full_build_later_records_carry(
+    tmp_path: Path, mocker
+) -> None:
+    # Under the default profile: the rewritten record starts the community
+    # counters from the reports stored, and the next incremental record
+    # carries it as its full build (the corpus size survives).
+    config, providers, source = _setup(tmp_path)
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    _failing_record_writes(mocker, attempts=1000)
+    e2e._ingest(config, providers, source, tmp_path / "run-1")
+    mocker.stopall()
+    e2e._ingest(config, providers, source, tmp_path / "run-2")
+    rewritten = _record(config, providers)
+    assert rewritten is not None
+    assert (rewritten["mode"], rewritten["documents"]) == ("full", 2)
+    reports = next(
+        entry["documents"]
+        for entry in providers.build_vector_indexer().describe_indices(None)
+        if entry["kind"] == "community_reports"
+    )
+    assert reports
+    assert rewritten["communities"]["communities_now"] == reports
+    assert rewritten["communities"]["runs_since"] == 0
+    (source / "carrier.txt").write_text("Carrier ships widgets for Depot.")
+
+    e2e._ingest(config, providers, source, tmp_path / "run-3")
+
+    record = _record(config, providers)
+    assert record is not None
+    assert (record["mode"], record["documents"]) == ("incremental", 1)
+    assert record["full_build"]["pipeline_id"] == "run-2"
+    assert record["full_build"]["documents"] == 2
+    assert record["communities"]["runs_since"] == 1
+
+
+@pytest.mark.usefixtures("no_aws")
+def test_a_record_one_index_rejected_is_written_again_in_the_run(
+    tmp_path: Path, mocker
+) -> None:
+    # One index refuses the first write; the others take it. The run writes
+    # it again after the registry, as its log says, so no index is left
+    # holding no record (or an earlier one).
+    config, providers, source = _setup(tmp_path)
+    put = OpenSearchIndexer._put_index_meta
+    refused: list[str] = []
+
+    def once(self, name, meta):  # noqa: ANN001, ANN202
+        if "entities" in name and "build" in meta and not refused:
+            refused.append(name)
+            raise RuntimeError("mapping update denied")
+        return put(self, name, meta)
+
+    mocker.patch.object(OpenSearchIndexer, "_put_index_meta", once)
+
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert refused
+    assert _build_record(context) == "written"
+    vectors = providers.build_vector_indexer()
+    try:
+        builds = {
+            entry["kind"]: (entry["meta"].get("build") or {}).get("pipeline_id")
+            for entry in vectors.describe_indices(None)
+            if entry["index"]
+        }
+    finally:
+        vectors.close()
+    assert builds and set(builds.values()) == {"run-1"}, builds

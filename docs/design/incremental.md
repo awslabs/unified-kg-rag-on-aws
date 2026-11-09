@@ -132,7 +132,12 @@ unless noted.
    record of what it built (the next run finds nothing to index and writes
    none). A record the store rejected (on any index) is written again after
    the registry write, and a run with nothing to index writes the record
-   when the configured suffix has none. `failure_count` counts
+   when the configured suffix has none: a full record of the build the
+   stores hold, naming the artifacts they show (a non-empty index, a graph
+   item, the tree's record) that the config builds, the documents the
+   registry records and community counters started from the stored
+   reports; later incremental records carry it as their `full_build`.
+   `failure_count` counts
    consecutive failures of the same content; after
    `indexing.max_document_failures` the document reads unchanged. A run that
    stops before this step at a stage that failed on all of its units still

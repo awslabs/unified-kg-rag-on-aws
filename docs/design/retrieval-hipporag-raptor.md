@@ -429,7 +429,11 @@ flip a tie):
   documents get no tree under `document`. The trees are read (texts and
   vectors) and built a batch at a time, a batch holding at most
   `max_leaves_in_memory` leaves (whole trees, in name order), so a corpus
-  split into many trees holds one batch at once, not every tree. A batch
+  split into many trees holds one batch's leaves at once, not every tree's.
+  The summary nodes of every tree (each with its text and vector, fewer
+  than its leaves) are held until the stage writes them, in one new index
+  it swaps in whole: they grow with the corpus, not the batch (unbounded;
+  streaming them into the new index is left for the tree's re-key). A batch
   reads its own text units by id (`VectorIndexer.read_text_unit_fields`), a
   page of ids at a time, so the stored units are read once in all; a store
   that cannot read them by id is walked once per batch.

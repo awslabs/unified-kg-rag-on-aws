@@ -102,15 +102,27 @@ def _parse_in_worker(
 
 
 # Source digests computed while the corpus fingerprint read each file
-# (:func:`fingerprint_digest`), by path, size, modification time and parser
-# fingerprint: the parsing stage reads each file once per run, not twice.
-_SOURCE_DIGESTS: dict[tuple[str, int, int, str], str] = {}
+# (:func:`fingerprint_digest`), by path, inode, size, modification and
+# change times and parser fingerprint: the parsing stage reads each file
+# once per run, not twice. The change time is set by every write and cannot
+# be set back, so a file rewritten at the same size and modification time
+# (a sync that copies an object's second-precision time) is read again.
+_SOURCE_DIGESTS: dict[tuple[str, int, int, int, int, str], str] = {}
 _SOURCE_DIGESTS_HELD = 1 << 17
 
 
-def _stat_key(path: Path, parser_fingerprint: str) -> tuple[str, int, int, str]:
+def _stat_key(
+    path: Path, parser_fingerprint: str
+) -> tuple[str, int, int, int, int, str]:
     stat = path.stat()
-    return str(path.resolve()), stat.st_size, stat.st_mtime_ns, parser_fingerprint
+    return (
+        str(path.resolve()),
+        stat.st_ino,
+        stat.st_size,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+        parser_fingerprint,
+    )
 
 
 def fingerprint_digest(path: Path) -> str:

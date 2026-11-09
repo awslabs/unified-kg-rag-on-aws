@@ -302,6 +302,9 @@ class _ItemSpec(NamedTuple):
 _UNKNOWN_STORAGE_KEY = re.compile(r"unknown parameter \[(mode|compression_level)\]")
 # The embedded engine was warned of ignoring them (once per process).
 _storage_ignored_warned = False
+# The live text fields kept with their stored analyzers already warned of
+# (``check_index_settings``), by engine, suffix and fields.
+_kept_analyzers_warned: set[tuple[str, str, tuple[str, ...]]] = set()
 
 
 def _vector_storage_of(field: dict[str, Any]) -> tuple[str, str]:
@@ -717,8 +720,27 @@ class OpenSearchIndexer(VectorIndexer):
     def _mapping_funcs(self) -> dict[str, Callable[[], dict[str, Any]]]:
         return {spec.alias_prefix: spec.mapping for spec in self._specs()}
 
+    def _keeps_stored_analyzer(self, stored: str, wanted: str) -> bool:
+        """Whether a live text field analyzed by ``stored`` keeps it though
+        this config gives it ``wanted``: ``wanted`` comes from the default
+        ``language_analyzers`` (the key is not set) and ``stored`` is what
+        a language without an entry gets (``default_analyzer``). The index
+        was built before the default map named its language (the codes
+        mapped to OpenSearch's built-in analyzers, ``BUILT_IN_ANALYZERS``);
+        its field cannot change, and the default alone is no reason to make
+        a run reset it. A map the user set is followed (a mismatch stops)."""
+        opensearch = self.opensearch_config
+        return (
+            "language_analyzers" not in opensearch.model_fields_set
+            and stored == opensearch.default_analyzer
+            and wanted != stored
+        )
+
     def _text_field_mismatches(
-        self, expected: dict[str, Any], live: dict[str, Any]
+        self,
+        expected: dict[str, Any],
+        live: dict[str, Any],
+        kept: list[str] | None = None,
     ) -> list[str]:
         """The analyzed text fields of ``expected`` that ``live`` maps otherwise.
 
@@ -727,7 +749,9 @@ class OpenSearchIndexer(VectorIndexer):
         as a date, on an index built before date detection was turned off).
         An engine with an ``analyzes_alike`` (the embedded one, where ``cjk``
         and ``standard`` are one analyzer) accepts a field whose analyzer it
-        tokenizes alike under another name.
+        tokenizes alike under another name. A field that keeps its stored
+        analyzer (``_keeps_stored_analyzer``) is no mismatch: it is added to
+        ``kept``.
         """
         engine_alike = getattr(self.opensearch_client, "analyzes_alike", None)
         alike: Callable[[str, str], bool] = (
@@ -745,10 +769,16 @@ class OpenSearchIndexer(VectorIndexer):
                 mismatches.append(
                     f"'{name}' is mapped as {stored.get('type')} (needs '{analyzer}')"
                 )
-            elif not alike(stored.get("analyzer", "standard"), analyzer):
+            elif not alike(
+                stored_analyzer := stored.get("analyzer", "standard"), analyzer
+            ):
+                if kept is not None and self._keeps_stored_analyzer(
+                    stored_analyzer, analyzer
+                ):
+                    kept.append(f"'{name}' keeps '{stored_analyzer}' ('{analyzer}')")
+                    continue
                 mismatches.append(
-                    f"'{name}' uses '{stored.get('analyzer', 'standard')}' "
-                    f"(needs '{analyzer}')"
+                    f"'{name}' uses '{stored_analyzer}' (needs '{analyzer}')"
                 )
         return mismatches
 
@@ -797,6 +827,7 @@ class OpenSearchIndexer(VectorIndexer):
         mapping_funcs = self._mapping_funcs()
         # Not the summary tree's: its stage writes a new index every build.
         summary = self.opensearch_config.summary_nodes_index_prefix
+        kept: list[str] = []
         for prefix in self._index_prefixes():
             if prefix == summary:
                 continue
@@ -826,7 +857,11 @@ class OpenSearchIndexer(VectorIndexer):
                 )
             expected_properties = mapping_funcs[prefix]()["mappings"]["properties"]
             self._check_vector_storage(index_name, expected_properties, properties)
-            mismatches = self._text_field_mismatches(expected_properties, properties)
+            kept_here: list[str] = []
+            mismatches = self._text_field_mismatches(
+                expected_properties, properties, kept_here
+            )
+            kept += [f"{index_name}: {field}" for field in kept_here]
             if META_MODEL not in meta and META_DIMENSION not in meta:
                 raise ConfigurationError(
                     f"The {self._engine} index '{index_name}' records no embedding "
@@ -856,6 +891,23 @@ class OpenSearchIndexer(VectorIndexer):
                     "keep the registry off for this suffix."
                 )
             self._add_missing_fields(index_name, mappings, expected_properties)
+        named = namespace_suffix(suffix)
+        warned = (self._engine, named, tuple(kept))
+        if kept and warned not in _kept_analyzers_warned:
+            # Once per process: a run checks a suffix more than once.
+            _kept_analyzers_warned.add(warned)
+            logger.warning(
+                "The %s indices of '%s' were built before the default "
+                "language_analyzers named their language, and keep the "
+                "analyzers they were built with: %s. Their text is searched "
+                "without that language's stemming and stop words until a "
+                "run with indexing.reset: true rebuilds them; pin "
+                "indexing.opensearch.language_analyzers to keep the stored "
+                "analyzers.",
+                self._engine,
+                named,
+                "; ".join(kept),
+            )
 
     @staticmethod
     def _check_vector_storage(
@@ -960,11 +1012,14 @@ class OpenSearchIndexer(VectorIndexer):
 
         Merged into the existing ``_meta`` (the embedding settings stay), so
         it needs ``indices:admin/mapping/put``; a failure is logged and the run
-        goes on (``None`` when no index took it: the indexing stage retries). An incremental record keeps the full build the index holds
-        and its community counters (``IndexBuildRecord.over``). Returns the
-        first record written that carries counters (else the first written).
+        goes on (``None`` when an index did not take it: the indexing stage
+        writes it again, an index that holds it already keeping it). An
+        incremental record keeps the full build the index holds and its
+        community counters (``IndexBuildRecord.over``). Returns the first
+        record written that carries counters (else the first written).
         """
         written: IndexBuildRecord | None = None
+        failed = False
         for prefix in self._index_prefixes():
             alias = self._get_name(prefix, suffix)
             try:
@@ -982,6 +1037,7 @@ class OpenSearchIndexer(VectorIndexer):
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the record is optional
+                failed = True
                 logger.warning(
                     "Could not record the build of pipeline '%s' in the _meta of "
                     "%s (%s): the run retries it once its documents are "
@@ -990,7 +1046,7 @@ class OpenSearchIndexer(VectorIndexer):
                     alias,
                     e,
                 )
-        return written
+        return None if failed else written
 
     def read_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """The build record in the ``_meta`` of ``suffix``'s live text-units

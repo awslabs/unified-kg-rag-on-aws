@@ -273,3 +273,45 @@ def dropped_methodologies(
         return ()
     kept = methodologies_holding(stored & artifacts_to_build(config))
     return tuple(m for m in methodologies_holding(stored) if m not in kept)
+
+
+# The vector-store item kind (the port's StoredItemKind) whose index holds
+# each artifact. The graph store holds the others (GRAPH_STORE_ARTIFACTS and
+# the edges, RELATIONSHIPS); the summary tree is held when its record is.
+ARTIFACT_KINDS: dict[IndexArtifact, str] = {
+    _A.TEXT_UNITS: "text_units",
+    _A.ENTITIES: "entities",
+    _A.RELATIONSHIP_VECTORS: "relationships",
+    _A.CLAIMS: "claims",
+    _A.COMMUNITY_REPORTS: "community_reports",
+}
+
+
+def stored_artifacts_shown(
+    config: Config,
+    documents: Mapping[str, int | None],
+    *,
+    graph_holds: bool | None,
+    tree: bool,
+) -> frozenset[IndexArtifact]:
+    """The artifacts of ``artifacts_to_build`` the stores show they hold,
+    for a build record written without the run that built them (the
+    record a store rejected, rewritten by a run with nothing to index).
+
+    ``documents`` counts the documents each vector-store kind's index holds
+    (``ARTIFACT_KINDS``); ``graph_holds`` is whether the graph holds an item
+    (``None`` when it cannot tell: the config's graph artifacts are taken);
+    ``tree`` whether the summary tree's record is stored. Communities are
+    held with their reports; where the config builds no reports, the
+    stores cannot tell, so they are held with the graph.
+    """
+    building = artifacts_to_build(config)
+    held = {a for a, kind in ARTIFACT_KINDS.items() if documents.get(kind)}
+    graph = graph_holds is not False and bool(building & GRAPH_STORE_ARTIFACTS)
+    if graph:
+        held |= {_A.GRAPH, _A.RELATIONSHIPS}
+    if _A.COMMUNITY_REPORTS in held or (graph and _A.COMMUNITY_REPORTS not in building):
+        held.add(_A.COMMUNITIES)
+    if tree:
+        held.add(_A.SUMMARY_TREE)
+    return frozenset(held & building)

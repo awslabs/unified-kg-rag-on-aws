@@ -343,3 +343,24 @@ def test_upload_missing_file_returns_false(s3_setup, tmp_path) -> None:
     missing = tmp_path / "ghost.json"
     # FileNotFoundError is caught -> False, not raised.
     assert mgr._upload_file_to_s3(missing, "k/ghost.json") is False
+
+
+def test_read_head_reads_the_first_bytes_of_an_uploaded_file(
+    s3_setup, tmp_path: Path
+) -> None:
+    config, session = s3_setup
+    manager = _manager(config, session)
+    cache_dir = tmp_path / "run-1"
+    export = cache_dir / "visualization" / "data.json"
+    export.parent.mkdir(parents=True)
+    export.write_text('{"namespace": "기본", "built_at": "t"}' + " " * 2000)
+    manager.upload_file("run-1", cache_dir, export)
+
+    head = manager.read_head("run-1", "visualization/data.json", 32)
+
+    assert head is not None and head.startswith('{"namespace": "기본"')
+    assert len(head.encode("utf-8")) <= 32
+    assert manager.read_head("run-1", "visualization/missing.json", 32) is None
+    assert manager.uri("run-1", "visualization/data.json") == (
+        f"s3://{_BUCKET}/cache/run-1/visualization/data.json"
+    )

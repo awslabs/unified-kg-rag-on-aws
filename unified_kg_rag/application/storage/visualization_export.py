@@ -144,14 +144,20 @@ def _built_at(vector: VectorIndexer, suffix: str) -> str | None:
     return str(built_at) if built_at else None
 
 
-def stored_build_time(providers: Providers, suffix: str) -> str | None:
+def stored_export(providers: Providers, suffix: str) -> tuple[str | None, str | None]:
     """When the build the stores of ``suffix`` hold finished, as an export
-    names it (``None`` without a build record)."""
+    names it, and the run that exports it (``visualization_export_run``):
+    ``None`` for either the build record does not name."""
     vector = providers.build_vector_indexer()
     try:
-        return _built_at(vector, suffix)
+        record = vector.read_build_record(suffix) or {}
     finally:
         vector.close()
+    built_at, run = record.get("built_at"), record.get("visualization_export_run")
+    return (
+        str(built_at) if built_at else None,
+        run if isinstance(run, str) and run else None,
+    )
 
 
 # How the file begins (stored_visualization_data writes the namespace, then
@@ -161,13 +167,24 @@ _HEAD = re.compile(
 )
 
 
+# How many leading bytes hold the namespace and the build (``_HEAD``).
+EXPORT_HEAD_BYTES = 512
+
+
 def _head(path: Path) -> re.Match[str] | None:
     try:
         with path.open("r", encoding="utf-8") as handle:
-            head = handle.read(512)
+            head = handle.read(EXPORT_HEAD_BYTES)
     except OSError:
         return None
     return _HEAD.match(head)
+
+
+def export_head(head: str) -> tuple[str | None, str | None]:
+    """The namespace and the build time an export's first bytes ``head``
+    name (``None`` for either it does not)."""
+    match = _HEAD.match(head)
+    return (match.group(1), match.group(2)) if match else (None, None)
 
 
 def export_namespace(path: Path) -> str | None:

@@ -90,7 +90,12 @@ unit holds any more are deleted by the next full build
   built-in analyzer of the language where it has one (`nl`: `dutch`, `sv`:
   `swedish`, `tr`: `turkish`, ...; the default `language_analyzers` lists
   them), else the `default_analyzer`, English declines, and prompts that
-  name the language by its code. A profile
+  name the language by its code. `nn` (Nynorsk) gets `norwegian`, whose
+  stemmer and stop words are Bokmål's. An index built before the default
+  named its language keeps the `default_analyzer` its fields were built
+  with (one WARNING per run) until an `indexing.reset: true` run; a
+  `language_analyzers` you set yourself is followed (a field built
+  otherwise stops the run). A profile
   (`unified_kg_rag/domain/languages/profiles/`) is one module: its name,
   script, analyzer, decline and the words answers in it are read by.
 - **The analyzer must exist on the cluster**, or the indexing stage fails

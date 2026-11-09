@@ -983,8 +983,10 @@ class IndexingManager:
         again, so their stored edges and claims and the old copies would
         stay as they were. The next commit of the suffix derives the noted
         entities and the items stored under the old ids again
-        (:meth:`_merge_suffix`). Raises when a write fails, before anything
-        is written."""
+        (:meth:`_merge_suffix`). An earlier note's old id no store holds any
+        more (a commit deleted it) is left out, so a note does not grow for
+        as long as a write keeps failing. Raises when a write or a read
+        fails, before anything is written."""
         retired = self._retired_ids()
         for suffix in sorted(
             self._commit_entities.keys()
@@ -996,9 +998,12 @@ class IndexingManager:
                 *self._commit_entities.get(suffix, set()),
                 *self._noted_commit_entities.get(suffix, set()),
             }
+            earlier = self._noted_retired.get(suffix, set()) - set(
+                retired.get(suffix, [])
+            )
             old_ids = {
                 *retired.get(suffix, []),
-                *self._noted_retired.get(suffix, set()),
+                *(self._still_stored(sorted(earlier), suffix) if earlier else ()),
             }
             if not ids and not old_ids:
                 continue
@@ -1007,6 +1012,19 @@ class IndexingManager:
                 note["retired_ids"] = sorted(old_ids)
             self._write_note(_PENDING_COMMIT, suffix, note)
             self._commit_note_suffixes.add(suffix)
+
+    def _still_stored(self, ids: list[str], suffix: str) -> set[str]:
+        """The ``ids`` an entity, edge, vector copy or claim of ``suffix`` is
+        stored under. A failed read raises."""
+        return {
+            *(e.id for e in self.graph_indexer.read_entities(ids, suffix=suffix)),
+            *(r.id for r in self.graph_indexer.read_relationships(ids, suffix=suffix)),
+            *self.vector_indexer.read_vector_copies("entities", ids, suffix=suffix),
+            *self.vector_indexer.read_vector_copies(
+                "relationships", ids, suffix=suffix
+            ),
+            *(c.id for c in self.vector_indexer.read_claims(ids, suffix=suffix)),
+        }
 
     def read_pending_writes(
         self, suffixes: Iterable[str], text_units: Sequence[TextUnit] = ()

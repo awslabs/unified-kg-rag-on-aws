@@ -136,7 +136,8 @@ stored is read again: follow *Upgrading* in order.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
   `true`), at the end of every run that indexed, from the namespace's stores once the run gave up the namespace's
   lease, and prints its path; a run that wrote nothing keeps an export naming the build the stores hold (`built_at`),
-  so a no-change run at 10k text units no longer rewrites a 59 MB file;
+  local or uploaded by the S3 cache sync from the run the build record names (`visualization_export_run`), so a
+  no-change run at 10k text units, a deployed task's on an empty disk too, no longer rewrites a 59 MB file;
   `run-visualization` renders it (without `--data-path` the newest export, of `--suffix`'s namespace when given)
   with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are gone.
   `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown key (#344,
@@ -478,9 +479,12 @@ From a `main` checkout (formats and keys no release had):
 - Stored items: an index built before #508 (seed properties unmapped; such an entities index is refused, exit 2),
   #562 (relationships store their type, else `Relationship: A -> B`) or #383/#410 (removals written ahead) needs the
   same reset; for a deleted document restored mid-removal, deleting its registry record is enough.
-- #574 analyzers: an OpenSearch namespace translating into `de`, `es`, `fr`, `it`, `ja`, `pt`, `ru` or `zh` stops
-  before any model call (exit 2, `was built for other language settings`) until one `indexing.reset: true` run, or
-  set `language_analyzers: {en: english, ko: nori}`.
+- Analyzers: a namespace indexed in a language before the default `language_analyzers` named it (`de`, `es`, `fr`,
+  `it`, `ja`, `pt`, `ru` and `zh` before #574; `nl`, `sv`, `tr` and the other built-in analyzers before #671) keeps
+  the `default_analyzer` its fields were built with, one WARNING per run naming them, until one `indexing.reset: true`
+  run gives them the language's stemming and stop words. With `language_analyzers` set, a field built otherwise stops
+  the run before any model call (exit 2, `was built for other language settings`): reset, or set the map to what the
+  fields hold.
 - #574 legal forms: entity `name_key` follows the larger table; reset with a new or no `--pipeline-id` to merge
   designator variants, or entities stored apart stay apart.
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
@@ -961,9 +965,11 @@ From a `main` checkout (formats and keys no release had):
   reads a summary tree (#599). Without a build record (a namespace ingested before them), a query takes the namespace
   to hold what a run of the config builds, `hipporag` included (#602); a run writes the record before the registry
   records its documents, so a first build or reset killed between the two leaves it (the next run found nothing to
-  index and wrote none, and queries took the namespace to hold what the config builds). A record the store rejected
-  is written again once the documents are recorded, and a run with nothing to index writes a missing one (a WARNING
-  says what queries assume until one is written). With
+  index and wrote none, and queries took the namespace to hold what the config builds). A record any index rejected
+  is written again once the documents are recorded, and a run with nothing to index writes a missing one: a full
+  record naming only the artifacts the stores hold, the documents the registry records and community counters from
+  the stored reports (a WARNING says what queries assume until one is written; the run result's `build_record` and
+  `run-describe` say whether one is stored). With
   `graph.community_detection.report_generation.enabled: false` a run builds no reports, so an incremental run no
   longer takes them for missing and rebuilds the namespace, and the namespace holds `graphrag` for `local` while
   `global` and `drift`, which declare the reports among their artifacts, are refused naming the switch (a WARNING at
@@ -1329,7 +1335,8 @@ From a `main` checkout (formats and keys no release had):
   `source_language`/`target_language` take any other BCP-47 code with one WARNING and the defaults (a region is
   dropped: `pt-BR` is `pt`); such a code's text fields get OpenSearch's built-in analyzer of the language where it
   has one (`nl: dutch`, `sv: swedish`, `tr: turkish`, ... in the default `language_analyzers`; the embedded engine
-  stems those with Snowball), not `standard`. The embedded engine stems German, French, Spanish, Italian,
+  stems those with Snowball), not `standard` (`config-template.yaml` leaves the map unset: a copy listing a few
+  replaced it). The embedded engine stems German, French, Spanish, Italian,
   Portuguese, Russian, Arabic and Hindi with Snowball, normalizes Arabic as Lucene does and splits Thai runs into
   character pairs. A
   Devanagari or Thai name keeps its vowel signs in fuzzy matching (`राहुल` was `र ह ल`), Arabic short vowels and
@@ -1518,7 +1525,8 @@ From a `main` checkout (formats and keys no release had):
   before its attempt opens. A reset, `processing.deduplicate` or a `target_directory` export parses every file. Files
   parse in a process pool once the rest is expected to take longer than starting one. The first run after upgrading
   parses every file once and records their digests. The corpus fingerprint's read of each file computes its source
-  digest too, so a run reads each file's bytes once for both.
+  digest too, so a run reads each file's bytes once for both (kept by inode, size, modification and change times: a
+  file rewritten at its size and modification time is read again).
 - Stage-cache files are compact UTF-8 JSON, 1.2 to 1.6 times fewer bytes to write and hash on English text (more on
   text the ASCII escapes multiplied); entries written indented still load.
 - Faster at query time and ingestion: the query path no longer imports datasketch and SciPy (about a second per
@@ -1750,12 +1758,15 @@ Ingestion and incremental indexing.
   records the documents owning it `FAILED`: the item is noted in the extraction store (`pending-writes`) and the next
   run writes it again without extracting anything. Re-extracting the owners re-extracted every document a hub entity
   cites, on every run its write kept failing. Only a failed text-unit write fails its document. The commit's note
-  (`pending-commit`) lists the old ids its derivation retires, so when a write fails, or the run dies, the next
-  commit derives the items still stored under them again and deletes the old copies of those it re-keyed (another
-  spelling took over their name) or dropped; the failed commit already deletes the old ids no failed write touches, so
-  a hub whose write keeps failing holds back only the re-keys at it. A suffix whose stored reports could not be
-  pointed at the new ids keeps its old ids until a later run does both. A note over 1 MiB is split into parts, each
-  its own record, under a store's request limit (10 MiB on small OpenSearch instances).
+  (`pending-commit`) lists the old ids its derivation retires, so when a write fails, or the run dies, the next commit
+  derives the items still stored under them again and deletes the old copies of those it re-keyed (another spelling
+  took over their name) or dropped; the failed commit already deletes the old ids no failed write touches, so a hub
+  whose write keeps failing holds back only the re-keys at it (a note keeps only the old ids still stored). A suffix
+  whose stored reports could not be pointed at the new ids keeps its old ids until a later run does both. A note over
+  1 MiB is split into parts, each its own record, under a store's request limit (10 MiB on small OpenSearch
+  instances). A noted edge the delta states again takes the endpoints the delta resolves, and a noted claim derived
+  again resolves its unit's statements against every stored spelling of their names (`Acme Inc` beside `Acme`), as the
+  full build does.
 - Deleting a document under a non-default suffix strips it from shared claims, a deletion-only run checks the
   configured suffix, and a run whose new documents name no entity still commits them (#248, #252, #256).
 - `indexing.reset` reusing a pipeline id rebuilds from the whole corpus, fails when the registry cannot be cleared,
@@ -1766,7 +1777,9 @@ Ingestion and incremental indexing.
 - Neptune no longer loses edges when interrupted, a vertex write replaces its stored properties, and OpenSearch no
   longer stores a description cut at the Neptune cap (#252, #294, #377); an edge write looks its endpoints up by
   vertex id (property-mode ids read in one request per batch), so its cost no longer grows with the vertex count of
-  every tenant on the cluster (1.5 s an edge at 21k vertices) (#626).
+  every tenant on the cluster (1.5 s an edge at 21k vertices) (#626). A vertex's multi-valued property is written
+  1,000 values a request (a hub's 5,000 text units failed with `QueryTooLargeException` under load), and that error
+  is no longer retried as it stands.
 - A store error while preparing or clearing fails the stage, a lost create or delete response no longer fails a
   build, a failed delete batch counts every id, bulk errors name their cause, and indexing memory no longer grows
   with the corpus (#252, #265, #294, #431, #432, #440).

@@ -113,7 +113,8 @@ class IndexBuildRecord(BaseModel):
     documents: int = Field(
         description=(
             "Distinct documents whose text units the run indexed (an "
-            "incremental run counts only its new and changed documents)."
+            "incremental run counts only its new and changed documents; one "
+            "that rewrote a missing record, those the registry records)."
         )
     )
     extraction_fingerprint: str = Field(
@@ -167,6 +168,16 @@ class IndexBuildRecord(BaseModel):
             "and the others its diff read). Its methodologies hold for all "
             "of them. None without the registry and in a record written "
             "by an earlier version."
+        ),
+    )
+    visualization_export_run: str | None = Field(
+        default=None,
+        description=(
+            "The ingestion run that exports this build's visualization data "
+            "after it (graph.visualization.export_data), into its cache "
+            "directory unless outputs_directory is set: a later run that "
+            "writes nothing keeps that export, uploaded or local, instead of "
+            "writing it again. None when the run exports none."
         ),
     )
     community_change: CommunityChange | None = Field(
