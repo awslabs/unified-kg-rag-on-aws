@@ -31,7 +31,8 @@ Usage::
 
 Exit status 0 when every pin is current, 1 when one is behind (the report
 says which), 2 when a lookup failed. A release past a pin held on purpose
-(``HELD``) is listed in the report as held and does not count as behind. Image digests come from
+(``HELD``) is listed in the report as held and does not count as behind; a
+newer release inside the held series (a patch of it) does. Image digests come from
 ``docker buildx imagetools inspect``; release versions from the GitHub API
 (``GITHUB_TOKEN``, if set, raises its rate limit) and the npm registry; the
 apt versions from ``apt-cache policy`` in the pinned base image (``docker
@@ -51,6 +52,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile"
@@ -82,6 +84,8 @@ _APT_PIN = re.compile(
 IMAGE_PLATFORMS = ("linux/amd64", "linux/arm64")
 
 UV_RELEASES = "https://api.github.com/repos/astral-sh/uv/releases/latest"
+# The recent releases (newest first), for the newest one of a held series.
+UV_RELEASE_LIST = "https://api.github.com/repos/astral-sh/uv/releases?per_page=100"
 ADOT_RELEASES = (
     "https://api.github.com/repos/aws-observability/aws-otel-collector/releases/latest"
 )
@@ -112,6 +116,12 @@ HELD: dict[str, Held] = {
 
 def _in_series(version: str, series: str) -> bool:
     return _version(version)[: len(_version(series))] == _version(series)
+
+
+def _newest_in_series(tags: list[str], series: str) -> str | None:
+    """The newest of the release ``tags`` inside ``series``, or None."""
+    inside = [tag.lstrip("v") for tag in tags if _in_series(tag.lstrip("v"), series)]
+    return max(inside, key=_version, default=None)
 
 
 @dataclass(frozen=True)
@@ -197,6 +207,9 @@ class Lookups:
     # ref -> {"os/arch": digest} of the images an index lists.
     platform_digests: Callable[[str], dict[str, str]]
     latest_release: Callable[[str], str]
+    # The tag names of a repository's recent releases (no drafts or
+    # pre-releases), for the newest one inside a held series.
+    releases: Callable[[str], list[str]]
     latest_npm: Callable[[str], str]
     # (image, packages) -> {package: (installed, candidate)} as apt-cache
     # policy reports them in that image ("(none)": not installed).
@@ -235,6 +248,13 @@ def check(pins: Pins, lookups: Lookups) -> Report:
             f"- uv {latest_uv} is released; held at {uv_hold.series} "
             f"(pinned: {pins.uv_version}): {uv_hold.reason}."
         )
+        patch = _newest_in_series(lookups.releases(UV_RELEASE_LIST), uv_hold.series)
+        if patch is not None and _version(patch) > _version(pins.uv_version):
+            behind.append(
+                f"- uv {patch}, the newest {uv_hold.series} release, is released "
+                f"(pinned: {pins.uv_version}, the image in docker/Dockerfile and "
+                "`version:` of setup-uv in the workflows)."
+            )
     else:
         behind.append(
             f"- uv {latest_uv} is released (pinned: {pins.uv_version}, the image "
@@ -396,10 +416,12 @@ def parse_apt_policy(
     return found
 
 
-_ALLOWED_URLS = frozenset({UV_RELEASES, ADOT_RELEASES, CDK_CLI_LATEST, TRIVY_RELEASES})
+_ALLOWED_URLS = frozenset(
+    {UV_RELEASES, UV_RELEASE_LIST, ADOT_RELEASES, CDK_CLI_LATEST, TRIVY_RELEASES}
+)
 
 
-def _get_json(url: str) -> dict[str, object]:
+def _get_json(url: str) -> Any:
     if url not in _ALLOWED_URLS:
         raise ValueError(f"refusing to fetch {url!r}: not one of the pinned sources")
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
@@ -410,12 +432,19 @@ def _get_json(url: str) -> dict[str, object]:
     with urllib.request.urlopen(  # nosec B310 - only the allowlisted https URLs
         request, timeout=60
     ) as response:
-        data: dict[str, object] = json.load(response)
-    return data
+        return json.load(response)
 
 
 def _latest_release(url: str) -> str:
     return str(_get_json(url)["tag_name"])
+
+
+def _releases(url: str) -> list[str]:
+    return [
+        str(release["tag_name"])
+        for release in _get_json(url)
+        if not release.get("draft") and not release.get("prerelease")
+    ]
 
 
 def _latest_npm(url: str) -> str:
@@ -426,6 +455,7 @@ NETWORK = Lookups(
     digest=_image_digest,
     platform_digests=_platform_digests,
     latest_release=_latest_release,
+    releases=_releases,
     latest_npm=_latest_npm,
     apt_policy=_apt_policy,
 )

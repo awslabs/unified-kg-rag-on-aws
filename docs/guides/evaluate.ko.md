@@ -215,8 +215,9 @@ p값과 함께 안내만 남깁니다. 재순위화가 꺼져 있거나 만들 �
   두 번 실행해 잡음 수준을 확인하세요. `deltas_by_category`는 차이를 데이터셋 `category`별로 나누며, 범주와
   지표 수에 따른 다중 비교 보정을 하지 않으므로 여러 개 가운데 하나만 0을 벗어난 결과는
   탐색적으로 읽으세요. `--closed-book`을 쓰면 `deltas_by_closed_book`이 같은 방식으로 차이를
-  답변 모델이 검색 없이 비교군 반복의 절반 이상에서 맞힌 질문(`known`, 주 지표 기준)과 나머지
-  질문(`unknown`)으로 나눕니다. `unknown` 쪽이 검색이 더하는 부분을 보여 주며, 전체 차이에서는
+  답변 모델이 검색 없이 비교군 반복의 절반 이상에서 맞힌 질문(`known`, 주 지표 기준. token F1
+  같은 연속 지표는 평균 0.5 이상, 실패한 답변은 0으로 계산)과 나머지 질문(`unknown`)으로
+  나눕니다. `unknown` 쪽이 검색이 더하는 부분을 보여 주며, 전체 차이에서는
   이 부분이 가려질 수 있습니다. 이것도 보정하지 않는 탐색적 결과입니다.
 - **맞비교 판정.** `--pairwise-judge`는 GraphRAG / LightRAG 논문의 맞비교 LLM 판정(포괄성,
   다양성, 이해 도움, 직접성)을 더하며, 쌍마다 순서를 바꿔 두 번 판정합니다.
@@ -319,10 +320,14 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   `search.output_ceilings.query_extraction`, `models.default_max_output_tokens`, LLM
   제공자(kind, `base_url`, temperature, 출력 상한, 컨텍스트 창), Bedrock 리전을 바꾸거나 `search.query_extraction_cache_size: 0`을 지정한 비교군은 직접
   추출합니다.
-- 실행 자체의 인덱스를 쓰는 빈 오버레이(위의 `aa.yaml`, 무시되는 `evaluation` 섹션만 있는
-  오버레이도 포함)는 A/A 비교군입니다. 그 차이가 이 데이터셋과 반복 횟수에서 지표마다의
-  잡음 수준입니다. 매니페스트에 `arm.aa`로 기록되고 비교 결과의 `aa_arms`에 나열되며,
-  폐쇄형 비교군처럼 모든 Holm 묶음에서 빠지므로 다른 검정의 보정을 넓히지 않습니다. 기본 실행과 추출 결과를 공유하므로 이 잡음 수준에는 추출의 잡음이 빠집니다.
+- 병합한 구성이 실행의 구성과 같고(캐시 크기 `search.query_extraction_cache_size`와
+  `search.token_manager.token_count_cache_size`는 제외) 실행 자체의 인덱스를 쓰는 비교군은
+  A/A 비교군입니다. 빈 오버레이(위의 `aa.yaml`), 무시되는 `evaluation` 섹션만 있는 오버레이,
+  실행과 같은 값만 지정한 오버레이가 여기에 해당합니다. 그 차이가 이 데이터셋과 반복 횟수에서
+  지표마다의 잡음 수준입니다. `,aa=true`(또는 `aa=false`)로 직접 지정할 수도 있습니다.
+  매니페스트에 `arm.aa`로 기록되고 비교 결과의 `aa_arms`에 나열되며, 보고서는 그 차이를
+  "(noise floor)"로 표시합니다. 폐쇄형 비교군처럼 모든 Holm 묶음과 `--fail-if` 게이트에서
+  빠지므로 다른 검정의 보정을 넓히거나 실행을 실패시키지 않습니다. 기본 실행과 추출 결과를 공유하므로 이 잡음 수준에는 추출의 잡음이 빠집니다.
   `search: {query_extraction_cache_size: 0}` 오버레이로 만든 A/A 비교군은 직접 추출해 그 잡음을
   포함하며, 질문과 반복마다 추출 호출이 한 번 더 듭니다.
 - 비교군 하나는 전략 하나만큼(답변과 워밍업) 들며, 나열한 전략 수만큼 곱해집니다.

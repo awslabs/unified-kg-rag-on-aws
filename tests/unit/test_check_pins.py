@@ -137,6 +137,11 @@ def _lookups(pins: Any, **changes: str) -> Any:
         digest=digests.__getitem__,
         platform_digests=images.__getitem__,
         latest_release=releases.__getitem__,
+        releases=lambda url: {
+            check_pins.UV_RELEASE_LIST: changes.get(
+                "uv_list", [releases[check_pins.UV_RELEASES]]
+            )
+        }[url],
         latest_npm=npm.__getitem__,
         apt_policy=apt_policy,
     )
@@ -232,6 +237,24 @@ def test_a_release_past_a_held_series_is_held_not_behind() -> None:
     assert "Every pin is current." in rendered and "Held on purpose" in rendered
 
 
+def test_a_newer_patch_inside_a_held_series_is_behind() -> None:
+    pins = check_pins.read_pins()
+    series = check_pins.HELD["uv"].series
+    newer = f"{series}.{check_pins._version(pins.uv_version)[-1] + 1}"
+    report = check_pins.check(
+        pins, _lookups(pins, uv="99.0.0", uv_list=["99.0.0", f"v{newer}", "0.1.0"])
+    )
+    (held,) = report.held
+    assert "held at" in held
+    (line,) = report.behind
+    assert f"uv {newer}, the newest {series} release, is released" in line
+    # The pinned patch is the series' newest: only the held line.
+    current = check_pins.check(
+        pins, _lookups(pins, uv="99.0.0", uv_list=["99.0.0", pins.uv_version])
+    )
+    assert current.behind == [] and len(current.held) == 1
+
+
 def test_only_a_pin_behind_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
     pins = check_pins.read_pins()
     monkeypatch.setattr(check_pins, "NETWORK", _lookups(pins, uv="99.0.0"))
@@ -286,12 +309,13 @@ def test_the_workflow_runs_the_script_weekly_and_files_one_issue() -> None:
 
 
 def test_only_the_pinned_sources_are_fetched() -> None:
-    # The network lookups read four fixed URLs; anything else is refused
+    # The network lookups read five fixed URLs; anything else is refused
     # before a request is built, so the fetch cannot be pointed elsewhere.
     with pytest.raises(ValueError, match="not one of the pinned sources"):
         check_pins._get_json("https://example.com/latest")
     assert check_pins._ALLOWED_URLS == {
         check_pins.UV_RELEASES,
+        check_pins.UV_RELEASE_LIST,
         check_pins.ADOT_RELEASES,
         check_pins.CDK_CLI_LATEST,
         check_pins.TRIVY_RELEASES,

@@ -32,7 +32,7 @@ from unified_kg_rag.adapters.providers import Providers
 from unified_kg_rag.application.cli.arm_args import (
     arm_config,
     arm_spec,
-    is_aa_overlay,
+    is_aa_arm,
     overlay_sha256,
 )
 from unified_kg_rag.application.cli.config_args import (
@@ -737,18 +737,22 @@ class CommandLineInterface:
             "--arm",
             type=arm_spec,
             action="append",
-            metavar="NAME=OVERLAY[,suffix=SUFFIX]",
+            metavar="NAME=OVERLAY[,suffix=SUFFIX][,aa=true]",
             help=(
                 "A configuration arm, repeatable: answer the dataset again with "
                 "the config under OVERLAY (a YAML mapping merged over it, as "
                 "a config file is validated; its evaluation section is the "
                 "run's), as a chain of its own, with each --search-strategy. "
                 "Its runs are labelled <strategy>@NAME and compared with the "
-                "same strategy's base run, interleaved with it (--run-order) "
-                "and Holm-adjusted with the other deltas; the run manifest "
-                "records the overlay's path and sha256. suffix= queries "
-                "another index namespace with the arm. An empty overlay is an "
-                "A/A arm (the noise floor)"
+                "same strategy's base run, interleaved with it (--run-order); "
+                "the arms' deltas are Holm-adjusted in families of their own "
+                "(arm_primary, arm_secondary, arm_cost, arm_pairwise), apart "
+                "from the strategies'. The run manifest records the overlay's "
+                "path and sha256. suffix= queries another index namespace with "
+                "the arm. An arm whose resolved config equals the run's (cache "
+                "sizes aside) on its own index, or one given aa=true, is an A/A "
+                "arm: its deltas are the noise floor, left out of Holm and of "
+                "--fail-if"
             ),
         )
         parser.add_argument(
@@ -812,6 +816,8 @@ class EvaluationRunner:
         self.args = args
         self.chain_factory = chain_factory
         self._arm_chains: list[Any] = []
+        # Per --arm name, whether it runs the base configuration (is_aa_arm).
+        self._aa_by_arm: dict[str, bool] = {}
         self.config = with_pairwise_mode(
             with_judge_model(
                 with_evaluators(config, getattr(args, "evaluators", None)),
@@ -1192,6 +1198,7 @@ class EvaluationRunner:
     def _print_comparison(comparison: dict[str, Any], total_time: float) -> None:
         """Mean per strategy and the paired delta (95% CI) against each
         strategy's baseline."""
+        _load_evaluation()  # a static method: no __init__ bound the names
         baseline = comparison["baseline"]
         strategies = comparison["strategies"]
         pairs = compared_pairs(comparison)
@@ -1213,9 +1220,13 @@ class EvaluationRunner:
         for strategy in strategies:
             marked = f"{strategy} (no retrieval)" if strategy in closed else strategy
             table.add_column(markup_safe(marked), style="green", overflow="fold")
+        noise_floor = set(comparison.get("aa_arms") or ())
         for strategy, label in pairs.items():
+            marked = " (noise floor)" if strategy in noise_floor else ""
             table.add_column(
-                f"{strategy} - {label} [CI]", style="cyan", overflow="fold"
+                f"{strategy} - {label} [CI]{marked}",
+                style="cyan",
+                overflow="fold",
             )
         primary = (comparison.get("multiplicity") or {}).get("primary_metric")
         for key in keys:
@@ -1942,8 +1953,8 @@ class EvaluationRunner:
                     "overlay_sha256": overlay_sha256(arm),
                     "suffix": arm.get("suffix"),
                     # The base configuration unchanged: its deltas are the
-                    # noise floor, not a finding (left out of Holm).
-                    "aa": is_aa_overlay(arm),
+                    # noise floor, not a finding (left out of Holm and gates).
+                    "aa": self._aa_by_arm.get(arm["name"], False),
                 }
                 for label, (_, arm) in runs_of.items()
                 if arm is not None
@@ -2027,6 +2038,7 @@ class EvaluationRunner:
         )
         for warning in warnings:
             logger.warning("%s", warning)
+        self._aa_by_arm[arm["name"]] = is_aa_arm(self.config, config, arm)
         error = missing_extras_error(config, seeds=False) or missing_endpoints_error(
             config,
             {
@@ -2404,6 +2416,10 @@ class EvaluationRunner:
         if closed:
             # No retrieval: a bound on prior knowledge, not a strategy to gate.
             comparison["closed_book_arms"] = closed
+            # The arm split by its own scores selects on the outcome.
+            split = comparison.pop("deltas_by_closed_book", None) or {}
+            if split := {s: d for s, d in split.items() if s not in closed}:
+                comparison["deltas_by_closed_book"] = split
         noise_floor = [label for label in aa_arms(manifests) if label in names]
         if noise_floor:
             # The base configuration again: its deltas are the noise floor.

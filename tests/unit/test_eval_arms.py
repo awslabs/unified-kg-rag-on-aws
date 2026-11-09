@@ -16,7 +16,7 @@ from unified_kg_rag.application.cli import run_evaluation
 from unified_kg_rag.application.cli.arm_args import (
     arm_config,
     arm_spec,
-    is_aa_overlay,
+    is_aa_arm,
 )
 from unified_kg_rag.domain.models import Config, ModelRole
 from unified_kg_rag.evaluation.arms import (
@@ -39,12 +39,15 @@ def test_an_arm_is_name_overlay_and_an_optional_suffix(tmp_path: Path) -> None:
         "suffix": None,
     }
     assert arm_spec(f"b={overlay},suffix=v2")["suffix"] == "v2"
+    assert arm_spec(f"b={overlay},aa=true")["aa"] is True
+    assert arm_spec(f"b={overlay},suffix=v2,aa=False")["aa"] is False
     for bad in (
         "aa",
         f"a b={overlay}",
         f"closed_book={overlay}",
         f"x@y={overlay}",
         f"aa={overlay},top_k=3",
+        f"aa={overlay},aa=maybe",
         f"aa={tmp_path / 'missing.yaml'}",
     ):
         with pytest.raises(argparse.ArgumentTypeError):
@@ -83,18 +86,53 @@ def test_the_overlay_merges_over_the_run_config_but_not_its_scoring(
         ("{}", "", True),
         # The evaluation section is ignored (every arm is scored alike).
         (yaml.safe_dump({"evaluation": {"answer_span": "full"}}), "", True),
+        # A cache size changes no answer: an A/A arm that extracts on its
+        # own (docs/guides/evaluate.md), so its floor includes extraction.
+        (yaml.safe_dump({"search": {"query_extraction_cache_size": 0}}), "", True),
+        (
+            yaml.safe_dump(
+                {"search": {"token_manager": {"token_count_cache_size": 8}}}
+            ),
+            "",
+            True,
+        ),
+        # A value equal to the run's own changes nothing either.
+        (
+            yaml.safe_dump(
+                {"search": {"max_concurrency": Config().search.max_concurrency}}
+            ),
+            "",
+            True,
+        ),
         # Another index namespace is another index, not an A/A copy.
         ("", ",suffix=v2", False),
-        (yaml.safe_dump({"search": {"top_k": 3}}), "", False),
+        (yaml.safe_dump({"search": {"max_concurrency": 3}}), "", False),
+        # Declared: the option decides, whatever the overlay sets.
+        (yaml.safe_dump({"search": {"max_concurrency": 3}}), ",aa=true", True),
+        ("", ",aa=false", False),
     ],
-    ids=["empty", "empty-mapping", "evaluation-only", "suffix", "overlay"],
+    ids=[
+        "empty",
+        "empty-mapping",
+        "evaluation-only",
+        "extraction-cache-off",
+        "token-count-cache",
+        "same-value",
+        "suffix",
+        "overlay",
+        "declared",
+        "declared-not",
+    ],
 )
 def test_an_arm_without_a_change_is_an_aa_arm(
     tmp_path: Path, content: str, options: str, aa: bool
 ) -> None:
     overlay = tmp_path / "o.yaml"
     overlay.write_text(content)
-    assert is_aa_overlay(arm_spec(f"a={overlay}{options}")) is aa
+    base = Config()
+    spec = arm_spec(f"a={overlay}{options}")
+    config, _ = arm_config(base, spec)
+    assert is_aa_arm(base, config, spec) is aa
 
 
 def test_aa_arms_are_read_from_the_run_manifests() -> None:

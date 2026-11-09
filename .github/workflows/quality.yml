@@ -104,7 +104,9 @@ jobs:
 
       - name: File hygiene hooks
         # The pre-commit hooks not covered by the steps above: end-of-file,
-        # trailing whitespace, YAML syntax and merge-conflict markers.
+        # trailing whitespace, YAML syntax, merge-conflict markers and
+        # actionlint on the workflows (pinned in .pre-commit-config.yaml;
+        # the runner's Go builds it, its shellcheck checks run: scripts).
         env:
           SKIP: ruff,isort,black,mypy
         run: uv run pre-commit run --all-files --show-diff-on-failure
@@ -141,6 +143,28 @@ jobs:
             .coverage
           include-hidden-files: true
           if-no-files-found: ignore
+
+  test-isolation:
+    # Each unit test file in a process of its own: the quality job runs them
+    # in a few shared processes, where a file that only passes after another
+    # one bound a lazy import or filled a cache passes too, and then fails
+    # when a developer runs it alone. About 7 minutes on four workers.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.23"
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync --locked --extra otel --extra eval --extra viz --extra ontology --extra mcp --extra docx --extra console
+
+      - name: Every unit test file alone
+        run: uv run --frozen python scripts/check_test_isolation.py tests/unit
 
   core-install:
     # The default install has none of the eval, viz, ontology, mcp, console,

@@ -14,7 +14,7 @@ import pytest
 from aws_cdk.assertions import Template
 
 from iac.config import DeploymentConfig
-from iac.stacks.compute_stack import WRITABLE_VOLUMES, ComputeStack
+from iac.stacks.compute_stack import COLLECTOR_VOLUMES, WRITABLE_VOLUMES, ComputeStack
 from iac.stacks.networking_stack import NetworkingStack
 from iac.stacks.orchestration_stack import OrchestrationStack
 from iac.stacks.storage_stack import StorageStack
@@ -756,22 +756,34 @@ def test_an_observability_secret_cannot_shadow_the_stack_environment() -> None:
 @pytest.mark.parametrize(
     "context", [{}, {"enable_cloudwatch_tracing": True}], ids=["app", "with-collector"]
 )
-def test_the_app_runs_on_a_read_only_root_filesystem(context: dict[str, Any]) -> None:
-    # Security Hub ECS.5: the app writes only to task volumes, one per path.
+def test_every_container_runs_on_a_read_only_root_filesystem(
+    context: dict[str, Any],
+) -> None:
+    # Security Hub ECS.5: every container (the app and the trace collector
+    # sidecar) writes only to task volumes, one per path.
     task_defs = _compute_template(context).find_resources("AWS::ECS::TaskDefinition")
     assert len(task_defs) == 2  # the ingestion and the query task
+    writable = {
+        "app": WRITABLE_VOLUMES,
+        "otel-collector": COLLECTOR_VOLUMES,
+    }
     for task_def in task_defs.values():
         properties = task_def["Properties"]
-        (app,) = [c for c in properties["ContainerDefinitions"] if c["Name"] == "app"]
-        assert app["ReadonlyRootFilesystem"] is True
-        mounts = {m["ContainerPath"]: m["SourceVolume"] for m in app["MountPoints"]}
-        assert mounts == {path: name for name, path in WRITABLE_VOLUMES.items()}
-        assert all(m["ReadOnly"] is False for m in app["MountPoints"])
+        containers = {c["Name"]: c for c in properties["ContainerDefinitions"]}
+        assert set(containers) == ({"app", "otel-collector"} if context else {"app"})
+        for name, container in containers.items():
+            assert container["ReadonlyRootFilesystem"] is True, name
+            mounts = {
+                m["ContainerPath"]: m["SourceVolume"] for m in container["MountPoints"]
+            }
+            assert mounts == {path: v for v, path in writable[name].items()}, name
+            assert all(m["ReadOnly"] is False for m in container["MountPoints"])
         # Bind mounts on the task's ephemeral storage: no host path, no EFS.
+        volumes = {v for name in containers for v in writable[name]}
         assert sorted(properties["Volumes"], key=lambda v: v["Name"]) == [
-            {"Name": name} for name in sorted(WRITABLE_VOLUMES)
+            {"Name": name} for name in sorted(volumes)
         ]
-        env = {e["Name"]: e["Value"] for e in app["Environment"]}
+        env = {e["Name"]: e["Value"] for e in containers["app"]["Environment"]}
         assert env["XDG_CACHE_HOME"].startswith(WRITABLE_VOLUMES["tmp"] + "/")
 
 

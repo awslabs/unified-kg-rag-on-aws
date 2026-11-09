@@ -251,9 +251,10 @@ How to read it:
   so treat a lone excluded 0 among many as exploratory. With
   `--closed-book`, `deltas_by_closed_book` splits them the same way into the
   questions the answer model gets right without retrieval in at least half
-  of the arm's repeats (`known`, on the primary metric) and the rest
-  (`unknown`): the unknown ones show what retrieval adds, where a pooled
-  delta can hide it. Exploratory and unadjusted too.
+  of the arm's repeats (`known`, on the primary metric; on a graded metric
+  such as token F1, a mean of at least 0.5; a failed answer counts 0) and
+  the rest (`unknown`): the unknown ones show what retrieval adds, where a
+  pooled delta can hide it. Exploratory and unadjusted too.
 - **Pairwise judge.** `--pairwise-judge` adds the GraphRAG / LightRAG
   head-to-head LLM judge (comprehensiveness, diversity, empowerment,
   directness), each pair judged in both orders; read `candidate_win_rate`
@@ -377,12 +378,17 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   `models.default_max_output_tokens`, the LLM provider (kind, `base_url`,
   temperature, output cap, context window), the Bedrock region or sets
   `search.query_extraction_cache_size: 0` extracts on its own.
-- An empty overlay (`aa.yaml` above; one holding only the ignored
-  `evaluation` section counts too) on the run's own index is an A/A arm:
-  its deltas are the noise floor of each metric for this dataset and repeat
-  count. The manifest records it (`arm.aa`), the comparison lists it under
-  `aa_arms`, and it is left out of every Holm family, as the closed-book arm
-  is, so it does not widen the other tests' adjustment. It shares
+- An arm whose configuration, once merged, equals the run's (cache sizes
+  aside: `search.query_extraction_cache_size` and
+  `search.token_manager.token_count_cache_size`) on the run's own index is
+  an A/A arm: an empty overlay (`aa.yaml` above), one holding only the
+  ignored `evaluation` section, or one setting the run's own values. Its
+  deltas are the noise floor of each metric for this dataset and repeat
+  count. `,aa=true` (or `aa=false`) declares it either way. The manifest
+  records it (`arm.aa`), the comparison lists it under `aa_arms` and the
+  report marks its deltas "(noise floor)"; it is left out of every Holm
+  family and of the `--fail-if` gates, as the closed-book arm is, so it
+  does not widen the other tests' adjustment or fail the run. It shares
   the base runs' extractions, so that floor leaves out the extraction's
   noise; an A/A overlay of `search: {query_extraction_cache_size: 0}`
   extracts on its own and includes it, at one extra extraction call per

@@ -99,7 +99,9 @@ def test_configuration_arms_are_answered_paired_and_rebuilt(
         )
     )
     aa = tmp_path / "aa.yaml"
-    aa.write_text("")  # no change: an A/A arm
+    # No answer changes, only a cache size (it extracts on its own): an A/A
+    # arm (docs/guides/evaluate.md "Configuration arms").
+    aa.write_text(yaml.safe_dump({"search": {"query_extraction_cache_size": 0}}))
     uncited = tmp_path / "uncited.yaml"
     uncited.write_text(yaml.safe_dump({"search": {"citations": {"enabled": False}}}))
     built: list[Config] = []
@@ -188,14 +190,29 @@ def test_configuration_arms_are_answered_paired_and_rebuilt(
     assert manifest["run_order"] == "interleaved" and manifest["repeat"] == 1
     assert manifest["compared_runs"][:2] == ["local", "mix"]
 
-    # Rebuilt from the files: the same runs, pairs and deltas.
+    # Rebuilt from the files: the same runs, pairs and deltas. A gate skips
+    # the A/A arms (the noise floor, no Holm family); the others breach on
+    # this three-query set's too few pairs.
     code, rebuilt = _run_eval(
-        ["--from-results", str(out_dir), "--output-directory", str(tmp_path / "re")],
+        [
+            "--from-results",
+            str(out_dir),
+            "--output-directory",
+            str(tmp_path / "re"),
+            "--fail-if",
+            "answer_match/answer_contains:adjusted_ci_high<-2",
+        ],
         None,
         config,
         None,
     )
-    assert code == 0
+    assert code == 1
+    breaches = rebuilt["comparison"]["gates"]["breaches"]
+    assert {b.split(":", 1)[0] for b in breaches} == {
+        "mix",
+        "local@uncited",
+        "mix@uncited",
+    }
     again = rebuilt["comparison"]
     # In the order the run compared them (the manifests' compared_runs: the
     # interleaved runs share a start time and their stamps are random).

@@ -292,14 +292,18 @@ strategies, or `--repeats`) saves every run's files and adds
   category and not corrected for the number of categories and metrics read,
   so treat a lone excluded 0 among many as exploratory.
 - `deltas_by_closed_book.<s>.<known|unknown>.<metric>` (with a closed-book
-  arm): the same deltas over the questions the closed-book arm answered
-  right in at least half of its repeats on the primary metric (`known`) and
-  the rest it scored (`unknown`); the run's own `closed_book` arm, else an
-  earlier run's. Exploratory and unadjusted like `deltas_by_category`.
+  arm): the same deltas over the questions whose closed-book score on the
+  primary metric averages at least 0.5 over the arm's repeats (`known`: on
+  a 0/1 metric, right in at least half of them) and the rest it scored or
+  failed (`unknown`; a failed answer counts 0); the run's own `closed_book`
+  arm, else an earlier run's. The closed-book arms themselves are not split
+  (that would select on their own scores). Exploratory and unadjusted like
+  `deltas_by_category`.
 - `aa_arms` (with an A/A `--arm`): the arm runs whose manifest records
-  `arm.aa: true` (an empty overlay, or one holding only the ignored
-  `evaluation` section, on the run's own index). Their deltas are the
-  noise floor and stay out of every Holm family.
+  `arm.aa: true` (on the run's own index, a merged configuration equal to
+  the run's but for cache sizes, or `,aa=true`). Their deltas are the
+  noise floor: they stay out of every Holm family, `--fail-if` skips them
+  and the Markdown report marks them "(noise floor)".
 - `pairwise_vs_baseline.<s>` (with `--pairwise-judge`): the GraphRAG /
   LightRAG head-to-head LLM judge on comprehensiveness, diversity,
   empowerment and directness (plus LightRAG's `overall` with

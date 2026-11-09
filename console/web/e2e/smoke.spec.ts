@@ -8,7 +8,9 @@ import { existsSync } from "node:fs";
 import { chromium, expect, test } from "@playwright/test";
 
 const browser = process.env.CHROMIUM_PATH ?? chromium.executablePath();
-if (process.env.CI && !existsSync(browser)) {
+// CI providers set CI=true (or 1); CI=false or an empty CI is a local run.
+const inCI = ["true", "1"].includes((process.env.CI ?? "").trim().toLowerCase());
+if (inCI && !existsSync(browser)) {
   throw new Error(`no browser at ${browser} in CI (npx playwright install chromium)`);
 }
 test.skip(!existsSync(browser), `no browser at ${browser} (npx playwright install chromium)`);
