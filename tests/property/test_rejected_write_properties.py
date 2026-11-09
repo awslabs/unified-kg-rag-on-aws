@@ -14,6 +14,7 @@ leaves exactly what a fresh full build stores.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 
 import pytest
 from hypothesis import HealthCheck, example, given, settings
@@ -21,11 +22,21 @@ from hypothesis import strategies as st
 
 from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
-from tests.fixtures.incremental_runs import Corpus, IncrementalRun, expected_state
+from tests.fixtures.incremental_runs import (
+    Content,
+    Corpus,
+    IncrementalRun,
+    expected_state,
+    extract,
+)
+from unified_kg_rag.domain.ingestion.graph_resolver import entity_keys
 from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.models import Config, DocStatus
+from unified_kg_rag.shared.utils import entity_key
 
 pytestmark = pytest.mark.property
+
+Edge = tuple[str, str, int]
 
 _PATHS = ["/corpus/a.txt", "/corpus/b.txt", "/corpus/c.txt", "/corpus/d.txt"]
 # With spellings of one entity (legal forms the full build folds): which
@@ -208,12 +219,15 @@ _SPELLINGS = {
 }
 
 
-def _corpus_of(names: list[str]) -> st.SearchStrategy[Corpus]:
+def _unit_of(names: list[str]) -> st.SearchStrategy[list[Edge]]:
     edge = st.tuples(
         st.sampled_from(names), st.sampled_from(names), st.integers(1, 3)
     ).filter(lambda e: compact_name_key(e[0]) != compact_name_key(e[1]))
-    unit = st.lists(edge, min_size=1, max_size=3, unique_by=lambda e: (e[0], e[1]))
-    content = st.lists(unit, min_size=1, max_size=2)
+    return st.lists(edge, min_size=1, max_size=3, unique_by=lambda e: (e[0], e[1]))
+
+
+def _corpus_of(names: list[str]) -> st.SearchStrategy[Corpus]:
+    content = st.lists(_unit_of(names), min_size=1, max_size=2)
     return st.fixed_dictionaries({p: st.none() | content for p in _PATHS}).map(
         lambda state: {path: c for path, c in state.items() if c}
     )
@@ -321,3 +335,189 @@ def test_a_removal_after_rejected_writes_converges_when_interrupted(
     entities = set(harness.graph.ids("entities"))
     for claim in harness.vector.data.get("claims", {}).values():
         assert {claim.subject_id, claim.object_id or claim.subject_id} <= entities
+
+
+# The shapes of the bugs a removal after a rejected write had, drawn
+# directly: the random corpora above did not reach them in 1,600 examples
+# (outside their pinned ones), and the ci profile replays the same examples
+# on every run.
+_PLAIN = ["Depot", "Buyer", "Vendor"]
+
+
+def _stating(draw: st.DrawFn, name: str, names: list[str], strength: int) -> Edge:
+    """An edge stating ``name`` with another of ``names``, either way."""
+    other = draw(
+        st.sampled_from(
+            [n for n in names if compact_name_key(n) != compact_name_key(name)]
+        )
+    )
+    return (name, other, strength) if draw(st.booleans()) else (other, name, strength)
+
+
+def _with_others(
+    draw: st.DrawFn, names: list[str], documents: dict[str, Content]
+) -> Corpus:
+    """``documents`` and random ones over ``names`` at the other paths."""
+    others = draw(_corpus_of(names))
+    return {
+        **{p: c for p, c in others.items() if p not in documents},
+        **documents,
+    }
+
+
+@st.composite
+def _shared_entity_removals(draw: st.DrawFn) -> tuple[Corpus, str, str]:
+    """An entity a kept and a removed document both state, in one language's
+    spellings or Korean and Japanese ones together: the rejected run's
+    corpus, the removed path and the name."""
+    lang = draw(st.sampled_from([*sorted(_SPELLINGS), "mix"]))
+    spellings = _SPELLINGS.get(lang) or [*_SPELLINGS["ko"], *_SPELLINGS["ja"]]
+    names = [*_PLAIN, *spellings]
+    shared = draw(st.sampled_from(names))
+    kept, gone = draw(st.permutations(_PATHS))[:2]
+    documents = {
+        path: [
+            [_stating(draw, shared, names, draw(st.integers(1, 3)))],
+            *draw(st.lists(_unit_of(names), max_size=1)),
+        ]
+        for path in (kept, gone)
+    }
+    return _with_others(draw, names, documents), gone, shared
+
+
+@st.composite
+def _folding_removals(draw: st.DrawFn) -> tuple[Corpus, str, str]:
+    """Two spellings of one entity a full build keeps apart only while the
+    removed document types the second one otherwise (an edge's strength
+    parity types its names, and types are voted on): the kept document
+    states the first one with a claim (strength 3) and the second one with
+    the first one's type, the removed one states the second one in two
+    units with the other type, so its removal folds them into one entity.
+    The rejected run's corpus, the removed path and the first spelling."""
+    lang = draw(st.sampled_from(sorted(_SPELLINGS)))
+    first, second = draw(
+        st.permutations(_SPELLINGS[lang])
+        .map(lambda names: names[:2])
+        .filter(lambda pair: entity_key(pair[0]) != entity_key(pair[1]))
+    )
+    kept, gone = draw(st.permutations(_PATHS))[:2]
+    documents = {
+        kept: [
+            [
+                _stating(draw, first, _PLAIN, 3),
+                _stating(draw, second, _PLAIN, draw(st.sampled_from([1, 3]))),
+            ]
+        ],
+        gone: [[_stating(draw, second, _PLAIN, 2)] for _ in range(2)],
+    }
+    return _with_others(draw, _PLAIN, documents), gone, first
+
+
+def _entities_of(corpus: Corpus, name: str) -> set[str]:
+    """The ids of the entities of ``name``'s spellings in a build of
+    ``corpus``."""
+    return {
+        e.id
+        for e in extract(corpus).entities
+        if any(
+            compact_name_key(key) == compact_name_key(name) for key in entity_keys(e)
+        )
+    }
+
+
+def _converges(
+    before: Corpus,
+    mid: Corpus,
+    gone: str,
+    rejects: Callable[[str, str], bool],
+    again: Callable[[str, str], bool] | None,
+    point: str | None,
+    k: int,
+) -> None:
+    """A rejected run over ``mid``, the removal of ``gone`` (interrupted at
+    ``point``, or not; its writes rejected by ``again``, or not), then clean
+    runs, leave what a full build stores, and no claim about an entity the
+    graph does not hold."""
+    after = {path: content for path, content in mid.items() if path != gone}
+    config = Config()
+    config.indexing.max_failure_rate = 0.95
+    harness = IncrementalRun(FakeDocStatusStore(), config)
+    harness.run(before)
+    harness.run(mid, fail=rejects)
+    harness.run(after, interrupt=point, k=k, fail=again)
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, config)
+    assert harness.registry_problems(after) == []
+    entities = set(harness.graph.ids("entities"))
+    for claim in harness.vector.data.get("claims", {}).values():
+        assert {claim.subject_id, claim.object_id or claim.subject_id} <= entities
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    shape=_shared_entity_removals(),
+    # The strip writes the graph copies first: the second to fifth writes
+    # cover a kill between an entity's graph and vector copies.
+    k=st.integers(2, 5),
+    again=st.none() | st.sampled_from(_WRITES),
+    salt=st.integers(0, 1000),
+)
+def test_a_removal_killed_in_its_strip_after_a_rejected_vector_write_converges(
+    shape: tuple[Corpus, str, str],
+    k: int,
+    again: str | None,
+    salt: int,
+) -> None:
+    # The removed document is indexed first; the entity's vector write is
+    # rejected while the kept one is added, so its vector copy cites the
+    # removed document only. The removal is killed at its k-th store write.
+    mid, gone, shared = shape
+    rejected = _entities_of(mid, shared)
+    _converges(
+        {gone: mid[gone]},
+        mid,
+        gone,
+        lambda at, item_id: at == "vector.upsert_entities" and item_id in rejected,
+        _rejects(again, salt) if again else None,
+        "mid_index_delta",
+        k,
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    shape=_folding_removals(),
+    indexed_first=st.booleans(),
+    where=st.sampled_from([w for w in _WRITES if "entit" in w]),
+    point=st.none() | st.sampled_from(_REMOVAL_POINTS),
+    k=st.integers(1, 3),
+)
+def test_a_removal_that_folds_a_rejected_spelling_converges(
+    shape: tuple[Corpus, str, str],
+    indexed_first: bool,
+    where: str,
+    point: str | None,
+    k: int,
+) -> None:
+    # The write of the spelling the removal folds into the other is
+    # rejected, the claim about it stored: the claim follows the fold only
+    # when it is derived again.
+    mid, gone, first = shape
+    after = {path: content for path, content in mid.items() if path != gone}
+    rejected = _entities_of(mid, first) - _entities_of(after, first)
+    assert rejected
+    _converges(
+        {gone: mid[gone]} if indexed_first else {},
+        mid,
+        gone,
+        lambda at, item_id: at == where and item_id in rejected,
+        None,
+        point,
+        k,
+    )
