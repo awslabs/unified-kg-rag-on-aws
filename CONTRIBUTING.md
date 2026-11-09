@@ -225,11 +225,18 @@ A concept implemented in two places drifts, so each shared one has an owner modu
 - **A new guard** names a finder that matches the owner's own form (a test fails when the owner holds no match, so a
   finder that cannot see the concept cannot guard it), every path it scans must exist, and its pattern is pinned by
   `test_each_pattern_catches_the_forms_copies_took` with each form a copy took.
-- **Planted copies measure a finder on forms it was not written against.** Each file of `tests/fixtures/guard_copies`
-  is one copy (or code near the concept that is none), headed by the guard, the module it stands in and what the
-  guard must do: `copy`, `clean`, `missed: why` or `flagged: why`. Write new forms there before widening a finder,
-  and keep a form the finder still misses as `missed`: the test fails when the finder starts to see it, so the header
-  moves to `copy`.
+- **The guards are tripwires for the forms they know, not coverage.** A finder matches the forms copies took and
+  the forms its pins and planted files spell; a copy written another way passes it (most forms written outside
+  the finders' vocabulary do). Review owns the rest: a reviewer who sees a second implementation of a guarded
+  concept asks for the owner whether or not a guard fails. Do not widen a finder one idiom at a time to catch a
+  form review found; fix the copy, and widen a finder only where one rule covers a whole family (the decoders of
+  G2 and G10 are a denylist of decoding modules, not of the calls one takes).
+- **Planted copies are tuning data.** Each file of `tests/fixtures/guard_copies` is one copy (or code near the
+  concept that is none), headed by the guard, the module it stands in and what the guard must do: `copy`, `clean`,
+  `missed: why` or `flagged: why`; the `tuned_` files were a held-out set until the finders were tuned on them. The
+  finders were written against all of them, so they pin behaviour, not measure it: a measurement of what a guard
+  misses needs forms written after it, kept out of the repository. Keep a form the finder still misses as
+  `missed`: the test fails when the finder starts to see it, so the header moves to `copy`.
 
 ### Code conventions
 

@@ -343,16 +343,25 @@ def test_the_unreleased_section_has_no_pr_placeholder() -> None:
     assert _placeholders(SECTION) == []
 
 
+def _held(section: str, title: str) -> bool:
+    """Whether ``section`` has a ``### title`` (one just after a release cut
+    may hold none but *Added*, or nothing)."""
+    return f"\n### {title}\n" in section
+
+
 def test_the_upgrading_steps_are_numbered_once_each_in_order() -> None:
+    if not _held(SECTION, "Upgrading"):
+        pytest.skip("no Upgrading subsection to number")
     steps = _step_numbers(_subsection(SECTION, "Upgrading"))
     assert steps, "no numbered Upgrading step found"
     assert steps == list(range(1, len(steps) + 1)), steps
 
 
 def test_every_step_reference_names_a_step() -> None:
-    last = max(_step_numbers(_subsection(SECTION, "Upgrading")))
     references = _step_references(SECTION)
-    assert references, "no step reference found"
+    if not references:
+        pytest.skip("no step reference to check")
+    last = max(_step_numbers(_subsection(SECTION, "Upgrading")), default=0)
     assert [n for n in references if not 1 <= n <= last] == []
 
 
@@ -376,14 +385,16 @@ def test_no_line_is_over_long() -> None:
 
 def test_every_extra_is_named_where_the_section_lists_them() -> None:
     breaking = _subsection(SECTION, "Breaking changes")
-    (extras_entry,) = [
-        entry for entry in breaking.split("\n- ") if "Extras: `" in entry
-    ]
-    step_one = _subsection(SECTION, "Upgrading").split("\n1. ", 1)[1]
-    step_one = step_one.split("\n2. ", 1)[0]
+    entries = [entry for entry in breaking.split("\n- ") if "Extras: `" in entry]
+    if not entries:
+        pytest.skip("no Breaking entry lists the extras")
+    (extras_entry,) = entries
+    step_one = _subsection(SECTION, "Upgrading").split("\n1. ", 1)
+    assert len(step_one) == 2, "Breaking lists the extras; Upgrading step 1 must"
+    step_one_text = step_one[1].split("\n2. ", 1)[0]
     for extra in _extras():
         assert f"`{extra}`" in extras_entry, f"Breaking extras omit `{extra}`"
-        assert f"`{extra}`" in step_one, f"Upgrading step 1 omits `{extra}`"
+        assert f"`{extra}`" in step_one_text, f"Upgrading step 1 omits `{extra}`"
 
 
 def test_fixed_and_changed_entries_name_only_keys_the_release_had() -> None:
@@ -436,6 +447,34 @@ def test_the_new_key_scan() -> None:
     ]
     # Just after a release cut the section may hold no Changed heading.
     assert _new_config_keys("\n### Added\n- `search.n`\n", known, top) == []
+
+
+@pytest.mark.parametrize(
+    "section",
+    [
+        "## [Unreleased]\n\n",
+        "## [Unreleased]\n\n### Added\n- A new `run-eval` flag.\n",
+        "## [Unreleased]\n\n### Fixed\n- `run-eval` exits 2 on a bad dataset.\n",
+    ],
+    ids=["empty", "added-only", "fixed-only"],
+)
+@pytest.mark.parametrize(
+    "check",
+    [
+        test_the_upgrading_steps_are_numbered_once_each_in_order,
+        test_every_step_reference_names_a_step,
+        test_every_extra_is_named_where_the_section_lists_them,
+    ],
+    ids=lambda check: check.__name__[5:],
+)
+def test_a_section_just_after_a_release_cut_is_skipped_not_failed(
+    monkeypatch: pytest.MonkeyPatch, section: str, check: typing.Callable[[], None]
+) -> None:
+    # A release cut leaves [Unreleased] empty, then fills it entry by entry:
+    # a check with nothing to read skips instead of failing every branch.
+    monkeypatch.setattr(sys.modules[__name__], "SECTION", section)
+    with pytest.raises(pytest.skip.Exception):
+        check()
 
 
 @pytest.mark.parametrize(

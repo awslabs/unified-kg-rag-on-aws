@@ -25,9 +25,13 @@ file does not move its entries. Names a module imports are resolved
 import replace`` makes ``replace`` ``os.replace``, and a relative import is
 resolved against the module's package), so an alias hides no copy.
 
-``tests/fixtures/guard_copies`` holds planted copies the finders were not
-written against, each naming the guard it must trip (or must not):
-``test_single_owner_guards`` measures every guard on them.
+A guard is a tripwire for the forms of a copy it knows, not coverage: a
+copy spelled another way passes it, and review owns those
+(CONTRIBUTING.md, "Single-owner guards").
+``tests/fixtures/guard_copies`` holds planted copies, each naming the guard
+it must trip (or must not); the finders were tuned on them, so
+``test_single_owner_guards`` pins every guard's behaviour on them rather
+than measuring what it misses.
 """
 
 from __future__ import annotations
@@ -393,6 +397,33 @@ def references(*names: str) -> Finder:
                 and resolved(node, source) in names
             ):
                 yield node.lineno, ast.unparse(node)
+
+    return find
+
+
+def uses(*names: str) -> Finder:
+    """A use of one of the dotted ``names`` or of anything under one: a
+    denylist of modules and their members (``yaml`` matches
+    ``yaml.safe_load(s)``, ``json.loads`` matches it called, passed as a
+    callback or bound to a name), however the module imported it. A
+    chain is matched once, at its outermost use (``yaml.safe_load``, not
+    ``yaml`` in it too)."""
+    wanted = tuple(names)
+
+    def denied(node: ast.AST, source: Source) -> bool:
+        name = resolved(node, source)
+        return name is not None and any(
+            name == w or name.startswith(w + ".") for w in wanted
+        )
+
+    def find(source: Source) -> Iterator[tuple[int, str]]:
+        inner: set[int] = set()
+        for node in _all_nodes(source.tree):
+            if id(node) in inner or not isinstance(node, ast.Name | ast.Attribute):
+                continue
+            if isinstance(node.ctx, ast.Load) and denied(node, source):
+                inner.update(id(n) for n in ast.walk(node))
+                yield node.lineno, ast.unparse(node)[:80]
 
     return find
 

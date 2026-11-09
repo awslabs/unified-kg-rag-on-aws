@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import subprocess  # nosec B404 - fixed argv, no shell
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -44,20 +45,36 @@ _DEFAULT_TIMEOUT = 600
 def run_alone(path: Path, timeout: float = _DEFAULT_TIMEOUT) -> tuple[Path, int, str]:
     """``path``'s pytest exit code and output, in a fresh interpreter;
     :data:`TIMED_OUT` and what it printed when it ran past ``timeout``
-    seconds (the process is killed)."""
+    seconds. The file runs in a process group of its own, killed whole at
+    the timeout: a server or worker a hung test started goes with it rather
+    than living on (and holding the output pipe open)."""
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(path)]
+    with subprocess.Popen(  # nosec B603 - fixed argv, no shell
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=os.name == "posix",
+    ) as process:
+        try:
+            out, err = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_group(process)
+            out, err = process.communicate()
+            printed = (out or "") + (err or "")
+            return path, TIMED_OUT, f"{printed}\ntimed out after {timeout:g} s"
+    return path, process.returncode, out + err
+
+
+def _kill_group(process: subprocess.Popen[str]) -> None:
+    """Kill ``process`` and, on POSIX, every process of its group."""
+    if os.name != "posix":
+        process.kill()
+        return
     try:
-        done = subprocess.run(  # nosec B603 - fixed argv, no shell
-            argv, capture_output=True, text=True, check=False, timeout=timeout
-        )
-    except subprocess.TimeoutExpired as e:
-        printed = "".join(
-            out.decode(errors="replace") if isinstance(out, bytes) else out
-            for out in (e.stdout, e.stderr)
-            if out
-        )
-        return path, TIMED_OUT, f"{printed}\ntimed out after {timeout:g} s"
-    return path, done.returncode, done.stdout + done.stderr
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:  # it ended in between
+        pass
 
 
 def failures(
