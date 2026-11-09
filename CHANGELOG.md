@@ -965,7 +965,7 @@ From a `main` checkout (formats and keys no release had):
   reads a summary tree (#599). Without a build record (a namespace ingested before them), a query takes the namespace
   to hold what a run of the config builds, `hipporag` included (#602); a run writes the record before the registry
   records its documents, so a first build or reset killed between the two leaves it (the next run found nothing to
-  index and wrote none, and queries took the namespace to hold what the config builds). A record the store rejected
+  index and wrote none, and queries took the namespace to hold what the config builds). A record any index rejected
   is written again once the documents are recorded, and a run with nothing to index writes a missing one: a full
   record naming only the artifacts the stores hold, the documents the registry records and community counters from
   the stored reports (a WARNING says what queries assume until one is written; the run result's `build_record` and

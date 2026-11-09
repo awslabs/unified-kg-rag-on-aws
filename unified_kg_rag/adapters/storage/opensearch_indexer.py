@@ -1012,11 +1012,14 @@ class OpenSearchIndexer(VectorIndexer):
 
         Merged into the existing ``_meta`` (the embedding settings stay), so
         it needs ``indices:admin/mapping/put``; a failure is logged and the run
-        goes on (``None`` when no index took it: the indexing stage retries). An incremental record keeps the full build the index holds
-        and its community counters (``IndexBuildRecord.over``). Returns the
-        first record written that carries counters (else the first written).
+        goes on (``None`` when an index did not take it: the indexing stage
+        writes it again, an index that holds it already keeping it). An
+        incremental record keeps the full build the index holds and its
+        community counters (``IndexBuildRecord.over``). Returns the first
+        record written that carries counters (else the first written).
         """
         written: IndexBuildRecord | None = None
+        failed = False
         for prefix in self._index_prefixes():
             alias = self._get_name(prefix, suffix)
             try:
@@ -1034,6 +1037,7 @@ class OpenSearchIndexer(VectorIndexer):
             except NamespaceLeaseError:
                 raise
             except Exception as e:  # noqa: BLE001 - the record is optional
+                failed = True
                 logger.warning(
                     "Could not record the build of pipeline '%s' in the _meta of "
                     "%s (%s): the run retries it once its documents are "
@@ -1042,7 +1046,7 @@ class OpenSearchIndexer(VectorIndexer):
                     alias,
                     e,
                 )
-        return written
+        return None if failed else written
 
     def read_build_record(self, suffix: str | None) -> dict[str, Any] | None:
         """The build record in the ``_meta`` of ``suffix``'s live text-units

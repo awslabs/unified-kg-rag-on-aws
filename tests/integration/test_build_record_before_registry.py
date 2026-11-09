@@ -238,3 +238,39 @@ def test_a_rewritten_record_is_the_full_build_later_records_carry(
     assert record["full_build"]["pipeline_id"] == "run-2"
     assert record["full_build"]["documents"] == 2
     assert record["communities"]["runs_since"] == 1
+
+
+@pytest.mark.usefixtures("no_aws")
+def test_a_record_one_index_rejected_is_written_again_in_the_run(
+    tmp_path: Path, mocker
+) -> None:
+    # One index refuses the first write; the others take it. The run writes
+    # it again after the registry, as its log says, so no index is left
+    # holding no record (or an earlier one).
+    config, providers, source = _setup(tmp_path)
+    put = OpenSearchIndexer._put_index_meta
+    refused: list[str] = []
+
+    def once(self, name, meta):  # noqa: ANN001, ANN202
+        if "entities" in name and "build" in meta and not refused:
+            refused.append(name)
+            raise RuntimeError("mapping update denied")
+        return put(self, name, meta)
+
+    mocker.patch.object(OpenSearchIndexer, "_put_index_meta", once)
+
+    context = e2e._ingest(config, providers, source, tmp_path / "run-1")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert refused
+    assert _build_record(context) == "written"
+    vectors = providers.build_vector_indexer()
+    try:
+        builds = {
+            entry["kind"]: (entry["meta"].get("build") or {}).get("pipeline_id")
+            for entry in vectors.describe_indices(None)
+            if entry["index"]
+        }
+    finally:
+        vectors.close()
+    assert builds and set(builds.values()) == {"run-1"}, builds
