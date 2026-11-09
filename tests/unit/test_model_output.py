@@ -218,6 +218,19 @@ async def test_a_cut_off_answer_is_not_repaired() -> None:
         ("<think>global or local?</think>\n\nlocal", "local"),
         ('{"strategy": "global"}', "global"),
         ("\n\n  mix  ", "mix"),
+        # A line that is the name alone wins, the last first; a preamble
+        # before it costs no repair call.
+        ("Sure, here is my answer:\n\nlocal", "local"),
+        ("Sure! Here is a simple choice:\nlocal", "local"),
+        ("This is a simple factual lookup, so:\n\nlocal", "local"),
+        ("global\n\nOn reflection:\n**mix**", "mix"),
+        ("Selected strategy: `mix`", "mix"),
+        # Regression (rv11 query M2): prose whose words hold one name was
+        # routed to it ("simple", "local", "global" are English words).
+        ("This is a simple factual lookup.", None),
+        ("Not global.", None),
+        ("None of these; local is best", None),
+        ("Global search would be best: local", None),
         # Several names, none, or an unclosed reasoning block: not guessed.
         ("Not global; local fits", None),
         ("I cannot tell", None),
@@ -227,4 +240,4 @@ async def test_a_cut_off_answer_is_not_repaired() -> None:
     ],
 )
 def test_named_choice(text: str, expected: str | None) -> None:
-    assert named_choice(text, {"local", "global", "mix"}) == expected
+    assert named_choice(text, {"local", "global", "mix", "simple"}) == expected

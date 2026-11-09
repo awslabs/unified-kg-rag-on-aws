@@ -1017,9 +1017,12 @@ its Claude tokens. The rate counts the letters of the language's script (Han,
 Hangul and Kana together for Korean, Japanese and Chinese); other letters and
 digits in the text (the Latin names, ids and numbers of a Korean row) count
 at the English rate, and spaces and punctuation at each side's share of the
-letters, so a text in two scripts costs about what its parts do. The
-sentences above were single-language: mixed-script sections were not
-measured. French, Italian and Portuguese were not measured and keep
+letters, so a text in two scripts costs about what its parts do. Digits
+count at the English rate in a single-language text too, so a Korean,
+Japanese or Chinese text with figures is budgeted a little under its
+language's rate alone (a Korean paragraph with two figures: 58 tokens, 63
+at that rate). The sentences above were single-language: mixed-script
+sections were not measured. French, Italian and Portuguese were not measured and keep
 the scaled estimate (Spanish, the nearest, was at 0.92). Chunking keeps the
 script estimate (stored chunks, and chunk sizes in the BPE tokens MS GraphRAG
 sizes them in). Titan Text Embeddings v2 counted differently again (script

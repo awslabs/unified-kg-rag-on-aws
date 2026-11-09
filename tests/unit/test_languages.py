@@ -142,6 +142,7 @@ _FACETS = (
     "articles",
     "number_words",
     "zero_words",
+    "absence_phrases",
     "year_words",
     "partitive_words",
     "polarity_words",
@@ -170,6 +171,8 @@ _GAPS: dict[str, set[str]] = {
     # Their words for none, of time and of partitives too (the answer
     # matcher reads the dense scripts' own forms for all three).
     "zero_words": {"ja", "ko", "zh"} | _NEW,
+    # German states it with its words for none ("Es gibt keine").
+    "absence_phrases": {"de", "ja", "ko", "zh"} | _NEW,
     "year_words": {"ja", "ko", "zh"} | _NEW,
     "partitive_words": {"ja", "ko", "zh"} | _NEW,
 }
@@ -260,6 +263,96 @@ def test_latin_names_quoted_in_another_script(
     question: str, language: LanguageCode
 ) -> None:
     assert text_language(question, LanguageCode.EN) is language
+
+
+# Names in another script a Latin-script question quotes, by that script's
+# language.
+_QUOTED = {
+    KO: "한빛전자",
+    JA: "株式会社アクメ",
+    ZH: "阿克米集团",
+    LanguageCode.RU: "Иван Петров",
+}
+
+
+@pytest.mark.parametrize(
+    ("template", "language"),
+    [
+        # Regression (rv11 query M1): a capitalised word opened a name that
+        # took in the question's own words ("Why did Orion Labs" was one).
+        ("Why did Orion Labs drop {n}?", LanguageCode.EN),
+        ("When did Orion Labs acquire {n}?", LanguageCode.EN),
+        ("Does Orion Labs supply {n}?", LanguageCode.EN),
+        ("Is Orion Labs a vendor of {n}?", LanguageCode.EN),
+        ("How much did Orion Labs pay {n}?", LanguageCode.EN),
+        ("What did Acme Corp sign with {n}?", LanguageCode.EN),
+        ("Who at Acme Corp negotiated with {n}?", LanguageCode.EN),
+        ("What is the relationship between Acme Corp and {n}?", LanguageCode.EN),
+        ("How is {n} related to Acme Corp?", LanguageCode.EN),
+        ("Compare Acme Corp with {n}", LanguageCode.EN),
+        ("What Is The Revenue Of {n} Holdings?", LanguageCode.EN),
+        ("Who Is The CEO Of {n}?", LanguageCode.EN),
+        # German capitalises its nouns.
+        ("Wie viele Lieferanten hat {n}?", LanguageCode.DE),
+        ("Wer ist der Geschäftsführer von {n}?", LanguageCode.DE),
+        ("Seit wann liefert {n} an Orion Labs?", LanguageCode.DE),
+        ("Combien de fournisseurs a {n} ?", LanguageCode.FR),
+        ("Pourquoi Orion Labs a-t-il quitté {n} ?", LanguageCode.FR),
+        ("¿Cuántos proveedores tiene {n}?", LanguageCode.ES),
+        ("¿Quién dirige {n}?", LanguageCode.ES),
+        ("Quantos fornecedores tem {n}?", LanguageCode.PT),
+        ("Quanti fornitori ha {n}?", LanguageCode.IT),
+        ("Ai là giám đốc của {n}?", LanguageCode.VI),
+        # Regression (rv11 query M5): a short name in a dense script (or
+        # Cyrillic) outweighed the whole Latin question around it.
+        ("Where does {n} ship to?", LanguageCode.EN),
+        ("Who is the CEO of {n}?", LanguageCode.EN),
+        ("Who is {n}?", LanguageCode.EN),
+        ("Can You Compare {n} And Acme?", LanguageCode.EN),
+    ],
+)
+@pytest.mark.parametrize("quoted", list(_QUOTED), ids=str)
+def test_a_latin_question_quoting_a_name_in_another_script(
+    template: str, language: LanguageCode, quoted: LanguageCode
+) -> None:
+    question = template.format(n=_QUOTED[quoted])
+    for fallback in (language, quoted):
+        assert text_language(question, fallback) is language
+
+
+@pytest.mark.parametrize(
+    ("question", "language"),
+    [
+        # rv10 M6 with a lowercase article: "the Walt Disney Company" is a
+        # name, so the question keeps no English word.
+        ("Bank of America和the Walt Disney Company是什么关系？", ZH),
+        ("the Acme 계약 조건은?", KO),
+        # Three runs or more are the question's own words.
+        ("What is 계약 조건 기간?", KO),
+        ("Acme의 CEO는 누구인가요?", KO),
+        ("Python的for循环怎么写？", ZH),
+    ],
+)
+@pytest.mark.parametrize("fallback", [LanguageCode.EN, KO, ZH])
+def test_a_quoted_latin_article_and_a_question_of_runs(
+    question: str, language: LanguageCode, fallback: LanguageCode
+) -> None:
+    assert text_language(question, fallback) is language
+
+
+def test_italian_tiene_is_no_spanish_word() -> None:
+    # Regression (rv11 query low): "tiene" is Spanish and Italian.
+    assert "tiene" not in profile(LanguageCode.ES).function_words
+    assert text_language("Il fornitore tiene molti clienti?", LanguageCode.IT) is (
+        LanguageCode.IT
+    )
+
+
+def test_letter_runs_are_counted_by_the_group_dominant_weighs() -> None:
+    counts = count_letters(["Who is the CEO of 한빛전자 and 株式会社アクメ?"])
+    assert counts.runs == {"latin": 6, "dense": 2}
+    # A combining mark continues its run (Devanagari vowel signs).
+    assert count_letters(["कौन है"]).runs == {"devanagari": 2}
 
 
 @pytest.mark.parametrize(

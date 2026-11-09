@@ -70,6 +70,14 @@ PROFILE = LanguageProfile(
     number_conjunctions=("et",),
     compound_ones=("un", "une"),
     zero_words=("aucun", "aucune"),
+    absence_phrases=(
+        "n'y a pas de",
+        "n'y a pas d'",
+        "n'a pas de",
+        "n'a pas d'",
+        "n'ont pas de",
+        "n'ont pas d'",
+    ),
     ordinal_words=frozenset(
         "unième deuxième troisième quatrième cinquième sixième septième "
         "huitième neuvième dixième onzième douzième treizième quatorzième "

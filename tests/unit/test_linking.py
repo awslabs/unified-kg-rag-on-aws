@@ -246,6 +246,15 @@ def test_coverage_leaves_latin_accents_out() -> None:
         ("Cong ty Thanh Cong", "Công ty Thành Công"),
         ("Cafe de Flore", "Café de Flore"),
         ("Muller Logistik", "Müller Logistik"),
+        # Regression (rv11 query M3): letters no decomposition takes a mark
+        # from (a stroke, a ligature, a dotless i) were never folded.
+        ("Dang Van Lam", "Đặng Văn Lâm"),
+        ("Do Hung Dung", "Đỗ Hùng Dũng"),
+        ("Lodz Logistics", "Łódź Logistics"),
+        ("Yildiz Holding", "Yıldız Holding"),
+        ("Soren Kierkegaard Institut", "Søren Kierkegaard Institut"),
+        ("Aero Faergeri", "Ærø Færgeri"),
+        ("Thorsdottir Fisheries", "Þórsdóttir Fisheries"),
     ],
 )
 def test_the_rank_policy_leaves_latin_accents_out(mention: str, name: str) -> None:
@@ -256,3 +265,4 @@ def test_the_rank_policy_leaves_latin_accents_out(mention: str, name: str) -> No
     # A one-word lookalike is still none ("Zorblax Flore").
     lookalike = f"Zorblax {mention.split()[-1]}"
     assert choose_links(lookalike, hits, policy="rank") == []
+    assert [h.source for h in choose_links(mention, hits, policy="cover")] == ["e1"]

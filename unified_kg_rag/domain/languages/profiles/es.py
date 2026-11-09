@@ -16,7 +16,7 @@ PROFILE = LanguageProfile(
     ),
     function_words=frozenset(
         "el los las qué quién cuál cómo cuándo dónde es fue y del cuánto cuántos "
-        "cuánta cuántas cuanto cuantos cuanta cuantas tiene hay".split()
+        "cuánta cuántas cuanto cuantos cuanta cuantas hay".split()
     ),
     no_value_words=("desconocido", "ninguno"),
     articles=frozenset("el la los las un una unos unas".split()),
@@ -92,6 +92,7 @@ PROFILE = LanguageProfile(
     number_conjunctions=("y",),
     compound_ones=("un", "una", "uno"),
     zero_words=("ningún", "ninguno", "ninguna", "ningun"),
+    absence_phrases=("no hay", "no tiene", "no tienen", "no existe", "no existen"),
     year_words=("en", "desde", "hasta", "antes de", "después de", "a partir de"),
     partitive_words=(
         "de los",

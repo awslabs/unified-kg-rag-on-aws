@@ -81,6 +81,13 @@ class LanguageProfile:
     number_tens: Mapping[str, int] = field(default_factory=dict)
     number_scales: Mapping[str, int] = field(default_factory=dict)
     zero_words: tuple[str, ...] = ()
+    # The phrases that state there is none of what is asked, read as a count
+    # of 0 as its words for none are ("does not have any", "no hay", "il
+    # n'y a pas de", "Поставщиков нет"): "…" stands for up to three words
+    # between, and a leading "-" for a clitic written onto the word before
+    # ("-n't … any": "doesn't have any"). One opening a line before a comma
+    # or a stop is a yes/no answer ("Нет, три"), no count.
+    absence_phrases: tuple[str, ...] = ()
     # Whether it writes the ones before the tens ("vierundzwanzig"): in
     # another language the words of a number go down by place ("deux vingt"
     # is two numbers).
@@ -96,6 +103,10 @@ class LanguageProfile:
     # set the answer counts elsewhere ("one of them", "один из них"): the
     # number there counts nothing.
     year_words: tuple[str, ...] = ()
+    # The words a year comes before, written onto it or after a space
+    # ("2019년", "2019부터", "2019 이후", "2019以降"): the number there counts
+    # nothing either, in an answer in any language.
+    year_suffixes: tuple[str, ...] = ()
     partitive_words: tuple[str, ...] = ()
     partitive_anaphors: tuple[str, ...] = ()
     # The words that join the parts of a written number ("and" in "three

@@ -1069,13 +1069,14 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
 
         The answer is the strategy name alone (``StrategySelectionPrompt``:
         a JSON answer made the router write about three times the output
-        tokens, docs/concepts/defaults-and-evidence.md), read as the one
-        name its first line holds (``named_choice``: a reasoning block,
-        markdown, punctuation and case aside, so "**Local**" or "Strategy:
-        local" cost no repair call); any other answer is read as
+        tokens, docs/concepts/defaults-and-evidence.md), read from a line
+        that is the name alone or a short label and the name
+        (``named_choice``: a reasoning block, markdown, punctuation and
+        case aside, so "**Local**", "Strategy: local" or a preamble line
+        before the name cost no repair call); any other answer is read as
         ``{"strategy": "<name>"}``, as every JSON answer is (one repair when
-        it does not parse). A name is matched whole: prose naming several
-        ("not global ... local") is not guessed from.
+        it does not parse). Prose is not guessed from, though a strategy
+        name is one of its words ("a simple lookup", "not global").
         """
         name = named_choice(raw, _STRATEGY_NAMES) or ""
         if not name:

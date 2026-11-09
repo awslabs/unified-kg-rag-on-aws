@@ -63,6 +63,7 @@ PROFILE = LanguageProfile(
         "девятьсот": 900,
     },
     zero_words=("ни одного", "ни одной", "ни один", "ни одна", "ни одно"),
+    absence_phrases=("нет",),
     # Masculine, feminine and neuter.
     ordinal_words=frozenset(
         f"{stem}{ending}"
