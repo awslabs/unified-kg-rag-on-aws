@@ -1011,7 +1011,13 @@ each language's rate is in the registry (`LanguageProfile.chars_per_token`
 for the tokenizer `claude-opus-4.7`), and a budget for those models counts
 the larger of the scaled estimate and the text's length at its language's
 rate, 10% over: every language above is then counted at 1.10 to 1.26 times
-its Claude tokens. French, Italian and Portuguese were not measured and keep
+its Claude tokens. The rate counts the letters of the language's script (Han,
+Hangul and Kana together for Korean, Japanese and Chinese); other letters and
+digits in the text (the Latin names, ids and numbers of a Korean row) count
+at the English rate, and spaces and punctuation at each side's share of the
+letters, so a text in two scripts costs about what its parts do. The
+sentences above were single-language: mixed-script sections were not
+measured. French, Italian and Portuguese were not measured and keep
 the scaled estimate (Spanish, the nearest, was at 0.92). Chunking keeps the
 script estimate (stored chunks, and chunk sizes in the BPE tokens MS GraphRAG
 sizes them in). Titan Text Embeddings v2 counted differently again (script

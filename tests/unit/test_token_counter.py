@@ -528,6 +528,33 @@ def test_a_claude_budget_never_undercounts_a_measured_language(language: str) ->
     assert budget_token_count(text) == estimate_token_count(text)
 
 
+@pytest.mark.parametrize("language", ["ko", "ja", "zh", "ru"])
+def test_a_claude_budget_counts_each_script_at_its_own_rate(language: str) -> None:
+    # Regression (rv10 query M3): every character of a Korean text counted
+    # at Korean's rate, so its Latin names, ids and digits cost a token
+    # each and a mixed text was budgeted at about 2.5 times its tokens.
+    # Its parts now count at their own languages' rates.
+    from unified_kg_rag.adapters.llm.token_estimate import budget_token_count
+    from unified_kg_rag.domain.languages import CLAUDE_TOKENIZER
+
+    own, english = _CALIBRATION_TEXTS[language] * 4, _CALIBRATION_TEXTS["en"] * 3
+    mixed = own + english
+    parts = budget_token_count(own, CLAUDE_TOKENIZER) + budget_token_count(
+        english, CLAUDE_TOKENIZER
+    )
+    # (Spaces and punctuation are shared by the letters' counts, not
+    # told apart: a few percent either way.)
+    budget = budget_token_count(mixed, CLAUDE_TOKENIZER)
+    assert 0.95 * parts <= budget <= 1.1 * parts, (budget, parts)
+    # A Latin name inside the text costs its English tokens, not a token a
+    # letter.
+    name = " Acme Robotics International Holdings ACME-2024-00421 "
+    added = budget_token_count(own + name, CLAUDE_TOKENIZER) - budget_token_count(
+        own, CLAUDE_TOKENIZER
+    )
+    assert added <= len(name) / 2
+
+
 def test_the_claude_4_7_family_names_its_tokenizer() -> None:
     from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
     from unified_kg_rag.domain.languages import CLAUDE_TOKENIZER
