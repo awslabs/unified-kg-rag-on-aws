@@ -303,7 +303,7 @@ export interface Comparison {
   warnings?: string[];
   bootstrap?: { confidence?: number; resamples?: number };
   multiplicity?: Multiplicity;
-  pairwise_vs_baseline?: Record<string, { criteria: Record<string, { candidate_win_rate: number | null }>; lengths?: { buckets: Record<string, { pairs: number; criteria: Record<string, { candidate_win_rate: number | null }> }> } }>;
+  pairwise_vs_baseline?: Record<string, { criteria: Record<string, { candidate_win_rate: number | null }>; length?: { buckets: Record<string, { pairs: number; criteria: Record<string, { candidate_win_rate: number | null }> }> } }>;
   // The compared runs that are no candidate, by role: answered without
   // retrieval (closed_book) or the base configuration again (aa, the noise
   // floor). Left out of Holm and the gates; their deltas are no finding.
