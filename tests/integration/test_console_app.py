@@ -424,6 +424,32 @@ def test_uploads_land_in_the_uploads_folder_and_unsafe_names_are_refused(
     assert "workspace:cache" not in corpora
 
 
+def test_an_upload_with_a_long_korean_name_lands_and_a_too_long_one_is_refused(
+    client: Any, workspace: Path
+) -> None:
+    # 78 Hangul characters and ".txt": 238 bytes, a valid name; its
+    # temporary sibling's must fit 255 bytes too. One past 255 is refused.
+    fits, too_long = "가" * 78 + ".txt", "가" * 84 + ".txt"
+    ok = client.post(
+        "/api/uploads",
+        data={"name": "long"},
+        files=[("files", (fits, "공급사가 부품을 납품한다.".encode(), "text/plain"))],
+        headers=HEADERS,
+    )
+    assert ok.status_code == 200, ok.text
+    folder = workspace / "uploads" / "long"
+    assert [p.name for p in folder.iterdir()] == [fits]
+    refused = client.post(
+        "/api/uploads",
+        data={"name": "long"},
+        files=[("files", (too_long, b"x", "text/plain"))],
+        headers=HEADERS,
+    )
+    assert refused.status_code == 403, refused.text
+    assert "longer than 255 bytes" in refused.text
+    assert [p.name for p in folder.iterdir()] == [fits]
+
+
 def test_a_refused_upload_leaves_the_folder_as_it_was(
     client: Any, workspace: Path
 ) -> None:

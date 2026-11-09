@@ -75,6 +75,28 @@ def test_the_temporary_name_is_hidden_unique_and_not_the_target_suffix(
     assert first.name.startswith(".segment.json.") and first.suffix == ".tmp"
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["가" * 80, "가" * 85, "あ" * 81 + ".txt", "a" * 255],
+    ids=["korean-240-bytes", "korean-255-bytes", "japanese-247-bytes", "ascii-255"],
+)
+def test_a_long_valid_name_is_written_atomically(tmp_path: Path, name: str) -> None:
+    # A Korean or Japanese name of 80-odd characters is 240-255 bytes in
+    # UTF-8: valid itself, but too long once the temporary name's 38 bytes
+    # are added (ENAMETOOLONG). The temporary name cuts the target's at a
+    # character boundary to stay within a name's 255 bytes.
+    path = tmp_path / name
+    assert len(os.fsencode(name)) <= files.NAME_MAX
+    temporary = temporary_sibling(path)
+    assert len(os.fsencode(temporary.name)) <= files.NAME_MAX
+    assert temporary.name.startswith(".") and temporary.suffix == ".tmp"
+    temporary.name.encode("utf-8")  # no half character
+    path.write_text("old")
+    atomic_write_text(path, "새 내용")
+    assert path.read_text(encoding="utf-8") == "새 내용"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [name]
+
+
 def _interrupted(monkeypatch: pytest.MonkeyPatch) -> None:
     def crash(*_: object) -> None:
         raise KeyboardInterrupt
@@ -271,6 +293,73 @@ def test_a_writable_file_in_a_read_only_directory_is_written_in_place(
         folder.chmod(0o755)
 
 
+def _staged_in(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Where a write that cannot be made beside its file stages it."""
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    monkeypatch.setattr(files.tempfile, "tempdir", str(stage))
+    return stage
+
+
+def _counted_fsyncs(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    calls: list[int] = []
+    real = os.fsync
+    monkeypatch.setattr(files.os, "fsync", lambda fd: (calls.append(fd), real(fd))[1])
+    return calls
+
+
+@pytest.mark.skipif(_ROOT, reason="root writes into a read-only directory")
+def test_a_read_only_directory_s_file_keeps_its_text_when_the_block_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The in-place write is staged elsewhere and copied in on success: an
+    # export that fails halfway leaves the previous file, not its first half.
+    stage = _staged_in(monkeypatch, tmp_path)
+    folder = tmp_path / "ro"
+    folder.mkdir()
+    path = folder / "export.jsonl"
+    path.write_text("OLD" * 1000)
+    folder.chmod(0o555)
+    try:
+        with pytest.raises(RuntimeError), files.atomic_open(path) as out:
+            out.write("NEW-partial")
+            out.flush()
+            raise RuntimeError("the store went away")
+        assert path.read_text() == "OLD" * 1000
+        fsyncs = _counted_fsyncs(monkeypatch)
+        atomic_write_text(path, "new", fsync=True)
+        assert path.read_text() == "new"
+        assert fsyncs  # the copied-in file is flushed, as asked
+        assert sorted(p.name for p in folder.iterdir()) == ["export.jsonl"]
+    finally:
+        folder.chmod(0o755)
+    assert list(stage.iterdir()) == []
+
+
+@pytest.mark.parametrize("code", [errno.EBUSY, errno.EPERM, errno.EACCES])
+def test_a_file_it_cannot_rename_over_flushes_the_copy_when_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    path = tmp_path / "mounted.json"
+    path.write_text("old")
+
+    def refuse(*_: Any) -> None:
+        raise OSError(code, os.strerror(code))
+
+    monkeypatch.setattr(files.os, "replace", refuse)
+    fsynced: list[int] = []
+    real = os.fsync
+
+    def fsync(fd: int) -> None:
+        fsynced.append(os.fstat(fd).st_ino)
+        real(fd)
+
+    monkeypatch.setattr(files.os, "fsync", fsync)
+    atomic_write_text(path, "new", fsync=True)
+    assert path.read_text() == "new"
+    assert path.stat().st_ino in fsynced  # the file itself, not just the temp
+
+
 @pytest.mark.parametrize("code", [errno.EBUSY, errno.EPERM, errno.EACCES])
 def test_a_file_it_cannot_rename_over_is_written_in_place(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
@@ -291,3 +380,28 @@ def test_a_file_it_cannot_rename_over_is_written_in_place(
     with pytest.raises(OSError):
         atomic_write_text(tmp_path / "fresh.json", "x")
     assert sorted(p.name for p in tmp_path.iterdir()) == ["mounted.json"]
+
+
+def test_a_descriptor_open_on_a_file_for_update_drops_the_old_tail(
+    tmp_path: Path,
+) -> None:
+    # A file opened read-write (a shell's <>) at its start: the write goes
+    # through the descriptor at its offset and ends the file there, as
+    # opening the path to write would; nothing of the old text follows it.
+    path = tmp_path / "held.txt"
+    path.write_text("0123456789ABCDEF")
+    with path.open("r+") as held:
+        alias = Path(f"/proc/self/fd/{held.fileno()}")
+        if not alias.exists():
+            pytest.skip("no /proc/self/fd here")
+        atomic_write_text(alias, "xy")
+    assert path.read_text() == "xy"
+
+
+def test_a_closed_descriptor_s_alias_names_the_path(tmp_path: Path) -> None:
+    fd = os.open(tmp_path / "f", os.O_WRONLY | os.O_CREAT)
+    os.close(fd)
+    alias = Path(f"/dev/fd/{fd}")
+    with pytest.raises(OSError) as raised:
+        atomic_write_text(alias, "x")
+    assert raised.value.filename == str(alias)

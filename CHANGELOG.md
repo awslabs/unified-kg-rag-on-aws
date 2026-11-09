@@ -1870,8 +1870,11 @@ Evaluation, visualization and tuning.
   previous one). A symlinked file stays a link (the file it points to is replaced), a replaced file keeps its
   permission bits, a fifo is written in place, and `/dev/stdout` (`/dev/fd/N`, `/proc/self/fd/N`, a link to one)
   is written through its descriptor, so `--output-path /dev/stdout > out.txt` (or `>>`) keeps what else the run
-  prints. A file its directory will not let be replaced (read-only, a bind-mounted file) is written in place, not
-  atomically, and a write that asks for `fsync` flushes the directory after the rename too where it may.
+  prints (a file open to update ends where the write does). A file its directory will not let be replaced
+  (read-only, a bind-mounted file) is staged in a temporary file and copied in once written, so a failed export
+  still leaves it whole, and `fsync` flushes the copy too; a write that asks for `fsync` flushes the directory after
+  the rename where it may. A valid name of 218-255 bytes (about 73 or more Korean or Japanese characters, a console
+  upload's too) is written atomically: its temporary name is cut to fit 255 bytes.
 - `graph_aware` matches a word through its possessive and finds a Latin word or number inside Chinese or Japanese
   text (`AWS` in `答案是AWS公司`) (#516, #563).
 - `run-visualization` rejects unknown `--renderers` and invalid data (exit 2), lays out only the drawn nodes, keeps
