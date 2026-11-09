@@ -77,7 +77,11 @@ processing:
   어간 추출과 불용어는 보크몰 기준입니다. 기본값에 언어가 들어가기 전에 만든 인덱스는 필드를
   만들 때 쓴 `default_analyzer`를 `indexing.reset: true` 실행 전까지 유지합니다(실행마다
   WARNING 한 번). `language_analyzers`를 직접 설정했다면 그 값을 따르며, 다르게 만든 필드가
-  있으면 실행이 멈춥니다. 프로필
+  있으면 실행이 멈춥니다. 내장 어간 추출기가 어근을 놓칠 수도 있습니다. Amazon OpenSearch Service
+  도메인(OpenSearch 2.19)의 `indonesian`은 "pemasok"를 "asok"로, "mengirimkan"을 "irim"으로
+  줄였지만 어근 "pasok"와 "kirim"은 그대로 두어, 어근으로 질의하면 문서를 찾지 못했습니다(Lucene의
+  인도네시아어 어간 추출기는 비음 접두사를 복원하지 않음). 벡터 검색과 그래프 검색은 그대로 찾습니다.
+  프로필
   (`unified_kg_rag/domain/languages/profiles/`)은 모듈 하나로, 언어 이름, 문자 체계,
   분석기, 거절 응답, 답변을 읽는 데 쓰는 단어를 담습니다.
 - **분석기는 클러스터에 있어야** 하며, 없으면 인덱싱 단계가

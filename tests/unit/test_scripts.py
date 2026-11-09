@@ -135,3 +135,17 @@ def test_dense_letters_are_the_dense_scripts_letters() -> None:
             for cp in (lo, hi):
                 dense = script.spacing is scripts.Spacing.DENSE
                 assert is_dense_script_char(chr(cp)) is dense, hex(cp)
+
+
+def test_one_latin_token_rate_and_one_hangul_predicate() -> None:
+    # The chunk-size bound, the token estimate and the script table read one
+    # rate; the evaluators' Hangul test is the table's (syllables and jamo).
+    from unified_kg_rag.adapters.llm import token_estimate
+    from unified_kg_rag.domain.ingestion import chunk_length
+    from unified_kg_rag.shared.utils import scripts
+
+    assert chunk_length.LATIN_CHARS_PER_TOKEN is scripts.LATIN_CHARS_PER_TOKEN
+    assert token_estimate.LATIN_CHARS_PER_TOKEN is scripts.LATIN_CHARS_PER_TOKEN
+    assert scripts.script_named("latin").chars_per_token == 4
+    assert [scripts.is_hangul(c) for c in "한ㄱᄀA漢"] == [True] * 3 + [False] * 2
+    assert [scripts.is_hangul_syllable(c) for c in "한ㄱ"] == [True, False]

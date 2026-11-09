@@ -20,9 +20,9 @@ from unified_kg_rag.shared.utils.scripts import (
     drop_dense_script_spaces,
     has_dense_script,
     is_dense_script_char,
+    is_hangul,
     is_hangul_syllable,
     letter_class,
-    script_of,
 )
 
 # A Hangul letter (the script table's blocks): a Korean word goes on.
@@ -512,10 +512,6 @@ def phrase_in_text(phrase: str, text: str, language: str | None = None) -> bool:
     )
 
 
-def _is_hangul(ch: str) -> bool:
-    return (script := script_of(ch)) is not None and script.name == "hangul"
-
-
 def _substring_beside_han_or_kana(needle: str, haystack: str) -> bool:
     """True if ``needle`` occurs in ``haystack`` where no word, number or
     Hangul letter continues it on either side.
@@ -534,8 +530,8 @@ def _substring_beside_han_or_kana(needle: str, haystack: str) -> bool:
         before = haystack[start - 1] if start else ""
         after = haystack[end] if end < len(haystack) else ""
         if not (
-            (before and (_is_hangul(before) or _continues_word(before, needle[0])))
-            or (after and (_is_hangul(after) or _continues_word(needle[-1], after)))
+            (before and (is_hangul(before) or _continues_word(before, needle[0])))
+            or (after and (is_hangul(after) or _continues_word(needle[-1], after)))
         ):
             return True
         start = haystack.find(needle, start + 1)

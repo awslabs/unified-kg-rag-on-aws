@@ -22,6 +22,7 @@ from unified_kg_rag.domain.ingestion.graph_analyzer import CentralityMetrics
 from unified_kg_rag.domain.models import Community
 from unified_kg_rag.domain.models.config import StaticChartSettings
 from unified_kg_rag.shared import get_logger
+from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
 
@@ -495,5 +496,5 @@ class StaticRenderer:
             f'font-family="{_attr(self.font)}" style="max-width:100%;height:auto">\n'
             f"{body}\n</svg>\n</body>\n</html>\n"
         )
-        Path(path).write_text(page, encoding="utf-8")
+        atomic_write_text(Path(path), page)
         logger.info("Static plot '%s' saved to %s", title, path)

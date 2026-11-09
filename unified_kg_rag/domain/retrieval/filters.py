@@ -691,7 +691,7 @@ class Range:
             if _is_number(bound) != _is_number(stored):
                 return False
             try:
-                if not _COMPARISONS[op](stored, bound):
+                if not bound_holds(op, stored, bound):
                     return False
             except TypeError:
                 return False
@@ -704,6 +704,13 @@ _COMPARISONS = {
     "gt": lambda stored, bound: stored > bound,
     "lt": lambda stored, bound: stored < bound,
 }
+
+
+def bound_holds(op: str, stored: Any, bound: Any) -> bool:
+    """Whether ``stored op bound`` holds for one of ``RANGE_BOUNDS``: the
+    one comparison of a range filter and a structured query's operator
+    (a ``TypeError`` of values that do not compare propagates)."""
+    return bool(_COMPARISONS[op](stored, bound))
 
 
 def _is_number(value: Any) -> bool:

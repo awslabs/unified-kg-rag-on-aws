@@ -46,9 +46,13 @@ def test_a_file_that_needs_another_first_fails(tmp_path: Path) -> None:
     assert script.main([str(tmp_path), "--jobs", "2"]) == 1
 
 
-def test_ci_runs_it_over_the_unit_tests() -> None:
+def test_ci_runs_it_over_every_test_directory() -> None:
     workflow = yaml.safe_load(
         (REPO_ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8")
     )
     runs = [step.get("run", "") for step in workflow["jobs"]["test-isolation"]["steps"]]
-    assert any("scripts/check_test_isolation.py tests/unit" in run for run in runs)
+    assert any(
+        "scripts/check_test_isolation.py tests/unit tests/integration tests/property"
+        in run
+        for run in runs
+    )

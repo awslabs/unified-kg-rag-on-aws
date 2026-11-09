@@ -145,10 +145,11 @@ jobs:
           if-no-files-found: ignore
 
   test-isolation:
-    # Each unit test file in a process of its own: the quality job runs them
-    # in a few shared processes, where a file that only passes after another
-    # one bound a lazy import or filled a cache passes too, and then fails
-    # when a developer runs it alone. About 7 minutes on four workers.
+    # Each test file (unit, integration, property) in a process of its own:
+    # the quality job runs them in a few shared processes, where a file that
+    # only passes after another one bound a lazy import or filled a cache
+    # passes too, and then fails when a developer runs it alone. About 12
+    # minutes on four workers (unit 7, integration 4, property 1).
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -163,8 +164,8 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked --extra otel --extra eval --extra viz --extra ontology --extra mcp --extra docx --extra console
 
-      - name: Every unit test file alone
-        run: uv run --frozen python scripts/check_test_isolation.py tests/unit
+      - name: Every test file alone
+        run: uv run --frozen python scripts/check_test_isolation.py tests/unit tests/integration tests/property
 
   core-install:
     # The default install has none of the eval, viz, ontology, mcp, console,
@@ -580,6 +581,20 @@ jobs:
         # entrypoint and the installed console script, so a missing runtime
         # dependency or a broken entrypoint fails here, not at deploy time.
         run: docker run --rm unified-kg-rag:ci
+
+      - name: Check the image holds this checkout's package
+        # uv's build cache keys the project's own wheel by its version, so a
+        # warm cache once installed an earlier commit's package: the build
+        # checks the installed package against the copied source and bakes
+        # the digest in; it must be this checkout's, and so must the
+        # installed files, digested again here (scripts/package_digest.py).
+        run: |
+          expected=$(python3 -I scripts/package_digest.py unified_kg_rag)
+          baked=$(docker run --rm --entrypoint cat unified-kg-rag:ci /app/.venv/unified-kg-rag-source.sha256)
+          installed=$(docker run --rm -v "$PWD/scripts/package_digest.py:/tmp/package_digest.py:ro" \
+            --entrypoint /app/.venv/bin/python unified-kg-rag:ci -I /tmp/package_digest.py --installed)
+          echo "checkout $expected, baked $baked, installed $installed"
+          [ "$expected" = "$baked" ] && [ "$expected" = "$installed" ]
 
       - name: Check the image leaves the eval extra out
         # run-eval's default evaluators are LLM-free; the ragas judge's eval

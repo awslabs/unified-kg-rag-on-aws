@@ -37,6 +37,7 @@ __all__ = [
     "OTHER_LETTERS",
     "DENSE_SCRIPT_LETTERS",
     "DENSE_SCRIPT_TOKEN_RANGES",
+    "LATIN_CHARS_PER_TOKEN",
     "SCRIPTS",
     "SPACELESS_SCRIPT_LETTERS",
     "Script",
@@ -49,6 +50,7 @@ __all__ = [
     "has_dense_script",
     "has_unspaced_script",
     "is_dense_script_char",
+    "is_hangul",
     "is_hangul_syllable",
     "is_unspaced_char",
     "join_dense_middle_dots",
@@ -67,6 +69,12 @@ class Spacing(str, Enum):
 
 
 Ranges = tuple[tuple[int, int], ...]
+
+# Characters per token of Latin text, and of every script not measured, in
+# the local token estimate (``adapters.llm.token_estimate``); the chunk
+# sizes in tokens bound their characters with it (``domain.ingestion.
+# chunk_length``).
+LATIN_CHARS_PER_TOKEN = 4
 
 
 @dataclass(frozen=True)
@@ -88,7 +96,7 @@ class Script:
     name: str
     ranges: Ranges
     spacing: Spacing = Spacing.SPACED
-    chars_per_token: float = 4.0
+    chars_per_token: float = LATIN_CHARS_PER_TOKEN
     optional_marks: Ranges = field(default=())
     letter_variants: Mapping[str, str] = field(default_factory=dict)
 
@@ -288,7 +296,11 @@ class ScriptCounts:
                 group, rate = "dense", script.chars_per_token
             else:
                 group = name
-                rate = script.chars_per_token if script is not None else 4.0
+                rate = (
+                    script.chars_per_token
+                    if script is not None
+                    else LATIN_CHARS_PER_TOKEN
+                )
             if group not in without:
                 weights[group] = weights.get(group, 0.0) + count / rate
         if not weights:
@@ -415,6 +427,12 @@ def is_dense_script_char(ch: str) -> bool:
 def has_dense_script(text: str) -> bool:
     """True if ``text`` contains at least one Han, Hangul or Kana letter."""
     return _DENSE_SCRIPT_LETTER.search(text) is not None
+
+
+def is_hangul(ch: str) -> bool:
+    """True if ``ch`` is a Hangul letter: a syllable or a jamo, of any of
+    the script table's Hangul blocks."""
+    return (script := script_of(ch)) is not None and script.name == "hangul"
 
 
 def is_hangul_syllable(ch: str) -> bool:

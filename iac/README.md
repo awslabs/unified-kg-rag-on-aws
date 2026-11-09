@@ -469,6 +469,14 @@ docker push "$REGISTRY/graphrag-app:latest"
   task's: an x86_64 image on an ARM64 task, or the reverse, stops at start
   with `exec format error`.
 
+- Each build reinstalls the package from the copied source and fails
+  unless the installed package is that source (uv's build cache keys the
+  project's own wheel by its version, so a warm cache once put an earlier
+  commit's code into the image). Before pushing, compare the digest it
+  baked in with your checkout's: `docker run --rm --entrypoint cat
+  "$REGISTRY/graphrag-app:latest" /app/.venv/unified-kg-rag-source.sha256`
+  must print what `python3 scripts/package_digest.py` prints.
+
 - Outside dev, push a unique version tag and deploy with
   `cdk deploy --all -c image_tag=<tag>`, so a pushed image cannot be swapped
   under the running task definition.

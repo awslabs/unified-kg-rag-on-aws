@@ -18,6 +18,8 @@ import io
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .arms import arm_role_mark, arm_roles
+
 CSV_COLUMNS = (
     "strategy",
     "baseline",
@@ -136,7 +138,8 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
         else "vs each strategy's baseline"
     )
     lines = [f"# Paired comparison {title}", ""]
-    closed = set(comparison.get("closed_book_arms") or ())
+    roles = arm_roles(comparison)
+    closed = {arm for arm, role in roles.items() if role == "closed_book"}
     if closed:
         lines += [
             f"{', '.join(f'`{a}`' for a in sorted(closed))} answered without "
@@ -145,7 +148,7 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
             "metrics score no sources, and gates skip it.",
             "",
         ]
-    noise_floor = set(comparison.get("aa_arms") or ())
+    noise_floor = {arm for arm, role in roles.items() if role == "aa"}
     if noise_floor:
         lines += [
             f"{', '.join(f'`{a}`' for a in sorted(noise_floor))} ran the base "
@@ -165,10 +168,9 @@ def comparison_markdown(comparison: Mapping[str, Any]) -> str:
         rows.append(row)
     header = [
         "Metric",
-        *(f"{s} (no retrieval)" if s in closed else s for s in strategies),
+        *(f"{s}{arm_role_mark(s, roles)}" for s in strategies),
         *(
-            f"{s} - {pairs[s]} [{confidence:.0%} CI]"
-            + (" (noise floor)" if s in noise_floor else "")
+            f"{s} - {pairs[s]} [{confidence:.0%} CI]{arm_role_mark(s, roles)}"
             for s in others
         ),
     ]

@@ -4,19 +4,16 @@
 
 With ``tokens`` the sizes count the local token estimate
 (``adapters.llm.token_estimate``), which counts one token per
-:data:`LATIN_CHARS_PER_TOKEN` characters outside the dense scripts and one
-per dense character. The chunkers locate overlaps in characters and the
-output floors of the long-output prompts size an answer by a chunk's
-characters, so both take the bound from here.
+:data:`LATIN_CHARS_PER_TOKEN` (``shared.utils.scripts``) characters outside
+the dense scripts and one per dense character. The chunkers locate overlaps
+in characters and the output floors of the long-output prompts size an
+answer by a chunk's characters, so both take the bound from here.
 """
 
 from __future__ import annotations
 
 from unified_kg_rag.domain.models.config import ChunkLengthUnit
-
-# Characters per token of the text outside the dense scripts, in the local
-# token estimate.
-LATIN_CHARS_PER_TOKEN = 4
+from unified_kg_rag.shared.utils.scripts import LATIN_CHARS_PER_TOKEN
 
 
 def max_chars(size: int, unit: ChunkLengthUnit) -> int:

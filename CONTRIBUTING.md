@@ -200,12 +200,30 @@ its reason and an expiry.
 - `tests/integration/test_local_stores.py`, the `container` cases of the store conformance suites and of
   `test_embedded_e2e.py` run against the local containers in `docker/compose.local.yaml` when `LOCAL_STORES=1` is
   set (`LOCAL_STORES_GREMLIN_PORT` / `LOCAL_STORES_OPENSEARCH_PORT` point them at other ports).
-- Every unit test file passes when run on its own: the `test-isolation` CI job runs each in a process of its own
-  (`python scripts/check_test_isolation.py tests/unit`), so a file that passes only after another bound a lazy import
-  or filled a cache fails there.
+- Every test file passes when run on its own: the `test-isolation` CI job runs each unit, integration and property
+  test file in a process of its own (`python scripts/check_test_isolation.py tests/unit tests/integration
+  tests/property`), so a file that passes only after another bound a lazy import or filled a cache fails there.
 - Tests, fixtures and evaluation data use synthetic content only (generic entities such as "Vendor" and "Buyer",
   made-up amounts). Never add real corpus text, customer names, account ids, endpoints or hostnames to code, tests,
   docs or commit messages.
+
+### Single-owner guards
+
+A concept implemented in two places drifts, so each shared one has an owner module, and
+`tests/unit/test_single_owner_guards.py` (with `test_namespace_resolution.py`) fails on a copy of it: a
+`SourceGuard` names the pattern a copy takes, the owner, and an allowlist of the other places that may hold it
+(`tests/fixtures/source_guards.py`). The [Extension guide](./docs/guides/extend.md#15-extension-guide) lists the owners.
+
+- **A failing guard names the copy and the owner to call.** Call the owner. Names a module imports are resolved, so
+  an alias (`import json as j`, `from os import replace`) is still a copy.
+- **A place that holds the pattern but is not a copy** (a store's own codec, a dataset file read with `json.loads`)
+  gets an allowlist entry: `"path::scope": (count, "reason")`, the scope being the enclosing function or class, or
+  the name a module- or class-level assignment binds (`path::_TABLE`). The count is how many matches the place
+  holds: one more fails as a copy, and fewer fails too, so the entry shrinks or goes when the place is cleaned up.
+  The reason says what the place holds instead of the concept, and must stay true.
+- **A new guard** names a finder that matches the owner's own form (a test fails when the owner holds no match, so a
+  finder that cannot see the concept cannot guard it), every path it scans must exist, and its pattern is pinned by
+  `test_each_pattern_catches_the_forms_copies_took` with each form a copy took.
 
 ### Code conventions
 

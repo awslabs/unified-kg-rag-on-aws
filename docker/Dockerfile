@@ -49,10 +49,23 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev ${UV_EXTRAS}
 
 # Now the source, then the project itself, installed into the venv (not
-# editable), so the runtime stage needs only /app/.venv.
+# editable), so the runtime stage needs only /app/.venv. uv caches the wheel
+# it builds of the project keyed by its metadata, not its source: with the
+# version unchanged, a warm cache mount installed the previous source's
+# wheel. --reinstall-package rebuilds it on every build, and the check below
+# fails the build unless the installed package is the copied source; its
+# digest stays in the image for the CI docker job and a deploy to compare
+# (scripts/package_digest.py).
 COPY unified_kg_rag ./unified_kg_rag
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable ${UV_EXTRAS}
+    uv sync --frozen --no-dev --no-editable --reinstall-package unified-kg-rag-on-aws ${UV_EXTRAS}
+RUN --mount=type=bind,source=scripts/package_digest.py,target=/tmp/package_digest.py \
+    source=$(python3 -I /tmp/package_digest.py /app/unified_kg_rag) \
+    && installed=$(/app/.venv/bin/python -I /tmp/package_digest.py --installed) \
+    && if [ "$source" != "$installed" ]; then \
+         echo "installed unified_kg_rag ($installed) is not the source ($source)" >&2; exit 1; \
+       fi \
+    && echo "$source" > /app/.venv/unified-kg-rag-source.sha256
 
 # A wheel directory for the spaCy model install below: empty unless a build
 # passes one (`--build-context spacy-wheels=<dir>`), which replaces this stage.

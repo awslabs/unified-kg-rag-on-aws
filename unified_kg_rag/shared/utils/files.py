@@ -4,7 +4,10 @@
 
 import os
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import IO, Any
 
 
 def temporary_sibling(path: Path) -> Path:
@@ -16,6 +19,42 @@ def temporary_sibling(path: Path) -> Path:
     return path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
 
 
+@contextmanager
+def atomic_open(
+    path: Path,
+    mode: str = "w",
+    *,
+    fsync: bool = False,
+    encoding: str | None = "utf-8",
+    newline: str | None = None,
+) -> Iterator[IO[Any]]:
+    """Open a uniquely named sibling of ``path`` for writing (``mode`` ``w``
+    or ``wb``) and rename it over ``path`` when the block ends, so a reader
+    sees the old file or the new one, never a truncated one; a block that
+    raises leaves the previous file and no temporary one. For a write that
+    streams (an export, a download); ``atomic_write_text`` for a string.
+    ``fsync`` flushes the data to disk before the rename, for state that
+    must survive a power loss, not just a crash.
+    """
+    if mode not in ("w", "wb"):
+        raise ValueError(f"atomic_open writes a whole file ('w' or 'wb'), not {mode!r}")
+    temp_path = temporary_sibling(path)
+    try:
+        with (
+            temp_path.open("wb")
+            if mode == "wb"
+            else temp_path.open("w", encoding=encoding, newline=newline)
+        ) as handle:
+            yield handle
+            if fsync:
+                handle.flush()
+                os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
 def atomic_write_text(path: Path, text: str, *, fsync: bool = False) -> None:
     """Write ``text`` to ``path`` so a reader sees the old file or the new one.
 
@@ -25,14 +64,5 @@ def atomic_write_text(path: Path, text: str, *, fsync: bool = False) -> None:
     no temporary file behind. ``fsync`` flushes the data to disk before the
     rename, for state that must survive a power loss, not just a crash.
     """
-    temp_path = temporary_sibling(path)
-    try:
-        with temp_path.open("w", encoding="utf-8") as handle:
-            handle.write(text)
-            if fsync:
-                handle.flush()
-                os.fsync(handle.fileno())
-        os.replace(temp_path, path)
-    except BaseException:
-        temp_path.unlink(missing_ok=True)
-        raise
+    with atomic_open(path, fsync=fsync) as handle:
+        handle.write(text)

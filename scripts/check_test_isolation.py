@@ -6,7 +6,8 @@ The suite runs every file in a few shared processes (``pytest -n``), so a
 file that only passes after another one bound a lazy import, registered a
 plugin or filled a cache passes there and fails when run alone, as a
 developer runs the file they are changing. The ``test-isolation`` job of
-``.github/workflows/quality.yml`` runs this over ``tests/unit``.
+``.github/workflows/quality.yml`` runs this over ``tests/unit``,
+``tests/integration`` and ``tests/property``.
 
 Usage::
 

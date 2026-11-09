@@ -132,3 +132,41 @@ def test_the_runtime_image_has_no_uv_or_aws_cli_and_a_read_only_venv() -> None:
     runs = " ".join(step.get("run", "") for step in _steps("docker"))
     assert "! command -v uv && ! command -v aws" in runs
     assert "! touch /app/.venv/probe" in runs
+
+
+def test_the_image_holds_the_source_it_was_built_from(tmp_path: Path) -> None:
+    # uv keys the project's own wheel by its version: a warm cache installed
+    # an earlier commit's package. The build reinstalls it, checks the
+    # installed files against the copied source and bakes the digest in;
+    # the CI job compares it with the checkout's.
+    import importlib.util
+
+    root = _WORKFLOW.parents[2]
+    dockerfile = (root / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    (install,) = (
+        line
+        for line in dockerfile.splitlines()
+        if "uv sync" in line and "--no-editable" in line
+    )
+    assert "--reinstall-package unified-kg-rag-on-aws" in install
+    assert "package_digest.py --installed" in dockerfile
+    assert "/app/.venv/unified-kg-rag-source.sha256" in dockerfile
+    check = _step("docker", "Check the image holds this checkout's package")["run"]
+    assert "scripts/package_digest.py unified_kg_rag" in check
+    assert "unified-kg-rag-source.sha256" in check and "--installed" in check
+
+    spec = importlib.util.spec_from_file_location(
+        "package_digest", root / "scripts" / "package_digest.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    package = tmp_path / "pkg"
+    (package / "sub" / "__pycache__").mkdir(parents=True)
+    (package / "a.py").write_text("A = 1\n")
+    (package / "sub" / "b.py").write_text("B = 1\n")
+    before = module.package_digest(package)
+    (package / "sub" / "__pycache__" / "b.cpython-312.pyc").write_bytes(b"\0")
+    assert module.package_digest(package) == before  # bytecode aside
+    (package / "sub" / "b.py").write_text("B = 2\n")
+    assert module.package_digest(package) != before

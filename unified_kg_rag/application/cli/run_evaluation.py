@@ -106,6 +106,7 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import ErrorClass, classify
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils.files import atomic_write_text
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
 
 if TYPE_CHECKING:
@@ -120,6 +121,8 @@ if TYPE_CHECKING:
         aa_arms,
         arm_label,
         arm_pairs,
+        arm_role_mark,
+        arm_roles,
         is_arm_label,
         label_strategy,
     )
@@ -258,6 +261,8 @@ __getattr__, _load_evaluation = lazy_names(
         "aa_arms": _arms_module,
         "arm_label": _arms_module,
         "arm_pairs": _arms_module,
+        "arm_role_mark": _arms_module,
+        "arm_roles": _arms_module,
         "is_arm_label": _arms_module,
         "label_strategy": _arms_module,
         "check_answer_scoring": _saved_results_module,
@@ -1188,9 +1193,8 @@ class EvaluationRunner:
         outputs_dir.mkdir(parents=True, exist_ok=True)
         stamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         path = outputs_dir / f"evaluation_comparison_{stamp}.json"
-        path.write_text(
-            json.dumps(comparison, indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
+        atomic_write_text(
+            path, json.dumps(comparison, indent=2, ensure_ascii=False, default=str)
         )
         return path
 
@@ -1216,15 +1220,13 @@ class EvaluationRunner:
         # Never cut ("answer_match/answer_contai…"): a long name or value
         # folds onto the next line instead.
         table.add_column("Metric", min_width=_widest(keys), overflow="fold")
-        closed = set(comparison.get("closed_book_arms") or ())
+        roles = arm_roles(comparison)
         for strategy in strategies:
-            marked = f"{strategy} (no retrieval)" if strategy in closed else strategy
+            marked = f"{strategy}{arm_role_mark(strategy, roles)}"
             table.add_column(markup_safe(marked), style="green", overflow="fold")
-        noise_floor = set(comparison.get("aa_arms") or ())
         for strategy, label in pairs.items():
-            marked = " (noise floor)" if strategy in noise_floor else ""
             table.add_column(
-                f"{strategy} - {label} [CI]{marked}",
+                f"{strategy} - {label} [CI]{arm_role_mark(strategy, roles)}",
                 style="cyan",
                 overflow="fold",
             )
@@ -2414,16 +2416,18 @@ class EvaluationRunner:
                 )
             )
         if closed:
-            # No retrieval: a bound on prior knowledge, not a strategy to gate.
-            comparison["closed_book_arms"] = closed
             # The arm split by its own scores selects on the outcome.
             split = comparison.pop("deltas_by_closed_book", None) or {}
             if split := {s: d for s, d in split.items() if s not in closed}:
                 comparison["deltas_by_closed_book"] = split
         noise_floor = [label for label in aa_arms(manifests) if label in names]
-        if noise_floor:
-            # The base configuration again: its deltas are the noise floor.
-            comparison["aa_arms"] = noise_floor
+        # No retrieval (a bound on prior knowledge) and the base configuration
+        # again (the noise floor): no candidate to adjust, gate or rank.
+        if roles := {
+            **dict.fromkeys(closed, "closed_book"),
+            **dict.fromkeys(noise_floor, "aa"),
+        }:
+            comparison["arm_roles"] = roles
         adjust_for_multiplicity(
             comparison,
             primary_metric=primary_metric,
@@ -2444,10 +2448,8 @@ class EvaluationRunner:
                 "breaches": gate_failures,
             }
         path = self._save_comparison(comparison, local_outputs)
-        path.with_suffix(".csv").write_text(comparison_csv(rows), encoding="utf-8")
-        path.with_suffix(".md").write_text(
-            comparison_markdown(comparison), encoding="utf-8"
-        )
+        atomic_write_text(path.with_suffix(".csv"), comparison_csv(rows))
+        atomic_write_text(path.with_suffix(".md"), comparison_markdown(comparison))
         self._print_comparison(comparison, elapsed)
         return comparison, gate_failures
 

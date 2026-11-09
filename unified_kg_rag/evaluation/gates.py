@@ -23,11 +23,11 @@ answers (``cost.strategies.<s>.failed_answers``): a failed answer counts
 with what it spent before failing, so the delta compares the failures too
 (a fast failure looks cheap, a timeout slow).
 
-The closed-book arm of ``run-eval --closed-book``
-(``closed_book_arms``) is not gated: it answers without retrieval, so it
-bounds the answer model's prior knowledge and is expected to score lower.
-Nor is an A/A arm (``aa_arms``): it runs the base configuration again, so
-its deltas are the noise floor, not a change to check.
+The closed-book arm of ``run-eval --closed-book`` (``arm_roles``
+``closed_book``) is not gated: it answers without retrieval, so it bounds
+the answer model's prior knowledge and is expected to score lower. Nor is
+an A/A arm (``aa``): it runs the base configuration again, so its deltas
+are the noise floor, not a change to check.
 
 ``<stat>`` is ``mean_delta``, ``ci_low`` or ``ci_high``, or a
 multiplicity-adjusted one (``comparison.adjust_for_multiplicity``):
@@ -58,6 +58,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from .arms import arm_roles
 from .comparison import failed_metric_counts_differ
 
 STATS = (
@@ -204,10 +205,7 @@ def gate_breaches(comparison: Mapping[str, Any], gates: list[Gate]) -> list[str]
     cost = (comparison.get("cost") or {}).get("deltas_vs_baseline") or {}
     # A closed-book arm (run-eval --closed-book) bounds the answer model's
     # prior knowledge, an A/A arm measures the noise floor: neither is gated.
-    ungated = {
-        *(comparison.get("closed_book_arms") or ()),
-        *(comparison.get("aa_arms") or ()),
-    }
+    ungated = set(arm_roles(comparison))
     breaches = []
     for strategy in deltas:
         if strategy in ungated:

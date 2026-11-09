@@ -123,7 +123,7 @@ ships no price table, because one would go stale.
 | `indexing.methodologies` | `[graphrag, lightrag]` (no `raptor`); `search.auto_routable_strategies` refuses `tree` | `tree` against `naive` on 100 MuSiQue questions, one repeat, on a namespace that also held the graph (so `tree` fused its graph signal too): `answer_contains` +8.0 points [+3.0, +14.0], EM +9.0 [+2.0, +16.0], token F1 +7.5 [+1.1, +14.1], recall@5 -0.6 n.s., +1.2 s and +$0.0060 a query; `mix` and `local` scored +19 and +18 points of `answer_contains` over `naive` on the same questions. A `[raptor]`-only namespace was not measured. One repeat on one corpus, so opt-in. On sensemaking questions, with the comprehensive answer, `mix`, which needs no community reports (`[lightrag]`; the reports were 26% of that index's model cost), answered at least as well as `global` ([RAPTOR summary tree](#raptor-summary-tree), [Sensemaking strategies](#sensemaking-strategies)) |
 | `aws.bedrock.ingestion_effort` | `null` (`default_effort`, `high`) | `low` on a 109-document slice: ingestion cost -19%, answers n.s. on 30 questions ([Ingestion effort](#ingestion-effort)) |
 | `search.model_timeout_seconds`, `search.query_timeout_seconds` | 90 s, 180 s | From the query times of the package's real-AWS evaluation runs ([Query deadlines and model timeouts](#query-deadlines-and-model-timeouts)) |
-| `search.citations.enabled`, `search.citations.strategies` | `true`; `{global: false, drift: false}` | Against off on 200 MuSiQue questions, two repeats, interleaved: `local` and `mix` answers n.s. (`answer_contains` -0.75 [-2.5, +0.75] adjusted, and 0.0), citation precision 0.75 and 0.82, recall 0.88 and 0.85. On 50 sensemaking questions the answers without citations won comprehensiveness 0.617 [0.540, 0.695] 95% (`global`, Holm p 0.037) and 0.642 [0.573, 0.708] 95% (`drift`, Holm p 0.002) with the differential judge, averaged over both answer orders; a "cite where possible" instruction for them won no comprehensiveness back and cost `global` directness ([Citations](#citations)) |
+| `search.citations.enabled`, `search.citations.strategies` | `true`; `{global: false, drift: false}` | Against off on 200 MuSiQue questions, two repeats, interleaved: `local` and `mix` answers n.s. (`answer_contains` -0.75 [-2.5, +0.75] adjusted, and 0.0), citation precision 0.75 and 0.82, recall 0.88 and 0.85. On 50 sensemaking questions the answers without citations won comprehensiveness 0.617 [0.540, 0.695] 95% (`global`, Holm p 0.037) and 0.642 [0.573, 0.708] 95% (`drift`, Holm p 0.002) with the differential judge, averaged over both answer orders, and `global` 0.742 (Holm p 0.002) with `run-eval`'s split on 2026-11-08; a "cite where possible" instruction for them won no comprehensiveness back and cost `global` directness ([Citations](#citations)) |
 | `search.iterative_search.max_rounds` | 2 | 3 against 2: `answer_contains` +1.5 [-0.5, +3.75] adjusted, n.s., +2.7 s and +$0.0024 a query; 44% of questions still stop at the cap ([Iterative settings](#iterative-settings)) |
 | `search.token_manager.max_context_tokens` | 30000 | 12000 against 30000: `mix` -40% cost a query, `answer_contains` -2.25 [-5.75, +0.75] adjusted, n.s., citation precision -3.4 [-6.0, -1.1] adjusted; `local` -13% cost, n.s. ([Iterative settings](#iterative-settings)) |
 | `aws.bedrock.default_effort` | `high` | `medium` against `high`: about 2 s faster and -4% cost a query, `answer_contains` n.s., token F1 -3.6 and -4.4 (their 95% intervals exclude zero; Holm p 0.50 and 0.41, n.s.) ([Iterative settings](#iterative-settings)) |
@@ -220,8 +220,13 @@ between strategies there (-0.12 to +0.07). So the comparisons from
 ([Evaluation](../guides/evaluate.md); results in
 [Sensemaking strategies](#sensemaking-strategies) and [Citations](#citations)).
 They used the earlier overlap prompt, which kept a shared statement in
-Answer 1's wording; `run-eval`'s split keeps the shorter wording, which
-these runs did not measure.
+Answer 1's wording. A later run on 2026-11-08 (package at commit `0d41461b`)
+measured `run-eval`'s split, which keeps the shorter wording, with the same
+A/A comparison (`simple` against itself, 50 sensemaking questions, two
+repeats, both orders): comprehensiveness 0.545 [0.475, 0.615] 95%, n.s.,
+and diversity, empowerment and directness 0.49-0.52, n.s.; the slot effect
+on comprehensiveness was +0.240 (0.665 with the baseline as Answer 1, 0.425
+as Answer 2). So averaging both orders stays necessary with it.
 
 ## Gleaning rounds
 
@@ -875,7 +880,12 @@ Judged with the baseline in one slot only, the same answers had given
 0.68 (`global`) and 0.75 (`drift`) on comprehensiveness and 0.705 on
 `drift` empowerment, the latter significant. The cited answers were less
 comprehensive in both readings, although their key points could now be
-cited, so the default stands.
+cited, so the default stands. A later run on 2026-11-08 (package at commit
+`0d41461b`) judged `global` again with `run-eval`'s split (the shorter
+wording of a shared statement, both orders): the answers without citations
+won comprehensiveness 0.742 (the cited ones 0.258 [0.188, 0.330] 95%, Holm
+p 0.002); diversity, empowerment and directness n.s.; 1,747 estimated
+answer tokens without citations against 1,528 with them.
 
 On 100 MuSiQue questions, two repeats, where `global` declines most
 questions, its citations attributed little: it declined 113 of 199 answers

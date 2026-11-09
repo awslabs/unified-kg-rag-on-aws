@@ -80,9 +80,11 @@ from unified_kg_rag.domain.prompts import (
     BenchmarkQuestionsPrompt,
     BenchmarkValidationPrompt,
 )
+from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.evaluation.benchmarks import QUESTION_CLASSES
 from unified_kg_rag.shared import EvaluationException, get_logger
 from unified_kg_rag.shared.usage import merge_usage, usage_scope
+from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
 
@@ -927,9 +929,7 @@ class AssertionBenchmarkGenerator:
                     Candidate(
                         question_class="data_global",
                         clusters=sorted({c.clusters[0] for c in members}),
-                        source_units=list(
-                            dict.fromkeys(u for c in members for u in c.source_units)
-                        ),
+                        source_units=merge_lineages(c.source_units for c in members),
                         claims=claims,
                         **item,
                     )
@@ -1156,16 +1156,18 @@ def write_outputs(output_dir: Path, generated: dict[str, Any]) -> None:
     """Write ``eval_data.json``, ``text_units.jsonl`` and
     ``generation_report.json``."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "eval_data.json").write_text(
-        json.dumps(generated["rows"], ensure_ascii=False, indent=2), "utf-8"
+    atomic_write_text(
+        output_dir / "eval_data.json",
+        json.dumps(generated["rows"], ensure_ascii=False, indent=2),
     )
-    (output_dir / "text_units.jsonl").write_text(
+    atomic_write_text(
+        output_dir / "text_units.jsonl",
         "".join(
             json.dumps(unit.model_dump(), ensure_ascii=False) + "\n"
             for unit in generated["units"]
         ),
-        "utf-8",
     )
-    (output_dir / "generation_report.json").write_text(
-        json.dumps(generated["report"], ensure_ascii=False, indent=2), "utf-8"
+    atomic_write_text(
+        output_dir / "generation_report.json",
+        json.dumps(generated["report"], ensure_ascii=False, indent=2),
     )

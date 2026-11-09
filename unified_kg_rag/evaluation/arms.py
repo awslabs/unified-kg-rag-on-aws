@@ -15,10 +15,32 @@ the base strategies are compared with the first, as before.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import Any, Literal
 
 # Between a run's strategy and its arm in a run label.
 ARM_SEPARATOR = "@"
+
+# A compared run that is no candidate, by what it measures: ``closed_book``
+# answers without retrieval (``run-eval --closed-book``: a bound on the
+# answer model's prior knowledge), ``aa`` runs the base configuration again
+# (an A/A ``--arm``: the noise floor). A comparison names them under
+# ``arm_roles``; Holm and the gates leave them out, and every surface (the
+# Markdown report, the terminal table, the console) marks them with
+# ``ARM_ROLE_MARKS`` and reads their deltas as no finding.
+ArmRole = Literal["closed_book", "aa"]
+ARM_ROLE_MARKS: dict[str, str] = {"closed_book": "no retrieval", "aa": "noise floor"}
+
+
+def arm_roles(comparison: Mapping[str, Any]) -> dict[str, ArmRole]:
+    """The compared runs of ``comparison`` that are no candidate, by role."""
+    return dict(comparison.get("arm_roles") or {})
+
+
+def arm_role_mark(label: str, roles: Mapping[str, str]) -> str:
+    """What a table column of ``label`` (its means, its deltas) ends in:
+    `` (<its role's mark>)``, or nothing for a candidate."""
+    mark = ARM_ROLE_MARKS.get(roles.get(label, ""))
+    return f" ({mark})" if mark else ""
 
 
 def arm_label(strategy: str, arm: str | None) -> str:

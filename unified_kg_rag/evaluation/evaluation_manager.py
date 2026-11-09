@@ -63,6 +63,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     INSUFFICIENCY_REASON_KEY,
 )
 from unified_kg_rag.domain.retrieval.degradation import DegradationReport
+from unified_kg_rag.domain.retrieval.lineage import merge as merge_lineages
 from unified_kg_rag.domain.retrieval.store_names import resolve_namespace
 from unified_kg_rag.ports.guardrail import GuardAction
 from unified_kg_rag.shared import (
@@ -82,6 +83,7 @@ from unified_kg_rag.shared.usage import (
     metering,
     usage_scope,
 )
+from unified_kg_rag.shared.utils.files import atomic_write_text
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 from .answer_match_evaluator import (
@@ -1093,11 +1095,7 @@ class EvaluationManager:
                 for payload in payloads:
                     if name := source_fields.file_name(payload):
                         files.append(name)
-                    lineage = payload.get("text_unit_ids") or []
-                    if isinstance(lineage, str):
-                        lineage = [lineage]
-                    if isinstance(lineage, list | tuple):
-                        unit_ids.extend(str(u) for u in lineage if u)
+                    unit_ids.extend(source_fields.id_list(payload.get("text_unit_ids")))
                 if (
                     isinstance(metadata, dict)
                     and metadata.get("section_type") == SectionType.TEXT.value
@@ -1105,9 +1103,7 @@ class EvaluationManager:
                     own_id = metadata.get("chunk_id") or metadata.get("source_id")
                     if own_id:
                         unit_ids.append(str(own_id))
-            provenance.append(
-                (list(dict.fromkeys(files)), list(dict.fromkeys(unit_ids)))
-            )
+            provenance.append((list(dict.fromkeys(files)), merge_lineages([unit_ids])))
         return provenance
 
     def create_lean_context_strings(
@@ -1968,5 +1964,8 @@ class EvaluationManager:
 
     @staticmethod
     def _save_json(path: Path, data: Any) -> None:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+        # Atomic: a run stopped mid-write leaves no truncated result file
+        # for --from-results to refuse.
+        atomic_write_text(
+            path, json.dumps(data, ensure_ascii=False, indent=2, default=str)
+        )

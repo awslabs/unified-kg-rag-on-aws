@@ -135,6 +135,39 @@ def test_an_arm_without_a_change_is_an_aa_arm(
     assert is_aa_arm(base, config, spec) is aa
 
 
+def test_an_arm_resolves_only_the_paths_its_overlay_sets(tmp_path: Path) -> None:
+    # A run configured without a file (defaults, environment) keeps its
+    # relative store paths; the arm must read the same stores, so only the
+    # paths the overlay itself writes resolve against its directory.
+    sub = tmp_path / "arms"
+    sub.mkdir()
+    overlay = sub / "o.yaml"
+    overlay.write_text("{}")
+    base = Config.model_validate({"backend": "local"})
+    spec = arm_spec(f"a={overlay}")
+    config, _ = arm_config(base, spec)
+    for section in ("doc_status", "graph", "vector"):
+        assert (
+            getattr(config.providers, section).sqlite_path
+            == getattr(base.providers, section).sqlite_path
+        )
+    assert is_aa_arm(base, config, spec)
+    overlay.write_text(
+        yaml.safe_dump(
+            {
+                "providers": {"graph": {"sqlite_path": "other.sqlite3"}},
+                "processing": {
+                    "seed_graphs": [{"name": "s", "kind": "rdf", "path": "seed.ttl"}]
+                },
+            }
+        )
+    )
+    config, _ = arm_config(base, spec)
+    assert config.providers.graph.sqlite_path == str(sub / "other.sqlite3")
+    assert config.providers.vector.sqlite_path == base.providers.vector.sqlite_path
+    assert config.processing.seed_graphs[0].path == str(sub / "seed.ttl")
+
+
 def test_aa_arms_are_read_from_the_run_manifests() -> None:
     manifests = [
         ("local", {"repeat": 1}),
@@ -286,3 +319,42 @@ def test_runs_judged_by_different_models_are_warned_about() -> None:
     assert len(warnings) == 2
     assert "LLM judge" in warnings[0] and "local@b" in warnings[0]
     assert "embedding" in warnings[1]
+
+
+def test_every_surface_marks_an_arm_by_the_comparison_s_one_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One field names the runs that are no candidate; the report, the
+    # terminal and the gates read it (the console too: EvaluatePage).
+    import io
+
+    from rich.console import Console
+
+    from unified_kg_rag.evaluation.gates import gate_breaches, parse_gate
+    from unified_kg_rag.evaluation.report import comparison_markdown
+
+    name = "answer_match/answer_contains"
+    delta = {"mean_delta": -0.5, "ci_low": -0.6, "ci_high": -0.4, "pairs": 9}
+    labels = ("local", "local@aa", "closed_book", "mix")
+    comparison = {
+        "baseline": "local",
+        "strategies": {
+            s: {"metrics": {name: {"mean": 0.5}}, "routed_strategies": {}}
+            for s in labels
+        },
+        "deltas_vs_baseline": {s: {name: delta} for s in labels[1:]},
+        "arm_roles": {"local@aa": "aa", "closed_book": "closed_book"},
+    }
+    markdown = comparison_markdown(comparison)
+    out = io.StringIO()
+    monkeypatch.setattr(
+        run_evaluation, "console", Console(file=out, width=400, color_system=None)
+    )
+    run_evaluation.EvaluationRunner._print_comparison(comparison, 1.0)
+    for text in (markdown, out.getvalue()):
+        assert "local@aa (noise floor)" in text
+        assert "local@aa - local [" in text and "CI] (noise floor)" in text
+        assert "closed_book (no retrieval)" in text
+        assert "mix (" not in text
+    gate = parse_gate(f"{name}:mean_delta<0")
+    assert [b.split(":", 1)[0] for b in gate_breaches(comparison, [gate])] == ["mix"]

@@ -95,7 +95,12 @@ unit holds any more are deleted by the next full build
   named its language keeps the `default_analyzer` its fields were built
   with (one WARNING per run) until an `indexing.reset: true` run; a
   `language_analyzers` you set yourself is followed (a field built
-  otherwise stops the run). A profile
+  otherwise stops the run). A built-in stemmer can miss a root: on an
+  Amazon OpenSearch Service domain (OpenSearch 2.19) `indonesian` reduced
+  "pemasok" to "asok" and "mengirimkan" to "irim" while the roots "pasok"
+  and "kirim" stayed, so a query of the root found no document (Lucene's
+  Indonesian stemmer restores no nasal prefix); the vector and graph
+  searches still match. A profile
   (`unified_kg_rag/domain/languages/profiles/`) is one module: its name,
   script, analyzer, decline and the words answers in it are read by.
 - **The analyzer must exist on the cluster**, or the indexing stage fails

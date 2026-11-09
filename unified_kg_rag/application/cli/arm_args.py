@@ -5,8 +5,9 @@ configuration arm.
 
 The overlay is a YAML mapping merged over the run's configuration (as the
 environment layer is over a config file), validated like a config file
-(unknown keys refused unless ``--allow-unknown-keys``), its relative paths
-resolved against its own directory. ``suffix=`` queries another index
+(unknown keys refused unless ``--allow-unknown-keys``), the relative paths
+it sets resolved against its own directory (the others stay the run's).
+``suffix=`` queries another index
 namespace with the arm (``--suffix``'s, which the overlay's index settings
 otherwise follow). The arm is scored exactly as the base runs are: its
 ``evaluation`` section is the run's. ``aa=true`` declares it an A/A arm
@@ -153,7 +154,8 @@ def arm_config(
         raise ConfigurationError(
             f"--arm {spec['name']}: {format_validation_errors('', e)} (in '{path}')"
         ) from e
-    resolve_relative_paths(config, path)
+    # Only the overlay's own paths: the rest are the run's, as it reads them.
+    resolve_relative_paths(config, path, set_in=data)
     config.evaluation = base.evaluation.model_copy(deep=True)
     # The models that score: the run's judge and answer-span extractor, not
     # the ones the overlay's answer model or tiers would pick.

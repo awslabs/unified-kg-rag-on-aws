@@ -304,11 +304,13 @@ export interface Comparison {
   bootstrap?: { confidence?: number; resamples?: number };
   multiplicity?: Multiplicity;
   pairwise_vs_baseline?: Record<string, { criteria: Record<string, { candidate_win_rate: number | null }>; lengths?: { buckets: Record<string, { pairs: number; criteria: Record<string, { candidate_win_rate: number | null }> }> } }>;
-  closed_book_arms?: string[];
-  // The A/A arms (the base configuration again): their deltas are the
-  // noise floor, left out of Holm and the gates.
-  aa_arms?: string[];
+  // The compared runs that are no candidate, by role: answered without
+  // retrieval (closed_book) or the base configuration again (aa, the noise
+  // floor). Left out of Holm and the gates; their deltas are no finding.
+  arm_roles?: Record<string, ArmRole>;
 }
+
+export type ArmRole = "closed_book" | "aa";
 
 export interface RunSummary {
   file: string;

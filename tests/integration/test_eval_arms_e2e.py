@@ -156,7 +156,7 @@ def test_configuration_arms_are_answered_paired_and_rebuilt(
     families = comparison["multiplicity"]["families"]
     assert families["primary"]["tests"] == 1
     assert families["arm_primary"]["tests"] == 2
-    assert comparison["aa_arms"] == ["local@aa", "mix@aa"]
+    assert comparison["arm_roles"] == {"local@aa": "aa", "mix@aa": "aa"}
     assert comparison["multiplicity"]["unadjusted"] == ["local@aa", "mix@aa"]
     aa_delta = comparison["deltas_vs_baseline"]["local@aa"][
         "answer_match/answer_contains"
@@ -218,7 +218,7 @@ def test_configuration_arms_are_answered_paired_and_rebuilt(
     # interleaved runs share a start time and their stamps are random).
     assert list(again["strategies"]) == _LABELS
     assert again["baselines"] == comparison["baselines"]
-    assert again["aa_arms"] == comparison["aa_arms"]
+    assert again["arm_roles"] == comparison["arm_roles"]
     assert again["multiplicity"]["families"] == families
     assert (
         again["deltas_vs_baseline"]["mix@uncited"]["answer_match/answer_contains"][

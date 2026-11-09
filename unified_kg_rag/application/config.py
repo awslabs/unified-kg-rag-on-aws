@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import types
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, cast, get_args, get_origin
 
@@ -81,9 +81,14 @@ def _unknown_in_gone_section(path: str, value: Any) -> list[str]:
 DOTENV_FILENAME = ".env"
 
 
-def resolve_relative_paths(config: Config, config_path: str | Path) -> None:
+def resolve_relative_paths(
+    config: Config, config_path: str | Path, *, set_in: Mapping[str, Any] | None = None
+) -> None:
     """Resolve relative SQLite store paths, the extraction schema source's
-    path and the seed graphs' paths against ``config_path``'s directory.
+    path and the seed graphs' paths against ``config_path``'s directory;
+    with ``set_in`` (the file's raw mapping merged over another config: a
+    ``run-eval --arm`` overlay), only the ones it sets, so a path the
+    config inherited keeps what it was relative to.
 
     A store must be the same file on every run against it; relative to the
     working directory, a run started elsewhere would silently use an empty
@@ -93,9 +98,21 @@ def resolve_relative_paths(config: Config, config_path: str | Path) -> None:
     file) calls this again. A schema source path that is a URL
     (``scheme://...``) is left as written, and so is a seed graph's.
     """
+
+    def sets(*keys: str) -> bool:
+        section: Any = set_in
+        if section is None:
+            return True  # every path is the file's own
+        for key in keys:
+            if not isinstance(section, Mapping) or key not in section:
+                return False
+            section = section[key]
+        return True
+
     schema_source = config.processing.graph_extraction.schema_source
     if (
-        schema_source.path is not None
+        sets("processing", "graph_extraction", "schema_source", "path")
+        and schema_source.path is not None
         and "://" not in schema_source.path
         and not Path(schema_source.path).is_absolute()
     ):
@@ -113,13 +130,15 @@ def resolve_relative_paths(config: Config, config_path: str | Path) -> None:
         )
         for seed in processing.seed_graphs
     ]
-    if seeds != processing.seed_graphs:
+    if seeds != processing.seed_graphs and sets("processing", "seed_graphs"):
         processing.seed_graphs = seeds
     providers = config.providers
-    for section in (providers.doc_status, providers.graph, providers.vector):
+    for name in ("doc_status", "graph", "vector"):
+        section = getattr(providers, name)
         path = Path(section.sqlite_path)
         if (
-            section.kind == SQLITE
+            sets("providers", name, "sqlite_path")
+            and section.kind == SQLITE
             and section.sqlite_path != ":memory:"
             and not path.is_absolute()
         ):

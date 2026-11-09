@@ -354,7 +354,10 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   apart from the strategies' against the first: the two answer different
   questions.
 - The overlay is validated like a config file (an unknown key stops the
-  run, exit 2, unless `--allow-unknown-keys`); its `evaluation` section and
+  run, exit 2, unless `--allow-unknown-keys`), and the relative paths it
+  sets (SQLite stores, seed graphs, a schema file) resolve against its own
+  directory; the ones it leaves are the run's, so an arm reads the run's
+  stores. Its `evaluation` section and
   `models.roles.evaluation` / `answer_span` are ignored with a warning,
   since every arm is scored as the base runs are: an unset LLM judge is
   chosen over the answer models of the base runs and of every arm (one
@@ -385,8 +388,8 @@ run-eval --data-path eval.json --search-strategy local,mix --repeats 2 \
   ignored `evaluation` section, or one setting the run's own values. Its
   deltas are the noise floor of each metric for this dataset and repeat
   count. `,aa=true` (or `aa=false`) declares it either way. The manifest
-  records it (`arm.aa`), the comparison lists it under `aa_arms` and the
-  report marks its deltas "(noise floor)"; it is left out of every Holm
+  records it (`arm.aa`), the comparison lists it under `arm_roles` (`aa`)
+  and the report, the terminal and the console mark it "(noise floor)"; it is left out of every Holm
   family and of the `--fail-if` gates, as the closed-book arm is, so it
   does not widen the other tests' adjustment or fail the run. It shares
   the base runs' extractions, so that floor leaves out the extraction's

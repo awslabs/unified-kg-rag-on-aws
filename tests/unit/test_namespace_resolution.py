@@ -11,11 +11,12 @@ same config wrote ``index_value``.
 
 from __future__ import annotations
 
+import ast
 import re
 
 import pytest
 
-from tests.fixtures.source_guards import SourceGuard, text_matching
+from tests.fixtures.source_guards import SourceGuard, matches, nodes, text_matching
 from unified_kg_rag.domain.models import Config
 from unified_kg_rag.domain.retrieval.store_names import (
     namespace_suffix,
@@ -86,3 +87,39 @@ def test_the_copy_pattern_catches_the_old_forms() -> None:
         "suffix or DEFAULT_NAMESPACE",
     ):
         assert _COPIES.search(form), form
+
+
+def _alias(node: ast.AST) -> bool:
+    """A function that only returns ``resolve_namespace(...)``: the rule
+    under another name (``namespace_of``, ``namespace_name``), which drifts
+    from it as soon as one of them changes."""
+    if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        return False
+    body = [
+        b
+        for b in node.body
+        if not (isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant))
+    ]
+    return (
+        len(body) == 1
+        and isinstance(body[0], ast.Return)
+        and isinstance(body[0].value, ast.Call)
+        and ast.unparse(body[0].value.func).endswith("resolve_namespace")
+    )
+
+
+ALIASES = SourceGuard(
+    name="namespace rule aliases",
+    use="resolve_namespace itself",
+    owners=(),
+    find=nodes(_alias),
+)
+
+
+def test_no_function_renames_the_namespace_rule() -> None:
+    assert not ALIASES.copies(), [str(hit) for hit in ALIASES.copies()]
+    assert matches(
+        nodes(_alias),
+        "def namespace_of(config, value=None):\n"
+        "    return resolve_namespace(config, value)\n",
+    )

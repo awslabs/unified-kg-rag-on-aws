@@ -231,6 +231,14 @@ describe("helpers", () => {
     const secondary = rows.find((r) => r.textContent?.includes("token_f1"))!;
     expect(within(secondary).queryByText("primary")).toBeNull();
   });
+  it("marks no delta of a closed-book or A/A arm better or worse", () => {
+    // Unadjusted intervals that exclude zero would read as findings.
+    const delta = { pairs: 40, wins: 30, ties: 5, losses: 5, p_value: 0.001, mean_delta: -0.3, ci_low: -0.4, ci_high: -0.2 };
+    renderIn(<DeltaPlot deltas={[["answer_match/token_f1", delta]]} noFinding />);
+    expect(screen.queryByText("worse")).toBeNull();
+    renderIn(<DeltaPlot deltas={[["answer_match/token_f1", delta]]} />);
+    expect(screen.getByText("worse")).toBeInTheDocument();
+  });
   it("types filter values", () => {
     expect(parseFilters("file_name: a.pdf\nin_schema: false\nyear: 2026\n\nbad")).toEqual({ file_name: "a.pdf", in_schema: false, year: 2026 });
     expect(parseFilters("")).toBeNull();

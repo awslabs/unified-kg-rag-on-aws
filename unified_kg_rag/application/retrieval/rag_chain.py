@@ -150,7 +150,7 @@ from unified_kg_rag.domain.retrieval.abstention import (
     split_marker,
 )
 from unified_kg_rag.domain.retrieval.degradation import (
-    DEGRADED_ERROR_KEY,
+    DegradationReport,
     DegradationStep,
 )
 from unified_kg_rag.domain.retrieval.filters import (
@@ -1394,7 +1394,7 @@ class GraphRAGChain(Runnable[RAGInput, RAGOutput]):
             with query_scope():
                 ledger = current_ledger()
                 result = await strategy_instance.asearch(search_query, config=config)
-                degraded = result.metadata.get(DEGRADED_ERROR_KEY)
+                degraded = DegradationReport.of(result.metadata).degraded_error
                 if degraded and ledger is not None and not ledger.entries:
                     # A strategy that reports its own (not through the ledger).
                     ledger.record(DegradationStep.RETRIEVAL, "strategy", degraded)

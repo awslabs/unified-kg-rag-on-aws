@@ -49,10 +49,6 @@ logger = get_logger(__name__)
 HELD_TTL_SECONDS = 300.0
 
 
-def _namespace(chain: GraphRAGChain, suffix: str | None) -> str:
-    return resolve_namespace(chain.config, suffix)
-
-
 async def namespace_artifacts(
     chain: GraphRAGChain, suffix: str | None, *, refresh: bool = False
 ) -> frozenset[IndexArtifact]:
@@ -69,7 +65,7 @@ async def _namespace_holding(
     """``namespace_artifacts`` and the source scopes the build record names
     (``IndexBuildRecord.source_scopes``; None when it names none, is not
     read again here or cannot be read)."""
-    key = _namespace(chain, suffix)
+    key = resolve_namespace(chain.config, suffix)
     now = time.monotonic()
     with chain._cache_lock:
         cached = chain._held_artifacts.get(key)
@@ -110,7 +106,7 @@ async def check_strategy_methodology(
         held = methodologies_holding(artifacts)
         if _served(chain, strategy, artifacts, held):
             return held
-    namespace = _namespace(chain, suffix)
+    namespace = resolve_namespace(chain.config, suffix)
     needed = strategy_artifacts(strategy, chain.config)
     methodology = strategy_methodology(strategy, chain.config)
     if needed is not None and not (
