@@ -90,6 +90,17 @@ PROFILE = LanguageProfile(
     },
     number_conjunctions=("y",),
     compound_ones=("un", "una", "uno"),
+    zero_words=("ningún", "ninguno", "ninguna", "ningun"),
+    year_words=("en", "desde", "hasta", "antes de", "después de", "a partir de"),
+    partitive_words=(
+        "de los",
+        "de las",
+        "de estos",
+        "de estas",
+        "entre los",
+        "entre las",
+    ),
+    partitive_anaphors=("de ellos", "de ellas", "de los cuales", "de las cuales"),
     month_words={
         "January": ("enero", "ene"),
         "February": ("febrero",),

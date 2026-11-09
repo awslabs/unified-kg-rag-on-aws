@@ -81,6 +81,23 @@ class LanguageProfile:
     number_tens: Mapping[str, int] = field(default_factory=dict)
     number_scales: Mapping[str, int] = field(default_factory=dict)
     zero_words: tuple[str, ...] = ()
+    # Whether it writes the ones before the tens ("vierundzwanzig"): in
+    # another language the words of a number go down by place ("deux vingt"
+    # is two numbers).
+    ones_before_tens: bool = False
+    # The ordinals of the ones a tens word writes them with, as words of
+    # their own ("twenty-first", "vingt-troisième", "двадцать первый"): the
+    # number before one is an ordinal, no count.
+    ordinal_words: frozenset[str] = frozenset()
+    # The words a year follows ("in 2019", "seit 2019", "в 2019"; a month
+    # may stand between: "in March 2019"), the words that open the whole a
+    # partitive takes its part from ("Of the three vendors, only one",
+    # "De los tres proveedores"), and those after a one that take it from a
+    # set the answer counts elsewhere ("one of them", "один из них"): the
+    # number there counts nothing.
+    year_words: tuple[str, ...] = ()
+    partitive_words: tuple[str, ...] = ()
+    partitive_anaphors: tuple[str, ...] = ()
     # The words that join the parts of a written number ("and" in "three
     # hundred and twelve", "y" in "treinta y dos", "und" in
     # "vierundzwanzig"), and the forms of one left out of ``number_words``

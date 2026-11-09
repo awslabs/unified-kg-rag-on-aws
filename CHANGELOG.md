@@ -842,8 +842,8 @@ From a `main` checkout (formats and keys no release had):
   repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)). Its items say how `answer_match` reads them:
   `metadata.answer_type: number` compares the answer's leading number (digits, English words with their scale
-  words, Korean native, Sino-Korean and Han numerals with their multipliers (十二, 一万二千, 만 이천; 1만 2천 and 3万 for
-  digits), 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사, 대, 社 or 台; list
+  words, Korean native, Sino-Korean and Han numerals with their multipliers (十二, 一万二千, 만 이천, 一千零一; 1만 2천,
+  3万, 1.5万 and 3,000万 for digits), 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사, 대, 社, 台 or 円; list
   enumerators, citation markers, years, ordinals such as 두 번째, 三つ目 and 第三, negated numbers such as "not one
   but three", 一つではなく and 不是一家, and the whole of a partitive, so "only one of the three", 三家中只有一家, 세 곳 중
   한 곳 and 三社のうち一社 are 1, count nothing; "not ... any", "not one", "not a single", 한 곳도, 一社も, 没有 and
@@ -1184,7 +1184,10 @@ From a `main` checkout (formats and keys no release had):
   Korean answers get partial credit, and a German, Spanish, French, Italian, Portuguese or Russian answer (the
   question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
   elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its written numbers
-  ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") (#324, #516, #606, #613).
+  ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") and its words for none ("aucun", "kein", "ни
+  одного") in place of English's (Spanish and Portuguese "no" is no 0), its words of time, partitives and ordinals
+  telling a number that counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième")
+  (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See

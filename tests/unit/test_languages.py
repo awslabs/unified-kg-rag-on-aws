@@ -141,6 +141,9 @@ _FACETS = (
     "legal_forms",
     "articles",
     "number_words",
+    "zero_words",
+    "year_words",
+    "partitive_words",
     "polarity_words",
     "quote_pairs",
 )
@@ -164,6 +167,11 @@ _GAPS: dict[str, set[str]] = {
     # Korean, Japanese and Chinese count with numerals before a counter
     # (counter_numerals).
     "number_words": {"ja", "ko", "zh"} | _NEW,
+    # Their words for none, of time and of partitives too (the answer
+    # matcher reads the dense scripts' own forms for all three).
+    "zero_words": {"ja", "ko", "zh"} | _NEW,
+    "year_words": {"ja", "ko", "zh"} | _NEW,
+    "partitive_words": {"ja", "ko", "zh"} | _NEW,
 }
 
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 import string
 import unicodedata
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 from unified_kg_rag.domain.languages import (
     LanguageCode,
@@ -583,12 +583,16 @@ def _magnitude(value: int) -> int:
     return 0 if value < 10 else 1 if value < 20 else 2 if value < 100 else 3
 
 
-def _compose(parts: list[tuple[int, bool]]) -> int | None:
+def _compose(
+    parts: list[tuple[int, bool]], ones_before_tens: bool = False
+) -> int | None:
     """The value of a written number's words, each ``(value, scale)``:
     "twenty-one" 21, "three hundred and twelve" 312, "deux mille trois
-    cents" 2300, "vierundzwanzig" (4, 20) 24, "dos mil millones" 2e9.
+    cents" 2300, "dos mil millones" 2e9, and with ``ones_before_tens``
+    (``LanguageProfile.ones_before_tens``) "vierundzwanzig" (4, 20) 24.
     ``None`` when the words are two numbers, not one ("deux trois", "zwei
-    und drei": a place filled twice)."""
+    und drei": a place filled twice; "deux vingt": a place after a smaller
+    one)."""
     total = current = 0
     largest = 0
     filled: set[int] = set()
@@ -596,6 +600,11 @@ def _compose(parts: list[tuple[int, bool]]) -> int | None:
         if not scale:
             place = _magnitude(value)
             if place in filled:
+                return None
+            # The places go down, but for ones before tens where written so.
+            lowest = min(filled, default=place)
+            ones_first = ones_before_tens and place == 2 and lowest == 0
+            if place > lowest and not ones_first:
                 return None
             filled.add(place)
             current += value
@@ -616,27 +625,40 @@ def _compose(parts: list[tuple[int, bool]]) -> int | None:
     return total + current
 
 
+def _phrases(words: Iterable[str]) -> str:
+    """``words`` as a regex alternation, longest first, each written with
+    any spaces between its words, a hyphen or a space where it has a hyphen
+    ("quatre-vingts", "quatre vingts") and either apostrophe."""
+
+    def phrase(word: str) -> str:
+        return (
+            re.escape(word)
+            .replace(r"\ ", r"\s+")
+            .replace(r"\-", r"[-\s]")
+            .replace("'", "['\u2019]")
+        )
+
+    return "(?:" + "|".join(map(phrase, sorted(words, key=len, reverse=True))) + ")"
+
+
 class _NumberGrammar:
     """How one language writes a number in words
     (``LanguageProfile.number_words``, ``number_tens``, ``number_scales``,
-    ``number_conjunctions``, ``compound_ones``): the words, as separate words
-    or one ("vingt-quatre", "treinta y dos", "vierundzwanzig",
-    "duecentotrentadue"), read by :func:`_compose`."""
+    ``number_conjunctions``, ``compound_ones``, ``ones_before_tens``): the
+    words, as separate words or one ("vingt-quatre", "treinta y dos",
+    "vierundzwanzig", "duecentotrentadue"), read by :func:`_compose`, and
+    its words for none (``zero_words``: "aucun", "kein", "ни одного")."""
 
     def __init__(self, language: LanguageProfile) -> None:
         self.words = {**language.number_words, **language.number_tens}
         self.scales = dict(language.number_scales)
         self.ones = frozenset(language.compound_ones)
-        word = (
-            "(?:"
-            + "|".join(
-                sorted(
-                    map(re.escape, {*self.words, *self.scales, *self.ones}),
-                    key=len,
-                    reverse=True,
-                )
-            )
-            + ")"
+        self.ones_before_tens = language.ones_before_tens
+        word = _phrases({*self.words, *self.scales, *self.ones})
+        self.zero = (
+            re.compile(rf"(?<!\w){_phrases(language.zero_words)}(?!\w)", re.I)
+            if language.zero_words
+            else None
         )
         joint = "(?:" + "|".join(map(re.escape, language.number_conjunctions)) + ")"
         # Words joined by a hyphen or spaces (on one line), a conjunction
@@ -661,7 +683,7 @@ class _NumberGrammar:
             token = self._token.match(text, position)
             if token is None:
                 return None
-            word = token.group().lower()
+            word = re.sub(r"\s+", "-", token.group().lower())
             if word in self.scales:
                 parts.append((self.scales[word], True))
             elif word in self.words:
@@ -673,19 +695,21 @@ class _NumberGrammar:
             position = joined.end() if joined else token.end()
         if ones == len(parts):
             return None
-        return _compose(parts)
+        return _compose(parts, self.ones_before_tens)
 
 
 # The other languages' written numbers (English's are read by its own
-# grammar above, Korean's and the Han ones before a counter), read in an
-# answer in that language.
+# grammar below, Korean's and the Han ones before a counter), read in an
+# answer in that language instead of English's.
 _LANGUAGE_NUMBERS: dict[str, _NumberGrammar] = {
     language.code.value: _NumberGrammar(language)
     for language in profiles()
     if language.number_words and language.code is not LanguageCode.EN
 }
 
-_DIGITS = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?")
+# Digits, with thousands separators and a decimal part.
+_DIGIT_FORM = r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?"
+_DIGITS = re.compile(rf"-?(?:{_DIGIT_FORM})")
 # A number word below a hundred ("twenty-one", "seven"), then any scale
 # words and the words after them ("three hundred and twelve").
 _ENGLISH_SMALL = (
@@ -726,10 +750,14 @@ _CJK_NONE = re.compile(
     re.MULTILINE,
 )
 # Han, Sino-Korean and ASCII digits with the multipliers between them
-# ("十二", "一万二千", "1만 2천", "만 이천", "三"); ``_cjk_value`` reads them.
+# ("十二", "一万二千", "1만 2천", "만 이천", "三", "1.5万", "3,000万");
+# ``_cjk_value`` reads them.
 _CJK_PART = (
-    "(?:\\d+|[" + "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, *_MULTIPLIERS]) + "])"
+    f"(?:{_DIGIT_FORM}|["
+    + "".join([*_HAN_DIGITS, *_SINO_KOREAN_DIGITS, *_MULTIPLIERS])
+    + "])"
 )
+_CJK_PART_TOKEN = re.compile(rf"{_DIGIT_FORM}|\S")
 _CJK_NUMBER = re.compile(
     rf"(?<!{_HANGUL})(?<![\d.,]){_CJK_PART}(?:[^\S\n]?{_CJK_PART})*"
 )
@@ -740,24 +768,27 @@ _CJK_COUNTER_AFTER = re.compile(
 )
 
 
-def _cjk_value(match: re.Match[str]) -> int | None:
+def _cjk_value(match: re.Match[str]) -> float | None:
     """The number of a ``_CJK_NUMBER`` match: Han digits before a counter
     ("三社", "二〇二四年" is no count), or digits with multipliers ("十二台",
-    "一万二千", "1만 2천", "십이 대") before a counter, or after ASCII digits
-    alone ("3万", "1만 2천"); ``None`` for anything else (bare ASCII digits
-    are ``_DIGITS``')."""
-    parts = re.findall(r"\d+|\S", match.group())
+    "一万二千", "一千零一家", "1만 2천", "십이 대") before a counter, or
+    after ASCII digits alone ("3万", "1.5万", "3,000万", "1만 2천"); ``None``
+    for anything else (bare ASCII digits are ``_DIGITS``'). Between
+    multipliers a Han zero holds an empty place ("一千零一" is 1001)."""
+    parts = _CJK_PART_TOKEN.findall(match.group())
     multiplied = any(part in _MULTIPLIERS for part in parts)
     counted = bool(_CJK_COUNTER_AFTER.match(match.string, match.end()))
     if not multiplied:
         if not counted or not all(part in _HAN_DIGITS for part in parts):
             return None
-        return int("".join(str(_HAN_DIGITS[part]) for part in parts))
-    if not counted and not parts[0].isdigit():
+        return float("".join(str(_HAN_DIGITS[part]) for part in parts))
+    if not counted and not parts[0][0].isdigit():
         return None
-    total = section = 0
-    digit: int | None = None
+    total = section = 0.0
+    digit: float | None = None
     for part in parts:
+        if _HAN_DIGITS.get(part, 1) == 0:
+            continue
         if part in _MULTIPLIERS:
             multiplier = _MULTIPLIERS[part]
             if multiplier >= 10**4:
@@ -772,8 +803,8 @@ def _cjk_value(match: re.Match[str]) -> int | None:
             return None
         else:
             digit = (
-                int(part)
-                if part.isdigit()
+                float(part.replace(",", ""))
+                if part[0].isdigit()
                 else _HAN_DIGITS.get(part, _SINO_KOREAN_DIGITS.get(part, 0))
             )
     return total + section + (digit or 0)
@@ -817,13 +848,11 @@ _NEGATED_BEFORE = re.compile(r"(?:\bnot\s+|(?:不是|并非|並非|不止)\s?)$"
 _NEGATED_AFTER = re.compile(
     rf"\s?{_ANY_COUNTER}?\s?(?:ではな|じゃな|でな|(?:이|가)?\s?아니)"
 )
-# The whole a partitive takes its part from: "Of the three vendors, only
-# one ...", "三家(供应商)中只有一家", "세 곳 중 한 곳", "三社のうち一社". Bare 中
-# is a partitive only before a comma or what states the part ("三家中国
-# 供应商" is three Chinese vendors).
-_PARTITIVE_WHOLE_BEFORE = re.compile(
-    r"(?:^|[.!?;:]\s+|\n[ \t]*)of\s+(?:the|these|those|all)\s+$", re.IGNORECASE
-)
+# The whole a partitive takes its part from: "三家(供应商)中只有一家", "세 곳
+# 중 한 곳", "三社のうち一社" (and in the answer's language "Of the three
+# vendors, only one ...": ``_CountContext``). Bare 中 is a partitive only
+# before a comma or what states the part ("三家中国供应商" is three Chinese
+# vendors).
 _DENSE_WORD = f"[{DENSE_SCRIPT_LETTERS}]"
 _PARTITIVE_WHOLE_AFTER = re.compile(
     rf"\s?{_ANY_COUNTER}?(?:の|의)?\s?{_DENSE_WORD}{{0,5}}?\s?(?:之中|当中|當中"
@@ -844,17 +873,8 @@ _ENUMERATOR_AFTER = re.compile(r"[.)\]][ \t]+\S")
 # A citation marker ("[1]", "[2, 3]", "[4-6]").
 _CITATION_BEFORE = re.compile(r"\[[\d,\s–-]*$")
 _CITATION_AFTER = re.compile(r"[\d,\s–-]*\]")
-# A year: four digits before 년/年, after a preposition of time (with an
-# optional month) or opening an ISO date.
-_MONTHS = (
-    "january february march april may june july august september october "
-    "november december"
-).split()
-_YEAR_BEFORE = re.compile(
-    r"\b(?:in|as\s+of|since|until|till|from|before|after|during|circa)\s+"
-    r"(?:(?:early|mid|late|" + "|".join(_MONTHS) + r")[\s-]+(?:\d{1,2},?\s+)?)?$",
-    re.IGNORECASE,
-)
+# A year: four digits before 년/年 or opening an ISO date (or after a word
+# of time in the answer's language: ``_CountContext``).
 _YEAR_AFTER = re.compile(r"\s?(?:년|年)|-\d{1,2}-\d{1,2}")
 # "no" before these words is no count of zero: "No single vendor
 # dominates", "no more than 5", "no longer".
@@ -871,31 +891,91 @@ _NOT_ANY = re.compile(r"(?:\bnot|n't)\s+(?:\w+\s+){0,3}?any\b", re.IGNORECASE)
 _NOT_EVEN_ONE = re.compile(rf"\s?{_ANY_COUNTER}?\s?(?:도|も|也|都)")
 # "No," / "No." answers a yes/no question; "one of them" is a partitive.
 _NO_POLARITY = re.compile(r"\s*[*_]*\s*[,.;:!?]")
-# "One of them" refers to a set the answer counts elsewhere; "one of the
-# vendors" and "only one of the three" state one.
-_ONE_OF = re.compile(
-    r"\s+of\s+(?:them|these|those|which|whom|us|its|their)\b", re.IGNORECASE
-)
+
+# The English month names (strptime's, which the profiles leave out).
+_EN_MONTHS = (
+    "january february march april may june july august september october "
+    "november december"
+).split()
 
 
-def _count_value(body: str, start: int, end: int, value: float) -> float | None:
+class _CountContext:
+    """The words of one language around a number that make it no count
+    (``LanguageProfile.year_words``, ``month_words``, ``date_fillers``,
+    ``partitive_words``, ``partitive_anaphors``, ``ordinal_words``): a year
+    after a word of time ("in March 2024", "seit 2019", "en marzo de
+    2019"), the whole of a partitive opening a clause ("Of the three
+    vendors, only one", "De los tres proveedores"), a one taken from a set
+    counted elsewhere ("one of them", "один из них"; "one of the vendors"
+    states one) and the tens of an ordinal ("twenty-first", "vingt-
+    troisième")."""
+
+    def __init__(self, language: LanguageProfile) -> None:
+        # The English month names are strptime's: a profile lists only its
+        # others.
+        months = {*_EN_MONTHS, *(w for ws in language.month_words.values() for w in ws)}
+        fillers = (
+            rf"(?:{_phrases(language.date_fillers)}\s+)?"
+            if language.date_fillers
+            else ""
+        )
+        self.year_before = (
+            re.compile(
+                rf"(?<!\w){_phrases(language.year_words)}[\s-]+"
+                rf"(?:{_phrases(months)}\.?[\s-]+(?:\d{{1,2}},?\s+)?{fillers})?$",
+                re.IGNORECASE,
+            )
+            if language.year_words
+            else None
+        )
+        self.partitive_before = (
+            re.compile(
+                rf"(?:^|[.!?;:]\s+|\n[ \t]*){_phrases(language.partitive_words)}\s+$",
+                re.IGNORECASE,
+            )
+            if language.partitive_words
+            else None
+        )
+        self.one_of = (
+            re.compile(
+                rf"\s+{_phrases(language.partitive_anaphors)}(?!\w)", re.IGNORECASE
+            )
+            if language.partitive_anaphors
+            else None
+        )
+        self.ordinal_after = (
+            re.compile(
+                rf"(?:-|[^\S\n]+){_phrases(language.ordinal_words)}(?!\w)",
+                re.IGNORECASE,
+            )
+            if language.ordinal_words
+            else None
+        )
+
+
+def _count_value(
+    body: str, start: int, end: int, value: float, context: _CountContext
+) -> float | None:
     """``value``, the number at ``body[start:end]``, as the count it states:
-    ``None`` when it states none (``_not_a_count``), 0 for one with "even"
-    after it ("한 곳도", "一社も") or "not" before it ("not one vendor")."""
+    ``None`` when it states none (``_not_a_count``) or is a one taken from
+    a set counted elsewhere ("one of them"), 0 for one with "even" after it
+    ("한 곳도", "一社も") or "not" before it ("not one vendor")."""
     if (
         value == 1
         and _NOT_ONE_BEFORE.search(body, 0, start)
         and not _BUT_AFTER.match(body, end)
     ):
         return 0.0
-    if _not_a_count(body, start, end):
+    if _not_a_count(body, start, end, context):
+        return None
+    if value == 1 and context.one_of is not None and context.one_of.match(body, end):
         return None
     if value == 1 and _NOT_EVEN_ONE.match(body, end):
         return 0.0
     return value
 
 
-def _not_a_count(body: str, start: int, end: int) -> bool:
+def _not_a_count(body: str, start: int, end: int, context: _CountContext) -> bool:
     """Whether the number at ``body[start:end]`` states no count: a list
     enumerator, a citation marker, a year, an ordinal, a negated number
     ("not one but three", "一つではなく") or the whole of a partitive ("of
@@ -907,12 +987,17 @@ def _not_a_count(body: str, start: int, end: int) -> bool:
         return True
     number = body[start:end]
     if re.fullmatch(r"\d{4}", number) and (
-        _YEAR_AFTER.match(after) or _YEAR_BEFORE.search(before)
+        _YEAR_AFTER.match(after)
+        or (context.year_before is not None and context.year_before.search(before))
     ):
         return True
     if _ORDINAL_BEFORE.search(before) or _ORDINAL_AFTER.match(after):
         return True
-    if _PARTITIVE_WHOLE_BEFORE.search(before) or _PARTITIVE_WHOLE_AFTER.match(after):
+    if context.ordinal_after is not None and context.ordinal_after.match(after):
+        return True
+    if _PARTITIVE_WHOLE_AFTER.match(after) or (
+        context.partitive_before is not None and context.partitive_before.search(before)
+    ):
         return True
     return bool(_NEGATED_BEFORE.search(before) or _NEGATED_AFTER.match(after))
 
@@ -949,10 +1034,15 @@ def _english_value(match: re.Match[str]) -> int | None:
         if word == "no" and (_NO_POLARITY.match(after) or _NO_MODIFIES.match(after)):
             return None
         return 0
-    count = match.group("count")
-    if count.lower() == "one" and _ONE_OF.match(after):
-        return None
-    return _english_count(count)
+    return _english_count(match.group("count"))
+
+
+# The words around a number in the answer's language: English's for an
+# answer in a language whose numbers the reader does not know in words.
+_COUNT_CONTEXTS: dict[str, _CountContext] = {
+    code: _CountContext(profile(code))
+    for code in (LanguageCode.EN.value, *_LANGUAGE_NUMBERS)
+}
 
 
 def leading_number(text: str, language: str | None = None) -> float | None:
@@ -973,9 +1063,13 @@ def leading_number(text: str, language: str | None = None) -> float | None:
     number first ("Three vendors ... Two of them ..." is 3), so a numeric
     gold is compared with this number, not with every number the answer
     happens to name. With ``language`` German, Spanish, French, Italian,
-    Portuguese or Russian, that language's written numbers count too
-    ("drei", "vingt-quatre", "treinta y dos", "Zwei Millionen", "три
-    тысячи"); two side by side ("deux trois") are none."""
+    Portuguese or Russian, that language's written numbers and words for
+    none count instead of English's ("drei", "vingt-quatre", "treinta y
+    dos", "Zwei Millionen", "три тысячи"; "aucun", "kein", "ни одного" for
+    0: Spanish "no" is no zero), and its words of time, partitives and
+    ordinals tell which state no count ("seit 2019", "De los tres", "один
+    из них", "vingt-troisième"); two side by side ("deux trois") are none.
+    The digits, and Korean and Han numerals, read in every language."""
     lines = [
         line
         for line in unicodedata.normalize("NFKC", text).splitlines()
@@ -983,6 +1077,8 @@ def leading_number(text: str, language: str | None = None) -> float | None:
     ]
     body = "\n".join(lines)
     found: list[tuple[int, float]] = []
+    grammar = _LANGUAGE_NUMBERS.get(language or "")
+    context = _COUNT_CONTEXTS.get(language or "", _COUNT_CONTEXTS["en"])
 
     def first(
         matches: Iterator[re.Match[str]],
@@ -992,7 +1088,7 @@ def leading_number(text: str, language: str | None = None) -> float | None:
         for match in matches:
             value = read(match)
             if value is not None:
-                value = _count_value(body, match.start(), match.end(), value)
+                value = _count_value(body, match.start(), match.end(), value, context)
             if value is not None:
                 found.append((match.start(), float(value)))
                 return
@@ -1007,7 +1103,14 @@ def leading_number(text: str, language: str | None = None) -> float | None:
             else None
         ),
     )
-    first(_ENGLISH_NUMBER.finditer(body), _english_value)
+    zeros = [_KOREAN_NONE.search(body), _CJK_NONE.search(body)]
+    if grammar is None:
+        first(_ENGLISH_NUMBER.finditer(body), _english_value)
+        zeros += [_NOT_ANY.search(body), _NOT_A_SINGLE.search(body)]
+    else:
+        first(grammar.pattern.finditer(body), grammar.value)
+        if grammar.zero is not None:
+            first(grammar.zero.finditer(body), lambda _: 0.0)
     first(
         _KOREAN_NUMBER.finditer(body),
         lambda m: (
@@ -1018,14 +1121,7 @@ def leading_number(text: str, language: str | None = None) -> float | None:
         ),
     )
     first(_CJK_NUMBER.finditer(body), _cjk_value)
-    if (grammar := _LANGUAGE_NUMBERS.get(language or "")) is not None:
-        first(grammar.pattern.finditer(body), grammar.value)
-    for zero in (
-        _KOREAN_NONE.search(body),
-        _CJK_NONE.search(body),
-        _NOT_ANY.search(body),
-        _NOT_A_SINGLE.search(body),
-    ):
+    for zero in zeros:
         if zero is not None:
             found.append((zero.start(), 0.0))
     return min(found)[1] if found else None

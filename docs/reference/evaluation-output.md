@@ -753,7 +753,11 @@ list, top level or under `metadata`, which wins), taking the maximum.
   Italian elided word split off first (`d'Avignon` is `d avignon`), and in
   those languages and Russian its written numbers read as counts
   (`vingt-quatre`, `treinta y dos`, `vierundzwanzig`, `Zwei Millionen`,
-  `три тысячи`; two side by side, `deux trois`, are none); the answer's language is the question's, recorded as
+  `три тысячи`; two side by side, `deux trois`, are none) and its words
+  for none as 0 (`aucun`, `kein`, `ningún`, `ни одного`), in place of the
+  English ones, with its words of time, partitives and ordinals marking a
+  number that counts nothing (`seit 2019`, `De los tres`, `один из них`,
+  `vingt-troisième`); the answer's language is the question's, recorded as
   `answer_language`), keeping punctuation that changes meaning
   (`-5`, `1.5`, `C++`); `evaluation.answer_normalization: official_squad` is
   the official script (MuSiQue's evaluation uses it too) and `hotpotqa` adds
