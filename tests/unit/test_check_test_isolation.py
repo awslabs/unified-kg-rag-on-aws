@@ -6,7 +6,9 @@ another file ran in its process, and CI runs it over tests/unit."""
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -60,6 +62,37 @@ def test_a_file_past_the_timeout_fails_named(tmp_path: Path) -> None:
         ("test_hangs.py", script.TIMED_OUT)
     ]
     assert failed[0][2].endswith("timed out after 8 s")
+
+
+@pytest.mark.timeout(60)
+@pytest.mark.skipif(os.name != "posix", reason="process groups")
+def test_a_timed_out_file_s_children_are_stopped_with_it(tmp_path: Path) -> None:
+    # A hung test that started a server or a worker leaves it orphaned (and
+    # holding the output pipe) unless its whole process group is killed.
+    script = _script()
+    pid_file = tmp_path / "child.pid"
+    (tmp_path / "test_spawns.py").write_text(
+        "import subprocess, time\nfrom pathlib import Path\n\n\n"
+        "def test_spawns():\n"
+        "    child = subprocess.Popen(['sleep', '300'])\n"
+        f"    Path({str(pid_file)!r}).write_text(str(child.pid))\n"
+        "    time.sleep(120)\n"
+    )
+    started = time.monotonic()
+    failed = script.failures([tmp_path], jobs=1, timeout=6)
+    assert [code for _, code, _ in failed] == [script.TIMED_OUT]
+    assert time.monotonic() - started < 30
+    child = int(pid_file.read_text())
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        os.kill(child, 9)
+        pytest.fail("the timed-out file's child outlived it")
 
 
 def test_ci_runs_it_over_every_test_directory() -> None:
