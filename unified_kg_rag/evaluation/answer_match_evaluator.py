@@ -272,17 +272,21 @@ def answer_contains(
 
 
 def number_matches(
-    prediction: str, reference: str, language: str | None = None
+    prediction: str,
+    reference: str,
+    language: str | None = None,
+    question: str | None = None,
 ) -> float:
     """1.0 when the first number ``prediction`` states
     (``text_matching.leading_number``: digits, an English, Korean or Han
-    numeral, or a number word of ``language``) is the number ``reference``
-    is; 0.0 otherwise, and when the reference is no number (then
-    ``answer_contains`` reads it)."""
+    numeral, or a number word of ``language``; with ``question``, a number
+    it states is a condition where the answer reads an absence) is the
+    number ``reference`` is; 0.0 otherwise, and when the reference is no
+    number (then ``answer_contains`` reads it)."""
     gold = number_value(reference, language)
     if gold is None:
         return answer_contains(prediction, reference, language)
-    return float(leading_number(prediction, language) == gold)
+    return float(leading_number(prediction, language, question) == gold)
 
 
 def items_contained(
@@ -573,14 +577,18 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
     ) -> float:
         """``answer_contains`` as the item's ``answer_type`` reads it: a
         number by the leading number of the extracted span (of the answer
-        without one, or when the span fell back), a set by every one of its
+        without one, or when the span fell back; a number the question
+        states is a condition where the answer reads an absence), a set by every one of its
         ``answer_items`` (with ``answer_candidates``, in the extracted span
         or else the answer's first block, ``first_answer_block``), else any
         reference as a phrase."""
         kind = result.metadata.get(ANSWER_TYPE_KEY)
         if kind == "number":
             read = self._extracted_or(span, span_metadata, answer)
-            return max(number_matches(read, ref, language) for ref in references)
+            return max(
+                number_matches(read, ref, language, result.question)
+                for ref in references
+            )
         if kind == "set":
             items = result.metadata.get(ANSWER_ITEMS_KEY)
             candidates = result.metadata.get(ANSWER_CANDIDATES_KEY)

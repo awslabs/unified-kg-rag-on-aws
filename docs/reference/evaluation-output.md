@@ -711,10 +711,25 @@ list, top level or under `metadata`, which wins), taking the maximum.
   `没有` and `いません`/`ありません` (not `問題ありません` or `ではありません`)
   are 0, and so is a language's phrase of absence (`no hay`) that no
   comparative directly follows (`No hay más de tres` is 3) and no count
-  follows after a comma, a colon, a dash or a clause conjunction in its
-  sentence (`No hay duda de que son tres` is 3); a number in the absent
-  thing's own clause is no count (`No hay proveedores en el lote 7`, `There
-  are not any vendors with more than 100 employees` are 0). English scale words count (`three hundred and twelve` is 312),
+  follows after a clause break in its sentence: a comma, a colon or a dash
+  not between two numbers (`1,000`, `10:30`, `3–5`, `lotes 2, 3 y 4` break
+  nothing), or a clause conjunction no comparative follows (`No hay duda de
+  que son tres` is 3; `more than 100 but fewer than 500` is one
+  condition). A number in the absent thing's own clause after the phrase
+  is no count (`No hay proveedores en el lote 7`, `There are not any
+  vendors with more than 100 employees` are 0), nor is one before it that
+  follows a comparative (`Поставщиков с более чем 50 сотрудниками нет`).
+  The item's question decides the rest: a number the question states is a
+  condition, not a count, wherever the answer otherwise reads an absence
+  (`En el lote 7 no hay proveedores` asked `¿Cuántos proveedores hay en el
+  lote 7?`, `従業員100人以上の仕入先はありません` asked about suppliers with
+  100 or more staff, `Lieferanten mit mehr als 100 Mitarbeitern gibt es
+  keine` are 0; `Yes, 4` asked `Does Acme have 4?` is 4), and a
+  comparative anywhere in the clause of a phrase of absence, or written
+  onto a Han, Hangul or Kana number (`超过100人`, `100人以上`, `100명 이상`),
+  bounds the count unless the question states its number (`Non ha mai
+  avuto più di tre fornitori` asked `Quanti fornitori?` is 3, `没有超过三家`
+  asked `有几家?` is 3). English scale words count (`three hundred and twelve` is 312),
   `两`/`兩` is 2 and a space may stand before a Han counter (`三 社`). `set`
   scores 1.0 when every one of `metadata.answer_items` appears in the
   answer, in any order or layout (a numbered list too); with

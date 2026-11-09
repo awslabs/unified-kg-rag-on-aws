@@ -44,7 +44,7 @@ def detected(case: Case) -> object:
 
 
 def counted(case: Case) -> object:
-    return leading_number(case.text, case.context)
+    return leading_number(case.text, case.context, question=case.question)
 
 
 def routed(case: Case) -> object:

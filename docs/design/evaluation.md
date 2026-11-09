@@ -189,7 +189,8 @@ about 19 paragraphs a question.
 chain already answered an empty context with a fixed reply
 (`metadata.abstained`; `domain/retrieval/no_context.py`, one sentence per
 `LanguageCode`, picked by the question's script and, among the Latin-script
-languages, by disjoint function-word lists; the index language, else
+languages, by their function words (one two of them share ties them, and
+the index language among them decides); the index language, else
 English, when they do not tell), but a model that declines in its own words was
 invisible to evaluation. With `mode: mark` the answer step appends
 `ABSTENTION_INSTRUCTIONS` (`domain/prompts/retrieval.py`) to the system

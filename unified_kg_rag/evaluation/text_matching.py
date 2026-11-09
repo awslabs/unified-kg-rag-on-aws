@@ -1082,27 +1082,69 @@ _ABSENCES = {
 }
 
 
-def _comparative_pattern(words: Iterable[str]) -> re.Pattern[str]:
-    """``words`` as whole words: a comparative ends at a word boundary
-    ("más de", not "más detalles"; an elided one at its apostrophe:
-    "plus d'")."""
-    alternatives = "|".join(
+def _comparative_words(words: Iterable[str]) -> str:
+    """``words`` as an alternation of whole words: a comparative ends at a
+    word boundary ("más de", not "más detalles"; an elided one at its
+    apostrophe: "plus d'")."""
+    return "|".join(
         _phrases([word]) + ("" if word.endswith("'") else r"(?!\w)")
         for word in sorted(words, key=len, reverse=True)
     )
-    return re.compile(rf"(?<!\w)(?:{alternatives})", re.IGNORECASE)
 
 
-_COMPARATIVES = {
-    language.code.value: _comparative_pattern(language.comparatives)
+def _spaced(words: Iterable[str]) -> list[str]:
+    """The comparatives of ``words`` written between spaces; those in Han,
+    Hangul or Kana are written onto the number (``_DENSE_BEFORE``)."""
+    return [word for word in words if not has_dense_script(word)]
+
+
+_COMPARATIVE_WORDS = {
+    language.code.value: _comparative_words(_spaced(language.comparatives))
     for language in profiles()
-    if language.comparatives
+    if _spaced(language.comparatives)
 }
+_COMPARATIVES = {
+    code: re.compile(rf"(?<!\w)(?:{words})", re.IGNORECASE)
+    for code, words in _COMPARATIVE_WORDS.items()
+}
+# One directly before a number: only spaces and signs ("$") between.
+_COMPARATIVE_BEFORE = {
+    code: re.compile(rf"(?<!\w)(?:{words})[^\w\n]*$", re.IGNORECASE)
+    for code, words in _COMPARATIVE_WORDS.items()
+}
+# The comparatives of the Han, Hangul and Kana languages, read in an answer
+# in any language as their numerals are: before the number ("超过100人")
+# or after it, its counter and an object particle ("100人以上", "100명
+# 이상", "100명을 넘는": ``postposed_comparatives``).
+_DENSE_BEFORE = re.compile(
+    _phrases(
+        {
+            word
+            for language in profiles()
+            for word in language.comparatives
+            if has_dense_script(word)
+        }
+    )
+    + r"\s?$"
+)
+_DENSE_AFTER = re.compile(
+    rf"\s?{_ANY_COUNTER}?(?:을|를|を)?\s?"
+    + _phrases({w for language in profiles() for w in language.postposed_comparatives})
+)
 # A clause break inside a sentence: a comma, a colon or a dash (any
-# language's), or one of the language's ``clause_conjunctions``. A
+# language's) but one between two numbers ("1,000", "10:30", "3–5", "lots
+# 2, 3 and 4"), or one of the language's ``clause_conjunctions``. A
 # semicolon is none: the clause after it states a fact of its own ("does
 # not have any suppliers; it uses 3 plants").
-_CLAUSE_MARK = r"[,:\u2013\u2014\uff0c\uff1a\u3001]|\s-\s"
+_MARK = "[,:–—，：、]"
+_CLAUSE_MARK = rf"(?<!\d){_MARK}|{_MARK}(?!\s*\d)|\s-\s"
+_CONJUNCTIONS = {
+    language.code.value: re.compile(
+        rf"\s*(?<!\w){_phrases(language.clause_conjunctions)}(?!\w)", re.IGNORECASE
+    )
+    for language in profiles()
+    if language.clause_conjunctions
+}
 _CLAUSE_BREAKS = {
     language.code.value: re.compile(
         _CLAUSE_MARK
@@ -1118,19 +1160,46 @@ _CLAUSE_BREAKS = {
 }
 
 
-def _absence(body: str, language: str) -> int | None:
+# The numbers a question states (``None``: no question).
+_Stated = frozenset[float] | None
+
+
+def _breaks(body: str, start: int, end: int, language: str) -> Iterator[re.Match[str]]:
+    """The clause breaks of ``body[start:end]`` in ``language``, but a
+    conjunction (alone or after a mark) a comparative follows: the range
+    of one condition goes on there ("more than 100 but fewer than 500",
+    "более чем 100, но менее чем 500")."""
+    breaks = _CLAUSE_BREAKS.get(language, _CLAUSE_BREAKS["en"])
+    conjunction = _CONJUNCTIONS.get(language, _CONJUNCTIONS["en"])
+    for match in breaks.finditer(body, start, end):
+        led = (
+            match
+            if match.group()[:1].isalpha()
+            else conjunction.match(body, match.end(), end)
+        )
+        if led is None or _comparative_at(body, led.end(), end, language) is None:
+            yield match
+
+
+def _absence(body: str, language: str, stated: _Stated, aside: bool) -> int | None:
     """Where ``body`` first states a count of 0 by a phrase of absence of
     ``language`` (``LanguageProfile.absence_phrases``), or ``None``: not
-    where a comparative directly follows the phrase ("No hay más de tres"),
-    nor where a count follows it after a clause break in its sentence ("No
-    hay duda de que son tres", "Нет сомнений, их три"), nor a one-word phrase opening a line
-    before a comma or a stop ("Нет."), which answers a yes/no question. A
-    number in the phrase's own clause is the absent thing's ("No hay
-    proveedores en el lote 7", "with more than 100 employees"): the zero is
-    read where the clause opens when a number before the phrase follows a
-    comparative ("Поставщиков с более чем 50 сотрудниками нет")."""
+    where a comparative bounds the count instead ("No hay más de tres"),
+    nor where a count follows the phrase after a clause break in its
+    sentence ("No hay duda de que son tres", "Нет сомнений, их три"), nor
+    a one-word phrase opening a line before a comma or a stop ("Нет."),
+    which answers a yes/no question. A number in the phrase's own clause
+    after it is the absent thing's ("No hay proveedores en el lote 7",
+    "with more than 100 employees").
+
+    Read without the question (``stated`` ``None``), a comparative bounds
+    the count only directly after the phrase, and the zero is read where
+    the clause opens when a number before the phrase follows a comparative
+    ("Поставщиков с более чем 50 сотрудниками нет"). With it, a comparative
+    anywhere in the clause bounds the count but one bounding a number the
+    question states (``_bounds_count``), and the numbers the question
+    states are no count (``aside``: :func:`leading_number`)."""
     pattern = _ABSENCES.get(language)
-    breaks = _CLAUSE_BREAKS.get(language, _CLAUSE_BREAKS["en"])
     for match in pattern.finditer(body) if pattern is not None else ():
         if (
             not re.search(r"\s", match.group())
@@ -1138,22 +1207,78 @@ def _absence(body: str, language: str) -> int | None:
             and _NO_POLARITY.match(body, match.end())
         ):
             continue
-        start, end = _sentence_around(body, match.start())
-        if _comparative_at(body, match.end(), end, language) is not None:
+        end = _sentence_around(body, match.start())[1]
+        clause_start, clause_end = clause = _clause_of(body, match, language)
+        if _bounds_count(body, match, clause, end, language, stated):
             continue
-        clause_start = max(
-            (m.end() for m in breaks.finditer(body, start, match.start())),
-            default=start,
-        )
-        after = breaks.search(body, match.end(), end)
+        # A count after the clause's break.
         if (
-            after is not None
-            and _leading_number(body[after.start() : end], language, absences=False)
+            clause_end < end
+            and _leading_number(
+                body[clause_end:end],
+                language,
+                absences=False,
+                stated=stated,
+                aside=aside,
+            )
             is not None
         ):
             continue
+        if stated is not None:
+            return match.start()
         return _zero_offset(body, clause_start, match.start(), language)
     return None
+
+
+def _bounds_count(
+    body: str,
+    phrase: re.Match[str],
+    clause: tuple[int, int],
+    end: int,
+    language: str,
+    stated: _Stated,
+) -> bool:
+    """Whether a comparative bounds the count that a phrase of absence (or
+    a Korean, Chinese or Japanese verb of absence) at ``phrase`` would
+    state 0 of ("No hay más de tres", "没有超过三家"), so that it states no
+    zero. Without the question (``stated`` ``None``): one directly after
+    the phrase, up to ``end`` (its sentence's). With it: one anywhere in
+    the phrase's ``clause`` bounding a number the question does not state
+    ("No hay proveedores con más de 50 empleados" asked "¿…más de 50
+    empleados?" is 0, asked "¿Cuántos proveedores?" 50), or one directly
+    after the phrase that bounds no number ("No hay más de una docena")."""
+    if stated is None:
+        return _comparative_at(body, phrase.end(), end, language) is not None
+    clause_start, clause_end = clause
+    bounds = _bounded_numbers(body, clause_start, clause_end, language)
+    if any(value not in stated for _, value in bounds):
+        return True
+    adjacent = _comparative_at(body, phrase.end(), clause_end, language)
+    return adjacent is not None and not any(
+        not re.search(r"\w", body[adjacent.end() : start]) for start, _ in bounds
+    )
+
+
+def _bounded_numbers(
+    body: str, start: int, end: int, language: str
+) -> list[tuple[int, float]]:
+    """The numbers of ``body[start:end]`` a comparative bounds, each with
+    where it starts: one of ``language``'s directly before it ("más de
+    tres", "больше 50"), or one of the Han, Hangul and Kana languages
+    before ("超过100人") or after it ("100人以上", "100명 이상")."""
+    before = _COMPARATIVE_BEFORE.get(language)
+    bounds = []
+    for matches, read in _number_forms(body, language):
+        for match in matches:
+            if not start <= match.start() < end or not (value := read(match)):
+                continue
+            if (
+                (before is not None and before.search(body, start, match.start()))
+                or _DENSE_BEFORE.search(body, start, match.start())
+                or _DENSE_AFTER.match(body, match.end(), end)
+            ):
+                bounds.append((match.start(), float(value)))
+    return bounds
 
 
 def _comparative_at(
@@ -1182,10 +1307,10 @@ def _compares(body: str, match: re.Match[str], end: int, language: str) -> bool:
 
 
 def _zero_offset(body: str, clause_start: int, phrase: int, language: str) -> int:
-    """Where the zero of a phrase of absence at ``phrase`` is read: where
-    its clause opens when every number before the phrase in it follows a
-    comparative (a condition of the absent thing), else at the phrase (a
-    count before it is read first)."""
+    """Where the zero of a phrase of absence at ``phrase`` is read without
+    the question: where its clause opens when every number before the
+    phrase in it follows a comparative (a condition of the absent thing),
+    else at the phrase (a count before it is read first)."""
     comparative = _COMPARATIVES.get(language)
     matches = comparative.finditer(body, clause_start, phrase) if comparative else ()
     first = next((m for m in matches if _compares(body, m, phrase, language)), None)
@@ -1198,6 +1323,17 @@ def _zero_offset(body: str, clause_start: int, phrase: int, language: str) -> in
     ):
         return clause_start
     return phrase
+
+
+def _clause_of(body: str, match: re.Match[str], language: str) -> tuple[int, int]:
+    """The span of the clause of ``body`` that ``match`` stands in."""
+    start, end = _sentence_around(body, match.start())
+    clause_start = max(
+        (m.end() for m in _breaks(body, start, match.start(), language)),
+        default=start,
+    )
+    after = next(_breaks(body, match.end(), end, language), None)
+    return clause_start, after.start() if after is not None else end
 
 
 def _sentence_around(body: str, index: int) -> tuple[int, int]:
@@ -1225,7 +1361,9 @@ _COUNT_CONTEXTS: dict[str, _CountContext] = {
 }
 
 
-def leading_number(text: str, language: str | None = None) -> float | None:
+def leading_number(
+    text: str, language: str | None = None, question: str | None = None
+) -> float | None:
     """The first number ``text`` states as a count, or ``None``: digits
     ("4,486", "3곳", "3社"), English number words ("Three", "twenty-one",
     "three hundred and twelve"; "none", "no", "not one" and "not a single"
@@ -1251,15 +1389,85 @@ def leading_number(text: str, language: str | None = None) -> float | None:
     partitives and ordinals tell which state no count ("seit 2019", "De
     los tres", "один из них", "vingt-troisième"); two side by side ("deux
     trois") are none.
-    The digits, and Korean and Han numerals, read in every language."""
-    return _leading_number(text, language)
+    The digits, and Korean and Han numerals, read in every language.
+
+    ``question`` (the question ``text`` answers) tells a condition from a
+    count: a number it states is a condition when the rest of the answer
+    reads an absence ("En el lote 7 no hay proveedores" asked "¿Cuántos
+    proveedores hay en el lote 7?", "従業員100人以上の仕入先はありません"
+    asked "従業員100人以上の仕入先は何社?" are 0; "Yes, 4" asked "Does it
+    have 4?" is 4), and a comparative in the clause of a phrase of absence
+    bounds the count unless the question states its number ("Non ha mai
+    avuto più di tre fornitori" asked "Quanti fornitori?" is 3)."""
+    if question is None:
+        return _leading_number(text, language)
+    stated = _stated_numbers(question, language)
+    count = _leading_number(text, language, stated=stated)
+    if stated and _leading_number(text, language, stated=stated, aside=True) == 0:
+        return 0.0
+    return count
+
+
+def _stated_numbers(question: str, language: str | None) -> frozenset[float]:
+    """Every number ``question`` writes but zero, as an answer's are read
+    (its digits, its language's number words, Korean and Han numerals)."""
+    body = unicodedata.normalize("NFKC", question)
+    return frozenset(
+        float(value)
+        for matches, read in _number_forms(body, language)
+        for match in matches
+        if (value := read(match))
+    )
+
+
+def _number_forms(
+    body: str, language: str | None
+) -> list[tuple[Iterator[re.Match[str]], Callable[[re.Match[str]], float | None]]]:
+    """The forms ``body`` may write a number in, each with its reader:
+    digits, the number words (and words for none) of ``language`` or
+    English, Korean native numerals and Han numerals."""
+    grammar = _LANGUAGE_NUMBERS.get(language or "")
+
+    def digits(match: re.Match[str]) -> float | None:
+        if not _stands_alone(body, match.start(), match.end()):
+            return None
+        # A multiplier after them scales them ("3万", "1만"): _cjk_value.
+        if body[match.end() : match.end() + 1] in _MULTIPLIERS:
+            return None
+        return float(match.group().replace(",", ""))
+
+    def korean(match: re.Match[str]) -> float | None:
+        if not (match.group("tens") or match.group("ones")):
+            return None
+        return _KOREAN_NATIVE_TENS.get(
+            match.group("tens") or "", 0
+        ) + _KOREAN_NATIVE_ONES.get(match.group("ones") or "", 0)
+
+    forms: list[
+        tuple[Iterator[re.Match[str]], Callable[[re.Match[str]], float | None]]
+    ] = [(_DIGITS.finditer(body), digits)]
+    if grammar is None:
+        forms.append((_ENGLISH_NUMBER.finditer(body), _english_value))
+    else:
+        forms.append((grammar.pattern.finditer(body), grammar.value))
+        if grammar.zero is not None:
+            forms.append((grammar.zero.finditer(body), lambda _: 0.0))
+    forms.append((_KOREAN_NUMBER.finditer(body), korean))
+    forms.append((_CJK_NUMBER.finditer(body), _cjk_value))
+    return forms
 
 
 def _leading_number(
-    text: str, language: str | None, *, absences: bool = True
+    text: str,
+    language: str | None,
+    *,
+    absences: bool = True,
+    stated: _Stated = None,
+    aside: bool = False,
 ) -> float | None:
     """:func:`leading_number`, without the phrases of absence unless
-    ``absences``."""
+    ``absences``, and with ``stated`` the numbers the question states:
+    ``aside`` reads them as no count."""
     lines = [
         line
         for line in unicodedata.normalize("NFKC", text).splitlines()
@@ -1269,59 +1477,29 @@ def _leading_number(
     found: list[tuple[int, float]] = []
     grammar = _LANGUAGE_NUMBERS.get(language or "")
     context = _COUNT_CONTEXTS.get(language or "", _COUNT_CONTEXTS["en"])
-
-    def first(
-        matches: Iterator[re.Match[str]],
-        read: Callable[[re.Match[str]], float | None],
-    ) -> None:
+    for matches, read in _number_forms(body, language):
         # The first match of one form that states a count.
         for match in matches:
             value = read(match)
             if value is not None:
                 value = _count_value(body, match.start(), match.end(), value, context)
-            if value is not None:
+            if value is not None and not (aside and stated and value in stated):
                 found.append((match.start(), float(value)))
-                return
-
-    first(
-        _DIGITS.finditer(body),
-        lambda m: (
-            float(m.group().replace(",", ""))
-            if _stands_alone(body, m.start(), m.end())
-            # A multiplier after them scales them ("3万", "1만"): _cjk_value.
-            and body[m.end() : m.end() + 1] not in _MULTIPLIERS
-            else None
-        ),
-    )
-    zeros = [
-        _KOREAN_NONE.search(body),
-        _CJK_NONE.search(body),
-    ]
+                break
+    reader = (language or "") if grammar else "en"
+    zeros = [_KOREAN_NONE.search(body), _CJK_NONE.search(body)]
     if grammar is None:
-        first(_ENGLISH_NUMBER.finditer(body), _english_value)
         zeros.append(_NOT_A_SINGLE.search(body))
-    else:
-        first(grammar.pattern.finditer(body), grammar.value)
-        if grammar.zero is not None:
-            first(grammar.zero.finditer(body), lambda _: 0.0)
-    first(
-        _KOREAN_NUMBER.finditer(body),
-        lambda m: (
-            _KOREAN_NATIVE_TENS.get(m.group("tens") or "", 0)
-            + _KOREAN_NATIVE_ONES.get(m.group("ones") or "", 0)
-            if m.group("tens") or m.group("ones")
-            else None
-        ),
-    )
-    first(_CJK_NUMBER.finditer(body), _cjk_value)
     for zero in zeros:
-        if zero is not None:
+        if zero is not None and not (
+            stated is not None
+            and zero.re is not _NOT_A_SINGLE
+            and _bounds_count(
+                body, zero, _clause_of(body, zero, reader), len(body), reader, stated
+            )
+        ):
             found.append((zero.start(), 0.0))
-    if (
-        absences
-        and (absent := _absence(body, (language or "") if grammar else "en"))
-        is not None
-    ):
+    if absences and (absent := _absence(body, reader, stated, aside)) is not None:
         found.append((absent, 0.0))
     return min(found)[1] if found else None
 

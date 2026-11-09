@@ -17,8 +17,11 @@ of evidence (:func:`text_evidence`):
   "/usr/bin/the", "com.example.Main") or, in a text of two scripts, a
   word of a name it quotes (a run of capitalised words: "Bank of
   America", "The Walt Disney Company"); a shouted text (three or more
-  words, every one in capitals: "QUI A SIGNÉ LE CONTRAT ?") is read
-  lowercased, its words neither acronyms nor names;
+  words, every one in capitals: "QUI A SIGNÉ LE CONTRAT ?"; beside
+  another script, one of them longer than two letters, so "AS IS / TO BE
+  비교" holds acronyms) is read lowercased, its words neither acronyms nor
+  names; a colon joins a word only before "//", a digit or another colon
+  ("https://", "std::vector"; "Frage:Wer" is a label);
 - the texts that open on a capitalised word (a sentence starts there), by
   the script of that word.
 
@@ -121,6 +124,8 @@ _LETTER_OR_DIGIT = re.compile(r"[^\W_]")
 # compound's hyphen, and the punctuation of URLs, emails, paths and dotted
 # or snake_case names.
 _JOINERS = frozenset("-./@:_\\")
+# A colon that joins: before "//", a digit or another colon, or after one.
+_COLON_JOINS = re.compile(r"::|:(?://|\d)")
 # The fewest words of a shouted text: one or two capitalised words are
 # acronyms ("AI ethics", "SUPPLIERS OF").
 _SHOUTED_WORDS = 3
@@ -150,6 +155,10 @@ def text_evidence(texts: Iterable[str]) -> TextEvidence:
         shouted = len(spans) >= _SHOUTED_WORDS and all(
             span.group().isupper() for span in spans
         )
+        # Beside another script, capitals of a function word's length
+        # alone are acronyms ("AS IS / TO BE 비교", "IT OT IS の違い").
+        if shouted and _mixes_scripts(text):
+            shouted = any(len(span.group()) > 2 for span in spans)
         # In a text of one script its capitalised words quote nothing
         # (German writes its nouns so).
         names = (
@@ -188,6 +197,10 @@ def _joined(text: str, word: re.Match[str]) -> bool:
 
     def joins(i: int, step: int) -> bool:
         if not 0 <= i < len(text):
+            return False
+        if text[i] == ":" and not _COLON_JOINS.match(text, i - (step < 0)):
+            # A colon joins a scheme, a port, a time or "::" ("https://",
+            # ":8080", "std::vector"), not a label ("Frage:Wer").
             return False
         if text[i] in _JOINERS:
             i += step

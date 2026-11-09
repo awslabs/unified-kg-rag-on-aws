@@ -1200,9 +1200,16 @@ From a `main` checkout (formats and keys no release had):
   ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") and its words and phrases for none ("aucun",
   "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any"; none a comparative
   directly follows, "No hay más de tres", or a count follows after a clause break, "No hay duda de que son tres", a
-  number in the absent thing's own clause no count: "No hay proveedores en el lote 7" is 0) in place of
-  English's (Spanish and Portuguese "no" is no 0), its words of time, partitives and ordinals telling a number that
-  counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième") (#324, #516, #606, #613).
+  number in the absent thing's own clause no count: "No hay proveedores en el lote 7" is 0; a comma, colon or dash
+  between two numbers and a conjunction before a comparative break no clause: "1,000", "10:30", "lotes 2, 3 y 4",
+  "more than 100 but fewer than 500") in place of English's (Spanish and Portuguese "no" is no 0), Russian
+  numerals in every case ("около двадцати пяти", "с пятью"), its words of time, partitives and ordinals telling a
+  number that counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième"). A
+  `number` item reads the question too: a number it states is a condition where the answer reads an absence, in
+  any language ("En el lote 7 no hay proveedores" asked about lot 7, "従業員100人以上の仕入先はありません" asked about
+  suppliers of 100 or more staff are 0; "Yes, 4" asked "Does it have 4?" is 4), and a comparative in the phrase's
+  clause bounds the count unless the question states its number ("Non ha mai avuto più di tre fornitori" asked
+  "Quanti fornitori?" is 3) (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See
@@ -1454,8 +1461,10 @@ From a `main` checkout (formats and keys no release had):
   ("example.com", "admin@example.es", "/usr/bin/the") and the words of a quoted name ("Bank of America和…") are no
   function words, so "AI 모델 추천", "AIとは", "OS 설치" and "example.com 无法访问" are Korean, Japanese, Korean and Chinese,
   "Who is the CEO of 한빛전자?" and "Compare 한빛전자 and 아크미" English, "with 문 사용법" Korean; a shouted text (three or more
-  words, all in capitals) reads its words lowercased, so "QUI A SIGNÉ LE CONTRAT ?" is French; among Latin-script
-  languages, Spanish and Portuguese with their "how many" words ("como" Portuguese), an elision only one of them
+  words, all in capitals; beside another script one longer than two letters, so "AS IS / TO BE 비교" is Korean)
+  reads its words lowercased, so "QUI A SIGNÉ LE CONTRAT ?" is French; a colon joins a word only before "//", a digit
+  or a colon ("Frage:Wer hat …" is German); among Latin-script languages, Spanish and Portuguese with their "how
+  many" words ("como" both: the index language breaks the tie), an elision only one of them
   writes ("dell'", "qu'"; not "d'", French and
   Italian) counts with the function words, and a tie the index language is not in goes to the language whose own
   articles occur ("Qual è il prezzo?" is Italian, not English); evaluation counts a decline by `metadata.abstained`

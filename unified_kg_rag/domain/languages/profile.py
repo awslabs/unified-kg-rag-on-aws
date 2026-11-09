@@ -39,8 +39,9 @@ class LanguageProfile:
     analyzer: str
     # The fixed reply of a query declined without a model call.
     decline: str
-    # Frequent function words no other language of its script shares, which
-    # tell a short query's language apart from another of that script.
+    # Frequent function words, which tell a short query's language apart
+    # from another of its script; one two of them write ("como" in Spanish
+    # and Portuguese) counts for both, so the index language breaks the tie.
     function_words: frozenset[str] = frozenset()
     # Words a model writes for a claim status, by the status they state
     # (``claim_resolver.CLAIM_STATUSES``).
@@ -85,20 +86,25 @@ class LanguageProfile:
     # of 0 as its words for none are ("does not have any", "no hay", "il
     # n'y a pas de", "Поставщиков нет"): "…" stands for up to three words
     # between, and a leading "-" for a clitic written onto the word before
-    # ("-n't … any": "doesn't have any"). One states no count when one of
-    # the language's comparatives directly follows it ("No hay más de
-    # tres": "more than", "más de", "более"; a one-word one compares only
-    # before a number) or a count follows it after a clause break in its
-    # sentence: a comma, a colon, a dash or one of its
-    # ``clause_conjunctions`` ("No hay duda de que son tres", "Нет
-    # сомнений, их три", "not any other details, but Acme has 3"). A
-    # number in its own clause is the absent thing's ("No hay proveedores
-    # en el lote 7", "with more than 100 employees"; a semicolon is no
-    # clause break), and one after a stop another sentence's; a one-word
-    # one opening a line before a comma or a stop is a yes/no answer
-    # ("Нет."), no count either.
+    # ("-n't … any": "doesn't have any"). One states no count where one of
+    # its comparatives bounds the count instead ("No hay más de tres":
+    # "more than", "más de", "более"; a one-word one compares only before
+    # a number; "超过" in Han is written onto the number, and
+    # ``postposed_comparatives`` after it and its counter: "100人以上",
+    # "100명 이상") or a count follows it after a clause break in its
+    # sentence: a comma, a colon or a dash not between two numbers, or one
+    # of its ``clause_conjunctions`` that no comparative follows ("No hay
+    # duda de que son tres", "Нет сомнений, их три", "not any other
+    # details, but Acme has 3"; "more than 100 but fewer than 500" is one
+    # condition). A number in its own clause after it is the absent
+    # thing's ("No hay proveedores en el lote 7"; a semicolon is no clause
+    # break), and one after a stop another sentence's; a one-word one
+    # opening a line before a comma or a stop is a yes/no answer ("Нет."),
+    # no count either. A number the question states is a condition of the
+    # absent thing, not a count (``text_matching.leading_number``).
     absence_phrases: tuple[str, ...] = ()
     comparatives: tuple[str, ...] = ()
+    postposed_comparatives: tuple[str, ...] = ()
     clause_conjunctions: tuple[str, ...] = ()
     # Whether it writes the ones before the tens ("vierundzwanzig"): in
     # another language the words of a number go down by place ("deux vingt"
