@@ -1833,6 +1833,8 @@ Evaluation, visualization and tuning.
 - RAGAS skips `faithfulness` without context, counts each context once per batch, judges with its own metric
   objects, and stops when cancelled (#246, #366, #386, #393, #399).
 - `run-eval` reports an invalid or missing dataset with exit 2 (#227, #230).
+- `run-eval` result and comparison files (with their `.csv` and `.md`) and `Document.to_json_file` are written
+  atomically: a run stopped mid-write left a truncated JSON file that a later `--from-results` refused.
 - `graph_aware` matches a word through its possessive and finds a Latin word or number inside Chinese or Japanese
   text (`AWS` in `答案是AWS公司`) (#516, #563).
 - `run-visualization` rejects unknown `--renderers` and invalid data (exit 2), lays out only the drawn nodes, keeps

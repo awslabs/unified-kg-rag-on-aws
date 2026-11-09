@@ -82,6 +82,7 @@ from unified_kg_rag.shared.usage import (
     metering,
     usage_scope,
 )
+from unified_kg_rag.shared.utils.files import atomic_write_text
 from unified_kg_rag.shared.utils.scripts import has_dense_script
 
 from .answer_match_evaluator import (
@@ -1968,5 +1969,8 @@ class EvaluationManager:
 
     @staticmethod
     def _save_json(path: Path, data: Any) -> None:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+        # Atomic: a run stopped mid-write leaves no truncated result file
+        # for --from-results to refuse.
+        atomic_write_text(
+            path, json.dumps(data, ensure_ascii=False, indent=2, default=str)
+        )

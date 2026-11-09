@@ -106,6 +106,7 @@ from unified_kg_rag.shared import (
 from unified_kg_rag.shared.exceptions import ErrorClass, classify
 from unified_kg_rag.shared.usage import usage_scope
 from unified_kg_rag.shared.utils import event_loop
+from unified_kg_rag.shared.utils.files import atomic_write_text
 from unified_kg_rag.shared.utils.s3_uri import is_s3_uri
 
 if TYPE_CHECKING:
@@ -1192,9 +1193,8 @@ class EvaluationRunner:
         outputs_dir.mkdir(parents=True, exist_ok=True)
         stamp = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         path = outputs_dir / f"evaluation_comparison_{stamp}.json"
-        path.write_text(
-            json.dumps(comparison, indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
+        atomic_write_text(
+            path, json.dumps(comparison, indent=2, ensure_ascii=False, default=str)
         )
         return path
 
@@ -2448,10 +2448,8 @@ class EvaluationRunner:
                 "breaches": gate_failures,
             }
         path = self._save_comparison(comparison, local_outputs)
-        path.with_suffix(".csv").write_text(comparison_csv(rows), encoding="utf-8")
-        path.with_suffix(".md").write_text(
-            comparison_markdown(comparison), encoding="utf-8"
-        )
+        atomic_write_text(path.with_suffix(".csv"), comparison_csv(rows))
+        atomic_write_text(path.with_suffix(".md"), comparison_markdown(comparison))
         self._print_comparison(comparison, elapsed)
         return comparison, gate_failures
 

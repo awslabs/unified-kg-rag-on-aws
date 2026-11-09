@@ -11,6 +11,7 @@ from typing import Any, NamedTuple
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from unified_kg_rag.shared.logging import get_logger
+from unified_kg_rag.shared.utils.files import atomic_write_text
 
 logger = get_logger(__name__)
 
@@ -594,7 +595,7 @@ class Document(BaseModel):
         if output_path:
             path = Path(output_path)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json_data, encoding="utf-8")
+            atomic_write_text(path, json_data)
 
         return json_data
 
