@@ -458,26 +458,12 @@ GUARDS = [
                 2,
                 "filter values (a value or a list), intersected with a scope's",
             ),
-            "adapters/retrieval/base.py::BaseSearchStrategy._fetch_by_ids": (
-                1,
-                "the index prefixes argument (one or several)",
-            ),
             "adapters/retrieval/base.py::"
             "BaseSearchStrategy._expand_over_passing_relationships": (
                 1,
                 "a caller's id filter value",
             ),
-            "adapters/retrievers/opensearch_retriever.py::"
-            "OpenSearchRetriever._normalize_index_prefixes": (
-                1,
-                "the index prefixes argument (one or several)",
-            ),
-            "adapters/search_strategies/simple_search.py::"
-            "SimpleSearchStrategy._without_reports": (
-                1,
-                "a pinned type filter value",
-            ),
-            "adapters/storage/neptune_codec.py::_values": (
+            "adapters/storage/neptune_codec.py::property_values": (
                 1,
                 "the codec's reading of a Gremlin valueMap (lists by design)",
             ),
@@ -497,17 +483,10 @@ GUARDS = [
                 1,
                 "a structured plan's operand (one value or several)",
             ),
-            "evaluation/answer_match_evaluator.py::AnswerMatchEvaluator._references": (
+            "evaluation/answer_match_evaluator.py::answer_aliases": (
                 1,
-                "a dataset's answer_aliases (a string or a list)",
-            ),
-            "evaluation/evaluation_manager.py::EvaluationManager.holds_dense_script": (
-                1,
-                "a dataset's answer_aliases (a string or a list)",
-            ),
-            "adapters/retrievers/neptune_retriever.py::NeptuneRetriever._hydrate": (
-                1,
-                "a Gremlin valueMap, whose values are lists (the codec's reading)",
+                "a dataset's answer_aliases (a string or a list of strings), "
+                "read once for the evaluator and the run's language check",
             ),
             "adapters/search_strategies/structured_search.py::"
             "StructuredSearchStrategy._request": (

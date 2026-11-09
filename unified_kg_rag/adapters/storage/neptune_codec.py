@@ -167,20 +167,21 @@ def relationship_label(rel: Relationship) -> str:
     return rel.type or Constants.DEFAULT_RELATIONSHIP_TYPE.value
 
 
-def _values(value: Any) -> list[Any]:
-    """Gremlin returns vertex properties as lists and edge properties bare."""
+def property_values(value: Any) -> list[Any]:
+    """A property as Gremlin's ``valueMap`` returns it, as a list: a
+    vertex's properties come as lists, an edge's bare."""
     if value is None:
         return []
     return list(value) if isinstance(value, list) else [value]
 
 
 def _single(value: Any) -> Any:
-    values = _values(value)
+    values = property_values(value)
     return values[0] if values else None
 
 
 def _vertex_list(value: Any) -> list[str] | None:
-    values = _values(value)
+    values = property_values(value)
     return [str(v) for v in values] if values else None
 
 
@@ -209,7 +210,7 @@ def edge_text_unit_ids(value: Any) -> list[str]:
 
 
 def _attribute_value(value: Any) -> Any:
-    values = _values(value)
+    values = property_values(value)
     single = values[0] if len(values) == 1 else values
     if isinstance(single, str) and single[:1] in ("{", "["):
         try:

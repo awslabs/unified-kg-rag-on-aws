@@ -62,6 +62,7 @@ from unified_kg_rag.domain.retrieval.filters import (
 )
 from unified_kg_rag.domain.retrieval.hybrid_normalization import combine_min_max
 from unified_kg_rag.domain.retrieval.index_prefixes import configured_index_prefixes
+from unified_kg_rag.domain.retrieval.source_fields import id_list
 from unified_kg_rag.domain.retrieval.store_names import namespace_suffix
 from unified_kg_rag.ports.model_factory import EmbeddingFactoryPort
 from unified_kg_rag.shared import (
@@ -849,9 +850,7 @@ class OpenSearchRetriever(BaseGraphRAGRetriever):
         ]
 
     def _normalize_index_prefixes(self, prefixes: str | list[str] | None) -> list[str]:
-        if isinstance(prefixes, str):
-            return [prefixes]
-        return prefixes or self._default_index_prefixes()
+        return id_list(prefixes) or self._default_index_prefixes()
 
     def _default_index_prefixes(self) -> list[str]:
         return [

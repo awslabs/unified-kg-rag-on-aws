@@ -94,6 +94,7 @@ from .answer_match_evaluator import (
     DECLINE_IS_CORRECT_KEY,
     SPAN_FALLBACK_KEY,
     AnswerMatchEvaluator,
+    answer_aliases,
     answer_scoring,
 )
 from .assertion_evaluator import ASSERTIONS_KEY, AssertionEvaluator, assertions_of
@@ -1390,8 +1391,7 @@ class EvaluationManager:
         texts: list[str] = [q.question for q in queries]
         texts += [gt.ground_truth for gt in ground_truths]
         for q in queries:
-            aliases = q.metadata.get("answer_aliases") or []
-            texts += [aliases] if isinstance(aliases, str) else list(aliases)
+            texts += answer_aliases(q.metadata)
         return any(isinstance(t, str) and has_dense_script(t) for t in texts)
 
     @staticmethod

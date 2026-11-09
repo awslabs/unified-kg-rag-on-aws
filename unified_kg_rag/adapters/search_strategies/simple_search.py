@@ -23,6 +23,7 @@ from unified_kg_rag.domain.retrieval.index_prefixes import (
     held_artifacts_of,
     held_index_prefixes,
 )
+from unified_kg_rag.domain.retrieval.source_fields import id_list
 from unified_kg_rag.shared import get_logger
 from unified_kg_rag.shared.utils import text_digest
 
@@ -113,10 +114,7 @@ class SimpleSearchStrategy(BaseSearchStrategy):
         # be honoured on it (local and DRIFT read no report then either).
         # None: the caller pinned the reports index alone.
         reports = self.config.indexing.opensearch.community_reports_index_prefix
-        pinned = query.index_prefixes
-        if isinstance(pinned, str):
-            pinned = [pinned]
-        listed = list(pinned or configured_index_prefixes(self.config))
+        listed = id_list(query.index_prefixes) or configured_index_prefixes(self.config)
         prefixes = [prefix for prefix in listed if prefix != reports]
         if len(prefixes) < len(listed):
             logger.info(

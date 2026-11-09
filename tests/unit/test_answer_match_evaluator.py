@@ -20,6 +20,7 @@ from unified_kg_rag.evaluation import (
     text_matching,
 )
 from unified_kg_rag.evaluation.answer_match_evaluator import (
+    answer_aliases,
     answer_contains,
     exact_match,
     first_answer_line,
@@ -29,6 +30,17 @@ from unified_kg_rag.evaluation.answer_match_evaluator import (
 from unified_kg_rag.shared import EvaluationException
 
 pytestmark = pytest.mark.unit
+
+
+def test_answer_aliases_read_a_string_or_a_list_of_strings() -> None:
+    # One reader for the evaluator and the run's language check: a string
+    # is one alias, and what is no string in a list is no alias.
+    assert answer_aliases({"answer_aliases": "서울"}) == ["서울"]
+    assert answer_aliases({"answer_aliases": ["東京", 3, None, "Tokyo"]}) == [
+        "東京",
+        "Tokyo",
+    ]
+    assert answer_aliases({}) == answer_aliases({"answer_aliases": None}) == []
 
 
 class TestNormalization:
