@@ -552,7 +552,7 @@ def test_a_claim_derived_by_a_removal_resolves_against_the_noted_entities(
     assert harness.state() == expected_state(after, harness.config)
     entities = set(harness.graph.ids("entities"))
     claims = harness.vector.data.get("claims", {}).values()
-    assert claims and all(c.object_id in entities for c in claims)
+    assert claims and all({c.subject_id, c.object_id} <= entities for c in claims)
 
 
 @pytest.mark.parametrize(
@@ -584,7 +584,7 @@ def test_a_stored_claim_follows_a_noted_entity_the_commit_merges(
     assert harness.state() == expected_state(after, harness.config)
     entities = set(harness.graph.ids("entities"))
     claims = harness.vector.data.get("claims", {}).values()
-    assert claims and all(c.object_id in entities for c in claims)
+    assert claims and all({c.subject_id, c.object_id} <= entities for c in claims)
 
 
 @pytest.mark.parametrize("hub", ["Acme", "한빛", "ひかり"], ids=["en", "ko", "ja"])
@@ -639,8 +639,9 @@ def test_the_claims_about_a_noted_entity_that_keeps_its_id_are_not_rewritten(
     ],
     ids=["en", "ko", "ja", "mix", "mix-reversed"],
 )
+@pytest.mark.parametrize("direction", ["object", "subject"])
 def test_a_rejected_claim_re_derived_alone_keeps_its_own_entity(
-    spellings: tuple[str, str, str, str],
+    spellings: tuple[str, str, str, str], direction: str
 ) -> None:
     # The claim about the second company's first spelling is rejected; the
     # removal of b.txt re-derives it from d.txt alone, where the third
@@ -648,15 +649,26 @@ def test_a_rejected_claim_re_derived_alone_keeps_its_own_entity(
     # its id, so the statement of d.txt about the same names is its claim:
     # it took the statement winning a tie-break by id instead, a claim
     # about the first company's entity, which no store holds under that
-    # spelling, and no later run touched it again.
+    # spelling, and no later run touched it again. The companies are the
+    # claims' objects, or their subjects (the same statements reversed):
+    # both of a claim's names tell its statement apart.
     first, first_short, second, second_short = spellings
     mid: Corpus = {
         "/corpus/b.txt": [[(_C, second, 1)]],
         "/corpus/c.txt": [[(_C, first_short, 1)], [(_B, first_short, 1)]],
         "/corpus/d.txt": [[(_C, first, 3), (_C, second, 1), (_C, second_short, 3)]],
     }
+    if direction == "subject":
+        mid = {
+            path: [
+                [(target, source, k) for source, target, k in unit] for unit in units
+            ]
+            for path, units in mid.items()
+        }
     after = {path: content for path, content in mid.items() if path != "/corpus/b.txt"}
-    rejected = [c.id for c in extract(mid).claims if c.object_name == second]
+    rejected = [
+        c.id for c in extract(mid).claims if getattr(c, f"{direction}_name") == second
+    ]
     assert rejected
     harness = _harness()
     harness.config.indexing.max_failure_rate = 0.95
@@ -669,7 +681,7 @@ def test_a_rejected_claim_re_derived_alone_keeps_its_own_entity(
     assert harness.state() == expected_state(after, harness.config)
     entities = set(harness.graph.ids("entities"))
     claims = harness.vector.data.get("claims", {}).values()
-    assert claims and all(c.object_id in entities for c in claims)
+    assert claims and all({c.subject_id, c.object_id} <= entities for c in claims)
 
 
 @pytest.mark.parametrize(
