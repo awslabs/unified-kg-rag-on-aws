@@ -9,7 +9,14 @@ from dataclasses import dataclass, field
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
 
-__all__ = ["LanguageProfile"]
+__all__ = ["CLAUDE_TOKENIZER", "LanguageProfile"]
+
+# The tokenizer of Claude Opus 4.7 and later (Opus 4.8/5/5.5, Sonnet 5/5.5,
+# Haiku 5.5), which CountTokens does not count on bedrock-runtime: its
+# characters per token by language (``LanguageProfile.chars_per_token``)
+# were measured on Bedrock on 2026-11-08 (Sonnet and Haiku 5.5 count alike;
+# docs/concepts/defaults-and-evidence.md#token-estimate).
+CLAUDE_TOKENIZER = "claude-opus-4.7"
 
 
 @dataclass(frozen=True)
@@ -95,3 +102,9 @@ class LanguageProfile:
     polarity_words: Mapping[str, str] = field(default_factory=dict)
     # The quote pairs its text wraps a name in (opening, closing).
     quote_pairs: tuple[tuple[str, str], ...] = ()
+    # Characters per token of a text in it (spaces and punctuation
+    # included) by the tokenizer that counts them (a
+    # ``LanguageModelInfo.tokenizer``, such as ``CLAUDE_TOKENIZER``), where
+    # measured: a budget for a model of that tokenizer is sized by it
+    # (``adapters.llm.token_estimate.budget_token_count``).
+    chars_per_token: Mapping[str, float] = field(default_factory=dict)

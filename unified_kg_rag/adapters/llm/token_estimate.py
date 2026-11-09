@@ -11,9 +11,11 @@ Arabic, Hebrew, Devanagari, Thai). Costs are counted in twelfths of a token
 (:data:`UNITS_PER_TOKEN`), so the estimate is exact integer arithmetic.
 """
 
+import math
 import re
 
 from unified_kg_rag.domain.ingestion.chunk_length import LATIN_CHARS_PER_TOKEN
+from unified_kg_rag.domain.languages import LanguageCode, profile, text_language
 from unified_kg_rag.shared.utils.scripts import (
     DENSE_SCRIPT_TOKEN_RANGES,
     SCRIPTS,
@@ -99,6 +101,37 @@ def estimate_from_units(units: int, words: int) -> int:
     floored by the word count and by 1. The one formula of
     :func:`estimate_token_count` and of the chunker's running counts."""
     return max(words, units // UNITS_PER_TOKEN, 1)
+
+
+# A budget sized by a measured rate is sized this much over it: a rate is
+# one sentence's (the language matrix), a text's own varies around it.
+BUDGET_MARGIN = 1.1
+# The characters of a text its language is told from.
+_LANGUAGE_SAMPLE_CHARS = 2000
+
+
+def budget_token_count(
+    text: str, tokenizer: str | None = None, multiplier: float = 1.0
+) -> int:
+    """The tokens a budget counts ``text`` as for a model without a
+    counting API: the script estimate (:func:`estimate_token_count`) times
+    ``multiplier``, and for a model of ``tokenizer`` at least the text's
+    length at the characters per token measured for its language
+    (``LanguageProfile.chars_per_token``, the language told from the text's
+    first characters), :data:`BUDGET_MARGIN` over. The script rates are a
+    BPE vocabulary's, which counts German or Vietnamese text in about half
+    the tokens Claude's tokenizer does (docs/concepts/defaults-and-evidence.md
+    #token-estimate). Chunking keeps the script estimate (stored chunks)."""
+    estimate = estimate_token_count(text)
+    if multiplier != 1.0:
+        estimate = math.ceil(estimate * multiplier)
+    if tokenizer is None or not text:
+        return estimate
+    language = text_language(text[:_LANGUAGE_SAMPLE_CHARS], LanguageCode.EN)
+    rate = profile(language).chars_per_token.get(tokenizer)
+    if rate is None:
+        return estimate
+    return max(estimate, math.ceil(len(text) * BUDGET_MARGIN / rate))
 
 
 def truncate_to_estimate(text: str, max_tokens: int) -> str:

@@ -1384,7 +1384,10 @@ From a `main` checkout (formats and keys no release had):
   geometric mean of the cl100k and o200k counts over a sample), where it counted 4, a quarter to a half of the Hindi,
   Thai and Hebrew tokens; Latin stays at 4 and Han, Hangul and Kana at one a character, now also the rarer blocks
   (Hanja extensions, compatibility Jamo). A model whose reported input tokens are twice the estimate or more, or half
-  or less, over 20 calls logs one WARNING.
+  or less, over 20 calls logs one WARNING. A budget for Claude Opus 4.7 and later (no CountTokens) also counts a text
+  at least at its language's characters per Claude token, measured on Bedrock (`LanguageProfile.chars_per_token`,
+  `LanguageModelInfo.tokenizer`), 10% over: the script estimate times 1.3 counted German and Vietnamese at 0.67 and
+  0.57 of their tokens and overfilled the window ([evidence](docs/concepts/defaults-and-evidence.md#token-estimate)).
 - Local search's incident relationships that leave the retrieved entities are ordered as MS GraphRAG local orders
   its out-of-network relationships: by how many retrieved entities the outside endpoint links, then by rank (rank
   alone before), after the edges between two retrieved entities (#619).

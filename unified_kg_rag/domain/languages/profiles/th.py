@@ -3,7 +3,7 @@
 """Thai."""
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.profile import LanguageProfile
+from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 
 PROFILE = LanguageProfile(
     code=LanguageCode.TH,
@@ -15,4 +15,5 @@ PROFILE = LanguageProfile(
     decline="ไม่พบข้อมูลที่เกี่ยวข้องในข้อมูลที่มีอยู่เพื่อตอบคำถามนี้",
     # "unknown", "none", "not specified".
     no_value_words=("ไม่ทราบ", "ไม่มี", "ไม่ระบุ"),
+    chars_per_token={CLAUDE_TOKENIZER: 1.09},
 )

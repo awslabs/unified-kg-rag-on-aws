@@ -470,3 +470,76 @@ def test_new_tokenizer_claude_models_scale_the_token_estimate() -> None:
         get_language_model_info("anthropic.claude-sonnet-5-7").token_estimate_multiplier
         == 1.3
     )
+
+
+# The v23 calibration (Bedrock, 2026-11-08): the input tokens Claude Sonnet
+# and Haiku 5.5 (alike) counted for each text repeated 12 times, a one-token
+# baseline taken off. English and Spanish are these sentences, the others the
+# language matrix's.
+_CLAUDE_5_5_TOKENS = {
+    "en": 480,
+    "es": 528,
+    "ar": 660,
+    "he": 624,
+    "th": 1092,
+    "hi": 948,
+    "vi": 828,
+    "de": 768,
+    "ru": 480,
+    "ko": 599,
+    "ja": 503,
+    "zh": 431,
+}
+_CALIBRATION_TEXTS = {
+    "en": "The vendor delivered the lidar units to the warehouse on the second of "
+    "June. The buyer approved the invoice after the inspection. ",
+    "es": "El proveedor entregó las unidades lidar al almacén el dos de junio. "
+    "El comprador aprobó la factura después de la inspección. ",
+    **{
+        sample.code.value: (
+            sample.text if sample.text.endswith(" ") else sample.text + " "
+        )
+        for sample in MATRIX
+    },
+}
+
+
+@pytest.mark.parametrize("language", sorted(_CLAUDE_5_5_TOKENS))
+def test_a_claude_budget_never_undercounts_a_measured_language(language: str) -> None:
+    # Regression (v23 B9): the script estimate times 1.3 counted German and
+    # Vietnamese text at 0.67 and 0.57 of Claude 5.5's tokens (Spanish 0.92),
+    # so a budget sized by it overfilled the window.
+    from unified_kg_rag.adapters.llm.token_estimate import budget_token_count
+    from unified_kg_rag.domain.languages import CLAUDE_TOKENIZER
+
+    text = _CALIBRATION_TEXTS[language] * 12
+    actual = _CLAUDE_5_5_TOKENS[language]
+    budget = budget_token_count(text, CLAUDE_TOKENIZER, 1.3)
+    assert actual <= budget <= 1.3 * actual, (language, budget, actual)
+    # The counter of a Claude 4.7+ model counts so; no tokenizer, as before.
+    counter = BedrockTokenCounter(
+        "m",
+        None,
+        api_supported=False,
+        estimate_multiplier=1.3,
+        tokenizer=CLAUDE_TOKENIZER,
+    )
+    assert counter.count_tokens(text) == budget
+    assert budget_token_count(text) == estimate_token_count(text)
+
+
+def test_the_claude_4_7_family_names_its_tokenizer() -> None:
+    from unified_kg_rag.adapters.aws.bedrock_models import get_language_model_info
+    from unified_kg_rag.domain.languages import CLAUDE_TOKENIZER
+    from unified_kg_rag.domain.models import LanguageModelId
+
+    for model_id in (
+        LanguageModelId.CLAUDE_V5_5_HAIKU,
+        LanguageModelId.CLAUDE_V4_7_OPUS,
+    ):
+        assert get_language_model_info(model_id).tokenizer == CLAUDE_TOKENIZER
+    assert get_language_model_info("anthropic.claude-sonnet-5-7").tokenizer == (
+        CLAUDE_TOKENIZER
+    )
+    for model_id in (LanguageModelId.CLAUDE_V4_6_SONNET, LanguageModelId.GPT_V5_5):
+        assert get_language_model_info(model_id).tokenizer is None

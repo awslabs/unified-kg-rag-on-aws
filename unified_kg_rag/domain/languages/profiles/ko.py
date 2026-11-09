@@ -3,7 +3,7 @@
 """Korean."""
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.profile import LanguageProfile
+from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 
 PROFILE = LanguageProfile(
     code=LanguageCode.KO,
@@ -67,4 +67,5 @@ PROFILE = LanguageProfile(
         "아니오": "no",
         "아닙니다": "no",
     },
+    chars_per_token={CLAUDE_TOKENIZER: 1.0},
 )

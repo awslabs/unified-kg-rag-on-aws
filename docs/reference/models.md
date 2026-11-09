@@ -107,8 +107,12 @@ Four things differ for Claude 4.7-and-later models:
   per Han, Hangul or Kana character, each other script at its rate in
   `shared/utils/scripts.py`) is
   multiplied by the record's `token_estimate_multiplier` (1.3) when sizing
-  context budgets. Override it per model with
-  `aws.bedrock.model_overrides`. A model whose reported input tokens are
+  context budgets, and floored at the text's length at the characters per
+  token measured for its language with this tokenizer, 10% over (the
+  record's `tokenizer`, `claude-opus-4.7`: German and Vietnamese text count
+  about twice the tokens the script rate says;
+  [evidence](../concepts/defaults-and-evidence.md#token-estimate)). Override
+  either per model with `aws.bedrock.model_overrides`. A model whose reported input tokens are
   twice the estimate or more (or half or less) over 20 calls logs one
   WARNING naming it.
 

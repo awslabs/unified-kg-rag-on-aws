@@ -1256,6 +1256,7 @@ def bedrock_token_counter_factory(
             cache_maxsize=cache_maxsize,
             api_supported=api_supported,
             estimate_multiplier=info.token_estimate_multiplier,
+            tokenizer=info.tokenizer,
         )
 
     return build

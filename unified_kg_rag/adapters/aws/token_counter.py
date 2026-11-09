@@ -2,12 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-import math
 import threading
 from functools import lru_cache
 from typing import Any
 
-from unified_kg_rag.adapters.llm.token_estimate import estimate_token_count
+from unified_kg_rag.adapters.llm.token_estimate import budget_token_count
 from unified_kg_rag.shared import get_logger
 
 logger = get_logger(__name__)
@@ -99,8 +98,10 @@ class BedrockTokenCounter:
 
     ``estimate_multiplier`` scales the local estimate for a model whose
     tokenizer counts more tokens than the one the estimate is calibrated to
-    (``LanguageModelInfo.token_estimate_multiplier``); API counts are exact and
-    never scaled.
+    (``LanguageModelInfo.token_estimate_multiplier``), and ``tokenizer``
+    (``LanguageModelInfo.tokenizer``) floors it at the text's language's
+    measured rate (``token_estimate.budget_token_count``); API counts are
+    exact and never scaled.
     """
 
     MAX_TRUNCATION_ITERATIONS: int = 8
@@ -113,17 +114,26 @@ class BedrockTokenCounter:
         *,
         api_supported: bool = True,
         estimate_multiplier: float = 1.0,
+        tokenizer: str | None = None,
     ) -> None:
         self.model_id = model_id
         self._client = client
         self._api_supported = api_supported and client is not None
         self._estimate_multiplier = estimate_multiplier
+        self._tokenizer = tokenizer
 
         @lru_cache(maxsize=cache_maxsize)
         def _cached_count(text: str) -> int:
             return self._call_bedrock_count_tokens(text)
 
+        # The estimate tells the text's language for its rate: counted once
+        # per text, as a budget counts a section more than once.
+        @lru_cache(maxsize=cache_maxsize)
+        def _cached_estimate(text: str) -> int:
+            return budget_token_count(text, self._tokenizer, self._estimate_multiplier)
+
         self._cached_count = _cached_count
+        self._cached_estimate = _cached_estimate
 
     @property
     def counts_via_api(self) -> bool:
@@ -167,10 +177,7 @@ class BedrockTokenCounter:
             return self._estimate(text)
 
     def _estimate(self, text: str) -> int:
-        estimate = estimate_token_count(text)
-        if self._estimate_multiplier == 1.0:
-            return estimate
-        return math.ceil(estimate * self._estimate_multiplier)
+        return int(self._cached_estimate(text))
 
     def truncate_to_token_limit(self, text: str, max_tokens: int) -> tuple[str, int]:
         """Truncate text to fit within max_tokens using ratio-based estimation and verification.

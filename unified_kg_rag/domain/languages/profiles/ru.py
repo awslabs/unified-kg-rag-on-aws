@@ -3,7 +3,7 @@
 """Russian."""
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.profile import LanguageProfile
+from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 
 PROFILE = LanguageProfile(
     code=LanguageCode.RU,
@@ -93,4 +93,5 @@ PROFILE = LanguageProfile(
     },
     # The year mark: "2024 г.", "2024 года".
     date_fillers=("г", "года", "год"),
+    chars_per_token={CLAUDE_TOKENIZER: 2.45},
 )

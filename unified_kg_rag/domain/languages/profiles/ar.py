@@ -3,7 +3,7 @@
 """Arabic."""
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.profile import LanguageProfile
+from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 
 PROFILE = LanguageProfile(
     code=LanguageCode.AR,
@@ -19,4 +19,5 @@ PROFILE = LanguageProfile(
     no_value_words=("غيرمعروف", "لايوجد", "غيرمحدد"),
     # "Company", written before the name ("شركة النور").
     leading_legal_forms={"شركة": "شركة"},
+    chars_per_token={CLAUDE_TOKENIZER: 1.75},
 )

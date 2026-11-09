@@ -3,7 +3,7 @@
 """Hebrew."""
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.profile import LanguageProfile
+from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 
 PROFILE = LanguageProfile(
     code=LanguageCode.HE,
@@ -15,4 +15,5 @@ PROFILE = LanguageProfile(
     decline="לא מצאתי מידע רלוונטי בנתונים הזמינים כדי לענות על שאלה זו.",
     # "unknown", "none", "not specified".
     no_value_words=("לאידוע", "אין", "לאצוין"),
+    chars_per_token={CLAUDE_TOKENIZER: 1.54},
 )

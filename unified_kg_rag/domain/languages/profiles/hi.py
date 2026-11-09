@@ -3,7 +3,7 @@
 """Hindi."""
 
 from unified_kg_rag.domain.languages.codes import LanguageCode
-from unified_kg_rag.domain.languages.profile import LanguageProfile
+from unified_kg_rag.domain.languages.profile import CLAUDE_TOKENIZER, LanguageProfile
 
 PROFILE = LanguageProfile(
     code=LanguageCode.HI,
@@ -15,4 +15,5 @@ PROFILE = LanguageProfile(
     ),
     # "unknown", "none", "not applicable".
     no_value_words=("अज्ञात", "कोईनहीं", "लागूनहीं"),
+    chars_per_token={CLAUDE_TOKENIZER: 1.35},
 )
