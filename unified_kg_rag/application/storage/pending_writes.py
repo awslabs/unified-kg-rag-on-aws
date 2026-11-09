@@ -206,17 +206,27 @@ class PendingWrites:
         # By suffix, the part records of the note this run read (deleted
         # once a note replaces it, or nothing is left to note).
         self._parts: dict[str, list[str]] = {}
+        # By suffix, the ids of the noted entities the commit's delta holds.
+        self._entities: dict[str, set[str]] = defaultdict(set)
 
     def reset(self) -> None:
         self._read.clear()
         self._joined.clear()
         self._parts.clear()
+        self._entities.clear()
 
     def joined(self, suffix: str) -> bool:
         """Whether the commit's delta holds noted items of ``suffix``: their
         content is derived from their records (a noted item's lineage may
         have lost the units of a document removed since)."""
         return suffix in self._joined
+
+    def joined_entities(self) -> dict[str, set[str]]:
+        """By suffix, the ids of the noted entities the commit's delta
+        holds. A stored claim may name one (its own write was not
+        rejected): the merge may fold it into another entity, as it does a
+        stored one, and the claim follows only when it is derived again."""
+        return {suffix: set(ids) for suffix, ids in self._entities.items()}
 
     def read(
         self, suffixes: Iterable[str], text_units: Sequence[TextUnit] = ()
@@ -230,25 +240,11 @@ class PendingWrites:
         noted = NotedWrites()
         delta_units = {u.id for u in text_units}
         for suffix in sorted(set(suffixes)):
-            note = self._m.vector_indexer.read_extraction_records(
-                [_PENDING_WRITES], suffix=suffix
-            ).get(_PENDING_WRITES)
-            if note is None:
+            items = self._noted(suffix, delta_units)
+            if items is None:
                 continue
             self._read.add(suffix)
-            items = self._parse(self._whole(note, suffix), suffix)
-            cited = sorted(
-                {
-                    u
-                    for group in items.values()
-                    for item in group
-                    for u in getattr(item, "text_unit_ids", None) or []
-                }
-                - delta_units
-            )
-            held = self._m.vector_indexer.read_text_unit_ids(cited, suffix=suffix)
-            gone = set() if held is None else set(cited) - set(held)
-            for kind, group in self._without_units(items, gone).items():
+            for kind, group in items.items():
                 getattr(noted, kind).extend(group)
             logger.info(
                 "Writing again %d items of '%s' whose write an earlier commit's "
@@ -257,6 +253,49 @@ class PendingWrites:
                 suffix,
             )
         return noted
+
+    def entities_of_keys(self, suffix: str, keys: Collection[str]) -> list[Entity]:
+        """The noted entities of ``suffix`` whose ``compact_name_key`` is in
+        ``keys`` (see :meth:`read`): held like the stored ones, though no
+        store has them yet. A derivation before the commit joins them (a
+        removal's) resolves a name against them too, as the full build
+        does: without them, a claim about another spelling of the name
+        took that spelling's id, an entity no store holds. None once the
+        commit read the note: its delta holds them then (merged, maybe
+        re-keyed). A failed read raises."""
+        if not keys or suffix in self._read:
+            return []
+        items = self._noted(suffix, set())
+        return [
+            e
+            for e in (items or {}).get("entities", [])
+            if compact_name_key(e.name) in keys
+        ]
+
+    def _noted(
+        self, suffix: str, delta_units: Collection[str]
+    ) -> dict[str, list[Any]] | None:
+        """The items of the note of ``suffix`` by kind, cut to the text units
+        the vector store still holds or in ``delta_units`` (see
+        :meth:`read`); None when there is no note."""
+        note = self._m.vector_indexer.read_extraction_records(
+            [_PENDING_WRITES], suffix=suffix
+        ).get(_PENDING_WRITES)
+        if note is None:
+            return None
+        items = self._parse(self._whole(note, suffix), suffix)
+        cited = sorted(
+            {
+                u
+                for group in items.values()
+                for item in group
+                for u in getattr(item, "text_unit_ids", None) or []
+            }
+            - set(delta_units)
+        )
+        held = self._m.vector_indexer.read_text_unit_ids(cited, suffix=suffix)
+        gone = set() if held is None else set(cited) - set(held)
+        return self._without_units(items, gone)
 
     def _whole(self, note: Mapping[str, Any], suffix: str) -> Mapping[str, Any]:
         """A stored ``note`` with the items of its parts (a split note lists
@@ -408,6 +447,8 @@ class PendingWrites:
         state (:meth:`_respelled`); the derivation then draws the edge as a
         full build over those units does."""
         noted.relationships = _repointed(noted.relationships, relationships or [])
+        for entity in noted.entities:
+            self._entities[BaseIndexer.get_suffix(entity)].add(entity.id)
         known = {e.id for e in [*(entities or []), *noted.entities]}
         ends: dict[str, set[str]] = defaultdict(set)
         for rel in noted.relationships:
@@ -461,8 +502,10 @@ class PendingWrites:
         id). A full build over those units gives the endpoint an entity
         citing them (every endpoint cites its edges' units), so one citing
         none is another entity of the key (a spelling of another type), not
-        the endpoint. An endpoint with none keeps its id. Those ``known``
-        are not returned (the delta holds them)."""
+        the endpoint. An endpoint with none keeps its id; no pipeline run is
+        known to reach that case, which breaks the same invariant (every
+        endpoint cites its edges' units). Those ``known`` are not returned
+        (the delta holds them)."""
         named: dict[str, str] = {}
         units: dict[str, set[str]] = defaultdict(set)
         for rel in noted:

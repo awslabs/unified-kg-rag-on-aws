@@ -1044,8 +1044,11 @@ From a `main` checkout (formats and keys no release had):
   small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, one whose
   endpoint a later removal re-keyed takes the stored spelling of its name its units state, and a noted
   claim derived again resolves its unit's statements against every stored spelling of their names (`Acme Inc` beside
-  `Acme`), as the full build does. See [incremental indexing](docs/guides/incremental.md) and [scopes and
-  namespaces](docs/concepts/scopes-and-namespaces.md).
+  `Acme`), as the full build does. A removal resolves the claims it derives against the noted entities too (a
+  rejected write of `Acme`): it pointed a claim about `Acme Corp` at an entity no store holds, and no later run
+  touched it again. The stored claims about a noted entity are derived again when its write is: one the commit
+  merged into another spelling kept a claim at its old id. See [incremental indexing](docs/guides/incremental.md)
+  and [scopes and namespaces](docs/concepts/scopes-and-namespaces.md).
 - Deletion guard: an incremental run that would delete more than `indexing.max_deletion_share` of a scope of 10 or
   more documents (seed shards and retired scopes not counted) stops at `document_loading` unless confirmed
   (`--confirm-deletions`, `UKR_CONFIRM_DELETIONS=1`, `--yes`, the prompt, or

@@ -93,9 +93,11 @@ unless noted.
    removal re-keyed it to another spelling) is the stored entity of its
    name's key that the edge's text units state (the one citing most of
    them; one citing none, a spelling of another type, is not it, as a full
-   build cites each endpoint's edges' units). The note is replaced by what
-   still fails, or
-   deleted. Recording the owners `FAILED` instead re-extracted every document
+   build cites each endpoint's edges' units). The noted entities are held as
+   stored ones are: a removal before the commit resolves the claims it
+   derives against them too, and the commit derives the stored claims about
+   them again (it may merge one into another spelling). The note is replaced
+   by what still fails, or deleted. Recording the owners `FAILED` instead re-extracted every document
    a hub entity cites, on every run its write kept failing. A note that cannot
    be written falls back to that.
 5. **Deletion propagation** (`IndexingManager.remove_text_units`). The stores

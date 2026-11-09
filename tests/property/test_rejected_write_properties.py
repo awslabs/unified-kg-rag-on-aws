@@ -123,13 +123,26 @@ def test_rejected_writes_are_written_by_the_next_run(
     assert harness.extracted == []
 
 
+# The run after the rejected one sees another corpus, or the same one with
+# one or two documents removed: a removal derives the stored items while the
+# rejected ones are still only noted.
+_mid_and_after = _corpus.flatmap(
+    lambda mid: st.tuples(
+        st.just(mid),
+        _corpus
+        | st.sets(st.sampled_from(_PATHS), min_size=1, max_size=2).map(
+            lambda gone: {p: c for p, c in mid.items() if p not in gone}
+        ),
+    )
+)
+
+
 @pytest.mark.slow
 @pytest.mark.timeout(600)
 @settings(max_examples=50, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     before=_corpus,
-    mid=_corpus,
-    after=_corpus,
+    corpora=_mid_and_after,
     where=st.sampled_from(_WRITES),
     salt=st.integers(0, 1000),
 )
@@ -139,17 +152,39 @@ def test_rejected_writes_are_written_by_the_next_run(
 # them ("endpoint entity not found").
 @example(
     before={},
-    mid={
-        "/corpus/a.txt": [[("Depot", "Acme Inc", 2), ("Acme Inc", "Depot", 1)]],
-        "/corpus/d.txt": [[("Buyer", "Acme", 1)]],
-    },
-    after={"/corpus/a.txt": [[("Depot", "Acme Inc", 2), ("Acme Inc", "Depot", 1)]]},
+    corpora=(
+        {
+            "/corpus/a.txt": [[("Depot", "Acme Inc", 2), ("Acme Inc", "Depot", 1)]],
+            "/corpus/d.txt": [[("Buyer", "Acme", 1)]],
+        },
+        {"/corpus/a.txt": [[("Depot", "Acme Inc", 2), ("Acme Inc", "Depot", 1)]]},
+    ),
     where="graph.upsert_entities",
     salt=150,
 )
+# The removal of b.txt derives the claim about "Acme Corp" while "Acme"
+# (a.txt) is only noted: resolved without it, the claim's object was "Acme
+# Corp", an entity no store holds, and no later run touched the claim.
+@example(
+    before={},
+    corpora=(
+        {
+            "/corpus/a.txt": [[("Depot", "Acme", 1)]],
+            "/corpus/b.txt": [[("Depot", "Buyer", 1), ("Buyer", "Acme Inc", 3)]],
+            "/corpus/c.txt": [[("Buyer", "Acme Corp", 3)]],
+        },
+        {
+            "/corpus/a.txt": [[("Depot", "Acme", 1)]],
+            "/corpus/c.txt": [[("Buyer", "Acme Corp", 3)]],
+        },
+    ),
+    where="graph.upsert_entities",
+    salt=10,
+)
 def test_writes_rejected_twice_are_written_by_the_next_run(
-    before: Corpus, mid: Corpus, after: Corpus, where: str, salt: int
+    before: Corpus, corpora: tuple[Corpus, Corpus], where: str, salt: int
 ) -> None:
+    mid, after = corpora
     config = Config()
     config.indexing.max_failure_rate = 0.9
     harness = IncrementalRun(FakeDocStatusStore(), config)

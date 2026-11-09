@@ -691,7 +691,10 @@ class NeptuneIndexer(GraphIndexer):
     def holds_any_relationship(self, suffix: str | None = None) -> bool:
         """Whether the label holds an edge between two of its vertices (see
         the port; an older build's MemberOf edges lead to communities): one
-        bounded read.
+        read that stops at the first such edge. A label without one (no
+        edge, or MemberOf edges only) has every vertex and its out-edges
+        walked: the worst case, paid only when a build record is rewritten
+        from the stores.
 
         Raises:
             AWSServiceError: The read failed.

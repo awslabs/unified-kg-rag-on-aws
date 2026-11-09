@@ -519,3 +519,69 @@ def test_a_noted_edge_the_delta_states_again_takes_its_endpoints(
 
     assert harness.state() == expected_state(after, harness.config)
     assert _note(harness) is None
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [("Acme", "Acme Inc", "Acme Corp"), ("(주)한빛", "주식회사 한빛", "한빛")],
+    ids=["en", "ko"],
+)
+def test_a_claim_derived_by_a_removal_resolves_against_the_noted_entities(
+    spellings: tuple[str, str, str],
+) -> None:
+    # The removal of b.txt derives the claim of c.txt about the third
+    # spelling. The first one, stated only in a.txt, is a noted write (its
+    # graph write was rejected): resolved without it, the claim's object
+    # was the third spelling, an entity no store holds, and no later run
+    # touched the claim again.
+    first, second, third = spellings
+    mid: Corpus = {
+        "/corpus/a.txt": [[(_D, first, 1)]],
+        "/corpus/b.txt": [[(_D, _B, 1), (_B, second, 3)]],
+        "/corpus/c.txt": [[(_B, third, 3)]],
+    }
+    after = {path: content for path, content in mid.items() if path != "/corpus/b.txt"}
+    (noted,) = [e.id for e in extract(mid).entities if e.name == first]
+    harness = _harness()
+    harness.run(mid, fail=_rejecting("graph.upsert_entities", noted))
+    assert _note(harness) is not None
+
+    harness.run(after)
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, harness.config)
+    entities = set(harness.graph.ids("entities"))
+    claims = harness.vector.data.get("claims", {}).values()
+    assert claims and all(c.object_id in entities for c in claims)
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [("Acme Inc", "Acme"), ("주식회사 한빛", "한빛"), ("株式会社ひかり", "ひかり")],
+    ids=["en", "ko", "ja"],
+)
+def test_a_stored_claim_follows_a_noted_entity_the_commit_merges(
+    spellings: tuple[str, str],
+) -> None:
+    # The two spellings are kept apart while a.txt types the first one
+    # otherwise; the second one's entity write is rejected, its claim's
+    # is not. Removing a.txt merges them: the commit folded the noted
+    # entity into the first one, and the stored claim kept its id.
+    first, second = spellings
+    mid: Corpus = {
+        "/corpus/a.txt": [[(_B, first, 2)]],
+        "/corpus/c.txt": [[(_D, first, 1), (_D, second, 3)], [(_D, first, 2)]],
+    }
+    after = {path: content for path, content in mid.items() if path != "/corpus/a.txt"}
+    (noted,) = [e.id for e in extract(mid).entities if e.name == second]
+    assert len(extract(after).entities) == 2
+    harness = _harness()
+    harness.run(mid, fail=_rejecting("graph.upsert_entities", noted))
+    assert _note(harness) is not None
+
+    harness.run(after)
+
+    assert harness.state() == expected_state(after, harness.config)
+    entities = set(harness.graph.ids("entities"))
+    claims = harness.vector.data.get("claims", {}).values()
+    assert claims and all(c.object_id in entities for c in claims)
