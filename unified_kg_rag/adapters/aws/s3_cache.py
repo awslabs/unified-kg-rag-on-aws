@@ -248,6 +248,29 @@ class S3CacheManager:
             )
         self._synced[local_path.resolve()] = state
 
+    def read_head(self, pipeline_id: str, relative_path: str, size: int) -> str | None:
+        """The first ``size`` bytes of the pipeline's uploaded file at
+        ``relative_path`` (one ranged GET), as text; ``None`` when there is
+        none or it cannot be read (logged at DEBUG: the caller writes the
+        file again)."""
+        s3_key = f"{self._get_base_prefix(pipeline_id)}/{relative_path}"
+        try:
+            response = self.s3_client.get_object(
+                Bucket=str(self.bucket_name), Key=s3_key, Range=f"bytes=0-{size - 1}"
+            )
+            head = response["Body"].read(size)
+        except (ClientError, BotoCoreError) as e:
+            logger.debug("No readable 's3://%s/%s': %s", self.bucket_name, s3_key, e)
+            return None
+        return head.decode("utf-8", errors="ignore")
+
+    def uri(self, pipeline_id: str, relative_path: str) -> str:
+        """Where the pipeline's file at ``relative_path`` is uploaded."""
+        return (
+            f"s3://{self.bucket_name}/{self._get_base_prefix(pipeline_id)}/"
+            f"{relative_path}"
+        )
+
     @staticmethod
     def _upload_order(local_cache_dir: Path) -> list[Path]:
         """The cache files, stage data first, then the cache index, then the

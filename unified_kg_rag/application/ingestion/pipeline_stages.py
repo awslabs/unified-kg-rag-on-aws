@@ -2976,6 +2976,11 @@ class IndexingStage(_RegistryStage):
             extraction_settings=settings,
             package_version=package_version,
             source_scopes=recorded_source_scopes(context, self.config.indexing.reset),
+            visualization_export_run=(
+                context.pipeline_id
+                if self.config.graph.visualization.export_data
+                else None
+            ),
         ).with_artifacts(artifacts)
         added = Counter(BaseIndexer.get_suffix(c) for c in communities)
         deleted = self.indexing_manager.deleted_communities

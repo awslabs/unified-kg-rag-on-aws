@@ -170,6 +170,16 @@ class IndexBuildRecord(BaseModel):
             "by an earlier version."
         ),
     )
+    visualization_export_run: str | None = Field(
+        default=None,
+        description=(
+            "The ingestion run that exports this build's visualization data "
+            "after it (graph.visualization.export_data), into its cache "
+            "directory unless outputs_directory is set: a later run that "
+            "writes nothing keeps that export, uploaded or local, instead of "
+            "writing it again. None when the run exports none."
+        ),
+    )
     community_change: CommunityChange | None = Field(
         default=None,
         exclude=True,

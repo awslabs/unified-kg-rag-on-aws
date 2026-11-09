@@ -81,10 +81,12 @@ from unified_kg_rag.application.ingestion.source_parsing import fingerprint_dige
 from unified_kg_rag.application.ingestion.summary_tree_stage import SummaryTreeStage
 from unified_kg_rag.application.observability import configure_observability
 from unified_kg_rag.application.storage.visualization_export import (
+    EXPORT_HEAD_BYTES,
     export_build_time,
+    export_head,
     export_namespace,
     newest_export,
-    stored_build_time,
+    stored_export,
     write_visualization_data,
 )
 from unified_kg_rag.domain.ingestion.cache_keys import (
@@ -2408,18 +2410,18 @@ class DataIngestionPipeline:
                 return True
         return False
 
-    def _visualization_path(self, context: PipelineContext) -> Path:
-        """Where ``visualization_data.json`` goes: ``graph.visualization.
-        outputs_directory``, else the pipeline's cache directory, which the
-        S3 cache sync uploads (a deployed task's local outputs are lost on
-        exit), else ``outputs/visualization``."""
+    def _visualization_path(self, pipeline_id: str) -> Path:
+        """Where the run ``pipeline_id`` writes ``visualization_data.json``:
+        ``graph.visualization.outputs_directory``, else the pipeline's cache
+        directory, which the S3 cache sync uploads (a deployed task's local
+        outputs are lost on exit), else ``outputs/visualization``."""
         configured = self.config.graph.visualization.outputs_directory
         if configured:
             directory = Path(configured)
         elif self.pipeline_config.local_directory:
             directory = (
                 Path(self.pipeline_config.local_directory)
-                / context.pipeline_id
+                / pipeline_id
                 / "visualization"
             )
         else:
@@ -2440,7 +2442,7 @@ class DataIngestionPipeline:
         if PipelineStageType.INDEXING.value not in self._executed_stages:
             return
         suffix = resolve_namespace(self.config, None)
-        path = self._visualization_path(context)
+        path = self._visualization_path(context.pipeline_id)
         try:
             current = self._current_export(context, suffix, path)
             if current is not None:
@@ -2449,7 +2451,7 @@ class DataIngestionPipeline:
                     "(this run wrote nothing)",
                     current,
                 )
-                context.visualization_data_path = str(current)
+                context.visualization_data_path = current
                 return
             counts = write_visualization_data(self.providers, suffix, path)
         except Exception as e:  # noqa: BLE001 - the export is optional
@@ -2469,13 +2471,15 @@ class DataIngestionPipeline:
 
     def _current_export(
         self, context: PipelineContext, suffix: str, path: Path
-    ) -> Path | None:
-        """An export that shows what the stores of ``suffix`` hold, when the
+    ) -> str | None:
+        """Where an export shows what the stores of ``suffix`` hold, when the
         run's indexing stage wrote, deleted and re-annotated nothing: the
-        one at ``path``, else the newest of the namespace where ingestion
-        writes them (a run under a new pipeline id has a new ``path``), if
-        it names the build the namespace's record names (another run may
-        have written it since)."""
+        one at ``path``, else the one of the run the build record names
+        (``visualization_export_run``: a run under a new pipeline id has a
+        new ``path``), on this disk or uploaded by the S3 cache sync (a
+        deployed task starts with an empty disk), else the newest of the
+        namespace where ingestion writes them; one that names the build the
+        namespace's record names (another run may have written it since)."""
         indexing = next(
             (
                 r
@@ -2494,23 +2498,50 @@ class DataIngestionPipeline:
             )
         ):
             return None
-        if not path.is_file() or export_namespace(path) != suffix:
-            configured = self.config.graph.visualization.outputs_directory
-            local = self.pipeline_config.local_directory
-            found = newest_export(
-                [
-                    Path(configured) if configured else Path(DEFAULT_OUTPUTS_DIRECTORY),
-                    *([Path(local)] if local else []),
-                ],
-                suffix,
-            )
-            if found is None:
-                return None
-            path = found
-        built_at = export_build_time(path)
-        if built_at is None or built_at != stored_build_time(self.providers, suffix):
+        built_at, run = stored_export(self.providers, suffix)
+        if built_at is None:
             return None
-        return path
+
+        def shows_the_stores(candidate: Path) -> bool:
+            return (
+                candidate.is_file()
+                and export_namespace(candidate) == suffix
+                and export_build_time(candidate) == built_at
+            )
+
+        recorded = self._visualization_path(run) if run else None
+        for candidate in (path, recorded):
+            if candidate is not None and shows_the_stores(candidate):
+                return str(candidate)
+        sync = self.s3_cache_manager
+        uploaded = self._uploaded_export(run) if run else None
+        if sync is not None and run and uploaded:
+            head = sync.read_head(run, uploaded, EXPORT_HEAD_BYTES)
+            if head is not None and export_head(head) == (suffix, built_at):
+                return sync.uri(run, uploaded)
+        configured = self.config.graph.visualization.outputs_directory
+        local = self.pipeline_config.local_directory
+        found = newest_export(
+            [
+                Path(configured) if configured else Path(DEFAULT_OUTPUTS_DIRECTORY),
+                *([Path(local)] if local else []),
+            ],
+            suffix,
+        )
+        return str(found) if found is not None and shows_the_stores(found) else None
+
+    def _uploaded_export(self, pipeline_id: str) -> str | None:
+        """The path, in its cache directory, of the export the run
+        ``pipeline_id`` uploaded with the S3 cache sync (``None`` when the
+        sync is off or its export is written elsewhere)."""
+        if not (self.pipeline_config.s3_sync_enabled and self.s3_cache_manager):
+            return None
+        path = self._visualization_path(pipeline_id)
+        cache_dir = self.cache_manager.get_pipeline_cache_dir(pipeline_id)
+        try:
+            return path.resolve().relative_to(cache_dir.resolve()).as_posix()
+        except ValueError:
+            return None
 
     def _upload_export(self, pipeline_id: str, path: Path) -> None:
         """Upload an export written into the pipeline's cache directory

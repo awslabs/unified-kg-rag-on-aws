@@ -153,6 +153,14 @@ class CheckpointSync(Protocol):
         self, pipeline_id: str, local_cache_dir: Path
     ) -> None: ...
 
+    def read_head(self, pipeline_id: str, relative_path: str, size: int) -> str | None:
+        """The first ``size`` bytes of a file uploaded from the pipeline's
+        cache directory (``relative_path`` in it), ``None`` without one; does
+        not raise."""
+
+    def uri(self, pipeline_id: str, relative_path: str) -> str:
+        """Where that file is uploaded."""
+
 
 def build_checkpoint_sync(
     config: Config, pipeline_config: PipelineConfig, providers: Providers

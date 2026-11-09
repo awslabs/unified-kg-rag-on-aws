@@ -169,7 +169,7 @@ def test_the_export_goes_where_the_config_says(
     config = Config()
     config.graph.visualization.outputs_directory = configured
     pipeline = _pipeline(config, set(), Path(cache) if cache else None)
-    path = pipeline._visualization_path(SimpleNamespace(pipeline_id="pid"))
+    path = pipeline._visualization_path("pid")
     assert path == Path(expected) / "visualization_data.json"
 
 

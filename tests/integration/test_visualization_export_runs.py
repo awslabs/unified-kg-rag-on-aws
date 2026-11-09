@@ -12,6 +12,7 @@ stores hold.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -171,3 +172,89 @@ def test_a_run_under_a_new_pipeline_id_keeps_the_current_export(
     assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
     assert exports == [first]
     assert context.visualization_data_path == str(first)
+
+
+class _Bucket:
+    """The S3 cache sync over a directory: ``<root>/<pipeline id>/<path>``."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def upload_file(self, pipeline_id: str, cache_dir: Path, path: Path) -> None:
+        target = self.root / pipeline_id / path.relative_to(cache_dir)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+
+    def sync_pipeline_to_s3(self, pipeline_id: str, cache_dir: Path) -> None:
+        for path in cache_dir.rglob("*.json"):
+            self.upload_file(pipeline_id, cache_dir, path)
+
+    def sync_pipeline_from_s3(self, pipeline_id: str, cache_dir: Path) -> None:
+        source = self.root / pipeline_id
+        if source.is_dir():
+            shutil.copytree(source, cache_dir, dirs_exist_ok=True)
+
+    def read_head(self, pipeline_id: str, relative_path: str, size: int) -> str | None:
+        path = self.root / pipeline_id / relative_path
+        if not path.is_file():
+            return None
+        with path.open("r", encoding="utf-8") as handle:
+            return handle.read(size)
+
+    def uri(self, pipeline_id: str, relative_path: str) -> str:
+        return f"s3://bucket/{pipeline_id}/{relative_path}"
+
+
+@pytest.mark.parametrize("uploaded", [True, False], ids=["uploaded", "lost"])
+def test_a_new_task_on_an_empty_disk_keeps_the_uploaded_export(
+    tmp_path: Path, mocker, uploaded: bool
+) -> None:
+    # A deployed task: a new pipeline id each run, an empty disk, the cache
+    # synced to S3. The build record names the run whose upload shows the
+    # stores, so a run that writes nothing finds it there (17 s and a 59 MB
+    # upload at 10k text units); an upload that is gone is written again.
+    config, providers, source = _setup(tmp_path)
+    config.graph.visualization.outputs_directory = None
+    exports = _exports(mocker)
+    bucket = _Bucket(tmp_path / "bucket")
+
+    def ingest(pipeline_id: str):  # noqa: ANN202
+        cache = tmp_path / "disk" / pipeline_id
+        pipeline = DataIngestionPipeline(
+            config,
+            PipelineConfig(
+                stages_enabled=dict.fromkeys(PipelineStageType, True),
+                local_directory=cache,
+            ),
+            source_directory=source,
+            providers=providers,
+        )
+        pipeline.pipeline_config.s3_sync_enabled = True
+        pipeline.s3_cache_manager = bucket
+        for stage in pipeline.stages:
+            if isinstance(stage, ps.GraphResolutionStage):
+                stage.resolver.entity_resolver.use_process_pool = False
+                stage.resolver.relationship_resolver.use_process_pool = False
+        try:
+            return pipeline.run(source, pipeline_id=pipeline_id)
+        finally:
+            pipeline.close()
+
+    ingest("first")
+    relative = Path("visualization") / VISUALIZATION_DATA_FILENAME
+    assert (bucket.root / "first" / relative).is_file()
+    assert len(exports) == 1
+    if not uploaded:
+        (bucket.root / "first" / relative).unlink()
+
+    context = ingest("second")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    if uploaded:
+        assert len(exports) == 1
+        assert context.visualization_data_path == (
+            f"s3://bucket/first/{relative.as_posix()}"
+        )
+    else:
+        assert len(exports) == 2
+        assert (bucket.root / "second" / relative).is_file()
