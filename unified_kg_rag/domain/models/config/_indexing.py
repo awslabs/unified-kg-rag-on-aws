@@ -311,8 +311,9 @@ class OpenSearchIndexingConfig(BaseModel):
             "OpenSearch Service domain has it only once its optional package "
             "is associated (the CDK stack maps ko to cjk). An index keeps the "
             "analyzers it was created with, so a change needs indexing.reset; "
-            "unset, a field built with default_analyzer before the default "
-            "map named its language keeps it (one WARNING). "
+            "a field built with default_analyzer before the default map named "
+            "its language keeps it while the map gives that language the "
+            "default's analyzer (one WARNING). "
             "Setting the key replaces the whole map."
         ),
     )

@@ -386,3 +386,83 @@ def test_a_failed_set_value_request_fails_its_vertex_only(indexer, mocker) -> No
     assert (stats.successful_items, stats.failed_items) == (1, 1)
     assert stats.failed_ids == ["hub"]
     assert len(requests) == 2
+
+
+class _VertexModel:
+    """One stored vertex, changed by the requests the write sends as Neptune
+    would apply them (each request whole), so a test can stop the write
+    after any request and read what a reader, or the next run, would."""
+
+    def __init__(self, stored: dict[str, list]) -> None:
+        self.props = {key: list(values) for key, values in stored.items()}
+
+    def apply(self, steps: list, op: str) -> list:
+        names = [name for name, _ in steps]
+        if op == "Reading vertex property values":
+            (key,) = next(args for name, args in steps if name == "values")
+            return list(self.props.get(key, []))
+        if "hasValue" in names:  # dropping stale values
+            (key,) = next(args for name, args in steps if name == "properties")
+            (within,) = next(args for name, args in steps if name == "hasValue")
+            self.props[key] = [v for v in self.props[key] if v not in within.value]
+            return []
+        for name, args in steps:
+            if name == "sideEffect":  # the write's drop of stored properties
+                kept = {
+                    str(step[1].value)
+                    for step in args[0].bytecode.step_instructions
+                    if step[0] == "hasKey"
+                }
+                self.props = {k: v for k, v in self.props.items() if k in kept}
+            elif name == "property" and len(args) == 3:
+                values = self.props.setdefault(args[1], [])
+                if args[2] not in values:
+                    values.append(args[2])
+        return ["v"]
+
+
+@pytest.mark.parametrize("kill_at", [*range(1, 7), None])
+def test_an_interrupted_hub_write_never_stores_part_of_a_set(
+    indexer, mocker, kill_at: int | None
+) -> None:
+    # Regression: the first request dropped the stored text_unit_ids and wrote
+    # 1,000 of the new ones; a run killed before the follow-ups left the hub
+    # with those 1,000 for good (the next run merges with the stored vertex).
+    # Now every request until the last only adds, so at any stop the vertex
+    # holds the old set or the new one in full, and the finished write the
+    # new one exactly.
+    from unified_kg_rag.domain.models import Entity
+
+    old = [f"t{i:05d}" for i in range(2_200)]
+    new = [f"t{i:05d}" for i in range(1_100, 3_400)] + ["t-new"]
+    vertex = _VertexModel({"text_unit_ids": old})
+
+    class _Killed(BaseException):
+        pass
+
+    sent = {"n": 0}
+
+    def execute(
+        build, op, *, results=False, fenced=True, exhausted_level=None
+    ):  # noqa: ANN001, ANN202
+        sent["n"] += 1
+        if sent["n"] == kill_at:
+            raise _Killed
+        steps: list = []
+        build(RecordingTraversal(steps, with_args=True))
+        out = vertex.apply(steps, op)
+        return out if results else []
+
+    mocker.patch.object(indexer, "_execute_with_retries", side_effect=execute)
+    entity = Entity(id="hub", name="Hub", text_unit_ids=new)
+    try:
+        stats = indexer.upsert_entities([entity])
+    except _Killed:
+        stored = set(vertex.props.get("text_unit_ids", []))
+        assert stored >= set(old) or stored >= set(new)
+        return
+    assert kill_at is None
+    # Three adds, the read, two drops of the 1,100 stale values.
+    assert sent["n"] == 6
+    assert (stats.successful_items, stats.failed_items) == (1, 0)
+    assert vertex.props["text_unit_ids"] == new

@@ -37,6 +37,7 @@ from unified_kg_rag.domain.ingestion.merge import (
     remove_claim_text_units,
     remove_text_units,
 )
+from unified_kg_rag.domain.ingestion.names import compact_name_key
 from unified_kg_rag.domain.models import (
     Claim,
     Community,
@@ -127,6 +128,24 @@ def _join(
     return [*joined, *by_id.values()]
 
 
+def _with_endpoints(
+    rels: Sequence[Relationship], moved: Mapping[str, tuple[str, str | None]]
+) -> list[Relationship]:
+    """``rels`` with each endpoint in ``moved`` replaced by its ``(id,
+    name)``."""
+    if not moved:
+        return list(rels)
+    out = []
+    for rel in rels:
+        update: dict[str, Any] = {}
+        if rel.source_id in moved:
+            update["source_id"], update["source_name"] = moved[rel.source_id]
+        if rel.target_id in moved:
+            update["target_id"], update["target_name"] = moved[rel.target_id]
+        out.append(rel.model_copy(update=update) if update else rel)
+    return out
+
+
 def _repointed(
     noted: Sequence[Relationship], delta: Sequence[Relationship]
 ) -> list[Relationship]:
@@ -151,17 +170,7 @@ def _repointed(
         ):
             if old != new:
                 ends.setdefault(old, (new, name))
-    if not ends:
-        return list(noted)
-    repointed = []
-    for rel in noted:
-        update: dict[str, Any] = {}
-        if rel.source_id in ends:
-            update["source_id"], update["source_name"] = ends[rel.source_id]
-        if rel.target_id in ends:
-            update["target_id"], update["target_name"] = ends[rel.target_id]
-        repointed.append(rel.model_copy(update=update) if update else rel)
-    return repointed
+    return _with_endpoints(noted, ends)
 
 
 def _merged_entity(noted: Entity, delta: Entity) -> Entity:
@@ -393,7 +402,11 @@ class PendingWrites:
         delta's are, so the ranks of their stored edges follow its degree:
         one neither the delta nor the note holds is read from the graph,
         after the noted edges took the endpoints the delta resolves
-        (:func:`_repointed`)."""
+        (:func:`_repointed`). An endpoint the graph no longer holds (a
+        removal re-keyed it to another spelling since the note) is pointed
+        at the stored entity of its name's key that the edge's text units
+        state (:meth:`_respelled`); the derivation then draws the edge as a
+        full build over those units does."""
         noted.relationships = _repointed(noted.relationships, relationships or [])
         known = {e.id for e in [*(entities or []), *noted.entities]}
         ends: dict[str, set[str]] = defaultdict(set)
@@ -402,11 +415,17 @@ class PendingWrites:
                 if end not in known:
                     ends[BaseIndexer.get_suffix(rel)].add(end)
         for suffix, ids in sorted(ends.items()):
+            stored = self._m.graph_indexer.read_entities(sorted(ids), suffix=suffix)
+            gone = ids - {e.id for e in stored}
+            if gone:
+                respelled, moved = self._respelled(
+                    suffix, gone, noted.relationships, known | ids
+                )
+                stored += respelled
+                noted.relationships = _with_endpoints(noted.relationships, moved)
             noted.entities.extend(
                 self._m._with_full_descriptions(
-                    self._m.graph_indexer.read_entities(sorted(ids), suffix=suffix),
-                    self._m.vector_indexer.read_entity_descriptions,
-                    suffix,
+                    stored, self._m.vector_indexer.read_entity_descriptions, suffix
                 )
             )
         for item in [*noted.entities, *noted.relationships]:
@@ -427,6 +446,55 @@ class PendingWrites:
             _join(communities, noted.communities, _delta_wins),
             _join(community_reports, noted.community_reports, _delta_wins),
         )
+
+    def _respelled(
+        self,
+        suffix: str,
+        gone: set[str],
+        noted: Sequence[Relationship],
+        known: Collection[str],
+    ) -> tuple[list[Entity], dict[str, tuple[str, str | None]]]:
+        """The stored entities the ``gone`` endpoints of the ``noted`` edges
+        now are, and ``{gone id: (stored id, name)}``: of the stored entities
+        whose ``compact_name_key`` is the endpoint name's, the one sharing
+        the most text units with its edges (then the first id). An endpoint
+        with none keeps its id. Those ``known`` are not returned (the delta
+        holds them)."""
+        named: dict[str, str] = {}
+        units: dict[str, set[str]] = defaultdict(set)
+        for rel in noted:
+            for end, name in (
+                (rel.source_id, rel.source_name),
+                (rel.target_id, rel.target_name),
+            ):
+                if end in gone and name:
+                    named.setdefault(end, compact_name_key(name))
+                    units[end].update(rel.text_unit_ids or [])
+        keys = sorted(set(named.values()))
+        if not keys:
+            return [], {}
+        graph = self._m.graph_indexer
+        ids = graph.find_entity_ids_by_name_key(keys, suffix)
+        if ids is None:
+            ids = [
+                i
+                for i, name in graph.read_entity_names(suffix)
+                if compact_name_key(name) in keys
+            ]
+        candidates = graph.read_entities(sorted(set(ids)), suffix=suffix) if ids else []
+        moved: dict[str, tuple[str, str | None]] = {}
+        chosen: dict[str, Entity] = {}
+        for end, key in sorted(named.items()):
+            spelled = [e for e in candidates if compact_name_key(e.name) == key]
+            if not spelled:
+                continue
+            best = min(
+                spelled,
+                key=lambda e: (-len(units[end] & set(e.text_unit_ids or [])), e.id),
+            )
+            moved[end] = (best.id, best.name)
+            chosen[best.id] = best
+        return [e for i, e in sorted(chosen.items()) if i not in known], moved
 
     def note(
         self, results: Mapping[str, IndexingStats], written: Iterable[Any]

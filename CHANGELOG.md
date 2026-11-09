@@ -136,8 +136,9 @@ stored is read again: follow *Upgrading* in order.
 - Visualization: ingestion only writes `visualization_data.json` (`graph.visualization.export_data`, default
   `true`), at the end of every run that indexed, from the namespace's stores once the run gave up the namespace's
   lease, and prints its path; a run that wrote nothing keeps an export naming the build the stores hold (`built_at`),
-  local or uploaded by the S3 cache sync from the run the build record names (`visualization_export_run`), so a
-  no-change run at 10k text units, a deployed task's on an empty disk too, no longer rewrites a 59 MB file;
+  local or uploaded by the S3 cache sync from the run the build record names (`visualization_export_run`; one that
+  cannot be read is written again), so a no-change run at 10k text units, a deployed task's on an empty disk too,
+  no longer rewrites a 59 MB file;
   `run-visualization` renders it (without `--data-path` the newest export, of `--suffix`'s namespace when given)
   with a seeded spring layout, and the embedding layouts (UMAP, t-SNE, PCA) are gone.
   `graph.visualization.interactive` and `static` are typed sections: a misspelled setting is an unknown key (#344,
@@ -482,9 +483,10 @@ From a `main` checkout (formats and keys no release had):
 - Analyzers: a namespace indexed in a language before the default `language_analyzers` named it (`de`, `es`, `fr`,
   `it`, `ja`, `pt`, `ru` and `zh` before #574; `nl`, `sv`, `tr` and the other built-in analyzers before #671) keeps
   the `default_analyzer` its fields were built with, one WARNING per run naming them, until one `indexing.reset: true`
-  run gives them the language's stemming and stop words. With `language_analyzers` set, a field built otherwise stops
-  the run before any model call (exit 2, `was built for other language settings`): reset, or set the map to what the
-  fields hold.
+  run gives them the language's stemming and stop words, also with `language_analyzers` set (as the CDK stack sets
+  `ko`) while it gives the language the default's analyzer. A language it gives another analyzer than its fields
+  hold stops the run before any model call (exit 2, `was built for other language settings`): reset, or set the map
+  to what the fields hold.
 - #574 legal forms: entity `name_key` follows the larger table; reset with a new or no `--pipeline-id` to merge
   designator variants, or entities stored apart stay apart.
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored
@@ -971,7 +973,8 @@ From a `main` checkout (formats and keys no release had):
   records its documents, so a first build or reset killed between the two leaves it (the next run found nothing to
   index and wrote none, and queries took the namespace to hold what the config builds). A record any index rejected
   is written again once the documents are recorded, and a run with nothing to index writes a missing one: a full
-  record naming only the artifacts the stores hold, the documents the registry records and community counters from
+  record naming only the artifacts the stores hold (claims and relationship vectors with the text units and graph:
+  a corpus stating none leaves them empty), the documents the registry records and community counters from
   the stored reports (a WARNING says what queries assume until one is written; the run result's `build_record` and
   `run-describe` say whether one is stored). With
   `graph.community_detection.report_generation.enabled: false` a run builds no reports, so an incremental run no
@@ -1034,7 +1037,8 @@ From a `main` checkout (formats and keys no release had):
   touches, so a hub whose write keeps failing holds back only the re-keys at it (a note keeps only the old ids still
   stored), and a suffix whose stored reports could not be pointed at the new ids keeps its old ids until a later run
   does both. A note over 1 MiB is split into parts, each its own record, under a store's request limit (10 MiB on
-  small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, and a noted
+  small OpenSearch instances). A noted edge the delta states again takes the endpoints the delta resolves, one whose
+  endpoint a later removal re-keyed takes the stored spelling of its name its units state, and a noted
   claim derived again resolves its unit's statements against every stored spelling of their names (`Acme Inc` beside
   `Acme`), as the full build does. See [incremental indexing](docs/guides/incremental.md) and [scopes and
   namespaces](docs/concepts/scopes-and-namespaces.md).
@@ -1786,7 +1790,8 @@ Ingestion and incremental indexing.
   vertex id (property-mode ids read in one request per batch), so its cost no longer grows with the vertex count of
   every tenant on the cluster (1.5 s an edge at 21k vertices) (#626). A vertex's multi-valued property is written
   1,000 values a request (a hub's 5,000 text units failed with `QueryTooLargeException` under load), and that error
-  is no longer retried as it stands.
+  is no longer retried as it stands. Such a set's stored values are dropped only after every new value is added, so
+  a run killed in between leaves the old values beside the new ones, never part of the set.
 - A store error while preparing or clearing fails the stage, a lost create or delete response no longer fails a
   build, a failed delete batch counts every id, bulk errors name their cause, and indexing memory no longer grows
   with the corpus (#252, #265, #294, #431, #432, #440).
