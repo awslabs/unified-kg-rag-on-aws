@@ -25,13 +25,14 @@ from __future__ import annotations
 import functools
 import hashlib
 from collections.abc import Callable, Iterable
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeVar
 
 from tests.fixtures.doc_status_records import all_records
 from tests.fixtures.fakes.doc_status import FakeDocStatusStore
 from tests.fixtures.fakes.stores import FakeGraphStore, FakeVectorStore
 from tests.fixtures.seed_graphs import seed_shard_extraction
 from unified_kg_rag.adapters.ingestion.claim_extractor import ClaimExtractor
+from unified_kg_rag.adapters.storage.neptune_codec import property_value
 from unified_kg_rag.application.ingestion.incremental import (
     IncrementalIndexer,
     build_document_lineage,
@@ -83,6 +84,8 @@ Content = list[list[tuple[str, str, int]]]
 Corpus = dict[str, Content | Document]
 
 _TYPE = "RELATED_TO"
+
+_Item = TypeVar("_Item", Entity, Relationship)
 
 # The statuses a unit's claims state, picked by the unit (``_claim_status``):
 # units of one claim disagree, so a build holds true, false, disputed and
@@ -336,6 +339,14 @@ def expected_state(corpus: Corpus, config: Config | None = None) -> dict[str, An
     :meth:`IncrementalRun.state`)."""
     built = extract(corpus, config)
     entity_units = {e.id: frozenset(e.text_unit_ids or []) for e in built.entities}
+    # The graph store cuts a long property (a hub's description, with the
+    # summaries off) as Neptune's codec does; the vector store keeps it.
+    max_length = (config or Config()).indexing.neptune.property_max_length
+
+    def graph_copy(item: _Item) -> _Item:
+        cut = property_value(item.description, max_length)
+        return item.model_copy(update={"description": cut})
+
     # The indexing annotates an item's source kinds from its text units.
     provenance = _provenance(built.entities, built.relationships, annotate_sources)
     return {
@@ -349,8 +360,8 @@ def expected_state(corpus: Corpus, config: Config | None = None) -> dict[str, An
         "vector_entities": entity_units,
         "vector_relationships": {r.id for r in built.relationships},
         "vector_text_units": {u.id for u in built.units},
-        "entity_content": {e.id: entity_state(e) for e in built.entities},
-        "edge_content": {r.id: edge_state(r) for r in built.relationships},
+        "entity_content": {e.id: entity_state(graph_copy(e)) for e in built.entities},
+        "edge_content": {r.id: edge_state(graph_copy(r)) for r in built.relationships},
         "vector_entity_content": {e.id: entity_state(e) for e in built.entities},
         "claims": {c.id: claim_state(c) for c in built.claims},
     }
