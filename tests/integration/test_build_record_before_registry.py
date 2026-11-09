@@ -241,6 +241,35 @@ def test_a_rewritten_record_is_the_full_build_later_records_carry(
 
 
 @pytest.mark.usefixtures("no_aws")
+def test_a_rewritten_record_keeps_the_claims_a_build_found_none_of(
+    tmp_path: Path, mocker
+) -> None:
+    # Claim extraction on, a corpus stating no claim: no claims index. The
+    # rewritten record left claims out, so the next delta rebuilt the whole
+    # namespace for them (3 documents processed instead of 1).
+    config, providers, source = _setup(tmp_path)
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    config.processing.claim_extraction.enabled = True
+    _failing_record_writes(mocker, attempts=1000)
+    e2e._ingest(config, providers, source, tmp_path / "run-1")
+    mocker.stopall()
+    e2e._ingest(config, providers, source, tmp_path / "run-2")
+    rewritten = _record(config, providers)
+    assert rewritten is not None
+    assert {"claims", "relationship_vectors"} <= set(rewritten["artifacts"])
+    (source / "carrier.txt").write_text("Carrier ships widgets for Depot.")
+
+    context = e2e._ingest(config, providers, source, tmp_path / "run-3")
+
+    assert context.status is PipelineStageStatus.COMPLETED, e2e._errors(context)
+    assert context.incremental_delta is not None
+    assert len(context.incremental_delta.to_process) == 1
+    record = _record(config, providers)
+    assert record is not None
+    assert (record["mode"], record["documents"]) == ("incremental", 1)
+
+
+@pytest.mark.usefixtures("no_aws")
 def test_a_record_one_index_rejected_is_written_again_in_the_run(
     tmp_path: Path, mocker
 ) -> None:

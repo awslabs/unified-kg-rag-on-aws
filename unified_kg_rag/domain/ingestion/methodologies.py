@@ -304,12 +304,21 @@ def stored_artifacts_shown(
     ``tree`` whether the summary tree's record is stored. Communities are
     held with their reports; where the config builds no reports, the
     stores cannot tell, so they are held with the graph.
+
+    An index is held when it holds a document, except claims and
+    relationship vectors beside held text units and graph: a build that
+    made them leaves them empty (or uncreated) for a corpus stating no claim
+    or relationship, as a build without them, so their emptiness tells
+    nothing apart. Taking them for missing rebuilds the namespace (or
+    refuses LightRAG); taking them for held costs a query an empty index.
     """
     building = artifacts_to_build(config)
     held = {a for a, kind in ARTIFACT_KINDS.items() if documents.get(kind)}
     graph = graph_holds is not False and bool(building & GRAPH_STORE_ARTIFACTS)
     if graph:
         held |= {_A.GRAPH, _A.RELATIONSHIPS}
+        if _A.TEXT_UNITS in held:
+            held |= {_A.CLAIMS, _A.RELATIONSHIP_VECTORS}
     if _A.COMMUNITY_REPORTS in held or (graph and _A.COMMUNITY_REPORTS not in building):
         held.add(_A.COMMUNITIES)
     if tree:

@@ -134,7 +134,9 @@ unless noted.
    the registry write, and a run with nothing to index writes the record
    when the configured suffix has none: a full record of the build the
    stores hold, naming the artifacts they show (a non-empty index, a graph
-   item, the tree's record) that the config builds, the documents the
+   item, the tree's record; claims and relationship vectors with held text
+   units and graph, which a corpus stating none leaves empty) that the
+   config builds, the documents the
    registry records and community counters started from the stored
    reports; later incremental records carry it as their `full_build`.
    `failure_count` counts

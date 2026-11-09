@@ -1255,7 +1255,7 @@ def test_stored_artifacts_shown_names_only_what_the_stores_hold() -> None:
     with_reports = {**lightrag_build, "community_reports": 1, "claims": None}
     shown = mp.stored_artifacts_shown(config, with_reports, graph_holds=True, tree=True)
     assert {IndexArtifact.COMMUNITIES, IndexArtifact.COMMUNITY_REPORTS} <= shown
-    # Neither the tree (raptor is not selected) nor the empty claims index.
+    # Neither the tree (raptor is not selected) nor claims (not extracted).
     assert not {IndexArtifact.SUMMARY_TREE, IndexArtifact.CLAIMS} & shown
     # An empty graph holds no graph artifact; one that cannot tell, the
     # config's.
@@ -1270,3 +1270,29 @@ def test_stored_artifacts_shown_names_only_what_the_stores_hold() -> None:
     assert IndexArtifact.COMMUNITIES in mp.stored_artifacts_shown(
         config, lightrag_build, graph_holds=True, tree=False
     )
+
+
+def test_stored_artifacts_shown_holds_the_empty_artifacts_of_a_held_graph() -> None:
+    # Regression: a corpus that states no claim, or no relationship, leaves
+    # its claims or relationship index empty (or not created) after a build
+    # that made them; the rewritten record left them out, so the next run
+    # rebuilt the namespace for them, or refused its LightRAG queries. Beside
+    # held text units and graph, their emptiness tells nothing apart.
+    config = Config()
+    config.indexing.methodologies = [Methodology.GRAPHRAG, Methodology.LIGHTRAG]
+    config.processing.claim_extraction.enabled = True
+    empty = {"text_units": 3, "entities": 4, "relationships": 0, "claims": None}
+    shown = mp.stored_artifacts_shown(config, empty, graph_holds=True, tree=False)
+    assert {IndexArtifact.CLAIMS, IndexArtifact.RELATIONSHIP_VECTORS} <= shown
+    assert Methodology.LIGHTRAG in methodologies_holding(shown)
+    # Not what the config does not build, nor without the text units or graph.
+    config.processing.claim_extraction.enabled = False
+    assert IndexArtifact.CLAIMS not in mp.stored_artifacts_shown(
+        config, empty, graph_holds=True, tree=False
+    )
+    config.processing.claim_extraction.enabled = True
+    for documents, graph in (({**empty, "text_units": 0}, True), (empty, False)):
+        shown = mp.stored_artifacts_shown(
+            config, documents, graph_holds=graph, tree=False
+        )
+        assert not {IndexArtifact.CLAIMS, IndexArtifact.RELATIONSHIP_VECTORS} & shown
