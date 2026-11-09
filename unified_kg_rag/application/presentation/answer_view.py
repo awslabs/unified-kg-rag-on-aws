@@ -89,7 +89,7 @@ class QueryOutcome(BaseModel):
             error_class=(
                 error_class_of(metadata.get(ERROR_CLASS_KEY)).value if error else None
             ),
-            error_type=_text(metadata.get("error_type")),
+            error_type=_text(metadata.get("error_type")) if error else None,
             error_message=str(message) if error and message else None,
         )
 

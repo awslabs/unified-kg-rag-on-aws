@@ -330,3 +330,12 @@ def test_the_outcome_carries_the_error_answers_type_and_message() -> None:
     # No error answer: no message, whatever the search metadata holds.
     output.metadata = {}
     assert QueryOutcome.of_output(output).error_message is None
+
+
+def test_an_answer_without_an_error_reports_no_error_type() -> None:
+    # Low (rv10 query): error_type was read without the error flag.
+    outcome = QueryOutcome.of({"error_type": "ValueError"})
+    assert outcome.error_type is None
+    assert QueryOutcome.of({"error": True, "error_type": "ValueError"}).error_type == (
+        "ValueError"
+    )
