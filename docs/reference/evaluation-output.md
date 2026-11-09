@@ -692,46 +692,42 @@ list, top level or under `metadata`, which wins), taking the maximum.
   match `airport附近` nor `2` `12年`); next to Hangul the Korean rules
   above decide.
 - **Structured golds.** An item's `metadata.answer_type` changes how
-  `answer_contains` reads it: `number` compares the first number the
-  answer (its extracted span, with `extracted`) states, in digits, English
-  words, a Korean native numeral before a counter (`세 곳`, `열두 개사`;
-  `없습니다` is 0) or a Han or Sino-Korean numeral with its multipliers
-  before one (`三社`, `十二台`, `一万二千台`, `만 이천 대`; digits a
-  multiplier scales need none: `1만 2천`, `3万`), with the gold's
-  number, so `Three vendors ... Two of them ...` is 3 and does not match
-  the gold 2. Numbers that count nothing are skipped: list enumerators
-  (`1. Acme`), citation markers (`[2]`), years (`as of 2024`, `2024년`,
-  `2024年`, and before a range particle, `2019부터`, `从2019到现在`, unless
-  the range ends on a four-digit count: `1500から2000社` is 1500), ordinals (`두 번째`, `三つ目`, `第三`), a negated number
-  (`not one but three`, `一つではなく`, `不是一家`, `한 곳이 아니라`), the
-  whole of a partitive (`Of the three vendors, only one`, `三家中只有一家`,
-  `세 곳 중 한 곳`, `三社のうち一社` are 1), and
-  `no` answering a yes/no question or before `single`, `more` and the like;
-  `not ... any`, `not one`, `not a single`, `한 곳도`, `一社も`, `一家也`,
-  `没有` and `いません`/`ありません` (not `問題ありません` or `ではありません`)
-  are 0, and so is a language's phrase of absence (`no hay`) that no
-  comparative directly follows (`No hay más de tres` is 3) and no count
-  follows after a clause break in its sentence: a comma, a colon or a dash
-  not between two numbers (`1,000`, `10:30`, `3–5`, `lotes 2, 3 y 4` break
-  nothing), or a clause conjunction no comparative follows (`No hay duda de
-  que son tres` is 3; `more than 100 but fewer than 500` is one
-  condition). A number in the absent thing's own clause after the phrase
-  is no count (`No hay proveedores en el lote 7`, `There are not any
-  vendors with more than 100 employees` are 0), nor is one before it that
-  follows a comparative (`Поставщиков с более чем 50 сотрудниками нет`).
-  The item's question decides the rest: a number the question states is a
-  condition, not a count, wherever the answer otherwise reads an absence
-  (`En el lote 7 no hay proveedores` asked `¿Cuántos proveedores hay en el
-  lote 7?`, `従業員100人以上の仕入先はありません` asked about suppliers with
-  100 or more staff, `Lieferanten mit mehr als 100 Mitarbeitern gibt es
-  keine` are 0; `Yes, 4` asked `Does Acme have 4?` is 4), and a
-  comparative anywhere in the clause of a phrase of absence, or written
-  onto a Han, Hangul or Kana number (`超过100人`, `100人以上`, `100명 이상`),
-  bounds the count unless the question states its number (`Non ha mai
-  avuto più di tre fornitori` asked `Quanti fornitori?` is 3, `没有超过三家`
-  asked `有几家?` is 3). English scale words count (`three hundred and twelve` is 312),
-  `两`/`兩` is 2 and a space may stand before a Han counter (`三 社`). `set`
-  scores 1.0 when every one of `metadata.answer_items` appears in the
+  `answer_contains` reads it: `number` reads the answer's first line that
+  is no heading (its extracted span, with `extracted`) and scores 1.0 on
+  this rule only:
+  - A gold other than 0 matches when that line writes it as a number,
+    anywhere: digits, number words of the answer's language (English's for
+    a language without them), a Korean native numeral before a counter
+    (`세 곳`, `열두 개사`) or a Han or Sino-Korean numeral with its
+    multipliers (`三社`, `十二台`, `一万二千台`, `만 이천 대`; digits a
+    multiplier scales: `1만 2천`, `3万`; `两`/`兩` is 2, and a space may
+    stand before a Han counter: `三 社`). `Three: Acme, Beta and Gamma`,
+    `Between 3 and 5`, `No, 3` and `Of the five vendors, 3 signed` all
+    match the gold 3.
+  - A gold of 0 matches when the line states there is none and writes no
+    number the question does not. The statements of none are `0`, a word
+    for none (`none`, `no`, `aucun`, `kein`, `ни одного`), `not one`, `not
+    a single`, a language's phrase of absence (`not ... any`, `no hay`, `il
+    n'y a pas de`, `Поставщиков нет`; Spanish and Portuguese `no` alone is
+    none), and `없습니다`, `한 곳도`, `一社も`, `一家也`, `没有` and
+    `いません`/`ありません` (not `問題ありません` or `ではありません`). So
+    `No hay proveedores en el lote 7` asked `¿Cuántos proveedores hay en el
+    lote 7?` is 0, but `No hay más de tres` and `Acme has 5 plants but no
+    suppliers` are no 0: a number of its own may be the count.
+  - Not a number: one inside a word (`Zortal13`, `3rd`), a list enumerator
+    (`1. Acme`), a citation marker (`[2]`) and an ordinal (`두 번째`,
+    `三つ目`, `第三`, `twenty-first`). A year is a number like any other.
+  - Known limits: which number is the count is not read, so a line that
+    also writes the gold as a condition, a comparison or another quantity
+    matches (`3 suppliers have more than 4 plants` matches 4; `It has 5
+    vendors, not 3` matches 3), and a gold of 0 is missed beside any number
+    of its own (`No supplier joined in 2023` asked about last year). An
+    answer that declines in its own words is read like any other (`There
+    is no information on lot 7` asked about lot 7 matches 0); one the
+    pipeline marks `abstained` scores 0. These nuances are the LLM judges'
+    (`ragas`, `langchain`) in the same run.
+
+  `set` scores 1.0 when every one of `metadata.answer_items` appears in the
   answer, in any order or layout (a numbered list too); with
   `metadata.answer_candidates` (the names the answer picks from,
   `prepare-benchmark structural` writes every vendor) the candidates the
@@ -772,13 +768,12 @@ list, top level or under `metadata`, which wins), taking the maximum.
   removed, whitespace collapsed; for an answer in German, Spanish, French,
   Italian or Portuguese that language's articles too, every French and
   Italian elided word split off first (`d'Avignon` is `d avignon`), and in
-  those languages and Russian its written numbers read as counts
+  those languages and Russian its written numbers read as numbers
   (`vingt-quatre`, `treinta y dos`, `vierundzwanzig`, `Zwei Millionen`,
   `три тысячи`; two side by side, `deux trois`, are none) and its words
   for none as 0 (`aucun`, `kein`, `ningún`, `ни одного`), in place of the
-  English ones, with its words of time, partitives and ordinals marking a
-  number that counts nothing (`seit 2019`, `De los tres`, `один из них`,
-  `vingt-troisième`); the answer's language is the question's, recorded as
+  English ones, an ordinal's tens no number (`vingt-troisième`); the
+  answer's language is the question's, recorded as
   `answer_language`), keeping punctuation that changes meaning
   (`-5`, `1.5`, `C++`); `evaluation.answer_normalization: official_squad` is
   the official script (MuSiQue's evaluation uses it too) and `hotpotqa` adds

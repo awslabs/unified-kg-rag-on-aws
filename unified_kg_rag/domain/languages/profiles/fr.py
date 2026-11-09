@@ -78,23 +78,11 @@ PROFILE = LanguageProfile(
         "n'ont pas de",
         "n'ont pas d'",
     ),
-    comparatives=(
-        "plus de",
-        "moins de",
-        "plus d'",
-        "moins d'",
-        "plus que",
-        "moins que",
-    ),
-    clause_conjunctions=("mais", "bien que", "cependant"),
     ordinal_words=frozenset(
         "unième deuxième troisième quatrième cinquième sixième septième "
         "huitième neuvième dixième onzième douzième treizième quatorzième "
         "quinzième seizième".split()
     ),
-    year_words=("en", "depuis", "dès", "avant", "après", "jusqu'en", "vers"),
-    partitive_words=("des", "parmi les", "parmi ces", "sur les"),
-    partitive_anaphors=("d'entre eux", "d'entre elles", "d'entre nous"),
     month_words={
         "January": ("janvier", "janv"),
         "February": ("février", "févr", "fevrier"),

@@ -40,11 +40,15 @@ records the span mode (``answer_span``) and the text scored
   "はい"/"いいえ") is instead compared with the polarity of the first yes/no
   word that answers the question (not a heading, not the determiner in
   "there is no clause", not part of a longer word such as "예외"). An item
-  whose ``metadata.answer_type`` is ``number`` is instead compared by the
-  first number the answer (its extracted span, with ``extracted``) states:
-  digits, an English number word, a Korean native numeral before a counter
-  ("세 곳") or a Han numeral before one ("三社"), so "Three vendors ... Two
-  of them ..." is 3, not a match of the gold 2. One whose ``answer_type``
+  whose ``metadata.answer_type`` is ``number`` is instead read in the
+  answer's first line (its extracted span, with ``extracted``): a gold
+  other than 0 matches when that line writes it anywhere, as digits, a
+  number word of the answer's language, a Korean native numeral before a
+  counter ("세 곳") or a Han numeral ("三社"); a gold of 0 when it states
+  there is none ("does not have any", "no hay", 없습니다, 没有) and writes no
+  number the question does not (``text_matching.states_number``). Which
+  number is the count, and what a condition or comparative bounds, is left
+  to the LLM judges. One whose ``answer_type``
   is ``set`` scores 1.0 when every one of its ``metadata.answer_items``
   appears in the answer, in any order or layout; with
   ``metadata.answer_candidates`` (the names it could pick from) the
@@ -123,12 +127,12 @@ from unified_kg_rag.domain.retrieval.no_context import answer_language
 from unified_kg_rag.shared import EvaluationException, get_logger
 
 from .text_matching import (
-    leading_number,
     normalize_answer,
     normalize_answer_squad,
     number_value,
     phrase_in_text,
     script_tokens,
+    states_number,
 )
 
 logger = get_logger(__name__)
@@ -150,8 +154,8 @@ SPAN_FALLBACK_KEY = "answer_span_fallback"
 ANSWER_LANGUAGE_KEY = "answer_language"
 ABSTAINED_KEY = "abstained"
 # Dataset metadata that says how a gold answer is matched (structural
-# benchmarks): ``answer_type`` "number" (the answer's leading number against
-# the gold's), "set" (every one of ``answer_items`` in the answer, in any
+# benchmarks): ``answer_type`` "number" (the gold number stated in the
+# answer's first line, ``number_matches``), "set" (every one of ``answer_items`` in the answer, in any
 # order or layout; with ``answer_candidates``, the names the answer could
 # pick from, the ones it states must be exactly ``answer_items``);
 # ``decline_is_correct``, a question about something the
@@ -277,16 +281,15 @@ def number_matches(
     language: str | None = None,
     question: str | None = None,
 ) -> float:
-    """1.0 when the first number ``prediction`` states
-    (``text_matching.leading_number``: digits, an English, Korean or Han
-    numeral, or a number word of ``language``; with ``question``, a number
-    it states is a condition where the answer reads an absence) is the
-    number ``reference`` is; 0.0 otherwise, and when the reference is no
+    """1.0 when ``prediction`` states the number ``reference`` is
+    (``text_matching.states_number``: a gold other than 0 written anywhere
+    in it; a gold of 0 by a statement of none with no number but those
+    ``question`` writes); 0.0 otherwise, and when the reference is no
     number (then ``answer_contains`` reads it)."""
     gold = number_value(reference, language)
     if gold is None:
         return answer_contains(prediction, reference, language)
-    return float(leading_number(prediction, language, question) == gold)
+    return float(states_number(prediction, gold, language, question))
 
 
 def items_contained(
@@ -576,15 +579,14 @@ class AnswerMatchEvaluator(BaseGraphRAGEvaluator):
         language: str,
     ) -> float:
         """``answer_contains`` as the item's ``answer_type`` reads it: a
-        number by the leading number of the extracted span (of the answer
-        without one, or when the span fell back; a number the question
-        states is a condition where the answer reads an absence), a set by every one of its
-        ``answer_items`` (with ``answer_candidates``, in the extracted span
-        or else the answer's first block, ``first_answer_block``), else any
-        reference as a phrase."""
+        number in the extracted span, else the answer's first line
+        (``first_answer_line``; ``number_matches``), a set by every one of
+        its ``answer_items`` (with ``answer_candidates``, in the extracted
+        span or else the answer's first block, ``first_answer_block``),
+        else any reference as a phrase."""
         kind = result.metadata.get(ANSWER_TYPE_KEY)
         if kind == "number":
-            read = self._extracted_or(span, span_metadata, answer)
+            read = self._extracted_or(span, span_metadata, first_answer_line(answer))
             return max(
                 number_matches(read, ref, language, result.question)
                 for ref in references

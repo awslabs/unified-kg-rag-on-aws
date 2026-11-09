@@ -156,9 +156,10 @@ the generated graph from the template's plan (`metadata.gold_plan`); a
 number has its digit and word forms as `answer_aliases` (the Korean and
 Japanese counts `3곳` / `세 곳` and `3社` / `三社` too), and the top three
 every order of the three names. Each item also says how `answer_match`
-reads it: a count or maximum (`metadata.answer_type: number`) by the first
-number the answer states, so "Three vendors supply it. Two of them are
-local." is 3, not a match of the gold 2; the top three
+reads it: a count or maximum (`metadata.answer_type: number`) by whether
+the answer's first line writes the gold number (a gold of 0: states there
+is none, with no number the question does not write), so "Three vendors
+supply it." matches 3 and "Four vendors supply it." does not; the top three
 (`answer_type: set`, `metadata.answer_items`) by all three names in any
 order or layout, a numbered list too, and no other vendor
 (`metadata.answer_candidates` lists them all); and an absent-vendor question

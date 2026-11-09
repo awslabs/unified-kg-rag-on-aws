@@ -842,21 +842,18 @@ From a `main` checkout (formats and keys no release had):
   keeps each answer's `structured` record and reports `structured_statistics` (status, fallback reasons, valid-plan,
   repair, truncation and exact rates), per arm under a comparison
   ([guide](docs/guides/benchmarks.md#structural-benchmark)). Its items say how `answer_match` reads them:
-  `metadata.answer_type: number` compares the answer's leading number (digits, English words with their scale
-  words, Korean native, Sino-Korean and Han numerals with their multipliers (十二, 一万二千, 만 이천, 一千零一; 1만 2천,
-  3万, 1.5万 and 3,000万 for digits), 两 and 兩 among them, before a counter such as 곳, 군데, 가지, 개사, 대, 社, 台 or 円; list
-  enumerators, citation markers, years (2019년, 2019以降; 2019부터 and 从2019到 unless the range ends on a four-digit
-  count, as 1500から2000社 does), ordinals such as 두 번째, 三つ目 and 第三, negated
-  numbers such as "not one but three", 一つではなく and 不是一家, and the whole of a partitive, so "only one of the
-  three", 三家中只有一家, 세 곳 중
-  한 곳 and 三社のうち一社 are 1, count nothing; "not ... any", "not one", "not a single", 한 곳도, 一社も, 没有 and
-  いません are 0), `set` needs every one of `metadata.answer_items` in any layout and, with
-  `metadata.answer_candidates` (every vendor), no other candidate in the part that answers (the extracted span, else
-  the first line and the list right after it), so listing them all is no match and a later "Delta is fourth" no
-  pick, and
-  `metadata.decline_is_correct` scores a decline of an absent vendor as right; the localized counts carry 3곳 / 세 곳
-  and 3社 / 三社 aliases (#639, #645). `structural-config.yaml` sets `evaluation.answer_span: extracted` (EM and F1 on
-  the short span: one fast-model call per scored answer) (#645).
+  `metadata.answer_type: number` matches when the answer's first line (the extracted span, with `extracted`)
+  writes the gold number anywhere: digits, number words with their scale words, Korean native, Sino-Korean and Han
+  numerals with their multipliers (十二, 一万二千, 만 이천, 一千零一; 1만 2천, 3万, 1.5万 and 3,000万 for digits), 两
+  and 兩 among them, before a counter such as 곳, 군데, 가지, 개사, 대, 社, 台 or 円; list enumerators, citation
+  markers and ordinals (두 번째, 三つ目, 第三) are no numbers. A gold of 0 matches a statement of none ("not ... any",
+  "not one", "not a single", 한 곳도, 一社も, 没有, いません) that writes no number the question does not; which
+  number is the count is left to the LLM judges. `set` needs every one of `metadata.answer_items` in any layout
+  and, with `metadata.answer_candidates` (every vendor), no other candidate in the part that answers (the extracted
+  span, else the first line and the list right after it), so listing them all is no match and a later "Delta is
+  fourth" no pick, and `metadata.decline_is_correct` scores a decline of an absent vendor as right; the localized
+  counts carry 3곳 / 세 곳 and 3社 / 三社 aliases (#639, #645). `structural-config.yaml` sets
+  `evaluation.answer_span: extracted` (EM and F1 on the short span: one fast-model call per scored answer) (#645).
 - A local web console, opt-in (the `console` extra, `run-console`; #631, #634): ask with a strategy picker (and how
   `auto` chose), the answer streamed as the answer model writes it, its citation markers `[n]` linked to the sources
   they cite, follow-ups sent with the page's conversation (`RAGInput.history`), and each source the answer read on a
@@ -1200,19 +1197,13 @@ From a `main` checkout (formats and keys no release had):
   Korean answers get partial credit, and a German, Spanish, French, Italian, Portuguese or Russian answer (the
   question's language, `answer_language` in each report) drops that language's articles, splits a French or Italian
   elided word from the next ("d'Avignon" is "d avignon", not "davignon") and reads its written numbers
-  ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи") and its words and phrases for none ("aucun",
-  "kein", "ни одного", "no hay", "il n'y a pas de", "Поставщиков нет", as English's "not ... any"; none a comparative
-  directly follows, "No hay más de tres", or a count follows after a clause break, "No hay duda de que son tres", a
-  number in the absent thing's own clause no count: "No hay proveedores en el lote 7" is 0; a comma, colon or dash
-  between two numbers and a conjunction before a comparative break no clause: "1,000", "10:30", "lotes 2, 3 y 4",
-  "more than 100 but fewer than 500") in place of English's (Spanish and Portuguese "no" is no 0), Russian
-  numerals in every case ("около двадцати пяти", "с пятью"), its words of time, partitives and ordinals telling a
-  number that counts nothing ("seit 2019", "De los tres proveedores", "один из них", "vingt-troisième"). A
-  `number` item reads the question too: a number it states is a condition where the answer reads an absence, in
-  any language ("En el lote 7 no hay proveedores" asked about lot 7, "従業員100人以上の仕入先はありません" asked about
-  suppliers of 100 or more staff are 0; "Yes, 4" asked "Does it have 4?" is 4), and a comparative in the phrase's
-  clause bounds the count unless the question states its number ("Non ha mai avuto più di tre fornitori" asked
-  "Quanti fornitori?" is 3) (#324, #516, #606, #613).
+  ("vingt-quatre", "treinta y dos", "vierundzwanzig", "три тысячи"; Russian in every case: "около двадцати пяти",
+  "с пятью") and its words and phrases for none ("aucun", "kein", "ни одного", "no hay", "il n'y a pas de",
+  "Поставщиков нет", as English's "not ... any"; Spanish and Portuguese "no" is no 0) in place of English's. A
+  `number` item is one rule in every language: a gold other than 0 matches any number the first line writes, a gold
+  of 0 a statement of none with no number the question does not write ("En el lote 7 no hay proveedores" asked
+  about lot 7 is 0, "No hay más de tres" no 0); a condition or comparative is not told from a count, so a line that
+  writes the gold as either matches (#324, #516, #606, #613).
 - Strategy comparison: `run-eval --search-strategy a,b --repeats N` with bootstrap intervals, `deltas_by_category`,
   a `--pairwise-judge` (LightRAG's verdicts with `evaluation.pairwise_overall`, `position_consistency`, a win-rate
   interval, `--judge-model`) and `prepare-benchmark musique` (#324, #516, #536). See

@@ -451,17 +451,17 @@ class TestLanguageNormalization:
             ("ru", "У Acme нет поставщиков.", 0),
             ("en", "Acme doesn't have any vendors.", 0),
             ("en", "Acme does not supply any buyers.", 0),
-            # A yes/no answer opening the line is no "none".
+            # A yes/no word beside the count.
             ("ru", "Нет, у Acme три поставщика.", 3),
             ("ru", "**Нет**. Три поставщика.", 3),
             ("es", "Tiene tres proveedores; no hay más.", 3),
-            # Low (rv11 query): a CJK word after a year, not only 년/年.
+            # A year beside the count (rv11 query low).
             ("ko", "2019부터 3곳", 3),
             ("ko", "2019 이후 3곳", 3),
             ("ja", "2019以降、3社", 3),
             ("zh", "从2019到现在有3家", 3),
-            # Regression (rv10 query M7): a year, the whole of a partitive
-            # and "one of them" in the language's own words.
+            # A year, the whole of a partitive and "one of them" beside the
+            # count in the language's own words (rv10 query M7).
             ("de", "Seit 2019 drei Lieferanten.", 3),
             ("fr", "Depuis 2019, trois fournisseurs.", 3),
             ("es", "En 2019 firmó con tres proveedores.", 3),
@@ -480,10 +480,10 @@ class TestLanguageNormalization:
             ("fr", "Quatre vingt dix fournisseurs.", 90),
         ],
     )
-    def test_the_languages_own_words_around_a_number(
+    def test_the_languages_own_words_state_the_number(
         self, language: str, answer: str, number: int
     ) -> None:
-        assert text_matching.leading_number(answer, language) == number
+        assert answer_match_evaluator.number_matches(answer, str(number), language)
 
     @pytest.mark.parametrize(
         ("language", "answer"),
@@ -495,17 +495,33 @@ class TestLanguageNormalization:
             ("fr", "deux vingt"),
             ("es", "tres veinte"),
             ("ru", "два двадцать"),
-            # Ordinals: their tens count nothing.
+            # Ordinals: their tens state no number.
             ("fr", "Il est arrivé vingt-troisième."),
             ("ru", "двадцать первый"),
             ("en", "the twenty-first vendor"),
-            # A partitive's whole, and "one of them".
-            ("de", "Von den drei Lieferanten hat nur einer unterschrieben."),
-            ("ru", "один из них"),
         ],
     )
-    def test_words_that_state_no_count(self, language: str, answer: str) -> None:
-        assert text_matching.leading_number(answer, language) is None
+    def test_words_that_state_no_number(self, language: str, answer: str) -> None:
+        assert text_matching.stated_numbers(answer, language) == frozenset()
+
+    @pytest.mark.parametrize(
+        ("language", "answer", "numbers"),
+        [
+            # Every number is read, a partitive's whole and "one of them"
+            # too: which one is the count is the LLM judges' to read.
+            ("de", "Von den drei Lieferanten hat nur einer unterschrieben.", {3}),
+            ("ru", "один из них", {1}),
+            ("en", "Three vendors supply it. Two of them are local.", {2, 3}),
+            ("es", "En 2019 firmó con tres proveedores.", {2019, 3}),
+            # A word for none holds no number of its own.
+            ("ru", "Нет, ни одного.", {0}),
+            ("ru", "Ни один поставщик.", {0}),
+        ],
+    )
+    def test_every_number_stated(
+        self, language: str, answer: str, numbers: set[int]
+    ) -> None:
+        assert text_matching.stated_numbers(answer, language) == numbers
 
     def test_the_evaluator_normalizes_in_the_questions_language(
         self, config: Config
@@ -790,13 +806,26 @@ class TestHotpotQARule:
 @pytest.mark.parametrize(
     ("question", "answer", "gold", "contains"),
     [
-        # A number the question states is a condition of the absent thing.
+        # A gold of 0: an absence with no number but the question's.
         ("¿Cuántos proveedores hay en el lote 7?", "En el lote 7 no hay.", "0", 1.0),
         ("仕入先は従業員100人以上で何社?", "100人以上の仕入先はありません。", "0", 1.0),
-        # One the answer adds after a comparative bounds the count.
+        ("직원 100명 이상인 공급업체는 몇 곳?", "그런 공급업체는 없습니다.", "0", 1.0),
+        ("员工超过100人的供应商有几家？", "员工超过100人的供应商没有。", "0", 1.0),
+        ("Сколько поставщиков в лоте 7?", "В лоте 7 поставщиков нет.", "0", 1.0),
+        # A number of its own may be a count: no 0.
+        ("¿Cuántos proveedores hay?", "No hay más de tres.", "0", 0.0),
+        ("How many suppliers does Acme have?", "No, it has 3.", "0", 0.0),
+        ("How many suppliers?", "It has 5 plants but no suppliers.", "0", 0.0),
+        # No absence: a 0 needs one.
+        ("How many suppliers are in lot 7?", "Lot 7.", "0", 0.0),
+        # A gold other than 0 is any number the answer writes.
         ("Quanti fornitori ha avuto Acme?", "Non ha mai avuto più di tre.", "3", 1.0),
-        # No absence: the question's number is the count it confirms.
         ("Does Acme have 4 suppliers?", "Yes, 4.", "4", 1.0),
+        ("Does Acme have 4 suppliers?", "No, 3.", "3", 1.0),
+        ("Does Acme have 4 suppliers?", "No, 3.", "4", 0.0),
+        # Only the first line is read: the support below it is not.
+        ("How many suppliers?", "The context does not say.\n\n- Lot 3 [1].", "3", 0.0),
+        ("How many suppliers?", "# Answer\nThree suppliers.\n- 5 plants", "3", 1.0),
     ],
 )
 def test_a_number_item_reads_the_question(

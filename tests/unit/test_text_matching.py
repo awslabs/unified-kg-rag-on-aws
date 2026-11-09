@@ -10,8 +10,8 @@ import pytest
 
 from unified_kg_rag.evaluation.text_matching import (
     is_spaceless_script,
-    leading_number,
     phrase_in_text,
+    stated_numbers,
     strip_possessives,
     tokenize,
 )
@@ -253,187 +253,163 @@ class TestKoreanCounters:
         assert phrase_in_text("3", text) is True
 
 
-class TestLeadingNumber:
-    @pytest.mark.parametrize(
-        ("text", "number"),
-        [
-            ("Three vendors supply it. Two of them are local.", 3),
-            ("It has 3 vendors (one with 2 products).", 3),
-            ("twenty-one vendors", 21),
-            ("It supplies no buyers.", 0),
-            ("None.", 0),
-            ("The largest has 4,486 employees.", 4486),
-            ("# 2 headings\nIt has 5 vendors.", 5),
-            ("세 곳의 벤더가 공급합니다.", 3),
-            ("총 4곳이며, 그중 3곳은 국내입니다.", 4),
-            ("열두 개사가 공급합니다", 12),
-            ("공급하는 벤더가 없습니다", 0),
-            ("ベンダーは三社です。", 3),
-            ("二十三件です", 23),
-            ("ベンダーは3社です", 3),
-        ],
-    )
-    def test_the_first_number_stated(self, text: str, number: float) -> None:
-        assert leading_number(text) == number
+class TestStatedNumbers:
+    """``stated_numbers``: every number a text writes, in any position, 0
+    for a statement of none; which one is the count is not read."""
 
     @pytest.mark.parametrize(
-        ("text", "number"),
+        ("text", "numbers"),
+        [
+            ("Three vendors supply it. Two of them are local.", {2, 3}),
+            ("It has 3 vendors (one with 2 products).", {1, 2, 3}),
+            ("twenty-one vendors", {21}),
+            ("It supplies no buyers.", {0}),
+            ("None.", {0}),
+            ("The largest has 4,486 employees.", {4486}),
+            ("# 2 headings\nIt has 5 vendors.", {5}),
+            ("세 곳의 벤더가 공급합니다.", {3}),
+            ("총 4곳이며, 그중 3곳은 국내입니다.", {3, 4}),
+            ("열두 개사가 공급합니다", {12}),
+            ("공급하는 벤더가 없습니다", {0}),
+            ("ベンダーは三社です。", {3}),
+            ("二十三件です", {23}),
+            ("ベンダーは3社です", {3}),
+            # Every number counts, wherever it stands: a partitive's whole,
+            # a negated one, "one of them", "no" answering yes or no.
+            ("Only one of the three vendors supplies X.", {1, 3}),
+            ("One of the vendors, Acme, supplies X.", {1}),
+            ("Of the three vendors, only one supplies X.", {1, 3}),
+            ("It has a total of three vendors.", {3}),
+            ("三家中只有一家。", {1, 3}),
+            ("三家供应商中，只有一家供货。", {1, 3}),
+            ("三家中国供应商。", {3}),
+            ("세 곳 중 한 곳만 공급합니다.", {1, 3}),
+            ("세 곳 중에서 두 곳이 국내입니다.", {2, 3}),
+            ("三社のうち一社だけです。", {1, 3}),
+            ("Not one vendor supplies X.", {0}),
+            ("Not a single vendor supplies X.", {0}),
+            ("Not one but three vendors.", {1, 3}),
+            ("共有两家供应商。", {2}),
+            ("共有兩家供應商。", {2}),
+            ("两个", {2}),
+            ("没有供应商。", {0}),
+            ("沒有供應商。", {0}),
+            ("サプライヤーはいません。", {0}),
+            ("供給元はありません。", {0}),
+            ("三 社", {3}),
+            ("三 家供应商", {3}),
+            ("three hundred vendors", {300}),
+            ("two thousand", {2000}),
+            ("three hundred and twelve buyers", {312}),
+            ("two thousand five hundred employees", {2500}),
+            ("twenty-one hundred", {2100}),
+            ("As of 2024, it is unknown.", {2024}),
+            ("No, it does not.", {0}),
+            ("One of them, Acme, is the largest.", {1}),
+            ("Acme is not one of the suppliers.", {1}),
+        ],
+    )
+    def test_every_number_stated(self, text: str, numbers: set[float]) -> None:
+        assert stated_numbers(text) == numbers
+
+    @pytest.mark.parametrize(
+        ("text", "numbers"),
         [
             # Regression (rv9 query L13): 台 and 대 were no counters, 万 and
-            # 만 no multipliers.
-            ("十二台を不合格とした。", 12),
-            ("十二台不合格。", 12),
-            ("两千台", 2000),
-            ("오리온 랩스는 열두 대를 불합격 처리했다.", 12),
-            ("一万二千台", 12000),
-            ("十二万台", 120_000),
-            ("一億二千万人", 120_000_000),
-            ("만 이천 대", 12000),
-            ("십이 대가 불합격이었다.", 12),
-            # Digits a multiplier scales.
-            ("1만 2천 대", 12000),
-            ("3万社", 30000),
-            ("1천만 명", 10**7),
-            # Regression (rv10 query M2): a decimal or thousands separator
-            # before a multiplier dropped the number (and the next was
-            # read); 零 holds an empty place.
-            ("约1.5万人", 15000),
-            ("1.5万人です", 15000),
-            ("3,000万円", 30_000_000),
-            ("1.5억 원", 150_000_000),
-            ("1,200만 명", 12_000_000),
-            ("약 1.5만 명의 직원과 3개 공장", 15000),
-            ("一千零一家", 1001),
-            ("两千零二十四家", 2024),
-            ("三千零五十家", 3050),
-            # Low: 円 (and 元) count a sum.
-            ("一億円", 100_000_000),
-            ("三千万元", 30_000_000),
+            # 만 no multipliers; (rv10 query M2) a decimal or thousands
+            # separator before a multiplier; 零 holds an empty place; 円 and
+            # 元 count a sum.
+            ("十二台を不合格とした。", {12}),
+            ("十二台不合格。", {12}),
+            ("两千台", {2000}),
+            ("오리온 랩스는 열두 대를 불합격 처리했다.", {12}),
+            ("一万二千台", {12_000}),
+            ("十二万台", {120_000}),
+            ("一億二千万人", {120_000_000}),
+            ("만 이천 대", {12_000}),
+            ("십이 대가 불합격이었다.", {12}),
+            ("1만 2천 대", {12_000}),
+            ("3万社", {30_000}),
+            ("1천만 명", {10_000_000}),
+            ("约1.5万人", {15_000}),
+            ("1.5万人です", {15_000}),
+            ("3,000万円", {30_000_000}),
+            ("1.5억 원", {150_000_000}),
+            ("1,200만 명", {12_000_000}),
+            ("약 1.5만 명의 직원과 3개 공장", {3, 15_000}),
+            ("一千零一家", {1001}),
+            ("两千零二十四家", {2024}),
+            ("三千零五十家", {3050}),
+            ("一億円", {100_000_000}),
+            ("三千万元", {30_000_000}),
         ],
     )
-    def test_cjk_counters_and_multipliers(self, text: str, number: float) -> None:
-        assert leading_number(text) == number
+    def test_cjk_counters_and_multipliers(self, text: str, numbers: set[float]) -> None:
+        assert stated_numbers(text) == numbers
+
+    @pytest.mark.parametrize(
+        ("text", "numbers"),
+        [
+            # List enumerators, citation markers and ordinals are no
+            # numbers; a year, "no" and a negated number are.
+            ("1. Acme\n2. Beta\n3. Gamma\nIn total, three vendors.", {3}),
+            ("(1) Acme\n(2) Beta\nTwo vendors.", {2}),
+            ("Acme [1], Beta [2] and Gamma [3]: three vendors.", {3}),
+            ("As of 2024, three vendors supply Buyer A.", {3, 2024}),
+            ("In March 2024 it had 7 buyers.", {7, 2024}),
+            ("2024년 기준 3곳입니다.", {3, 2024}),
+            ("2024年時点で3社です。", {3, 2024}),
+            ("It has 2003 employees.", {2003}),
+            ("공급 벤더는 두 번째로 많은 네 곳입니다.", {4}),
+            ("2번째로 많은 3곳입니다.", {3}),
+            ("三つ目の供給元を含め、五社です。", {5}),
+            ("3番目に多いのは4社です。", {4}),
+            ("第三家供应商之后，共有五家。", {5}),
+            ("No single vendor dominates; three vendors supply Buyer A.", {0, 3}),
+            ("No, three vendors supply it.", {0, 3}),
+            ("No more than 5 vendors.", {0, 5}),
+            ("One of them, Acme, is the largest; in total four vendors.", {1, 4}),
+            ("Not one but three vendors.", {1, 3}),
+            ("Buyer Aへの供給元は一つではなく、三社あります。", {1, 3}),
+            ("不是一家，而是三家。", {1, 3}),
+            ("한 곳이 아니라 세 곳입니다.", {1, 3}),
+            ("문제없습니다. 공급사는 세 곳입니다.", {3}),
+            ("Zortal does not supply any buyers.", {0}),
+            ("Zortal doesn't have any buyers.", {0}),
+            ("한 곳도 없습니다.", {0}),
+            ("一社もありません。", {0}),
+            ("一家也没有。", {0}),
+        ],
+    )
+    def test_markup_and_ordinals_state_no_number(
+        self, text: str, numbers: set[float]
+    ) -> None:
+        assert stated_numbers(text) == numbers
 
     @pytest.mark.parametrize(
         "text",
         [
-            # A Sino-Korean digit alone is another word ("이 곳": this place),
-            # and Han digits without a counter are no count (a year).
             "이 곳은 넓다",
             "二〇二四年",
-        ],
-    )
-    def test_cjk_digits_that_state_no_count(self, text: str) -> None:
-        assert leading_number(text) is None
-
-    @pytest.mark.parametrize(
-        ("text", "number"),
-        [
-            # List enumerators and citation markers count nothing.
-            ("1. Acme\n2. Beta\n3. Gamma\nIn total, three vendors.", 3),
-            ("(1) Acme\n(2) Beta\nTwo vendors.", 2),
-            ("Acme [1], Beta [2] and Gamma [3]: three vendors.", 3),
-            # Years.
-            ("As of 2024, three vendors supply Buyer A.", 3),
-            ("In March 2024 it had 7 buyers.", 7),
-            ("2024년 기준 3곳입니다.", 3),
-            ("2024年時点で3社です。", 3),
-            ("It has 2003 employees.", 2003),
-            # Ordinals.
-            ("공급 벤더는 두 번째로 많은 네 곳입니다.", 4),
-            ("2번째로 많은 3곳입니다.", 3),
-            ("三つ目の供給元を含め、五社です。", 5),
-            ("3番目に多いのは4社です。", 4),
-            ("第三家供应商之后，共有五家。", 5),
-            # "no" and a negated number that modify something else.
-            ("No single vendor dominates; three vendors supply Buyer A.", 3),
-            ("No, three vendors supply it.", 3),
-            ("No more than 5 vendors.", 5),
-            ("One of them, Acme, is the largest; in total four vendors.", 4),
-            ("Not one but three vendors.", 3),
-            ("Buyer Aへの供給元は一つではなく、三社あります。", 3),
-            ("不是一家，而是三家。", 3),
-            ("한 곳이 아니라 세 곳입니다.", 3),
-            ("문제없습니다. 공급사는 세 곳입니다.", 3),
-            # Zero, stated with a negation.
-            ("Zortal does not supply any buyers.", 0),
-            ("Zortal doesn't have any buyers.", 0),
-            ("한 곳도 없습니다.", 0),
-            ("一社もありません。", 0),
-            ("一家也没有。", 0),
-        ],
-    )
-    def test_numbers_that_count_nothing_are_skipped(
-        self, text: str, number: float
-    ) -> None:
-        assert leading_number(text) == number
-
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "I could not find Zortal13 Holdings.",  # a number inside a word
-            "네, 공급합니다.",  # "네" is yes, not four, without a counter
+            "I could not find Zortal13 Holdings.",
+            "네, 공급합니다.",
             "The 3rd vendor",
-            "1. Acme\n2. Beta",  # enumerators only
-            "As of 2024, it is unknown.",
-            "No, it does not.",
+            "1. Acme\n2. Beta",
+            "Aではありません。",
+            "問題ありません。",
+            "没有问题。",
+            "特に問題はありません。",
         ],
     )
     def test_none(self, text: str) -> None:
-        assert leading_number(text) is None
+        # A number inside a word, "네" (yes) without a counter, a
+        # Sino-Korean digit alone ("이 곳": this place), Han digits without
+        # a counter, enumerators only, and idioms of absence ("no
+        # problem", a negated copula).
+        assert stated_numbers(text) == set()
 
-    @pytest.mark.parametrize(
-        ("text", "number"),
-        [
-            # A partitive states its part; the whole it is taken from counts
-            # nothing ("of the three", "三家中", "세 곳 중", "三社のうち").
-            ("Only one of the three vendors supplies X.", 1),
-            ("One of the vendors, Acme, supplies X.", 1),
-            ("Of the three vendors, only one supplies X.", 1),
-            ("It has a total of three vendors.", 3),
-            ("三家中只有一家。", 1),
-            ("三家供应商中，只有一家供货。", 1),
-            ("三家中国供应商。", 3),
-            ("세 곳 중 한 곳만 공급합니다.", 1),
-            ("세 곳 중에서 두 곳이 국내입니다.", 2),
-            ("三社のうち一社だけです。", 1),
-            # "Not one" and "not a single" state zero, "not one but" negates.
-            ("Not one vendor supplies X.", 0),
-            ("Not a single vendor supplies X.", 0),
-            ("Not one but three vendors.", 3),
-            # 两/兩 is two.
-            ("共有两家供应商。", 2),
-            ("共有兩家供應商。", 2),
-            ("两个", 2),
-            # Zero stated by a Chinese or Japanese verb of absence.
-            ("没有供应商。", 0),
-            ("沒有供應商。", 0),
-            ("サプライヤーはいません。", 0),
-            ("供給元はありません。", 0),
-            # A space before a Han counter.
-            ("三 社", 3),
-            ("三 家供应商", 3),
-            # English scale words.
-            ("three hundred vendors", 300),
-            ("two thousand", 2000),
-            ("three hundred and twelve buyers", 312),
-            ("two thousand five hundred employees", 2500),
-            ("twenty-one hundred", 2100),
-        ],
-    )
-    def test_partitives_negated_zero_and_scales(self, text: str, number: float) -> None:
-        assert leading_number(text) == number
-
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "Aではありません。",  # a negated copula, not absence
-            "問題ありません。",  # "no problem"
-            "没有问题。",  # "no problem"
-            "One of them, Acme, is the largest.",  # an anaphoric partitive
-            "特に問題はありません。",  # "no particular problem"
-            "Acme is not one of the suppliers.",  # a negated partitive
-        ],
-    )
-    def test_idioms_of_absence_count_nothing(self, text: str) -> None:
-        assert leading_number(text) is None
+    def test_a_dash_after_a_number_joins_a_range(self) -> None:
+        assert stated_numbers("1990-1995") == {1990, 1995}
+        assert stated_numbers("3-5 vendors") == {3, 5}
+        assert stated_numbers("It fell to -5") == {-5}
+        assert stated_numbers("A-1 grade") == set()

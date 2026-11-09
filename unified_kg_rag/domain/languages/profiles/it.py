@@ -97,11 +97,6 @@ PROFILE = LanguageProfile(
         "non esiste",
         "non esistono",
     ),
-    comparatives=("più di", "meno di", "più che", "meno che"),
-    clause_conjunctions=("ma", "però", "bensì", "anche se"),
-    year_words=("nel", "dal", "fino al", "entro il", "prima del", "dopo il", "in"),
-    partitive_words=("dei", "delle", "degli", "tra i", "tra le", "fra i", "fra le"),
-    partitive_anaphors=("di loro", "di essi", "di esse", "dei quali", "delle quali"),
     month_words={
         "January": ("gennaio", "gen"),
         "February": ("febbraio",),

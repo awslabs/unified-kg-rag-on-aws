@@ -143,8 +143,6 @@ _FACETS = (
     "number_words",
     "zero_words",
     "absence_phrases",
-    "year_words",
-    "partitive_words",
     "polarity_words",
     "quote_pairs",
 )
@@ -168,13 +166,11 @@ _GAPS: dict[str, set[str]] = {
     # Korean, Japanese and Chinese count with numerals before a counter
     # (counter_numerals).
     "number_words": {"ja", "ko", "zh"} | _NEW,
-    # Their words for none, of time and of partitives too (the answer
-    # matcher reads the dense scripts' own forms for all three).
+    # Their words for none too (the answer matcher reads the dense
+    # scripts' own forms).
     "zero_words": {"ja", "ko", "zh"} | _NEW,
     # German states it with its words for none ("Es gibt keine").
     "absence_phrases": {"de", "ja", "ko", "zh"} | _NEW,
-    "year_words": {"ja", "ko", "zh"} | _NEW,
-    "partitive_words": {"ja", "ko", "zh"} | _NEW,
 }
 
 
@@ -433,4 +429,4 @@ def test_the_count_numerals_are_the_profiles() -> None:
         ("十二社", 12),
         ("两家", 2),
     ]:
-        assert text_matching.leading_number(answer) == value
+        assert text_matching.stated_numbers(answer) == {value}

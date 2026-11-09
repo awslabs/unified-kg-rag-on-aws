@@ -120,6 +120,20 @@ choices:
   (cached, falling back to the first line) or the whole answer. The choice is
   recorded in the manifest and each report, and a comparison warns when its
   runs differ.
+- **A number item is read by one small rule.** `answer_type: number` asks
+  whether the answer's first line (or extracted span) states the gold: a
+  gold other than 0 when the line writes it anywhere, a gold of 0 when it
+  states there is none and writes no number the question does not
+  (`text_matching.states_number`). Earlier versions picked the count among
+  the line's numbers (the first one, then rules for conditions,
+  comparatives, clauses, years, partitives and the question's numbers);
+  each rule moved other answers, and the count kept regressing across
+  reviews in other languages. The rule now reads only what is
+  language-independent apart from number words and words for none, and
+  over-counts by design (a gold written as a condition matches); telling a
+  count from a condition is the LLM judges' job in the same run. The exact
+  rule and its limits are in
+  [evaluation output](../reference/evaluation-output.md#answer_match).
 - **Run manifest.** Ingestion records an `IndexBuildRecord` (pipeline id,
   mode, build time, documents, extraction fingerprint and settings, package
   version, community counters) in the vector index mappings' `_meta` (`VectorIndexer.record_build`),
