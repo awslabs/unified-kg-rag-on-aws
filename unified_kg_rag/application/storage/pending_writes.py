@@ -456,10 +456,13 @@ class PendingWrites:
     ) -> tuple[list[Entity], dict[str, tuple[str, str | None]]]:
         """The stored entities the ``gone`` endpoints of the ``noted`` edges
         now are, and ``{gone id: (stored id, name)}``: of the stored entities
-        whose ``compact_name_key`` is the endpoint name's, the one sharing
-        the most text units with its edges (then the first id). An endpoint
-        with none keeps its id. Those ``known`` are not returned (the delta
-        holds them)."""
+        whose ``compact_name_key`` is the endpoint name's and that cite one
+        of its edges' text units, the one sharing the most (then the first
+        id). A full build over those units gives the endpoint an entity
+        citing them (every endpoint cites its edges' units), so one citing
+        none is another entity of the key (a spelling of another type), not
+        the endpoint. An endpoint with none keeps its id. Those ``known``
+        are not returned (the delta holds them)."""
         named: dict[str, str] = {}
         units: dict[str, set[str]] = defaultdict(set)
         for rel in noted:
@@ -485,13 +488,15 @@ class PendingWrites:
         moved: dict[str, tuple[str, str | None]] = {}
         chosen: dict[str, Entity] = {}
         for end, key in sorted(named.items()):
-            spelled = [e for e in candidates if compact_name_key(e.name) == key]
+            shared = {
+                e.id: len(units[end] & set(e.text_unit_ids or []))
+                for e in candidates
+                if compact_name_key(e.name) == key
+            }
+            spelled = [e for e in candidates if shared.get(e.id)]
             if not spelled:
                 continue
-            best = min(
-                spelled,
-                key=lambda e: (-len(units[end] & set(e.text_unit_ids or [])), e.id),
-            )
+            best = min(spelled, key=lambda e: (-shared[e.id], e.id))
             moved[end] = (best.id, best.name)
             chosen[best.id] = best
         return [e for i, e in sorted(chosen.items()) if i not in known], moved
