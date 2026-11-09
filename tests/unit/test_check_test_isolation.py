@@ -95,6 +95,46 @@ def test_a_timed_out_file_s_children_are_stopped_with_it(tmp_path: Path) -> None
         pytest.fail("the timed-out file's child outlived it")
 
 
+@pytest.mark.timeout(90)
+@pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="needs /proc")
+def test_a_grandchild_in_its_own_session_does_not_hang_the_check(
+    tmp_path: Path,
+) -> None:
+    # A worker started in a session of its own (start_new_session=True)
+    # is in no group the kill reaches: it lives on, and while it holds the
+    # file's output pipe, reading the killed file's output to the end
+    # would wait for it. The read after the kill is bounded instead.
+    script = _script()
+    pid_file = tmp_path / "grandchild.pid"
+    (tmp_path / "test_detaches.py").write_text(
+        "import os, subprocess, time\nfrom pathlib import Path\n\n\n"
+        "def test_detaches():\n"
+        "    # The pipes pytest's capture saved: the checker's output pipes.\n"
+        "    held = []\n"
+        "    for fd in os.listdir('/proc/self/fd'):\n"
+        "        try:\n"
+        "            if os.readlink(f'/proc/self/fd/{fd}').startswith('pipe:'):\n"
+        "                held.append(int(fd))\n"
+        "        except OSError:\n"
+        "            pass\n"
+        "    child = subprocess.Popen(['sleep', '45'], stdout=held[0],\n"
+        "                             pass_fds=held, start_new_session=True)\n"
+        f"    Path({str(pid_file)!r}).write_text(str(child.pid))\n"
+        "    time.sleep(120)\n"
+    )
+    started = time.monotonic()
+    try:
+        failed = script.failures([tmp_path], jobs=1, timeout=6)
+        assert [code for _, code, _ in failed] == [script.TIMED_OUT]
+        assert time.monotonic() - started < 30
+    finally:
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), 9)
+            except ProcessLookupError:
+                pass
+
+
 def test_ci_runs_it_over_every_test_directory() -> None:
     workflow = yaml.safe_load(
         (REPO_ROOT / ".github/workflows/quality.yml").read_text(encoding="utf-8")

@@ -40,14 +40,20 @@ TIMED_OUT = 124
 # Seconds one file may run: well past the slowest file alone (about four
 # minutes on a loaded host), well under the CI job's 25 minutes.
 _DEFAULT_TIMEOUT = 600
+# Seconds the output of a killed file is read for: what it printed is in
+# the pipe by then, unless a process outside its group holds it open.
+_DRAIN = 5
 
 
 def run_alone(path: Path, timeout: float = _DEFAULT_TIMEOUT) -> tuple[Path, int, str]:
     """``path``'s pytest exit code and output, in a fresh interpreter;
     :data:`TIMED_OUT` and what it printed when it ran past ``timeout``
-    seconds. The file runs in a process group of its own, killed whole at
-    the timeout: a server or worker a hung test started goes with it rather
-    than living on (and holding the output pipe open)."""
+    seconds. The file runs in a session of its own, whose process group is
+    killed whole at the timeout: a server or worker a hung test started
+    goes with it rather than living on. One that started a session of its
+    own (``start_new_session=True``) is in no group the kill reaches and
+    may live on; it cannot hang the check, which reads the killed file's
+    output for :data:`_DRAIN` seconds at most."""
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(path)]
     with subprocess.Popen(  # nosec B603 - fixed argv, no shell
         argv,
@@ -60,10 +66,20 @@ def run_alone(path: Path, timeout: float = _DEFAULT_TIMEOUT) -> tuple[Path, int,
             out, err = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             _kill_group(process)
-            out, err = process.communicate()
+            try:
+                out, err = process.communicate(timeout=_DRAIN)
+            except subprocess.TimeoutExpired as held:  # a survivor holds the pipe
+                out, err = (_text(b) for b in (held.output, held.stderr))
             printed = (out or "") + (err or "")
             return path, TIMED_OUT, f"{printed}\ntimed out after {timeout:g} s"
     return path, process.returncode, out + err
+
+
+def _text(read: bytes | str | None) -> str:
+    """What a timed-out read returned (bytes, even of a text pipe)."""
+    if isinstance(read, bytes):
+        return read.decode(errors="replace")
+    return read or ""
 
 
 def _kill_group(process: subprocess.Popen[str]) -> None:

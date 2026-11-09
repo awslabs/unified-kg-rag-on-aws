@@ -9,6 +9,7 @@ import re
 import shutil
 import stat
 import sys
+import tempfile
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -18,13 +19,26 @@ from typing import IO, Any
 logger = logging.getLogger(__name__)
 
 
+# The longest file name, in bytes, of the file systems written to (ext4,
+# XFS, APFS, NTFS's 255 UTF-16 units hold at least as many characters).
+NAME_MAX = 255
+
+
 def temporary_sibling(path: Path) -> Path:
     """A uniquely named hidden file beside ``path`` for writing it atomically.
 
     The name ends in ``.tmp``, not the target's suffix, so a sync or a glob
-    over ``*.json`` never picks up a half-written file.
+    over ``*.json`` never picks up a half-written file. It begins with as
+    much of ``path``'s name as fits :data:`NAME_MAX` bytes with the rest,
+    cut at a character boundary: a valid long name (80 Korean characters
+    are 240 bytes) gets a valid temporary name.
     """
-    return path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    unique = f".{uuid.uuid4().hex}.tmp"
+    room = NAME_MAX - 1 - len(unique)
+    name = path.name
+    while len(os.fsencode(name)) > room:
+        name = name[:-1]
+    return path.with_name(f".{name}{unique}")
 
 
 @contextmanager
@@ -50,13 +64,16 @@ def atomic_open(
     and a descriptor's alias (``/dev/stdout``, ``/dev/fd/N``,
     ``/proc/self/fd/N``, or a link into them), which is written through the
     descriptor even when it is open on a regular file (``cmd > out.txt``):
-    a rename would unlink the file the shell writes to. So is, without the
-    atomic guarantee, a file whose sibling cannot be made or renamed over it
-    (a writable file in a read-only directory, a bind-mounted file).
+    a rename would unlink the file the shell writes to. A file whose
+    sibling cannot be made or renamed over it (a writable file in a
+    read-only directory, a bind-mounted file) is staged in a temporary file
+    (beside it, or in :func:`tempfile.gettempdir` when its directory refuses
+    one) and copied into it when the block ends: a block that raises still
+    leaves it as it was, but a reader may see the copy half made.
     ``fsync`` flushes the data to disk before the rename and the directory
-    after it, for state that must survive a power loss, not just a crash;
-    a directory that cannot be flushed (no read permission) is logged, not
-    raised: the file is written by then.
+    after it (a copied-in file, once copied), for state that must survive
+    a power loss, not just a crash; a directory that cannot be flushed (no
+    read permission) is logged, not raised: the file is written by then.
     """
     if mode not in ("w", "wb"):
         raise ValueError(f"atomic_open writes a whole file ('w' or 'wb'), not {mode!r}")
@@ -73,7 +90,7 @@ def atomic_open(
             with opened(path) as handle:
                 yield handle
         else:
-            with _written_through(fd, opened) as handle:
+            with _written_through(path, fd, opened) as handle:
                 yield handle
         return
     try:
@@ -86,21 +103,26 @@ def atomic_open(
         return
     target = path.resolve() if path.is_symlink() else path
     temp_path = temporary_sibling(target)
+    beside = True
     try:
         temp = opened(temp_path)
     except PermissionError:
         if current is None:
             raise
-        logger.debug("cannot create %s; writing %s in place", temp_path, target)
-        with opened(target) as handle:
-            yield handle
-        return
+        logger.debug("cannot create %s; staging %s elsewhere", temp_path, target)
+        temp_path = temporary_sibling(Path(tempfile.gettempdir()) / target.name)
+        temp = opened(temp_path)
+        beside = False
     try:
         with temp as handle:
             yield handle
-            if fsync:
+            if fsync and beside:
                 handle.flush()
                 os.fsync(handle.fileno())
+        if not beside:
+            _copy_in(temp_path, target, fsync=fsync)
+            temp_path.unlink()
+            return
         if current is not None:
             os.chmod(temp_path, stat.S_IMODE(current.st_mode))
         try:
@@ -109,7 +131,7 @@ def atomic_open(
             if current is None or error.errno not in _IN_PLACE_ERRORS:
                 raise
             logger.debug("cannot rename over %s (%s); writing in place", target, error)
-            shutil.copyfile(temp_path, target)
+            _copy_in(temp_path, target, fsync=fsync)
             temp_path.unlink()
             return
     except BaseException:
@@ -117,6 +139,17 @@ def atomic_open(
         raise
     if fsync:
         _fsync_directory(target.parent)
+
+
+def _copy_in(staged: Path, target: Path, *, fsync: bool) -> None:
+    """Write ``staged``'s bytes into ``target`` in place (it keeps its
+    inode, mode and links), flushed to disk with ``fsync``: the finished
+    text of a file that cannot be renamed over."""
+    with staged.open("rb") as source, target.open("wb") as out:
+        shutil.copyfileobj(source, out)
+        if fsync:
+            out.flush()
+            os.fsync(out.fileno())
 
 
 # A rename over an existing file that a write in place still makes: a
@@ -155,18 +188,40 @@ def _descriptor_alias(path: Path) -> tuple[int | None] | None:
 
 
 @contextmanager
-def _written_through(fd: int, opened: Callable[[int], IO[Any]]) -> Iterator[IO[Any]]:
-    """This process's descriptor ``fd``, written through a duplicate of it:
-    at its offset and with its flags (``>>`` appends), after what Python
-    buffered for it (a ``print`` before the export comes before it)."""
+def _written_through(
+    path: Path, fd: int, opened: Callable[[int], IO[Any]]
+) -> Iterator[IO[Any]]:
+    """This process's descriptor ``fd`` (``path`` names it), written through
+    a duplicate of it: at its offset and with its flags (``>>`` appends),
+    after what Python buffered for it (a ``print`` before the export comes
+    before it). A regular file open to update in place (``<>``, ``r+``) ends
+    where the write does, as opening ``path`` to write would end it: no
+    tail of its old text is left past the new."""
     for stream in (sys.stdout, sys.stderr):
         try:
             if stream is not None and stream.fileno() == fd:
                 stream.flush()
         except (OSError, ValueError):  # no descriptor (captured), or closed
             continue
-    with opened(os.dup(fd)) as handle:
+    try:
+        duplicate = os.dup(fd)
+    except OSError as error:  # a closed descriptor: say which path named it
+        raise OSError(error.errno, error.strerror, str(path)) from error
+    with opened(duplicate) as handle:
         yield handle
+    if _updated_in_place(fd):
+        os.ftruncate(fd, os.lseek(fd, 0, os.SEEK_CUR))
+
+
+def _updated_in_place(fd: int) -> bool:
+    """Whether ``fd`` is a regular file open to write at its offset, not to
+    append: one whose old text past a write would survive it."""
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        return False
+    import fcntl  # POSIX only, as the descriptor aliases are
+
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    return flags & os.O_ACCMODE != os.O_RDONLY and not flags & os.O_APPEND
 
 
 def _fsync_directory(directory: Path) -> None:

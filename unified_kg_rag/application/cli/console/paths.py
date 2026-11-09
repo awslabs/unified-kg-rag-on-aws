@@ -19,11 +19,11 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from unified_kg_rag.shared.exceptions import ConfigurationError
+from unified_kg_rag.shared.utils.files import NAME_MAX
 
 # What one uploaded path segment may hold: no separator, no control
 # character, not "." or "..", not starting with "~".
 _UNSAFE_SEGMENT = re.compile(r"[\x00-\x1f\x7f/\\:]")
-_MAX_SEGMENT = 255
 
 
 class PathRefused(ConfigurationError):
@@ -127,10 +127,8 @@ def safe_relative(relative: str) -> PurePosixPath:
     for part in parts:
         if part == ".." or part.startswith("~") or _UNSAFE_SEGMENT.search(part):
             raise PathRefused(f"'{relative}' holds an unsafe name '{part}'")
-        if len(part.encode("utf-8")) > _MAX_SEGMENT:
-            raise PathRefused(
-                f"'{relative}' holds a name longer than {_MAX_SEGMENT} bytes"
-            )
+        if len(part.encode("utf-8")) > NAME_MAX:
+            raise PathRefused(f"'{relative}' holds a name longer than {NAME_MAX} bytes")
     return PurePosixPath(*parts)
 
 
