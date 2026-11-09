@@ -351,7 +351,18 @@ def _script_bounds(bounds: list[int], of_characters: bool) -> bool:
     CJK" check). Bare numbers must each bound the same script's: a script
     range's ends are one script's (``0xAC00 <= cp <= 0xD7A3``), while two
     round numbers each near some block are a number range (``1024 <= port
-    <= 49151``, ``1000 <= year <= 2999``)."""
+    <= 49151``, ``1000 <= year <= 2999``).
+
+    Known limits, both of bare numbers: a number range whose ends both fall
+    in (or one past) one script's blocks is flagged though it is no script
+    range: sizes ``1024 <= size <= 8192`` (one past Greek and Greek
+    Extended), ``(16384, 131072)``, a sample rate ``44100 <= rate <= 48000``
+    (Han and Hangul are wide). A real one in the package gets an
+    ``allowed`` entry with its reason; the ends cannot be told apart from
+    a script's without the Unicode block-edge table, which ``SCRIPTS`` is
+    not. And a pure-number span across scripts (``(0x3040, 0x9FFF)``,
+    ``range(0x3040, 0xA000)``) is missed: spelled with characters or
+    ``ord`` it is caught."""
     if of_characters:
         return all(map(_a_script_bound, bounds))
     return bool(frozenset.intersection(*map(_bounded_scripts, bounds)))

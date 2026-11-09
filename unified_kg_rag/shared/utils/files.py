@@ -20,8 +20,19 @@ logger = logging.getLogger(__name__)
 
 
 # The longest file name, in bytes, of the file systems written to (ext4,
-# XFS, APFS, NTFS's 255 UTF-16 units hold at least as many characters).
+# XFS, APFS, NTFS's 255 UTF-16 units hold at least as many characters):
+# the limit where a directory does not say its own (``PC_NAME_MAX``).
 NAME_MAX = 255
+
+
+def name_max(directory: Path) -> int:
+    """The longest file name, in bytes, ``directory`` holds (143 on
+    eCryptfs), or :data:`NAME_MAX` where it does not say (Windows, a
+    directory not made yet)."""
+    try:
+        return os.pathconf(directory, "PC_NAME_MAX")
+    except (AttributeError, OSError, ValueError):
+        return NAME_MAX
 
 
 def temporary_sibling(path: Path) -> Path:
@@ -29,12 +40,12 @@ def temporary_sibling(path: Path) -> Path:
 
     The name ends in ``.tmp``, not the target's suffix, so a sync or a glob
     over ``*.json`` never picks up a half-written file. It begins with as
-    much of ``path``'s name as fits :data:`NAME_MAX` bytes with the rest,
-    cut at a character boundary: a valid long name (80 Korean characters
-    are 240 bytes) gets a valid temporary name.
+    much of ``path``'s name as fits its directory's :func:`name_max` bytes
+    with the rest, cut at a character boundary: a valid long name (80
+    Korean characters are 240 bytes) gets a valid temporary name.
     """
     unique = f".{uuid.uuid4().hex}.tmp"
-    room = NAME_MAX - 1 - len(unique)
+    room = name_max(path.parent) - 1 - len(unique)
     name = path.name
     while len(os.fsencode(name)) > room:
         name = name[:-1]
@@ -59,17 +70,21 @@ def atomic_open(
     The file keeps what it is: a symlink stays one (the file it points to
     is replaced), and a replaced file keeps its permission bits (it is a new
     file: a hard link to the old one keeps the old text, and the writer owns
-    it). What has no sibling to rename over it is written in place as the
+    it); until the block ends the new text is readable by its writer only
+    (the temporary file is 0600). What has no sibling to rename over it is written in place as the
     block streams: a target that is no regular file (a fifo, ``/dev/null``),
     and a descriptor's alias (``/dev/stdout``, ``/dev/fd/N``,
     ``/proc/self/fd/N``, or a link into them), which is written through the
     descriptor even when it is open on a regular file (``cmd > out.txt``):
     a rename would unlink the file the shell writes to. A file whose
     sibling cannot be made or renamed over it (a writable file in a
-    read-only directory, a bind-mounted file) is staged in a temporary file
-    (beside it, or in :func:`tempfile.gettempdir` when its directory refuses
-    one) and copied into it when the block ends: a block that raises still
-    leaves it as it was, but a reader may see the copy half made.
+    read-only directory or on a read-only file system, a bind-mounted file)
+    is staged in a temporary file (beside it, or in
+    :func:`tempfile.gettempdir` when its directory refuses one) and copied
+    into it when the block ends: a block that raises still leaves it as it
+    was, but a reader may see the copy half made, and a copy that fails
+    once it has begun (a full disk) keeps the staged file and names it in
+    the error, the one whole copy of the new text left.
     ``fsync`` flushes the data to disk before the rename and the directory
     after it (a copied-in file, once copied), for state that must survive
     a power loss, not just a crash; a directory that cannot be flushed (no
@@ -82,6 +97,18 @@ def atomic_open(
         if mode == "wb":
             return open(target, "wb")
         return open(target, "w", encoding=encoding, newline=newline)
+
+    def created(temp: Path, private: bool) -> IO[Any]:
+        # A new file: 0600 when it holds an existing file's text until the
+        # block ends (it is given that file's mode then), else the mode
+        # open() gives a new file (0666 less the umask), as the file gets.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        fd = os.open(temp, flags, 0o600 if private else 0o666)
+        try:
+            return opened(fd)
+        except BaseException:  # an unknown encoding: open() closed fd
+            temp.unlink(missing_ok=True)
+            raise
 
     alias = _descriptor_alias(path)
     if alias is not None:
@@ -105,13 +132,15 @@ def atomic_open(
     temp_path = temporary_sibling(target)
     beside = True
     try:
-        temp = opened(temp_path)
-    except PermissionError:
-        if current is None:
+        temp = created(temp_path, current is not None)
+    except OSError as error:
+        if current is None or error.errno not in _STAGE_ERRORS:
             raise
-        logger.debug("cannot create %s; staging %s elsewhere", temp_path, target)
+        logger.debug(
+            "cannot create %s (%s); staging %s elsewhere", temp_path, error, target
+        )
         temp_path = temporary_sibling(Path(tempfile.gettempdir()) / target.name)
-        temp = opened(temp_path)
+        temp = created(temp_path, True)
         beside = False
     try:
         with temp as handle:
@@ -119,42 +148,67 @@ def atomic_open(
             if fsync and beside:
                 handle.flush()
                 os.fsync(handle.fileno())
-        if not beside:
-            _copy_in(temp_path, target, fsync=fsync)
-            temp_path.unlink()
-            return
-        if current is not None:
-            os.chmod(temp_path, stat.S_IMODE(current.st_mode))
-        try:
-            os.replace(temp_path, target)
-        except OSError as error:
-            if current is None or error.errno not in _IN_PLACE_ERRORS:
-                raise
-            logger.debug("cannot rename over %s (%s); writing in place", target, error)
-            _copy_in(temp_path, target, fsync=fsync)
-            temp_path.unlink()
-            return
+        if beside:
+            if current is not None:
+                os.chmod(temp_path, stat.S_IMODE(current.st_mode))
+            try:
+                os.replace(temp_path, target)
+            except OSError as error:
+                if current is None or error.errno not in _IN_PLACE_ERRORS:
+                    raise
+                logger.debug(
+                    "cannot rename over %s (%s); writing in place", target, error
+                )
+                beside = False
     except BaseException:
         temp_path.unlink(missing_ok=True)
         raise
-    if fsync:
+    if not beside:  # the staged text goes into the file; _copy_in owns it now
+        _copy_in(temp_path, target, fsync=fsync)
+    elif fsync:
         _fsync_directory(target.parent)
 
 
 def _copy_in(staged: Path, target: Path, *, fsync: bool) -> None:
     """Write ``staged``'s bytes into ``target`` in place (it keeps its
-    inode, mode and links), flushed to disk with ``fsync``: the finished
-    text of a file that cannot be renamed over."""
-    with staged.open("rb") as source, target.open("wb") as out:
-        shutil.copyfileobj(source, out)
-        if fsync:
-            out.flush()
-            os.fsync(out.fileno())
+    inode, mode and links), flushed to disk with ``fsync``, and remove
+    ``staged``: the finished text of a file that cannot be renamed over.
+    Once ``target`` is opened (and so emptied) a failure keeps ``staged``,
+    the one whole copy of the new text, and names it in the error."""
+    try:
+        source = staged.open("rb")
+        try:
+            out = target.open("wb")
+        except BaseException:
+            source.close()
+            raise
+    except BaseException:  # the file is untouched: nothing to keep
+        staged.unlink(missing_ok=True)
+        raise
+    try:
+        with source, out:
+            shutil.copyfileobj(source, out)
+            if fsync:
+                out.flush()
+                os.fsync(out.fileno())
+    except OSError as error:
+        raise OSError(
+            error.errno,
+            f"{error.strerror}; its new text is kept in {staged}",
+            str(target),
+        ) from error
+    except BaseException:
+        logger.warning("%s was cut short; its new text is kept in %s", target, staged)
+        raise
+    staged.unlink()
 
 
 # A rename over an existing file that a write in place still makes: a
 # bind-mounted file (EBUSY), another user's file in a sticky directory.
 _IN_PLACE_ERRORS = frozenset({errno.EBUSY, errno.EPERM, errno.EACCES})
+# A directory refusing a new file beside an existing one, which a staged
+# write may still reach: no write permission, a read-only file system.
+_STAGE_ERRORS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
 # A path naming a descriptor rather than a file: its number, or None for
 # another process's.
 _STANDARD_STREAMS = {"/dev/stdin": 0, "/dev/stdout": 1, "/dev/stderr": 2}
@@ -207,6 +261,9 @@ def _written_through(
         duplicate = os.dup(fd)
     except OSError as error:  # a closed descriptor: say which path named it
         raise OSError(error.errno, error.strerror, str(path)) from error
+    if _access_mode(duplicate) == os.O_RDONLY:  # its writes would fail EBADF
+        os.close(duplicate)
+        raise OSError(errno.EBADF, "descriptor not open for writing", str(path))
     with opened(duplicate) as handle:
         yield handle
     if _updated_in_place(fd):
@@ -222,6 +279,13 @@ def _updated_in_place(fd: int) -> bool:
 
     flags = fcntl.fcntl(fd, fcntl.F_GETFL)
     return flags & os.O_ACCMODE != os.O_RDONLY and not flags & os.O_APPEND
+
+
+def _access_mode(fd: int) -> int:
+    """``fd``'s access mode (``os.O_RDONLY``, ``O_WRONLY`` or ``O_RDWR``)."""
+    import fcntl  # POSIX only, as the descriptor aliases are
+
+    return fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE
 
 
 def _fsync_directory(directory: Path) -> None:
