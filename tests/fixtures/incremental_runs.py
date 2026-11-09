@@ -314,6 +314,8 @@ def claim_state(claim: Claim) -> tuple[Any, ...]:
         _lines(claim.description),
         _lines(claim.source_text),
         frozenset(claim.text_unit_ids or []),
+        # A wrong object shows even when the claim's id did not change.
+        claim.object_id,
     )
 
 

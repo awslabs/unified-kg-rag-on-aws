@@ -167,6 +167,7 @@ class CrossRunMerge:
     ) -> list[Claim] | None:
         """See :meth:`IndexingManager.merge_with_stored_claims`."""
         m = self._m
+        noted_entities = m._pending_writes.joined_entities()
         if not (
             claims
             or m._rekeyed
@@ -174,6 +175,7 @@ class CrossRunMerge:
             or m._renamed
             or m._noted_commit_entities
             or m._noted_retired
+            or noted_entities
         ):
             return claims
         groups = m._group_by_suffix(claims or [])
@@ -185,6 +187,7 @@ class CrossRunMerge:
             | m._renamed.keys()
             | m._noted_commit_entities.keys()
             | m._noted_retired.keys()
+            | noted_entities.keys()
         ):
             group = groups.get(suffix, [])
             stored = m._read_stored_claims(sorted({c.id for c in group}), suffix)
@@ -1453,9 +1456,11 @@ class CrossRunMerge:
     def _rederived_entity_ids(self, suffix: str) -> list[str]:
         """The stored entity ids whose claims this run derives again: the
         re-keyed ones, those an entity was split off and the parts split off
-        them (a stored claim may name a part already), those renamed, and the
+        them (a stored claim may name a part already), those renamed, the
         other spellings this run derived of a split-off, re-keyed or renamed
-        entity's name (a claim naming it may sit on one of them)."""
+        entity's name (a claim naming it may sit on one of them), and the
+        noted entities the delta joined (``PendingWrites.joined_entities``:
+        held like stored ones, they may merge into another id too)."""
         m = self._m
         split_from = m._split_from.get(suffix, {})
         derived = m._derived_entities.get(suffix, {})
@@ -1473,6 +1478,7 @@ class CrossRunMerge:
                 *(i for i, e in derived.items() if compact_name_key(e.name) in keys),
                 *m._renamed.get(suffix, set()),
                 *m._noted_commit_entities.get(suffix, set()),
+                *m._pending_writes.joined_entities().get(suffix, set()),
             }
         )
 
@@ -1620,6 +1626,15 @@ class CrossRunMerge:
         ) - (entity_ids | set(derived_entities) | {e.id for e in entities})
         if family:
             entities += m.graph_indexer.read_entities(sorted(family), suffix=suffix)
+        # And the noted entities of those keys (an earlier commit's write of
+        # them was rejected): held as the stored ones are, though the commit
+        # joins them only after a removal derived these claims.
+        known = {e.id for e in entities} | set(derived_entities)
+        entities += [
+            e
+            for e in m._pending_writes.entities_of_keys(suffix, keys)
+            if e.id not in known
+        ]
         if removed:
             stripped = {e.id: e for e in remove_text_units(entities, [], removed)[0]}
             entities = [stripped.get(e.id, e) for e in entities]
