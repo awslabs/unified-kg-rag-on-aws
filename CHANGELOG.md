@@ -484,9 +484,10 @@ From a `main` checkout (formats and keys no release had):
   `it`, `ja`, `pt`, `ru` and `zh` before #574; `nl`, `sv`, `tr` and the other built-in analyzers before #671) keeps
   the `default_analyzer` its fields were built with, one WARNING per run naming them, until one `indexing.reset: true`
   run gives them the language's stemming and stop words, also with `language_analyzers` set (as the CDK stack sets
-  `ko`) while it gives the language the default's analyzer. A language it gives another analyzer than its fields
-  hold stops the run before any model call (exit 2, `was built for other language settings`): reset, or set the map
-  to what the fields hold.
+  `ko`) while it gives the language the default's analyzer, decided per field by the language it holds (another
+  language set to the same analyzer, `af: dutch` beside `nl`, keeps them too). A language it gives another analyzer
+  than its fields hold stops the run before any model call (exit 2, `was built for other language settings`): reset,
+  or set the map to what the fields hold.
 - #574 legal forms: entity `name_key` follows the larger table; reset with a new or no `--pipeline-id` to merge
   designator variants, or entities stored apart stay apart.
 - One reset covers all of these and the items below. On an index built with #565 or later it reuses the stored

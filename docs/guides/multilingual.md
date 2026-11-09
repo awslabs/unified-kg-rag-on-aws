@@ -95,7 +95,8 @@ unit holds any more are deleted by the next full build
   named its language keeps the `default_analyzer` its fields were built
   with (one WARNING per run) until an `indexing.reset: true` run, also
   with a `language_analyzers` you set (the CDK stack sets `ko`) that gives
-  the language the default's analyzer; a language you give another
+  the language the default's analyzer (each field by the language it
+  holds); a language you give another
   analyzer is followed (a field built otherwise stops the run). A built-in stemmer can miss a root: on an
   Amazon OpenSearch Service domain (OpenSearch 2.19) `indonesian` reduced
   "pemasok" to "asok" and "mengirimkan" to "irim" while the roots "pasok"
